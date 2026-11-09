@@ -543,6 +543,10 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// The matte of the last `cameo.backgroundPreview`, keyed by the frame's pixels. A panel that
+    /// asks for the same frame again (a preview loop, a repeated CLI run) must not pay 2 s of
+    /// inference a second time; a new segmenter, or a frame that changed, invalidates it.
+    preview_matte: Option<(u64, deckcraft_matte::Matte)>,
 }
 
 impl Default for Session {
@@ -581,6 +585,7 @@ impl Session {
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            preview_matte: None,
         }
     }
     /// Install (or replace) the camera-background segmenter. The host owns the model; the engine
@@ -589,6 +594,7 @@ impl Session {
         self.segmenter = Some(segmenter);
         self.segmenter_failed = None;
         self.segmenter_failed_probe = None;
+        self.preview_matte = None;
     }
 
     /// Hand the engine the host's way of finding its model. A desktop app that knows where the
@@ -645,6 +651,21 @@ impl Session {
         self.segmenter = None;
         self.segmenter_failed = None;
         self.segmenter_failed_probe = None;
+        self.preview_matte = None;
+    }
+
+    /// The matte of an identical frame from the last preview, if the segmenter has not changed
+    /// since. `key` is a hash of the frame's pixels (see [`preview_key`]).
+    pub(crate) fn cached_preview_matte(&self, key: u64) -> Option<deckcraft_matte::Matte> {
+        match &self.preview_matte {
+            Some((cached, matte)) if *cached == key => Some(matte.clone()),
+            _ => None,
+        }
+    }
+
+    /// Remember the matte a preview just computed, so the same frame is not segmented twice.
+    pub(crate) fn cache_preview_matte(&mut self, key: u64, matte: deckcraft_matte::Matte) {
+        self.preview_matte = Some((key, matte));
     }
 
     /// Forget a loaded segmenter or a remembered failure that disagrees with the host's model

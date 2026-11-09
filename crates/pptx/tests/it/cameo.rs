@@ -330,3 +330,36 @@ fn unknown_children_of_background_props_survive() {
     assert!(!xml.contains("<alf:Blur/>"), "{xml}");
     assert!(xml.contains("<a:ext uri=\"urn:example:bg\"/>"), "{xml}");
 }
+
+/// A feed that names a package relationship (`r:embed`, `r:link`, `r:id`) cannot be written back:
+/// the export creates no such relationship, so PowerPoint would repair a dangling reference. The
+/// feed is replaced by one carrying only the mode, and the exported slide holds no such id.
+#[test]
+fn a_feed_that_names_a_relationship_exports_only_the_mode() {
+    for attr in ["r:embed", "r:link", "r:id"] {
+        for background in [None, Some(CameraBackground::new(CameraBackgroundMode::Blur))] {
+            let raw = format!(
+                concat!(
+                    "<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\" ",
+                    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+                    "<alf:backgroundProps><alf:Custom {}=\"rId9\"/></alf:backgroundProps>",
+                    "</alf:liveFeedProps>"
+                ),
+                attr
+            );
+            let p = cameo_with(background.clone(), Some(&raw));
+            let bytes = deckcraft_pptx::export(&p).expect("export");
+            let found = exported_shape(&bytes);
+            assert!(!found.slide_xml.contains("rId9"), "{attr}/{background:?}: {}", found.slide_xml);
+            let kept = found.shape.cameo.and_then(|c| c.raw).unwrap_or_default();
+            assert!(!kept.contains("rId9"), "{attr}/{background:?}: {kept}");
+            match &background {
+                Some(bg) => {
+                    let expected = format!("<alf:backgroundProps><alf:{}/></alf:backgroundProps>", bg.mode.xml_name());
+                    assert!(found.slide_xml.contains(&expected), "{attr}: {}", found.slide_xml);
+                }
+                None => assert!(!kept.contains("<alf:Custom"), "{attr}: {kept}"),
+            }
+        }
+    }
+}

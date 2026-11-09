@@ -47,6 +47,7 @@ impl SlideApp {
             session,
             services,
             matte,
+            camera_background_checked: None,
             ui: UiState::default(),
             textures: textures::Textures::default(),
             control_rx: None,

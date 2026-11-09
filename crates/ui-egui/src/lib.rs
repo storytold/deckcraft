@@ -225,6 +225,10 @@ pub struct SlideApp {
     pub services: Services,
     /// Camera-background model and processor (desktop); `None` in the web build.
     pub matte: Option<Box<dyn deckcraft_matte::MatteService>>,
+    /// When the Camera Background panel last re-probed the model directory: the probe touches
+    /// several roots, so it runs when the tab opens and then on a throttle, not on every ribbon
+    /// draw.
+    pub(crate) camera_background_checked: Option<std::time::Instant>,
     pub ui: UiState,
     pub textures: textures::Textures,
     pub control_rx: Option<Receiver<ControlRequest>>,

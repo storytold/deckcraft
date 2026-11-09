@@ -129,6 +129,19 @@ fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Largest base64 PNG the preview command accepts (about 48 MB decoded).
 const MAX_PREVIEW_BASE64: usize = 64 * 1024 * 1024;
+/// Largest side a preview frame may have. 1280 px is 1 MP — four times the model's own 512 input —
+/// and keeps the working set (frame, matte, replacement and PNG buffer) to a few megabytes instead
+/// of the ~100 MB a 4096 px frame needs. The preview is a proof of the pipeline, not the live
+/// capture path (#1837).
+pub const MAX_PREVIEW_DIM: u32 = 1280;
+/// Largest decoded replacement picture `imageData` stores. A PNG/JPEG photo is far smaller; the
+/// check runs before the bytes reach the document. The Camera Format picker uses the same limit.
+pub const MAX_INLINE_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+/// The most all media may take before an inline picture is refused (the loader's own budget is
+/// 4 GiB, so this leaves room to save).
+const MAX_DOCUMENT_MEDIA_BYTES: u64 = 2 << 30;
+/// The default feather radius the preview applies when the caller names none.
+const DEFAULT_FEATHER: u32 = 2;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -137,7 +150,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Cameo",
             ["Insert", "Images"],
             None,
-            "{slide?: index, all?: bool, rect?: [x,y,w,h] pt} → {id, ids, slide}",
+            "{slide?: index (0-based; `all` inserts on every slide and `slide` only names the one left selected), all?: bool, rect?: [x,y,w,h] pt} → {id, ids, slide} (slide is 0-based)",
             super::has_doc,
             insert_cameo
         ),
@@ -146,7 +159,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Camera Background",
             ["Camera Format", "Camera Background"],
             None,
-            "{mode: normal|removed|blur|custom, color?: [r,g,b]|#RRGGBB, image?: media id, imageData?: base64 png/jpeg, all?: bool, id?: shape, ids?: [shape]} → {mode}",
+            "{mode: normal|removed|blur|custom, color?: [r,g,b]|[r,g,b,a]|#RRGGBB|#RRGGBBAA, image?: media id the document already holds, imageData?: base64 PNG or JPEG (added as media, at most 16 MB), all?: bool, id?: shape, ids?: [shape]} → {mode, ids, changed} (all plus id/ids is refused; without all, id/ids or the selection names the targets, and id/ids win)",
             super::has_doc,
             background
         ),
@@ -155,7 +168,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Camera Background State",
             ["Camera Format", "Camera Background"],
             None,
-            "{} → {mode, color, image, segmenter, accelerator, accelerators}",
+            "{} → {mode, color ([r,g,b,a] or null), image (media id or null), hasCameo, segmenter, accelerator, accelerators} (mode is the first selected Cameo's; `accelerator` is cpu)",
             always,
             state
         ),
@@ -164,7 +177,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply Background to All Cameos",
             ["Camera Format", "Camera Background"],
             None,
-            "{mode?, color?, image?, imageData?, id?: shape, ids?: [shape]} → {mode, changed} (without `mode`, copies the selected Cameo's background)",
+            "{mode?, color?, image?, imageData?, id?, ids?} → {mode, ids, changed} (without `mode`, copies the background of the first Cameo among id/ids or the selection; all Cameos in the deck are targets)",
             super::has_doc,
             apply_to_all
         ),
@@ -173,7 +186,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Preview Camera Background",
             ["Camera Format", "Camera Background"],
             None,
-            "{image: base64 png, mode: normal|removed|blur|custom, background?: base64 png, color?: [r,g,b], feather?, blur?, accelerator?: cpu} → {image: base64 png, width, height, ms} (does not touch the deck)",
+            "{frame: base64 PNG or JPEG (up to 1280x1280), mode: normal|removed|blur|custom, background?: base64 PNG or JPEG (the replacement, same limit), color?: [r,g,b]|[r,g,b,a]|#RRGGBB|#RRGGBBAA, feather?: number 0..=64 (default 2), blur?: number 0..=64 (default 0, which picks a radius from the frame size), accelerator?: cpu} → {image: base64 png, width, height, mode, ms} (does not touch the deck; synchronous, about 2 s for a segmentation mode)",
             always,
             preview
         ),
@@ -187,7 +200,7 @@ fn parse_mode(p: &Value, cmd: &str) -> Result<CameraBackgroundMode> {
 
 /// `[r, g, b]`, `[r, g, b, a]`, `#RRGGBB` or `#RRGGBBAA`; a value that is present but not one of
 /// those is an error rather than silently dropped.
-fn parse_color(p: &Value) -> Result<Option<Rgba>> {
+fn parse_color(p: &Value, cmd: &str) -> Result<Option<Rgba>> {
     let Some(v) = p.get("color") else { return Ok(None) };
     if v.is_null() {
         return Ok(None);
@@ -197,104 +210,157 @@ fn parse_color(p: &Value) -> Result<Option<Rgba>> {
         let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2).unwrap_or(""), 16).ok();
         if hex.len() == 6 || hex.len() == 8 {
             let (Some(r), Some(g), Some(b)) = (byte(0), byte(2), byte(4)) else {
-                return Err(bad("cameo.background", format!("`color` is not a hex colour: {s}")));
+                return Err(bad(cmd, format!("`color` is not a hex colour: {s}")));
             };
-            let a = if hex.len() == 8 { byte(6).ok_or_else(|| bad("cameo.background", format!("`color` is not a hex colour: {s}")))? } else { 255 };
+            let a = if hex.len() == 8 { byte(6).ok_or_else(|| bad(cmd, format!("`color` is not a hex colour: {s}")))? } else { 255 };
             return Ok(Some(Rgba { r, g, b, a }));
         }
-        return Err(bad("cameo.background", format!("`color` is not #RRGGBB: {s}")));
+        return Err(bad(cmd, format!("`color` is not #RRGGBB: {s}")));
     }
     let Some(a) = v.as_array() else {
-        return Err(bad("cameo.background", "`color` must be [r,g,b], [r,g,b,a] or #RRGGBB"));
+        return Err(bad(cmd, "`color` must be [r,g,b], [r,g,b,a] or #RRGGBB"));
     };
     if a.len() != 3 && a.len() != 4 {
-        return Err(bad("cameo.background", "`color` needs 3 or 4 channels"));
+        return Err(bad(cmd, "`color` needs 3 or 4 channels"));
     }
     let mut c = [0u8; 4];
     c[3] = 255;
     for (i, slot) in c.iter_mut().enumerate() {
         if let Some(v) = a.get(i) {
-            let n = v.as_u64().filter(|n| *n <= 255).ok_or_else(|| bad("cameo.background", "`color` channels are 0..255 integers"))?;
+            let n = v.as_u64().filter(|n| *n <= 255).ok_or_else(|| bad(cmd, "`color` channels are 0..255 integers"))?;
             *slot = n as u8;
         }
     }
     Ok(Some(Rgba { r: c[0], g: c[1], b: c[2], a: c[3] }))
 }
 
-fn parse_image(p: &Value) -> Result<Option<MediaId>> {
+fn parse_image(p: &Value, cmd: &str) -> Result<Option<MediaId>> {
     match p.get("image") {
         None | Some(Value::Null) => Ok(None),
-        Some(v) => v
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .map(|n| Some(MediaId(n)))
-            .ok_or_else(|| bad("cameo.background", "`image` is not a media id")),
+        Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()).map(|n| Some(MediaId(n))).ok_or_else(|| bad(cmd, "`image` is not a media id")),
     }
 }
 
-fn requested(p: &Value) -> Result<CameraBackground> {
-    let mode = parse_mode(p, "cameo.background")?;
-    let color = parse_color(p)?;
-    let image = parse_image(p)?;
+fn requested(p: &Value, cmd: &str) -> Result<CameraBackground> {
+    let mode = parse_mode(p, cmd)?;
+    let color = parse_color(p, cmd)?;
+    let image = parse_image(p, cmd)?;
     if mode == CameraBackgroundMode::Custom && color.is_none() && image.is_none() && p.get("imageData").is_none() {
-        return Err(bad("cameo.background", "custom needs `color` or `image` for the replacement"));
+        return Err(bad(cmd, "custom needs `color` or `image` for the replacement"));
     }
     Ok(CameraBackground { mode, color, image })
 }
 
+/// The dimensions a picture claims, from its header only: a hostile PNG that says 100000x100000 is
+/// refused before a decoder (or the document) allocates anything for it.
+fn header_dimensions(bytes: &[u8], what: &str, cmd: &str) -> Result<(u32, u32)> {
+    let (w, h) = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| bad(cmd, format!("{what} is not an image: {e}")))?
+        .into_dimensions()
+        .map_err(|e| bad(cmd, format!("{what} could not be read: {e}")))?;
+    if w == 0 || h == 0 || w > deckcraft_matte::MAX_DIM || h > deckcraft_matte::MAX_DIM {
+        return Err(bad(cmd, format!("{what} is {w}x{h}; the pipeline accepts up to {}x{}", deckcraft_matte::MAX_DIM, deckcraft_matte::MAX_DIM)));
+    }
+    Ok((w, h))
+}
+
 /// A replacement picture the caller sends inline: bytes, the name and content type PowerPoint and
-/// the media list will show. The command adds it to the document in the same undo step.
-fn image_data(p: &Value) -> Result<Option<(String, String, Vec<u8>)>> {
+/// the media list will show. The command adds it to the document in the same undo step. The magic
+/// and the header are checked, and the size is capped, before the bytes can reach the document.
+fn image_data(p: &Value, cmd: &str) -> Result<Option<(String, String, Vec<u8>)>> {
     let Some(encoded) = str_param(p, "imageData") else { return Ok(None) };
     if encoded.len() > MAX_PREVIEW_BASE64 {
-        return Err(bad("cameo.background", "`imageData` is larger than the command accepts"));
+        return Err(bad(cmd, "`imageData` is larger than the command accepts"));
     }
-    let bytes = super::base64_decode(encoded).ok_or_else(|| bad("cameo.background", "`imageData` is not base64"))?;
+    let bytes = super::base64_decode(encoded).ok_or_else(|| bad(cmd, "`imageData` is not base64"))?;
+    if bytes.len() > MAX_INLINE_IMAGE_BYTES {
+        return Err(bad(
+            cmd,
+            format!("`imageData` is {} MB; the limit is {} MB", bytes.len() / (1024 * 1024), MAX_INLINE_IMAGE_BYTES / (1024 * 1024)),
+        ));
+    }
     let (ext, mime) = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         ("png", "image/png")
     } else if bytes.starts_with(&[0xFF, 0xD8]) {
         ("jpg", "image/jpeg")
     } else {
-        return Err(bad("cameo.background", "`imageData` must be a PNG or JPEG"));
+        return Err(bad(cmd, "`imageData` must be a PNG or JPEG"));
     };
+    header_dimensions(&bytes, "`imageData`", cmd)?;
     Ok(Some((format!("cameo-background.{ext}"), mime.to_string(), bytes)))
 }
 
-fn set_one(sh: &mut deckcraft_model::Shape, bg: &CameraBackground) -> Result<()> {
-    let c = sh.cameo.as_mut().ok_or_else(|| bad("cameo.background", "select a Cameo"))?;
+/// Refuse an inline picture that would take the presentation past its media budget. Without this a
+/// script can add picture after picture in one undoable command and exhaust memory on load.
+fn check_media_budget(s: &Session, cmd: &str, bytes: usize) -> Result<()> {
+    let doc = s.doc()?;
+    let total: u64 = doc.doc.media.iter().map(|m| m.data.len() as u64).sum();
+    if total.saturating_add(bytes as u64) > MAX_DOCUMENT_MEDIA_BYTES {
+        return Err(bad(
+            cmd,
+            format!("`imageData` would take the presentation past its {} MB media budget", MAX_DOCUMENT_MEDIA_BYTES / (1024 * 1024)),
+        ));
+    }
+    Ok(())
+}
+
+fn set_one(sh: &mut deckcraft_model::Shape, bg: &CameraBackground, cmd: &str) -> Result<()> {
+    let c = sh.cameo.as_mut().ok_or_else(|| bad(cmd, "select a Cameo"))?;
     c.background = Some(bg.clone());
     Ok(())
 }
 
+/// Every Cameo in the deck, in slide order. Counted before any media is added, so `all` with no
+/// Cameo cannot leave an orphan picture in the document.
+fn cameo_positions(doc: &deckcraft_model::Presentation) -> Vec<(usize, ShapeId)> {
+    let mut out = Vec::new();
+    for (slide_index, slide) in doc.slides.iter().enumerate() {
+        deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+            if sh.is_cameo() {
+                out.push((slide_index, sh.id));
+            }
+        });
+    }
+    out
+}
+
 fn background(s: &mut Session, p: &Value) -> Result<Value> {
-    let bg = requested(p)?;
-    check_media(s, "cameo.background", &bg)?;
-    let data = image_data(p)?;
-    if bool_or(p, "all", false) {
-        let changed = s.edit(|doc, _| {
+    const CMD: &str = "cameo.background";
+    let all = bool_or(p, "all", false);
+    if all && (p.get("id").is_some() || p.get("ids").is_some()) {
+        return Err(bad(CMD, "`all` and `id`/`ids` name different targets; send one"));
+    }
+    let bg = requested(p, CMD)?;
+    check_media(s, CMD, &bg)?;
+    let data = image_data(p, CMD)?;
+    if let Some((_, _, bytes)) = &data {
+        check_media_budget(s, CMD, bytes.len())?;
+    }
+    if all {
+        let (changed, mut ids) = s.edit(|doc, _| {
+            let mut ids: Vec<ShapeId> = Vec::new();
+            let positions = cameo_positions(doc);
+            if positions.is_empty() {
+                return Ok((0usize, ids));
+            }
             let mut bg = bg.clone();
             if let Some((name, mime, bytes)) = data.clone() {
-                bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad("cameo.background", NO_ID_SPACE))?);
+                bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
             }
             let mut n = 0usize;
-            for slide in &mut doc.slides {
-                let mut ids = Vec::new();
-                deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
-                    if sh.is_cameo() {
-                        ids.push(sh.id);
-                    }
-                });
-                let slide = std::sync::Arc::make_mut(slide);
-                for id in ids {
-                    if let Some(sh) = slide.shape_mut(id) {
-                        set_one(sh, &bg)?;
-                        n += 1;
-                    }
+            for (slide_index, id) in positions {
+                let slide = std::sync::Arc::make_mut(&mut doc.slides[slide_index]);
+                if let Some(sh) = slide.shape_mut(id) {
+                    set_one(sh, &bg, CMD)?;
+                    n += 1;
+                    ids.push(id);
                 }
             }
-            Ok(n)
+            Ok((n, ids))
         })?;
-        return Ok(json!({"mode": bg.mode.as_str(), "all": true, "changed": changed}));
+        ids.sort_by_key(|id| id.0);
+        return Ok(json!({"mode": bg.mode.as_str(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "changed": changed}));
     }
     let mut ids = targets(s, p)?;
     let explicit = p.get("ids").is_some() || p.get("id").is_some();
@@ -302,29 +368,33 @@ fn background(s: &mut Session, p: &Value) -> Result<Value> {
         let doc = s.doc()?;
         ids.retain(|id| doc.shape(*id).is_some_and(deckcraft_model::Shape::is_cameo));
     }
-    let ids = cameo_ids(s, ids)?;
+    let ids = cameo_ids(s, ids, CMD)?;
     s.edit(|doc, sel| {
         let mut bg = bg.clone();
         if let Some((name, mime, bytes)) = data.clone() {
-            bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad("cameo.background", NO_ID_SPACE))?);
+            bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         }
-        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("cameo.background", "no slide"))?;
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
         for id in &ids {
-            let sh = deckcraft_model::find_shape_mut(shapes, *id).ok_or_else(|| bad("cameo.background", "no such shape"))?;
-            set_one(sh, &bg)?;
+            let sh = deckcraft_model::find_shape_mut(shapes, *id).ok_or_else(|| bad(CMD, "no such shape"))?;
+            set_one(sh, &bg, CMD)?;
         }
         Ok(())
     })?;
-    Ok(json!({"mode": bg.mode.as_str(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
+    Ok(json!({
+        "mode": bg.mode.as_str(),
+        "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(),
+        "changed": ids.len(),
+    }))
 }
 
-fn cameo_ids(s: &Session, ids: Vec<ShapeId>) -> Result<Vec<ShapeId>> {
+fn cameo_ids(s: &Session, ids: Vec<ShapeId>, cmd: &str) -> Result<Vec<ShapeId>> {
     if ids.is_empty() {
-        return Err(bad("cameo.background", "nothing selected"));
+        return Err(bad(cmd, "nothing selected"));
     }
     let doc = s.doc()?;
     if !ids.iter().all(|id| doc.shape(*id).is_some_and(deckcraft_model::Shape::is_cameo)) {
-        return Err(bad("cameo.background", "select a Cameo"));
+        return Err(bad(cmd, "select a Cameo"));
     }
     Ok(ids)
 }
@@ -366,8 +436,9 @@ fn check_media(s: &Session, cmd: &str, bg: &CameraBackground) -> Result<()> {
 }
 
 fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "cameo.backgroundApplyToAll";
     let bg = if p.get("mode").is_some() {
-        requested(p)?
+        requested(p, CMD)?
     } else {
         // A mixed selection is allowed by the command, and a plain shape has no background to
         // copy: take the first Cameo in the targets, not the first target.
@@ -377,57 +448,83 @@ fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
             .iter()
             .copied()
             .find(|id| doc.shape(*id).is_some_and(Shape::is_cameo))
-            .ok_or_else(|| bad("cameo.backgroundApplyToAll", "select a Cameo to copy its background"))?;
+            .ok_or_else(|| bad(CMD, "select a Cameo to copy its background"))?;
         doc.shape(id).and_then(|sh| sh.cameo.as_ref()).and_then(|c| c.background.clone()).unwrap_or_default()
     };
-    check_media(s, "cameo.backgroundApplyToAll", &bg)?;
-    let data = image_data(p)?;
-    let changed = s.edit(|doc, _| {
+    check_media(s, CMD, &bg)?;
+    let data = image_data(p, CMD)?;
+    if let Some((_, _, bytes)) = &data {
+        check_media_budget(s, CMD, bytes.len())?;
+    }
+    let (changed, mut ids) = s.edit(|doc, _| {
+        let mut ids: Vec<ShapeId> = Vec::new();
+        let positions = cameo_positions(doc);
+        if positions.is_empty() {
+            return Ok((0usize, ids));
+        }
         let mut bg = bg.clone();
         if let Some((name, mime, bytes)) = data.clone() {
-            bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad("cameo.backgroundApplyToAll", NO_ID_SPACE))?);
+            bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         }
         let mut n = 0usize;
-        for slide in &mut doc.slides {
-            let slide = std::sync::Arc::make_mut(slide);
-            let mut ids = Vec::new();
-            deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
-                if sh.is_cameo() {
-                    ids.push(sh.id);
-                }
-            });
-            for id in ids {
-                if let Some(sh) = slide.shape_mut(id)
-                    && let Some(c) = sh.cameo.as_mut()
-                {
-                    c.background = Some(bg.clone());
-                    n += 1;
-                }
+        for (slide_index, id) in positions {
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[slide_index]);
+            if let Some(sh) = slide.shape_mut(id)
+                && let Some(c) = sh.cameo.as_mut()
+            {
+                c.background = Some(bg.clone());
+                n += 1;
+                ids.push(id);
             }
         }
-        Ok(n)
+        Ok((n, ids))
     })?;
-    Ok(json!({"mode": bg.mode.as_str(), "changed": changed}))
+    ids.sort_by_key(|id| id.0);
+    Ok(json!({"mode": bg.mode.as_str(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "changed": changed}))
 }
 
-fn decode_frame(bytes: &[u8], what: &str) -> Result<RgbaFrame> {
-    // Read only the header first: a hostile PNG that claims a huge canvas is refused before the
-    // decoder allocates it.
+/// Decode a picture for the preview. The header is checked first — at most `max_dim` on a side —
+/// so a hostile PNG that claims a huge canvas is refused before the decoder allocates it. Every
+/// client-caused failure is a `bad()` with the calling command's name.
+fn decode_frame(bytes: &[u8], what: &str, cmd: &str, max_dim: u32) -> Result<RgbaFrame> {
     let (w, h) = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|e| EngineError::Other(format!("{what} is not an image: {e}")))?
+        .map_err(|e| bad(cmd, format!("{what} is not an image: {e}")))?
         .into_dimensions()
-        .map_err(|e| EngineError::Other(format!("{what} could not be read: {e}")))?;
-    if w == 0 || h == 0 || w > deckcraft_matte::MAX_DIM || h > deckcraft_matte::MAX_DIM {
-        return Err(EngineError::Other(format!(
-            "{what} is {w}x{h}; the pipeline accepts up to {}x{}",
-            deckcraft_matte::MAX_DIM,
-            deckcraft_matte::MAX_DIM
-        )));
+        .map_err(|e| bad(cmd, format!("{what} could not be read: {e}")))?;
+    if w == 0 || h == 0 || w > max_dim || h > max_dim {
+        return Err(bad(cmd, format!("{what} is {w}x{h}; the preview accepts up to {max_dim}x{max_dim}")));
     }
-    let img = image::load_from_memory(bytes).map_err(|e| EngineError::Other(format!("{what} could not be decoded: {e}")))?;
+    let img = image::load_from_memory(bytes).map_err(|e| bad(cmd, format!("{what} could not be decoded: {e}")))?;
     let img = img.to_rgba8();
-    RgbaFrame::new(img.width(), img.height(), img.into_raw()).map_err(|e| EngineError::Other(e.message()))
+    RgbaFrame::new(img.width(), img.height(), img.into_raw()).map_err(|e| bad(cmd, e.message()))
+}
+
+/// A hash of a frame's pixels: the preview cache's key. Two calls with the same frame (a preview
+/// loop, a repeated CLI run) reuse the matte instead of running 2 s of inference again.
+fn preview_key(frame: &RgbaFrame) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    frame.width().hash(&mut hasher);
+    frame.height().hash(&mut hasher);
+    frame.pixels().hash(&mut hasher);
+    hasher.finish()
+}
+
+/// One radius parameter: absent means `default`; present must be a finite number, clamped to the
+/// documented 0..=64. A string, a null inside a number or a non-finite value is refused instead of
+/// silently replaced by the default (which would make `feather: "2"` look like it worked).
+fn radius_param(p: &Value, key: &str, default: u32, cmd: &str) -> Result<u32> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => {
+            let n = v.as_f64().ok_or_else(|| bad(cmd, format!("`{key}` must be a number 0..=64")))?;
+            if !n.is_finite() {
+                return Err(bad(cmd, format!("`{key}` must be a finite number 0..=64")));
+            }
+            Ok(n.clamp(0.0, 64.0) as u32)
+        }
+    }
 }
 
 /// A millisecond clock for the preview's timing. `Instant::now()` panics on
@@ -445,53 +542,63 @@ fn now_ms() -> f64 {
 }
 
 fn preview(s: &mut Session, p: &Value) -> Result<Value> {
-    let mode = parse_mode(p, "cameo.backgroundPreview")?;
+    const CMD: &str = "cameo.backgroundPreview";
+    let mode = parse_mode(p, CMD)?;
     if let Some(name) = str_param(p, "accelerator") {
-        let accelerator =
-            deckcraft_matte::Accelerator::parse(name).ok_or_else(|| bad("cameo.backgroundPreview", format!("unknown accelerator `{name}`")))?;
+        let accelerator = deckcraft_matte::Accelerator::parse(name).ok_or_else(|| bad(CMD, format!("unknown accelerator `{name}`")))?;
         if accelerator != deckcraft_matte::Accelerator::Cpu {
-            return Err(EngineError::Other(deckcraft_matte::ACCELERATOR_UNAVAILABLE.to_string()));
+            return Err(bad(CMD, deckcraft_matte::ACCELERATOR_UNAVAILABLE.to_string()));
         }
     }
-    let color = parse_color(p)?;
-    let encoded = str_param(p, "image").ok_or_else(|| bad("cameo.backgroundPreview", "missing `image` (base64 PNG)"))?;
+    let color = parse_color(p, CMD)?;
+    let encoded = str_param(p, "frame").ok_or_else(|| bad(CMD, "missing `frame` (base64 PNG or JPEG)"))?;
     if encoded.len() > MAX_PREVIEW_BASE64 {
-        return Err(bad("cameo.backgroundPreview", "`image` is larger than the preview command accepts"));
+        return Err(bad(CMD, "`frame` is larger than the preview command accepts"));
     }
-    let bytes = super::base64_decode(encoded).ok_or_else(|| bad("cameo.backgroundPreview", "`image` is not base64"))?;
-    let frame = decode_frame(&bytes, "`image`")?;
+    let bytes = super::base64_decode(encoded).ok_or_else(|| bad(CMD, "`frame` is not base64"))?;
+    let frame = decode_frame(&bytes, "`frame`", CMD, MAX_PREVIEW_DIM)?;
     let replacement = match str_param(p, "background") {
         None => None,
         Some(b) => {
             if b.len() > MAX_PREVIEW_BASE64 {
-                return Err(bad("cameo.backgroundPreview", "`background` is larger than the preview command accepts"));
+                return Err(bad(CMD, "`background` is larger than the preview command accepts"));
             }
-            let bytes = super::base64_decode(b).ok_or_else(|| bad("cameo.backgroundPreview", "`background` is not base64"))?;
-            Some(decode_frame(&bytes, "`background`")?)
+            let bytes = super::base64_decode(b).ok_or_else(|| bad(CMD, "`background` is not base64"))?;
+            Some(decode_frame(&bytes, "`background`", CMD, MAX_PREVIEW_DIM)?)
         }
     };
-    let feather = p.get("feather").and_then(Value::as_f64).map(|v| if v.is_finite() { v.clamp(0.0, 64.0) as u32 } else { 2 }).unwrap_or(2);
-    let blur = p.get("blur").and_then(Value::as_f64).map(|v| if v.is_finite() { v.clamp(0.0, 64.0) as u32 } else { 0 }).unwrap_or(0);
+    let feather = radius_param(p, "feather", DEFAULT_FEATHER, CMD)?;
+    let blur = radius_param(p, "blur", 0, CMD)?;
     let options = CompositeOptions { mode, color: color.map(|c| [c.r, c.g, c.b]), blur_radius: (blur > 0).then_some(blur), feather };
     let start = now_ms();
     let matte = if mode == CameraBackgroundMode::Normal {
         None
     } else {
-        s.ensure_segmenter().map_err(EngineError::Other)?;
-        let segmenter = s.segmenter_mut().ok_or_else(|| {
-            EngineError::Other(
-                deckcraft_matte::MatteError::Unavailable(
-                    "camera background segmentation is not available: install the birefnet-lite-512 model".into(),
-                )
-                .message(),
-            )
-        })?;
-        Some(segmenter.matte(&frame).map_err(|e| EngineError::Other(e.message()))?)
+        let key = preview_key(&frame);
+        match s.cached_preview_matte(key) {
+            Some(m) => Some(m),
+            None => {
+                s.ensure_segmenter().map_err(EngineError::Other)?;
+                let segmenter = s.segmenter_mut().ok_or_else(|| {
+                    EngineError::Other(
+                        deckcraft_matte::MatteError::Unavailable(
+                            "camera background segmentation is not available: install the birefnet-lite-512 model".into(),
+                        )
+                        .message(),
+                    )
+                })?;
+                let matte = segmenter.matte(&frame).map_err(|e| EngineError::Other(e.message()))?;
+                s.cache_preview_matte(key, matte.clone());
+                Some(matte)
+            }
+        }
     };
     let out = composite(&frame, matte.as_ref(), &options, replacement.as_ref()).map_err(|e| EngineError::Other(e.message()))?;
     let (w, h) = (out.width(), out.height());
+    // The composite owns its pixels; move them into the encoder instead of copying the frame once
+    // more for `RgbaImage::from_raw`.
     let img =
-        image::RgbaImage::from_raw(w, h, out.pixels().to_vec()).ok_or_else(|| EngineError::Other("the composite does not match its size".into()))?;
+        image::RgbaImage::from_raw(w, h, out.into_pixels()).ok_or_else(|| EngineError::Other("the composite does not match its size".into()))?;
     let mut png = Cursor::new(Vec::new());
     image::DynamicImage::ImageRgba8(img)
         .write_to(&mut png, image::ImageFormat::Png)
@@ -587,7 +694,7 @@ mod tests {
         assert_eq!(loads.load(Ordering::Relaxed), 0, "a status query never loads the model");
 
         // The preview is what loads it, and from then on the state names the loaded segmenter.
-        s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).expect("preview");
+        s.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).expect("preview");
         assert_eq!(loads.load(Ordering::Relaxed), 1);
         assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], Segmenter::name(&EllipseSegmenter::default()));
 
@@ -595,16 +702,16 @@ mod tests {
         installed.store(false, Ordering::Relaxed);
         s.sync_segmenter(false);
         assert!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"].is_null());
-        assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
+        assert!(s.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
         let attempts = loads.load(Ordering::Relaxed);
-        assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
+        assert!(s.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
         assert_eq!(loads.load(Ordering::Relaxed), attempts, "a remembered failure is not retried per call");
 
         // The model is installed while the session runs (an MCP server outlives the install): the
         // probe now names it, so the cached failure is dropped without a restart.
         installed.store(true, Ordering::Relaxed);
         assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], "stub-segmenter");
-        s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).expect("the model appeared");
+        s.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).expect("the model appeared");
         assert_eq!(loads.load(Ordering::Relaxed), attempts + 1);
     }
 
@@ -734,13 +841,13 @@ mod tests {
     fn the_offscreen_preview_composites_with_the_installed_segmenter() {
         let mut s = with_cameo();
         // Normal needs no model at all.
-        let r = s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [40, 50, 60, 255]), "mode": "normal"})).expect("normal");
+        let r = s.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [40, 50, 60, 255]), "mode": "normal"})).expect("normal");
         assert_eq!(r["mode"], "normal");
-        assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [0, 0, 0, 255]), "mode": "removed"})).is_err(), "no segmenter yet");
+        assert!(s.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [0, 0, 0, 255]), "mode": "removed"})).is_err(), "no segmenter yet");
 
         s.set_segmenter(Box::new(EllipseSegmenter::default()));
         let removed = s
-            .execute("cameo.backgroundPreview", &json!({"image": png(16, 16, [40, 50, 60, 255]), "mode": "removed", "feather": 0}))
+            .execute("cameo.backgroundPreview", &json!({"frame": png(16, 16, [40, 50, 60, 255]), "mode": "removed", "feather": 0}))
             .expect("removed");
         let bytes = super::super::base64_decode(removed["image"].as_str().expect("png")).expect("base64");
         let img = image::load_from_memory(&bytes).expect("decode").to_rgba8();
@@ -751,7 +858,7 @@ mod tests {
             .execute(
                 "cameo.backgroundPreview",
                 &json!({
-                    "image": png(16, 16, [40, 50, 60, 255]),
+                    "frame": png(16, 16, [40, 50, 60, 255]),
                     "mode": "custom",
                     "color": [200, 10, 10],
                     "feather": 0
@@ -765,10 +872,10 @@ mod tests {
 
         assert!(s.execute("cameo.backgroundPreview", &json!({})).is_err());
         let err = s
-            .execute("cameo.backgroundPreview", &json!({"image": png(4, 4, [1, 2, 3, 255]), "mode": "normal", "accelerator": "openvino"}))
+            .execute("cameo.backgroundPreview", &json!({"frame": png(4, 4, [1, 2, 3, 255]), "mode": "normal", "accelerator": "openvino"}))
             .expect_err("no openvino");
         assert!(err.to_string().contains("OpenVINO"), "{err}");
-        assert!(s.execute("cameo.backgroundPreview", &json!({"image": "%%%", "mode": "blur"})).is_err());
+        assert!(s.execute("cameo.backgroundPreview", &json!({"frame": "%%%", "mode": "blur"})).is_err());
     }
 
     #[test]
@@ -776,9 +883,134 @@ mod tests {
         let mut s = with_cameo();
         s.set_segmenter(Box::new(EllipseSegmenter::default()));
         let before = deckcraft_format::save(&s.doc().expect("doc").doc).expect("save");
-        s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "blur"})).expect("preview");
+        let journal = s.journal.len();
+        s.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [1, 2, 3, 255]), "mode": "blur"})).expect("preview");
         let after = deckcraft_format::save(&s.doc().expect("doc").doc).expect("save");
         assert_eq!(before, after, "the preview is not a document edit");
+        assert_eq!(s.journal.len(), journal, "the preview adds no journal entry and no undo step");
+        // A preview needs no document at all: the command is a query.
+        let mut empty = Session::new();
+        empty.execute("cameo.backgroundPreview", &json!({"frame": png(8, 8, [1, 2, 3, 255]), "mode": "normal"})).expect("a preview with no document");
+        assert!(empty.journal.is_empty(), "a preview with no document journals nothing");
+    }
+
+    /// The preview is bounded on both axes: a frame the decoder would allocate hundreds of
+    /// megabytes for is refused from its header, at 1280 px (not the pipeline's 4096).
+    #[test]
+    fn the_preview_rejects_a_frame_over_its_pixel_limit() {
+        let mut s = with_cameo();
+        let err = s
+            .execute("cameo.backgroundPreview", &json!({"frame": png(super::MAX_PREVIEW_DIM + 1, 8, [1, 2, 3, 255]), "mode": "normal"}))
+            .expect_err("too wide");
+        assert!(err.to_string().contains("1280"), "{err}");
+        let err = s
+            .execute("cameo.backgroundPreview", &json!({"frame": png(8, super::MAX_PREVIEW_DIM + 1, [1, 2, 3, 255]), "mode": "normal"}))
+            .expect_err("too tall");
+        assert!(err.to_string().contains("1280"), "{err}");
+        assert!(s.execute("cameo.backgroundPreview", &json!({"frame": png(4, 4, [1, 2, 3, 255]), "mode": "normal"})).is_ok());
+    }
+
+    /// The encoded payload is checked before base64 decoding, so a 64 MB string is refused without
+    /// allocating the decoded copy on top of it.
+    #[test]
+    fn the_preview_rejects_an_encoded_payload_over_its_limit() {
+        let mut s = with_cameo();
+        let huge = "A".repeat(super::MAX_PREVIEW_BASE64 + 1);
+        let err = s.execute("cameo.backgroundPreview", &json!({"frame": huge, "mode": "normal"})).expect_err("too large");
+        assert!(err.to_string().contains("larger than"), "{err}");
+    }
+
+    /// Custom mode composes a replacement picture: the corner takes its colour, the subject stays.
+    #[test]
+    fn the_preview_uses_a_background_picture() {
+        let mut s = with_cameo();
+        s.set_segmenter(Box::new(EllipseSegmenter::default()));
+        let answer = s
+            .execute(
+                "cameo.backgroundPreview",
+                &json!({
+                    "frame": png(16, 16, [40, 50, 60, 255]),
+                    "background": png(8, 8, [0, 200, 0, 255]),
+                    "mode": "custom",
+                    "feather": 0
+                }),
+            )
+            .expect("custom with a picture");
+        let bytes = super::super::base64_decode(answer["image"].as_str().expect("png")).expect("base64");
+        let img = image::load_from_memory(&bytes).expect("decode").to_rgba8();
+        assert_eq!(img.get_pixel(0, 0), &image::Rgba([0, 200, 0, 255]), "the replacement is resized and drawn");
+        assert_eq!(img.get_pixel(8, 8), &image::Rgba([40, 50, 60, 255]), "the subject is kept");
+    }
+
+    /// A radius that is present but not a number (or not finite) is an error, not the default; a
+    /// huge finite radius is clamped to the documented 0..=64.
+    #[test]
+    fn the_preview_rejects_a_non_numeric_radius_and_clamps_a_large_one() {
+        let mut s = with_cameo();
+        for (key, value) in [("feather", json!("2")), ("blur", json!("4")), ("feather", json!(true))] {
+            let mut params = json!({"frame": png(4, 4, [1, 2, 3, 255]), "mode": "normal"});
+            params[key] = value;
+            let err = s.execute("cameo.backgroundPreview", &params).expect_err("not a number");
+            assert!(err.to_string().contains(key), "{err}");
+        }
+        s.execute("cameo.backgroundPreview", &json!({"frame": png(4, 4, [1, 2, 3, 255]), "mode": "normal", "feather": 1e9, "blur": 1e9}))
+            .expect("a finite radius is clamped, not refused");
+    }
+
+    /// The same frame previewed twice is segmented once: the panel's preview loop with an unchanged
+    /// camera frame must not pay 2 s of inference per call. A different frame segments again.
+    #[test]
+    fn the_preview_reuses_the_matte_for_an_unchanged_frame() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingSegmenter(Arc<AtomicUsize>);
+        impl Segmenter for CountingSegmenter {
+            fn matte(&mut self, frame: &deckcraft_matte::frame::RgbaFrame) -> Result<deckcraft_matte::Matte, deckcraft_matte::MatteError> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                let mut inner = EllipseSegmenter::default();
+                inner.matte(frame)
+            }
+            fn name(&self) -> &'static str {
+                "counting"
+            }
+        }
+
+        let runs = Arc::new(AtomicUsize::new(0));
+        let mut s = with_cameo();
+        s.set_segmenter(Box::new(CountingSegmenter(Arc::clone(&runs))));
+        let frame = png(16, 16, [40, 50, 60, 255]);
+        for _ in 0..3 {
+            s.execute("cameo.backgroundPreview", &json!({"frame": frame, "mode": "blur"})).expect("preview");
+        }
+        assert_eq!(runs.load(Ordering::Relaxed), 1, "one frame, one inference");
+        s.execute("cameo.backgroundPreview", &json!({"frame": png(16, 16, [1, 2, 3, 255]), "mode": "blur"})).expect("a new frame");
+        assert_eq!(runs.load(Ordering::Relaxed), 2, "a changed frame is segmented again");
+    }
+
+    /// `all` with no Cameo in the deck changes nothing and adds no media: the picture would
+    /// otherwise sit in the document with nothing using it.
+    #[test]
+    fn all_with_no_cameo_changes_nothing_and_adds_no_media() {
+        let mut s = Session::with_new();
+        let media = s.doc().expect("doc").doc.media.len();
+        let v = s
+            .execute("cameo.background", &json!({"mode": "custom", "all": true, "imageData": png(4, 4, [9, 8, 7, 255])}))
+            .expect("all with no cameo is not an error");
+        assert_eq!(v["changed"].as_u64(), Some(0));
+        assert_eq!(v["ids"], json!([]));
+        assert_eq!(s.doc().expect("doc").doc.media.len(), media, "no orphan picture");
+    }
+
+    /// `all` and `id`/`ids` name different targets: silently preferring one would edit the wrong
+    /// shapes.
+    #[test]
+    fn all_with_an_explicit_id_is_refused() {
+        let mut s = with_cameo();
+        let id = s.doc().expect("doc").selected_shapes().first().map(|sh| sh.id.0).unwrap_or(1);
+        let err = s.execute("cameo.background", &json!({"mode": "blur", "all": true, "id": id})).expect_err("conflicting targets");
+        assert!(err.to_string().contains("all"), "{err}");
+        assert!(s.execute("cameo.background", &json!({"mode": "blur", "all": true, "ids": [id]})).is_err());
     }
 
     #[test]
@@ -790,5 +1022,7 @@ mod tests {
         let state = s.execute("cameo.background.state", &json!({})).expect("state");
         assert_eq!(state["accelerator"], "cpu");
         assert_eq!(state["accelerators"], json!(["cpu"]));
+        assert_eq!(state["hasCameo"], true, "the state says whether a Cameo is selected");
+        assert_eq!(state["mode"], "normal");
     }
 }
