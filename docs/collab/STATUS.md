@@ -30,7 +30,8 @@ The Commit column names the slice commits; each branch also carries documentatio
 `41fe1ad9`, `4e666b95`, `f6281736` (journal replay of history operations), `3ec81d70` (shape
 insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs), `98d9e9ce`
 (group/ungroup undo), `31d353fe` (align/distribute as one final-bounds step), `5b078c7d`
-(the §8 gates and the non-active-slide fix), plus the docs commits on top. The working tree is clean: the chair's
+(the §8 gates and the non-active-slide fix), `556c00d9` (three-session gate and the reconnect
+catch-up fix), plus the docs commits on top. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
@@ -42,7 +43,8 @@ as one final-bounds operation with one undo step.
 
 The published head of the fork branch `copoka/deckcraft:collab/pr10` is `63ec1ebe`, open as
 [PR #1975](https://github.com/storytold/deckcraft/pull/1975). Local `collab/pr10` is ahead of it by
-`3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce`, `31d353fe` and `5b078c7d`. `git fetch fork` shows no commit on the fork side that is missing locally, and a
+`3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce`, `31d353fe`, `5b078c7d` and
+`556c00d9`. `git fetch fork` shows no commit on the fork side that is missing locally, and a
 `git push --dry-run` from this workspace is refused by the environment policy, so publishing the
 new head is a manual step. Nothing was pushed to `storytold/deckcraft`; the PR comes from the
 fork and a human decision still governs merging it. The PR body is prepared in [`pr10.md`](pr10.md):
@@ -161,7 +163,7 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
 
 ## 8. Gates (TASK.md §8)
 
-Both gates are tests, not scripts: `apps/deckcraft-collab-server/tests/gates.rs`. Run them with
+All three gates are tests, not scripts: `apps/deckcraft-collab-server/tests/gates.rs`. Run them with
 
 ```bash
 cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1
@@ -185,6 +187,18 @@ cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads
   missing or empty output, or a page-count mismatch fails the test. The build host has no
   `soffice` or `pdfinfo`, so there the test prints a skip line and passes; the gate was run with
   the remote-built binary on the workstation, which has LibreOffice 26.2.6.3.
+- **Three sessions: conflict and reconnect.** Two editor sockets and one viewer socket join one
+  room built from a two-slide deck (one rectangle per slide). Alice moves the first slide's
+  rectangle; Bob moves the *same* shape before seeing that step. The payload is absolute, so the
+  later accepted value wins deterministically (x = 300) on all three replicas, and Alice's undo is
+  refused with `undo-conflict` because it would overwrite Bob's later change; the refused step
+  moves no version and loses no data. Bob then edits the second slide (the editors are not forced
+  onto one active slide), drops his socket, Alice edits the second slide again (version 4), the
+  viewer's op is refused `forbidden` without moving the version, and Bob reconnects with the
+  version his replica has. The server answers the resync with the journal tail after that version;
+  Bob catches up to version 4. All three clients and all three local replicas settle on one
+  version and an equal `Presentation`, and a commit at version 4 reimports with the conflict's
+  winner and the later move.
 
 The gates found a real adapter bug: `shape.move`, `shape.setBounds` and `text.set` ran against the
 engine *selection*, so a replica whose active slide was another one refused a remote edit on
@@ -193,14 +207,22 @@ slide 5 with `no such shape`. Those payloads now select the target shape (and it
 `an_operation_on_another_slide_applies_whatever_the_replica_is_looking_at` fails without the fix,
 and the 120-slide gate now moves a picture on every slide.
 
+The three-session gate found a reconnect bug in `ClientSession`: a `welcome` ahead of the local
+replica was adopted as the current head before the resync, so the client asked for the tail after
+the head and kept a stale document while claiming to be current. The welcome no longer moves the
+version when there is a gap, and the resync names the version the replica actually has
+(`a_reconnect_asks_for_the_tail_from_the_version_the_replica_has`). The gate exercises the real
+path: a replica that missed version 4 replays it from the snapshot tail and lands on the same
+document as the editors.
+
 ## Verification
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 123 unit + 8 integration |
-| `cargo test -p deckcraft-collab-server --test gates` (on `agents`, then the same binary where LibreOffice exists) | 2 passed: the 120-slide/media room and commit; LibreOffice 26.2 renders 121 pages and round-trips the commit; on the build host the LibreOffice test skips itself (no `soffice`) |
-| `cargo test -p deckcraft-collab --lib apply::` | 123 (a remote edit on a slide the replica is not looking at applies) |
-| `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) |
+| `cargo test -p deckcraft-collab` | 124 unit + 8 integration |
+| `cargo test -p deckcraft-collab-server --test gates` (on `agents`, then the same binary where LibreOffice exists) | 3 passed: the 120-slide/media room and commit; three sessions (two editors on different slides and a viewer) across a conflicting edit, an undo-conflict, a forbidden viewer op and a reconnect with journal catch-up, all converging on version 4; LibreOffice 26.2 renders 121 pages and round-trips the commit; on the build host the LibreOffice test skips itself (no `soffice`) |
+| `cargo test -p deckcraft-collab --lib apply::` | 124 (a remote edit on a slide the replica is not looking at applies) |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 3 gates |
 | `cargo test -p deckcraft-collab-proto` | 20 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
 | `cargo test -p deckcraft-engine` | 569 passed, 1 ignored |
@@ -225,6 +247,14 @@ Re-run on 2026-11-09 after the `arrange.align`/`arrange.distribute` slice: `fmt`
 `collab-proto` 20, `collab` 122 + 8, `collab-server` 10 + 6 + 4, `ui-egui collab::` 17,
 `deckcraft-engine` 569 + 1 ignored; clippy over the four collab crates and `ui-egui` with
 `-D warnings` clean; `xtask layers` 31 crates.
+
+Re-run on 2026-11-09 after the three-session gate (`556c00d9`): `fmt --check` clean,
+`collab-proto` 20, `collab` 124 + 8, `collab-server` 10 unit + 4 commit + 3 gates + 6 socket,
+`ui-egui collab::` 17, `deckcraft-engine` 569 + 1 ignored; clippy over the four collab crates and
+`ui-egui` with `-D warnings` clean; `xtask layers` 31 crates. The three session gate runs in
+0.95 s on `agents` (it includes two 300 ms waits for the server to drop the old peer and two
+round trips); its document comparisons are `Presentation` equality on three local replicas, and
+the commit at version 4 reimports with the expected two slides.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
@@ -273,9 +303,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format/duplicate | collab tests |
-| Reconnect works | ✅ within the retained journal tail | client queue + resync; base transfer for an evicted tail is still open |
+| Reconnect works | ✅ within the retained journal tail, including the version the replica actually has | client queue + resync; three-session gate; base transfer for an evicted tail is still open |
 | Per-user undo/redo | ✅ text/shape values, align/distribute, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`) |
-| Viewer cannot edit | ✅ server + engine gate | socket test, UI test |
+| Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
@@ -376,11 +406,30 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    insert/delete/duplicate, shape insert/delete and group/ungroup (whole-subtree images on both
    sides). The remaining undo work is table/notes text and run-level formatting, which wait for
    their command slices.
-6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the next gate is a longer three-client soak.
+6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-session gate covers conflict, viewer and reconnect, so the next gate is a longer three-client soak (more edits, a snapshot eviction and base transfer).
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — three-session gate: conflicting edit, viewer, reconnect
+
+Added the third §8 gate to `apps/deckcraft-collab-server/tests/gates.rs`: two real editor sockets
+and one viewer socket on a two-slide deck. Both editors move the same rectangle; the second
+absolute value wins deterministically and the first editor's undo is refused `undo-conflict`
+without touching the document. The editors also work on different slides, the viewer's op is
+refused `forbidden`, and one editor drops and reconnects: the resync returns the journal tail
+after the version his replica has, and he lands on version 4 and on an equal `Presentation`.
+Three local replicas (opened from the same bytes) apply every confirmed command, so convergence
+is compared on presentation state; a commit at version 4 reimports with the expected values.
+
+The gate exposed a real reconnect bug in `ClientSession`: a `welcome` ahead of the replica was
+adopted as the head before the resync, so the client requested the tail after the head. The
+welcome no longer moves the version across a gap, and the new unit test
+`a_reconnect_asks_for_the_tail_from_the_version_the_replica_has` pins the behavior; two older
+client tests were corrected to the same semantics. On `agents`: `fmt --check` clean,
+`collab` 124 + 8, `collab-proto` 20, `collab-server` 10 + 4 + 3 + 6, clippy `-D warnings` clean,
+`xtask layers` 31 crates. Commit `556c00d9`, not pushed.
 
 ### 2026-11-09 — TASK.md §8 gates: 120 slides with media, LibreOffice on the commit
 
