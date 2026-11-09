@@ -148,6 +148,8 @@ The first release deliberately normalises a small, idempotent command set:
 | `slide.duplicate` | structural | the source slide key; the copy is inserted after it |
 | `transition.set` | command | the slide's **whole** transition as a final value (effect, option, duration, advance timings, embedded sound, kept XML) in one `slide.transition.set`; a `none` with nothing else to keep is the model's "no transition" |
 | `animation.add`, `animation.remove` | command | one shape's **whole** ordered animation step list as a final value in one `slide.animation.set` (`shape_animations`, the model `Animation` values as JSON); the client builds a step with the engine's `animation.add_plan`, appends it, and sends the resulting list; an unaddressable shape is refused before any write |
+| `notes.set` | command | the slide's **whole** speaker-notes body as a final value (`notes_set`, the model `TextBody` as JSON) in one `slide.notes`; the notes pane's `body` travels as it is and its `text` is applied to the current body, so runs, levels and bullets survive |
+| `notes.insert`, `notes.delete` | command | character offsets inside one slide's notes body (`notes_insert`/`notes_delete`); the server rebases them against notes operations since the base and against the slide address, so two people typing in one slide's notes keep both texts and another slide's notes never shift them |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
 | `shape.restore` | structural | server-built undo/redo image of whole shapes (model JSON, parent, z-order index, animations); a client cannot send it as an edit |
 
@@ -157,7 +159,7 @@ commands whose result is a deterministic function of the authoritative state, ex
 values, go on the wire. What is still refused: fonts as a document asset, the rest of the
 animation surface (`animation.set` styles, `animation.timing`, `animation.options`,
 `animation.move`, `animation.clear`, the painter), the rest of the table surface (style, fill,
-merge/split, sizing), formatting a table cell, SmartArt/charts, notes, run-range formatting and
+merge/split, sizing), formatting a table cell, SmartArt/charts, run-range formatting and
 relative effects. The full command surface is the next slice; it needs a final-value normalisation
 for each command, not a raw `execute` on the wire.
 
@@ -301,10 +303,14 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
 2. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
    models are not. The browser link fetches and uploads them with `fetch` plus the session token;
    the sync server has no CORS headers, so a page on another origin cannot use the channel yet.
-3. **P1 — Text in notes, rich runs, table formatting**. Shape text and table-cell text are
-   addressed and rebased now. Notes still need their own address (a slide body, not a shape), and
-   formatting a table cell needs a cell address in `FormatSet` plus a cell-aware exact body
-   restore. Formatting runs need a run-level payload.
+3. **P1 — Notes are in; rich runs and table formatting are not**. Shape text, table-cell text
+   and slide notes are addressed and rebased now: a notes edit addresses `(slide key, notes
+   body)` (`notes.set`/`notes.insert`/`notes.delete`), its undo image is the whole text body of
+   the slide, an unaddressable slide is refused before any write, and a remote notes edit keeps
+   the receiving user's selection (a caret in the same notes body moves with the characters
+   inserted or removed before it). What is left in this line: formatting a table cell needs a
+   cell address in `FormatSet` plus a cell-aware exact body restore, and formatting runs needs a
+   run-level payload.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
