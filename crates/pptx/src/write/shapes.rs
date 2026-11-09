@@ -842,6 +842,9 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
         w.close("p:ext");
         w.close("p:extLst");
     }
+    // Add-in tags (a screen-recording take carries `deckcraft.recording=media`): the reader looks
+    // for them here, in `p:nvPr`, for every picture kind.
+    super::cust_data(w, x, o, &s.tags);
     w.close("p:nvPr");
     w.close("p:nvPicPr");
     let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), crop: m.crop, ..Default::default() };
