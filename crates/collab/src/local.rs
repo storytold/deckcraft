@@ -18,6 +18,7 @@ use deckcraft_collab_proto::{
     ServerMsg, ShapeBounds, ShapeKey, SlideKey, TableAxis, Target,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
+use deckcraft_model::anim::Animation;
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
 use serde_json::Value;
 
@@ -573,6 +574,51 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             let key = keys.slide_key(target.id).cloned().ok_or(LocalError::NoDocument)?;
             Ok(vec![make(Target { slide: Some(key), ..Target::default() }, Payload::SlideTransition { transition })])
         }
+        "animation.add" | "animation.remove" => {
+            // One shape per operation: the wire value is one shape's whole step list, and a
+            // selection of several shapes would become several versions and several undo steps.
+            let (id, drop_index) = match p.get("index") {
+                None | Some(Value::Null) => {
+                    let ids = shape_ids(p, st)?;
+                    let [id] = ids.as_slice() else {
+                        return Err(LocalError::Unsupported(format!("{cmd} on several shapes")));
+                    };
+                    (*id, None)
+                }
+                Some(value) => {
+                    let index = value
+                        .as_u64()
+                        .and_then(|v| usize::try_from(v).ok())
+                        .ok_or_else(|| LocalError::BadParams(format!("`index` is not a valid animation index: {value}")))?;
+                    let at = slide.animations.get(index).ok_or_else(|| LocalError::BadParams("no such animation".into()))?;
+                    (at.shape, Some(index))
+                }
+            };
+            find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            let key = shape_key(keys, slide.id, id)?;
+            let steps: Vec<Animation> = if cmd == "animation.add" {
+                let size = &st.doc.slide_size;
+                let mut steps: Vec<Animation> = slide.animations.iter().filter(|a| a.shape == id).cloned().collect();
+                let mut step =
+                    deckcraft_engine::cmd::animation::add_plan(p, (size.width, size.height)).map_err(|e| LocalError::BadParams(e.to_string()))?;
+                step.shape = id;
+                steps.push(step);
+                steps
+            } else {
+                slide.animations.iter().enumerate().filter(|(k, a)| a.shape == id && Some(*k) != drop_index).map(|(_, a)| a.clone()).collect()
+            };
+            let current = slide.animations.iter().filter(|a| a.shape == id).count();
+            if steps.len() == current && drop_index.is_none() {
+                // Nothing to remove: a shape without steps (or a step already gone) sends nothing.
+                return Ok(Vec::new());
+            }
+            let animations = steps
+                .iter()
+                .map(crate::animation::spec)
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| LocalError::BadParams("the animation steps cannot be sent".into()))?;
+            Ok(vec![make(Target { slide: slide_key, shape: Some(key), ..Target::default() }, Payload::ShapeAnimations { animations })])
+        }
         cmd if cmd.starts_with("format.") => {
             let format = FormatCmd::from_id(cmd).ok_or_else(|| LocalError::Unsupported(cmd.into()))?;
             if st.selection.text.is_some() {
@@ -1034,6 +1080,55 @@ mod tests {
         // to the selected slide.
         assert!(matches!(normalize(&km, st, "transition.set", &json!({"kind": "nope"}), "op", &doc), Err(LocalError::BadParams(_))));
         assert!(matches!(normalize(&km, st, "transition.set", &json!({"kind": "fade", "index": -1}), "op", &doc), Err(LocalError::BadParams(_))));
+    }
+
+    #[test]
+    fn an_animation_command_normalises_to_the_shapes_whole_step_list() {
+        let (mut s, doc, slide, shapes) = deck();
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [shapes[0].0]})).expect("seed fade");
+        s.execute("animation.add", &json!({"effect": "zoom", "ids": [shapes[1].0]})).expect("seed zoom");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        let ops =
+            normalize(&km, st, "animation.add", &json!({"effect": "pulse", "class": "emphasis", "ids": [shapes[0].0]}), "op", &doc).expect("add");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(shapes[0]));
+        let Payload::ShapeAnimations { animations } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        let effects: Vec<&str> = animations.iter().filter_map(|a| a.get("effect").and_then(Value::as_str)).collect();
+        assert_eq!(effects, ["fade", "pulse"], "the shape's own steps plus the new one");
+        assert!(
+            animations.iter().all(|a| a.get("shape").and_then(Value::as_u64) == Some(shapes[0].0 as u64)),
+            "every step names the addressed shape"
+        );
+
+        // `animation.remove` by index sends that shape's list without the named step; the address
+        // is the step's shape, not whatever happens to be selected.
+        let ops = normalize(&km, st, "animation.remove", &json!({"index": 1}), "op", &doc).expect("remove");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(shapes[1]));
+        let Payload::ShapeAnimations { animations } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert!(animations.is_empty(), "the shape had one step and it is the one removed");
+
+        // A shape without a step has nothing to remove, so nothing is sent.
+        let (bare, bare_doc, _, bare_shapes) = deck();
+        let bare_st = bare.doc().expect("doc");
+        let bare_keys = keys(bare_st.doc.as_ref());
+        let ops = normalize(&bare_keys, bare_st, "animation.remove", &json!({"ids": [bare_shapes[0].0]}), "op", &bare_doc).expect("no-op");
+        assert!(ops.is_empty(), "a no-op sends nothing");
+        // An unknown effect, an out-of-range index and a selection of several shapes are refused
+        // before anything is sent.
+        assert!(matches!(
+            normalize(&km, st, "animation.add", &json!({"effect": "nope", "ids": [shapes[0].0]}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
+        assert!(matches!(normalize(&km, st, "animation.remove", &json!({"index": 9}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(
+            normalize(&km, st, "animation.add", &json!({"effect": "fade", "ids": [shapes[0].0, shapes[1].0]}), "op", &doc),
+            Err(LocalError::Unsupported(_))
+        ));
     }
 
     #[test]

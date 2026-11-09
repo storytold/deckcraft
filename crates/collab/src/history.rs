@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use deckcraft_collab_proto::{Payload, ShapeBounds, ShapeField, ShapeFieldItem, ShapeKey, ShapeRestoreItem, SlideKey};
-use deckcraft_model::anim::Transition;
+use deckcraft_model::anim::{Animation, Transition};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Fill, Line, Table};
 
@@ -42,6 +42,10 @@ pub enum Image {
     /// A whole table, for a structural row/column edit: the cells' indices and values both
     /// change, so only the whole table is an exact image.
     Table(Table),
+    /// One shape's animation steps, in order, as `animation.add`/`animation.remove` leave them.
+    /// A file's animations carry preset ids, timings, colours and motion paths that the
+    /// `animation.add` arguments cannot repeat, so the step image is the model list itself.
+    Animation(Vec<Animation>),
 }
 
 /// One shape a step touched.
@@ -192,6 +196,7 @@ impl Image {
             Image::Line(line) => Payload::ShapeField { field: ShapeField::Line, value: serde_json::to_value(line).ok()? },
             Image::Format(body) => Payload::ShapeField { field: ShapeField::Text, value: serde_json::to_value(body).ok()? },
             Image::Table(table) => Payload::ShapeField { field: ShapeField::Table, value: serde_json::to_value(table).ok()? },
+            Image::Animation(steps) => Payload::ShapeAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
         })
     }
 }
@@ -678,6 +683,41 @@ mod tests {
         assert!(!at.same_state(&other), "someone replaced the transition after the step");
         let elsewhere = Change::SlideTransition(TransitionImage { slide: "s1".into(), transition: Some(fade) });
         assert!(!at.same_state(&elsewhere), "the image names one slide");
+    }
+
+    #[test]
+    fn an_animation_step_restores_the_shapes_whole_list_around_it() {
+        let fade = Animation { shape: deckcraft_model::ShapeId(4), effect: "fade".into(), ..Animation::default() };
+        let pulse = Animation { shape: deckcraft_model::ShapeId(4), effect: "pulse".into(), duration_ms: 900, ..Animation::default() };
+        let step = Step {
+            op_id: "op".into(),
+            version: 2,
+            before: vec![Change::Shape(Snapshot { slide: "s1".into(), shape: "k4".into(), cell: None, image: Image::Animation(vec![fade.clone()]) })],
+            after: vec![Change::Shape(Snapshot {
+                slide: "s1".into(),
+                shape: "k4".into(),
+                cell: None,
+                image: Image::Animation(vec![fade, pulse.clone()]),
+            })],
+        };
+        let undo = step.restoring_payload().expect("animation restore");
+        assert_eq!(undo.slide.0, "s1");
+        assert_eq!(undo.shape.as_ref().map(|k| k.0.as_str()), Some("k4"));
+        let Payload::ShapeAnimations { animations } = &undo.payload else { panic!("the whole step list: {:?}", undo.payload) };
+        assert_eq!(animations.len(), 1, "the step's before image keeps the other steps");
+        assert_eq!(animations[0].get("effect").and_then(serde_json::Value::as_str), Some("fade"));
+        let redo = step.reapplying_payload().expect("animation redo");
+        assert!(matches!(&redo.payload, Payload::ShapeAnimations { animations } if animations.len() == 2));
+
+        let at = Change::Shape(Snapshot { slide: "s1".into(), shape: "k4".into(), cell: None, image: Image::Animation(vec![pulse.clone()]) });
+        assert!(at.same_state(&at));
+        let other = Change::Shape(Snapshot {
+            slide: "s1".into(),
+            shape: "k4".into(),
+            cell: None,
+            image: Image::Animation(vec![Animation { effect: "wipe".into(), ..pulse }]),
+        });
+        assert!(!at.same_state(&other), "someone changed the shape's steps after the undo");
     }
 
     #[test]

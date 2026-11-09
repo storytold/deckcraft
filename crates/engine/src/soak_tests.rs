@@ -12,9 +12,23 @@ use serde_json::{Value, json};
 use crate::{EngineError, Session, command_specs, sample};
 
 /// Commands that touch the file system, other windows or real time; the soak drives the rest.
+/// The four exact-value setters are left out too: a session (or a history restore) builds their
+/// whole-value images, and the soak's parameter generator, which is built from the user-facing
+/// commands, can never produce one — they would only bounce off their own validation.
 fn skipped(id: &str) -> bool {
-    matches!(id, "file.close" | "file.open" | "file.save" | "file.saveAs" | "file.export" | "file.saveTemplate" | "file.openBytes" | "file.new")
-        || id.starts_with("window.")
+    matches!(
+        id,
+        "file.close"
+            | "file.open"
+            | "file.save"
+            | "file.saveAs"
+            | "file.export"
+            | "file.saveTemplate"
+            | "file.openBytes"
+            | "file.new"
+            | "slide.transition.set"
+            | "slide.animation.set"
+    ) || id.starts_with("window.")
         || id.starts_with("show.")
         || id.starts_with("media.")
 }

@@ -195,6 +195,16 @@ pub enum Payload {
     /// arguments against its own state could keep a different value. The command is also the
     /// exact-value restore of a transition step (ADR 0010), checked like `shape_field`.
     SlideTransition { transition: Option<TransitionSpec> },
+    /// Replaces one shape's animation steps with the exact ordered list given (`[]`: none).
+    /// `target.slide` and `target.shape` address the shape; every value is one whole model
+    /// `Animation` (`crates/model/src/anim.rs`) as JSON, the same way a `ShapeRestoreItem` carries
+    /// a whole shape. A mirror struct in this crate would duplicate six model enums, a colour and
+    /// two ids, so the model value travels as JSON and the engine deserialises it before the first
+    /// write. The list is the shape's **whole** steps: `animation.add` normalises to the current
+    /// list plus the new step, `animation.remove` to the list without the removed ones. The
+    /// command is also the exact-image restore of an animation step (ADR 0010), because a file
+    /// can carry preset ids, timings and colours the `animation.add` arguments cannot repeat.
+    ShapeAnimations { animations: Vec<serde_json::Value> },
     /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
     /// of `target.shape`. Run-level ranges are a later slice (RFC §15).
     FormatSet { format: FormatCmd, args: serde_json::Value },
@@ -587,6 +597,7 @@ impl Payload {
             Payload::ShapeFill { .. } => "shape.fill",
             Payload::ShapeLine { .. } => "shape.line",
             Payload::SlideTransition { .. } => "slide.transition.set",
+            Payload::ShapeAnimations { .. } => "slide.animation.set",
             Payload::FormatSet { format, .. } => format.id(),
             Payload::TableEdit { .. } => "table.edit",
             Payload::ShapeField { .. } => "shape.setField",
@@ -1202,6 +1213,20 @@ mod tests {
         assert_eq!(Payload::SlideMove { before: None }.command(), "slide.move");
         assert_eq!(Payload::Reorder { before: None }.command(), "arrange.reorder");
         assert_eq!(Payload::SlideTransition { transition: None }.command(), "slide.transition.set");
+        assert_eq!(Payload::ShapeAnimations { animations: Vec::new() }.command(), "slide.animation.set");
+    }
+
+    #[test]
+    fn a_shape_animation_list_travels_as_whole_model_values() {
+        let fade = serde_json::json!({"shape": 7, "effect": "fade", "class": "entrance", "durationMs": 500});
+        let pulse = serde_json::json!({"shape": 7, "effect": "pulse", "class": "emphasis", "repeat": 3});
+        let payload = Payload::ShapeAnimations { animations: vec![fade.clone(), pulse.clone()] };
+        let text = serde_json::to_string(&payload).expect("encode");
+        assert!(text.contains("\"cmd\":\"shape_animations\""), "{text}");
+        assert!(text.contains("\"effect\":\"pulse\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
+        let empty = Payload::ShapeAnimations { animations: Vec::new() };
+        assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&empty).expect("encode")).expect("decode"), empty);
     }
 
     #[test]

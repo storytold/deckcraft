@@ -123,6 +123,7 @@ impl Hub {
                     "slide.delete".into(),
                     "slide.move".into(),
                     "slide.transition.set".into(),
+                    "slide.animation.set".into(),
                     "arrange.group".into(),
                     "arrange.ungroup".into(),
                     "arrange.reorder".into(),
@@ -653,5 +654,72 @@ mod tests {
         assert_eq!(sa.doc().expect("doc").doc.slides.len(), before + 1);
         assert_eq!(sb.doc().expect("doc").doc.slides.len(), before + 1);
         assert_eq!(hub.session().document().expect("doc").slides.len(), before + 1);
+    }
+
+    /// Drain one client's outgoing messages into the room.
+    fn send_all(hub: &mut Hub, doc: &mut CollabDoc, actor: &str) {
+        while let Some(msg) = doc.next_outgoing() {
+            match msg {
+                ClientMsg::Op(op) => hub.receive(actor, ClientMsg::Op(op)).expect("op"),
+                ClientMsg::Redo => hub.receive(actor, ClientMsg::Redo).expect("redo"),
+                ClientMsg::Undo => hub.receive(actor, ClientMsg::Undo).expect("undo"),
+                ClientMsg::Presence(p) => hub.receive(actor, ClientMsg::Presence(p)).expect("presence"),
+                _ => {}
+            }
+        }
+    }
+
+    /// Deliver everything the room answered to one client.
+    fn deliver(hub: &mut Hub, doc: &mut CollabDoc, session: &mut Session, actor: &str) {
+        while let Some(msg) = hub.poll(actor) {
+            doc.on_msg(session, msg);
+        }
+    }
+
+    #[test]
+    fn two_animation_steps_in_a_row_and_an_undo_reach_both_replicas_through_the_hub() {
+        let mut hub = hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = deck_session();
+        let mut sb = deck_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let shape = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
+        let effects = |s: &Session| s.doc().expect("doc").doc.slides[0].animations.iter().map(|x| x.effect.clone()).collect::<Vec<_>>();
+
+        // Two steps in a row: the second normalises the list the first left on the replica.
+        for (n, (cmd, params)) in [
+            ("animation.add", json!({"effect": "fade", "ids": [shape]})),
+            ("animation.add", json!({"effect": "pulse", "class": "emphasis", "ids": [shape]})),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            a.submit(&sa, cmd, &params, &format!("a-{n}")).expect("submit");
+            send_all(&mut hub, &mut a, "alice");
+            deliver(&mut hub, &mut a, &mut sa, "alice");
+            deliver(&mut hub, &mut b, &mut sb, "bob");
+        }
+        assert_eq!(a.version(), 2);
+        assert_eq!(b.version(), 2);
+        assert_eq!(effects(&sa), ["fade", "pulse"], "the two steps keep their order");
+        assert_eq!(effects(&sb), ["fade", "pulse"]);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same presentation");
+
+        // Undo takes back the second step and keeps the first, on both replicas.
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(a.version(), 3);
+        assert_eq!(b.version(), 3);
+        assert_eq!(effects(&sa), ["fade"], "the undo put the shape's step list back");
+        assert_eq!(effects(&sb), ["fade"]);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
     }
 }

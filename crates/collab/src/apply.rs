@@ -318,6 +318,7 @@ impl Adapter {
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
+            Payload::ShapeAnimations { .. } => (None, Image::Animation(Vec::new())),
             Payload::FormatSet { .. } => (None, Image::Format(TextBody::default())),
             Payload::ShapeField { field, .. } => (None, image_of_field(*field)),
             Payload::ShapeInsert { .. } | Payload::PictureInsert { .. } | Payload::MediaInsert { .. } => {
@@ -685,6 +686,10 @@ impl Adapter {
                 ShapeKind::Table(t) => Image::Table(t.clone()),
                 _ => return None,
             },
+            Image::Animation(_) => {
+                let slide = doc.slide(slide_id)?;
+                Image::Animation(slide.animations.iter().filter(|a| a.shape == shape_id).cloned().collect())
+            }
         };
         Some(Snapshot { slide: at.slide.clone(), shape: at.shape.clone(), cell: at.cell, image })
     }
@@ -848,6 +853,22 @@ impl Adapter {
                     None => Value::Null,
                 };
                 self.call(session, "slide.transition.set", json!({"index": index, "transition": value}), head)
+            }
+            Payload::ShapeAnimations { animations } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+                // Every value is a whole model animation, the same form the engine command
+                // validates again. The addressed shape wins: a payload may not animate another
+                // shape's steps. A value the model cannot read refuses the operation before the
+                // first write, so a hostile list never leaves half a shape animated.
+                let mut steps = Vec::with_capacity(animations.len());
+                for value in animations {
+                    let step = crate::animation::value(value, shape)
+                        .ok_or_else(|| Rejection::invalid("an animation step is not a valid model animation", Some(head)))?;
+                    let json = crate::animation::spec(&step).ok_or_else(|| Rejection::invalid("an animation step cannot be sent", Some(head)))?;
+                    steps.push(json);
+                }
+                self.call(session, "slide.animation.set", json!({"index": index, "shape": shape.0, "animations": steps}), head)
             }
             Payload::FormatSet { format, args } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
@@ -1292,6 +1313,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::ShapeLine { .. }
         | Payload::FormatSet { .. }
         | Payload::SlideTransition { .. }
+        | Payload::ShapeAnimations { .. }
         | Payload::ShapeField { .. }
         | Payload::ShapeFields { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
@@ -2833,5 +2855,161 @@ mod tests {
             .expect_err("unknown effect without kept XML");
         assert_eq!(err.code, RejectCode::Invalid);
         assert!(transition_of(&doc_of(&s)).is_none(), "nothing was written");
+    }
+
+    /// One animation step as the wire carries it; the payload's own shape id is deliberately
+    /// another number, because the adapter forces the shape the target names.
+    fn animation_step(effect: &str) -> Value {
+        json!({"shape": 999, "effect": effect, "class": "entrance", "durationMs": 500})
+    }
+
+    fn animation_effects(doc: &Presentation) -> Vec<String> {
+        doc.slides[0].animations.iter().map(|a| a.effect.clone()).collect()
+    }
+
+    fn step_list(doc: &Presentation) -> Vec<Value> {
+        doc.slides[0].animations.iter().filter_map(|a| serde_json::to_value(a).ok()).collect()
+    }
+
+    #[test]
+    fn animation_steps_converge_on_both_replicas_and_two_steps_in_a_row_keep_their_order() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 0);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        // `animation.add` normalised to the shape's whole list: no steps plus the new one.
+        let fade = op(OpKind::Command, 0, target.clone(), Payload::ShapeAnimations { animations: vec![animation_step("fade")] });
+        let da = aa.apply(&mut a, 0, "alice", &fade).expect("fade a");
+        let db = bb.apply(&mut b, 0, "bob", &fade).expect("fade b");
+        assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        assert!(!da.is_empty(), "the slide's animation list is a reported change");
+        assert_eq!(animation_effects(&doc_of(&a)), ["fade"]);
+
+        // A second step in a row: the client sends the list it now has plus the new step.
+        let mut steps = step_list(&doc_of(&a));
+        steps.push(animation_step("pulse"));
+        let pulse = op(OpKind::Command, 1, target.clone(), Payload::ShapeAnimations { animations: steps });
+        aa.apply(&mut a, 1, "alice", &pulse).expect("pulse a");
+        bb.apply_confirmed(&mut b, 1, "alice", &pulse).expect("pulse b");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(animation_effects(&doc_of(&a)), ["fade", "pulse"], "two steps in a row keep their order");
+        assert!(doc_of(&a).slides[0].animations.iter().all(|x| x.shape.0 != 999), "the addressed shape wins over the value's id");
+    }
+
+    #[test]
+    fn undo_of_an_animation_step_keeps_the_other_step_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 0);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let fade = op(OpKind::Command, 0, target.clone(), Payload::ShapeAnimations { animations: vec![animation_step("fade")] });
+        aa.apply(&mut a, 0, "alice", &fade).expect("fade");
+        bb.apply_confirmed(&mut b, 0, "alice", &fade).expect("b sees the fade");
+        let pulse = op(OpKind::Command, 1, target, Payload::ShapeAnimations { animations: vec![animation_step("fade"), animation_step("pulse")] });
+        aa.apply(&mut a, 1, "alice", &pulse).expect("pulse");
+        bb.apply_confirmed(&mut b, 1, "alice", &pulse).expect("b sees the pulse");
+        assert_eq!(animation_effects(&doc_of(&a)), ["fade", "pulse"]);
+
+        let undo = aa.undo(&a, 2, "alice", "undo-1").expect("undo the second step");
+        let Payload::ShapeAnimations { animations } = &undo.payload else { panic!("the whole step list: {:?}", undo.payload) };
+        assert_eq!(animations.len(), 1, "the step keeps the shape's other steps");
+        aa.apply(&mut a, 2, "alice", &undo).expect("undo a");
+        bb.apply_confirmed(&mut b, 2, "alice", &undo).expect("undo b");
+        assert_eq!(doc_of(&a), doc_of(&b), "the restore converges");
+        assert_eq!(animation_effects(&doc_of(&a)), ["fade"]);
+
+        let undo = aa.undo(&a, 3, "alice", "undo-2").expect("undo the first step");
+        aa.apply(&mut a, 3, "alice", &undo).expect("undo a");
+        bb.apply_confirmed(&mut b, 3, "alice", &undo).expect("undo b");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert!(animation_effects(&doc_of(&a)).is_empty(), "the shape has no step again");
+
+        let redo = aa.redo(&a, 4, "alice", "redo-1").expect("redo the first step");
+        aa.apply(&mut a, 4, "alice", &redo).expect("redo a");
+        bb.apply_confirmed(&mut b, 4, "alice", &redo).expect("redo b");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(animation_effects(&doc_of(&a)), ["fade"]);
+    }
+
+    #[test]
+    fn an_animation_undo_is_refused_after_someone_else_changed_the_shape_steps() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 0);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let fade = op(OpKind::Command, 0, target.clone(), Payload::ShapeAnimations { animations: vec![animation_step("fade")] });
+        aa.apply(&mut a, 0, "alice", &fade).expect("fade");
+        bb.apply_confirmed(&mut b, 0, "alice", &fade).expect("b sees the fade");
+
+        // Bob adds his own step before Alice's undo; the list is absolute, so his value wins.
+        let mine = op(OpKind::Command, 1, target.clone(), Payload::ShapeAnimations { animations: vec![animation_step("wipe")] });
+        aa.apply(&mut a, 1, "bob", &mine).expect("bob's steps");
+        bb.apply(&mut b, 1, "bob", &mine).expect("bob's steps");
+        let err = aa.undo(&a, 2, "alice", "undo-1").expect_err("her list would overwrite Bob's step");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert!(!err.retryable);
+        assert_eq!(animation_effects(&doc_of(&a)), ["wipe"], "a refused undo changes nothing");
+    }
+
+    #[test]
+    fn an_animation_step_on_a_shape_that_cannot_be_addressed_is_refused_before_any_write() {
+        let mut s = two_slide_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let slide = ad.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let other = ad.keys().shape_key(doc.slides[1].id, doc.slides[1].shapes[0].id).expect("key").clone();
+
+        for (why, target) in [
+            ("an unknown key", Target { slide: Some(slide.clone()), shape: Some(ShapeKey("nope".into())), ..Target::default() }),
+            ("a shape of another slide", Target { slide: Some(slide.clone()), shape: Some(other), ..Target::default() }),
+            ("no shape at all", Target { slide: Some(slide), ..Target::default() }),
+        ] {
+            let step = op(OpKind::Command, 0, target, Payload::ShapeAnimations { animations: vec![animation_step("fade")] });
+            let err = ad.apply(&mut s, 0, "a", &step).expect_err(why);
+            assert!(matches!(err.code, RejectCode::Invalid | RejectCode::Stale), "{why}: {err:?}");
+            assert!(animation_effects(&doc_of(&s)).is_empty(), "{why} wrote a step");
+        }
+
+        // A value the model cannot read is refused too, and the list is all-or-nothing.
+        let doc = doc_of(&s);
+        let slide = ad.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let (_, shape) = key_of(&ad, &doc, 0);
+        let step = op(
+            OpKind::Command,
+            0,
+            Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            Payload::ShapeAnimations { animations: vec![animation_step("fade"), json!({"effect": "mystery"})] },
+        );
+        let err = ad.apply(&mut s, 0, "a", &step).expect_err("an unknown effect");
+        assert!(matches!(err.code, RejectCode::Invalid | RejectCode::Unsupported), "{err:?}");
+        assert!(animation_effects(&doc_of(&s)).is_empty(), "nothing of a refused list was written");
+    }
+
+    #[test]
+    fn an_animation_restore_cannot_name_another_list() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, shape) = key_of(&ad, &doc_of(&s), 0);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, target, Payload::ShapeAnimations { animations: vec![animation_step("fade")] }))
+            .expect("fade");
+        let mut undo = ad.undo(&s, 1, "a", "undo-1").expect("undo");
+        undo.payload = Payload::ShapeAnimations { animations: vec![animation_step("wipe")] };
+        let err = ad.apply(&mut s, 1, "a", &undo).expect_err("a restore must repeat its recorded value");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(animation_effects(&doc_of(&s)), ["fade"], "nothing was written");
     }
 }
