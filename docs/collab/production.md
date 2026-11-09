@@ -142,7 +142,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
 | `shape.fill` | command | a final fill: solid colour, `none` or `background`; gradients, pictures, patterns and relative transparency are refused |
 | `shape.line` | command | final outline values (`color`, `width`, `dash`, `cap`, `join`, `compound`, heads) or `none` |
-| `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's whole text body, or on the whole body of one table cell (`cell: [row, col]`); a table without a cell address, a range of cells and a caret range inside a shape are refused instead of being widened; toggles need an explicit `on`, `args` cannot carry an address |
+| `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's whole text body or on N table cells of one table (`FormatSet { addresses: [{ cell: [row, col] }] }`); a table without a cell address, an empty address list, a repeated cell and a cell the table does not have are refused before any write instead of being widened; toggles need an explicit `on`, `args` cannot carry an address |
 | `edit.delete` (shapes) | structural | explicit shape keys |
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
 | `slide.duplicate` | structural | the source slide key; the copy is inserted after it |
@@ -150,7 +150,8 @@ The first release deliberately normalises a small, idempotent command set:
 | `animation.add`, `animation.remove` | command | one shape's **whole** ordered animation step list as a final value in one `slide.animation.set` (`shape_animations`, the model `Animation` values as JSON); the client builds a step with the engine's `animation.add_plan`, appends it, and sends the resulting list; an unaddressable shape is refused before any write |
 | `notes.set` | command | the slide's **whole** speaker-notes body as a final value (`notes_set`, the model `TextBody` as JSON) in one `slide.notes`; the notes pane's `body` travels as it is and its `text` is applied to the current body, so runs, levels and bullets survive |
 | `notes.insert`, `notes.delete` | command | character offsets inside one slide's notes body (`notes_insert`/`notes_delete`); the server rebases them against notes operations since the base and against the slide address, so two people typing in one slide's notes keep both texts and another slide's notes never shift them |
-| `format.*` over a run range | command | a whole-body character range (`FormatSet { range: {from, to} }`, a paragraph break counted as one, the same coordinates `text.insert`/`text.delete` use) inside a shape's body or one table cell; every replica derives the same `(paragraph, character)` pair, the server rebases both offsets, an empty or past-the-end range is refused `invalid` before any write, and the undo image is the whole body it changed |
+| `format.*` over a run range or a caret | command | a whole-body character range (`addresses: [{ range: {from, to} }]`, a paragraph break counted as one, the same coordinates `text.insert`/`text.delete` use) or a collapsed caret (`addresses: [{ caret: offset }]`, a shape's own body) inside a shape's body or one table cell; every replica derives the same `(paragraph, character)` pair and the same collapsed selection, the server rebases every offset, an empty or past-the-end range is refused `invalid` before any write, a caret lets the engine command decide what it touches (a word for run commands, the paragraph for paragraph commands; no pre-widening), and the undo image is the whole body it changed |
+| `format.*` over N cells | command | one operation with one address per cell of one table and one undo step: exactly those cells change, a neighbour is never touched, a foreign edit of any addressed cell makes its undo `undo-conflict`, and the restore is their whole bodies in one `cells_text` |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
 | `shape.restore` | structural | server-built undo/redo image of whole shapes (model JSON, parent, z-order index, animations); a client cannot send it as an edit |
 
@@ -279,9 +280,9 @@ cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 175 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape and on one table cell, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation steps), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition/animation/cell-format slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
+| `cargo test -p deckcraft-collab` | 192 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation steps), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
-| `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
+| `cargo test -p deckcraft-ui-egui collab::` | 19 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
 | `cargo test -p deckcraft-engine` | 575 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore`, `slide.restore`, `slide.transition.set` and `slide.animation.set` did not change single-user behaviour; `transition.set`/`set_plan` and `animation.add`/`add_plan` leave the same values; `arrange.align`/`distribute` keep their numbers after the plan refactor |
@@ -304,24 +305,27 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
 2. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
    models are not. The browser link fetches and uploads them with `fetch` plus the session token;
    the sync server has no CORS headers, so a page on another origin cannot use the channel yet.
-3. **P1 — Notes, cell formatting and run ranges are in**. Shape text, table-cell text,
-   slide notes, a table cell's formatting and a run range inside either body are addressed and
-   rebased now: a notes edit
+3. **P1 — Notes, cell formatting, N-cell ranges and carets are in**. Shape text, table-cell text,
+   slide notes, a table cell's formatting, a run range inside either body and a caret in a shape's
+   body are addressed and rebased now: a notes edit
    addresses `(slide key, notes body)` (`notes.set`/`notes.insert`/`notes.delete`), its undo image
    is the whole text body of the slide, an unaddressable slide is refused before any write, and a
    remote notes edit keeps the receiving user's selection (a caret in the same notes body moves
-   with the characters inserted or removed before it). A `format.*` command now addresses one
-   table cell (`FormatSet { cell: [row, col] }`), applies to that cell's own body — not to the
-   table's empty shape text — and is refused before any write for a cell the table does not have;
-   its undo restores the whole body of exactly that cell (`cell_text`, one `shape.setField` with
-   `field: cellText`), so a neighbouring cell keeps whatever anyone else wrote there, and an undo
-   after someone else changed the addressed cell is refused `undo_conflict`. A `format.*` step
-   over a run range (`FormatSet { range: {from, to} }`) carries whole-body character offsets, is
-   rebased past typing that arrived before it, is refused `invalid` before any write for an empty
-   or past-the-end range, and restores the whole body it changed, so only the addressed runs come
-   back on undo and a later edit of that body by someone else is `undo_conflict`. What is left in
-   this line: a range across table cells (N addresses) and a bare caret in a shape's body (the
-   single-user command would widen it to a word).
+   with the characters inserted or removed before it). A `format.*` command addresses a list of
+   bodies — `FormatSet { addresses: [{ cell?: [row, col], range?: {from, to}, caret?: offset }] }`.
+   A table cell is one address and applies to that cell's own body, not to the table's empty shape
+   text; a selection of several cells is **one operation with N addresses, one per cell**, so a
+   range of cells formats exactly those cells and the undo image is those cells' whole bodies
+   (`cells_text`, one `shape.setCellBodies` → `shape.setField { field: cellText }` per cell, one
+   atomic step). An empty address list, a missing cell, a repeated cell and a range or caret past
+   the addressed body are refused `invalid` before any write (the version does not move), a
+   neighbouring cell is never touched, and an undo after someone changed **any** addressed cell is
+   refused `undo_conflict`. A run range carries whole-body character offsets and is rebased past
+   typing that arrived before it. A caret in a shape's body is its own address: the server puts
+   the same collapsed selection on the same authoritative body and runs the single-user command,
+   so a run command widens it to the word it is in and a paragraph command takes the paragraph —
+   the address is never pre-widened, and both replicas get the same result. What is left in this
+   line: the rest of the animation and table surfaces and fonts as a document asset.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
