@@ -1905,18 +1905,9 @@ fn grouped_recorded_ink_counts_toward_the_preview_frame_key() {
         .edit(|doc, _| {
             let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
             slide.shapes.clear();
-            let stroke = InkStroke {
-                points: vec![(0.1, 0.1, 0.5), (0.2, 0.2, 0.5)],
-                color: Rgba::BLACK,
-                width: 2.25,
-                highlighter: false,
-                at_ms: Some(2_000),
-            };
-            let ink = Shape {
-                kind: ShapeKind::Ink { strokes: vec![stroke] },
-                xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)),
-                ..Default::default()
-            };
+            let stroke =
+                InkStroke { points: vec![(0.1, 0.1, 0.5), (0.2, 0.2, 0.5)], color: Rgba::BLACK, width: 2.25, highlighter: false, at_ms: Some(2_000) };
+            let ink = Shape { kind: ShapeKind::Ink { strokes: vec![stroke] }, xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)), ..Default::default() };
             slide.shapes.push(Shape {
                 kind: ShapeKind::Group { children: vec![ink], child: Xfrm::new(0.0, 0.0, 100.0, 100.0) },
                 xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)),
