@@ -818,6 +818,10 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
     if let Some(l) = &link {
         w.empty(tag, A::new().a("r:link", l));
     }
+    // Add-in tags (a screen-recording take carries `deckcraft.recording=media`): the reader looks
+    // for them in `p:nvPr`, and the schema orders `p:custDataLst` before `p:extLst`, so this goes
+    // before the media extension below.
+    super::cust_data(w, x, o, &s.tags);
     if let Some(e) = &embed {
         w.open0("p:extLst");
         w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
@@ -842,9 +846,6 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
         w.close("p:ext");
         w.close("p:extLst");
     }
-    // Add-in tags (a screen-recording take carries `deckcraft.recording=media`): the reader looks
-    // for them here, in `p:nvPr`, for every picture kind.
-    super::cust_data(w, x, o, &s.tags);
     w.close("p:nvPr");
     w.close("p:nvPicPr");
     let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), crop: m.crop, ..Default::default() };

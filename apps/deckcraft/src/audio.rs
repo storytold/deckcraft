@@ -51,7 +51,13 @@ impl Drop for CpalOut {
 }
 
 /// Mono samples from an interleaved frame. Stops at `cap` samples; true when it had to drop some.
-fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usize) -> bool {
+/// The mono downmix the input callback runs: `f32` samples as they are, every other device format
+/// (`I16`, `U16`, `I32`… on ALSA and USB microphones) through cpal's conversion, one frame at a
+/// time, so the realtime callback allocates nothing.
+fn push_mono_as<T: cpal::SizedSample>(out: &mut Vec<f32>, interleaved: &[T], channels: usize, cap: usize) -> bool
+where
+    f32: cpal::FromSample<T>,
+{
     let ch = channels.max(1);
     let frames = interleaved.len() / ch;
     let room = cap.saturating_sub(out.len());
@@ -60,11 +66,12 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
         let mut sum = 0.0f32;
         let mut n = 0u32;
         for c in 0..ch {
-            if let Some(s) = interleaved.get(i * ch + c)
-                && s.is_finite()
-            {
-                sum += *s;
-                n += 1;
+            if let Some(s) = interleaved.get(i * ch + c) {
+                let v: f32 = cpal::Sample::to_sample(*s);
+                if v.is_finite() {
+                    sum += v;
+                    n += 1;
+                }
             }
         }
         if n > 0 {
@@ -74,9 +81,44 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
     full
 }
 
+/// One input stream for any device sample format: the callback is written once.
+fn input_stream<T: cpal::SizedSample>(
+    dev: &cpal::Device,
+    config: &cpal::StreamConfig,
+    channels: usize,
+    buf: Arc<Mutex<Capture>>,
+    counter: Arc<std::sync::atomic::AtomicU64>,
+    slot: ErrorSlot,
+) -> Result<cpal::Stream, cpal::BuildStreamError>
+where
+    f32: cpal::FromSample<T>,
+{
+    let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
+    dev.build_input_stream(
+        config,
+        move |data: &[T], _| match buf.try_lock() {
+            Ok(mut g) => {
+                let cap = max_samples(g.rate);
+                if push_mono_as(&mut g.samples, data, channels.max(1), cap) {
+                    g.truncated = true;
+                }
+            }
+            // Never block the realtime callback: count the gap and report it.
+            Err(_) => {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        },
+        err,
+        None,
+    )
+}
+
 /// Skipped input callbacks that mean audio is really being lost, not one callback that lost a
 /// lock race with the UI's own short lock.
 const SKIPPED_CALLBACKS_TO_REPORT: u64 = 8;
+
+/// How long the skipped callbacks are counted over: a run inside this window is a real loss.
+const SKIPPED_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Ten minutes of mono audio at `rate`, so one slide cannot grow without bound. The limit follows
 /// the device: a 96 kHz stream must not stop after five minutes.
@@ -101,6 +143,9 @@ pub struct CpalIn {
     /// The callback must never block on the UI thread's mutex, so it counts the gap here (a shared
     /// atomic) and `problem` reports it.
     skipped: Arc<std::sync::atomic::AtomicU64>,
+    /// When the current skip-counting window began: one lost callback per poll is normal, a run
+    /// of them inside a second is audio actually going missing.
+    window: Option<std::time::Instant>,
 }
 
 impl Default for CpalIn {
@@ -110,6 +155,7 @@ impl Default for CpalIn {
             buf: Arc::new(Mutex::new(Capture::default())),
             error: ErrorSlot::default(),
             skipped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            window: None,
         }
     }
 }
@@ -146,54 +192,22 @@ impl deckcraft_media::MicIn for CpalIn {
             g.truncated = false;
         }
         self.skipped.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.window = None;
         let config: cpal::StreamConfig = cfg.clone().into();
         let buf = self.buf.clone();
         let slot = self.error.clone();
         let counter = self.skipped.clone();
         let stream = match cfg.sample_format() {
-            cpal::SampleFormat::F32 => {
-                let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
-                dev.build_input_stream(
-                    &config,
-                    move |data: &[f32], _| match buf.try_lock() {
-                        Ok(mut g) => {
-                            let cap = max_samples(g.rate);
-                            if push_mono(&mut g.samples, data, channels.max(1), cap) {
-                                g.truncated = true;
-                            }
-                        }
-                        // Never block the realtime callback: count the gap and report it.
-                        Err(_) => {
-                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    },
-                    err,
-                    None,
-                )
-            }
-            cpal::SampleFormat::I16 => {
-                let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
-                dev.build_input_stream(
-                    &config,
-                    move |data: &[i16], _| match buf.try_lock() {
-                        Ok(mut g) => {
-                            let mut tmp = Vec::with_capacity(data.len());
-                            for s in data {
-                                tmp.push(*s as f32 / i16::MAX as f32);
-                            }
-                            let cap = max_samples(g.rate);
-                            if push_mono(&mut g.samples, &tmp, channels.max(1), cap) {
-                                g.truncated = true;
-                            }
-                        }
-                        Err(_) => {
-                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    },
-                    err,
-                    None,
-                )
-            }
+            cpal::SampleFormat::F32 => input_stream::<f32>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::I16 => input_stream::<i16>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::U16 => input_stream::<u16>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::I32 => input_stream::<i32>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::U32 => input_stream::<u32>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::I8 => input_stream::<i8>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::U8 => input_stream::<u8>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::F64 => input_stream::<f64>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::I64 => input_stream::<i64>(&dev, &config, channels, buf, counter, slot),
+            cpal::SampleFormat::U64 => input_stream::<u64>(&dev, &config, channels, buf, counter, slot),
             other => return Err(format!("unsupported microphone format {other:?}")),
         }
         .map_err(|e| e.to_string())?;
@@ -218,9 +232,20 @@ impl deckcraft_media::MicIn for CpalIn {
             return Some(format!("the microphone stopped ({e})"));
         }
         // The UI's own short locks can make a callback skip, so one skip is not a failure: report
-        // only a run of them, which means the capture is actually losing audio.
-        if self.skipped.swap(0, std::sync::atomic::Ordering::Relaxed) >= SKIPPED_CALLBACKS_TO_REPORT {
+        // only a run of them inside one second, which means the capture is actually losing audio.
+        // The count is not cleared here — one lost callback in most frames never tripped a
+        // per-poll reset, yet adds up to half the audio.
+        let now = std::time::Instant::now();
+        let start = *self.window.get_or_insert(now);
+        let skipped = self.skipped.load(std::sync::atomic::Ordering::Relaxed);
+        if skipped >= SKIPPED_CALLBACKS_TO_REPORT {
+            self.skipped.store(0, std::sync::atomic::Ordering::Relaxed);
+            self.window = Some(now);
             return Some("some microphone audio was dropped while the recorder was busy".to_string());
+        }
+        if now.duration_since(start) >= SKIPPED_WINDOW {
+            self.skipped.store(0, std::sync::atomic::Ordering::Relaxed);
+            self.window = Some(now);
         }
         let mut g = self.buf.lock().unwrap_or_else(PoisonError::into_inner);
         std::mem::take(&mut g.truncated).then(|| "the take reached its ten minute limit, so later audio was dropped".to_string())
@@ -318,18 +343,35 @@ mod tests {
         assert_eq!(take_stream_error(&slot).as_deref(), Some("lost"));
     }
 
+    /// One skipped callback per UI poll is normal; the count survives the polls, so a steady loss
+    /// that never exceeds the threshold in a single frame is still reported.
+    #[test]
+    fn skipped_callbacks_accumulate_across_polls() {
+        let mut mic = CpalIn::default();
+        for _ in 0..5 {
+            mic.skipped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        assert_eq!(deckcraft_media::MicIn::problem(&mut mic), None, "five is below the threshold");
+        assert_eq!(mic.skipped.load(std::sync::atomic::Ordering::Relaxed), 5, "and the count is not thrown away");
+        for _ in 0..3 {
+            mic.skipped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        assert!(deckcraft_media::MicIn::problem(&mut mic).is_some_and(|m| m.contains("dropped")));
+        assert_eq!(mic.skipped.load(std::sync::atomic::Ordering::Relaxed), 0, "reported once, then a new window");
+    }
+
     #[test]
     fn mono_downmix_averages_channels_and_stops_at_the_cap() {
         let mut out = Vec::new();
-        push_mono(&mut out, &[0.5, -0.5, 1.0, 1.0], 2, 10);
+        push_mono_as::<f32>(&mut out, &[0.5, -0.5, 1.0, 1.0], 2, 10);
         assert_eq!(out, vec![0.0, 1.0]);
-        push_mono(&mut out, &[f32::NAN, 0.5], 2, 10);
+        push_mono_as::<f32>(&mut out, &[f32::NAN, 0.5], 2, 10);
         assert_eq!(out.len(), 3);
         assert!((out[2] - 0.5).abs() < 1e-6);
         let before = out.len();
-        assert!(push_mono(&mut out, &[0.25], 1, 3), "the cap dropped a sample, and says so");
+        assert!(push_mono_as::<f32>(&mut out, &[0.25], 1, 3), "the cap dropped a sample, and says so");
         assert_eq!(out.len(), before);
-        assert!(!push_mono(&mut out, &[0.25], 1, 10), "room left: nothing dropped");
+        assert!(!push_mono_as::<f32>(&mut out, &[0.25], 1, 10), "room left: nothing dropped");
     }
 
     #[test]

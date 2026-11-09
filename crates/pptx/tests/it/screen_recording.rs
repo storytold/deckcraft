@@ -2,10 +2,20 @@
 //! `deckcraft.recording=media` tag that Clear Recording uses to find takes without touching
 //! ordinary videos.
 
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 use deckcraft_geom::Xfrm;
 use deckcraft_model::{MediaClip, Shape, ShapeId, ShapeKind, defaults};
+
+/// One part of the package as text.
+fn part(bytes: &[u8], name: &str) -> String {
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("zip");
+    let mut f = z.by_name(name).expect("part");
+    let mut s = String::new();
+    f.read_to_string(&mut s).expect("read");
+    s
+}
 
 /// An MP4 head (`ftyp`), which is all the format needs to keep the part as video.
 fn mp4() -> Vec<u8> {
@@ -27,6 +37,13 @@ fn a_screen_recording_take_round_trips() {
     Arc::make_mut(&mut p.slides[0]).shapes.push(take);
 
     let bytes = deckcraft_pptx::export(&p).expect("export");
+    // `p:nvPr` orders `p:custDataLst` before `p:extLst`; PowerPoint repairs a slide that swaps
+    // them, so the take's tags must not sit after the media extension.
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    let tags_at = xml.find("<p:custDataLst>").expect("the take carries its tag in p:nvPr");
+    let ext_at = xml.find("<p:extLst>").expect("the video reference is an extension");
+    assert!(tags_at < ext_at, "p:custDataLst comes before p:extLst: {xml}");
+
     let back = deckcraft_pptx::import(&bytes).expect("import");
     let found = back.slides[0].shapes.iter().find(|s| s.name == "Screen Recording").expect("the take survives");
     let clip = match &found.kind {

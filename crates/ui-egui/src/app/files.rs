@@ -511,11 +511,17 @@ impl SlideApp {
     /// draws its own full-screen shell, so the Presenter View window is cleared: it would open
     /// over that shell and take the keyboard for the wrong window.
     pub(crate) fn start_show_request(&mut self, custom: Option<&str>, from: Option<usize>, reading: bool, record: bool) {
+        let before = self.show_instance;
         match custom {
             Some(name) => self.start_custom_show(name, reading),
             None => self.start_show(from.unwrap_or_else(|| self.show_start_index()), reading),
         }
-        if let Some(show) = self.show.as_mut() {
+        // A custom show that does not exist starts nothing: the previous show (whose take is still
+        // being captured) must not have its `record` flag rewritten by a request that started
+        // nothing. `start_show` bumps `show_instance` only when it creates a show.
+        if self.show_instance != before
+            && let Some(show) = self.show.as_mut()
+        {
             show.record = record;
             if record {
                 show.presenter = false;
