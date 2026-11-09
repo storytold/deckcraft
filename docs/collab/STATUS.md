@@ -14,7 +14,8 @@ table-text slice `2a91d49e`, its docs commit, the cell-set rebase `b54eed3d`, th
 slice `f562aea4` with its docs commit on top, the notes-text slice `b7025f9a` with its docs
 commit on top, the table-cell format slice
 `a48c12de` with its docs commit on top, the run-range format slice `b4f13167` with its docs
-commit on top, and the N-cell/caret format slice `6ddc0c4f` with its docs commit on top.
+commit on top, the N-cell/caret format slice `6ddc0c4f` with its docs commit on top, and the
+whole-slide animation slice `b31bff47` with its docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -38,7 +39,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
-| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica) |
+| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
 
@@ -161,12 +162,13 @@ human decision.
   the base without bytes and the client reopens the file from the cabinet.
 - Per-actor undo: server-side before/after images, `undo-conflict` when someone else changed the
   object, undo is an ordinary new operation. The images cover `xfrm`, text, fill, outline, a
-  slide's whole transition, one shape's whole animation step list, the whole `TextBody` of a
-  `format.*` step (one body or each of N table cells) and a slide's whole notes body; the last six travel as
-  an exact model value
-  (`shape_field`/`shape_animations`/`notes_set`/`cells_text`) because the user-facing
-  fill/line/format/animation/notes commands cannot express the whole model, and the adapter
-  accepts that payload only as an undo/redo of the actor's own latest step.
+  slide's whole transition, one shape's whole animation step list, a slide's whole ordered
+  animation sequence, the whole `TextBody` of a
+  `format.*` step (one body or each of N table cells) and a slide's whole notes body; these travel
+  as an exact model value
+  (`shape_field`/`shape_animations`/`slide_animations`/`notes_set`/`cells_text`) because the
+  user-facing fill/line/format/animation/notes commands cannot express the whole model, and the
+  adapter accepts that payload only as an undo/redo of the actor's own latest step.
   A group's fill/line step records one image per changed member and restores them atomically with
   `shape_fields` (engine `shape.setFields`, values validated before the first write). An
   `arrange.align`/`distribute` step records one `xfrm` image per moved shape and restores them in
@@ -254,6 +256,17 @@ human decision.
   effect, and replaces the shape's steps where the first one stood before the first write. Two
   steps in a row are two absolute values, so the later accepted list wins; a shape that cannot be
   addressed (unknown key, another slide, no shape) is refused before anything is written.
+- `animation.set`/`animation.timing`/`animation.move`: one slide's **whole ordered animation
+  sequence** as a final value (`slide_animations`: every step is the model `Animation` as JSON and
+  carries its own shape id), addressed by slide key. The client computes the resulting sequence
+  with the engine's own plans — `set_plan`, `timing_plan`, `move_plan`, the same functions the
+  single-user commands run — so a style/`none` replacement keeps each shape's place, timing
+  changes exactly the named steps, and a move may cross another shape's step. The adapter runs
+  `slide.animations.set`, which bounds the list (4096 steps, 192 KiB), accepts only the model's
+  own fields, requires a known effect and a shape still on that slide, and replaces the whole list
+  before the first write; a list that changes nothing sends no operation. This is a per-slide
+  value, so the whole-sequence payload, not the per-shape `shape_animations`, is what keeps
+  interleaved steps exact.
 - `format.*`: 17 allowlisted commands (`bold`, `italic`, `underline`, `strikethrough`,
   `superscript`, `subscript`, `font`, `size`, `color`, `highlight`, `alignLeft/Center/Right`,
   `justify`, `caps`, `spacing`, `clear`) over one explicit shape's whole text body, over the
@@ -290,7 +303,8 @@ human decision.
   an align that moves nothing sends nothing.
 - Undo/redo: move, bounds, align/distribute, text (shape text and table cells), fill, outline,
   `format.*` (a shape's body, one cell's body, N cells of one table, or a character range/caret of
-  a body), transition and animation steps. A restore
+  a body), transition and animation (a shape's step list for add/remove, a slide's whole sequence
+  for set/timing/move). A restore
   carries the exact model value (`shape_field`) and runs through the `shape.setField` engine
   command, which bounds the JSON and deserialises it into the model type. A cell text step records
   the cell's whole body text with its address and restores it with `text.set{cell}`, so the
@@ -316,7 +330,10 @@ human decision.
   shape's whole step list before and after (model animations in order) and restores it through the
   same `shape_animations` payload, applied by `slide.animation.set`; a later list from another
   participant refuses the undo with `undo-conflict`, while a change to another shape's steps does
-  not.
+  not. An `animation.set`/`animation.timing`/`animation.move` step records the slide's whole
+  ordered sequence before and after and restores it through the same `slide_animations` payload,
+  applied by `slide.animations.set`; any animation change on that slide after the step (including
+  another shape's) refuses the undo with `undo-conflict`, because the whole order is the value.
 
 ### Server (`apps/deckcraft-collab-server`)
 
@@ -576,6 +593,21 @@ wasm32-unknown-unknown` ok. `git status` is clean after the docs commit; nothing
 was not touched, and no collab slice changed (the code patch is main's own, see the rebase
 section).
 
+Re-run on 2026-11-09 after the whole-sequence animation slice (on `agents`, rust 1.99.1):
+`cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings`
+clean, `collab-proto` 30, `collab` 195 + 8, `collab-web` 15, `collab-server` 10 unit + 4 commit
++ 4 gates + 6 socket (LibreOffice skipped on the build host), `deckcraft-web` 6, `ui-egui
+collab::` 19, `deckcraft-engine` 579 + 1 ignored, `xtask layers` 32 crates with no violations,
+`cargo check -p deckcraft-web --target wasm32-unknown-unknown` ok. The new tests cover two
+replicas converging on `animation.set` and on the undo of the second shape's set, `animation.timing`
+changing one step with an undo that restores the exact duration, `animation.move` crossing another
+shape's step on both replicas with an undo that restores the whole order, a foreign animation edit
+on the same slide making the undo `undo-conflict` without a version move, the engine keeping
+interleaved steps through an exact list and refusing a missing shape, an unknown effect/field and
+too many steps before any write, the plans matching the single-user commands, the normaliser
+emitting the exact sequence and nothing for a no-op, and both wire forms. `git status` is clean
+after the docs commit; nothing was pushed and CI was not touched.
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -622,9 +654,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation steps, table cell text, table row/column edits and slide notes text | collab tests |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list and a slide's whole sequence), table cell text, table row/column edits and slide notes text | collab tests |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation steps, table row/column edits | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`notes_set`/whole-table `shape_field` |
+| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence), table row/column edits | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
@@ -650,12 +682,12 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
    applied to each cell's own body), over a character range of a shape or cell body and at a caret
    (`addresses: [{ cell?, range | caret }]`, rebased, exact-body undo), `slide.duplicate`,
    `transition.set`, table cell text, table
-   row/column edits, `animation.add`/`animation.remove` (one shape's whole step list) and slide
-   notes text (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) are
+   row/column edits, `animation.add`/`animation.remove` (one shape's whole step list),
+   `animation.set`/`animation.timing`/`animation.move` (one slide's whole ordered sequence) and
+   slide notes text (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) are
    collaborative now. Still refused: fonts as a document asset, the rest of the animation surface
-   (`animation.set` styles, `animation.timing`, `animation.options`, `animation.move`,
-   `animation.clear`, the painter), the rest of the table surface (style, fill, merge/split,
-   sizing), SmartArt/charts and relative effects. The design rule stands:
+   (`animation.options`, `animation.clear`, the painter), the rest of the table surface (style,
+   fill, merge/split, sizing), SmartArt/charts and relative effects. The design rule stands:
    only commands whose result is a deterministic function of the authoritative state, expressed
    as final values, go on the wire; a raw `execute` is not safe (toggles and relative edits
    diverge). Next candidates: the animation
@@ -777,21 +809,59 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `409` and stores the accepted version. For a page on another origin the sync server needs CORS
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Next: the rest of the animation
-   surface (`animation.set`, `animation.timing`, `animation.move`), then the rest of the table
-   surface, then fonts as a document asset.
+   adapter run → confirmed command → test on two clients. Next: the rest of the table
+   surface, then fonts as a document asset, then the remaining animation commands
+   (`animation.options`, `animation.clear`, the painter).
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
-   body image)/transition/animation
-   steps, a group's fill/line, slide insert/delete/duplicate, shape insert/delete,
-   group/ungroup and table row/column edits (whole-table image). What is left in this line is
-   only the undo of commands that are not on the wire yet (the animation timing/options/move/
-   clear commands, fonts, the rest of the table surface).
+   body image)/transition/animation (a shape's step list for add/remove, a slide's whole sequence
+   for set/timing/move) steps, a group's fill/line, slide insert/delete/duplicate, shape
+   insert/delete, group/ungroup and table row/column edits (whole-table image). What is left in
+   this line is only the undo of commands that are not on the wire yet (the animation
+   options/clear commands, fonts, the rest of the table surface).
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — the rest of the animation surface: `animation.set`, `animation.timing`, `animation.move`
+
+- The three commands are collaborative as **one slide's whole ordered animation sequence**
+  (`Payload::SlideAnimations { animations: Vec<Value> }`, `target.slide` the address). Every value
+  is the model `Animation` as JSON and carries its own shape id, because `animation.move` can put a
+  step past another shape's step; the per-shape `shape_animations` list could not express that
+  interleaving. A later list from another participant is the later absolute value.
+- Normalise runs the same plans as the single-user commands — new public
+  `deckcraft_engine::cmd::animation::set_plan`, `timing_plan`, `move_plan`, with `set`, `timing`
+  and `move_anim` refactored onto them. `animation.set` on a selection is one operation (the whole
+  sequence once), not one version per shape; `animation.timing` by `index` changes exactly that
+  step and by shape ids exactly those shapes' steps; `animation.move` clamps `to` to the end as
+  the single-user command does. A command whose result equals the current sequence sends nothing,
+  and an unknown effect, a missing `index`/`to`, an out-of-range index or a timing edit that names
+  no step is refused `BadParams` before anything is sent.
+- Engine: new `slide.animations.set { index, animations }` replaces the whole list. It bounds the
+  image (4096 steps, 192 KiB), accepts only the model's own field names, requires a known effect,
+  a bounded option and motion path, and validates that **every** named shape is on that slide
+  before the first write; the shared `read_steps` also serves the existing per-shape
+  `slide.animation.set`. The soak skips the new exact-value setter for the same reason as the
+  other two.
+- Adapter: resolves the slide, refuses a shape key in the target, reads every value as its own
+  model animation, and runs `slide.animations.set`. Undo records the slide's whole sequence before
+  and after (`Image::SlideAnimations`, `Change::SlideAnimations`) and restores it through the same
+  payload; `same_state` compares the slide and the whole list, so any animation change on that
+  slide after the step (including another shape's) makes the undo `undo-conflict`, while a change
+  to another slide's steps does not.
+- Tests: two replicas converge on `animation.set` and on the undo of the second shape's set;
+  `animation.timing` changes one step and its undo restores the exact duration; `animation.move`
+  crosses another shape's step on both replicas and its undo restores the whole order; a foreign
+  animation edit makes the undo a conflict and writes nothing; the engine keeps interleaved steps
+  through an exact list, refuses a missing shape/unknown effect/unknown field/too many steps
+  before any write, and its plans match the single-user commands; the normaliser emits the exact
+  sequence for set/timing/move, sends nothing for a no-op, and both wire forms round-trip.
+  `collab` 195 + 8, `collab-proto` 30. Commit `b31bff47` plus this docs commit on `collab/pr11`;
+  `production.md`, `rfc.md` and this file updated. Nothing pushed, CI untouched, PR #1975
+  unchanged.
 
 ### 2026-11-09 — rebase onto `origin/main` (`0623b430`)
 
