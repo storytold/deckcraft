@@ -225,7 +225,15 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
     }
     // The Draw ruler takes the wheel over its body: it turns 1° a notch rather than scrolling.
-    let over_stencil = stencil::wheel(app, ui, Xf { origin: content_rect.translate(-offset).min, scale }, hover, avail);
+    // Only when the canvas itself is hovered, no menu or popup is open over it, and the wheel is
+    // not a zoom gesture: Ctrl/Cmd+wheel and a pinch zoom the canvas and must not also turn the
+    // ruler, and an open popup owns the wheel even where it only covers the body with its frame.
+    let popup_open = egui::Popup::is_any_open(ui.ctx());
+    let over_stencil = resp.hovered()
+        && !zooming
+        && !popup_open
+        && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl)
+        && stencil::wheel(app, ui, Xf { origin: content_rect.translate(-offset).min, scale }, resp.hovered(), hover, avail);
     if (resp.hovered() || on_bar) && !zooming && !over_stencil {
         if overflow != egui::Vec2::ZERO {
             offset -= wheel;

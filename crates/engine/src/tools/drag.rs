@@ -214,20 +214,34 @@ impl Session {
             }
         }
         let ids_now = if duplicate { self.doc()?.selection.shapes.clone() } else { ids.clone() };
-        if mods.shift {
-            if d.x.abs() > d.y.abs() {
+        // Shift keeps the drag on one axis. Which axis is settled before any snap, so a ruler that
+        // is turned cannot carry the drag off it afterwards.
+        let axis = if mods.shift { Some(if d.x.abs() > d.y.abs() { 0 } else { 1 }) } else { None };
+        if let Some(a) = axis {
+            if a == 0 {
                 d.y = 0.0;
             } else {
                 d.x = 0.0;
             }
         }
-        // Smart guides on the moved group's bounds. A ruler edge wins over them and the grid: it
-        // is explicitly placed by the user, so an object that comes near it aligns to it.
+        // A ruler edge wins over the smart guides and the grid: it is explicitly placed by the
+        // user, so an object that comes near it aligns to it. Each object meets the edge with its
+        // own outline, and the object nearest the edge decides where the whole drag goes.
         let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
         let moved_b = bounds + d;
-        let ruler_snap = if mods.cmd { None } else { crate::ruler::snap_rect(moved_b, &self.view.ruler, tol * 1.5) };
+        let ruler_snap = if mods.cmd {
+            None
+        } else {
+            let outlines = self.ruler_outlines(&ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect::<Vec<_>>(), d);
+            crate::ruler::snap_outlines(&outlines, &self.view.ruler, tol * 1.5)
+        };
         if let Some(snap) = ruler_snap {
-            d += snap;
+            // A Shift drag takes only the part of the snap along its axis.
+            d += match axis {
+                Some(0) => Vec2::new(snap.x, 0.0),
+                Some(_) => Vec2::new(0.0, snap.y),
+                None => snap,
+            };
             self.tool.guides.clear();
         } else {
             let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);

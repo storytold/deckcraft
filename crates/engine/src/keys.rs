@@ -189,7 +189,7 @@ impl Session {
     }
 
     /// Draw ▸ Stencils ▸ Ruler: Shift+F6 turns manipulation mode on and off; in it the arrow keys
-    /// move the ruler instead of nudging shapes, Alt+arrows turn it 15° and Alt+Ctrl 1°.
+    /// move the ruler instead of nudging shapes, Alt+Left/Right turn it 15° and Alt+Ctrl/Cmd 1°.
     /// `None` when the key is not the ruler's.
     fn ruler_key(&mut self, k: &str, mods: Mods) -> Result<Option<Value>> {
         if !self.view.ruler.visible {
@@ -203,8 +203,8 @@ impl Session {
             return Ok(None);
         }
         let by = match (mods.alt, k) {
-            (true, "left" | "up") => Some(-crate::ruler::rotation_step(true, mods.cmd)),
-            (true, "right" | "down") => Some(crate::ruler::rotation_step(true, mods.cmd)),
+            (true, "left") => Some(-crate::ruler::rotation_step(true, mods.cmd)),
+            (true, "right") => Some(crate::ruler::rotation_step(true, mods.cmd)),
             _ => None,
         };
         if let Some(by) = by {

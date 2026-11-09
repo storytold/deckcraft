@@ -79,10 +79,12 @@ fn over_page_ruler(app: &SlideApp, avail: Rect, at: Pos2) -> bool {
 }
 
 /// The wheel over the ruler turns it 1° per notch around the pointer. Returns whether the pointer
-/// was over it, so the caller keeps the wheel from scrolling or turning the page.
-pub(super) fn wheel(app: &mut SlideApp, ui: &Ui, xf: Xf, hover: Option<Pos2>, avail: Rect) -> bool {
+/// was over it, so the caller keeps the wheel from scrolling or turning the page. `canvas_hovered`
+/// is the canvas response's own hover: a popup or menu over the body takes the hover away from the
+/// canvas, and then the wheel belongs to the popup, not to the ruler.
+pub(super) fn wheel(app: &mut SlideApp, ui: &Ui, xf: Xf, canvas_hovered: bool, hover: Option<Pos2>, avail: Rect) -> bool {
     let r = app.session.view.ruler;
-    if !r.visible || app.session.tool.dragging() || app.anim_preview_active() {
+    if !canvas_hovered || !r.visible || app.session.tool.dragging() || app.anim_preview_active() {
         return false;
     }
     let Some(at) = hover.filter(|p| avail.contains(*p)) else { return false };

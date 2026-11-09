@@ -3,9 +3,10 @@
 //! PowerPoint's ruler is a view aid, not part of the presentation: it is never saved in the deck.
 //! It is a long translucent body with a tick scale and numbers on both edges and a degree dial at
 //! its centre. Dragging the body moves it, the wheel over it turns it 1° around the pointer, and
-//! Shift+F6 enters manipulation mode where the arrow keys move it and Alt+arrows turn it 15° (with
-//! Ctrl or Cmd too, 1°); clicking the dial types an exact angle. Ink drawn near an edge is
-//! straightened along that edge, and a dragged object's bounding box snaps to a nearby edge.
+//! Shift+F6 enters manipulation mode where the arrow keys move it and Alt+Left/Right turn it 15°
+//! (with Ctrl or Cmd too, 1°); clicking the dial types an exact angle. Ink drawn near an edge is
+//! straightened along that edge, and a dragged object snaps to a nearby edge with its own outline
+//! (its bounding box for pictures, icons and text boxes).
 //!
 //! Everything in this module is pure geometry over [`RulerState`]; the commands that change the
 //! state live in `cmd::draw`.
@@ -215,44 +216,75 @@ pub fn straighten(points: &[(f64, f64, f32)], r: &RulerState, tol: f64) -> Optio
     Some(vec![(a.x, a.y, first.2), (b.x, b.y, last.2)])
 }
 
-/// Snap `rect`'s nearest side to the nearest ruler edge when it is within `tol`, returning the
-/// translation that does it. The translation is along the edge's normal, so a horizontal edge
-/// brings the box's parallel side onto the line, and a turned edge brings the box's nearest
-/// corner onto it (an axis-aligned box cannot have an edge along a diagonal line). A box the
-/// edge already crosses, or runs through, is left alone, and so is one past either end of the
+/// Snap an outline's nearest point to the nearest ruler edge when it is within `tol`, returning
+/// the translation that does it. The translation is along the edge's normal, so a horizontal edge
+/// brings the outline's parallel side onto the line, and a turned edge brings the outline's
+/// nearest point (a corner of an axis-aligned box, the edge of a turned one) onto it. An outline
+/// the edge already crosses, or runs through, is left alone, and so is one past either end of the
 /// body: only the body's own edge aligns anything.
-pub fn snap_rect(rect: Rect, r: &RulerState, tol: f64) -> Option<Vec2> {
-    if !r.visible || !(rect.x0.is_finite() && rect.y0.is_finite() && rect.x1.is_finite() && rect.y1.is_finite()) {
+pub fn snap_outline(points: &[Point], r: &RulerState, tol: f64) -> Option<Vec2> {
+    snap_points(points, r, tol).map(|(_, d)| d)
+}
+
+/// The smallest gap among several outlines: the shape nearest a ruler edge decides where the
+/// whole selection goes.
+pub fn snap_outlines(outlines: &[Vec<Point>], r: &RulerState, tol: f64) -> Option<Vec2> {
+    outlines.iter().filter_map(|p| snap_points(p, r, tol)).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, d)| d)
+}
+
+fn snap_points(points: &[Point], r: &RulerState, tol: f64) -> Option<(f64, Vec2)> {
+    if !r.visible || points.is_empty() || !points.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
         return None;
     }
     let tol = if tol.is_finite() { tol.max(0.0) } else { SNAP };
-    let half = Vec2::new(rect.width() / 2.0, rect.height() / 2.0);
-    let centre = rect.center();
     let mut best: Option<(f64, Vec2)> = None;
     for e in edges(r) {
-        // A box past the end of the body is not near the edge, however close it is to the line
-        // the edge lies on.
-        let along = Vec2::new(centre.x, centre.y).dot(e.dir);
-        let along_reach = half.x * e.dir.x.abs() + half.y * e.dir.y.abs();
+        // An outline past the end of the body is not near the edge, however close it is to the
+        // line the edge lies on.
+        let (mut along_lo, mut along_hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut off_lo, mut off_hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for p in points {
+            let v = Vec2::new(p.x, p.y);
+            let a = v.dot(e.dir);
+            along_lo = along_lo.min(a);
+            along_hi = along_hi.max(a);
+            let o = v.dot(e.normal);
+            off_lo = off_lo.min(o);
+            off_hi = off_hi.max(o);
+        }
         let (lo, hi) = (Vec2::new(e.from.x, e.from.y).dot(e.dir), Vec2::new(e.to.x, e.to.y).dot(e.dir));
-        if along + along_reach < lo || along - along_reach > hi {
+        if along_hi < lo || along_lo > hi {
             continue;
         }
         let line = Vec2::new(e.from.x, e.from.y).dot(e.normal);
-        let mid = Vec2::new(centre.x, centre.y).dot(e.normal);
-        // How far the box reaches along the normal: its nearest side is this close to the line.
-        let reach = half.x * e.normal.x.abs() + half.y * e.normal.y.abs();
-        let signed = mid - line;
-        let gap = signed.abs() - reach;
+        // Whichever side the outline is on, its point nearest the line is the one that lands on
+        // it. An outline the line runs through is already aligned.
+        let (gap, delta) = if off_hi <= line {
+            let gap = line - off_hi;
+            (gap, e.normal * gap)
+        } else if off_lo >= line {
+            let gap = off_lo - line;
+            (gap, -e.normal * gap)
+        } else {
+            continue;
+        };
         if gap <= 1e-6 || gap > tol {
             continue;
         }
-        let delta = if signed > 0.0 { -e.normal * gap } else { e.normal * gap };
         if best.is_none_or(|(bd, _)| gap < bd) {
             best = Some((gap, delta));
         }
     }
-    best.map(|(_, d)| d)
+    best
+}
+
+/// Snap `rect`'s nearest side to the nearest ruler edge: its four corners are the outline.
+pub fn snap_rect(rect: Rect, r: &RulerState, tol: f64) -> Option<Vec2> {
+    if !(rect.x0.is_finite() && rect.y0.is_finite() && rect.x1.is_finite() && rect.y1.is_finite()) {
+        return None;
+    }
+    let corners = [Point::new(rect.x0, rect.y0), Point::new(rect.x1, rect.y0), Point::new(rect.x1, rect.y1), Point::new(rect.x0, rect.y1)];
+    snap_outline(&corners, r, tol)
 }
 
 /// Slide-space rect of a box's corners (rotation ignored: the drag works on bounding boxes).
@@ -436,6 +468,37 @@ mod tests {
         assert!(!contains(&r, Point::new(400.0, 0.0)), "across it");
         assert!(on_dial(&r, Point::new(5.0, 0.0)));
         assert!(!on_dial(&r, Point::new(40.0, 0.0)));
+    }
+
+    #[test]
+    fn an_outline_snaps_by_its_own_edge_not_its_box() {
+        let r = ruler(300.0, 300.0, 45.0);
+        let [e, _] = edges(&r);
+        let n = e.normal;
+        let line = Vec2::new(e.from.x, e.from.y).dot(n);
+        // A diamond (a square turned 45°) whose nearest vertex comes 3 pt inside the edge. Its
+        // axis-aligned box is more than twice as far out along the edge normal.
+        let want = 50.0 * n.x.abs() + 3.0;
+        let c = Point::new(300.0, 300.0) + n * (line + want - Vec2::new(300.0, 300.0).dot(n));
+        let diamond = [Point::new(c.x + 50.0, c.y), Point::new(c.x, c.y + 50.0), Point::new(c.x - 50.0, c.y), Point::new(c.x, c.y - 50.0)];
+        let d = snap_outline(&diamond, &r, SNAP).expect("the vertex snaps");
+        assert!((d.hypot() - 3.0).abs() < 1e-6, "{d:?}");
+        let moved: Vec<Point> = diamond.iter().map(|p| Point::new(p.x + d.x, p.y + d.y)).collect();
+        let nearest = moved.iter().map(|p| Vec2::new(p.x, p.y).dot(n)).fold(f64::INFINITY, f64::min);
+        assert!((nearest - line).abs() < 1e-6, "the nearest vertex is on the edge: {nearest} vs {line}");
+        // The box around it straddles the line, so a box snap would find nothing at all.
+        let box_ = Rect::new(c.x - 50.0, c.y - 50.0, c.x + 50.0, c.y + 50.0);
+        assert!(snap_rect(box_, &r, SNAP).is_none());
+    }
+
+    #[test]
+    fn the_shape_nearest_the_edge_decides_where_the_set_goes() {
+        let r = ruler(300.0, 200.0, 0.0);
+        let top = 200.0 - HALF_WIDTH;
+        let far = vec![Point::new(240.0, top - 40.0), Point::new(340.0, top - 40.0)];
+        let near = vec![Point::new(240.0, top - 6.0), Point::new(340.0, top - 6.0)];
+        let d = snap_outlines(&[far, near], &r, SNAP).expect("the nearer one snaps");
+        assert!(d.x.abs() < 1e-9 && (d.y - 6.0).abs() < 1e-9, "{d:?}");
     }
 
     #[test]

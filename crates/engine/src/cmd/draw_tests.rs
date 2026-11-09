@@ -231,3 +231,70 @@ fn ctrl_during_a_drag_turns_ruler_snapping_off() {
     let b = box_of(&s, id);
     assert!((b.y - (100.0 + want_dy)).abs() < 1e-6, "Ctrl keeps the raw drag: {b:?}");
 }
+
+#[test]
+fn a_shape_snaps_to_a_turned_ruler_by_its_own_edge_not_its_box() {
+    let mut s = blank();
+    s.execute("draw.ruler", &json!({"on": true, "x": 300, "y": 300, "angle": 45})).unwrap();
+    // An oval is a circle inside its box: with a turned ruler its own edge meets the line a long
+    // way inside the box's corner, so a box snap would leave a visible gap.
+    let id = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [400.0, 60.0, 100.0, 100.0]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.view.ruler;
+    let [edge, _] = crate::ruler::edges(&r);
+    let (n, c0) = (edge.normal, deckcraft_geom::Point::new(450.0, 110.0));
+    let radius = 50.0;
+    let line = (edge.from.x * n.x) + (edge.from.y * n.y);
+    let along = (c0.x * n.x + c0.y * n.y) - line;
+    // Drag the circle so its silhouette comes 3 pt short of the edge (the box corner is nearer).
+    let want = radius + 3.0;
+    let dx = n.x * (want - along);
+    let dy = n.y * (want - along);
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    s.pointer(ev(PointerKind::Down, c0.x, c0.y)).unwrap();
+    s.pointer(ev(PointerKind::Drag, c0.x + dx, c0.y + dy)).unwrap();
+    s.pointer(ev(PointerKind::Up, c0.x + dx, c0.y + dy)).unwrap();
+    let b = box_of(&s, id);
+    let c = deckcraft_geom::Point::new(b.x + b.w / 2.0, b.y + b.h / 2.0);
+    let gap = (c.x * n.x + c.y * n.y) - line;
+    assert!((gap - radius).abs() < 1e-6, "the oval's own edge sits on the ruler, not its box corner: {gap} vs {radius}");
+}
+
+#[test]
+fn shift_keeps_a_drag_on_its_axis_when_a_turned_ruler_snaps() {
+    let mut s = blank();
+    s.execute("draw.ruler", &json!({"on": true, "x": 300, "y": 300, "angle": 315})).unwrap();
+    let id = rect(&mut s, [100.0, 100.0, 100.0, 100.0]);
+    let r = s.view.ruler;
+    let [edge, _] = crate::ruler::edges(&r);
+    let (n, c0) = (edge.normal, deckcraft_geom::Point::new(150.0, 150.0));
+    let line = edge.from.x * n.x + edge.from.y * n.y;
+    let reach = 50.0 * n.x.abs() + 50.0 * n.y.abs();
+    // A horizontal drag (Shift, so y stays) that brings the box 3 pt short of the edge.
+    let want = reach + 3.0;
+    let dx = (line + want - (c0.x * n.x + c0.y * n.y)) / n.x;
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let shift = |kind, x, y| PointerEvent { kind, x, y, mods: Mods { shift: true, ..Mods::default() }, tol: 3.0, pressure: None };
+    // Shift is held during the drag, not the press: a Shift press toggles the selection.
+    s.pointer(ev(PointerKind::Down, c0.x, c0.y)).unwrap();
+    s.pointer(shift(PointerKind::Drag, c0.x + dx / 2.0, c0.y)).unwrap();
+    s.pointer(shift(PointerKind::Drag, c0.x + dx, c0.y)).unwrap();
+    s.pointer(shift(PointerKind::Up, c0.x + dx, c0.y)).unwrap();
+    let b = box_of(&s, id);
+    assert!((b.y - 100.0).abs() < 1e-6, "Shift kept the drag on its axis: {b:?}");
+    // The edge's pull is along its normal; only its part along the axis is taken, so the drag
+    // still stays on the axis instead of being carried off it.
+    assert!((b.x - (100.0 + dx - 3.0 * n.x)).abs() < 0.01, "the edge pulls along the axis only: {b:?} dx {dx}");
+}
+
+#[test]
+fn only_left_and_right_turn_the_ruler() {
+    let mut s = blank();
+    s.execute("draw.ruler", &json!({"on": true, "x": 300, "y": 200, "angle": 0})).unwrap();
+    s.key("F6", Mods { shift: true, ..Mods::default() }).unwrap();
+    s.key("Up", Mods { alt: true, ..Mods::default() }).unwrap();
+    s.key("Down", Mods { alt: true, ..Mods::default() }).unwrap();
+    assert_eq!(ruler(&mut s)["angle"].as_f64(), Some(0.0), "Alt+Up/Down do not turn it");
+    assert_eq!((ruler(&mut s)["x"].as_f64(), ruler(&mut s)["y"].as_f64()), (Some(300.0), Some(200.0)));
+    s.key("Left", Mods { alt: true, ..Mods::default() }).unwrap();
+    assert_eq!(ruler(&mut s)["angle"].as_f64(), Some(345.0));
+}

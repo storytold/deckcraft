@@ -228,6 +228,40 @@ impl Session {
         (off, guides)
     }
 
+    /// The points of each moved shape that may meet a ruler edge, in slide space at the drag's
+    /// current offset: a shape drawn by its geometry aligns on its own outline (so a turned or
+    /// non-rectangular shape meets the edge with the part the user sees), while the items whose
+    /// content is their frame — pictures, icons, text boxes, tables, charts, media, groups and ink
+    /// — align on the box.
+    pub(super) fn ruler_outlines(&self, ids: &[(ShapeId, Xfrm)], d: Vec2) -> Vec<Vec<Point>> {
+        let Some(st) = self.active() else { return vec![] };
+        let mut out = Vec::new();
+        for (id, x) in ids {
+            let Some(sh) = st.shape(*id) else { continue };
+            let aff = x.affine();
+            let mut points: Vec<Point> = vec![];
+            if box_is_the_edge(sh) {
+                let r = x.rect();
+                for p in [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x1, r.y1), Point::new(r.x0, r.y1)] {
+                    points.push(aff * p);
+                }
+            } else {
+                let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
+                deckcraft_geom::preset_flatten(&geo.outline(), &mut |el| match el {
+                    deckcraft_geom::PathEl::MoveTo(p) | deckcraft_geom::PathEl::LineTo(p) => points.push(aff * p),
+                    _ => {}
+                });
+            }
+            for p in &mut points {
+                *p = Point::new(p.x + d.x, p.y + d.y);
+            }
+            if !points.is_empty() {
+                out.push(points);
+            }
+        }
+        out
+    }
+
     /// Snap the edges that resize handle `handle` drags in the resized box `x` to the smart guides.
     pub(super) fn snap_resize(&mut self, x: Xfrm, handle: u8, exclude: &[ShapeId], tol: f64) -> Xfrm {
         if x.rot != 0.0 {
@@ -328,5 +362,30 @@ impl Session {
             crate::push_undo(st, HistoryEntry { label: "Erase".into(), doc: before, selection: sel_before, vertex_kind });
         }
         Ok(Value::Null)
+    }
+}
+
+/// Whether the shape's own edge is its frame: a picture, an icon (a stroked custom path), a text
+/// box, or an item whose content fills its box. Everything else is a drawn geometry, and its
+/// outline is the edge that meets a ruler.
+fn box_is_the_edge(sh: &Shape) -> bool {
+    if sh.text_box {
+        return true;
+    }
+    match &sh.kind {
+        ShapeKind::Picture { .. }
+        | ShapeKind::Group { .. }
+        | ShapeKind::Table(_)
+        | ShapeKind::Chart(_)
+        | ShapeKind::Media(_)
+        | ShapeKind::Model3d { .. }
+        | ShapeKind::Opaque { .. }
+        | ShapeKind::Ink { .. } => true,
+        ShapeKind::Connector { .. } => false,
+        ShapeKind::Shape => match &sh.geom {
+            // A stroked-only custom path is an icon: line art drawn inside its square.
+            deckcraft_model::Geom::Custom { paths } => !paths.is_empty() && paths.iter().all(|p| p.fill == deckcraft_geom::preset::FillMode::None),
+            deckcraft_model::Geom::Preset { .. } => false,
+        },
     }
 }
