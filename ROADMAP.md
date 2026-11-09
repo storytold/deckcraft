@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-08 · **Last updated:** 2026-11-08 · **Change:** trivial (native chart workbook validation protocol and Mac observations; product scores unchanged)
+> **Last reviewed:** 2026-11-08 · **Last updated:** 2026-11-09 · **Change:** trivial (chart workbook validation revision history; measurements and product scores unchanged)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -342,6 +342,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-09 | trivial | Added chart workbook validation guide revision history; retained the measured run and its source revisions unchanged |
 | 2026-11-08 | trivial | Native chart workbook validation protocol, Mac observations and untested cases recorded; clarified linkage, chart/workbook comparisons and separate new-chart expectations; no export implementation or score change |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |

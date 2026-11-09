@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-11-08 · **Last updated:** 2026-11-08 · **Change:** trivial (native chart workbook validation protocol and Mac observations; product scores unchanged)
+> **Last reviewed:** 2026-11-08 · **Last updated:** 2026-11-09 · **Change:** trivial (chart workbook validation revision history; measurements and product scores unchanged)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
@@ -123,6 +123,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-09 | trivial | Added chart workbook validation guide revision history; retained the measured run and its source revisions unchanged |
 | 2026-11-08 | trivial | Native chart workbook validation protocol, Mac observations and untested cases recorded; clarified linkage, chart/workbook comparisons and separate new-chart expectations; no export implementation or score change |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
 | 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |

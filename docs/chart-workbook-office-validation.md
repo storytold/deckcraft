@@ -1,6 +1,6 @@
 # Chart workbook validation in desktop Office
 
-> **Last reviewed:** 2026-11-08 · **Status:** measured on Mac only; workbook export fix remains in [PR #241](https://github.com/storytold/deckcraft/pull/241).
+> **Last reviewed:** 2026-11-08 · **Last updated:** 2026-11-09 · **Change:** trivial (revision history) · **Status:** measured on Mac only; workbook export fix remains in [PR #241](https://github.com/storytold/deckcraft/pull/241).
 
 A working **Edit Data** command does not establish that an imported workbook survived.
 PowerPoint for Mac can reconstruct a one-sheet workbook from chart caches. That can hide
@@ -153,3 +153,10 @@ actual revisions and file hashes. Do not treat cached formula values as recalcul
 Do not close #1047 based only on this run. Updating PR #241 against current main and
 rerunning its native new-chart/fallback cases remain separate work. Main still needs the
 existing export fix; a reconstructed cache cannot restore the lost workbook contents.
+
+## Revision history
+
+| Date | Change |
+| --- | --- |
+| 2026-11-08 | Recorded the measured Mac title/data preservation run and its exact source revisions and limits. Added the pre-Office linkage, chart/workbook agreement and separate new-chart expectations as future acceptance checks. |
+| 2026-11-09 | Added the guide revision history and separate supplemental log entries; preserved the historical measurements and source pointers. |
