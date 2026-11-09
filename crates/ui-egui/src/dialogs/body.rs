@@ -281,6 +281,9 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     run(app, "show.setup", json!({"type": ty, "loop": lp, "nonNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
 }
 
+ok || cancel
+}
+
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
     if names.is_empty() {
