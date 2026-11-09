@@ -135,14 +135,14 @@ S→C {"type":"applied","opId":"<uuid>","version":42,
 | `notes_set` | command | `notes`: всё тело заметок слайда как модель `TextBody` (раны, уровни, буллеты) в JSON; адрес — `target.slide` | фигура в адресе, нечитаемый образ, слайд удалён → `invalid`/`stale` |
 | `notes_insert` | command | `at`, `text`: вставка в тело заметок слайда по смещению в символах; адрес — `target.slide` | то же; смещение перебазируется по журналу, после замены тела — `stale` |
 | `notes_delete` | command | `from`, `to`: удаление диапазона тела заметок; адрес — `target.slide` | то же |
-| `format_set` | command | `format: <allowlisted FormatCmd>`, `args` только из собственного набора команды | `id/ids/index` в `args`, относительный toggle без `on`, таблица, фигура без текста |
+| `format_set` | command | `format: <allowlisted FormatCmd>`, `args` только из собственного набора команды, `cell?: [row, col]` — ячейка таблицы, чьё тело форматируется | `id/ids/index/cell` в `args`, относительный toggle без `on`, таблица без адреса ячейки, несуществующая ячейка, адрес ячейки у не-таблицы, фигура без текста |
 | `slide_duplicate` | structural | ничего; адрес — `target.slide` | слайд удалён → `stale` |
 | `shape_fields` | command | `items:[{shape, field: fill\|line\|text, value}]` | только undo/redo шага группы; иначе → `invalid`; > 4096 значений или > 192 KiB → `invalid` |
 | `shapes_set_bounds` | command | `items:[{shape, x, y, w, h}]` — итоговые боксы всей выборки (`arrange.align`/`arrange.distribute`); адрес — `target.shapes` | неизвестная или удалённая фигура, ключ дважды, нечисловое значение, > 4096 боксов → `invalid`/`stale`; заблокированная фигура не двигается |
 | `slide_restore` | structural | `index`, `slide` (модель JSON), `sections?: [[section, pos]]`, `shows?: [[show, pos]]` | только undo/redo шага слайда; id уже открыт или образ > 192 KiB → `invalid` |
 | `shape_restore` | structural | `items:[{shape, parent?, index, value: фигура как JSON, animations?}]` | только undo/redo шага фигуры; id уже открыт, родитель не группа, > 64 образов или > 192 KiB → `invalid` |
 
-`format_set` покрывает `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear`. Перечисление `FormatCmd` (а не строка) закрывает allowlist на уровне типа; `FormatCmd::accepts` не даёт положить в `args` чужой ключ. Множество фигур для `format.*` нормализуется в **N операций по одной фигуре** (решение по §13 п. 3): так undo остаётся объектным, а `applied` несёт понятный адрес.
+`format_set` покрывает `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear`. Перечисление `FormatCmd` (а не строка) закрывает allowlist на уровне типа; `FormatCmd::accepts` не даёт положить в `args` чужой ключ. Множество фигур для `format.*` нормализуется в **N операций по одной фигуре** (решение по §13 п. 3): так undo остаётся объектным, а `applied` несёт понятный адрес. Ячейка таблицы — тоже отдельный адрес: `cell: [row, col]` берётся из аргументов команды, из одной выделенной ячейки или из каретки внутри ячейки, а применяется к телу **этой** ячейки (не к пустому `text` таблицы). Диапазон ячеек или ранов — это `format` по ранам, он оставлен следующему срезу и отклоняется, а не расширяется до целого тела; несуществующая ячейка, таблица без адреса и адрес у не-таблицы отклоняются до первой записи.
 
 `arrange.align` и `arrange.distribute` — исключение из этого правила, потому что это одна пользовательская команда над несколькими объектами и её undo обязан отменять шаг целиком. Клиент считает итоговые боксы сам, через движковые `align_plan`/`distribute_plan` — ту же арифметику, что использует одиночная команда (край слайда, рамка выборки, равные промежутки), и отправляет **одну** `shapes_set_bounds`. Адаптер прогоняет движковую `shape.setBoundsMany`: она проверяет все id и дубликаты до первой записи, клампит значения и пишет геометрию в одном `edit`, поэтому вся выборка — один version и один шаг undo. Фигуры, чей бокс не меняется, в операцию не попадают; если не меняется ни одна, клиент не отправляет ничего.
 
@@ -340,10 +340,13 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
   `rejected{code:"undo-conflict"}`, без молчаливой перезаписи.
 - **Образ значения.** Шаг хранит before/after-образ одного объекта: `xfrm`,
   текст (plain для `text.set`/`text.insert`/`text.delete`), fill, outline и
-  целый `TextBody` для `format.*`. Первые три восстанавливаются обычными
-  командами (final values). Fill, outline и тело восстанавливаются payload
-  `shape_field{field, value}`: значение — сама модель в JSON, потому что
-  `shape.fill`, `shape.line` и `format.*` покрывают только её часть. Сервер
+  целый `TextBody` для `format.*` (тело фигуры или одной ячейки таблицы).
+  Первые три восстанавливаются обычными командами (final values). Fill, outline
+  и тело фигуры восстанавливаются payload `shape_field{field, value}`: значение —
+  сама модель в JSON, потому что `shape.fill`, `shape.line` и `format.*`
+  покрывают только её часть. Тело ячейки восстанавливается `cell_text{cell, body}`
+  (`shape.setField{field: cellText, cell}`), чтобы undo не переписывал соседние
+  ячейки: образ шага адресован `(слайд, фигура, row, col)`. Сервер
   строит `shape_field` из своей истории; адаптер принимает его лишь как
   undo/redo своего шага и только с тем значением, которое шаг записал (иначе —
   `invalid`). `shape.setField` в движке ставит значение обратно, ограничив
@@ -607,11 +610,12 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
    `remove`, §6), `transition.set` (полный образ перехода: эффект, опция,
    длительность, тайминги, звук и сохранённый XML, `slide_transition`, §3.2.1)
    шаги анимации (`animation.add`/`animation.remove`: полный список шагов
-   фигуры, `shape_animations`, §3.2.1) и текст заметок слайда (`notes_set`,
+   фигуры, `shape_animations`, §3.2.1), текст заметок слайда (`notes_set`,
    `notes_insert`, `notes_delete`: адрес — слайд, образ шага — всё тело
-   заметок, §3.2.1).
-   Открыто: run-level формат, остальные команды анимации, форматирование
-   ячейки таблицы.
+   заметок, §3.2.1) и `format.*` по одной ячейке таблицы (`format_set` с
+   `cell`, образ шага — тело этой ячейки, `cell_text`, §3.2.1, §6).
+   Открыто: run-level формат, остальные команды анимации, остальная
+   поверхность таблицы (стиль, заливка, merge/split, размеры).
 5. **Presence во время показа:** показывать ли курсоры других в presenter view
    (сейчас — нет).
 6. **Commit при выходе последнего участника**, если он viewer: коммитить

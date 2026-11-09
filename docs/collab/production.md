@@ -142,7 +142,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
 | `shape.fill` | command | a final fill: solid colour, `none` or `background`; gradients, pictures, patterns and relative transparency are refused |
 | `shape.line` | command | final outline values (`color`, `width`, `dash`, `cap`, `join`, `compound`, heads) or `none` |
-| `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's text; toggles need an explicit `on`, `args` cannot carry an address |
+| `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's whole text body, or on the whole body of one table cell (`cell: [row, col]`); a table without a cell address, a range of cells and a caret range inside a shape are refused instead of being widened; toggles need an explicit `on`, `args` cannot carry an address |
 | `edit.delete` (shapes) | structural | explicit shape keys |
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
 | `slide.duplicate` | structural | the source slide key; the copy is inserted after it |
@@ -159,9 +159,9 @@ commands whose result is a deterministic function of the authoritative state, ex
 values, go on the wire. What is still refused: fonts as a document asset, the rest of the
 animation surface (`animation.set` styles, `animation.timing`, `animation.options`,
 `animation.move`, `animation.clear`, the painter), the rest of the table surface (style, fill,
-merge/split, sizing), formatting a table cell, SmartArt/charts, run-range formatting and
-relative effects. The full command surface is the next slice; it needs a final-value normalisation
-for each command, not a raw `execute` on the wire.
+merge/split, sizing), SmartArt/charts, run-range formatting and relative effects. The full
+command surface is the next slice; it needs a final-value normalisation for each command, not a
+raw `execute` on the wire.
 
 ## Browser mode
 
@@ -278,7 +278,7 @@ cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 156 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation steps), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition/animation slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
+| `cargo test -p deckcraft-collab` | 175 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape and on one table cell, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation steps), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition/animation/cell-format slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
@@ -303,14 +303,19 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
 2. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
    models are not. The browser link fetches and uploads them with `fetch` plus the session token;
    the sync server has no CORS headers, so a page on another origin cannot use the channel yet.
-3. **P1 — Notes are in; rich runs and table formatting are not**. Shape text, table-cell text
-   and slide notes are addressed and rebased now: a notes edit addresses `(slide key, notes
-   body)` (`notes.set`/`notes.insert`/`notes.delete`), its undo image is the whole text body of
-   the slide, an unaddressable slide is refused before any write, and a remote notes edit keeps
-   the receiving user's selection (a caret in the same notes body moves with the characters
-   inserted or removed before it). What is left in this line: formatting a table cell needs a
-   cell address in `FormatSet` plus a cell-aware exact body restore, and formatting runs needs a
-   run-level payload.
+3. **P1 — Notes and cell formatting are in; rich runs are not**. Shape text, table-cell text,
+   slide notes and a table cell's formatting are addressed and rebased now: a notes edit
+   addresses `(slide key, notes body)` (`notes.set`/`notes.insert`/`notes.delete`), its undo image
+   is the whole text body of the slide, an unaddressable slide is refused before any write, and a
+   remote notes edit keeps the receiving user's selection (a caret in the same notes body moves
+   with the characters inserted or removed before it). A `format.*` command now addresses one
+   table cell (`FormatSet { cell: [row, col] }`), applies to that cell's own body — not to the
+   table's empty shape text — and is refused before any write for a cell the table does not have;
+   its undo restores the whole body of exactly that cell (`cell_text`, one `shape.setField` with
+   `field: cellText`), so a neighbouring cell keeps whatever anyone else wrote there, and an undo
+   after someone else changed the addressed cell is refused `undo_conflict`. What is left in this
+   line: formatting *runs* (a range inside a shape or a cell) needs a run-level payload; today a
+   range is refused rather than widened to the whole body.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
