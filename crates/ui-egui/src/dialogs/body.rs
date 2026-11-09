@@ -341,7 +341,7 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 app.save();
                 // In the browser a save is a download: the presentation stays "unsaved". A page
                 // that keeps the files saves it for real, so a failed save keeps it open.
-                let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
+                let web = app.services.pick_save.is_none() && app.services.download.is_some();
                 if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
                     run(app, "file.close", json!({}));
                 }
