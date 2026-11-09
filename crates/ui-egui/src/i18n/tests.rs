@@ -292,7 +292,39 @@ fn right_to_left_languages_mirror_directional_symbols() {
     assert_eq!(mirror_glyph("→"), "←");
     assert_eq!(mirror_glyph("▶"), "◀");
     assert_eq!(mirror_glyph("◀"), "▶");
-    assert_eq!(mirror_glyph("‹"), "›");
-    assert_eq!(mirror_glyph("›"), "‹");
     assert_eq!(mirror_glyph("Close"), "Close");
+    // The left ribbon cue lowers the offset and the right cue raises it. The chevrons keep
+    // pointing that way when the language is Hebrew.
+    assert_eq!(mirror_glyph("‹"), "‹");
+    assert_eq!(mirror_glyph("›"), "›");
+    assert_eq!(crate::ribbon::scroll_cue_glyph(true), "‹");
+    assert_eq!(crate::ribbon::scroll_cue_glyph(false), "›");
+}
+
+/// A selected shape's Width label uses the catalog key `Width:`. `Width: ` (the old key, with the
+/// space inside it) has no row, so it would stay English. The stand-in is ASCII, and this fixture
+/// translates nothing else, so the test does not need a Hebrew face.
+#[test]
+fn a_selected_shapes_width_label_uses_the_catalog_key() {
+    let _reset = ResetLang::arm();
+    let he = use_fixture("he", "\tWidth:\tWIDTH\n");
+    assert_eq!(tr(he, "Width:"), "WIDTH");
+    assert_eq!(tr(he, "Width: "), "Width: ", "a trailing space is a different catalog key");
+    let mut session = Session::with_new();
+    session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = session.execute("shape.insert", &json!({"preset": "rect", "rect": [100.0, 100.0, 80.0, 60.0]})).unwrap()["id"].as_u64().unwrap();
+    session.execute("selection.select", &json!({"ids": [id]})).unwrap();
+    let mut app = SlideApp::new(session, Services::default());
+    app.run("app.language", json!({"language": "he"})).unwrap();
+    app.ui.tab = "Shape Format".into();
+    let mut h = Harness::builder().with_size(egui::vec2(2200.0, 900.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(4);
+    h.get_by_label("WIDTH ");
+    assert!(h.query_by_label("Width: ").is_none());
 }

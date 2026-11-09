@@ -205,8 +205,9 @@ pub(crate) fn is_rtl() -> bool {
     lang.i18n().rtl(lang.lang)
 }
 
-/// `ltr` as drawn for the current language. A right-to-left language mirrors the arrow; the
-/// control stays where it is.
+/// `ltr` as drawn for the current language. A right-to-left language mirrors a forward or
+/// play arrow; the control stays where it is. Ribbon scroll chevrons are not here: they point
+/// along the physical offset ([`crate::ribbon::scroll_cue_glyph`]).
 pub(crate) fn mirror_glyph(ltr: &'static str) -> &'static str {
     if !is_rtl() {
         return ltr;
@@ -215,8 +216,6 @@ pub(crate) fn mirror_glyph(ltr: &'static str) -> &'static str {
         "→" => "←",
         "▶" => "◀",
         "◀" => "▶",
-        "‹" => "›",
-        "›" => "‹",
         other => other,
     }
 }

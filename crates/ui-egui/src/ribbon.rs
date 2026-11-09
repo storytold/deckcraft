@@ -259,13 +259,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut next = None;
         if offset > 1.0 {
             let left = Rect::from_min_max(pos2((r.left() - edge).max(inner.left()), r.top()), pos2(r.left(), r.bottom()));
-            if edge_cue(&mut cui, left, crate::i18n::mirror_glyph("‹"), tl!("Scroll ribbon left"), &t) {
+            // The cue points the way the offset moves. That stays physical in a right-to-left language.
+            if edge_cue(&mut cui, left, scroll_cue_glyph(true), tl!("Scroll ribbon left"), &t) {
                 next = Some(offset - step);
             }
         }
         if overflow - offset > 1.0 {
             let right = Rect::from_min_max(pos2(r.right(), r.top()), pos2((r.right() + edge).min(inner.right()), r.bottom()));
-            if edge_cue(&mut cui, right, crate::i18n::mirror_glyph("›"), tl!("Scroll ribbon right"), &t) {
+            if edge_cue(&mut cui, right, scroll_cue_glyph(false), tl!("Scroll ribbon right"), &t) {
                 next = Some(offset + step);
             }
         }
@@ -285,6 +286,12 @@ fn spare_room_id(tab: &str) -> egui::Id {
 /// from this.
 pub(super) fn spare_room(ctx: &egui::Context, tab: &str) -> Option<f32> {
     ctx.data(|d| d.get_temp::<f32>(spare_room_id(tab)))
+}
+
+/// Chevron for a ribbon edge. `left` lowers the scroll offset; the other edge raises it.
+/// The mark points that way in every language, so a right-to-left interface does not flip it.
+pub(crate) fn scroll_cue_glyph(left: bool) -> &'static str {
+    if left { "‹" } else { "›" }
 }
 
 /// A chevron over a ribbon edge that scrolls it; `true` on the frame it is clicked.

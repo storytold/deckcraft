@@ -147,7 +147,8 @@ pub(super) fn size_group(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
             ui.horizontal(|ui| {
-                ui.label(tl!("Width: "));
+                // The catalog key is `Width:`. The space stays outside it, as on the empty selection.
+                ui.label(format!("{} ", tl!("Width:")));
                 if let Some(v) = widgets::spinner(ui, "sw", "Width", x.w / ppu, 0.1, suffix, width) {
                     run(app, "shape.resize", json!({"w": v.max(0.0) * ppu}));
                 }
