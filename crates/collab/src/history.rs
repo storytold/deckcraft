@@ -46,6 +46,10 @@ pub enum Image {
     /// A file's animations carry preset ids, timings, colours and motion paths that the
     /// `animation.add` arguments cannot repeat, so the step image is the model list itself.
     Animation(Vec<Animation>),
+    /// One slide's speaker notes as a whole body. Notes belong to a slide, not to a shape, and a
+    /// notes edit replaces text the typed string cannot describe (runs, levels, bullets), so the
+    /// image is the body itself.
+    Notes(TextBody),
 }
 
 /// One shape a step touched.
@@ -139,6 +143,15 @@ pub enum Change {
     GroupSubtree(GroupImage),
     Slide(SlideImage),
     SlideTransition(TransitionImage),
+    Notes(NotesImage),
+}
+
+/// One slide's speaker notes, present as a whole body, for a `notes.*` step. The address is the
+/// slide (`target.slide`), not a shape: notes are part of the slide model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NotesImage {
+    pub slide: SlideKey,
+    pub notes: TextBody,
 }
 
 impl Change {
@@ -169,6 +182,7 @@ impl Change {
                 _ => false,
             },
             (Change::SlideTransition(a), Change::SlideTransition(b)) => a.slide == b.slide && a.transition == b.transition,
+            (Change::Notes(a), Change::Notes(b)) => a.slide == b.slide && a.notes == b.notes,
             _ => false,
         }
     }
@@ -197,6 +211,8 @@ impl Image {
             Image::Format(body) => Payload::ShapeField { field: ShapeField::Text, value: serde_json::to_value(body).ok()? },
             Image::Table(table) => Payload::ShapeField { field: ShapeField::Table, value: serde_json::to_value(table).ok()? },
             Image::Animation(steps) => Payload::ShapeAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
+            // Notes are a slide's own body: the payload names the slide and carries the whole body.
+            Image::Notes(body) => Payload::NotesSet { notes: serde_json::to_value(body).ok()? },
         })
     }
 }
@@ -231,6 +247,12 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
             };
             Some(Restore { slide: at.slide.clone(), shape: None, shapes: Vec::new(), payload: Payload::SlideTransition { transition } })
         }
+        [Change::Notes(at)] => Some(Restore {
+            slide: at.slide.clone(),
+            shape: None,
+            shapes: Vec::new(),
+            payload: Payload::NotesSet { notes: serde_json::to_value(&at.notes).ok()? },
+        }),
         [] => None,
         many if many.iter().all(|change| matches!(change, Change::ShapeBody(_))) => {
             let bodies: Vec<&ShapeImage> = many

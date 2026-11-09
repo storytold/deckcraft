@@ -416,7 +416,15 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             }
             if let Some(ts) = st.selection.text.as_ref() {
                 if ts.notes {
-                    return Err(LocalError::Unsupported("editing notes".into()));
+                    let body = Some(&slide.notes);
+                    let (from, to) = (position_offset(body, ts.ordered().0), position_offset(body, ts.ordered().1));
+                    if to <= from {
+                        return Err(LocalError::BadParams("nothing selected".into()));
+                    }
+                    return Ok(vec![make(
+                        Target { slide: slide_key, ..Target::default() },
+                        Payload::NotesDelete { from: from as u32, to: to as u32 },
+                    )]);
                 }
                 let (body, cell) = selected_body(&slide.shapes, ts)?;
                 let (from, to) = (position_offset(body, ts.ordered().0), position_offset(body, ts.ordered().1));
@@ -437,10 +445,15 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
         }
         "text.insert" => {
             let ts = st.selection.text.as_ref().ok_or_else(|| LocalError::BadParams("text.insert needs a caret".into()))?;
-            if ts.notes {
-                return Err(LocalError::Unsupported("typing in notes".into()));
-            }
             let text = p.get("text").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("text.insert needs `text`".into()))?;
+            if ts.notes {
+                // Typing in the notes pane is one address, the current slide's notes body.
+                let at = position_offset(Some(&slide.notes), ts.caret);
+                return Ok(vec![make(
+                    Target { slide: slide_key, ..Target::default() },
+                    Payload::NotesInsert { at: at as u32, text: text.to_string() },
+                )]);
+            }
             let (body, cell) = selected_body(&slide.shapes, ts)?;
             let at = position_offset(body, ts.caret);
             Ok(vec![make(
@@ -450,11 +463,17 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
         }
         "text.delete" => {
             let ts = st.selection.text.as_ref().ok_or_else(|| LocalError::BadParams("text.delete needs a text selection".into()))?;
+            let (from, to) = (ts.ordered().0, ts.ordered().1);
             if ts.notes {
-                return Err(LocalError::Unsupported("editing notes".into()));
+                let body = Some(&slide.notes);
+                let (from, to) = (position_offset(body, from), position_offset(body, to));
+                if to <= from {
+                    return Err(LocalError::BadParams("nothing selected".into()));
+                }
+                return Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::NotesDelete { from: from as u32, to: to as u32 })]);
             }
             let (body, cell) = selected_body(&slide.shapes, ts)?;
-            let (from, to) = (position_offset(body, ts.ordered().0), position_offset(body, ts.ordered().1));
+            let (from, to) = (position_offset(body, from), position_offset(body, to));
             if to <= from {
                 return Err(LocalError::BadParams("nothing selected".into()));
             }
@@ -462,6 +481,11 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
                 Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
                 Payload::TextDelete { from: from as u32, to: to as u32, cell },
             )])
+        }
+        "slide.notes" => {
+            // The notes pane edits a whole slide body: the operation carries the complete body.
+            let (key, value) = notes_body(keys, st, p)?;
+            Ok(vec![make(Target { slide: Some(key), ..Target::default() }, Payload::NotesSet { notes: value })])
         }
         "shape.insert" => {
             let preset = p.get("preset").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("shape.insert needs `preset`".into()))?;
@@ -941,6 +965,31 @@ fn shape_key(keys: &crate::KeyMap, slide: SlideId, id: ShapeId) -> Result<ShapeK
     keys.shape_key(slide, id).cloned().ok_or(LocalError::NoDocument)
 }
 
+/// The slide and whole body a `slide.notes` edit leaves behind. `body` is the formatted body the
+/// notes editor holds; `text` is applied to the current body with the same `replace_text` the
+/// single-user command runs, so the value that travels is always the complete body.
+fn notes_body(keys: &crate::KeyMap, st: &DocState, p: &Value) -> Result<(SlideKey, Value), LocalError> {
+    let index = match p.get("index") {
+        Some(value) => usize::try_from(value.as_u64().ok_or_else(|| LocalError::BadParams("slide.notes: `index` must be a slide number".into()))?)
+            .map_err(|_| LocalError::BadParams("slide.notes: `index` must be a slide number".into()))?,
+        None => st.selection.slide,
+    };
+    let target = st.doc.slides.get(index).ok_or_else(|| LocalError::BadParams("slide.notes: no such slide".into()))?;
+    let key = keys.slide_key(target.id).cloned().ok_or(LocalError::NoDocument)?;
+    let notes = match p.get("body") {
+        Some(body) => serde_json::from_value::<deckcraft_model::text::TextBody>(body.clone())
+            .map_err(|e| LocalError::BadParams(format!("slide.notes: invalid `body`: {e}")))?,
+        None => {
+            let text = p.get("text").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("slide.notes needs `text` or `body`".into()))?;
+            let mut body = target.notes.clone();
+            deckcraft_model::edit::replace_text(&mut body, text);
+            body
+        }
+    };
+    let value = serde_json::to_value(&notes).map_err(|_| LocalError::BadParams("slide.notes: the body cannot be sent".into()))?;
+    Ok((key, value))
+}
+
 /// The text body a local text command edits, and the table cell it lives in. A table cell has
 /// its own body; a table without a cell address is refused, and the offset is inside that body.
 fn selected_body<'a>(
@@ -1274,11 +1323,56 @@ mod tests {
     }
 
     #[test]
+    fn notes_commands_normalise_to_one_slide_body_step() {
+        let (mut s, doc_id, slide, _) = deck();
+        s.apply_remote("slide.notes", &json!({"index": 0, "text": "old"})).expect("seed");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let body = st.doc.slides[0].notes.clone();
+        let whole = serde_json::to_value(&body).expect("body json");
+
+        // The notes pane sends the formatted body: the operation carries the whole body.
+        let ops = normalize(&km, st, "slide.notes", &json!({"body": whole.clone(), "index": 0}), "op", &doc_id).expect("body");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert!(ops[0].target.shape.is_none(), "notes belong to the slide, not to a shape");
+        assert_eq!(ops[0].payload, Payload::NotesSet { notes: whole.clone() });
+
+        // Typed text becomes the same whole body the single-user command would leave behind.
+        let ops = normalize(&km, st, "slide.notes", &json!({"text": "new"}), "op", &doc_id).expect("text");
+        let Payload::NotesSet { notes } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        let sent = serde_json::from_value::<deckcraft_model::text::TextBody>(notes.clone()).expect("a text body");
+        assert_eq!(sent.text(), "new");
+
+        // A slide that does not exist is refused before anything is sent.
+        assert!(matches!(normalize(&km, st, "slide.notes", &json!({"text": "x", "index": 9}), "op", &doc_id), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "slide.notes", &json!({}), "op", &doc_id), Err(LocalError::BadParams(_))));
+
+        // A caret in the notes turns typing and deleting into the slide body's own offsets.
+        let mut caret = TextSel { shape: ShapeId(0), anchor: (0, 3), caret: (0, 3), cell: None, notes: true, line_end: None };
+        s.doc_mut().expect("doc").selection.text = Some(caret.clone());
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "text.insert", &json!({"text": "!"}), "op", &doc_id).expect("insert");
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert!(ops[0].target.shape.is_none());
+        assert_eq!(ops[0].payload, Payload::NotesInsert { at: 3, text: "!".into() });
+
+        caret.anchor = (0, 0);
+        s.doc_mut().expect("doc").selection.text = Some(caret);
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "text.delete", &json!({}), "op", &doc_id).expect("delete");
+        assert_eq!(ops[0].payload, Payload::NotesDelete { from: 0, to: 3 });
+        let ops = normalize(&km, st, "edit.delete", &json!({}), "op", &doc_id).expect("edit.delete");
+        assert_eq!(ops[0].payload, Payload::NotesDelete { from: 0, to: 3 });
+    }
+
+    #[test]
     fn commands_outside_the_v1_set_are_refused_by_name() {
         let (s, doc, _, _) = deck();
         let km = keys(s.doc().expect("doc").doc.as_ref());
-        let e = normalize(&km, s.doc().expect("doc"), "slide.notes", &json!({"text": "x"}), "op", &doc).expect_err("refused");
-        assert_eq!(e, LocalError::Unsupported("slide.notes".into()));
+        let e = normalize(&km, s.doc().expect("doc"), "file.saveAs", &json!({}), "op", &doc).expect_err("refused");
+        assert_eq!(e, LocalError::Unsupported("file.saveAs".into()));
     }
 
     #[test]

@@ -205,6 +205,20 @@ pub enum Payload {
     /// command is also the exact-image restore of an animation step (ADR 0010), because a file
     /// can carry preset ids, timings and colours the `animation.add` arguments cannot repeat.
     ShapeAnimations { animations: Vec<serde_json::Value> },
+    /// Replaces one slide's speaker notes with a complete final value: the whole model text body
+    /// (`crates/model/src/text.rs`) as JSON, so runs, paragraph levels and bullets travel with the
+    /// text. `target.slide` is the address — notes belong to a slide, not to a shape, so no shape
+    /// key is named. This is the normalised form of `slide.notes` (with `body`, or with `text`
+    /// turned into a body by the normaliser) and the exact-image restore of a notes step
+    /// (ADR 0010), because the value a text edit replaced cannot be rebuilt from the typed string.
+    NotesSet { notes: serde_json::Value },
+    /// Inserts `text` at character offset `at` of `target.slide`'s notes (the offsets are whole
+    /// body, paragraph breaks counted as one `\n`). The server rebases the offset against notes
+    /// operations that arrived after `baseVersion`, so two people typing in one slide's notes
+    /// both keep their text (RFC §4.4).
+    NotesInsert { at: u32, text: String },
+    /// Removes the characters in `[from, to)` of `target.slide`'s notes.
+    NotesDelete { from: u32, to: u32 },
     /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
     /// of `target.shape`. Run-level ranges are a later slice (RFC §15).
     FormatSet { format: FormatCmd, args: serde_json::Value },
@@ -598,6 +612,9 @@ impl Payload {
             Payload::ShapeLine { .. } => "shape.line",
             Payload::SlideTransition { .. } => "slide.transition.set",
             Payload::ShapeAnimations { .. } => "slide.animation.set",
+            Payload::NotesSet { .. } => "notes.set",
+            Payload::NotesInsert { .. } => "notes.insert",
+            Payload::NotesDelete { .. } => "notes.delete",
             Payload::FormatSet { format, .. } => format.id(),
             Payload::TableEdit { .. } => "table.edit",
             Payload::ShapeField { .. } => "shape.setField",
@@ -1227,6 +1244,27 @@ mod tests {
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
         let empty = Payload::ShapeAnimations { animations: Vec::new() };
         assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&empty).expect("encode")).expect("decode"), empty);
+    }
+
+    #[test]
+    fn notes_operations_address_a_slide_and_carry_a_whole_body() {
+        let body = serde_json::json!({"paragraphs": [{"runs": [{"text": "hello", "props": {"bold": true}}]}]});
+        let set = Payload::NotesSet { notes: body.clone() };
+        let text = serde_json::to_string(&set).expect("encode");
+        assert!(text.contains("\"cmd\":\"notes_set\""), "{text}");
+        assert!(text.contains("\"hello\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), set);
+        assert_eq!(set.command(), "notes.set");
+
+        let insert = Payload::NotesInsert { at: 4, text: "X".into() };
+        assert!(serde_json::to_string(&insert).expect("encode").contains("\"cmd\":\"notes_insert\""));
+        assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&insert).expect("encode")).expect("decode"), insert);
+        assert_eq!(insert.command(), "notes.insert");
+
+        let delete = Payload::NotesDelete { from: 1, to: 3 };
+        assert!(serde_json::to_string(&delete).expect("encode").contains("\"cmd\":\"notes_delete\""));
+        assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&delete).expect("encode")).expect("decode"), delete);
+        assert_eq!(delete.command(), "notes.delete");
     }
 
     #[test]

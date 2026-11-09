@@ -18,13 +18,13 @@ use base64::Engine as _;
 use deckcraft_collab_proto::{
     ChangeKind, Delta, HistoryAction, MediaKind, OpEnvelope, OpKind, Payload, RejectCode, ShapeField, ShapeKey, SlideKey, TableAxis, Target,
 };
-use deckcraft_engine::{Session, Target as EngineTarget, TextSel};
+use deckcraft_engine::{Selection, Session, Target as EngineTarget, TextSel};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
 use serde_json::{Value, json};
 
 use crate::delta::delta;
-use crate::history::{Change, GroupImage, Histories, Image, Restore, ShapeImage, SlideImage, Snapshot, Step, TransitionImage};
+use crate::history::{Change, GroupImage, Histories, Image, NotesImage, Restore, ShapeImage, SlideImage, Snapshot, Step, TransitionImage};
 use crate::keys::{KeyIssuer, KeyMap};
 use crate::media::MediaCache;
 
@@ -309,6 +309,14 @@ impl Adapter {
     /// the slide's whole transition. A shape insert (preset, picture, media) and `edit.delete`
     /// record the whole shape with its place in the z-order and its animations (RFC §6).
     fn capture_step(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
+        // A notes step is a slide body, not a shape value: the whole body before and after is the
+        // image, so an undo puts back the runs the typed string cannot describe.
+        if matches!(op.payload, Payload::NotesSet { .. } | Payload::NotesInsert { .. } | Payload::NotesDelete { .. }) {
+            let key = op.target.slide.clone()?;
+            let was = self.capture_notes(before, &key)?;
+            let now = self.capture_notes(after, &key)?;
+            return Some((vec![Change::Notes(was)], vec![Change::Notes(now)]));
+        }
         let (cell, image) = match &op.payload {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
             Payload::ShapesSetBounds { items } => return self.capture_bounds_step(before, after, op, items),
@@ -586,7 +594,15 @@ impl Adapter {
                 let slide = doc.slide(id)?;
                 Some(Change::SlideTransition(TransitionImage { slide: snapshot.slide.clone(), transition: slide.transition.clone() }))
             }
+            Change::Notes(snapshot) => self.capture_notes(doc, &snapshot.slide).map(Change::Notes),
         }
+    }
+
+    /// The slide's speaker notes as a whole-body image, addressed by slide key.
+    fn capture_notes(&self, doc: &Presentation, slide: &SlideKey) -> Option<NotesImage> {
+        let id = self.keys.slide_id(slide)?;
+        let found = doc.slide(id)?;
+        Some(NotesImage { slide: slide.clone(), notes: found.notes.clone() })
     }
 
     /// The current state of a recorded group image: the group present with its children, or the
@@ -690,6 +706,8 @@ impl Adapter {
                 let slide = doc.slide(slide_id)?;
                 Image::Animation(slide.animations.iter().filter(|a| a.shape == shape_id).cloned().collect())
             }
+            // Notes are a slide body, never a shape value: they have their own `Change::Notes`.
+            Image::Notes(_) => return None,
         };
         Some(Snapshot { slide: at.slide.clone(), shape: at.shape.clone(), cell: at.cell, image })
     }
@@ -869,6 +887,46 @@ impl Adapter {
                     steps.push(json);
                 }
                 self.call(session, "slide.animation.set", json!({"index": index, "shape": shape.0, "animations": steps}), head)
+            }
+            Payload::NotesSet { notes } => {
+                // Notes belong to a slide: `target.slide` is the whole address, and a shape key in
+                // the target would mean the sender misspelt the object it edits.
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                if op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("notes are a slide's own body, not a shape's", Some(head)));
+                }
+                let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+                // The value is a whole model text body: a value this build cannot read refuses the
+                // operation before the first write, exactly like `shape.setField`.
+                serde_json::from_value::<TextBody>(notes.clone())
+                    .map_err(|_| Rejection::invalid("the notes value is not a text body", Some(head)))?;
+                self.call_notes(session, before, slide, None, NotesShift::Replace, "slide.notes", json!({"index": index, "body": notes}), head)
+            }
+            Payload::NotesInsert { at, text } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                if op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("notes are a slide's own body, not a shape's", Some(head)));
+                }
+                let notes = before.slide(slide).map(|s| &s.notes);
+                let pos = offset_position(notes, *at as usize);
+                let sel = TextSel { shape: ShapeId(0), anchor: pos, caret: pos, cell: None, notes: true, line_end: None };
+                let shift = NotesShift::Insert { at: *at, len: text.chars().count() as u32 };
+                self.call_notes(session, before, slide, Some(sel), shift, "text.insert", json!({"text": text}), head)
+            }
+            Payload::NotesDelete { from, to } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                if op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("notes are a slide's own body, not a shape's", Some(head)));
+                }
+                if to <= from {
+                    return Err(Rejection::invalid("the deleted notes range is empty", Some(head)));
+                }
+                let notes = before.slide(slide).map(|s| &s.notes);
+                let start = offset_position(notes, *from as usize);
+                let end = offset_position(notes, *to as usize);
+                let sel = TextSel { shape: ShapeId(0), anchor: start, caret: end, cell: None, notes: true, line_end: None };
+                let shift = NotesShift::Delete { from: *from, to: *to };
+                self.call_notes(session, before, slide, Some(sel), shift, "text.delete", json!({}), head)
             }
             Payload::FormatSet { format, args } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
@@ -1089,6 +1147,44 @@ impl Adapter {
         Ok(())
     }
 
+    /// Run one notes command without moving the receiving user's caret. `text.insert` and
+    /// `text.delete` act on the engine selection, so a notes edit borrows it for the call and puts
+    /// it back afterwards, shifted by the characters the edit added or removed before it on the
+    /// same slide (RFC §4.4). The command itself is the single-user one, so both paths produce the
+    /// same document.
+    #[allow(clippy::too_many_arguments)]
+    fn call_notes(
+        &self,
+        session: &mut Session,
+        before: &Presentation,
+        slide: SlideId,
+        sel: Option<TextSel>,
+        shift: NotesShift,
+        cmd: &str,
+        args: Value,
+        head: u64,
+    ) -> Result<(), Rejection> {
+        let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+        let saved = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.selection.clone();
+        let notes_before = before.slide(slide).map(|s| s.notes.clone()).unwrap_or_default();
+        if let Some(sel) = sel {
+            let st = session.doc_mut().map_err(|_| Rejection::invalid("no document open", Some(head)))?;
+            st.selection.target = EngineTarget::Slides;
+            st.selection.slide = index;
+            st.selection.slides.clear();
+            st.selection.shapes.clear();
+            st.selection.cells = None;
+            st.selection.text = Some(sel);
+        }
+        let out = self.call(session, cmd, args, head);
+        // Put the receiving user's selection back: a remote notes edit must not move their caret.
+        if let Ok(st) = session.doc_mut() {
+            let notes_after = st.doc.slides.get(index).map(|s| s.notes.clone()).unwrap_or_default();
+            st.selection = restore_notes_selection(saved, index, &notes_before, &notes_after, &shift);
+        }
+        out
+    }
+
     fn select_slide(&self, session: &mut Session, before: &Presentation, slide: SlideId, head: u64) -> Result<(), Rejection> {
         let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
         let st = session.doc_mut().map_err(|_| Rejection::invalid("no document open", Some(head)))?;
@@ -1301,6 +1397,64 @@ pub fn offset_position(body: Option<&TextBody>, offset: usize) -> (usize, usize)
     (body.paragraphs.len().saturating_sub(1), body.paragraphs.last().map_or(0, |p| p.char_len()))
 }
 
+/// How one notes edit moves the text before a caret inside the same notes body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotesShift {
+    Insert {
+        at: u32,
+        len: u32,
+    },
+    Delete {
+        from: u32,
+        to: u32,
+    },
+    /// A whole-body replacement: the caret keeps its offset, clamped to the new body.
+    Replace,
+}
+
+/// Put the receiving user's selection back after a remote notes edit. A caret that was inside the
+/// same notes body shifts by the characters the edit added or removed before it; a caret in a
+/// shape's text, on another slide, or outside the notes stays exactly where it was.
+fn restore_notes_selection(mut saved: Selection, index: usize, before_body: &TextBody, after_body: &TextBody, shift: &NotesShift) -> Selection {
+    if saved.slide == index
+        && let Some(sel) = saved.text.as_mut()
+        && sel.notes
+    {
+        let moved = |pos: (usize, usize)| {
+            let offset = position_offset(Some(before_body), pos) as u32;
+            offset_position(Some(after_body), shift_notes_offset(offset, shift) as usize)
+        };
+        sel.anchor = moved(sel.anchor);
+        sel.caret = moved(sel.caret);
+        sel.line_end = None;
+    }
+    saved
+}
+
+/// A whole-body notes offset after an edit: an insertion at or before it pushes it right, a
+/// deletion before it pulls it left, and a range that swallows it clamps to the range's start.
+fn shift_notes_offset(point: u32, shift: &NotesShift) -> u32 {
+    match *shift {
+        NotesShift::Insert { at, len } => {
+            if at <= point {
+                point.saturating_add(len)
+            } else {
+                point
+            }
+        }
+        NotesShift::Delete { from, to } => {
+            if to <= point {
+                point.saturating_sub(to.saturating_sub(from))
+            } else if from < point {
+                from
+            } else {
+                point
+            }
+        }
+        NotesShift::Replace => point,
+    }
+}
+
 pub fn class_of(payload: &Payload) -> OpKind {
     match payload {
         Payload::ShapeMove { .. }
@@ -1314,6 +1468,9 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::FormatSet { .. }
         | Payload::SlideTransition { .. }
         | Payload::ShapeAnimations { .. }
+        | Payload::NotesSet { .. }
+        | Payload::NotesInsert { .. }
+        | Payload::NotesDelete { .. }
         | Payload::ShapeField { .. }
         | Payload::ShapeFields { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
@@ -3011,5 +3168,263 @@ mod tests {
         let err = ad.apply(&mut s, 1, "a", &undo).expect_err("a restore must repeat its recorded value");
         assert_eq!(err.code, RejectCode::Invalid);
         assert_eq!(animation_effects(&doc_of(&s)), ["fade"], "nothing was written");
+    }
+
+    /// Seed speaker notes through the single-user command, so both replicas start equal.
+    fn seed_notes(s: &mut Session, text: &str) {
+        s.apply_remote("slide.notes", &json!({"index": 0, "text": text})).expect("notes");
+    }
+
+    fn notes_text(doc: &Presentation, index: usize) -> String {
+        doc.slides[index].notes.text()
+    }
+
+    fn notes_key(adapter: &Adapter, doc: &Presentation) -> SlideKey {
+        adapter.keys().slide_key(doc.slides[0].id).expect("slide key").clone()
+    }
+
+    #[test]
+    fn a_notes_edit_converges_on_both_replicas_after_a_slide_is_inserted() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let slide = notes_key(&aa, &doc_of(&a));
+
+        // A slide is inserted first: structural keys stay put, so the notes address still names
+        // the same slide on both replicas.
+        let new_slide = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide.clone()), ..Target::default() },
+            Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+        );
+        aa.apply(&mut a, 0, "bob", &new_slide).expect("insert a");
+        bb.apply(&mut b, 0, "bob", &new_slide).expect("insert b");
+        assert_eq!(doc_of(&a).slides.len(), 2);
+
+        // Typing in the first slide's notes, based on the version before the insert arrived.
+        let typing =
+            op(OpKind::Command, 0, Target { slide: Some(slide), ..Target::default() }, Payload::NotesInsert { at: 0, text: "Agenda".into() });
+        let da = aa.apply(&mut a, 1, "alice", &typing).expect("typing a");
+        bb.apply(&mut b, 1, "alice", &typing).expect("typing b");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        assert_eq!(notes_text(&doc_of(&a), 0), "Agenda");
+        assert_eq!(notes_text(&doc_of(&a), 1), "", "the slide inserted later was not the one edited");
+        assert!(!da.is_empty(), "the slide's own change is reported");
+    }
+
+    #[test]
+    fn undo_of_a_notes_step_restores_the_previous_text_and_its_formatting() {
+        let (mut a, mut b) = (deck(), deck());
+        for s in [&mut a, &mut b] {
+            seed_notes(s, "old");
+            // A bold heading over the notes: the image must carry the runs, not only the text.
+            s.apply_remote("text.edit", &json!({"notes": true})).expect("edit notes");
+            s.apply_remote("text.selectAll", &json!({})).expect("select");
+            s.apply_remote("format.bold", &json!({"on": true})).expect("bold");
+        }
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let target = Target { slide: Some(notes_key(&aa, &doc_of(&a))), ..Target::default() };
+
+        let typing = op(OpKind::Command, 0, target, Payload::NotesInsert { at: 3, text: " notes".into() });
+        aa.apply(&mut a, 0, "alice", &typing).expect("type a");
+        bb.apply_confirmed(&mut b, 0, "alice", &typing).expect("type b");
+        assert_eq!(notes_text(&doc_of(&a), 0), "old notes");
+        assert_eq!(doc_of(&a), doc_of(&b));
+
+        let undo = aa.undo(&a, 1, "alice", "undo-1").expect("undo the notes step");
+        let Payload::NotesSet { notes } = &undo.payload else { panic!("the whole body: {:?}", undo.payload) };
+        let image: TextBody = serde_json::from_value(notes.clone()).expect("a text body");
+        assert_eq!(image.text(), "old", "the image is the body the edit replaced");
+        aa.apply(&mut a, 1, "alice", &undo).expect("undo a");
+        bb.apply_confirmed(&mut b, 1, "alice", &undo).expect("undo b");
+        assert_eq!(doc_of(&a), doc_of(&b), "the restore converges");
+        assert_eq!(notes_text(&doc_of(&a), 0), "old");
+        assert_eq!(doc_of(&a).slides[0].notes.paragraphs[0].runs[0].props.bold, Some(true), "the runs came back with the body");
+
+        let redo = aa.redo(&a, 2, "alice", "redo-1").expect("redo");
+        aa.apply(&mut a, 2, "alice", &redo).expect("redo a");
+        bb.apply_confirmed(&mut b, 2, "alice", &redo).expect("redo b");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(notes_text(&doc_of(&a), 0), "old notes");
+    }
+
+    #[test]
+    fn a_notes_undo_is_refused_after_someone_else_edited_the_notes() {
+        let (mut a, mut b) = (deck(), deck());
+        seed_notes(&mut a, "old");
+        seed_notes(&mut b, "old");
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let target = Target { slide: Some(notes_key(&aa, &doc_of(&a))), ..Target::default() };
+
+        let typing = op(OpKind::Command, 0, target.clone(), Payload::NotesInsert { at: 0, text: "A".into() });
+        aa.apply(&mut a, 0, "alice", &typing).expect("alice");
+        bb.apply_confirmed(&mut b, 0, "alice", &typing).expect("b sees alice");
+        let theirs = op(OpKind::Command, 1, target, Payload::NotesInsert { at: 0, text: "B".into() });
+        aa.apply(&mut a, 1, "bob", &theirs).expect("bob");
+        bb.apply(&mut b, 1, "bob", &theirs).expect("bob");
+
+        let err = aa.undo(&a, 2, "alice", "undo-1").expect_err("her body is not the recorded one any more");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert!(!err.retryable);
+        assert_eq!(notes_text(&doc_of(&a), 0), "BAold", "a refused undo changes nothing");
+    }
+
+    #[test]
+    fn a_notes_step_on_a_slide_that_cannot_be_addressed_is_refused_before_any_write() {
+        let mut s = two_slide_deck();
+        seed_notes(&mut s, "keep");
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let first = ad.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let second = doc.slides[1].id;
+
+        // A deleted slide keeps its key as a tombstone: a late notes write is refused, and the
+        // body of the slide that is left is untouched.
+        let second_key = ad.keys().slide_key(second).expect("second").clone();
+        ad.apply(
+            &mut s,
+            0,
+            "a",
+            &op(OpKind::Structural, 0, Target { slide: Some(second_key.clone()), ..Target::default() }, Payload::SlideDelete {}),
+        )
+        .expect("delete the second slide");
+        let err = ad
+            .apply(
+                &mut s,
+                1,
+                "a",
+                &op(OpKind::Command, 1, Target { slide: Some(second_key), ..Target::default() }, Payload::NotesInsert { at: 0, text: "x".into() }),
+            )
+            .expect_err("a deleted slide");
+        assert!(matches!(err.code, RejectCode::Stale | RejectCode::Invalid), "{err:?}");
+
+        for (why, target) in
+            [("an unknown key", Target { slide: Some(SlideKey("nope".into())), ..Target::default() }), ("no slide at all", Target::default())]
+        {
+            let err =
+                ad.apply(&mut s, 1, "a", &op(OpKind::Command, 1, target, Payload::NotesSet { notes: json!({"paragraphs": []}) })).expect_err(why);
+            assert!(matches!(err.code, RejectCode::Stale | RejectCode::Invalid), "{why}: {err:?}");
+        }
+
+        // Notes belong to a slide: a shape key in the target is refused, and so is a body this
+        // build cannot read.
+        let (_, shape) = key_of(&ad, &doc_of(&s), 0);
+        let err = ad
+            .apply(
+                &mut s,
+                1,
+                "a",
+                &op(
+                    OpKind::Command,
+                    1,
+                    Target { slide: Some(first.clone()), shape: Some(shape), ..Target::default() },
+                    Payload::NotesInsert { at: 0, text: "x".into() },
+                ),
+            )
+            .expect_err("a shape is not a notes address");
+        assert_eq!(err.code, RejectCode::Invalid);
+        let err = ad
+            .apply(
+                &mut s,
+                1,
+                "a",
+                &op(OpKind::Command, 1, Target { slide: Some(first), ..Target::default() }, Payload::NotesSet { notes: json!("not a body") }),
+            )
+            .expect_err("an unreadable body");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(notes_text(&doc_of(&s), 0), "keep", "nothing of a refused notes step was written");
+    }
+
+    #[test]
+    fn a_remote_notes_edit_keeps_the_receiving_caret_and_selection() {
+        let (mut a, mut b) = (deck(), deck());
+        for s in [&mut a, &mut b] {
+            seed_notes(s, "old");
+        }
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let target = Target { slide: Some(notes_key(&aa, &doc_of(&a))), ..Target::default() };
+
+        // Bob is typing at the end of the same notes body.
+        b.doc_mut().expect("doc").selection.text =
+            Some(TextSel { shape: ShapeId(0), anchor: (0, 3), caret: (0, 3), cell: None, notes: true, line_end: None });
+        let typing = op(OpKind::Command, 0, target.clone(), Payload::NotesInsert { at: 0, text: "X ".into() });
+        aa.apply(&mut a, 0, "alice", &typing).expect("alice");
+        bb.apply_confirmed(&mut b, 0, "alice", &typing).expect("b applies it");
+        assert_eq!(notes_text(&doc_of(&b), 0), "X old");
+        let caret = b.doc().expect("doc").selection.text.as_ref().expect("caret");
+        assert!(caret.notes, "the caret stays in the notes");
+        assert_eq!((caret.anchor, caret.caret), ((0, 5), (0, 5)), "it moved with the text before it, not to the end");
+
+        // A deletion before the caret pulls it left as well.
+        let deleting = op(OpKind::Command, 1, target, Payload::NotesDelete { from: 0, to: 2 });
+        aa.apply(&mut a, 1, "alice", &deleting).expect("alice deletes");
+        bb.apply_confirmed(&mut b, 1, "alice", &deleting).expect("b applies the delete");
+        assert_eq!(notes_text(&doc_of(&b), 0), "old");
+        let caret = b.doc().expect("doc").selection.text.as_ref().expect("caret");
+        assert_eq!((caret.anchor, caret.caret), ((0, 3), (0, 3)), "the caret follows the deleted prefix");
+
+        // A selection in a shape's text on another slide is left exactly as it was.
+        let shape = doc_of(&a).slides[0].shapes[0].id;
+        bb.apply_confirmed(
+            &mut b,
+            2,
+            "alice",
+            &op(
+                OpKind::Command,
+                2,
+                Target { slide: Some(notes_key(&aa, &doc_of(&a))), ..Target::default() },
+                Payload::NotesInsert { at: 3, text: "!".into() },
+            ),
+        )
+        .expect("another notes edit");
+        b.doc_mut().expect("doc").selection.text = Some(TextSel { shape, anchor: (0, 1), caret: (0, 1), cell: None, notes: false, line_end: None });
+        let more = op(
+            OpKind::Command,
+            3,
+            Target { slide: Some(notes_key(&aa, &doc_of(&a))), ..Target::default() },
+            Payload::NotesInsert { at: 0, text: "?".into() },
+        );
+        bb.apply_confirmed(&mut b, 3, "alice", &more).expect("a third notes edit");
+        let sel = b.doc().expect("doc").selection.clone();
+        let text = sel.text.as_ref().expect("shape selection");
+        assert!(!text.notes, "a shape's text selection is not the notes");
+        assert_eq!((sel.slide, text.anchor, text.caret), (0, (0, 1), (0, 1)));
+        assert_eq!(
+            notes_text(&doc_of(&b), 0),
+            "?Old!",
+            "the single-user autocorrect capitalises the sentence start, and every replica does the same"
+        );
+    }
+
+    #[test]
+    fn a_notes_restore_cannot_name_another_body() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let target = Target { slide: Some(notes_key(&ad, &doc_of(&s))), ..Target::default() };
+        ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, target, Payload::NotesInsert { at: 0, text: "A".into() })).expect("type");
+        let mut undo = ad.undo(&s, 1, "a", "undo-1").expect("undo");
+        undo.payload = Payload::NotesSet { notes: json!({"paragraphs": [{"runs": [{"text": "another"}]}]}) };
+        let err = ad.apply(&mut s, 1, "a", &undo).expect_err("a restore must repeat its recorded body");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(notes_text(&doc_of(&s), 0), "A", "nothing was written");
+
+        // A body that is not a whole text body is refused even on the ordinary edit path.
+        let err =
+            ad.apply(&mut s, 1, "a", &op(OpKind::Command, 1, Target::default(), Payload::NotesSet { notes: json!(42) })).expect_err("not a body");
+        assert!(matches!(err.code, RejectCode::Invalid | RejectCode::Stale), "{err:?}");
     }
 }

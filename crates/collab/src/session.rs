@@ -216,6 +216,9 @@ impl DocSession {
         let rebases = match &op.payload {
             deckcraft_collab_proto::Payload::TextInsert { .. } | deckcraft_collab_proto::Payload::TextDelete { .. } => true,
             deckcraft_collab_proto::Payload::TextSet { cell, .. } => cell.is_some(),
+            // Notes edits carry a body offset like shape text; their address is the slide, so a
+            // slide move or a shape edit never shifts them.
+            deckcraft_collab_proto::Payload::NotesInsert { .. } | deckcraft_collab_proto::Payload::NotesDelete { .. } => true,
             _ => false,
         };
         let mut rebased: Option<OpEnvelope> = None;
@@ -310,6 +313,19 @@ impl DocSession {
                     *point = *from;
                 }
             }
+            // A notes body has one address (the slide), so its `cell` is always absent.
+            Payload::NotesInsert { at, text } if cell.is_none() => {
+                if *at <= *point {
+                    *point = point.saturating_add(text.chars().count() as u32);
+                }
+            }
+            Payload::NotesDelete { from, to } if cell.is_none() => {
+                if *to <= *point {
+                    *point = point.saturating_sub(to.saturating_sub(*from));
+                } else if *from < *point {
+                    *point = *from;
+                }
+            }
             _ => {}
         };
         let tail: Vec<Applied> = self.tail.iter().filter(|a| a.version > op.base_version).cloned().collect();
@@ -317,6 +333,17 @@ impl DocSession {
             let Some(command) = applied.command else { continue };
             if command.target.shape != op.target.shape {
                 continue;
+            }
+            // Two text bodies on different slides (or two notes bodies) never shift each other.
+            if command.target.slide != op.target.slide {
+                continue;
+            }
+            // A whole-body notes value replaces every offset: an insert or delete that was based
+            // before it cannot say where its text now belongs, so it is refused and the client
+            // resyncs instead of writing in the wrong place.
+            if matches!(command.payload, Payload::NotesSet { .. }) && matches!(op.payload, Payload::NotesInsert { .. } | Payload::NotesDelete { .. })
+            {
+                return Err(refuse(op, Rejection::stale("the notes were replaced after this edit began; resync first", Some(self.version))));
             }
             if let Payload::TableEdit { axis, at, insert } = &command.payload {
                 let index = match axis {
@@ -342,6 +369,11 @@ impl DocSession {
                     shift(from, &command.payload, cell);
                     shift(to, &command.payload, cell);
                 }
+                Payload::NotesInsert { at, .. } => shift(at, &command.payload, cell),
+                Payload::NotesDelete { from, to } => {
+                    shift(from, &command.payload, cell);
+                    shift(to, &command.payload, cell);
+                }
                 _ => {}
             }
         }
@@ -349,9 +381,12 @@ impl DocSession {
             Payload::TextSet { cell: at, .. } | Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cell,
             _ => {}
         }
-        if let Payload::TextDelete { from, to, .. } = op.payload
-            && to <= from
-        {
+        let empty = match op.payload {
+            Payload::TextDelete { from, to, .. } => to <= from,
+            Payload::NotesDelete { from, to } => to <= from,
+            _ => false,
+        };
+        if empty {
             return Err(refuse(op, Rejection::invalid("the deleted text was already changed", Some(self.version))));
         }
         Ok(())
@@ -792,6 +827,88 @@ mod tests {
         s.apply("b", &other).expect("another cell");
         assert_eq!(cell(&s, 0, 0), "aXYb", "the other cell's offset did not move this one");
         assert_eq!(cell(&s, 1, 1), "Q");
+    }
+
+    fn notes_op(slide: &SlideKey, payload: Payload, base: u64, op_id: &str) -> OpEnvelope {
+        OpEnvelope {
+            op_id: op_id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide.clone()), ..Target::default() },
+            payload,
+            history: None,
+        }
+    }
+
+    fn notes_key(session: &DocSession, index: usize) -> SlideKey {
+        let doc = session.document().expect("doc");
+        let slide = doc.slides.get(index).expect("slide");
+        session.adapter.keys().slide_key(slide.id).expect("slide key").clone()
+    }
+
+    /// Two slides; the first one carries seeded notes.
+    fn two_slide_deck() -> Presentation {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("second");
+        s.apply_remote("slide.notes", &json!({"index": 0, "text": "ab"})).expect("notes");
+        s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    #[test]
+    fn two_people_typing_in_one_slides_notes_keep_both_insertions() {
+        let mut s = DocSession::from_document("d", two_slide_deck(), SessionConfig::default()).expect("session");
+        let slide = notes_key(&s, 0);
+        let x = notes_op(&slide, Payload::NotesInsert { at: 0, text: "X".into() }, 0, "x");
+        let y = notes_op(&slide, Payload::NotesInsert { at: 0, text: "Y".into() }, 0, "y");
+        s.apply("a", &x).expect("x");
+        s.apply("b", &y).expect("y is rebased past x");
+        assert_eq!(s.document().expect("doc").slides[0].notes.text(), "XYab");
+        assert_eq!(s.version(), 2);
+
+        // A notes body on another slide has no address in common: its offsets do not shift.
+        let second = notes_key(&s, 1);
+        let other = notes_op(&second, Payload::NotesInsert { at: 0, text: "Q".into() }, 1, "q");
+        s.apply("b", &other).expect("the second slide's notes");
+        assert_eq!(s.document().expect("doc").slides[0].notes.text(), "XYab");
+        assert_eq!(s.document().expect("doc").slides[1].notes.text(), "Q", "the base 0 operation did not move this one");
+    }
+
+    #[test]
+    fn a_queued_notes_insert_rebases_across_a_slide_insert() {
+        let mut s = DocSession::from_document("d", two_slide_deck(), SessionConfig::default()).expect("session");
+        let first = notes_key(&s, 0);
+        let typed = notes_op(&first, Payload::NotesInsert { at: 1, text: "X".into() }, 0, "typed");
+        let new_slide = OpEnvelope {
+            op_id: "new".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(notes_key(&s, 1)), ..Target::default() },
+            payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+            history: None,
+        };
+        s.apply("b", &new_slide).expect("insert a slide");
+        s.apply("a", &typed).expect("the queued notes insert applies to the same slide");
+        assert_eq!(s.document().expect("doc").slides[0].notes.text(), "aXb");
+        assert_eq!(s.document().expect("doc").slides.len(), 3);
+    }
+
+    #[test]
+    fn a_queued_notes_insert_is_refused_after_a_whole_body_replacement() {
+        let mut s = DocSession::from_document("d", two_slide_deck(), SessionConfig::default()).expect("session");
+        let first = notes_key(&s, 0);
+        let typed = notes_op(&first, Payload::NotesInsert { at: 1, text: "X".into() }, 0, "typed");
+        let body = s.document().expect("doc").slides[0].notes.clone();
+        let replaced = notes_op(&first, Payload::NotesSet { notes: serde_json::to_value(&body).expect("json") }, 0, "set");
+        s.apply("b", &replaced).expect("the whole body");
+        let err = s.apply("a", &typed).expect_err("its offset no longer means this body");
+        assert_eq!(err.code, RejectCode::Stale);
+        assert!(err.retryable, "the client resyncs and re-reads the body");
+        assert_eq!(s.version(), 1, "the refused operation does not bump the version");
     }
 
     #[test]
