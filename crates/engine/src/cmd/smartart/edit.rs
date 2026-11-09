@@ -55,11 +55,21 @@ fn edit_diagram<T>(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Di
     let gid = target_group(s, p, cmd)?;
     s.edit(|doc, sel| {
         let g = current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, gid)).cloned().ok_or_else(|| bad(cmd, "no such shape"))?;
-        let (ShapeKind::Group { children, child }, Some(mut d)) = (g.kind, g.diagram) else { return Err(bad(cmd, "not a SmartArt graphic")) };
+        let (ShapeKind::Group { children, child }, Some(mut d)) = (g.kind.clone(), g.diagram.clone()) else {
+            return Err(bad(cmd, "not a SmartArt graphic"));
+        };
         sync_text(&mut d, &children);
         let out = f(&mut d)?;
         normalize(&mut d.nodes);
+        if let Some(preserved) = deckcraft_pptx::edit_imported_diagram_text(&g, &d).map_err(|e| bad(cmd, e))? {
+            let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
+            *deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))? = preserved;
+            sel.shapes = vec![gid];
+            sel.text = None;
+            return Ok(out);
+        }
         d.imported = false;
+        d.kept = None;
         let kids = regenerate(cmd, doc, &d, child)?;
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         let sh = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))?;

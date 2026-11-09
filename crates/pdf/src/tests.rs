@@ -728,3 +728,26 @@ fn raster_scale_caps_total_pixels_not_each_side() {
     let s = raster_scale(720.0, (960.0, 540.0), 200.0);
     assert!((s - 720.0 / 72.0 * 200.0 / 960.0).abs() < 1e-12);
 }
+
+#[test]
+fn text_layer_preserves_characters_after_authored_breaks() {
+    use deckcraft_model::text::{Paragraph, Run, RunKind};
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+    let br = || Run { text: String::new(), props: Default::default(), kind: RunKind::Break };
+    for (runs, expected) in [
+        (vec![Run::new("Café"), br(), Run::new("Brook")], "CaféBrook"),
+        (vec![br(), Run::new("αβ"), br(), br(), Run::new("γδ")], "αβγδ"),
+        (vec![Run::new("Café\n"), br(), Run::new("Brook")], "CaféBrook"),
+        (vec![Run::new("A"), Run { text: "unused".into(), ..br() }, Run::new("B")], "AB"),
+    ] {
+        let mut body = TextBody { paragraphs: vec![Paragraph { runs, ..Default::default() }], ..Default::default() };
+        for run in &mut body.paragraphs[0].runs {
+            run.props.font = Some("Ubuntu".into());
+            run.props.size = Some(20.0);
+        }
+        let mut p = deck(1);
+        Arc::make_mut(&mut p.slides[0]).shapes =
+            vec![Shape { id: ShapeId(9002), xfrm: Some(Xfrm::new(20.0, 20.0, 920.0, 400.0)), text: Some(body), ..Default::default() }];
+        assert_eq!(page_text(&export(&p, &opts(PageLayout::Slides)).unwrap(), 0), expected);
+    }
+}

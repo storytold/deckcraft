@@ -186,12 +186,18 @@ fn partial_locks_are_not_lock() {
     let xml =
         swap(xml, "C", r#"<a:spLocks noGrp="1" noRot="1" noMove="1" noResize="1" noEditPoints="1" noAdjustHandles="1" noChangeShapeType="1"/>"#);
     slide.1 = xml.into_bytes();
+    let source_xml = String::from_utf8(slide.1.clone()).expect("xml");
     let q = deckcraft_pptx::import(&rezip(&es)).expect("import");
     let s = &q.slides[0];
     assert!(!find(s, "A").locked);
     assert!(!find(s, "B").locked);
     assert!(!find(s, "C").locked);
     assert!(find(s, "D").locked);
+    let saved = slide1_xml(&deckcraft_pptx::export(&q).expect("export partial locks"));
+    for name in ["A", "B", "C"] {
+        let expected = nv_of(&source_xml, name).to_string();
+        assert_eq!(nv_of(&saved, name), expected, "{name}: partial restrictions must survive");
+    }
 }
 
 /// Unlocked objects written by PowerPoint keep an empty locks element; that's not locked.

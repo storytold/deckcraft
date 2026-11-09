@@ -36,7 +36,9 @@ use unicode_segmentation::UnicodeSegmentation;
 
 mod autonum;
 mod breaking;
+mod font_usage;
 mod layout;
+mod paragraphs;
 mod run;
 mod shape;
 mod style;
@@ -47,11 +49,12 @@ pub use autonum::autonum;
 use autonum::chinese_num;
 #[cfg(test)]
 use breaking::{LINE_PITCH, break_opportunities, measure_str};
+pub use font_usage::{FontUse, font_usage, requested_fonts};
 #[cfg(test)]
 pub(crate) use layout::LAYOUT_PASSES;
-pub use layout::layout;
 #[cfg(test)]
 use layout::layout_scaled;
+pub use layout::{layout, layout_with_metrics};
 pub use run::{Dash, Deco, DecoLine, GlyphRun, RunEffects, TextShadow, UPRIGHT_CENTRE};
 #[cfg(test)]
 use shape::{SUB_SUPER, caps_char, is_upright, shaping_features};
@@ -61,6 +64,38 @@ pub use style::{Fields, NoFields, Opts};
 #[cfg(test)]
 use symbol::{covers_symbol, is_symbol_font, symbol_font_char, symbol_font_draw, symbol_unicode, symbol_unicode_alts};
 pub use symbol::{map_symbol_bullet, symbol_char};
+
+/// Nominal advances used for layout. Materialized uncached diagrams use finer
+/// advances; their line sizing remains independent. Ordinary DrawingML keeps its policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AdvanceMetrics {
+    #[default]
+    DrawingMl,
+    Diagram,
+    /// Fine nominal advances, with both sides of a line-fit comparison rounded
+    /// to 1/200pt. Shaped glyph positions retain continuous pair adjustments.
+    Chart,
+}
+
+/// Line sizing policy, separate from glyph advances and authored line spacing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineMetrics {
+    #[default]
+    Slide,
+    Typographic,
+    /// Natural chart tick lines round ascent and descent independently to whole
+    /// points. Glyphs paint at whole-point sizes; advances retain authored sizes.
+    Chart,
+    /// Low-side category ticks also normalize exact point pitch before choosing
+    /// proportional natural-line placement or the explicit-spacing baseline.
+    ChartLow,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayoutMetrics {
+    pub advance: AdvanceMetrics,
+    pub line: LineMetrics,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct LineInfo {
@@ -117,6 +152,34 @@ pub struct TextLayout {
     /// Per paragraph: whether a caret may stand at each character offset 0..=len (grapheme
     /// boundaries), for logical caret movement.
     pub boundaries: Vec<Vec<bool>>,
+}
+
+impl TextLayout {
+    /// Emergency line breaks inside a normally unbreakable word. Diagram rule search uses
+    /// this independently of height overflow when font shrinking is permitted. The same
+    /// Unicode/language-sensitive opportunities are used by normal line breaking.
+    pub fn forced_line_breaks(&self, body: &TextBody) -> usize {
+        let allowed: Vec<_> = body
+            .paragraphs
+            .iter()
+            .map(|p| {
+                let text = p.text();
+                (breaking::break_opportunities(&text, p.props.latin_line_break.unwrap_or(false)).0, text.chars().collect::<Vec<_>>())
+            })
+            .collect();
+        self.lines
+            .iter()
+            .filter(|line| {
+                allowed.get(line.para).is_some_and(|(a, chars)| {
+                    // LineInfo excludes trailing spaces, whereas a Unicode opportunity follows them.
+                    line.start < line.end
+                        && line.end < chars.len()
+                        && !chars.get(line.end).is_some_and(|c| c.is_whitespace())
+                        && a.get(line.end).is_some_and(|v| !v)
+                })
+            })
+            .count()
+    }
 }
 
 /// Which side of a boundary a caret belongs to: `Downstream` sticks to the character after it

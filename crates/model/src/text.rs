@@ -104,7 +104,19 @@ pub struct BodyProps {
     pub anchor: Option<Anchor>,
     pub anchor_ctr: Option<bool>,
     pub wrap: Option<bool>,
+    /// Internal metrics for a recovered SmartArt text frame. Regenerated on diagram
+    /// import; this is not a DrawingML bodyPr attribute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_recovery_metrics: Option<bool>,
+    /// Internal advances for materialized uncached SmartArt text. This is independent
+    /// of recovered-diagram line sizing and is not a DrawingML bodyPr attribute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_fine_advances: Option<bool>,
     pub autofit: Option<AutoFit>,
+    /// Internal lower bound from a diagram font-size rule. Ordinary text leaves it unset.
+    /// Regenerated from the retained SmartArt layout on PPTX import; not an a:bodyPr attribute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_autofit_scale: Option<f64>,
     pub vert: Option<TextDir>,
     /// Extra text rotation in degrees.
     pub rot: Option<f64>,
@@ -122,6 +134,7 @@ pub struct BodyProps {
     /// Space before the first paragraph and after the last count too (`spcFirstLastPara`).
     pub space_first_last: Option<bool>,
     pub compat_ln_spc: Option<bool>,
+    #[serde(alias = "verticalOverflow", skip_serializing_if = "Option::is_none")]
     pub vert_overflow: Option<TextOverflow>,
     pub horz_overflow: Option<TextOverflow>,
     /// Unmodelled 3-D XML on the text body (`a:scene3d`, `a:sp3d`, `a:flatTx`).
@@ -175,7 +188,10 @@ impl BodyProps {
         self.anchor = self.anchor.or(p.anchor);
         self.anchor_ctr = self.anchor_ctr.or(p.anchor_ctr);
         self.wrap = self.wrap.or(p.wrap);
+        self.diagram_recovery_metrics = self.diagram_recovery_metrics.or(p.diagram_recovery_metrics);
+        self.diagram_fine_advances = self.diagram_fine_advances.or(p.diagram_fine_advances);
         self.autofit = self.autofit.or(p.autofit);
+        self.min_autofit_scale = self.min_autofit_scale.or(p.min_autofit_scale);
         self.vert = self.vert.or(p.vert);
         self.rot = self.rot.or(p.rot);
         self.columns = self.columns.or(p.columns);
@@ -758,6 +774,54 @@ impl TextBody {
 mod tests {
     use super::*;
     use deckcraft_color::Rgba;
+
+    #[test]
+    fn diagram_advances_inherit_and_serialize_independently_of_recovery_lines() {
+        let parent = BodyProps { diagram_fine_advances: Some(true), ..Default::default() };
+        let mut inherited = BodyProps::default();
+        inherited.inherit(&parent);
+        assert_eq!(inherited.diagram_fine_advances, Some(true));
+        assert_eq!(inherited.diagram_recovery_metrics, None);
+        let mut explicit = BodyProps { diagram_fine_advances: Some(false), ..Default::default() };
+        explicit.inherit(&parent);
+        assert_eq!(explicit.diagram_fine_advances, Some(false));
+        let old: BodyProps = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.diagram_fine_advances, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("diagramFineAdvances"));
+        let json = serde_json::to_string(&inherited).unwrap();
+        assert!(json.contains("\"diagramFineAdvances\":true"));
+        assert_eq!(serde_json::from_str::<BodyProps>(&json).unwrap(), inherited);
+    }
+
+    #[test]
+    fn optional_overflow_inherits_without_replacing_explicit_policy() {
+        let parent = BodyProps { vert_overflow: Some(TextOverflow::Ellipsis), ..Default::default() };
+        let mut inherited = BodyProps::default();
+        inherited.inherit(&parent);
+        assert_eq!(inherited.vert_overflow, Some(TextOverflow::Ellipsis));
+        let mut explicit = BodyProps { vert_overflow: Some(TextOverflow::Overflow), ..Default::default() };
+        explicit.inherit(&parent);
+        assert_eq!(explicit.vert_overflow, Some(TextOverflow::Overflow));
+        let old: BodyProps = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.vert_overflow, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("vertOverflow"));
+    }
+
+    #[test]
+    fn legacy_vertical_overflow_loads_into_the_canonical_field() {
+        for (name, policy) in [("clip", TextOverflow::Clip), ("overflow", TextOverflow::Overflow), ("ellipsis", TextOverflow::Ellipsis)] {
+            let legacy = serde_json::json!({"verticalOverflow": name, "horzOverflow": "clip"});
+            let body: BodyProps = serde_json::from_value(legacy).unwrap();
+            assert_eq!(body.vert_overflow, Some(policy));
+            assert_eq!(body.horz_overflow, Some(TextOverflow::Clip));
+            let current = serde_json::to_value(&body).unwrap();
+            assert_eq!(current["vertOverflow"], name);
+            assert!(current.get("verticalOverflow").is_none());
+            assert_eq!(serde_json::from_value::<BodyProps>(current).unwrap(), body);
+        }
+        let ambiguous = serde_json::json!({"verticalOverflow": "clip", "vertOverflow": "overflow"});
+        assert!(serde_json::from_value::<BodyProps>(ambiguous).is_err());
+    }
 
     #[test]
     fn alternate_language_inherits_and_native_input_is_bounded() {

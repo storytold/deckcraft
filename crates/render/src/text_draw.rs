@@ -111,6 +111,24 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
 
 /// Draw a laid-out text block with per-paragraph animation states.
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
+    draw_layout_painted(ctx, l, tr, m, paras, None);
+}
+
+/// Place emitted glyph-run origins on the page's vertical 300 dpi grid. Layout,
+/// decorations and advances stay continuous. `view` maps slide points to output
+/// pixels, independently of the text's shape/group transforms.
+pub(crate) fn draw_layout_with_origins(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, view: Affine) {
+    draw_layout_painted(ctx, l, tr, m, &[], Some(view));
+}
+
+fn draw_layout_painted(
+    ctx: &mut RenderContext,
+    l: &deckcraft_text::TextLayout,
+    tr: Rect,
+    m: Affine,
+    paras: &[(usize, ParaState)],
+    view: Option<Affine>,
+) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
     let lines_of = LineIndex::new(l);
@@ -128,13 +146,15 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
     }
     // Text shadows, then glows, under all the text.
     for pass in [TextEffect::Shadow, TextEffect::Glow] {
+        let mut origins = RunOrigins::new(view);
         for run in &l.runs {
             let ps = para(run.para);
             if ps.visible && ps.opacity > 0.001 {
-                text_effect(ctx, run, pass, m * Affine::translate(ps.offset), ps.opacity);
+                text_effect(ctx, run, pass, origins.transform(run, m * Affine::translate(ps.offset)), ps.opacity);
             }
         }
     }
+    let mut origins = RunOrigins::new(view);
     for run in &l.runs {
         if (run.alpha <= 0.0 || run.color.a == 0) && run.outline.is_none() {
             continue;
@@ -143,7 +163,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
         if !ps.visible || ps.opacity <= 0.001 {
             continue;
         }
-        let m = m * Affine::translate(ps.offset);
+        let m = origins.transform(run, m * Affine::translate(ps.offset));
         // A gradient fill starts over on every line and spans that line's text (from its top to
         // its bottom, from its first to its last character), as in PowerPoint.
         let mut grads: Vec<(usize, peniko::Gradient)> = Vec::new();
@@ -167,6 +187,52 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
     for d in l.decos.iter().filter(|d| !d.behind) {
         deco(ctx, d);
     }
+}
+
+/// Native rotated-text controls distinguish emitted paint runs from authored
+/// run boundaries: equal neighbouring paint keeps one origin, while changing
+/// colour begins a new origin. Only that origin's page Y is rounded; applying
+/// the same translation to the whole run preserves its shaped glyph advances.
+struct RunOrigins<'a> {
+    view: Option<(Affine, Affine)>,
+    previous: Option<(&'a deckcraft_text::GlyphRun, Affine, f64)>,
+    shift: Vec2,
+}
+
+impl<'a> RunOrigins<'a> {
+    fn new(view: Option<Affine>) -> Self {
+        let view = view.filter(|v| v.is_finite() && v.determinant().is_finite() && v.determinant().abs() > 1e-12);
+        Self { view: view.map(|v| (v, v.inverse())), previous: None, shift: Vec2::ZERO }
+    }
+
+    fn transform(&mut self, run: &'a deckcraft_text::GlyphRun, m: Affine) -> Affine {
+        let Some((view, inverse)) = self.view else { return m };
+        let Some(&(_, x, y)) = run.glyphs.first() else { return m };
+        let continued = self
+            .previous
+            .is_some_and(|(prev, transform, baseline)| transform == m && baseline == y && prev.para == run.para && same_glyph_paint(prev, run));
+        if !continued {
+            let page = inverse * (m * kurbo::Point::new(x, y));
+            let dy = (page.y * (300. / 72.)).round() * (72. / 300.) - page.y;
+            let c = view.as_coeffs();
+            self.shift = if dy.is_finite() { Vec2::new(c[2] * dy, c[3] * dy) } else { Vec2::ZERO };
+        }
+        self.previous = Some((run, m, y));
+        Affine::translate(self.shift) * m
+    }
+}
+
+fn same_glyph_paint(a: &deckcraft_text::GlyphRun, b: &deckcraft_text::GlyphRun) -> bool {
+    a.face.id() == b.face.id()
+        && a.size == b.size
+        && a.color == b.color
+        && a.alpha == b.alpha
+        && a.fake_bold == b.fake_bold
+        && a.fake_italic == b.fake_italic
+        && a.outline == b.outline
+        && a.gradient == b.gradient
+        && a.effects == b.effects
+        && a.upright == b.upright
 }
 
 /// Where glyph `gid` of `run` with its pen at (`x`, `y`) is drawn, in text space: there, turned a
@@ -395,6 +461,152 @@ fn draw_glyph_with(
         ctx.set_paint(color(oc, opacity));
         ctx.set_stroke(kurbo::Stroke::new(ow / k.max(1e-9)).with_join(kurbo::Join::Round));
         ctx.stroke_path(&path);
+    }
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+    use deckcraft_text::{Deco, DecoLine, GlyphRun, TextLayout};
+
+    fn run(font: &str, positions: &[(char, f64, f64)]) -> GlyphRun {
+        let face = FontDb::global().face(font, "Regular");
+        GlyphRun {
+            glyphs: positions.iter().map(|(ch, x, y)| (face.glyph_for(*ch), *x, *y)).collect(),
+            cells: positions.iter().enumerate().map(|(i, (ch, ..))| (i, *ch)).collect(),
+            face,
+            size: 16.,
+            color: Rgba::rgb(221, 85, 0),
+            fake_bold: false,
+            fake_italic: false,
+            outline: None,
+            para: 0,
+            chars: (0, positions.len()),
+            link: false,
+            alpha: 1.,
+            gradient: None,
+            effects: None,
+            upright: false,
+        }
+    }
+
+    fn shape_transform(angle: f64, phase: f64) -> Affine {
+        Affine::translate((300. + phase, 550. + phase)) * Affine::rotate(angle.to_radians()) * Affine::translate((-100., -50.))
+    }
+
+    #[test]
+    fn emitted_origins_round_page_y_after_rotation_and_viewport_transform() {
+        // Original two-font native controls rotate a 200×100pt text box, then
+        // translate it 0.13pt. X and internal advances stay continuous while
+        // the first emitted origin uses the same page-Y grid at either angle.
+        for (font, baseline, x15, y15, x90) in [("Lato", 16., 212.207275, 491.28, 334.), ("Open Sans", 15., 212.466095, 490.32, 335.)] {
+            let text = run(font, &[('A', 0., baseline), ('g', 10.8752, baseline), ('y', 19.2544, baseline)]);
+            for (angle, x, y) in [(15., x15, y15), (90., x90, 450.)] {
+                for phase in [0., 0.13] {
+                    for view in [Affine::IDENTITY, Affine::translate((17., -9.)) * Affine::scale(4.)] {
+                        let m = view * shape_transform(angle, phase);
+                        let painted = RunOrigins::new(Some(view)).transform(&text, m);
+                        let at = view.inverse() * (painted * kurbo::Point::new(0., baseline));
+                        assert!((at.x - x - phase).abs() < 0.0001, "{font}, {angle}, {phase}: {at:?}");
+                        assert!((at.y - y - if phase == 0. { 0. } else { 0.24 }).abs() < 0.0001);
+                        let first = kurbo::Point::new(text.glyphs[0].1, text.glyphs[0].2);
+                        for (_, gx, gy) in &text.glyphs[1..] {
+                            let next = kurbo::Point::new(*gx, *gy);
+                            assert!(((painted * next - painted * first) - (m * next - m * first)).hypot() < 1e-10);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn equal_paint_source_splits_share_an_origin_but_color_changes_start_one() {
+        let first = run("Lato", &[('A', 0., 16.)]);
+        let same = run("Lato", &[('g', 10.8752, 16.), ('y', 19.2544, 16.)]);
+        let mut changed = same.clone();
+        changed.color = Rgba::rgb(34, 85, 204);
+        let m = shape_transform(15., 0.);
+        let mut origins = RunOrigins::new(Some(Affine::IDENTITY));
+        let a = origins.transform(&first, m);
+        let b = origins.transform(&same, m);
+        assert_eq!(a, b, "identical authored run boundaries do not split emission");
+        let c = origins.transform(&changed, m);
+        let g = kurbo::Point::new(10.8752, 16.);
+        assert!(((b * g).y - 494.094666).abs() < 0.0001);
+        assert!(((c * g).y - 494.16).abs() < 0.0001);
+        assert_eq!((b * g).x, (c * g).x);
+        let mut next_line = same.clone();
+        for glyph in &mut next_line.glyphs {
+            glyph.2 += 19.;
+        }
+        let next = origins.transform(&next_line, m);
+        assert_ne!(next, c, "each new line begins another emitted origin");
+    }
+
+    #[test]
+    fn origin_paint_preserves_continuous_layout_and_highlight_pixels() {
+        let mut glyphs = run("Lato", &[('A', 30., 32.528)]);
+        glyphs.color = Rgba::rgb(255, 0, 0);
+        let layout = TextLayout {
+            runs: vec![glyphs],
+            decos: vec![Deco {
+                rect: Rect::new(20., 16.528, 60., 35.528),
+                color: Rgba::rgb(255, 255, 0),
+                behind: true,
+                para: 0,
+                line: DecoLine::Solid,
+            }],
+            ..Default::default()
+        };
+        let draw = |grid| {
+            let mut ctx = RenderContext::new(640, 480);
+            ctx.set_paint(color(Rgba::WHITE, 1.));
+            ctx.fill_rect(&Rect::new(0., 0., 640., 480.));
+            let view = Affine::scale(8.);
+            if grid {
+                draw_layout_with_origins(&mut ctx, &layout, Rect::new(0., 0., 80., 60.), view, view);
+            } else {
+                draw_layout(&mut ctx, &layout, Rect::new(0., 0., 80., 60.), view);
+            }
+            crate::Renderer::default().finish(ctx, 640, 480)
+        };
+        let before = draw(false);
+        let after = draw(true);
+        assert_ne!(before.pixels, after.pixels, "only the glyph's paint position changes");
+        let tinted = |px: &[u8]| px[0] > 200 && px[1] < 255 && px[2] < 20;
+        for (a, b) in before.pixels.chunks_exact(4).zip(after.pixels.chunks_exact(4)) {
+            if !tinted(a) && !tinted(b) {
+                assert_eq!(a, b, "highlight and backdrop pixels stay continuous");
+            }
+        }
+        assert_eq!(layout.runs[0].glyphs[0].2, 32.528);
+        assert_eq!(layout.decos[0].rect.y0, 16.528);
+    }
+
+    #[test]
+    fn continuous_or_invalid_views_do_not_adjust_glyph_origins() {
+        let text = run("Lato", &[('A', 0., 16.)]);
+        let m = shape_transform(15., 0.);
+        for view in [None, Some(Affine::scale(0.)), Some(Affine::scale(f64::NAN))] {
+            assert_eq!(RunOrigins::new(view).transform(&text, m), m);
+        }
+    }
+
+    #[test]
+    fn group_placement_rounds_after_composition_with_font_scale_removed() {
+        // Original group controls resize the child box by 1.25 while retaining
+        // authored 16pt text. Renderer::text_space removes that font scale.
+        let group = Affine::translate((60., 40.)) * Affine::scale(1.25);
+        let child = Affine::translate((100., 350.)) * Affine::scale(0.8);
+        let view = Affine::translate((17., -9.)) * Affine::scale(4.);
+        for (font, baseline, expected) in [("Lato", 16., 493.44), ("Open Sans", 15., 492.48)] {
+            let text = run(font, &[('A', 0., baseline)]);
+            let m = RunOrigins::new(Some(view)).transform(&text, view * group * child);
+            let point = view.inverse() * (m * kurbo::Point::new(0., baseline));
+            assert!((point.x - 185.).abs() < 1e-10);
+            assert!((point.y - expected).abs() < 1e-10);
+        }
     }
 }
 

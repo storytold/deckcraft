@@ -582,7 +582,7 @@ impl Exporter<'_> {
                 .body
                 .paragraphs
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.content()).collect::<String>())
+                .map(|p| p.text())
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)

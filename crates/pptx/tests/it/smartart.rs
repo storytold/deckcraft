@@ -165,3 +165,66 @@ fn smartart_text_follows_tx_xfrm() {
     let q = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("re-import");
     check(&q, &expected);
 }
+
+#[test]
+fn diagram_cache_keeps_nested_transforms_and_picture_nodes() {
+    use deckcraft_model::style::PictureFill;
+    use deckcraft_model::text::TextBody;
+    use deckcraft_model::{Diagram, DiagramNode, Shape, ShapeId, Xfrm};
+    let mut p = Presentation::default();
+    let mut png = Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([30, 90, 150, 255])).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let media = p.add_media("swatch.png", "image/png", png.into_inner()).unwrap();
+    let leaf = Shape {
+        id: ShapeId(101),
+        name: "Leaf".into(),
+        xfrm: Some(Xfrm::new(12.0, 18.0, 40.0, 25.0)),
+        text: Some(TextBody::from_text("Nested node")),
+        ..Default::default()
+    };
+    let picture = Shape {
+        id: ShapeId(102),
+        name: "Swatch".into(),
+        xfrm: Some(Xfrm::new(70.0, 18.0, 30.0, 25.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+        ..Default::default()
+    };
+    let nested_frame = Xfrm { rot: 17.0, ..Xfrm::new(30.0, 40.0, 240.0, 120.0) };
+    let nested_child = Xfrm::new(10.0, 15.0, 120.0, 60.0);
+    let nested = Shape {
+        id: ShapeId(103),
+        name: "Nested".into(),
+        xfrm: Some(nested_frame),
+        kind: ShapeKind::Group { children: vec![leaf, picture], child: nested_child },
+        ..Default::default()
+    };
+    let diagram = Shape {
+        id: ShapeId(104),
+        name: "Diagram".into(),
+        xfrm: Some(Xfrm::new(50.0, 60.0, 400.0, 240.0)),
+        kind: ShapeKind::Group { children: vec![nested], child: Xfrm::new(0.0, 0.0, 400.0, 240.0) },
+        diagram: Some(Diagram {
+            kind: "process".into(),
+            nodes: vec![DiagramNode { text: "Nested node".into(), ..Default::default() }],
+            imported: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![diagram];
+    let bytes = deckcraft_pptx::export(&p).unwrap();
+    let files = entries(&bytes);
+    let drawing = String::from_utf8_lossy(&files.iter().find(|(n, _)| n == "ppt/diagrams/drawing1.xml").unwrap().1);
+    assert!(drawing.contains("<dsp:grpSp>"));
+    assert!(drawing.contains("<a:blip"));
+    let back = deckcraft_pptx::import(&bytes).unwrap();
+    let ShapeKind::Group { children, .. } = &back.slides[0].shapes[0].kind else { panic!("diagram") };
+    let group = &children[0];
+    assert_eq!(group.xfrm, Some(nested_frame));
+    let ShapeKind::Group { children, child } = &group.kind else { panic!("nested group") };
+    assert_eq!(*child, nested_child);
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0].xfrm, Some(Xfrm::new(12.0, 18.0, 40.0, 25.0)));
+    assert!(matches!(children[1].fill, Some(deckcraft_model::Fill::Picture(_))));
+    assert_eq!(children[0].text.as_ref().unwrap().text(), "Nested node");
+}

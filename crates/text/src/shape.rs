@@ -3,8 +3,8 @@ use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
 use super::symbol::{covers_symbol, is_symbol_font, map_symbol_bullet, symbol_font_char, symbol_map_char};
 use super::{
-    Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
-    UnicodeSegmentation, bidi, resolve, script,
+    AdvanceMetrics, Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams,
+    TextBody, UnicodeSegmentation, bidi, resolve, script,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -17,6 +17,7 @@ pub(crate) fn shape_para(
     opts: &Opts,
     number: Option<u32>,
     vertical: Upright,
+    advances: AdvanceMetrics,
 ) -> ParaShaped {
     let db = FontDb::global();
     let Some(para) = body.paragraphs.get(pi) else {
@@ -30,6 +31,7 @@ pub(crate) fn shape_para(
             lead_face: face.clone(),
             end_size: 18.0,
             end_face: face,
+            literal_end: false,
             bullet: None,
             level: 0,
             rtl: false,
@@ -56,7 +58,7 @@ pub(crate) fn shape_para(
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
         text.push_str(&t);
     }
-    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical);
+    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical, advances);
     let lead = para.runs.first().map(|r| resolve::run(ctx, shape, para, &r.props)).unwrap_or_else(|| resolve::run(ctx, shape, para, &para.end_props));
     let lead_style = make_style(ctx, &lead, scale, opts.prompt_color);
     let lead_size = lead_style.size;
@@ -114,7 +116,7 @@ pub(crate) fn shape_para(
         }
         _ => None,
     };
-    ParaShaped { cells, styles, faces, props, lead_size, lead_face, end_size, end_face, bullet, level: para.level, rtl }
+    ParaShaped { cells, styles, faces, props, lead_size, lead_face, end_size, end_face, literal_end: false, bullet, level: para.level, rtl }
 }
 
 /// A face that draws the bullet `label` when the bullet's own can't (circled numbers ①, arrows
@@ -147,6 +149,7 @@ fn shape_cells(
     faces: &mut Vec<Arc<FontFace>>,
     rtl: bool,
     vertical: Upright,
+    advances: AdvanceMetrics,
 ) -> Vec<Cell> {
     let db = FontDb::global();
     let chars: Vec<char> = text.chars().collect();
@@ -198,8 +201,7 @@ fn shape_cells(
             .sym
             .as_deref()
             .filter(|_| cluster.first().is_some_and(|c| ('\u{F000}'..='\u{F0FF}').contains(c)))
-            .filter(|f| db.has_family(f))
-            .map(|f| db.face(f, st.style_name))
+            .and_then(|f| super::style::embedded_face(ctx, f, st.style_name).or_else(|| db.has_family(f).then(|| db.face(f, st.style_name))))
             .filter(|f| covers_symbol(f, cluster.first().copied().unwrap_or(' ')));
         let face = match (sym_face, prev.as_ref()) {
             (Some(f), _) => f,
@@ -265,7 +267,7 @@ fn shape_cells(
     // Upright glyphs keep their horizontal forms: PowerPoint turns "、", "。" and "「" as they are
     // (no `vert` alternates).
     for (a, b) in items {
-        shape_item(&mut cells, styles, faces, text, &byte_of, &char_at_byte, a..b, scripts.get(a).and_then(|s| s.0), lang(a), upper(a));
+        shape_item(&mut cells, styles, faces, text, &byte_of, &char_at_byte, a..b, scripts.get(a).and_then(|s| s.0), lang(a), upper(a), advances);
     }
     // Stacked text: each character takes one em down the line, centred across it (PowerPoint
     // stacks 18 pt Latin letters about 18 pt apart, a space only its own width).
@@ -380,6 +382,7 @@ fn shape_item(
     script: Option<ScriptTag>,
     lang: Option<&str>,
     upper: bool,
+    advances: AdvanceMetrics,
 ) {
     let Some(first) = cells.get(range.start) else { return };
     let (fi, level) = (first.face, first.level);
@@ -387,7 +390,14 @@ fn shape_item(
     let rtl = level % 2 == 1;
     let (Some(&b0), Some(&b1)) = (byte_of.get(range.start), byte_of.get(range.end)) else { return };
     let features = shaping_features(cells.get(range.clone()).unwrap_or(&[]), styles, script);
-    let params = ShapeParams { features: &features, rtl, script, language: lang };
+    let params = ShapeParams {
+        features: &features,
+        rtl,
+        script,
+        language: lang,
+        drawingml_kerning: matches!(script.as_ref(), Some(b"Latn" | b"Grek" | b"Cyrl")),
+    };
+    let quantized = params.drawingml_kerning && !rtl && face.uses_legacy_drawingml_metrics();
     let sym = styles.get(first.style).and_then(|st| st.sym.as_deref());
     let glyphs = deckcraft_fonts::shape_range(face, text, b0..b1, &params, |ch| {
         let ch = if upper { caps_char(ch) } else { ch };
@@ -419,7 +429,15 @@ fn shape_item(
         let s = scale_of(cell);
         let w = width.entry(h).or_insert(0.0);
         cell.glyphs.push((g.gid, *w + g.x_offset as f64 * s, -(g.y_offset as f64) * s));
-        *w += g.x_advance as f64 * s;
+        let advance = g.x_advance as f64 * s;
+        // Round the nominal width, before pair adjustments and character spacing.
+        // Rounding the kerned width instead loses the continuous legacy pair value.
+        let nominal = if quantized && g.x_advance != 0 { face.advance(g.gid) * s } else { 0.0 };
+        let precision = match advances {
+            AdvanceMetrics::DrawingMl => 8.0,
+            AdvanceMetrics::Diagram | AdvanceMetrics::Chart => 200.0,
+        };
+        *w += advance + (nominal * precision).round() / precision - nominal;
         let e = lig.entry(h).or_insert((g.gid, 0));
         e.1 += 1;
     }

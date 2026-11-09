@@ -381,6 +381,23 @@ impl Renderer {
         (tw, th, m * Affine::scale_non_uniform(1.0 / sx, 1.0 / sy))
     }
 
+    /// A Cartesian chart stays upright in slide space. Its parent still moves
+    /// the center and scales the physical frame; the chart's own rotation does
+    /// not rotate that frame or change its size under a nonuniform parent.
+    fn upright_chart_space(&self, parent: Affine, x: &deckcraft_geom::Xfrm) -> Option<(f64, f64, Affine)> {
+        if !self.view.is_finite() || self.view.determinant().abs() <= 1e-12 {
+            return None;
+        }
+        let rel = self.view.inverse() * parent;
+        let c = rel.as_coeffs();
+        let (w, h) = (x.w * c[0].hypot(c[1]), x.h * c[2].hypot(c[3]));
+        let center = rel * x.center();
+        if ![w, h, center.x, center.y].iter().all(|v| v.is_finite()) || w <= 0. || h <= 0. {
+            return None;
+        }
+        Some((w, h, self.view * Affine::translate((center.x - w / 2., center.y - h / 2.))))
+    }
+
     /// A shape's geometry in its own `w` × `h` space, built at its size on the slide: inside a
     /// group whose child coordinates scale the shape unevenly, the preset's rounded corners and
     /// other size-derived features stay as they would be on a plain shape of that size (#1083).
@@ -446,7 +463,8 @@ impl Renderer {
                 * Affine::translate(-c.to_vec2());
             m = parent * Affine::translate(st.offset) * x.affine() * around;
         }
-        if let Some(a) = camera_turn(rctx, s, x.w, x.h) {
+        let camera = camera_turn(rctx, s, x.w, x.h);
+        if let Some(a) = camera {
             m *= a;
         }
         let layered = st.opacity < 0.999 || st.clip.is_some();
@@ -508,8 +526,26 @@ impl Renderer {
                 self.track(m, cells.unwrap_or(Rect::new(0.0, 0.0, x.w, x.h)).inflate(2.0, 2.0));
             }
             ShapeKind::Chart(c) => {
-                self.track(m, Rect::new(0.0, 0.0, x.w, x.h));
-                chart::draw(ctx, rctx, c, m, x.w, x.h)
+                use deckcraft_model::chart::ChartType;
+                let upright = matches!(
+                    c.kind,
+                    ChartType::Column
+                        | ChartType::StackedColumn
+                        | ChartType::PercentColumn
+                        | ChartType::Line
+                        | ChartType::LineMarkers
+                        | ChartType::StackedLine
+                ) && st.rotate == 0.
+                    && st.scale == (1., 1.)
+                    && st.clip.is_none()
+                    && camera.is_none();
+                let frame = upright.then(|| self.upright_chart_space(parent * Affine::translate(st.offset), &x)).flatten();
+                // A grouped chart lays out at its physical frame size. Its font
+                // sizes and strokes remain slide points, like ordinary text.
+                // Animated transforms and other families keep their prior path.
+                let (w, h, m) = frame.unwrap_or_else(|| self.text_space(m, depth, x.w, x.h));
+                self.track(m, Rect::new(0.0, 0.0, w, h));
+                chart::draw_with_view(ctx, rctx, c, m, w, h, self.view)
             }
             ShapeKind::Ink { strokes } => {
                 for sk in strokes {

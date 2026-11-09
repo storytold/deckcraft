@@ -217,9 +217,43 @@ impl Default for Trendline {
     }
 }
 
+// Internally tagged shapes buffer their JSON content before reading the chart.
+// Numeric JSON object keys then arrive as strings rather than a map-key adapter.
+// Accept either representation without changing the stored index or JSON format.
+fn deserialize_point_labels<'de, D>(deserializer: D) -> Result<std::collections::BTreeMap<usize, DataLabel>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+    #[serde(untagged)]
+    enum Index {
+        Number(usize),
+        Text(String),
+    }
+    let encoded = std::collections::BTreeMap::<Index, DataLabel>::deserialize(deserializer)?;
+    let mut labels = std::collections::BTreeMap::new();
+    for (index, label) in encoded {
+        let index = match index {
+            Index::Number(index) => index,
+            Index::Text(text) => text.parse::<usize>().map_err(serde::de::Error::custom)?,
+        };
+        if labels.insert(index, label).is_some() {
+            return Err(serde::de::Error::custom("duplicate chart point-label index"));
+        }
+    }
+    Ok(labels)
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Series {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_colors: Option<crate::geography::ValueColorScale>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geography: Option<crate::geography::Geography>,
+    pub label_defaults: DataLabel,
+    #[serde(deserialize_with = "deserialize_point_labels")]
+    pub point_labels: std::collections::BTreeMap<usize, DataLabel>,
     pub name: String,
     pub values: Vec<Option<f64>>,
     /// X values for scatter/bubble.
@@ -245,6 +279,82 @@ pub struct Series {
     /// `c:errBars` on the values (y bars; a bar chart's run along its value axis).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_bars: Option<ErrorBars>,
+    /// chartEx options belong to a series; absence inherits the chart-wide defaults.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extended: Option<ExtendedChartOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inclusive_quartiles: Option<bool>,
+}
+
+/// Sparse point overrides inherit the series/group label properties.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DataLabel {
+    pub hidden: Option<bool>,
+    pub text: Option<crate::text::TextBody>,
+    pub style: Option<crate::text::TextBody>,
+    pub position: Option<String>,
+    pub layout: Option<ChartLayout>,
+    pub number_format: Option<String>,
+    pub show_value: Option<bool>,
+    pub show_category: Option<bool>,
+    pub show_series: Option<bool>,
+    pub show_percent: Option<bool>,
+    pub show_bubble_size: Option<bool>,
+    pub separator: Option<String>,
+    pub fill: Option<Fill>,
+    pub line: Option<Line>,
+}
+impl DataLabel {
+    pub fn inherit(&mut self, parent: &Self) {
+        if let (Some(child), Some(parent)) = (&mut self.style, &parent.style) {
+            child.body.inherit(&parent.body);
+            if child.paragraphs.is_empty() {
+                child.paragraphs = parent.paragraphs.clone();
+            }
+            for (i, p) in child.paragraphs.iter_mut().enumerate() {
+                if let Some(base) = parent.paragraphs.get(i).or_else(|| parent.paragraphs.first()) {
+                    p.props.inherit(&base.props);
+                    p.def_props.inherit(&base.def_props);
+                    if let Some(run) = base.runs.first() {
+                        p.def_props.inherit(&run.props);
+                    }
+                    for run in &mut p.runs {
+                        run.props.inherit(&p.def_props);
+                    }
+                }
+            }
+        }
+        macro_rules! inherit { ($($field:ident),*) => { $(if self.$field.is_none() { self.$field = parent.$field.clone(); })* }; }
+        inherit!(
+            hidden,
+            text,
+            style,
+            position,
+            layout,
+            number_format,
+            show_value,
+            show_category,
+            show_series,
+            show_percent,
+            show_bubble_size,
+            separator,
+            fill,
+            line
+        );
+    }
+}
+
+impl Series {
+    pub fn label(&self, index: usize) -> DataLabel {
+        let mut label = self.point_labels.get(&index).cloned().unwrap_or_default();
+        label.inherit(&self.label_defaults);
+        label
+    }
+
+    pub fn extended_options<'a>(&'a self, chart: &'a Chart) -> &'a ExtendedChartOptions {
+        self.extended.as_ref().unwrap_or(&chart.extended)
+    }
 }
 
 /// Error bars (`c:errBars`): how far each point's bar reaches below and above it.
@@ -314,6 +424,124 @@ impl ErrorBars {
     }
 }
 
+/// Independently formatted chart text. The default role is the chart-space text style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartTextRole {
+    Default,
+    Title,
+    Legend,
+    CategoryAxis,
+    ValueAxis,
+    SecondaryValueAxis,
+    CategoryTitle,
+    ValueTitle,
+}
+
+/// An explicit chart element rectangle, relative to the complete chart frame. Missing
+/// coordinates retain automatic layout; `factor` positions offset that automatic position.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChartLayout {
+    pub inner: bool,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub w: Option<f64>,
+    pub h: Option<f64>,
+    pub x_edge: bool,
+    pub y_edge: bool,
+    pub w_edge: bool,
+    pub h_edge: bool,
+}
+
+impl ChartLayout {
+    /// Resolve OOXML factor/edge modes, rejecting hostile or inverted rectangles.
+    pub fn resolve(&self, auto: deckcraft_geom::Rect, width: f64, height: f64) -> deckcraft_geom::Rect {
+        let values = [self.x, self.y, self.w, self.h];
+        if !width.is_finite()
+            || !height.is_finite()
+            || width <= 0.0
+            || height <= 0.0
+            || values.into_iter().flatten().any(|v| !v.is_finite() || v.abs() > 1.0)
+            || self.w.is_some_and(|v| v < 0.0)
+            || self.h.is_some_and(|v| v < 0.0)
+            || (self.x_edge && self.x.is_some_and(|v| v < 0.0))
+            || (self.y_edge && self.y.is_some_and(|v| v < 0.0))
+        {
+            return auto;
+        }
+        let x = self.x.map_or(auto.x0, |v| v * width + if self.x_edge { 0.0 } else { auto.x0 });
+        let y = self.y.map_or(auto.y0, |v| v * height + if self.y_edge { 0.0 } else { auto.y0 });
+        let right = self.w.map_or(x + auto.width(), |v| v * width + if self.w_edge { 0.0 } else { x });
+        let bottom = self.h.map_or(y + auto.height(), |v| v * height + if self.h_edge { 0.0 } else { y });
+        if right <= x || bottom <= y {
+            return auto;
+        }
+        let w = (right - x).min(width);
+        let h = (bottom - y).min(height);
+        let x = x.clamp(0.0, (width - w).max(0.0));
+        let y = y.clamp(0.0, (height - h).max(0.0));
+        deckcraft_geom::Rect::new(x, y, x + w, y + h)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartLineRole {
+    CategoryAxis,
+    ValueAxis,
+    SecondaryValueAxis,
+    MajorGrid,
+    MinorGrid,
+}
+
+/// Tick text placement relative to its axis or the plot edges. Hidden category
+/// text is represented separately by `Chart::cat_hidden`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartTickPosition {
+    NextTo,
+    Low,
+    High,
+}
+
+/// An authored category-axis crossing on the value scale. Office interprets
+/// `crossesAt` using the crossed axis, not its XML parent (MS-OI29500 §2.1.1447).
+/// A maximum crossing also chooses the high side for adjacent tick text; an
+/// explicit value does not.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartAxisCrossing {
+    AutoZero,
+    Min,
+    Max,
+    Value(f64),
+}
+
+/// Rendering properties which used to survive only in opaque chart XML.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChartFormat {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plot_layout: Option<ChartLayout>,
+    pub title_overlay: bool,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub layouts: std::collections::BTreeMap<ChartTextRole, ChartLayout>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub lines: std::collections::BTreeMap<ChartLineRole, Line>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub bodies: std::collections::BTreeMap<ChartTextRole, crate::text::BodyProps>,
+    /// Explicit paragraph line spacing in chart text, inherited from the default role.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub line_spacings: std::collections::BTreeMap<ChartTextRole, crate::text::Spacing>,
+}
+
+impl ChartFormat {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Chart {
@@ -331,6 +559,11 @@ pub struct Chart {
     /// Title text size in points (its rich text or `c:txPr`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_size: Option<f64>,
+    /// Per-element DrawingML text properties; absent properties inherit from the default role.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub text_styles: std::collections::BTreeMap<ChartTextRole, crate::text::RunProps>,
+    #[serde(skip_serializing_if = "ChartFormat::is_empty")]
+    pub format: ChartFormat,
     pub data_labels: bool,
     pub gridlines: bool,
     /// `c:minorGridlines` on the value axis: five to a major unit, between the major ones.
@@ -346,6 +579,8 @@ pub struct Chart {
     pub gap_width: f64,
     pub overlap: f64,
     pub vary_colors: bool,
+    /// Size and sign semantics of a bubble chart, independent of its retained XML.
+    pub bubbles: BubbleOptions,
     pub y_min: Option<f64>,
     pub y_max: Option<f64>,
     /// The value axis' major unit, when the chart fixes it.
@@ -356,6 +591,20 @@ pub struct Chart {
     pub y_format: Option<String>,
     /// The value axis is deleted (`c:delete`): no labels, though gridlines may stay.
     pub y_hidden: bool,
+    /// `c:tickLblPos="none"`: omit value labels while retaining the axis line.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub y_tick_labels_hidden: bool,
+    /// `c:tickLblPos="none"`: hide the category labels while retaining its axis line.
+    pub cat_hidden: bool,
+    /// `c:delete`: remove the category axis line and its labels.
+    pub cat_deleted: bool,
+    /// `c:lblOffset`, from 0 to 1000. An absent value uses the DrawingML default, 100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cat_label_offset: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cat_label_position: Option<ChartTickPosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cat_crossing: Option<ChartAxisCrossing>,
     /// The category axis runs backwards (`c:orientation val="maxMin"`): right to left, or on a
     /// horizontal bar chart top to bottom (the default puts the first category at the bottom).
     pub cat_reversed: bool,
@@ -365,6 +614,8 @@ pub struct Chart {
     pub y2_major: Option<f64>,
     pub y2_format: Option<String>,
     pub y2_hidden: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub y2_tick_labels_hidden: bool,
     /// The chart's language (`c:lang`, e.g. `ru-RU`): digit grouping and decimal mark.
     pub lang: Option<String>,
     /// A waterfall's total points (`cx:subtotals`): bars that stand on the axis and restart
@@ -389,6 +640,8 @@ pub struct Chart {
     /// A histogram's bin width (`cx:binSize`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bin_size: Option<f64>,
+    /// Extended chart layout options, independent of the original XML sidecar.
+    pub extended: ExtendedChartOptions,
     /// Original chart XML part kept for round-trip of unmodelled options.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
@@ -452,6 +705,8 @@ impl Default for Chart {
             legend_overlay: false,
             text_size: None,
             title_size: None,
+            text_styles: Default::default(),
+            format: Default::default(),
             data_labels: false,
             gridlines: true,
             minor_gridlines: false,
@@ -465,18 +720,26 @@ impl Default for Chart {
             gap_width: 2.19,
             overlap: -0.27,
             vary_colors: false,
+            bubbles: BubbleOptions::default(),
             y_min: None,
             y_max: None,
             y_major: None,
             y_log_base: None,
             y_format: None,
             y_hidden: false,
+            y_tick_labels_hidden: false,
+            cat_hidden: false,
+            cat_deleted: false,
+            cat_label_offset: None,
+            cat_label_position: None,
+            cat_crossing: None,
             cat_reversed: false,
             y2_min: None,
             y2_max: None,
             y2_major: None,
             y2_format: None,
             y2_hidden: false,
+            y2_tick_labels_hidden: false,
             lang: None,
             subtotals: vec![],
             category_levels: vec![],
@@ -484,13 +747,95 @@ impl Default for Chart {
             up_down_bars: false,
             bin_count: None,
             bin_size: None,
+            extended: ExtendedChartOptions::default(),
             raw: None,
             kept: ChartKept::default(),
         }
     }
 }
 
+/// OOXML bubble area/width scaling and optional negative-size data points.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct BubbleOptions {
+    /// Percentage of default bubble diameter, bounded to 0..=300.
+    pub scale: u16,
+    pub size_is_width: bool,
+    pub show_negative: bool,
+}
+
+impl Default for BubbleOptions {
+    fn default() -> Self {
+        Self { scale: 100, size_is_width: false, show_negative: false }
+    }
+}
+
+/// Statistical and hierarchy options used by Office's chartEx layouts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExtendedChartOptions {
+    pub bin_closed_left: bool,
+    pub underflow: Option<f64>,
+    pub overflow: Option<f64>,
+    /// Aggregate observations by category rather than numerical intervals.
+    pub aggregation: bool,
+    pub mean_marker: bool,
+    pub mean_line: bool,
+    pub inner_points: bool,
+    pub outliers: bool,
+    pub connector_lines: bool,
+    /// Treemap parent labels: banner, overlapping or none.
+    pub parent_labels: Option<String>,
+}
+impl Default for ExtendedChartOptions {
+    fn default() -> Self {
+        Self {
+            bin_closed_left: false,
+            underflow: None,
+            overflow: None,
+            aggregation: false,
+            mean_marker: true,
+            mean_line: false,
+            inner_points: false,
+            outliers: true,
+            connector_lines: true,
+            parent_labels: None,
+        }
+    }
+}
+
 impl Chart {
+    /// Apply the existing chart-wide colour command to all independently formatted labels.
+    pub fn set_text_color(&mut self, color: Option<ColorRef>) {
+        self.text_color = color.clone();
+        if !self.text_styles.is_empty() {
+            self.text_styles.entry(ChartTextRole::Default).or_default();
+            for props in self.text_styles.values_mut() {
+                props.fill = color.clone().map(Fill::solid);
+            }
+        }
+    }
+
+    pub fn text_props(&self, role: ChartTextRole) -> crate::text::RunProps {
+        let mut props = self.text_styles.get(&role).cloned().unwrap_or_default();
+        if let Some(base) = self.text_styles.get(&ChartTextRole::Default) {
+            props.inherit(base);
+        }
+        // Legacy/native decks without per-element styles retain their existing appearance.
+        if self.text_styles.is_empty() {
+            props.size = if role == ChartTextRole::Title { self.title_size } else { self.text_size };
+            props.fill = self.text_color.clone().map(Fill::solid);
+        }
+        if props.lang.is_none() {
+            props.lang = self.lang.clone();
+        }
+        props
+    }
+
+    pub fn line_spacing(&self, role: ChartTextRole) -> Option<&crate::text::Spacing> {
+        self.format.line_spacings.get(&role).or_else(|| self.format.line_spacings.get(&ChartTextRole::Default))
+    }
+
     fn sample_treemap_sunburst(kind: ChartType) -> Self {
         let mut c = Chart {
             kind,
@@ -707,6 +1052,30 @@ impl Chart {
         Some(axis_scale(lo, hi, fmin, fmax, major, max_intervals, !full_percent))
     }
 
+    /// The first aligned range for an authored major unit, before layout can
+    /// require a second normalization. `None` for automatic units or percent axes.
+    /// The renderer uses this checkpoint when an authored plot already clears
+    /// the value labels; the fully normalized scale remains available above.
+    pub fn initial_authored_axis_scale(&self, secondary: bool) -> Option<(f64, f64, f64)> {
+        if !secondary && self.kind.percent() {
+            return None;
+        }
+        let (lo, hi) = self.plotted_extent(secondary)?;
+        let (lo, hi) = axis_data_range(lo, hi);
+        let (fmin, fmax, major) = if secondary { (self.y2_min, self.y2_max, self.y2_major) } else { (self.y_min, self.y_max, self.y_major) };
+        let finite = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
+        let (fmin, fmax) = (finite(fmin), finite(fmax));
+        let major = finite(major).filter(|v| *v > 0.)?;
+        let (initial, refined) = major_limit_stages(lo, hi, fmin, fmax);
+        let span = initial.1 - initial.0;
+        if !span.is_finite() || span <= 1e-12 * initial.0.abs().max(initial.1.abs()) {
+            return None;
+        }
+        let step = major.max(span / 500.);
+        let bounds = align_major_bounds(refined, fmin, fmax, step)?;
+        Some((bounds.0, bounds.1, step))
+    }
+
     /// A logarithmic value axis' scale in exponents — (min, max, unit), so its labels are
     /// `base^min`, `base^(min+unit)`… — covering the positive values: whole powers, as PowerPoint
     /// and LibreOffice draw them. `None` when the axis isn't logarithmic or nothing is positive.
@@ -731,7 +1100,11 @@ impl Chart {
             None | Some("General") if !secondary && self.kind.percent() => "0%",
             c => c.unwrap_or("General"),
         };
-        crate::numfmt::format(code, v, self.lang.as_deref())
+        if code.trim().is_empty() || code.trim().eq_ignore_ascii_case("General") {
+            axis_general(v, self.lang.as_deref())
+        } else {
+            crate::numfmt::format(code, v, self.lang.as_deref())
+        }
     }
 
     /// A data label of series `s`: its number format, else its axis', in the chart's language.
@@ -743,6 +1116,52 @@ impl Chart {
 
     /// Does series `s` show its data labels? The series' own `c:dLbls/c:showVal` wins — an
     /// explicit `false` hides them even when the chart-wide setting is on (#868).
+    /// Visible label text at a point, including category/series/percentage and custom runs.
+    pub fn point_label(&self, series: &Series, index: usize) -> Option<String> {
+        let label = series.label(index);
+        if label.hidden == Some(true) {
+            return None;
+        }
+        if let Some(text) = label.text {
+            return Some(text.text());
+        }
+        let requested = [label.show_value, label.show_category, label.show_series, label.show_percent, label.show_bubble_size];
+        if !self.series_data_labels(series) && !requested.contains(&Some(true)) && !series.point_labels.contains_key(&index) {
+            return None;
+        }
+        let value = series.values.get(index).copied().flatten()?;
+        if !value.is_finite() {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if label.show_series == Some(true) {
+            parts.push(series.name.clone());
+        }
+        if label.show_category == Some(true) {
+            parts.push(self.categories.get(index).cloned().unwrap_or_default());
+        }
+        if label.show_value.unwrap_or(self.series_data_labels(series)) {
+            parts.push(if let Some(code) = label.number_format.as_deref() {
+                crate::numfmt::format(code, value, self.lang.as_deref())
+            } else {
+                self.data_label(series, value)
+            });
+        }
+        if label.show_percent == Some(true) {
+            let total: f64 = series.values.iter().flatten().filter(|v| v.is_finite()).map(|v| v.max(0.)).sum();
+            if total > 0.0 {
+                let code = label.number_format.as_deref().filter(|s| s.contains('%')).unwrap_or("0%");
+                parts.push(crate::numfmt::format(code, value.max(0.) / total, self.lang.as_deref()));
+            }
+        }
+        if label.show_bubble_size == Some(true)
+            && let Some(size) = series.sizes.get(index).copied().flatten()
+        {
+            parts.push(self.data_label(series, size));
+        }
+        (!parts.is_empty()).then(|| parts.join(label.separator.as_deref().unwrap_or(", ")))
+    }
+
     pub fn series_data_labels(&self, s: &Series) -> bool {
         s.data_labels.unwrap_or(self.data_labels)
     }
@@ -811,6 +1230,46 @@ impl Chart {
     }
 }
 
+/// Generated axis General labels have a nine-character budget, including sign
+/// and decimal mark. Authored formats and data labels retain their own precision.
+fn axis_general(v: f64, lang: Option<&str>) -> String {
+    if !v.is_finite() || v == 0. {
+        return crate::numfmt::format("General", v, lang);
+    }
+    let exponent = v.abs().log10().floor() as i32;
+    let negative = usize::from(v < 0.);
+    let integer_digits = (exponent + 1).max(1);
+    let decimals = (8 - integer_digits - negative as i32).clamp(0, 7) as usize;
+    let format = |decimals: usize, scientific: bool| {
+        let mut code = "0".to_owned();
+        if decimals > 0 {
+            code.push('.');
+            code.push_str(&"#".repeat(decimals));
+        }
+        if scientific {
+            code.push_str("E+00");
+        }
+        crate::numfmt::format(&code, v, lang)
+    };
+    let fixed = format(decimals, false);
+    // Choose notation before rounding: a value just below 0.0001 may round
+    // to 1E-04, but still belongs to the scientific path.
+    if v.abs() >= 1e-4 && fixed.chars().count() <= 9 {
+        return fixed;
+    }
+    let exponent_digits = exponent.unsigned_abs().to_string().len().max(2);
+    let mut decimals = 9usize.saturating_sub(4 + negative + exponent_digits);
+    loop {
+        let scientific = format(decimals, true);
+        if scientific.chars().count() <= 9 || decimals == 0 {
+            return scientific;
+        }
+        // A rounded exponent can gain a digit. At most three fractional
+        // placeholders are possible, so this retry is bounded.
+        decimals -= 1;
+    }
+}
+
 /// The (min, max, major unit) of an axis over the data range [lo, hi]: `fmin`/`fmax`/`major`
 /// where the chart fixes them; otherwise Office's automatic limits, rounded out to the smallest
 /// 1-2-5 unit giving at most `max_intervals` intervals:
@@ -826,21 +1285,26 @@ fn axis_data_range(lo: f64, hi: f64) -> (f64, f64) {
     if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) }
 }
 
-/// Office's automatic (min, max) of the data range [lo, hi]. "How chart axis limits are determined",
-/// as Jon Peltier summarises it: 5 % of the data range past the data, and zero when the values don't
-/// sit within the top sixth of their largest magnitude. A single value is measured from zero.
+/// Automatic bounds before major-unit rounding. Same-sign data uses zero or
+/// half its span toward zero, then five percent of that unrounded span at the
+/// far end. Rounding the inner bound first changes the resulting outer tick.
 fn auto_limits(lo: f64, hi: f64, headroom: bool) -> (f64, f64) {
     let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
-    let pad = if !headroom {
-        0.0
-    } else if flat {
-        hi.abs() / 20.0
+    let zero_lo = lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0);
+    let zero_hi = hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0);
+    if !headroom {
+        return (if zero_lo { 0.0 } else { lo }, if zero_hi { 0.0 } else { hi });
+    }
+    if lo >= 0.0 {
+        let lower = if zero_lo { 0.0 } else { lo - (hi - lo) / 2.0 };
+        (lower, hi + (hi - lower) / 20.0)
+    } else if hi <= 0.0 {
+        let upper = if zero_hi { 0.0 } else { hi + (hi - lo) / 2.0 };
+        (lo - (upper - lo) / 20.0, upper)
     } else {
-        (hi - lo) / 20.0
-    };
-    let auto_lo = if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) { 0.0 } else { lo - pad };
-    let auto_hi = if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) { 0.0 } else { hi + pad };
-    (auto_lo, auto_hi)
+        let pad = (hi - lo) / 20.0;
+        (lo - pad, hi + pad)
+    }
 }
 
 /// The ends of a span too small to show: with one fixed limit on the far side of the data, the
@@ -875,6 +1339,72 @@ fn axis_step(major: Option<f64>, lo: f64, hi: f64, n: f64, unit: f64) -> f64 {
     }
 }
 
+/// The initial five-percent range precedes the same-sign inner-limit expansion.
+/// An authored end (or an automatic zero end) supplies the opposite reference.
+fn major_limit_stages(lo: f64, hi: f64, fmin: Option<f64>, fmax: Option<f64>) -> ((f64, f64), (f64, f64)) {
+    match (fmin, fmax) {
+        (Some(min), Some(max)) => ((min, max), (min, max)),
+        (Some(min), None) => {
+            if hi <= 0.0 && min < 0.0 && hi > min * 5.0 / 6.0 {
+                return ((min, 0.0), (min, 0.0));
+            }
+            let initial = (min, hi + (hi - min) / 20.0);
+            let refined = if hi <= 0.0 && min < 0.0 { (min, hi + (hi - min) / 2.0) } else { initial };
+            (initial, refined)
+        }
+        (None, Some(max)) => {
+            if lo >= 0.0 && max > 0.0 && lo < max * 5.0 / 6.0 {
+                return ((0.0, max), (0.0, max));
+            }
+            let initial = (lo - (max - lo) / 20.0, max);
+            let refined = if lo >= 0.0 && max > 0.0 { (lo - (max - lo) / 2.0, max) } else { initial };
+            (initial, refined)
+        }
+        (None, None) => {
+            let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
+            if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) {
+                return ((0.0, hi * 1.05), (0.0, hi * 1.05));
+            }
+            if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) {
+                return ((lo * 1.05, 0.0), (lo * 1.05, 0.0));
+            }
+            let pad = (hi - lo) / 20.0;
+            ((lo - pad, hi + pad), auto_limits(lo, hi, true))
+        }
+    }
+}
+
+fn align_major_bounds(bounds: (f64, f64), fmin: Option<f64>, fmax: Option<f64>, step: f64) -> Option<(f64, f64)> {
+    let aligned = match (fmin, fmax) {
+        (Some(min), Some(max)) => (min, max),
+        (Some(min), None) => (min, min + ((bounds.1 - min) / step - 1e-9).ceil() * step),
+        (None, Some(max)) => (max - ((max - bounds.0) / step - 1e-9).ceil() * step, max),
+        (None, None) => (((bounds.0 / step + 1e-9).floor()) * step, ((bounds.1 / step - 1e-9).ceil()) * step),
+    };
+    (aligned.0.is_finite() && aligned.1.is_finite() && aligned.1 > aligned.0).then_some(aligned)
+}
+
+/// Normalize an authored unit at each range-generation stage, then align the
+/// limits again. The final alignment can have 501 intervals; repeatedly clamping
+/// it to 500 changes native mixed and translated same-sign scales.
+fn authored_major_scale(lo: f64, hi: f64, fmin: Option<f64>, fmax: Option<f64>, major: f64) -> Option<(f64, f64, f64)> {
+    if !(major > 0.0 && major.is_finite()) {
+        return None;
+    }
+    let (initial, refined) = major_limit_stages(lo, hi, fmin, fmax);
+    let span = initial.1 - initial.0;
+    if !span.is_finite() || span <= 1e-12 * initial.0.abs().max(initial.1.abs()) {
+        return None;
+    }
+    let mut step = major.max(span / 500.0);
+    let mut bounds = align_major_bounds(refined, fmin, fmax, step)?;
+    if refined != initial {
+        step = step.max((bounds.1 - bounds.0) / 500.0);
+        bounds = align_major_bounds(refined, fmin, fmax, step)?;
+    }
+    Some((bounds.0, bounds.1, step))
+}
+
 pub fn axis_scale(
     lo: f64,
     hi: f64,
@@ -888,7 +1418,24 @@ pub fn axis_scale(
     let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
     let (fmin, fmax) = (fin(fmin), fin(fmax));
     let (lo, hi) = axis_data_range(lo, hi);
-    let (auto_lo, auto_hi) = auto_limits(lo, hi, headroom);
+    if headroom && let Some(scale) = fin(major).and_then(|m| authored_major_scale(lo, hi, fmin, fmax, m)) {
+        return scale;
+    }
+    let (mut auto_lo, mut auto_hi) = auto_limits(lo, hi, headroom);
+    // A single authored end sets the reference for the opposite automatic
+    // limit. Keep zero outside its top sixth; inside it reserve half the
+    // remaining distance. Data beyond the fixed end is still clipped there.
+    if headroom {
+        match (fmin, fmax) {
+            (None, Some(max)) if lo >= 0.0 && max > 0.0 => {
+                auto_lo = if lo < max * 5.0 / 6.0 { 0.0 } else { lo - (max - lo) / 2.0 };
+            }
+            (Some(min), None) if hi <= 0.0 && min < 0.0 => {
+                auto_hi = if hi > min * 5.0 / 6.0 { 0.0 } else { hi + (hi - min) / 2.0 };
+            }
+            _ => {}
+        }
+    }
     let (mut lo, mut hi) = (fmin.unwrap_or(auto_lo), fmax.unwrap_or(auto_hi));
     let mag = lo.abs().max(hi.abs());
     // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
@@ -934,6 +1481,68 @@ pub fn nice_scale(lo: f64, hi: f64) -> (f64, f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authored_dense_axes_preserve_native_generation_stages() {
+        // Independent native controls distinguish the intermediate 716/717
+        // intervals, sign mirrors, an unrounded mixed extent and authored ends.
+        for (lo, hi, major, fmin, fmax, expected) in [
+            (42.0, 46.32, 0.001, None, None, (39.836795328, 46.651163328, 0.013628736)),
+            (-46.32, -42.0, 0.001, None, None, (-46.651163328, -39.836795328, 0.013628736)),
+            (42.077097, 46.397097, 0.001, None, None, (39.903722496, 46.722196224, 0.013609728)),
+            (42.081552, 46.401552, 0.001, None, None, (39.918567744, 46.732935744, 0.013628736)),
+            (45.000515625, 52.500515625, 0.001, None, None, (41.23086, 53.068488, 0.023628)),
+            (45.00825, 52.50825, 0.001, None, None, (41.241123, 53.071623, 0.023661)),
+            (-11.3, 27.7, 0.01, None, None, (-13.299, 29.6868, 0.0858)),
+            (5.0, 80.0, 0.1, None, None, (0.0, 84.0, 0.168)),
+            (42.0, 46.32, 0.001, Some(38.2), None, (38.2, 46.726, 0.017052)),
+            (42.0, 46.32, 0.001, None, Some(48.2), (38.8907, 48.2, 0.0186186)),
+            (45.0, 52.5, 0.001, Some(40.0), None, (40.0, 53.125, 0.02625)),
+            (45.0, 52.5, 0.001, None, Some(52.5), (41.23875, 52.5, 0.0225225)),
+        ] {
+            let actual = axis_scale(lo, hi, fmin, fmax, Some(major), 10, true);
+            assert!(
+                (actual.0 - expected.0).abs() < 1e-8 && (actual.1 - expected.1).abs() < 1e-8 && (actual.2 - expected.2).abs() < 1e-10,
+                "{lo}..{hi}, fixed {fmin:?}..{fmax:?}: {actual:?} != {expected:?}"
+            );
+        }
+        let (lo, hi, step) = axis_scale(-11.3, 27.7, None, None, Some(0.01), 10, true);
+        assert!(((hi - lo) / step - 501.0).abs() < 1e-9, "final rounding keeps the native 502 ticks");
+    }
+
+    #[test]
+    fn authored_dense_axes_anchor_to_fixed_ends_without_half_unit_offsets() {
+        for intervals in [499.0, 500.0, 501.0] {
+            let major = 6.48 / intervals;
+            for negative in [false, true] {
+                let actual = if negative {
+                    axis_scale(-46.32, -42.0, Some(-46.32), None, Some(major), 10, true)
+                } else {
+                    axis_scale(42.0, 46.32, None, Some(46.32), Some(major), 10, true)
+                };
+                let expected = if negative { (-46.32, -39.84) } else { (39.84, 46.32) };
+                assert!((actual.0 - expected.0).abs() < 1e-10 && (actual.1 - expected.1).abs() < 1e-10, "{intervals}: {actual:?}");
+                assert!((actual.2 - major.max(6.48 / 500.0)).abs() < 1e-12);
+            }
+        }
+        assert_eq!(axis_scale(1.0, 2.0, Some(0.0), Some(501.0), Some(1.0), 10, true), (0.0, 501.0, 1.002));
+        assert_eq!(axis_scale(3.0, 4.0, Some(2.2), Some(4.7), Some(1.0), 10, true), (2.2, 4.7, 1.0));
+    }
+
+    #[test]
+    fn authored_dense_axes_keep_fallback_and_finite_budget_guards() {
+        let automatic = axis_scale(42.0, 46.32, None, None, None, 10, true);
+        assert_eq!(automatic, (39.0, 47.0, 1.0));
+        for major in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 0.0] {
+            assert_eq!(axis_scale(42.0, 46.32, None, None, Some(major), 10, true), automatic);
+        }
+        assert_eq!(axis_scale(42.0, 46.32, None, None, Some(0.001), 10, false), (42.0, 46.5, 0.5));
+        for (lo, hi) in [(0.0, f64::from_bits(1)), (-1e100, 1e100), (f64::NAN, 3.0), (1e-300, 2e-300)] {
+            let (min, max, step) = axis_scale(lo, hi, None, None, Some(f64::from_bits(1)), usize::MAX, true);
+            assert!(min.is_finite() && max.is_finite() && step.is_finite() && step > 0.0 && max >= min, "{min} {max} {step}");
+            assert!(((max - min) / step).is_finite() && (max - min) / step <= 1000.0, "bounded authored-unit work: {min} {max} {step}");
+        }
+    }
 
     #[test]
     fn tiny_data_keeps_its_own_scale() {
@@ -1027,6 +1636,73 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fixed_axis_end_controls_the_opposite_automatic_limit() {
+        // With a fixed upper end, values in its top sixth retain half the
+        // remaining distance below the least value before unit rounding.
+        for (lo, hi, fixed, intervals, expected) in [
+            (8.0, 9.5, 10.0, 10, (0.0, 10.0, 1.0)),
+            (8.5, 9.5, 10.0, 10, (7.5, 10.0, 0.5)),
+            (9.0, 9.5, 10.0, 10, (8.4, 10.0, 0.2)),
+            (9.0, 12.0, 10.0, 10, (8.4, 10.0, 0.2)),
+            (9.5, 9.5, 10.0, 10, (9.2, 10.0, 0.1)),
+            (10.0, 11.0, 12.0, 10, (9.0, 12.0, 0.5)),
+            (9.99, 11.0, 12.0, 10, (0.0, 12.0, 2.0)),
+            (0.9, 0.95, 1.0, 10, (0.84, 1.0, 0.02)),
+            (9.0, 9.5, 10.0, 4, (8.5, 10.0, 0.5)),
+            (12.0, 12.0, 10.0, 10, (0.0, 10.0, 1.0)),
+        ] {
+            let positive = axis_scale(lo, hi, None, Some(fixed), None, intervals, true);
+            let negative = axis_scale(-hi, -lo, Some(-fixed), None, None, intervals, true);
+            for (got, want) in [
+                (positive.0, expected.0),
+                (positive.1, expected.1),
+                (positive.2, expected.2),
+                (negative.0, -expected.1),
+                (negative.1, -expected.0),
+                (negative.2, expected.2),
+            ] {
+                assert!((got - want).abs() < 1e-10, "{lo}..{hi}, fixed {fixed}: {positive:?}, {negative:?}");
+            }
+        }
+        assert_eq!(axis_scale(9.0, 9.0, None, Some(10.0), Some(1.0), 10, true), (8.0, 10.0, 1.0));
+        assert_eq!(axis_scale(9.0, 9.5, Some(0.0), Some(10.0), None, 10, true), (0.0, 10.0, 1.0));
+        // The fixed-end correction leaves the existing both-automatic and
+        // no-headroom policies independent.
+        assert_eq!(axis_scale(9.0, 9.0, None, None, None, 10, true), (0.0, 10.0, 1.0));
+        assert_eq!(axis_scale(0.0, 1.0, None, None, None, 5, false), (0.0, 1.0, 0.2));
+    }
+
+    #[test]
+    fn automatic_bounds_pad_from_the_unrounded_inner_limit() {
+        // Native controls distinguish original-data padding, padding after
+        // rounding the inner limit, and padding from its unrounded value.
+        for (lo, hi, major, expected) in [
+            (33.0, 35.0, 0.01, (32.0, 35.15)),
+            (26.0, 30.64, 1.0, (23.0, 31.0)),
+            (25.55, 30.64, 1.0, (23.0, 32.0)),
+            (25.5, 30.64, 1.0, (0.0, 33.0)),
+            (42.0, 46.32, 0.5, (39.5, 47.0)),
+            (50.0, 60.0, 1.0, (45.0, 61.0)),
+            (49.8, 60.0, 1.0, (0.0, 63.0)),
+            (0.42, 0.4632, 0.005, (0.395, 0.47)),
+            (-11.3, 27.7, 0.5, (-13.5, 30.0)),
+            (13.5, 13.5, 0.5, (0.0, 14.5)),
+        ] {
+            let positive = axis_scale(lo, hi, None, None, Some(major), 10, true);
+            let negative = axis_scale(-hi, -lo, None, None, Some(major), 10, true);
+            for (got, want) in [(positive.0, expected.0), (positive.1, expected.1), (negative.0, -expected.1), (negative.1, -expected.0)] {
+                assert!((got - want).abs() < 1e-10, "{lo}..{hi}: {positive:?}, {negative:?}");
+            }
+        }
+        assert_eq!(axis_scale(42.0, 46.32, None, None, None, 10, true), (39.0, 47.0, 1.0));
+        assert_eq!(axis_scale(50.0, 60.0, None, None, None, 10, true), (44.0, 62.0, 2.0));
+        assert_eq!(axis_scale(49.8, 60.0, None, None, None, 10, true), (0.0, 70.0, 10.0));
+        // No-headroom ranges retain their own policy.
+        assert_eq!(axis_scale(9.0, 9.5, None, None, Some(0.1), 10, false), (9.0, 9.5, 0.1));
+        assert_eq!(axis_scale(-7.0, 9.0, None, None, Some(1.0), 10, false), (-7.0, 9.0, 1.0));
+    }
+
     fn column(values: &[f64]) -> Chart {
         let series = Series { name: "Sales".into(), values: values.iter().map(|v| Some(*v)).collect(), ..Default::default() };
         Chart { categories: (0..values.len()).map(|i| format!("C{i}")).collect(), series: vec![series], ..Default::default() }
@@ -1057,14 +1733,15 @@ mod tests {
     #[test]
     fn automatic_axis_minimum() {
         // Below 5/6 of the maximum the axis starts at zero; at or above it, a unit below
-        // min − (max − min)/20.
+        // min − (max − min)/2. Native column, line and horizontal controls
+        // distinguish these bounds from the former five-percent assumption.
         assert_eq!(scale(&column(&[59.0, 49.0])).0, 0.0);
-        assert_eq!(scale(&column(&[59.0, 50.0])), (48.0, 60.0, 2.0));
-        assert_eq!(scale(&column(&[85.0, 92.0, 97.0])), (84.0, 98.0, 2.0));
+        assert_eq!(scale(&column(&[59.0, 50.0])), (44.0, 60.0, 2.0));
+        assert_eq!(scale(&column(&[85.0, 92.0, 97.0])), (78.0, 98.0, 2.0));
         // All-negative data mirrors it: the axis ends at zero, or near the data.
         assert_eq!(scale(&column(&[-42.1, -18.7, -6.3])), (-45.0, 0.0, 5.0));
         assert_eq!(scale(&column(&[-59.0, -49.0])).1, 0.0);
-        assert_eq!(scale(&column(&[-59.0, -50.0])), (-60.0, -48.0, 2.0));
+        assert_eq!(scale(&column(&[-59.0, -50.0])), (-60.0, -44.0, 2.0));
         // Mixed signs get headroom at both ends.
         assert_eq!(scale(&column(&[42.1, -18.7])), (-30.0, 50.0, 10.0));
         // Stacked bars build up from zero, so their axis keeps it.
@@ -1079,7 +1756,7 @@ mod tests {
         c.series[1].values = vec![Some(7_000.0), Some(7_400.0)];
         c.series[1].secondary_axis = true;
         assert_eq!(c.axis_scale(false, 10), Some((0.0, 350_000.0, 50_000.0)));
-        assert_eq!(c.axis_scale(true, 10), Some((6_950.0, 7_450.0, 50.0)));
+        assert_eq!(c.axis_scale(true, 10), Some((6_800.0, 7_500.0, 100.0)));
     }
 
     #[test]
@@ -1170,6 +1847,60 @@ mod tests {
     }
 
     #[test]
+    fn axis_general_limits_characters_without_changing_authored_precision() {
+        let mut c = Chart::sample(ChartType::Column);
+        for (value, expected) in [
+            (1.234567891, "1.2345679"),
+            (-2.234567891, "-2.234568"),
+            (0.001234567891, "0.0012346"),
+            (123456.7891, "123456.79"),
+            (0.000123456789, "0.0001235"),
+            (0.0000123456789, "1.235E-05"),
+            (-0.0000123456789, "-1.23E-05"),
+            (1.234567891e-10, "1.235E-10"),
+            (1.234567891e9, "1.235E+09"),
+            (12345678.9, "12345679"),
+            (123456789., "123456789"),
+            (99999999.6, "100000000"),
+            (-12345678.9, "-12345679"),
+            (9.99999996, "10"),
+            (-9.99999996, "-10"),
+            (0.0000999999996, "1E-04"),
+        ] {
+            assert_eq!(c.axis_label(false, value), expected, "{value}");
+        }
+        c.lang = Some("ru-RU".into());
+        assert_eq!(c.axis_label(false, -2.234567891), "-2,234568");
+        c.y_format = Some("0.000000000".into());
+        assert_eq!(c.axis_label(false, -2.234567891), "-2,234567891");
+        c.y_format = None;
+        c.lang = None;
+        assert_eq!(c.data_label(&c.series[0], 1.234567891), "1.234567891", "data-label General keeps its existing precision");
+    }
+
+    #[test]
+    fn initial_authored_scale_retains_the_unit_before_layout_refinement() {
+        let mut c = Chart::sample(ChartType::Column);
+        c.series.truncate(1);
+        c.series[0].values = vec![Some(57.4), Some(62.93)];
+        c.y_max = Some(64.1);
+        c.y_major = Some(0.001);
+        let first = c.initial_authored_axis_scale(false).unwrap();
+        let final_scale = c.axis_scale(false, 5).unwrap();
+        for (actual, expected) in [(first.0, 54.03995), (first.1, 64.1), (first.2, 0.01407), (final_scale.2, 0.0201201)] {
+            assert!((actual - expected).abs() < 1e-12, "{actual}, expected {expected}");
+        }
+        assert_eq!((first.0, first.1), (final_scale.0, final_scale.1));
+        c.y_major = None;
+        assert!(c.initial_authored_axis_scale(false).is_none());
+        c.y_major = Some(f64::NAN);
+        assert!(c.initial_authored_axis_scale(false).is_none());
+        c.y_major = Some(0.001);
+        c.kind = ChartType::PercentColumn;
+        assert!(c.initial_authored_axis_scale(false).is_none());
+    }
+
+    #[test]
     fn full_percent_axes_count_in_percent() {
         let mut c = Chart::sample(ChartType::PercentColumn);
         assert_eq!(c.axis_label(false, 0.5), "50%");
@@ -1233,6 +1964,7 @@ pub struct BoxStats {
     pub high: f64,
     pub mean: f64,
     pub outliers: Vec<f64>,
+    pub inside: Vec<f64>,
 }
 
 impl Chart {
@@ -1242,48 +1974,83 @@ impl Chart {
     }
 
     /// The histogram's bins over the first series: by `bin_size`, else `bin_count`, else
-    /// Scott's rule (3.49·σ·n^(-1/3)). Empty without observations.
+    /// Scott's rule (3.49·σ·n^(-1/3)), rounded to two significant digits like native Office.
+    /// Empty without observations.
     pub fn histogram_bins(&self) -> Vec<Bin> {
         let mut v = self.observations();
         if v.is_empty() {
             return vec![];
         }
         v.sort_by(f64::total_cmp);
-        let (lo, hi) = (v[0], v[v.len() - 1]);
-        let span = hi - lo;
+        let options = self.series.first().map(|s| s.extended_options(self)).unwrap_or(&self.extended);
+        // Office ignores bucket bounds outside the observations. Scott's rule still uses
+        // the full population, not just the points left after the end buckets are removed.
+        let min = v.first().copied().unwrap_or(0.0);
+        let max = v.last().copied().unwrap_or(min);
+        let lower = options.underflow.filter(|n| n.is_finite() && *n >= min && *n <= max);
+        let upper = options.overflow.filter(|n| n.is_finite() && *n >= min && *n <= max && lower.is_none_or(|l| *n > l));
+        let left = options.bin_closed_left;
         let n = v.len() as f64;
+        let mean = v.iter().sum::<f64>() / n;
+        let sd = (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
+        let end_buckets = usize::from(lower.is_some()) + usize::from(upper.is_some());
+        let max_inner = MAX_BINS - end_buckets;
+        let fixed = self
+            .bin_count
+            .filter(|k| *k > 0)
+            .filter(|_| self.bin_size.filter(|w| w.is_finite() && *w > 0.0).is_none())
+            .map(|k| (k as usize).saturating_sub(end_buckets).clamp(1, max_inner));
+        let under = lower.map_or(0, |l| v.iter().filter(|x| if left { **x < l } else { **x <= l }).count());
+        let over = upper.map_or(0, |u| v.iter().filter(|x| if left { **x >= u } else { **x > u }).count());
+        let lo = lower.unwrap_or(v[0]);
+        let hi = upper.unwrap_or(v[v.len() - 1]).max(lo);
+        let end = v.len().saturating_sub(over);
+        v = v.get(under..end).unwrap_or_default().to_vec();
+        let span = hi - lo;
         let width = if let Some(w) = self.bin_size.filter(|w| w.is_finite() && *w > 0.0) {
             w
-        } else if let Some(k) = self.bin_count.filter(|k| *k > 0) {
-            span / f64::from(k)
+        } else if let Some(k) = fixed {
+            span / k as f64
         } else {
-            let mean = v.iter().sum::<f64>() / n;
-            let sd = (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
-            3.49 * sd / n.cbrt()
+            let scott = 3.49 * sd / n.cbrt();
+            let unit = 10_f64.powf(scott.log10().floor() - 1.0);
+            if unit.is_finite() && unit > 0.0 { (scott / unit).round() * unit } else { scott }
         };
-        let fixed = self.bin_count.filter(|k| *k > 0).filter(|_| self.bin_size.filter(|w| w.is_finite() && *w > 0.0).is_none());
         let count = if span <= 0.0 || !width.is_finite() || width <= 0.0 {
             1
         } else if let Some(k) = fixed {
-            (k as usize).clamp(1, MAX_BINS)
+            k
         } else {
-            ((span / width).ceil() as usize).clamp(1, MAX_BINS)
+            ((span / width).ceil() as usize).clamp(1, max_inner)
         };
-        let width = if count == 1 && (span <= 0.0 || !width.is_finite() || width <= 0.0) { span.max(1.0) } else { width.max(span / MAX_BINS as f64) };
+        let width =
+            if count == 1 && (span <= 0.0 || !width.is_finite() || width <= 0.0) { span.max(1.0) } else { width.max(span / max_inner as f64) };
         let mut bins: Vec<Bin> = (0..count).map(|i| Bin { lo: lo + width * i as f64, hi: lo + width * (i + 1) as f64, count: 0 }).collect();
         for x in v {
             // (lo, hi] bins, the first one also holding the minimum.
-            let mut i = (((x - lo) / width).ceil() as usize).saturating_sub(1).min(count - 1);
+            let mut i =
+                if left { ((x - lo) / width).floor() as usize } else { (((x - lo) / width).ceil() as usize).saturating_sub(1) }.min(count - 1);
             // The division can round across an edge: settle on the bin whose stored bounds hold x.
-            while i > 0 && x <= bins[i - 1].hi {
+            while i > 0 && if left { x < bins[i - 1].hi } else { x <= bins[i - 1].hi } {
                 i -= 1;
             }
-            while i + 1 < count && x > bins[i].hi {
+            while i + 1 < count && if left { x >= bins[i].hi } else { x > bins[i].hi } {
                 i += 1;
             }
             if let Some(b) = bins.get_mut(i) {
                 b.count += 1;
             }
+        }
+        if let Some(upper) = upper
+            && let Some(last) = bins.last_mut()
+        {
+            last.hi = upper;
+        }
+        if let Some(lower) = lower {
+            bins.insert(0, Bin { lo: f64::NEG_INFINITY, hi: lower, count: under });
+        }
+        if let Some(upper) = upper {
+            bins.push(Bin { lo: upper, hi: f64::INFINITY, count: over });
         }
         bins
     }
@@ -1292,22 +2059,59 @@ impl Chart {
     /// touching columns, labelled by bin range. A Pareto sorts the bins by count and adds the
     /// cumulative percentage as a line on a 0–100 % secondary axis.
     pub fn histogram_view(&self) -> Chart {
-        let mut bins = self.histogram_bins();
         let pareto = self.kind == ChartType::Pareto;
-        if pareto {
-            bins.sort_by_key(|b| std::cmp::Reverse(b.count));
+        let options = self.series.first().map(|s| s.extended_options(self)).unwrap_or(&self.extended);
+        let mut entries: Vec<(String, f64)> = Vec::new();
+        if options.aggregation {
+            let mut indices = std::collections::HashMap::new();
+            if let Some(series) = self.series.first() {
+                for (i, value) in series.values.iter().enumerate() {
+                    let Some(value) = value.filter(|v| v.is_finite()) else { continue };
+                    let category = self.categories.get(i).cloned().unwrap_or_default();
+                    let index = *indices.entry(category.clone()).or_insert_with(|| {
+                        entries.push((category, 0.0));
+                        entries.len() - 1
+                    });
+                    if let Some(entry) = entries.get_mut(index) {
+                        entry.1 += value;
+                    }
+                }
+            }
+        } else {
+            let bins = self.histogram_bins();
+            // Keep labels compact, but retain enough decimal places to distinguish small
+            // intervals. Format directly: multiplying huge numbers or casting to i64 loses them.
+            let width = bins.iter().map(|b| b.hi - b.lo).filter(|w| w.is_finite() && *w > 0.0).reduce(f64::min).unwrap_or(1.0);
+            let precision = (1.0 - width.log10().floor()).clamp(2.0, 340.0) as usize;
+            let fmt = |v: f64| {
+                let value = format!("{v:.precision$}");
+                let value = value.trim_end_matches('0').trim_end_matches('.');
+                if value == "-0" { "0".to_string() } else { value.to_string() }
+            };
+            let left = options.bin_closed_left;
+            for (i, b) in bins.iter().enumerate() {
+                let label = if b.lo.is_infinite() {
+                    format!("{} {}", if left { "<" } else { "≤" }, fmt(b.hi))
+                } else if b.hi.is_infinite() {
+                    format!("{} {}", if left { "≥" } else { ">" }, fmt(b.lo))
+                } else {
+                    format!(
+                        "{}{}, {}{}",
+                        if left || i == 0 { "[" } else { "(" },
+                        fmt(b.lo),
+                        fmt(b.hi),
+                        if left && i + 1 < bins.len() { ")" } else { "]" }
+                    )
+                };
+                entries.push((label, b.count as f64));
+            }
         }
-        let fmt = |v: f64| {
-            let r = (v * 100.0).round() / 100.0;
-            if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
-        };
-        let first_lo = bins.iter().map(|b| b.lo).fold(f64::INFINITY, f64::min);
+        if pareto {
+            entries.sort_by(|a, b| b.1.total_cmp(&a.1));
+        }
         let mut v = Chart {
             kind: if pareto { ChartType::Combo } else { ChartType::Column },
-            categories: bins
-                .iter()
-                .map(|b| if b.lo <= first_lo { format!("[{}, {}]", fmt(b.lo), fmt(b.hi)) } else { format!("({}, {}]", fmt(b.lo), fmt(b.hi)) })
-                .collect(),
+            categories: entries.iter().map(|(label, _)| label.clone()).collect(),
             series: vec![],
             gap_width: 0.0,
             raw: None,
@@ -1318,20 +2122,20 @@ impl Chart {
         let base = self.series.first().cloned().unwrap_or_default();
         v.series.push(Series {
             name,
-            values: bins.iter().map(|b| Some(b.count as f64)).collect(),
+            values: entries.iter().map(|(_, value)| Some(*value)).collect(),
             kind: pareto.then_some(ChartType::Column),
             number_format: None,
             ..base
         });
         if pareto {
-            let total = bins.iter().map(|b| b.count).sum::<usize>().max(1) as f64;
+            let total = entries.iter().map(|(_, value)| *value).sum::<f64>().max(f64::EPSILON);
             let mut run = 0.0;
             v.series.push(Series {
                 name: "Cumulative %".into(),
-                values: bins
+                values: entries
                     .iter()
-                    .map(|b| {
-                        run += b.count as f64;
+                    .map(|(_, value)| {
+                        run += value;
                         Some(run / total)
                     })
                     .collect(),
@@ -1385,7 +2189,7 @@ impl Chart {
                         b.push(v);
                     }
                 }
-                buckets.into_iter().map(|pts| box_stats_by(pts, self.inclusive_quartiles)).collect()
+                buckets.into_iter().map(|pts| box_stats_by(pts, s.inclusive_quartiles.unwrap_or(self.inclusive_quartiles))).collect()
             })
             .collect();
         (groups, stats)
@@ -1442,7 +2246,7 @@ pub fn box_stats_by(mut pts: Vec<f64>, inclusive: bool) -> Option<BoxStats> {
     let high = inside.last().copied().unwrap_or(q3).max(q3);
     let mean = pts.iter().sum::<f64>() / pts.len() as f64;
     let outliers = pts.iter().copied().filter(|v| *v < lo_fence || *v > hi_fence).collect();
-    Some(BoxStats { low, q1, median, q3, high, mean, outliers })
+    Some(BoxStats { low, q1, median, q3, high, mean, outliers, inside })
 }
 
 /// A node of a treemap or sunburst hierarchy: its label, the total of the leaves under it, and
@@ -1669,5 +2473,114 @@ mod chartex_tests {
         assert_eq!(groups, vec!["Group A".to_string(), "Group B".to_string()]);
         assert_eq!(stats.len(), 2);
         assert!(stats.iter().all(|s| s.len() == 2 && s.iter().all(Option::is_some)));
+    }
+
+    #[test]
+    fn box_groups_apply_series_quartile_overrides_after_bucketing() {
+        let values: Vec<_> = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 100.0].into_iter().map(Some).collect();
+        let mut chart = Chart::sample(ChartType::BoxWhisker);
+        chart.categories = vec!["A".into(); values.len()];
+        chart.series = vec![
+            Series { values: values.clone(), inclusive_quartiles: Some(true), ..Default::default() },
+            Series { values: values.clone(), inclusive_quartiles: Some(false), ..Default::default() },
+            Series { values, inclusive_quartiles: None, ..Default::default() },
+        ];
+        chart.inclusive_quartiles = false;
+        let (_, stats) = chart.box_groups();
+        assert_eq!(stats.iter().map(|s| s[0].as_ref().unwrap().q1).collect::<Vec<_>>(), [2.75, 2.25, 2.25]);
+
+        chart.inclusive_quartiles = true;
+        let (_, stats) = chart.box_groups();
+        assert_eq!(stats.iter().map(|s| s[0].as_ref().unwrap().q1).collect::<Vec<_>>(), [2.75, 2.25, 2.75]);
+    }
+}
+
+#[cfg(test)]
+mod extended_tests {
+    use super::*;
+    fn observed() -> Chart {
+        Chart {
+            kind: ChartType::Histogram,
+            bin_size: Some(2.0),
+            series: vec![Series { values: [0.0, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0].into_iter().map(Some).collect(), ..Default::default() }],
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn boundary_buckets_respect_open_and_closed_sides_without_losing_observations() {
+        let mut c = observed();
+        c.extended.underflow = Some(2.0);
+        c.extended.overflow = Some(8.0);
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).collect::<Vec<_>>(), [2, 2, 1, 1, 1]);
+        c.extended.bin_closed_left = true;
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).collect::<Vec<_>>(), [1, 2, 1, 1, 2]);
+        assert_eq!(c.histogram_view().categories, ["< 2", "[2, 4)", "[4, 6)", "[6, 8)", "≥ 8"]);
+        c.extended.underflow = Some(20.0);
+        c.extended.overflow = Some(30.0);
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).sum::<usize>(), 7);
+    }
+    #[test]
+    fn categorical_pareto_aggregates_sorts_and_accumulates_actual_values() {
+        let mut c = observed();
+        c.kind = ChartType::Pareto;
+        c.extended.aggregation = true;
+        c.categories = ["A", "B", "A", "C", "B", "C", "A"].map(str::to_string).to_vec();
+        let view = c.histogram_view();
+        assert_eq!(view.categories, ["A", "C", "B"]);
+        assert_eq!(view.series[0].values, [Some(13.0), Some(12.0), Some(8.0)]);
+        assert_eq!(view.series[1].values.last(), Some(&Some(1.0)));
+    }
+
+    #[test]
+    fn histogram_series_options_and_total_bin_count_include_end_buckets() {
+        let mut c = observed();
+        c.bin_size = None;
+        c.bin_count = Some(5);
+        c.series[0].extended = Some(ExtendedChartOptions { underflow: Some(2.0), overflow: Some(8.0), ..Default::default() });
+        let bins = c.histogram_bins();
+        assert_eq!(bins.len(), 5);
+        assert_eq!(bins.iter().map(|b| b.count).collect::<Vec<_>>(), [2, 2, 1, 1, 1]);
+        assert_eq!(bins[1].hi, 4.0);
+        assert_eq!(c.histogram_view().categories[0], "≤ 2");
+        c.extended.aggregation = true;
+        assert_ne!(c.histogram_view().categories, c.categories);
+        c.series[0].extended = Some(ExtendedChartOptions { underflow: Some(-10.0), overflow: Some(-5.0), ..Default::default() });
+        assert!(c.histogram_bins().iter().all(|b| b.lo.is_finite() && b.hi.is_finite()));
+    }
+
+    #[test]
+    fn histogram_bucket_budget_includes_tails_and_final_interval_includes_maximum() {
+        let mut c = observed();
+        c.extended = ExtendedChartOptions { underflow: Some(2.0), overflow: Some(8.0), bin_closed_left: true, ..Default::default() };
+        c.bin_size = Some(1e-15);
+        let bins = c.histogram_bins();
+        assert!(bins.len() <= MAX_BINS);
+        assert_eq!(bins.iter().map(|b| b.count).sum::<usize>(), 7);
+        c.bin_size = Some(5.0);
+        c.extended.underflow = None;
+        c.extended.overflow = None;
+        assert_eq!(c.histogram_view().categories, ["[0, 5)", "[5, 10]"]);
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).collect::<Vec<_>>(), [4, 3]);
+    }
+
+    #[test]
+    fn automatic_histogram_intervals_match_independent_native_observations_across_scales() {
+        let values = [12.0, 15.0, 17.0, 18.0, 21.0, 22.0, 22.0, 24.0, 25.0, 27.0, 28.0, 31.0, 33.0, 36.0, 41.0, 48.0];
+        for scale in [0.1, 1.0, 10.0] {
+            let mut c = observed();
+            c.bin_size = None;
+            c.series[0].values = values.iter().map(|v| Some(v * scale)).collect();
+            let bins = c.histogram_bins();
+            assert_eq!(bins.len(), 3);
+            assert!((bins[0].hi - 25.0 * scale).abs() < 1e-9);
+        }
+        let mut c = observed();
+        c.bin_size = None;
+        c.extended.bin_closed_left = true;
+        c.series[0].values = [1.1, 1.2, 1.2, 1.3, 1.4, 1.5, 1.9].into_iter().map(Some).collect();
+        assert_eq!(c.histogram_view().categories, ["[1.1, 1.59)", "[1.59, 2.08]"]);
+        c.bin_size = Some(0.0001);
+        c.series[0].values = [0.0001, 0.0003].into_iter().map(Some).collect();
+        assert_eq!(c.histogram_view().categories, ["[0.0001, 0.0002)", "[0.0002, 0.0003]"]);
     }
 }
