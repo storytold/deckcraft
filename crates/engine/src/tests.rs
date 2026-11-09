@@ -1274,6 +1274,36 @@ fn double_click_in_table_uses_grown_row_heights() {
 }
 
 #[test]
+fn table_options_apply_final_booleans_and_refuse_an_unknown_flag() {
+    let mut s = session();
+    let id = s.execute("insert.table", &json!({"rows": 2, "cols": 2})).unwrap()["id"].clone();
+    let options = |s: &Session| {
+        let id = deckcraft_model::ShapeId(id.as_u64().unwrap() as u32);
+        match &s.doc().unwrap().shape(id).unwrap().kind {
+            deckcraft_model::ShapeKind::Table(t) => (t.first_row, t.last_row, t.band_row, t.first_col, t.last_col, t.band_col),
+            other => panic!("not a table: {other:?}"),
+        }
+    };
+    // A new table has a header row and banded rows; the other four options are off.
+    assert_eq!(options(&s), (true, false, true, false, false, false));
+    s.execute("table.options", &json!({"id": id, "headerRow": false, "totalRow": true, "bandedColumns": true})).unwrap();
+    assert_eq!(options(&s), (false, true, true, false, false, true));
+
+    // A misspelt or unknown flag, a value that is not a boolean and a call that names nothing are
+    // refused before the table is touched, so a typo cannot look like a successful no-op.
+    let before = options(&s);
+    for params in [
+        json!({"id": id, "headerRow": false, "bandedRow": true}),
+        json!({"id": id, "headerRow": "yes"}),
+        json!({"id": id, "totalRow": null}),
+        json!({"id": id}),
+    ] {
+        assert!(s.execute("table.options", &params).is_err(), "{params} was accepted");
+        assert_eq!(options(&s), before, "{params} changed the table");
+    }
+}
+
+#[test]
 fn double_click_edits_text_inside_group() {
     // A text member of a group is still editable: double-click reaches it through the group
     // (regression: it used to be a no-op, so grouped text boxes could not be edited).

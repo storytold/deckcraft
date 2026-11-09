@@ -458,6 +458,9 @@ mod title_bar_tests {
 mod drawtable_tests;
 
 #[cfg(test)]
+mod tablesize_tests;
+
+#[cfg(test)]
 mod inktoshape_tests;
 
 #[cfg(test)]

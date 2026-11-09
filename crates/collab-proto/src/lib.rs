@@ -360,6 +360,14 @@ pub enum Payload {
     /// Sets one row's height to a final minimum in points (`table.rowHeight`). A row still grows
     /// to fit its text, as in single-user editing.
     TableRowHeight { row: u32, height: f64 },
+    /// Replaces a table's six style options (`table.options`): header/total row, banded rows,
+    /// first/last column and banded columns. They are independent booleans rather than one value,
+    /// so the operation carries **all six as final values** — the sender computes the set it
+    /// wants from the table it sees, and every replica applies that set. A partial value would
+    /// make the result depend on which replica's stale copy a later merge started from. The
+    /// operation addresses the table shape alone: no cell address moves and no cell content
+    /// changes, so it is merge class.
+    TableOptions { header_row: bool, total_row: bool, banded_rows: bool, first_column: bool, last_column: bool, banded_columns: bool },
     /// Puts back the exact value an undoable step replaced (ADR 0010). The server builds this
     /// from the actor's history and never a client from a user edit: `value` is the model value
     /// of `field` as JSON (`null` = unset), because the user-facing fill, line and format
@@ -846,6 +854,7 @@ impl Payload {
             Payload::TableSplit { .. } => "table.split",
             Payload::TableColumnWidth { .. } => "table.columnWidth",
             Payload::TableRowHeight { .. } => "table.rowHeight",
+            Payload::TableOptions { .. } => "table.options",
             Payload::ShapeField { .. } => "shape.setField",
             Payload::CellText { .. } => "shape.setCellBody",
             Payload::CellsText { .. } => "shape.setCellBodies",
@@ -1625,6 +1634,31 @@ mod tests {
         let height = Payload::TableRowHeight { row: 3, height: 40.0 };
         assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&height).expect("encode")).expect("decode"), height);
         assert_eq!(height.command(), "table.rowHeight");
+
+        // All six options travel as final values: a partial set would let a replica's own copy
+        // decide the rest.
+        let options = Payload::TableOptions {
+            header_row: true,
+            total_row: false,
+            banded_rows: true,
+            first_column: false,
+            last_column: true,
+            banded_columns: false,
+        };
+        let text = serde_json::to_string(&options).expect("encode");
+        assert!(text.contains("\"cmd\":\"table_options\""), "{text}");
+        for field in [
+            "\"header_row\":true",
+            "\"total_row\":false",
+            "\"banded_rows\":true",
+            "\"first_column\":false",
+            "\"last_column\":true",
+            "\"banded_columns\":false",
+        ] {
+            assert!(text.contains(field), "{field} missing from {text}");
+        }
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), options);
+        assert_eq!(options.command(), "table.options");
     }
 
     #[test]

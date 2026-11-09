@@ -351,7 +351,8 @@ impl Adapter {
             | Payload::TableMerge { .. }
             | Payload::TableSplit { .. }
             | Payload::TableColumnWidth { .. }
-            | Payload::TableRowHeight { .. } => (None, Image::Table(deckcraft_model::Table::default())),
+            | Payload::TableRowHeight { .. }
+            | Payload::TableOptions { .. } => (None, Image::Table(deckcraft_model::Table::default())),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
@@ -1179,6 +1180,27 @@ impl Adapter {
                 self.select_shapes(session, before, slide, &[shape], head)?;
                 self.call(session, "table.rowHeight", json!({"id": shape.0, "row": row, "height": height}), head)
             }
+            Payload::TableOptions { header_row, total_row, banded_rows, first_column, last_column, banded_columns } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.table_of(before, slide, shape, head)?;
+                // All six are named, so the command applies one final set and no replica's own
+                // copy decides an option the sender did not name.
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(
+                    session,
+                    "table.options",
+                    json!({
+                        "id": shape.0,
+                        "headerRow": header_row,
+                        "totalRow": total_row,
+                        "bandedRows": banded_rows,
+                        "firstColumn": first_column,
+                        "lastColumn": last_column,
+                        "bandedColumns": banded_columns,
+                    }),
+                    head,
+                )
+            }
             Payload::ShapeField { field, value } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 self.select_shapes(session, before, slide, &[shape], head)?;
@@ -1930,7 +1952,8 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::TableMerge { .. }
         | Payload::TableSplit { .. }
         | Payload::TableColumnWidth { .. }
-        | Payload::TableRowHeight { .. } => OpKind::Command,
+        | Payload::TableRowHeight { .. }
+        | Payload::TableOptions { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
@@ -2899,6 +2922,56 @@ mod tests {
         bb.apply(&mut b, 3, "b", &op(OpKind::Command, 3, target, empty)).expect("none");
         assert!(matches!(table_model(&doc_of(&a), 2).cell(0, 1).expect("cell").fill, Some(deckcraft_model::Fill::None)));
         assert_eq!(doc_of(&a), doc_of(&b));
+    }
+
+    #[test]
+    fn two_clients_converge_on_table_options_and_their_undo_restores_the_whole_table() {
+        let (mut a, mut b) = (table_deck(), table_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let before = table_model(&doc_of(&a), 2).clone();
+
+        // All six toggles are one final value: the table ends with exactly this set on both
+        // replicas, including the flags that were already at their target and were not "toggled".
+        let payload = Payload::TableOptions {
+            header_row: false,
+            total_row: true,
+            banded_rows: false,
+            first_column: true,
+            last_column: false,
+            banded_columns: true,
+        };
+        let envelope = op(OpKind::Command, 0, target.clone(), payload);
+        aa.apply(&mut a, 0, "a", &envelope).expect("a sets the options");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed step");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        let doc = doc_of(&a);
+        let table = table_model(&doc, 2);
+        assert_eq!(
+            (table.first_row, table.last_row, table.band_row, table.first_col, table.last_col, table.band_col),
+            (false, true, false, true, false, true)
+        );
+
+        // The undo image is the whole table, so one undo puts the previous six values back, and
+        // the redo reapplies the exact set on both replicas.
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::Table, .. }), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a applies the undo");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(table_model(&doc_of(&a), 2), &before, "the first options before image is the original table");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 2, "a", &redo).expect("a applies the redo");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        let doc = doc_of(&a);
+        let table = table_model(&doc, 2);
+        assert_eq!((table.first_row, table.last_row, table.band_row), (false, true, false));
+        assert_eq!((table.first_col, table.last_col, table.band_col), (true, false, true));
     }
 
     #[test]

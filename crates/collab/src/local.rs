@@ -894,14 +894,15 @@ pub fn normalize_with_painter(
     }
 }
 
-/// The rest of the table surface, one final value per command: a style, one cell fill over an
-/// explicit cell list, a merge or a split, and one column width or row height. `None` when the
-/// command is not one of them. Every address is resolved from the sender's own selection here, so
-/// the operation says which table and which cells it changes and a replica's selection decides
-/// nothing (RFC §15).
+/// The rest of the table surface, one final value per command: a style, six style options, one
+/// cell fill over an explicit cell list, a merge or a split, and one column width or row height.
+/// `None` when the command is not one of them. Every address is resolved from the sender's own
+/// selection here, so the operation says which table and which cells it changes and a replica's
+/// selection decides nothing (RFC §15).
 fn table_value(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Option<Result<(ShapeId, Payload), LocalError>> {
     Some(match cmd {
         "table.style" => table_style(p, slide, st),
+        "table.options" => table_options(p, slide, st),
         "table.cellFill" => table_cell_fill(p, slide, st),
         "table.merge" => table_merge(p, slide, st),
         "table.split" => table_split(p, slide, st),
@@ -918,6 +919,56 @@ fn table_style(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payl
         return Err(LocalError::BadParams("table.style needs a style name".into()));
     }
     Ok((id, Payload::TableStyle { style: style.to_string() }))
+}
+
+fn table_options(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let (id, table) = table_target(slide, st, p, "table.options")?;
+    // The six toggles are independent, so the operation carries all of them as final values: the
+    // sender applies the options it names to the table it sees and sends the resulting set. An
+    // unknown flag or a non-boolean value is refused here, before anything is queued, and a call
+    // that names no option sends nothing rather than an empty no-op operation.
+    let Some(map) = p.as_object() else {
+        return Err(LocalError::BadParams("table.options: params are an object".into()));
+    };
+    let mut flags = [None; 6];
+    for (key, value) in map {
+        if key == "id" {
+            continue;
+        }
+        let slot = match key.as_str() {
+            "headerRow" => 0,
+            "totalRow" => 1,
+            "bandedRows" => 2,
+            "firstColumn" => 3,
+            "lastColumn" => 4,
+            "bandedColumns" => 5,
+            other => return Err(LocalError::BadParams(format!("table.options: unknown option `{other}`"))),
+        };
+        let Some(v) = value.as_bool() else {
+            return Err(LocalError::BadParams(format!("table.options: `{key}` is a boolean")));
+        };
+        flags[slot] = Some(v);
+    }
+    if flags.iter().all(Option::is_none) {
+        return Err(LocalError::BadParams("table.options needs an option to set".into()));
+    }
+    let mut values = [table.first_row, table.last_row, table.band_row, table.first_col, table.last_col, table.band_col];
+    for (value, flag) in values.iter_mut().zip(flags) {
+        if let Some(v) = flag {
+            *value = v;
+        }
+    }
+    Ok((
+        id,
+        Payload::TableOptions {
+            header_row: values[0],
+            total_row: values[1],
+            banded_rows: values[2],
+            first_column: values[3],
+            last_column: values[4],
+            banded_columns: values[5],
+        },
+    ))
 }
 
 fn table_cell_fill(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
@@ -2236,6 +2287,7 @@ mod tests {
         let st = s.doc().expect("doc");
         for (cmd, params) in [
             ("table.style", json!({"id": rect, "style": "grid"})),
+            ("table.options", json!({"id": rect, "headerRow": true})),
             ("table.cellFill", json!({"id": rect})),
             ("table.merge", json!({"id": rect, "from": [0, 0], "to": [0, 1]})),
             ("table.split", json!({"id": rect})),
@@ -2244,6 +2296,37 @@ mod tests {
         ] {
             assert!(normalize(&km, st, cmd, &params, "op", &doc_id).is_err(), "{cmd} on a rectangle");
         }
+    }
+
+    #[test]
+    fn table_options_normalise_to_one_final_set() {
+        let (mut s, doc_id, _slide, table) = table_deck();
+        caret(&mut s, table, (0, 0), Some((0, 0)));
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // The style options are six independent booleans, so the operation carries the whole set:
+        // the sender applies the flags it names to the table it sees and sends every final value.
+        let ops = normalize(&km, st, "table.options", &json!({"headerRow": false, "lastColumn": true}), "op", &doc_id).expect("options");
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(
+            ops[0].payload,
+            Payload::TableOptions {
+                header_row: false,
+                total_row: false,
+                banded_rows: true,
+                first_column: false,
+                last_column: true,
+                banded_columns: false,
+            }
+        );
+
+        // A misspelt flag, a value that is not a boolean and a call that names no option are
+        // refused before anything is sent.
+        assert!(normalize(&km, st, "table.options", &json!({"headerRow": false, "bandedRow": true}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.options", &json!({"headerRow": 1}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.options", &json!({"headerRow": null}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.options", &json!({}), "op", &doc_id).is_err());
     }
 
     #[test]

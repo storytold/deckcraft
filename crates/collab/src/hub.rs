@@ -117,6 +117,7 @@ impl Hub {
                     "text.delete".into(),
                     "table.edit".into(),
                     "table.style".into(),
+                    "table.options".into(),
                     "table.cellFill".into(),
                     "table.merge".into(),
                     "table.split".into(),
@@ -1078,6 +1079,42 @@ mod tests {
         assert_eq!((a.version(), b.version()), (5, 5));
         assert!(table_of(&sa).cell(0, 1).expect("cell").fill.is_none());
         assert_eq!(table_of(&sa).style, "grid");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
+
+    #[test]
+    fn table_options_reach_both_replicas_and_an_undo_is_one_step() {
+        let mut hub = table_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = table_session();
+        let mut sb = table_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let table = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
+        let before = table_of(&sa).clone();
+
+        // One style-option change is one whole-table final value, so both replicas end with the
+        // same six flags even though only two were named.
+        a.submit(&sa, "table.options", &json!({"id": table, "bandedColumns": true, "totalRow": true}), "a-1").expect("submit");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (1, 1));
+        assert!(table_of(&sa).band_col && table_of(&sa).last_row);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same table");
+
+        // The undo of the step puts the previous six values back on both replicas.
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (2, 2));
+        assert_eq!(table_of(&sa), &before, "the whole table came back");
         assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
     }
 }
