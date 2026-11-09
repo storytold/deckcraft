@@ -4,7 +4,7 @@
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
-exists. over 200k lines of Rust in 26 crates, 3 apps and `xtask`; 2,507 `#[test]` functions
+exists. over 200k lines of Rust in 26 crates, 3 apps and `xtask`; 2,534 `#[test]` functions
 (`cargo xtask stats` counts them per crate).
 
 ## Layers
