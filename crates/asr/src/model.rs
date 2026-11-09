@@ -32,6 +32,28 @@ pub const WHISPER_TINY_REVISION: &str = "169d4a4341b33bc18d8881c4b69c2e104e1cc0a
 /// The largest file a manifest entry may claim (1 GiB): a hand-edited manifest must not ask for
 /// an allocation or a download the disk cannot hold.
 pub const MAX_FILE_BYTES: u64 = 1 << 30;
+/// The hosts a model file or its licence page may come from. A manifest (or a `.deckcraft`
+/// file that carries one) is user-writable, so a URL is checked before it is used: HTTPS only,
+/// and only the model hub this feature documents.
+pub const ALLOWED_MODEL_HOSTS: &[&str] = &["huggingface.co", "hf.co"];
+
+/// Whether `url` is an `https://` URL on an allowlisted model host. Anything else (plain HTTP,
+/// another host, a `file:`/`data:` scheme, a userinfo trick) is refused before a request or a
+/// link is used.
+pub fn model_url_allowed(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    if rest.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\\') {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // `user@host` and `host:port`: only the actual host counts.
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host).trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    ALLOWED_MODEL_HOSTS.iter().any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
 
 /// One file of a model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,9 +129,15 @@ impl ModelManifest {
             if f.bytes == 0 || f.bytes > MAX_FILE_BYTES {
                 return Err(format!("`{}` has an implausible size", f.name));
             }
+            if !model_url_allowed(&f.url) {
+                return Err(format!("`{}` has no HTTPS URL on an allowlisted host", f.name));
+            }
             if self.files[..i].iter().any(|g| g.name.eq_ignore_ascii_case(&f.name)) {
                 return Err(format!("`{}` is listed twice", f.name));
             }
+        }
+        if !model_url_allowed(&self.license_url) {
+            return Err("the licence URL is not HTTPS on an allowlisted host".into());
         }
         Ok(())
     }
@@ -222,11 +250,22 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Stream a file through SHA-256. Returns the length and the digest.
 pub fn sha256_file(path: &Path) -> std::io::Result<(u64, String)> {
+    sha256_file_until(path, &std::sync::atomic::AtomicBool::new(false))?.ok_or_else(|| std::io::Error::other("hashing was cancelled"))
+}
+
+/// Stream a file through SHA-256, stopping between blocks when `cancel` is set. `Ok(None)` means
+/// the caller cancelled; a background check uses this so closing the dialog does not leave a
+/// thread hashing 151 MB.
+pub fn sha256_file_until(path: &Path, cancel: &std::sync::atomic::AtomicBool) -> std::io::Result<Option<(u64, String)>> {
+    use std::sync::atomic::Ordering;
     let mut f = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     let mut len = 0u64;
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
         let n = f.read(&mut buf)?;
         if n == 0 {
             break;
@@ -235,15 +274,20 @@ pub fn sha256_file(path: &Path) -> std::io::Result<(u64, String)> {
         hasher.update(buf.get(..n).unwrap_or_default());
     }
     let hash = hasher.finalize();
-    let mut hex = String::with_capacity(64);
-    for b in hash.iter() {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    Ok((len, hex))
+    Ok(Some((len, hex(&hash))))
 }
 
-/// Check one file against its manifest entry.
-pub fn verify_file(dir: &Path, file: &ModelFile) -> Result<(), String> {
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+/// Check one file against its manifest entry, stopping when `cancel` is set (`Err` then says the
+/// check was cancelled).
+pub fn verify_file_until(dir: &Path, file: &ModelFile, cancel: &std::sync::atomic::AtomicBool) -> Result<(), String> {
     let name = file.safe_name().ok_or_else(|| format!("unsafe model file name `{}`", file.name))?;
     let path = dir.join(name);
     let Ok(meta) = std::fs::metadata(&path) else {
@@ -255,7 +299,9 @@ pub fn verify_file(dir: &Path, file: &ModelFile) -> Result<(), String> {
     if meta.len() != file.bytes {
         return Err(format!("{name} is {} bytes, the manifest says {}", meta.len(), file.bytes));
     }
-    let (len, hash) = sha256_file(&path).map_err(|e| format!("{name}: {e}"))?;
+    let Some((len, hash)) = sha256_file_until(&path, cancel).map_err(|e| format!("{name}: {e}"))? else {
+        return Err("the check was cancelled".into());
+    };
     if len != file.bytes {
         return Err(format!("{name} changed while it was read"));
     }
@@ -263,6 +309,11 @@ pub fn verify_file(dir: &Path, file: &ModelFile) -> Result<(), String> {
         return Err(format!("{name} does not match its SHA-256"));
     }
     Ok(())
+}
+
+/// Check one file against its manifest entry.
+pub fn verify_file(dir: &Path, file: &ModelFile) -> Result<(), String> {
+    verify_file_until(dir, file, &std::sync::atomic::AtomicBool::new(false))
 }
 
 /// Check a model directory (usually `<root>/<model id>`), hashing every file.
@@ -299,45 +350,95 @@ fn check_impl(dir: &Path, manifest: &ModelManifest, hash: bool) -> ModelStatus {
     ModelStatus { state: ModelState::Ready, dir: Some(dir.to_path_buf()), problem: None }
 }
 
-/// Find the model among `roots`, hashing its files. Returns the status and the directory a
+/// Check a model directory (usually `<root>/<model id>`), hashing every file, stopping when
+/// `cancel` is set. `None` means the caller cancelled before the hashes finished.
+pub fn check_dir_until(dir: &Path, manifest: &ModelManifest, cancel: &std::sync::atomic::AtomicBool) -> Option<ModelStatus> {
+    use std::sync::atomic::Ordering;
+    if manifest.validate().is_err() {
+        return Some(ModelStatus { state: ModelState::Corrupt, dir: Some(dir.to_path_buf()), problem: Some("the manifest is damaged".into()) });
+    }
+    if !dir.is_dir() {
+        return Some(ModelStatus { state: ModelState::Absent, dir: None, problem: None });
+    }
+    let missing: Vec<&str> =
+        manifest.files.iter().filter(|f| f.safe_name().is_none_or(|n| !dir.join(n).is_file())).map(|f| f.name.as_str()).collect();
+    if !missing.is_empty() {
+        return Some(ModelStatus {
+            state: ModelState::Incomplete,
+            dir: Some(dir.to_path_buf()),
+            problem: Some(format!("missing {}", missing.join(", "))),
+        });
+    }
+    for file in &manifest.files {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        match verify_file_until(dir, file, cancel) {
+            Ok(()) => {}
+            Err(problem) if problem == "the check was cancelled" => return None,
+            Err(problem) => return Some(ModelStatus { state: ModelState::Corrupt, dir: Some(dir.to_path_buf()), problem: Some(problem) }),
+        }
+    }
+    Some(ModelStatus { state: ModelState::Ready, dir: Some(dir.to_path_buf()), problem: None })
+}
+
+/// Where a download for `manifest` installs: the explicit root when set, else the config
+/// directory, else the executable's `models/`. `None` when the host has no writable root, in
+/// which case the user places the files by hand.
+pub fn install_root(roots: &ModelRoots) -> Option<PathBuf> {
+    roots.install_root()
+}
+
+/// Where a download for `manifest` installs, with the manifest id appended.
+pub fn install_dir(roots: &ModelRoots, manifest: &ModelManifest) -> PathBuf {
+    roots.install_root().unwrap_or_else(|| PathBuf::from("models")).join(&manifest.id)
+}
+
+/// Find the model among `roots` by presence only. Returns the status and the directory a
 /// download would use.
-pub fn discover(roots: &ModelRoots, manifest: &ModelManifest) -> (ModelStatus, PathBuf) {
-    discover_with(roots, manifest, check_dir)
-}
-
-/// Find the model among `roots` by presence only.
 pub fn discover_files(roots: &ModelRoots, manifest: &ModelManifest) -> (ModelStatus, PathBuf) {
-    discover_with(roots, manifest, check_dir_files)
-}
-
-fn discover_with(roots: &ModelRoots, manifest: &ModelManifest, check: fn(&Path, &ModelManifest) -> ModelStatus) -> (ModelStatus, PathBuf) {
     let candidates = roots.candidates();
+    let mut first_existing: Option<ModelStatus> = None;
     for root in &candidates {
         let dir = root.join(&manifest.id);
-        let status = check(&dir, manifest);
+        let status = check_dir_files(&dir, manifest);
         if status.state == ModelState::Ready {
             return (status, dir);
+        }
+        if first_existing.is_none() && dir.is_dir() {
+            first_existing = Some(status);
         }
     }
     // Report the first directory that exists but is not ready, else "absent" with the install
     // target the download or the user would use.
-    let install = roots.install_root().unwrap_or_else(|| PathBuf::from("models")).join(&manifest.id);
-    for root in &candidates {
-        let dir = root.join(&manifest.id);
-        if dir.is_dir() {
-            return (check(&dir, manifest), install);
-        }
+    let install = install_dir(roots, manifest);
+    if let Some(status) = first_existing {
+        return (status, install);
     }
     (ModelStatus { state: ModelState::Absent, dir: None, problem: None }, install)
 }
 
 /// Write the provenance sidecar (`manifest.json`) into a model directory.
+///
+/// The directory is user-writable and may be a folder the user just picked, so the temporary
+/// file is created exclusively (never through a pre-planted symlink), and an existing symlink at
+/// the final name is refused rather than followed.
 pub fn write_sidecar(dir: &Path, manifest: &ModelManifest) -> std::io::Result<PathBuf> {
+    use std::io::Write;
     std::fs::create_dir_all(dir)?;
     let path = dir.join(SIDECAR);
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(std::io::Error::other("refusing to write through the sidecar symlink"));
+    }
     let json = serde_json::to_vec_pretty(manifest).map_err(std::io::Error::other)?;
-    let tmp = dir.join("manifest.json.tmp");
-    std::fs::write(&tmp, json)?;
+    let tmp = dir.join(format!("manifest.json.{}.tmp", std::process::id()));
+    if std::fs::symlink_metadata(&tmp).is_ok() {
+        return Err(std::io::Error::other("refusing to reuse the sidecar temporary file"));
+    }
+    let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+    out.write_all(&json)?;
+    out.sync_all()?;
+    drop(out);
     std::fs::rename(&tmp, &path)?;
     Ok(path)
 }
@@ -381,7 +482,9 @@ mod tests {
     use super::*;
 
     fn dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("deckcraft-asr-{}-{name}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!("deckcraft-asr-{}-{name}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -395,14 +498,14 @@ mod tests {
             revision: "0".into(),
             license: "MIT".into(),
             runtime: "candle-cpu".into(),
-            license_url: "https://example.invalid".into(),
+            license_url: "https://huggingface.co/owner/test".into(),
             files: files
                 .iter()
                 .map(|(name, bytes)| ModelFile {
                     name: (*name).into(),
                     bytes: bytes.len() as u64,
                     sha256: sha256_hex(bytes),
-                    url: format!("https://example.invalid/{name}"),
+                    url: format!("https://huggingface.co/owner/test/{name}"),
                 })
                 .collect(),
         }
@@ -463,19 +566,19 @@ mod tests {
         std::fs::create_dir_all(&ready).unwrap();
         std::fs::write(ready.join("a.bin"), b"hello").unwrap();
         let roots = ModelRoots { env: Some(env.clone()), config: Some(config.clone()), exe: None, source: None };
-        let (status, install) = discover(&roots, &manifest);
+        let (status, install) = discover_files(&roots, &manifest);
         assert_eq!(status.state, ModelState::Ready);
         assert_eq!(status.dir.as_deref(), Some(ready.as_path()));
         assert_eq!(install, ready);
 
         let empty = ModelRoots { env: None, config: Some(config.clone()), exe: None, source: None };
-        let (status, install) = discover(&empty, &manifest);
+        let (status, install) = discover_files(&empty, &manifest);
         assert_eq!(status.state, ModelState::Absent);
         assert_eq!(install, config.join(&manifest.id));
 
         // An incomplete config install is reported, not skipped for a lower root.
         std::fs::create_dir_all(install.clone()).unwrap();
-        let (status, _) = discover(&empty, &manifest);
+        let (status, _) = discover_files(&empty, &manifest);
         assert_eq!(status.state, ModelState::Incomplete);
     }
 
@@ -505,6 +608,62 @@ mod tests {
         assert_eq!(path.file_name().and_then(|n| n.to_str()), Some(SIDECAR));
         let back: ModelManifest = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(back, manifest);
-        assert!(!d.join("manifest.json.tmp").exists());
+        let leftovers: Vec<_> =
+            std::fs::read_dir(&d).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).collect();
+        assert!(leftovers.is_empty(), "the temporary file is renamed away");
+    }
+
+    #[test]
+    fn only_https_urls_on_the_model_hub_are_accepted() {
+        for ok in [
+            "https://huggingface.co/openai/whisper-tiny/resolve/abc/model.safetensors",
+            "https://cdn-lfs.huggingface.co/repos/x",
+            "https://HF.CO/x",
+            "https://huggingface.co:443/x",
+        ] {
+            assert!(model_url_allowed(ok), "{ok}");
+        }
+        for bad in [
+            "http://huggingface.co/x",
+            "https://example.com/x",
+            "https://huggingface.co.evil.example/x",
+            "https://user@evil.example/x",
+            "file:///etc/passwd",
+            "https://",
+            "https://huggingface.co\\evil",
+        ] {
+            assert!(!model_url_allowed(bad), "{bad}");
+        }
+        let mut m = tiny_manifest(&[("a.bin", b"x")]);
+        m.files[0].url = "http://huggingface.co/a.bin".into();
+        assert!(m.validate().is_err(), "a plain-HTTP model file is refused");
+        let mut m = tiny_manifest(&[("a.bin", b"x")]);
+        m.license_url = "https://example.com/licence".into();
+        assert!(m.validate().is_err(), "a licence page off the hub is refused");
+    }
+
+    #[test]
+    fn a_cancelled_hash_check_stops_between_blocks() {
+        let manifest = tiny_manifest(&[("a.bin", b"hello")]);
+        let d = dir("cancel");
+        let model = d.join(&manifest.id);
+        std::fs::create_dir_all(&model).unwrap();
+        std::fs::write(model.join("a.bin"), b"hello").unwrap();
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        assert_eq!(check_dir_until(&model, &manifest, &cancel), None, "a cancelled check reports nothing");
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        assert_eq!(check_dir_until(&model, &manifest, &cancel).map(|s| s.state), Some(ModelState::Ready));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_sidecar_symlink_is_refused() {
+        let manifest = whisper_tiny();
+        let d = dir("sidecar-symlink");
+        let outside = d.join("outside.json");
+        std::fs::write(&outside, b"{}").unwrap();
+        std::os::unix::fs::symlink(&outside, d.join(SIDECAR)).unwrap();
+        assert!(write_sidecar(&d, &manifest).is_err(), "the sidecar is not written through a symlink");
+        assert_eq!(std::fs::read(&outside).unwrap(), b"{}", "the link target is untouched");
     }
 }

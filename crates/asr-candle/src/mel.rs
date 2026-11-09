@@ -28,14 +28,19 @@ pub fn mel_to_hz(mel: f64) -> f64 {
     if mel < MIN_LOG_MEL { mel * F_SP } else { MIN_LOG_HZ * (LOGSTEP * (mel - MIN_LOG_MEL)).exp() }
 }
 
+/// The largest mel filter table this build will allocate. Whisper uses 80 (tiny/base) or 128
+/// (large-v3); a config asking for more is refused rather than allocated.
+pub const MAX_MEL_BINS: usize = 128;
+
 /// The `n_mel × FFT_BINS` Slaney-normalised triangular filters, row-major as
-/// `whisper::audio::pcm_to_mel` expects.
+/// `whisper::audio::pcm_to_mel` expects. A count outside `1..=MAX_MEL_BINS` yields nothing.
 pub fn mel_filters(n_mel: usize) -> Vec<f32> {
     let sample_rate = 16_000.0;
     let bins = FFT_BINS;
-    if n_mel == 0 {
+    if n_mel == 0 || n_mel > MAX_MEL_BINS {
         return Vec::new();
     }
+    let Some(len) = n_mel.checked_mul(bins) else { return Vec::new() };
     let freqs: Vec<f64> = (0..=bins).map(|i| i as f64 * sample_rate / 400.0).collect();
     let mel_min = hz_to_mel(0.0);
     let mel_max = hz_to_mel(sample_rate / 2.0);
@@ -45,7 +50,7 @@ pub fn mel_filters(n_mel: usize) -> Vec<f32> {
             mel_to_hz(mel_min + (mel_max - mel_min) * t)
         })
         .collect();
-    let mut out = vec![0.0f32; n_mel * bins];
+    let mut out = vec![0.0f32; len];
     for m in 0..n_mel {
         let (lo, center, hi) = (points[m], points[m + 1], points[m + 2]);
         let enorm = 2.0 / (hi - lo).max(f64::EPSILON);
@@ -89,5 +94,8 @@ mod tests {
         assert!(first_peak < 5, "{first_peak}");
         assert!(last_peak > 150, "{last_peak}");
         assert_eq!(mel_filters(0), Vec::<f32>::new());
+        assert_eq!(mel_filters(MAX_MEL_BINS + 1), Vec::<f32>::new(), "an oversized table is refused");
+        assert_eq!(mel_filters(usize::MAX), Vec::<f32>::new(), "a hostile count allocates nothing");
+        assert_eq!(mel_filters(128).len(), 128 * FFT_BINS);
     }
 }

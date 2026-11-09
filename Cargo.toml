@@ -56,7 +56,7 @@ sha2 = "0.10"
 candle-core = "0.11"
 candle-nn = "0.11"
 candle-transformers = "0.11"
-tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 cpal = "0.16"
 # Base features are wasm-safe (`std` only). The non-wasm `clock` feature is requested
 # per-crate for targets that read the local clock (see crates/text).

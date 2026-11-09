@@ -33,8 +33,25 @@ pub const SPOKEN_LANGUAGES: &[(&str, &str)] = &[
     ("uk", "Ukrainian"),
 ];
 
-/// The languages a subtitle line can be shown in. Translation is not part of the first cut, so
-/// the list is the languages the engine transcribes and the setting records the choice.
+/// The language tokens the speech model recognises (Whisper's 99 languages). A command that
+/// names a language outside this list, or a regional tag such as `pt-br`, is refused: the
+/// provider could not run it and would fail after the user asked for it.
+pub const LANGUAGE_CODES: [&str; 99] = [
+    "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms",
+    "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn",
+    "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be",
+    "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha",
+    "ba", "jw", "su",
+];
+
+/// Whether `tag` is one of [`LANGUAGE_CODES`] (case-insensitive).
+pub fn is_known_language(tag: &str) -> bool {
+    let tag = tag.trim();
+    LANGUAGE_CODES.iter().any(|code| code.eq_ignore_ascii_case(tag))
+}
+/// The languages a subtitle line can be shown in. Translation is not part of this cut, so the
+/// dialog disables the choice; the list is the languages the engine transcribes and the setting
+/// records the choice.
 pub const SUBTITLE_LANGUAGES: &[(&str, &str)] = &[
     ("en", "English"),
     ("es", "Spanish"),
@@ -71,6 +88,9 @@ pub struct SubtitleSettings {
     /// settings file that loses every other value too.
     #[serde(default, deserialize_with = "lenient_position")]
     pub position: Position,
+    /// Text size in points. The request field is `fontSizePt`, and it is the response field too;
+    /// `fontPt` is accepted when reading an older `prefs.json`.
+    #[serde(rename = "fontSizePt", alias = "fontPt")]
     pub font_pt: f64,
     pub max_lines: usize,
     /// The processor to run the model on; an unavailable request falls back to the CPU with a
