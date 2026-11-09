@@ -220,8 +220,16 @@ pub enum Payload {
     /// Removes the characters in `[from, to)` of `target.slide`'s notes.
     NotesDelete { from: u32, to: u32 },
     /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
-    /// of `target.shape`. Run-level ranges are a later slice (RFC §15).
-    FormatSet { format: FormatCmd, args: serde_json::Value },
+    /// of `target.shape` (§15), or at the whole body of one table cell addressed by `cell`
+    /// (`(row, column)`). A table's own `text` body is empty, so formatting a table without a
+    /// cell address is refused; an address that names no cell of that table is refused before
+    /// anything is written. Run-level ranges are a later slice (RFC §15).
+    FormatSet {
+        format: FormatCmd,
+        args: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cell: Option<(u32, u32)>,
+    },
     /// Inserts or deletes one row or column of the table in `target.shape`. Structural: every
     /// cell at or after `at` on the axis moves, so a queued text operation in a cell rebases its
     /// address before it applies. `insert` puts an empty line before `at`; otherwise the line
@@ -233,6 +241,16 @@ pub enum Payload {
     /// commands accept only a lossy subset of the model. A replica runs it through
     /// `shape.setField`, so every replica puts the same value back.
     ShapeField { field: ShapeField, value: serde_json::Value },
+    /// Puts back one table cell's whole text body, exactly (ADR 0010). A `format.*` step edits
+    /// runs and paragraphs inside one cell, and its arguments cannot describe the value they
+    /// replaced, so the image is that cell's body itself — not the table's, and not the shape's
+    /// (a table's own `text` is empty). `target.slide` and `target.shape` address the table,
+    /// `cell` the cell inside it; an address that names no cell of that table is refused before
+    /// anything is written. Merge class: it replaces one body and changes no structure, so a
+    /// neighbouring cell keeps whatever anyone else wrote there.
+    ///
+    /// Like [`Payload::ShapeField`], the server builds this from the actor's history only.
+    CellText { cell: (u32, u32), body: serde_json::Value },
     /// Puts back the exact values of several shapes in one operation. A group's `shape.fill` or
     /// `shape.line` also formats every visible member, so its undo restores the group and each
     /// member atomically: `target.slide` names the slide, every item names one shape on it.
@@ -618,6 +636,7 @@ impl Payload {
             Payload::FormatSet { format, .. } => format.id(),
             Payload::TableEdit { .. } => "table.edit",
             Payload::ShapeField { .. } => "shape.setField",
+            Payload::CellText { .. } => "shape.setCellBody",
             Payload::ShapeFields { .. } => "shape.setFields",
             Payload::ShapesSetBounds { .. } => "shape.setBoundsMany",
             Payload::ShapeRestore { .. } => "shape.restore",
@@ -1352,11 +1371,31 @@ mod tests {
         assert_eq!(line.command(), "shape.line");
         assert_eq!(spec.args(), json!({"color": "#0044ff", "width": 2.0, "dash": "dash"}));
 
-        let format = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) };
+        let format = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None };
         assert_eq!(format.command(), "format.bold");
         assert_eq!(FormatCmd::from_id("format.bold"), Some(FormatCmd::Bold));
         assert_eq!(FormatCmd::from_id("format.nope"), None);
         assert_eq!(Payload::SlideDuplicate {}.command(), "slide.duplicate");
+    }
+
+    #[test]
+    fn a_cell_format_carries_its_address_and_its_body_restore_round_trips() {
+        let format = Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: Some((1, 2)) };
+        let text = serde_json::to_string(&format).expect("encode");
+        assert!(text.contains("\"cell\":[1,2]"), "the cell address travels with the command: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), format);
+
+        // A shape-level format keeps its old wire form: no address, no `cell` key.
+        let plain = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None };
+        assert!(!serde_json::to_string(&plain).expect("encode").contains("cell"));
+
+        // The exact restore of a cell body names the same cell and carries the whole body.
+        let restore = Payload::CellText { cell: (1, 2), body: json!({"paragraphs": [{"runs": [{"text": "x"}]}]}) };
+        let text = serde_json::to_string(&restore).expect("encode");
+        assert!(text.contains("\"cmd\":\"cell_text\""), "{text}");
+        assert!(text.contains("\"cell\":[1,2]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
+        assert_eq!(restore.command(), "shape.setCellBody");
     }
 
     #[test]

@@ -645,42 +645,7 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
         }
         cmd if cmd.starts_with("format.") => {
             let format = FormatCmd::from_id(cmd).ok_or_else(|| LocalError::Unsupported(cmd.into()))?;
-            if st.selection.text.is_some() {
-                // The replica has no caret; a range would become the whole body. Run-level
-                // formatting needs its own payload (RFC §15), so refuse it instead of widening.
-                return Err(LocalError::Unsupported(format!("{cmd} on a text range (whole shape only in v1)")));
-            }
-            let mut args = p.clone();
-            if let Some(object) = args.as_object_mut() {
-                object.remove("ids");
-                object.remove("id");
-            }
-            if !format.accepts(&args) {
-                return Err(LocalError::BadParams(format!("{cmd} takes only its own arguments")));
-            }
-            if matches!(
-                format,
-                FormatCmd::Bold | FormatCmd::Italic | FormatCmd::Underline | FormatCmd::Strikethrough | FormatCmd::Superscript | FormatCmd::Subscript
-            ) && args.get("on").and_then(Value::as_bool).is_none()
-            {
-                return Err(LocalError::BadParams(format!("{cmd} needs an explicit `on` in a shared session")));
-            }
-            let ids = shape_ids(p, st)?;
-            if ids.is_empty() {
-                return Err(LocalError::BadParams("formatting needs a shape".into()));
-            }
-            let mut out = Vec::new();
-            for id in ids {
-                let shape = find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
-                if !matches!(shape.kind, deckcraft_model::ShapeKind::Table(_)) && shape.text.is_none() {
-                    return Err(LocalError::Unsupported(format!("{cmd} on a shape without text")));
-                }
-                out.push(make(
-                    Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
-                    Payload::FormatSet { format, args: args.clone() },
-                ));
-            }
-            Ok(out)
+            format_ops(keys, st, slide, format, p, &make)
         }
         "slide.duplicate" => {
             let index = p.get("index").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(st.selection.slide);
@@ -948,6 +913,82 @@ fn slide_delete_ops(
         .collect())
 }
 
+/// One allowlisted `format.*` command as wire operations, aimed at the whole body of a shape or
+/// of one table cell.
+///
+/// A table cell has its own body. Its address comes from an explicit `cell` (or `row`+`col`),
+/// else from the one selected cell, else from the cell a collapsed caret is in. A range — inside
+/// a cell or a shape body — is still a run-range format: the replica would have to widen it to
+/// the whole body, so it is refused (RFC §15).
+fn format_ops(
+    keys: &crate::KeyMap,
+    st: &DocState,
+    slide: &deckcraft_model::Slide,
+    format: FormatCmd,
+    p: &Value,
+    make: &impl Fn(Target, Payload) -> OpEnvelope,
+) -> Result<Vec<OpEnvelope>, LocalError> {
+    let cmd = format.id();
+    let slide_key = keys.slide_key(slide.id).cloned();
+    let explicit_cell = cell_args(p);
+    let mut args = p.clone();
+    if let Some(object) = args.as_object_mut() {
+        object.remove("ids");
+        object.remove("id");
+        object.remove("cell");
+        object.remove("row");
+        object.remove("col");
+    }
+    if !format.accepts(&args) {
+        return Err(LocalError::BadParams(format!("{cmd} takes only its own arguments")));
+    }
+    if matches!(
+        format,
+        FormatCmd::Bold | FormatCmd::Italic | FormatCmd::Underline | FormatCmd::Strikethrough | FormatCmd::Superscript | FormatCmd::Subscript
+    ) && args.get("on").and_then(Value::as_bool).is_none()
+    {
+        return Err(LocalError::BadParams(format!("{cmd} needs an explicit `on` in a shared session")));
+    }
+    let ids = shape_ids(p, st)?;
+    if ids.is_empty() {
+        return Err(LocalError::BadParams("formatting needs a shape".into()));
+    }
+    let mut out = Vec::new();
+    for id in ids {
+        let shape = find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+        let cell = match &shape.kind {
+            deckcraft_model::ShapeKind::Table(t) => {
+                let cell = match explicit_cell {
+                    Some(cell) => Some(cell),
+                    None => selected_cell(st, id)?,
+                }
+                .ok_or_else(|| LocalError::Unsupported(format!("{cmd} on a table needs a cell address (one cell at a time in v1)")))?;
+                if t.cell(cell.0 as usize, cell.1 as usize).is_none() {
+                    return Err(LocalError::BadParams(format!("the table has no cell ({}, {})", cell.0, cell.1)));
+                }
+                Some(cell)
+            }
+            _ => {
+                if explicit_cell.is_some() {
+                    return Err(LocalError::BadParams(format!("{cmd}: the shape is not a table")));
+                }
+                if st.selection.text.is_some() {
+                    return Err(LocalError::Unsupported(format!("{cmd} on a text range (whole shape only in v1)")));
+                }
+                if shape.text.is_none() {
+                    return Err(LocalError::Unsupported(format!("{cmd} on a shape without text")));
+                }
+                None
+            }
+        };
+        out.push(make(
+            Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
+            Payload::FormatSet { format, args: args.clone(), cell },
+        ));
+    }
+    Ok(out)
+}
+
 fn shape_ids(p: &Value, st: &DocState) -> Result<Vec<ShapeId>, LocalError> {
     if let Some(ids) = p.get("ids").and_then(Value::as_array) {
         return Ok(ids.iter().filter_map(Value::as_u64).map(|v| ShapeId(v as u32)).collect());
@@ -963,6 +1004,35 @@ fn shape_ids(p: &Value, st: &DocState) -> Result<Vec<ShapeId>, LocalError> {
 
 fn shape_key(keys: &crate::KeyMap, slide: SlideId, id: ShapeId) -> Result<ShapeKey, LocalError> {
     keys.shape_key(slide, id).cloned().ok_or(LocalError::NoDocument)
+}
+
+/// A cell address a local command carries in its arguments: `cell: [row, column]`, or `row` and
+/// `col`. Anything else is no address at all.
+fn cell_args(p: &Value) -> Option<(u32, u32)> {
+    let pair = p
+        .get("cell")
+        .and_then(Value::as_array)
+        .and_then(|a| Some((u32::try_from(a.first()?.as_u64()?).ok()?, u32::try_from(a.get(1)?.as_u64()?).ok()?)));
+    pair.or_else(|| Some((u32::try_from(p.get("row")?.as_u64()?).ok()?, u32::try_from(p.get("col")?.as_u64()?).ok()?)))
+}
+
+/// The one table cell a local format command addresses: the single selected cell, or the cell a
+/// collapsed caret is editing. A range across cells or inside a cell is refused, because the
+/// replica would have to widen it to the whole cell body (RFC §15).
+fn selected_cell(st: &DocState, id: ShapeId) -> Result<Option<(u32, u32)>, LocalError> {
+    if let Some((_, from, to)) = st.selection.cells.filter(|(table, ..)| *table == id) {
+        if from != to {
+            return Err(LocalError::Unsupported("formatting a range of table cells (one cell at a time in v1)".into()));
+        }
+        return Ok(Some((from.0 as u32, from.1 as u32)));
+    }
+    if let Some(text) = st.selection.text.as_ref().filter(|t| t.shape == id && !t.notes) {
+        if text.is_range() {
+            return Err(LocalError::Unsupported("formatting a range inside a table cell (whole cell only in v1)".into()));
+        }
+        return Ok(text.cell.map(|(r, c)| (r as u32, c as u32)));
+    }
+    Ok(None)
 }
 
 /// The slide and whole body a `slide.notes` edit leaves behind. `body` is the formatted body the
@@ -1295,6 +1365,47 @@ mod tests {
     }
 
     #[test]
+    fn formatting_a_table_cell_normalises_with_its_address() {
+        let (mut s, doc_id, _slide, table) = table_deck();
+        // One cell selected: the address comes from the selection.
+        s.doc_mut().expect("doc").selection.shapes = vec![table];
+        s.doc_mut().expect("doc").selection.cells = Some((table, (0, 0), (0, 0)));
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect("selected cell");
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) });
+
+        // A collapsed caret inside a cell formats that cell's whole body.
+        s.doc_mut().expect("doc").selection.cells = None;
+        caret(&mut s, table, (0, 1), Some((0, 1)));
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "format.italic", &json!({"on": true}), "op", &doc_id).expect("caret in a cell");
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: Some((0, 1)) });
+
+        // An explicit address wins over the selection and never travels in the formatting args.
+        let ops = normalize(&km, st, "format.bold", &json!({"on": true, "cell": [1, 1]}), "op", &doc_id).expect("explicit cell");
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((1, 1)) });
+
+        // A range across cells is not one address: refused, never widened to the table.
+        s.doc_mut().expect("doc").selection.cells = Some((table, (0, 0), (1, 1)));
+        let st = s.doc().expect("doc");
+        let e = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect_err("a cell range");
+        assert!(matches!(e, LocalError::Unsupported(_)), "{e:?}");
+
+        // A cell the table does not have is refused here as well.
+        s.doc_mut().expect("doc").selection.cells = None;
+        let st = s.doc().expect("doc");
+        let e = normalize(&km, st, "format.bold", &json!({"on": true, "cell": [9, 9]}), "op", &doc_id).expect_err("no such cell");
+        assert!(matches!(e, LocalError::BadParams(_)), "{e:?}");
+
+        // A table without any address has no body to format.
+        s.doc_mut().expect("doc").selection.text = None;
+        let st = s.doc().expect("doc");
+        let e = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect_err("a table needs a cell");
+        assert!(matches!(e, LocalError::Unsupported(_)), "{e:?}");
+    }
+
+    #[test]
     fn a_table_row_or_column_edit_normalises_to_one_structural_step() {
         let (mut s, doc_id, _slide, table) = table_deck();
         caret(&mut s, table, (0, 0), Some((0, 0)));
@@ -1402,7 +1513,7 @@ mod tests {
         }
 
         let ops = normalize(&km, st, "format.bold", &json!({"on": true, "id": shapes[0].0}), "op", &doc).expect("format");
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) });
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None });
         let e = normalize(&km, st, "format.bold", &json!({"id": shapes[0].0}), "op", &doc).expect_err("relative toggle");
         assert!(matches!(e, LocalError::BadParams(_)), "{e:?}");
         let second_key = km.shape_key(slide, shapes[1]).expect("key").clone();
@@ -1410,7 +1521,7 @@ mod tests {
             .expect("the address is taken from the command params, not from the args");
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].target.shape.as_ref(), Some(&second_key));
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) });
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None });
     }
 
     #[test]

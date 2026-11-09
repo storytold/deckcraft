@@ -228,7 +228,12 @@ fn media_and_format_slices_go_through_the_server() {
             second.clone(),
             1,
         ),
-        (Payload::FormatSet { format: deckcraft_collab_proto::FormatCmd::Bold, args: json!({"on": true}) }, OpKind::Command, first.clone(), 2),
+        (
+            Payload::FormatSet { format: deckcraft_collab_proto::FormatCmd::Bold, args: json!({"on": true}), cell: None },
+            OpKind::Command,
+            first.clone(),
+            2,
+        ),
         (Payload::SlideDuplicate {}, OpKind::Structural, first.clone(), 3),
     ];
     for (n, (payload, kind, shape, base)) in steps.into_iter().enumerate() {

@@ -216,6 +216,9 @@ impl DocSession {
         let rebases = match &op.payload {
             deckcraft_collab_proto::Payload::TextInsert { .. } | deckcraft_collab_proto::Payload::TextDelete { .. } => true,
             deckcraft_collab_proto::Payload::TextSet { cell, .. } => cell.is_some(),
+            // A format step addresses one cell and no offset: only a row or column edit can move
+            // it, and it must move, or the step would format the wrong cell.
+            deckcraft_collab_proto::Payload::FormatSet { cell, .. } => cell.is_some(),
             // Notes edits carry a body offset like shape text; their address is the slide, so a
             // slide move or a shape edit never shifts them.
             deckcraft_collab_proto::Payload::NotesInsert { .. } | deckcraft_collab_proto::Payload::NotesDelete { .. } => true,
@@ -298,6 +301,7 @@ impl DocSession {
         // operations in different cells of one table never shift each other's offsets.
         let mut cell = match &op.payload {
             Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => *cell,
+            Payload::FormatSet { cell, .. } => *cell,
             _ => None,
         };
         let shift = |point: &mut u32, payload: &Payload, cell: Option<(u32, u32)>| match payload {
@@ -379,6 +383,7 @@ impl DocSession {
         }
         match &mut op.payload {
             Payload::TextSet { cell: at, .. } | Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cell,
+            Payload::FormatSet { cell: at, .. } => *at = cell,
             _ => {}
         }
         let empty = match op.payload {
@@ -645,7 +650,7 @@ fn media_options_differ(clip: &MediaClip) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deckcraft_collab_proto::{OpKind, Payload, RejectCode, ShapeKey, SlideKey, TableAxis, Target};
+    use deckcraft_collab_proto::{FormatCmd, OpKind, Payload, RejectCode, ShapeKey, SlideKey, TableAxis, Target};
 
     fn deck() -> Presentation {
         let mut s = Session::with_new();
@@ -810,6 +815,82 @@ mod tests {
         s.apply("a", &queued).expect("the set follows its cell");
         assert_eq!(cell(&s, 1, 0), "replaced");
         assert_eq!(cell(&s, 0, 0), "", "the inserted row stays empty");
+    }
+
+    /// The bold flag of each run of one cell, so a test can see that a whole cell body was
+    /// formatted (including runs someone else added).
+    fn cell_bolds(session: &DocSession, r: usize, c: usize) -> Vec<Option<bool>> {
+        let doc = session.document().expect("doc");
+        match &doc.slides[0].shapes[0].kind {
+            deckcraft_model::ShapeKind::Table(t) => {
+                t.cell(r, c).expect("cell").text.paragraphs.iter().flat_map(|p| p.runs.iter()).map(|run| run.props.bold).collect()
+            }
+            other => panic!("not a table: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_queued_cell_format_applies_to_the_cell_someone_else_typed_in() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        // A client at version 0 formats the cell it sees ("ab").
+        let queued =
+            cell_op(&slide, &shape, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) }, 0, "bold");
+        // Someone else types into the same cell first: the format must land on that cell's body
+        // as it is now, not on the body the client saw.
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextInsert { at: 2, text: "X".into(), cell: Some((0, 0)) }, 0, "typed")).expect("typed");
+        s.apply("a", &queued).expect("the queued format applies after the insert");
+        assert_eq!(cell(&s, 0, 0), "abX");
+        let bolds = cell_bolds(&s, 0, 0);
+        assert!(!bolds.is_empty(), "the cell has runs");
+        assert!(bolds.iter().all(|b| *b == Some(true)), "every run, including the other participant's text, is bold: {bolds:?}");
+        assert_eq!(cell(&s, 1, 1), "", "another cell is untouched");
+    }
+
+    #[test]
+    fn a_queued_cell_format_moves_with_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued =
+            cell_op(&slide, &shape, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) }, 0, "bold");
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the format follows its cell");
+        assert_eq!(cell(&s, 1, 0), "ab", "the cell moved down with its row");
+        let bolds = cell_bolds(&s, 1, 0);
+        assert!(!bolds.is_empty() && bolds.iter().all(|b| *b == Some(true)), "the moved cell was formatted: {bolds:?}");
+        assert_eq!(cell_bolds(&s, 0, 0), Vec::<Option<bool>>::new(), "the inserted row is not formatted");
+        assert_eq!(s.version(), 2);
+    }
+
+    #[test]
+    fn a_queued_cell_format_is_refused_when_its_row_is_deleted() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued =
+            cell_op(&slide, &shape, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) }, 0, "bold");
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: false },
+            history: None,
+        };
+        s.apply("b", &row).expect("delete row");
+        let err = s.apply("a", &queued).expect_err("the addressed cell is gone");
+        assert_eq!(err.code, RejectCode::Stale);
+        assert!(err.retryable);
+        assert_eq!(s.version(), 1, "the refused format does not bump the version");
     }
 
     #[test]

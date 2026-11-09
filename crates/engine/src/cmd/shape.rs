@@ -161,7 +161,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Exact Value",
             [],
             None,
-            "{field: fill|line|text|table, value: the exact model value as JSON, ids?} (restores the value an undoable step replaced; the fill, line and format commands cannot express the whole model, so collaboration undo uses this)",
+            "{field: fill|line|text|cellText|table, cell?: [row, col] for cellText, value: the exact model value as JSON, ids?} (restores the value an undoable step replaced; the fill, line and format commands cannot express the whole model, so collaboration undo uses this)",
             has_selection,
             set_field
         ),
@@ -462,7 +462,7 @@ const MAX_TABLE_LINES: usize = 1_000;
 /// argument), so a lossless restore cannot go through them. The value is still hostile input:
 /// it is size-bounded and deserialised into the model type before anything is touched.
 fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
-    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text or table)"))?;
+    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text, cellText or table)"))?;
     let value = p.get("value").cloned().unwrap_or(Value::Null);
     let bytes = serde_json::to_vec(&value).map_err(|e| bad("shape.setField", format!("invalid value: {e}")))?;
     if bytes.len() > MAX_FIELD_JSON {
@@ -494,6 +494,29 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(())
             })
         }
+        // One table cell's whole body: the exact restore of a `format.*` step on a cell, which
+        // changes runs and paragraphs inside that cell and cannot be replayed from its arguments.
+        // The address is checked against the table before the first write, so a stale `(row, col)`
+        // cannot land the body in another cell.
+        "cellText" => {
+            let body = decode_field::<deckcraft_model::text::TextBody>(&value, "cellText")?
+                .ok_or_else(|| bad("shape.setField", "a cell body cannot be cleared"))?;
+            if body.paragraphs.len() > MAX_PARAGRAPHS || body.paragraphs.iter().map(|q| q.runs.len()).sum::<usize>() > MAX_RUNS {
+                return Err(bad("shape.setField", "the cell body is too large"));
+            }
+            let cell = p
+                .get("cell")
+                .and_then(Value::as_array)
+                .and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)))
+                .ok_or_else(|| bad("shape.setField", "a cell body needs a `cell` (row, column)"))?;
+            edit_shapes(s, p, "shape.setField", |sh| {
+                let ShapeKind::Table(t) = &mut sh.kind else { return Err(bad("shape.setField", "the shape is not a table")) };
+                let target =
+                    t.cell_mut(cell.0, cell.1).ok_or_else(|| bad("shape.setField", format!("the table has no cell ({}, {})", cell.0, cell.1)))?;
+                target.text = body.clone();
+                Ok(())
+            })
+        }
         "table" => {
             let table = decode_field::<deckcraft_model::Table>(&value, "table")?.ok_or_else(|| bad("shape.setField", "a table cannot be cleared"))?;
             let (rows, cols) = (table.rows.len(), table.cols.len());
@@ -508,7 +531,7 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(())
             })
         }
-        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text or table)"))),
+        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text, cellText or table)"))),
     }
 }
 

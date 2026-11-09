@@ -35,9 +35,9 @@ pub enum Image {
     Fill(Option<Fill>),
     /// The shape's outline.
     Line(Option<Line>),
-    /// The whole body formatting and text of one shape, as `format.*` leaves it. Formatting is
-    /// per run and per paragraph, so one command's arguments cannot describe the value it
-    /// replaced: the image is the body itself.
+    /// The whole body formatting and text of one shape or of one table cell, as `format.*` leaves
+    /// it. Formatting is per run and per paragraph, so one command's arguments cannot describe
+    /// the value it replaced: the image is the body itself, addressed by the step's cell.
     Format(TextBody),
     /// A whole table, for a structural row/column edit: the cells' indices and values both
     /// change, so only the whole table is an exact image.
@@ -208,7 +208,12 @@ impl Image {
             // subset of the model, so a lossless restore carries the model value itself.
             Image::Fill(fill) => Payload::ShapeField { field: ShapeField::Fill, value: serde_json::to_value(fill).ok()? },
             Image::Line(line) => Payload::ShapeField { field: ShapeField::Line, value: serde_json::to_value(line).ok()? },
-            Image::Format(body) => Payload::ShapeField { field: ShapeField::Text, value: serde_json::to_value(body).ok()? },
+            // A body inside a table cell is its own object: the restore names the cell and
+            // carries that body, so a neighbour's edit is neither overwritten nor touched.
+            Image::Format(body) => match cell {
+                Some((r, c)) => Payload::CellText { cell: (r, c), body: serde_json::to_value(body).ok()? },
+                None => Payload::ShapeField { field: ShapeField::Text, value: serde_json::to_value(body).ok()? },
+            },
             Image::Table(table) => Payload::ShapeField { field: ShapeField::Table, value: serde_json::to_value(table).ok()? },
             Image::Animation(steps) => Payload::ShapeAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
             // Notes are a slide's own body: the payload names the slide and carries the whole body.
