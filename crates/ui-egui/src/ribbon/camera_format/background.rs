@@ -20,9 +20,10 @@ pub(super) fn background_section(app: &mut SlideApp, ui: &mut Ui) {
     // The panel is the only place the model directory can change under a running app (the user
     // copies the file in). Re-read it when the tab opens and then at most once every few seconds:
     // `refresh()` probes every model root, and the ribbon redraws at animation speed.
-    let due = app.camera_background_checked.is_none_or(|t| t.elapsed() >= MODEL_PROBE_INTERVAL);
+    let now = ui.input(|i| i.time);
+    let due = app.camera_background_checked.is_none_or(|t| now - t >= MODEL_PROBE_SECONDS);
     if due {
-        app.camera_background_checked = Some(std::time::Instant::now());
+        app.camera_background_checked = Some(now);
         if let Some(matte) = app.matte.as_mut() {
             matte.refresh();
         }
@@ -81,8 +82,8 @@ pub(super) fn background_section(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| model_panel(app, ui, state));
 }
 
-/// How often the panel re-probes the model directory while it is open.
-const MODEL_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often the panel re-probes the model directory while it is open, in egui's seconds.
+const MODEL_PROBE_SECONDS: f64 = 5.0;
 /// The status line when the host has no file picker: a disabled button alone would not say why.
 const NO_PICKER: &str = "This build cannot pick files: the host has no file picker";
 

@@ -514,7 +514,7 @@ mod tests {
     fn a_planted_part_name_is_not_followed() {
         let dir = crate::test_temp::TempDir::new("part-name");
         let target = manifest::MANIFEST.path_in(dir.path());
-        let parent = target.parent().expect("parent").clone();
+        let parent = target.parent().expect("parent").to_path_buf();
         std::fs::create_dir_all(&parent).expect("dir");
         let victim = dir.path().join("victim.txt");
         std::fs::write(&victim, b"keep me").expect("victim");

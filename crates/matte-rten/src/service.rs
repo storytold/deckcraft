@@ -131,9 +131,8 @@ impl Service {
             Box::new(move || RtenSegmenter::load(&target).map(|s| Box::new(s) as Box<dyn Segmenter>).map_err(MatteError::Unavailable)),
             self.interval,
         )
-        .map_err(|e| {
+        .inspect_err(|e| {
             self.state = ModelState::Failed { detail: e.message() };
-            e
         })?;
         self.worker = Some(worker);
         Ok(())
