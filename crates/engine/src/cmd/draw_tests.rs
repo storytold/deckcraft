@@ -313,3 +313,22 @@ fn only_left_and_right_turn_the_ruler() {
     s.key("Left", Mods { alt: true, ..Mods::default() }).unwrap();
     assert_eq!(ruler(&mut s)["angle"].as_f64(), Some(345.0));
 }
+
+#[test]
+fn shift_keeps_a_drag_on_its_axis_when_a_smart_guide_pulls() {
+    let mut s = blank();
+    // The dragged box's right edge (200) sits 4 pt from the other box's left edge (196), inside
+    // the guide threshold; a vertical Shift drag must ignore that pull.
+    let id = rect(&mut s, [100.0, 100.0, 100.0, 50.0]);
+    rect(&mut s, [196.0, 300.0, 100.0, 50.0]);
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let shift = |kind, x, y| PointerEvent { kind, x, y, mods: Mods { shift: true, ..Mods::default() }, tol: 3.0, pressure: None };
+    s.pointer(ev(PointerKind::Down, 150.0, 125.0)).unwrap();
+    s.pointer(shift(PointerKind::Drag, 150.0, 250.0)).unwrap();
+    s.pointer(shift(PointerKind::Drag, 150.0, 375.0)).unwrap();
+    s.pointer(shift(PointerKind::Up, 150.0, 375.0)).unwrap();
+    let b = box_of(&s, id);
+    assert!((b.x - 100.0).abs() < 1e-6, "the guide did not pull it sideways: {b:?}");
+    assert!((b.y - 350.0).abs() < 1e-6, "it moved down the axis: {b:?}");
+    assert!(s.tool.guides.iter().all(|g| !g.vertical), "only the guides along the axis are drawn: {:?}", s.tool.guides);
+}

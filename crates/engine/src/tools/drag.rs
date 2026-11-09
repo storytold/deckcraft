@@ -3,6 +3,16 @@ use super::{
     Affine, DRAW_TABLE, Drag, Mods, Point, Rect, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, Vec2, Xfrm, cmd, json, set_warp_adj,
 };
 
+/// The part of a snap offset that a Shift-constrained drag may take: all of it when no axis is
+/// constrained, otherwise only its component along that axis (0 is horizontal, 1 vertical).
+fn along_axis(snap: Vec2, axis: Option<u8>) -> Vec2 {
+    match axis {
+        Some(0) => Vec2::new(snap.x, 0.0),
+        Some(_) => Vec2::new(0.0, snap.y),
+        None => snap,
+    }
+}
+
 struct MoveDrag {
     ids: Vec<ShapeId>,
     start: Point,
@@ -229,26 +239,36 @@ impl Session {
         // own outline, and the object nearest the edge decides where the whole drag goes.
         let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
         let moved_b = bounds + d;
+        // Each moving shape's frame where the drag started. A duplicate's copies were just made, so
+        // their document frames are the start frames: read them by id, never pairing an id with a
+        // frame by position (the copies come back in document order).
+        let start_frames: Vec<(ShapeId, Xfrm)> = if duplicate && !moved {
+            let st = self.doc()?;
+            ids_now.iter().filter_map(|id| st.shape(*id).map(|sh| (*id, super::xfrm_of(&st.doc, &st.selection, sh)))).collect()
+        } else {
+            origs.clone()
+        };
         let ruler_snap = if mods.cmd || !self.view.ruler.visible {
             None
         } else {
-            let outlines = self.ruler_outlines(&ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect::<Vec<_>>(), d);
+            let outlines = self.ruler_outlines(&start_frames, d);
             crate::ruler::snap_outlines(&outlines, &self.view.ruler, tol * 1.5)
         };
         if let Some(snap) = ruler_snap {
             // A Shift drag takes only the part of the snap along its axis.
-            d += match axis {
-                Some(0) => Vec2::new(snap.x, 0.0),
-                Some(_) => Vec2::new(0.0, snap.y),
-                None => snap,
-            };
+            d += along_axis(snap, axis);
             self.tool.guides.clear();
         } else {
-            let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
-            d += snap;
+            let (snap, mut guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
+            // The smart guides and the grid stay on the axis as well: a Shift drag takes only the
+            // along-axis part of their pull and shows only the guides that draw it.
+            d += along_axis(snap, axis);
+            if let Some(a) = axis {
+                guides.retain(|g| g.vertical == (a == 0));
+            }
             self.tool.guides = guides;
         }
-        let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
+        let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { start_frames } else { origs.clone() };
         self.edit(|doc, sel| {
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
             for (id, o) in &origs2 {
