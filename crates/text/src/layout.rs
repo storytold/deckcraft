@@ -418,7 +418,7 @@ fn justify_line(p: &ParaShaped, rl: &RawLine, adv: &mut [f64], align: Align, sla
             filled = true;
         }
     }
-    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow) {
+    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow | Align::ThaiDistributed) {
         let spaces = line_cells.iter().filter(|c| c.ch == ' ').count();
         if spaces > 0 {
             for (a, c) in adv.iter_mut().zip(line_cells) {
@@ -450,8 +450,8 @@ fn line_left(align: Align, filled: bool, rtl: bool, bx: (f64, f64), line_w: f64,
         Align::Center => box_l + (box_r - box_l - line_w) / 2.0,
         Align::Distributed if n <= 1 => box_l + slack / 2.0,
         // Justified lines that aren't stretched (the last one) sit at the start edge.
-        Align::Justify | Align::JustLow | Align::Distributed if rtl => box_r - line_w,
-        Align::Justify | Align::JustLow | Align::Distributed => box_l,
+        Align::Justify | Align::JustLow | Align::Distributed | Align::ThaiDistributed if rtl => box_r - line_w,
+        Align::Justify | Align::JustLow | Align::Distributed | Align::ThaiDistributed => box_l,
     }
 }
 
