@@ -6,13 +6,10 @@
 //! permission sheet. One worker serves every session: `start` replaces the running camera and
 //! `stop` drops it, so turning the preview off and on again never races another open for the same
 //! device. Nothing here logs from a capture path and nothing joins a worker on the UI thread.
+//!
+//! Only the desktop OSes build this module (`main` gates it the same way): anywhere else no
+//! backend is injected, so the UI disables the camera buttons instead of offering a camera that
+//! always reports `Unsupported`.
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod native;
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub use native::SystemCamera;
-
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-mod stub;
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-pub use stub::SystemCamera;

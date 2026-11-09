@@ -17,7 +17,7 @@
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod audio;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod camera;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -142,8 +142,10 @@ fn services(native_wayland: bool) -> Services {
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
         // The Cameo preview opens a camera only when the user asks for it. `DECKCRAFT_NO_CAMERA`
-        // keeps the backend out (headless runs, stores that prohibit camera access).
-        #[cfg(not(target_arch = "wasm32"))]
+        // keeps the backend out (headless runs, stores that prohibit camera access). Off the
+        // desktop OSes there is no backend at all: no stub is injected, so the UI disables the
+        // camera buttons instead of offering a camera that always reports `Unsupported`.
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         camera_in: std::env::var_os("DECKCRAFT_NO_CAMERA")
             .is_none()
             .then(|| Box::new(camera::SystemCamera::default()) as Box<dyn deckcraft_media::camera::CameraIn>),
