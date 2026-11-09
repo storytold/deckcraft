@@ -31,4 +31,4 @@ pub use audio::{AudioBuffer, TARGET_RATE};
 pub use caption::{CaptionLayout, LayoutInput, Position, Rect};
 pub use model::{ModelFile, ModelManifest, ModelRoots, ModelState, ModelStatus, WHISPER_TINY_ID, whisper_tiny};
 pub use provider::{AsrError, Event, FakeTranscriber, ProviderState, ProviderStatus, Transcriber};
-pub use settings::SubtitleSettings;
+pub use settings::{LANGUAGE_CODES, SubtitleSettings, is_known_language};

@@ -102,11 +102,6 @@ impl ProviderStatus {
         }
     }
 
-    /// The accelerator in use, as the status line spells it.
-    pub fn accelerator_label(&self) -> &'static str {
-        self.accelerator.unwrap_or_default().label()
-    }
-
     pub fn starting(model: impl Into<String>, language: Option<String>) -> Self {
         ProviderStatus { state: ProviderState::Starting, ..ProviderStatus::running(model, language) }
     }
@@ -179,11 +174,27 @@ impl Event {
 }
 
 fn clip(text: impl Into<String>) -> String {
-    let text = text.into();
+    let text = clean(text.into());
     let count = text.chars().count();
     // Captions are read while they are still being spoken: an overlong transcript keeps its end,
     // the newest words, as the layout does with `wrap_tail`.
     if count > Event::MAX_LINE_CHARS { text.chars().skip(count - Event::MAX_LINE_CHARS).collect() } else { text }
+}
+
+/// Make a transcript line safe to draw: a model can echo control characters, a bidirectional
+/// override or a zero-width joiner from the audio, and drawing them reorders the caption or hides
+/// text. Line breaks and tabs become an ordinary space; everything else that is not printable
+/// text is dropped.
+fn clean(text: String) -> String {
+    text.chars().map(|c| if matches!(c, '\n' | '\r' | '\t') { ' ' } else { c }).filter(|c| !c.is_control() && !is_invisible_format(*c)).collect()
+}
+
+/// Bidi controls and zero-width characters that a caption must never contain.
+fn is_invisible_format(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD | 0x061C | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF
+    )
 }
 
 /// A speech engine the slide show can start, stop and poll.
@@ -254,7 +265,11 @@ impl Transcriber for FakeTranscriber {
     fn stop(&mut self) {
         self.started = false;
         self.script.clear();
-        self.status = ProviderStatus::stopped();
+        // Production keeps a failure visible after a stop (the host reports it, the user sees
+        // why); the fake must not pretend the stream ended cleanly.
+        if self.status.state != ProviderState::Failed {
+            self.status = ProviderStatus::stopped();
+        }
     }
 
     fn status(&self) -> ProviderStatus {
@@ -305,7 +320,32 @@ mod tests {
         assert_eq!(t.status().state, ProviderState::Failed);
         assert!(t.status().summary().contains("no microphone"));
         t.stop();
-        assert_eq!(t.status().state, ProviderState::Stopped);
+        assert_eq!(t.status().state, ProviderState::Failed, "a failed stream stays failed after a stop");
+    }
+
+    #[test]
+    fn a_failed_stream_stops_as_failed_and_a_clean_one_as_stopped() {
+        let mut failed = FakeTranscriber::failing("model hash mismatch");
+        assert!(failed.start().is_ok());
+        assert!(matches!(failed.poll().first(), Some(Event::Error { .. })), "the stream failed before the stop");
+        failed.stop();
+        assert_eq!(failed.status().state, ProviderState::Failed, "the fake matches the production stop");
+        let mut clean = FakeTranscriber::scripted(&["x"]);
+        clean.start().unwrap_or(());
+        clean.stop();
+        assert_eq!(clean.status().state, ProviderState::Stopped);
+    }
+
+    #[test]
+    fn transcript_text_is_stripped_of_controls_and_bidi_overrides() {
+        let hostile = "he\u{202E}llo\u{0} wor\u{202B}ld\u{200B}!";
+        let e = Event::final_line(hostile);
+        assert_eq!(e.text(), "hello world!");
+        assert_eq!(Event::partial("two\nlines\there").text(), "two lines here");
+        assert_eq!(Event::partial("a\u{7F}b").text(), "ab");
+        // Ordinary text, including non-Latin scripts, is untouched.
+        let text = Event::final_line("¿Qué tal? Привет 日本語").text().to_string();
+        assert_eq!(text, "¿Qué tal? Привет 日本語");
     }
 
     #[test]

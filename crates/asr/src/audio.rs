@@ -30,15 +30,6 @@ impl AudioBuffer {
         self.samples.len() / ch
     }
 
-    /// How long the buffer plays, in milliseconds, from a sane sample rate.
-    pub fn duration_ms(&self) -> u64 {
-        if self.sample_rate == 0 {
-            return 0;
-        }
-        let frames = self.frames().min(MAX_SAMPLES) as u64;
-        frames.saturating_mul(1000) / u64::from(self.sample_rate)
-    }
-
     /// The buffer as mono, averaging the channels (and clamping anything not finite).
     pub fn mono(&self) -> Vec<f32> {
         downmix(&self.samples, self.channels)
@@ -47,13 +38,6 @@ impl AudioBuffer {
     /// The buffer as 16 kHz mono, ready for [`crate::provider`].
     pub fn mono_16k(&self) -> Vec<f32> {
         resample_linear(&self.mono(), self.sample_rate, TARGET_RATE)
-    }
-
-    /// Whether every sample is below `threshold` in magnitude (a silent block costs no
-    /// inference).
-    pub fn is_silent(&self, threshold: f32) -> bool {
-        let t = threshold.abs();
-        self.samples.iter().all(|s| !s.is_finite() || s.abs() <= t)
     }
 }
 
@@ -116,7 +100,7 @@ mod tests {
         assert!(downmix(&[], 0).is_empty());
         assert_eq!(downmix(&[f32::NAN, f32::INFINITY, 2.0, -3.0], 2), vec![0.0, -0.5]);
         let b = AudioBuffer::new(vec![0.0; 8], 0, 2);
-        assert_eq!(b.duration_ms(), 0);
+        assert_eq!(b.frames(), 4);
         assert!(b.mono_16k().is_empty(), "a zero sample rate has no time base");
         assert_eq!(resample_linear(&[1.0, 2.0], 0, TARGET_RATE), Vec::<f32>::new());
         assert_eq!(resample_linear(&[1.0, 2.0], TARGET_RATE, 0), Vec::<f32>::new());
@@ -140,11 +124,12 @@ mod tests {
     }
 
     #[test]
-    fn a_buffer_that_is_silent_costs_nothing() {
-        let b = AudioBuffer::new(vec![0.0; 32], 16_000, 1);
-        assert!(b.is_silent(1e-4));
-        let b = AudioBuffer::new(vec![0.0; 31].into_iter().chain([0.4]).collect(), 16_000, 1);
-        assert!(!b.is_silent(1e-4));
+    fn frame_count_follows_the_channel_count() {
+        let b = AudioBuffer::new(vec![0.0; 32], 16_000, 2);
+        assert_eq!(b.frames(), 16);
+        let mono = AudioBuffer::new(vec![0.0; 31], 16_000, 4);
+        assert_eq!(mono.frames(), 7, "a trailing partial frame is not a frame");
+        assert_eq!(AudioBuffer::new(vec![0.0; 31], 16_000, 0).frames(), 31);
     }
 
     #[test]

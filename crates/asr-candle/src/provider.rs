@@ -1,7 +1,7 @@
 //! The live transcription provider: a worker thread owns the microphone and the model, the UI
 //! starts and stops it and polls it, and nothing on the UI thread ever waits for inference.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -9,8 +9,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use deckcraft_asr::{
-    Accelerator, AsrError, AudioBuffer, Capabilities, Event, ModelState, ModelStatus, ProviderState, ProviderStatus, SubtitleSettings, Transcriber,
-    model, whisper_tiny,
+    Accelerator, AsrError, AudioBuffer, Capabilities, Event, ModelState, ProviderState, ProviderStatus, SubtitleSettings, Transcriber, model,
+    whisper_tiny,
 };
 
 use crate::capture::{self, Capture};
@@ -28,6 +28,10 @@ const VOICE_RMS: f32 = 0.006;
 const FINAL_AFTER: Duration = Duration::from_millis(900);
 /// How long the loop waits for the next audio chunk each turn.
 const TICK: Duration = Duration::from_millis(60);
+/// The least time between two decodes. A decode takes 1.2-2.7 s on a laptop, so scheduling the
+/// next one 0.5 s after the previous one finished only builds a backlog; a two-second floor keeps
+/// the worker near real time and lets stale audio go.
+const MIN_DECODE_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The accelerators this build can run speech inference on, here. The CPU is always there; an
 /// Intel OpenVINO installation is reported as detected but is not usable until a backend for it
@@ -66,11 +70,6 @@ impl WhisperTranscriber {
             stop: None,
             handle: None,
         }
-    }
-
-    /// The model status for a directory, for the settings dialog and the status line.
-    pub fn model_status(dir: &Path) -> ModelStatus {
-        model::check_dir(dir, &whisper_tiny())
     }
 
     /// The input devices this host can record from.
@@ -133,9 +132,14 @@ impl Transcriber for WhisperTranscriber {
             stop.store(true, Ordering::Relaxed);
         }
         if let Some(handle) = self.handle.take() {
-            // The worker checks the flag between windows; joining here is how the microphone and
-            // the model are released before the show goes away.
-            let _ = handle.join();
+            // The worker checks the flag between windows and releases the microphone and the
+            // model itself. Joining here would block the UI thread for the length of an in-flight
+            // decode (seconds to tens of seconds), so the join is handed to a short-lived thread;
+            // dropping the handle instead would be the same, but joining makes the release
+            // observable and keeps the thread from outliving the process unnoticed.
+            let _ = std::thread::Builder::new().name("deckcraft-subtitles-reaper".into()).spawn(move || {
+                let _ = handle.join();
+            });
         }
         self.events = None;
         let mut status = self.status.lock().unwrap_or_else(PoisonError::into_inner);
@@ -207,6 +211,7 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
     let mut new_samples = 0usize;
     let mut last_voice = Instant::now();
     let mut pending: Option<String> = None;
+    let mut last_decode: Option<Instant> = None;
     while !stop.load(Ordering::Relaxed) {
         if let Some(error) = capture.take_error() {
             return fail(&status, &tx, AsrError::new(format!("the microphone stopped: {error}")));
@@ -241,6 +246,13 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
             new_samples = 0;
             continue;
         }
+        // A decode takes seconds; starting the next one as soon as half a second of new audio
+        // arrived would keep the CPU saturated and grow the lag. Wait for the floor measured from
+        // the *end* of the previous decode; the accumulation continues meanwhile and stale audio
+        // falls off the ring.
+        if last_decode.is_some_and(|at| !decode_due(at, Instant::now())) {
+            continue;
+        }
         new_samples = 0;
         match engine.transcribe(&ring, hint.as_deref()) {
             Ok(text) if !text.is_empty() => {
@@ -252,6 +264,7 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
             Ok(_) => {}
             Err(e) => return fail(&status, &tx, e),
         }
+        last_decode = Some(Instant::now());
         // A decode takes seconds, and the audio that arrived meanwhile is still in the capture
         // queue. Fold it in before deciding the speaker paused: speech heard during the decode
         // must refresh `last_voice`, or continuous speech would be cut at every decode boundary.
@@ -271,6 +284,12 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
     if let Ok(mut s) = status.lock() {
         *s = ProviderStatus::stopped();
     }
+}
+
+/// Whether a new decode may start: never before [`MIN_DECODE_INTERVAL`] has passed since the
+/// previous one finished.
+fn decode_due(last_finished: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_finished) >= MIN_DECODE_INTERVAL
 }
 
 /// Whether the window only holds silence since the last final line, so another decode would
@@ -313,9 +332,17 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
+    fn temp(name: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!("deckcraft-asr-candle-{}-{name}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
     #[test]
     fn starting_without_a_model_fails_once_and_says_where_it_looked() {
-        let missing = std::env::temp_dir().join("deckcraft-asr-candle-no-model");
+        let missing = temp("no-model");
         let mut t = WhisperTranscriber::new(&missing, SubtitleSettings::default());
         let err = t.start().expect_err("no model");
         assert!(err.message().contains("not installed"), "{err}");
@@ -359,5 +386,27 @@ mod tests {
         assert!(is_idle(None, Instant::now() - FINAL_AFTER), "the final line has just gone out");
         assert!(!is_idle(Some("still pending"), quiet_for_a_while), "a pending line still has to be finalized");
         assert!(!is_idle(None, Instant::now()), "speech heard now keeps the decoder running");
+    }
+
+    #[test]
+    fn a_decode_is_not_scheduled_faster_than_the_decode_time() {
+        let now = Instant::now();
+        assert!(decode_due(now - MIN_DECODE_INTERVAL - Duration::from_millis(1), now), "the floor has passed");
+        assert!(!decode_due(now, now), "a decode that just finished is not restarted");
+        assert!(!decode_due(now, now + MIN_DECODE_INTERVAL / 2), "the floor is measured from the finish");
+        assert!(decode_due(now, now + MIN_DECODE_INTERVAL));
+    }
+
+    #[test]
+    fn a_missing_model_fails_the_worker_once_and_reports_where_it_looked() {
+        let dir = temp("run-missing");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = channel();
+        let status = Arc::new(Mutex::new(ProviderStatus::idle()));
+        run(dir, SubtitleSettings::default(), Arc::new(AtomicBool::new(false)), status.clone(), tx);
+        let first = rx.try_recv().expect("one error event");
+        assert!(matches!(first, Event::Error { .. }), "{first:?}");
+        assert!(rx.try_recv().is_err(), "the error is reported once");
+        assert_eq!(status.lock().unwrap_or_else(PoisonError::into_inner).state, ProviderState::Failed);
     }
 }

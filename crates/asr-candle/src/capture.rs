@@ -17,11 +17,38 @@ pub const MAX_QUEUED_SAMPLES: usize = 48_000 * 2 * 60;
 
 type ErrorSlot = Arc<Mutex<Option<String>>>;
 
+/// The audio waiting for the provider, with the sample count maintained on push and pop so the
+/// realtime callback never sums the queue.
+struct Queue {
+    chunks: VecDeque<AudioBuffer>,
+    total: usize,
+}
+
+impl Queue {
+    fn new() -> Self {
+        Queue { chunks: VecDeque::new(), total: 0 }
+    }
+
+    fn pop(&mut self) -> Option<AudioBuffer> {
+        let chunk = self.chunks.pop_front()?;
+        self.total = self.total.saturating_sub(chunk.samples.len());
+        Some(chunk)
+    }
+
+    fn push(&mut self, chunk: AudioBuffer) {
+        self.total = self.total.saturating_add(chunk.samples.len());
+        self.chunks.push_back(chunk);
+        while self.total > MAX_QUEUED_SAMPLES && self.chunks.len() > 1 {
+            self.pop();
+        }
+    }
+}
+
 /// An open input device.
 pub struct Capture {
     /// Kept so the stream plays; dropping it closes the device.
     _stream: cpal::Stream,
-    queue: Arc<Mutex<VecDeque<AudioBuffer>>>,
+    queue: Arc<Mutex<Queue>>,
     error: ErrorSlot,
     pub device: String,
     pub sample_rate: u32,
@@ -45,7 +72,7 @@ impl Capture {
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.clone().into();
         let (sample_rate, channels) = (config.sample_rate.0, config.channels);
-        let queue: Arc<Mutex<VecDeque<AudioBuffer>>> = Arc::default();
+        let queue: Arc<Mutex<Queue>> = Arc::new(Mutex::new(Queue::new()));
         let error: ErrorSlot = Arc::default();
         let slot = error.clone();
         let err = move |e: cpal::StreamError| {
@@ -64,9 +91,9 @@ impl Capture {
     pub fn recv(&self, timeout: Duration) -> Option<AudioBuffer> {
         let start = Instant::now();
         loop {
-            if let Ok(mut q) = self.queue.lock()
-                && let Some(chunk) = q.pop_front()
-            {
+            // A poisoned queue (a panic in the realtime callback) must not silently stop the
+            // captions: the audio already queued is still valid, so recover the guard.
+            if let Some(chunk) = self.queue.lock().unwrap_or_else(PoisonError::into_inner).pop() {
                 return Some(chunk);
             }
             if start.elapsed() >= timeout {
@@ -86,7 +113,7 @@ fn build(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     format: SampleFormat,
-    queue: Arc<Mutex<VecDeque<AudioBuffer>>>,
+    queue: Arc<Mutex<Queue>>,
     sample_rate: u32,
     channels: u16,
     err: impl FnMut(cpal::StreamError) + Send + 'static,
@@ -119,16 +146,10 @@ fn build(
 }
 
 /// Add a chunk to the queue, dropping the oldest audio when the cap is reached. Never blocks a
-/// busy queue (the worker holds the lock for microseconds) and never allocates.
-fn offer(queue: &Mutex<VecDeque<AudioBuffer>>, chunk: AudioBuffer) {
+/// busy queue (the worker holds the lock for microseconds).
+fn offer(queue: &Mutex<Queue>, chunk: AudioBuffer) {
     let Ok(mut q) = queue.try_lock() else { return };
-    q.push_back(chunk);
-    let mut total: usize = q.iter().map(|c| c.samples.len()).sum();
-    while total > MAX_QUEUED_SAMPLES && q.len() > 1 {
-        if let Some(old) = q.pop_front() {
-            total = total.saturating_sub(old.samples.len());
-        }
-    }
+    q.push(chunk);
 }
 
 /// Every input device the host reports, by name.
@@ -146,30 +167,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn listing_devices_is_safe_without_an_audio_system() {
+    fn listing_devices_is_safe_and_sorted_without_duplicates() {
         // A machine with no input still answers with an empty list instead of failing.
-        let _ = input_devices();
+        let names = input_devices();
+        assert!(names.windows(2).all(|w| w[0] <= w[1]), "the list is sorted");
+        assert!(names.iter().collect::<std::collections::HashSet<_>>().len() == names.len(), "the list has no duplicates");
     }
 
     #[test]
     fn the_queue_is_bounded_and_keeps_the_newest_audio() {
-        let q: Mutex<VecDeque<AudioBuffer>> = Mutex::new(VecDeque::new());
+        let q: Mutex<Queue> = Mutex::new(Queue::new());
         let chunk = AudioBuffer::new(vec![0.0; MAX_QUEUED_SAMPLES / 4], 48_000, 2);
         for _ in 0..8 {
             offer(&q, chunk.clone());
         }
         let q = q.lock().unwrap_or_else(PoisonError::into_inner);
-        let total: usize = q.iter().map(|c| c.samples.len()).sum();
-        assert!(total <= MAX_QUEUED_SAMPLES, "{total}");
-        assert!(q.len() < 8, "the oldest chunks go");
+        assert!(q.total <= MAX_QUEUED_SAMPLES, "{}", q.total);
+        assert_eq!(q.total, q.chunks.iter().map(|c| c.samples.len()).sum::<usize>(), "the running total matches the queue");
+        assert!(q.chunks.len() < 8, "the oldest chunks go");
+    }
+
+    #[test]
+    fn a_poisoned_queue_still_hands_back_its_audio() {
+        let q: Arc<Mutex<Queue>> = Arc::new(Mutex::new(Queue::new()));
+        q.lock().unwrap_or_else(PoisonError::into_inner).push(AudioBuffer::new(vec![0.5; 8], 16_000, 1));
+        // Poison the mutex the way a panic in the realtime callback would.
+        let poison = q.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poison.lock().expect("fresh lock");
+            panic!("callback panic");
+        })
+        .join();
+        assert!(q.is_poisoned(), "the test poisoned the queue");
+        // `recv` needs a Capture; the recovery is the same guard, so assert it directly here.
+        let chunk = q.lock().unwrap_or_else(PoisonError::into_inner).pop();
+        assert_eq!(chunk.map(|c| c.samples.len()), Some(8), "the queued audio survives the poison");
     }
 
     #[test]
     fn opening_an_unknown_device_is_an_error_not_a_panic() {
-        // A machine with no audio system at all may refuse the default device first, so only an
-        // error's content is checked here.
-        if let Err(e) = Capture::open(Some("deckcraft-no-such-microphone")) {
-            assert!(!e.message().is_empty(), "{e}");
+        let devices = cpal::default_host().input_devices();
+        if devices.is_err() {
+            // No audio system at all: the device list itself is the only way to tell, and the
+            // open path is covered by the same host call.
+            return;
         }
+        let Err(err) = Capture::open(Some("deckcraft-no-such-microphone")) else { panic!("an unknown microphone opened") };
+        assert!(!err.message().is_empty(), "{err}");
     }
 }

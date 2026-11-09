@@ -95,12 +95,33 @@ fn whisper_tiny_latency_by_window() {
     let mut engine = WhisperEngine::load(Path::new(&model)).expect("loads");
     let warm = Instant::now();
     let _ = engine.transcribe(&vec![0.0f32; 16_000], Some("en")).expect("warms up");
-    eprintln!("silent warm-up: {:?}", warm.elapsed());
+    let warm = warm.elapsed();
+    eprintln!("silent warm-up: {warm:?}");
+    // A bound, not a benchmark: the measurement in docs/captions.md is 3.1 s on a loaded laptop;
+    // 60 s catches a stalled decode without failing on a busy CI machine.
+    assert!(warm < std::time::Duration::from_secs(60), "the warm-up stalled: {warm:?}");
     for secs in [2usize, 4, 8, 16, 30] {
         let n = (secs * 16_000).min(pcm.len());
         let slice = &pcm[pcm.len() - n..];
         let t = Instant::now();
         let text = engine.transcribe(slice, Some("en")).expect("decodes");
-        eprintln!("{secs}s window: {:?}, {} chars: {text}", t.elapsed(), text.chars().count());
+        let elapsed = t.elapsed();
+        eprintln!("{secs}s window: {elapsed:?}, {} chars: {text}", text.chars().count());
+        assert!(elapsed < std::time::Duration::from_secs(120), "a {secs}s window took {elapsed:?}");
+        assert!(text.chars().count() <= 400, "a decode ran away: {} chars", text.chars().count());
     }
+}
+
+/// Not ignored: the loader's verification is pure file handling and needs no weights. A directory
+/// with none of the manifest's files must be refused with an explanation, not a panic.
+#[test]
+fn loading_an_empty_directory_is_an_error_not_a_panic() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!("deckcraft-whisper-empty-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let Err(err) = WhisperEngine::load(&dir) else { panic!("an empty directory loaded as a model") };
+    assert!(err.message().contains("manifest"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
