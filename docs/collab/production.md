@@ -145,13 +145,17 @@ The first release deliberately normalises a small, idempotent command set:
 | `edit.delete` (shapes) | structural | explicit shape keys |
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
 | `slide.duplicate` | structural | the source slide key; the copy is inserted after it |
+| `transition.set` | command | the slide's **whole** transition as a final value (effect, option, duration, advance timings, embedded sound, kept XML) in one `slide.transition.set`; a `none` with nothing else to keep is the model's "no transition" |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
 | `shape.restore` | structural | server-built undo/redo image of whole shapes (model JSON, parent, z-order index, animations); a client cannot send it as an edit |
 
 Anything else that changes the document is refused with a "not available in a shared session
-yet" message instead of being applied locally and silently diverging. The full command surface is
-the next slice; it needs a final-value normalisation for each command, not a raw `execute` on the
-wire.
+yet" message instead of being applied locally and silently diverging. The design rule stands: only
+commands whose result is a deterministic function of the authoritative state, expressed as final
+values, go on the wire. What is still refused: fonts as a document asset, animation steps,
+tables/SmartArt/charts, notes, run-range formatting and relative effects. The full command surface
+is the next slice; it needs a final-value normalisation for each command, not a raw `execute` on
+the wire.
 
 ## Browser mode
 
@@ -268,12 +272,12 @@ cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 129 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
+| `cargo test -p deckcraft-collab` | 138 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
-| `cargo test -p deckcraft-engine` | 570 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore` and `slide.restore` did not change single-user behaviour; `arrange.align`/`distribute` keep their numbers after the plan refactor |
+| `cargo test -p deckcraft-engine` | 572 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore`, `slide.restore` and `slide.transition.set` did not change single-user behaviour; `transition.set` and `set_plan` leave the same value; `arrange.align`/`distribute` keep their numbers after the plan refactor |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean; `xtask layers` 32 crates (`collab-web` L6), `cargo xtask wasm` 26 crates |
 | `cargo check -p deckcraft-web --target wasm32-unknown-unknown` | ok |
 | `trunk build` in `apps/deckcraft-web` (trunk 0.22.1) | ok in 4m7s (dev profile, cold): `dist/web` with `index.html`, the JS glue and a 49 MB `_bg.wasm` |
@@ -290,35 +294,31 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    (`INTEGRATION.md` §5.2), the host-bridge messages (`session`, `presence`, `commit`/`committed`)
    and a desktop "save to cabinet" command. Without the cabinet endpoint a deployment still
    builds verified bytes in the process, not a new cabinet version.
-2. **P1 — Command surface**: fill, line and 17 `format.*` commands over explicit shapes and
-   `slide.duplicate` are normalised now; fonts, animations, transitions, tables, diagrams and
-   charts are still refused (see "What v1 syncs"). The largest remaining product gap; add
-   commands in vertical slices, one normalisation each.
-3. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
+2. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
    models are not. The browser link fetches and uploads them with `fetch` plus the session token;
    the sync server has no CORS headers, so a page on another origin cannot use the channel yet.
-4. **P1 — Text in tables/notes and rich runs** are not normalised; shape text is. Table cells and
+3. **P1 — Text in tables/notes and rich runs** are not normalised; shape text is. Table cells and
    notes need their own addressing and rebase; formatting runs need a run-level payload.
-5. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
+4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
    What remains is deployment detail: the page must reach the sync server (same origin, or CORS
    headers the server does not send yet), and the cabinet must implement its end of
    `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2).
-6. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
+5. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
    rollback are the next latency slice.
-7. **P2 — Base transfer above the inline limit**: a client that missed a compacted journal tail is
+6. **P2 — Base transfer above the inline limit**: a client that missed a compacted journal tail is
    rebuilt from the native base and the key map the `snapshot` carries (up to 8 MiB,
    `COLLAB_MAX_BASE_INLINE`). Above that the message names the base without bytes and the client
    has to reopen the file from the cabinet; a chunked or HTTP-served base is the next step.
-8. **P3 — Three-client soak**: the 120-slide/media performance gate, the LibreOffice open/repair
+7. **P3 — Three-client soak**: the 120-slide/media performance gate, the LibreOffice open/repair
    gate and the three-client soak (26 move/bounds/text/fill edits across compaction, a viewer
    rebuilt from the base, a reconnect from the journal, commit at the final version) live in
    `apps/deckcraft-collab-server/tests/gates.rs`
    (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the
    LibreOffice test skips itself with a printed line where `soffice` is absent. What remains is a
    longer soak and running the LibreOffice gate in CI.
-9. **Human action — Upstream PR**: the work is in the fork branch `copoka/deckcraft:collab/pr10`
+8. **Human action — Upstream PR**: the work is in the fork branch `copoka/deckcraft:collab/pr10`
    and open as PR #1975; the local head holds commits the PR head did not have at the last check
    (`63ec1ebe`), and the push is manual because this workspace cannot push. The body is
    [`pr10.md`](pr10.md); merging requires a human decision. Nothing was pushed to

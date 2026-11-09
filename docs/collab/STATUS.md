@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, docs commits on top).
+Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -23,7 +23,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup and align/distribute; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
+| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
@@ -31,8 +31,8 @@ The Commit column names the slice commits; each branch also carries documentatio
 insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs), `98d9e9ce`
 (group/ungroup undo), `31d353fe` (align/distribute as one final-bounds step), `5b078c7d`
 (the §8 gates and the non-active-slide fix), `556c00d9` (three-session gate and the reconnect
-catch-up fix), `e007e965` (base transfer after compaction and the three-client soak), plus the docs
-commits on top. The working tree is clean: the chair's
+catch-up fix), `e007e965` (base transfer after compaction and the three-client soak), `927e773c`
+(`slide.transition.set` as a final-value slice with its undo), plus the docs commits on top. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
@@ -40,7 +40,8 @@ insert/delete, `3ec81d70` added undo of a shape insert and a shape delete (whole
 z-order, animations and triggers), `31842050` sends a commit to the cabinet, which creates the new
 version and keeps the original, `98d9e9ce` makes `arrange.group`/`arrange.ungroup` undoable
 with whole-subtree images on both sides, and `31d353fe` carries `arrange.align`/`arrange.distribute`
-as one final-bounds operation with one undo step.
+as one final-bounds operation with one undo step. `927e773c` makes `transition.set`
+collaborative as one whole final value with an exact-value undo step.
 
 The web build now has its side of the cabinet session (`66d4658c`, `crates/collab-web` +
 `apps/deckcraft-web`): the `deckcraft:session` message opens the session, the page's `WebSocket`
@@ -78,8 +79,9 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   server's numbering. Above `max_base_inline` (8 MiB, `COLLAB_MAX_BASE_INLINE`) the message names
   the base without bytes and the client reopens the file from the cabinet.
 - Per-actor undo: server-side before/after images, `undo-conflict` when someone else changed the
-  object, undo is an ordinary new operation. The images cover `xfrm`, text, fill, outline and the
-  whole `TextBody` of a `format.*` step; the last three travel as an exact model value
+  object, undo is an ordinary new operation. The images cover `xfrm`, text, fill, outline, a
+  slide's whole transition and the whole `TextBody` of a `format.*` step; the last four travel as
+  an exact model value
   (`shape_field`) because the user-facing fill/line/format commands cannot express the whole
   model, and the adapter accepts that payload only as an undo/redo of the actor's own latest step.
   A group's fill/line step records one image per changed member and restores them atomically with
@@ -136,6 +138,13 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   plain socket, `wss://` a `rustls` connection with the platform root store.
 - `shape.fill`: a final fill (solid colour, `none`, `background`), one operation per shape.
 - `shape.line`: final outline values (colour, width, dash, cap, join, compound, heads) or `none`.
+- `transition.set`: one slide's **whole** transition as a final value (`slide_transition`: effect,
+  option, duration, advance timings, embedded sound, kept XML; `None` = no transition). The client
+  computes it with the engine's `transition.set_plan`, the same function the single-user command
+  runs, so the value keeps the advance timings and sound the user did not name; no replica merges
+  its own state. The adapter runs `slide.transition.set`, which deserialises and validates the
+  model value (an effect the model does not know is accepted only with its kept XML, the sound must
+  be in the document) before the first write.
 - `format.*`: 17 allowlisted commands (`bold`, `italic`, `underline`, `strikethrough`,
   `superscript`, `subscript`, `font`, `size`, `color`, `highlight`, `alignLeft/Center/Right`,
   `justify`, `caps`, `spacing`, `clear`) over one explicit shape's text. Toggles need an explicit
@@ -147,7 +156,7 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   the adapter runs `shape.setBoundsMany`, which checks every id and duplicate before the first
   write and moves the whole selection in one `edit`. A shape whose box does not change is left out;
   an align that moves nothing sends nothing.
-- Undo/redo: move, bounds, align/distribute, text, fill, outline and `format.*` steps. A restore carries the exact
+- Undo/redo: move, bounds, align/distribute, text, fill, outline, `format.*` and transition steps. A restore carries the exact
   model value (`shape_field`) and runs through the `shape.setField` engine command, which bounds
   the JSON and deserialises it into the model type. A group's fill/outline step records an image
   per changed member and restores all of them in one `shape_fields` operation (`shape.setFields`
@@ -159,7 +168,9 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   sides (the group with its children, or every former member at the top level) and move between
   them in one `shape_restore{items, remove}`: the engine removes the other side's shapes first
   without dropping animations, then inserts the recorded images, all validated before the first
-  write.
+  write. A `transition.set` step records the slide's whole transition (effect, option, duration,
+  advance timings, sound and kept XML) and restores it through the same `slide_transition` payload,
+  applied by `slide.transition.set`.
 
 ### Server (`apps/deckcraft-collab-server`)
 
@@ -259,13 +270,13 @@ document as the editors.
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 129 unit + 8 integration |
+| `cargo test -p deckcraft-collab` | 138 unit + 8 integration |
 | `cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1` (on `agents`) | 4 passed in about 2.5 s: the 120-slide/media room and commit; three sessions (two editors on different slides and a viewer) across a conflicting edit, an undo-conflict, a forbidden viewer op and a reconnect with journal catch-up, all converging on version 4; the three-client soak (26 move/bounds/text/fill edits, compaction every 5 steps, a viewer rebuilt from a 5 KiB base at version 25 plus one tail step, a reconnect from a two-step tail, all three at version 28 and the commit reimporting); LibreOffice 26.2 renders 121 pages and round-trips the commit (run on the workstation, see below); on the build host the LibreOffice test skips itself (no `soffice`) |
 | `cargo test -p deckcraft-collab --lib apply::` | 44 (a remote edit on a slide the replica is not looking at applies) |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 4 gates |
-| `cargo test -p deckcraft-collab-proto` | 22 |
+| `cargo test -p deckcraft-collab-proto` | 23 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
-| `cargo test -p deckcraft-engine` | 570 passed, 1 ignored |
+| `cargo test -p deckcraft-engine` | 572 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
 | `cargo fmt --check` | clean |
 | `cargo xtask layers` | 32 crates (`collab-web` L6), no violations |
@@ -308,6 +319,13 @@ layers` 31 crates. The four gates run in about 2.5 s with `--test-threads=1`; th
 prints 26 edits in 0.67 s, a 5 KiB base at version 25 rebuilt in 21.4 ms and a two-step tail on
 the reconnect. `git status` is clean after the docs commit; nothing was pushed and CI was not
 touched.
+
+Re-run on 2026-11-09 after the transition slice (`927e773c`, on `agents`, rust 1.99.1): `fmt
+--check` clean, `collab-proto` 23, `collab` 138 + 8, `collab-server` 10 unit + 4 commit + 4 gates
++ 6 socket, `deckcraft-engine` 572 + 1 ignored; clippy over `collab-proto`, `collab`,
+`collab-server` and `engine` with `-D warnings` clean; `xtask layers` 32 crates. The gates were
+run without `soffice` on the build host. `git status` is clean after the docs commit; nothing was
+pushed and CI was not touched.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
@@ -355,9 +373,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format/duplicate | collab tests |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format/duplicate/transition | collab tests |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text/shape values, align/distribute, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`) |
+| Per-user undo/redo | ✅ text/shape values, align/distribute, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
@@ -379,12 +397,11 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
 ## What is NOT done (ordered by production impact)
 
 1. **Command surface beyond the new slices.** Fill, line, 17 `format.*` commands over whole shape
-   text and `slide.duplicate` are collaborative now. Still refused: fonts as a document asset,
-   animations, transitions, tables/SmartArt/charts, notes, run-range formatting and relative
+   text, `slide.duplicate` and `transition.set` are collaborative now. Still refused: fonts as a
+   document asset, animations, tables/SmartArt/charts, notes, run-range formatting and relative
    effects. The design rule stands: only commands whose result is a deterministic function of the
    authoritative state, expressed as final values, go on the wire; a raw `execute` is not safe
-   (toggles and relative edits diverge). Next candidates: table cell edits, transitions and
-   animation steps.
+   (toggles and relative edits diverge). Next candidates: table cell edits and animation steps.
 2. **Media refinement.** Fonts and 3D models are not in the media allowlist, and the browser link
    still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
    a private CA must be in the store or `SSL_CERT_FILE`).
@@ -393,10 +410,10 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
 4. **Structural undo is covered; size limits remain.** A group's fill/outline (one image per
    changed member, one `shape_fields`), `slide.delete`/`slide.new`/`slide.duplicate` (whole-slide
    image, `slide_restore`), `shape.insert`/`insert.picture`/`insert.video`/`insert.audio`/
-   `edit.delete` (whole-shape image, `shape_restore`/`shape_delete`) and `arrange.group`/
-   `arrange.ungroup` (whole-subtree images on both sides, one `shape_restore{items, remove}`) are
-   undoable. Merge operations (move, bounds, text set/insert/delete, fill/line/format, group
-   appearance) are covered too. A slide image is capped at 192 KiB and a shape restore at 192 KiB /
+   `edit.delete` (whole-shape image, `shape_restore`/`shape_delete`), `arrange.group`/
+   `arrange.ungroup` (whole-subtree images on both sides, one `shape_restore{items, remove}`) and
+   `transition.set` (the whole transition, `slide_transition`) are undoable. Merge operations
+   (move, bounds, text set/insert/delete, fill/line/format, group appearance) are covered too. A slide image is capped at 192 KiB and a shape restore at 192 KiB /
    64 images, so an undo of an unusually large object is refused `invalid` instead of breaking the
    wire limit.
 5. **Cabinet callback / host bridge.** The server side is wired: `POST /v1/sessions/{id}/commit`
@@ -479,9 +496,9 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `409` and stores the accepted version. For a page on another origin the sync server needs CORS
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Next: table cell text, transitions,
+   adapter run → confirmed command → test on two clients. Next: table cell text, animation steps,
    run-range formatting.
-5. Undo is covered for move/bounds/text/fill/line/format, a group's fill/line, slide
+5. Undo is covered for move/bounds/text/fill/line/format/transition, a group's fill/line, slide
    insert/delete/duplicate, shape insert/delete and group/ungroup (whole-subtree images on both
    sides). The remaining undo work is table/notes text and run-level formatting, which wait for
    their command slices.
@@ -490,6 +507,38 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — transitions as a final-value slice
+
+- `transition.set` is collaborative. `Payload::SlideTransition { transition: Option<TransitionSpec> }`
+  carries one slide's **whole** transition — effect, option, duration, advance timings, embedded
+  sound (`MediaId` as a number), loop/stop flags and the kept XML of an effect the model does not
+  name. The whole value travels because `transition.set` keeps the parts the user did not name;
+  sending its arguments would let each replica merge them against a different state.
+- The client computes that value with the new public
+  `deckcraft_engine::cmd::transition::set_plan` — the same function the single-user command now
+  runs, so the two paths cannot drift (the `align_plan`/`distribute_plan` pattern). A
+  `transition.set` on several selected slides is refused in a shared session (the wire addresses
+  one slide per operation); an unknown effect or a bad `index` is refused before anything is sent.
+- Engine command `slide.transition.set` (`{index, transition: model JSON | null}`) deserialises and
+  bounds the value (8 KiB), accepts an effect the model cannot name only together with its kept
+  XML, refuses a sound id that is not in `doc.media`, and writes one `edit`. It is both the
+  confirmed command and the exact-image restore of the step.
+- Undo: `Change::SlideTransition(TransitionImage { slide, transition })`; `same_state` compares the
+  slide key and the whole value, and the restore is the same `slide_transition` payload with the
+  recorded value, so advance timings, the sound and kept XML come back. A second participant's
+  later value refuses the first undo with `undo-conflict`; a forged restore (another value) is
+  `invalid`.
+- Rebase: nothing to rebase — the value is absolute, so a queued operation keeps the `baseVersion`
+  it was sent with and the later accepted value wins (a command does not need `baseVersion == head`).
+- Tests: proto round trip and command name; engine exact setter (kept XML, unknown effect without
+  XML, `null`, missing value, bad sound, bad index) and `transition.set` = `set_plan`; adapter
+  two-replica convergence, a second participant plus the refused first undo and his own undo,
+  undo/redo of a step that replaced a transition with an advance timing, a forged restore, an
+  unknown effect on the wire; client normalisation (whole final value, the `none` collapse,
+  unknown effect, bad index); history image and restore. `collab` 138 + 8, `collab-proto` 23,
+  `engine` 572 + 1 ignored.
+- Commit `927e773c` plus this docs commit on `collab/pr10`; nothing pushed, CI untouched.
 
 ### 2026-11-09 — the browser link: session, presence, commit over the host bridge
 
