@@ -422,7 +422,7 @@ impl SlideApp {
             Some(AfterSave::Close(uid)) => {
                 if let Some(index) = self.session.documents().iter().position(|d| d.uid == uid && !d.is_dirty()) {
                     self.session.set_active(index);
-                    let _ = self.session.execute("file.close", &json!({}));
+                    let _ = self.run("file.close", json!({}));
                 }
             }
         }
