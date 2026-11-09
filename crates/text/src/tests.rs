@@ -1494,6 +1494,19 @@ fn hanging_indent_acts_as_implicit_tab_stop() {
     assert!((code4_x - l4.inner.x0 - 27.0).abs() < 1.0, "implicit stop remains at marL (27.0 pt), got {}", code4_x - l4.inner.x0);
 }
 
+#[test]
+fn hanging_indent_coincident_explicit_stop_is_used_by_layout() {
+    let (p, mut sh) = setup("\tcode", 500.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.props.bullet = Some(Bullet::None);
+    para.props.margin_left = Some(27.0);
+    para.props.indent = Some(-0.25);
+    para.props.tabs = Some(vec![deckcraft_model::text::TabStop { pos: 27.0, align: "l".into() }]);
+    let l = lay(&p, &sh, 500.0, 300.0);
+    assert_eq!(l.lines.len(), 1);
+    assert!((l.lines[0].edges[1].0 - l.inner.x0 - 27.0).abs() < 0.01);
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);

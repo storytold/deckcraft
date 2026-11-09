@@ -1,4 +1,4 @@
-use super::breaking::{BreakParams, RawLine, Tab, break_lines, line_metrics, measure_str, tab_advance, tab_segment, tabs_of};
+use super::breaking::{BreakParams, RawLine, Tabs, break_lines, line_metrics, measure_str, tab_advance, tab_segment, tabs_of};
 use super::run::{Deco, DecoLine, GlyphRun};
 use super::shape::{SUB_SUPER, Upright, shape_para};
 use super::style::{Cell, Opts, ParaShaped, Style, spacing_pts};
@@ -232,7 +232,7 @@ struct ParaEnv<'a> {
     bullet_w: f64,
     first_x: f64,
     rest_x: f64,
-    tabs: &'a [Tab],
+    tabs: &'a Tabs,
 }
 
 impl ParaEnv<'_> {
