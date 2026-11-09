@@ -178,7 +178,8 @@ fn run(commands: Receiver<Command>) {
 }
 
 /// The next command: blocking while no camera runs (the worker is idle), non-blocking while one
-/// delivers frames. A gone host ends the worker like `Quit`.
+/// delivers frames. A gone host ends the worker like `Quit`, in both branches: an idle worker
+/// whose sender was dropped would otherwise spin on a `recv` that never blocks again.
 fn next_command(commands: &Receiver<Command>, running: bool) -> Option<Command> {
     match running {
         true => match commands.try_recv() {
@@ -186,7 +187,10 @@ fn next_command(commands: &Receiver<Command>, running: bool) -> Option<Command> 
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => Some(Command::Quit),
         },
-        false => commands.recv().ok(),
+        false => match commands.recv() {
+            Ok(command) => Some(command),
+            Err(_) => Some(Command::Quit),
+        },
     }
 }
 
@@ -439,6 +443,9 @@ mod tests {
         assert!(matches!(next_command(&rx, true), Some(Command::Stop)), "Stop is taken on the next frame");
         drop(tx);
         assert!(matches!(next_command(&rx, true), Some(Command::Quit)), "a gone host ends the worker");
+        let (tx, rx) = mpsc::channel();
+        drop(tx);
+        assert!(matches!(next_command(&rx, false), Some(Command::Quit)), "an idle worker ends too, instead of spinning");
     }
 
     #[test]

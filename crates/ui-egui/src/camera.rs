@@ -124,7 +124,14 @@ impl CameraHost {
         self.refresh_want();
     }
 
+    /// Turn the Cameo preview on or off. A click while the preview is on but the session failed
+    /// restarts it instead of turning it off, so one click retries after a start or mid-stream
+    /// failure.
     pub fn toggle_preview(&mut self) {
+        if self.preview && matches!(self.status, CameraStatus::Failed(_)) {
+            self.restart();
+            return;
+        }
         self.set_preview(!self.preview);
     }
 
@@ -758,6 +765,21 @@ mod tests {
         assert_eq!((frame.width, frame.height), (64, 48));
         assert_eq!(frame.rgba.len(), 64 * 48 * 4);
         assert!(host.texture().is_some());
+    }
+
+    #[test]
+    fn toggling_while_failed_restarts_instead_of_turning_off() {
+        let fake = FakeCamera::default().sized(64, 48);
+        let ctx = egui::Context::default();
+        let mut host = started(&fake);
+        host.tick(&ctx);
+        assert!(host.status().is_live());
+        fake.fail(CameraError::Lost);
+        host.tick(&ctx);
+        assert!(matches!(host.status(), CameraStatus::Failed(_)), "{:?}", host.status());
+        host.toggle_preview();
+        assert!(host.preview_on(), "one click retries instead of switching off");
+        assert_eq!(fake.starts(), 2, "the session restarts");
     }
 
     #[test]
