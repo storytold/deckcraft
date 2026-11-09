@@ -2,15 +2,21 @@
 //! Camera Border, Camera Effects and Format Object. A style is plain DrawingML on the picture, so
 //! every other picture command keeps working on a styled cameo.
 
-use super::super::galleries::{effects_menu, mask_gallery, outline_menu};
-use super::super::{Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, enabled, group, json, pos2, rows, run, scheme, small, vec2, widgets};
+use super::super::galleries::{effects_menu, mask_gallery, outline_menu, paint_preset};
+use super::super::{Color32, Icon, Rect, SlideApp, Ui, enabled, group, json, rows, run, scheme, small, vec2, widgets};
 use deckcraft_engine::cmd::camera::{STYLES, style_of};
 
 const TILE: egui::Vec2 = vec2(34.0, 34.0);
 
 pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
-    // A custom frame (`style_of` returns `None`) selects no tile; only a real "none" does.
-    let current = app.session.active().and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh)));
+    // A tile is selected only when every selected Cameo has the same style: a mixed selection
+    // shows none, instead of the first shape's style standing for all of them.
+    let current = app.session.active().and_then(|d| {
+        let selected = d.selected_shapes();
+        let mut styles = selected.iter().filter(|sh| sh.is_cameo()).filter_map(|sh| style_of(sh));
+        let first = styles.next()?;
+        styles.all(|s| s == first).then_some(first)
+    });
     let selected = current.and_then(|id| STYLES.iter().position(|s| s.id == id));
     group(ui, |ui| {
         let labels: Vec<&str> = STYLES.iter().map(|s| s.label).collect();
@@ -57,44 +63,23 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
-/// A gallery tile: the style's shape, frame and shadow over a camera-blue body.
+/// A gallery tile: the style's shape, frame and shadow over a camera-blue body. The shadow and
+/// soft edge follow the same preset as the body, so an ellipse looks like an ellipse.
 fn paint_style(p: &egui::Painter, r: Rect, i: usize) {
     let Some(st) = STYLES.get(i) else { return };
     let r = r.shrink(5.0);
     let body = Color32::from_rgb(0x6F, 0xB8, 0xDD);
-    let stroke = st.frame.map_or(Stroke::new(0.8, Color32::from_gray(130)), |w| Stroke::new((w as f32 / 3.0).clamp(1.0, 3.0), Color32::WHITE));
+    let stroke = if st.frame.is_some() { Color32::WHITE } else { Color32::from_gray(130) };
+    // "No Style" keeps whatever Camera Shape the user chose; the tile shows the default round
+    // Cameo rather than imposing a rectangle.
+    let preset = if st.preset.is_empty() { "ellipse" } else { st.preset };
     if st.shadow {
-        p.rect_filled(r.translate(vec2(1.5, 1.5)), CornerRadius::same(2), Color32::from_black_alpha(55));
+        paint_preset(p, r.translate(vec2(1.5, 1.5)), preset, Color32::from_black_alpha(55), Color32::TRANSPARENT);
     }
     if st.soft_edge.is_some() {
-        p.rect_filled(r.expand(2.0), CornerRadius::same(6), body.gamma_multiply(0.25));
+        paint_preset(p, r.expand(2.0), preset, body.gamma_multiply(0.25), Color32::TRANSPARENT);
     }
-    match st.preset {
-        "ellipse" => {
-            p.add(egui::Shape::ellipse_filled(r.center(), r.size() / 2.0, body));
-            p.add(egui::Shape::ellipse_stroke(r.center(), r.size() / 2.0, stroke));
-        }
-        "diamond" => {
-            let c = r.center();
-            let pts = vec![pos2(c.x, r.top()), pos2(r.right(), c.y), pos2(c.x, r.bottom()), pos2(r.left(), c.y)];
-            p.add(egui::Shape::convex_polygon(pts, body, stroke));
-        }
-        "hexagon" => {
-            let c = r.center();
-            let rad = r.width().min(r.height()) / 2.0;
-            let pts = (0..6)
-                .map(|k| {
-                    let a = std::f32::consts::TAU * k as f32 / 6.0;
-                    pos2(c.x + rad * a.cos(), c.y + rad * a.sin())
-                })
-                .collect();
-            p.add(egui::Shape::convex_polygon(pts, body, stroke));
-        }
-        _ => {
-            p.rect_filled(r, CornerRadius::same(2), body);
-            p.rect_stroke(r, CornerRadius::same(2), stroke, egui::StrokeKind::Middle);
-        }
-    }
+    paint_preset(p, r, preset, body, stroke);
     // The lens, so the tile reads as a camera rather than a bare shape.
     let lens = r.center();
     let lr = (r.width().min(r.height()) * 0.18).max(1.5);

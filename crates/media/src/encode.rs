@@ -1,6 +1,6 @@
 //! H.264 in MP4: one [`H264Mp4Track`] per clip, and the frame fitting a camera recording uses.
 //!
-//! The encoder is ours ([`deckcraft_h264::Encoder`]) and the muxer is `craft_media::isobmff`, so
+//! The encoder is ours ([`deckcraft_h264::Encoder`]) and the muxer is [`deckcraft_isobmff`], so
 //! no external tool or codec library is involved and the module builds for wasm. Two users share
 //! it: recorded Cameo clips (per slide, video only) and, later, video export.
 
@@ -86,7 +86,7 @@ impl H264Mp4Track {
             return Err(MediaError::Corrupt(format!("a {}×{} frame is {need} bytes, not {}", self.width, self.height, rgba.len())));
         }
         let key = self.frames == 0 || self.since_key + 1 >= self.fps * KEY_EVERY_S;
-        let pic = self.enc.encode_rgba(rgba, key);
+        let pic = self.enc.encode_rgba(rgba, key).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         let sample = pic.length_prefixed();
         self.mux.write_sample(self.track, WriteSample { data: &sample, duration: 1, composition_offset: 0, is_sync: pic.key }).map_err(mp4)?;
         self.bytes += sample.len() as u64;
@@ -113,10 +113,17 @@ pub fn fitted_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -
     if src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0 {
         return Err(MediaError::Corrupt("an empty frame".into()));
     }
-    let need = src_w as usize * src_h as usize * 4;
+    if dst_w > MAX_WIDTH || dst_h > MAX_HEIGHT {
+        return Err(MediaError::Unsupported(format!("a {dst_w}×{dst_h} destination")));
+    }
+    let pixels = |w: u32, h: u32, what: &str| -> Result<usize> {
+        (w as usize).checked_mul(h as usize).and_then(|n| n.checked_mul(4)).ok_or_else(|| MediaError::Corrupt(format!("a {w}×{h} {what} overflows")))
+    };
+    let need = pixels(src_w, src_h, "source frame")?;
     if src.len() < need {
         return Err(MediaError::Corrupt(format!("a {src_w}×{src_h} frame is {need} bytes, not {}", src.len())));
     }
+    let out_len = pixels(dst_w, dst_h, "destination")?;
     let (src_wf, src_hf) = (f64::from(src_w), f64::from(src_h));
     let (dst_wf, dst_hf) = (f64::from(dst_w), f64::from(dst_h));
     let (cw, ch) = if src_wf * dst_hf > src_hf * dst_wf {
@@ -127,7 +134,7 @@ pub fn fitted_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -
     };
     let x0 = (src_wf - cw) / 2.0;
     let y0 = (src_hf - ch) / 2.0;
-    let mut out = vec![0u8; dst_w as usize * dst_h as usize * 4];
+    let mut out = vec![0u8; out_len];
     for y in 0..dst_h {
         let sy = (y0 + (f64::from(y) + 0.5) * ch / dst_hf - 0.5).clamp(0.0, src_hf - 1.0);
         let y1 = sy as usize;
@@ -179,9 +186,12 @@ mod tests {
         assert_eq!(track.frames(), 10);
         let mp4 = track.finish().expect("finish");
         assert_eq!(&mp4[4..8], b"ftyp");
-        // Decode the samples out of the MP4 with the media layer's own demuxer.
+        // Decode the samples out of the MP4 with the media layer's own demuxer (an independent
+        // parser from the encoder): size and timing come back from the container.
         let info = crate::probe(&std::sync::Arc::new(mp4)).expect("probe");
         assert_eq!(info.video.as_ref().map(|v| (v.width, v.height)), Some((w, h)));
+        let ms = info.duration_ms;
+        assert!((666..=667).contains(&ms), "ten samples at 15 fps, got {ms} ms");
     }
 
     #[test]

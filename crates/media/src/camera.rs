@@ -90,32 +90,53 @@ pub enum CameraEvent {
 pub struct CameraSession {
     pub started_at: Instant,
     events: Receiver<CameraEvent>,
+    /// The worker's channel went away and [`CameraEvent::Closed`] has been reported.
+    closed: bool,
 }
 
 /// Most events one [`CameraSession::drain`] returns; the rest wait for the next pass.
 pub const MAX_DRAIN: usize = 256;
 
+/// What one [`CameraSession::drain`] pass took from the channel.
+#[derive(Clone, Debug)]
+pub struct Drained {
+    pub events: Vec<CameraEvent>,
+    /// The pass stopped at [`MAX_DRAIN`] with more events waiting, so the host can tell a flood
+    /// from a quiet camera instead of silently losing frames.
+    pub truncated: bool,
+}
+
 impl CameraSession {
     pub fn new(started_at: Instant, events: Receiver<CameraEvent>) -> Self {
-        CameraSession { started_at, events }
+        CameraSession { started_at, events, closed: false }
     }
 
     /// Take the events that are ready, without blocking. Bounded so one pass cannot spin on a
-    /// camera flooding the channel.
-    pub fn drain(&self) -> Vec<CameraEvent> {
-        let mut out = Vec::new();
-        while out.len() < MAX_DRAIN {
+    /// camera flooding the channel; `truncated` says when the cap cut the pass short, and
+    /// [`CameraEvent::Closed`] is reported once however many passes follow.
+    pub fn drain(&mut self) -> Drained {
+        let mut events = Vec::new();
+        let mut truncated = false;
+        loop {
+            if events.len() >= MAX_DRAIN {
+                truncated = true;
+                break;
+            }
             match self.events.try_recv() {
-                Ok(e) => out.push(e),
+                Ok(e) => events.push(e),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    // The worker went away without saying so: treat it as an unplugged camera.
-                    out.push(CameraEvent::Closed);
+                    // The worker went away without saying so: treat it as an unplugged camera,
+                    // once, so a lost device does not read as a new failure on every pass.
+                    if !self.closed {
+                        self.closed = true;
+                        events.push(CameraEvent::Closed);
+                    }
                     break;
                 }
             }
         }
-        out
+        Drained { events, truncated }
     }
 }
 
@@ -161,8 +182,14 @@ pub struct CameoRecorder {
     fps: u32,
     start_ms: u64,
     written: u64,
-    /// The most recent frame, already fitted to the target.
-    last: Option<Vec<u8>>,
+    /// The samples due so far on the slide's clock; [`CameoRecorder::tick`] writes the rest.
+    target: u64,
+    /// The frame the samples being written show, kept as the camera handed it over so a frame
+    /// that is never sampled costs no fitting.
+    image: Option<SrcFrame>,
+    /// A frame that arrived while the samples before it were still being written: it becomes
+    /// `image` once `target` is reached.
+    next_image: Option<SrcFrame>,
     /// The image the last written sample shows: the bytes are otherwise only inside the MP4
     /// (tests only).
     #[cfg(test)]
@@ -172,8 +199,23 @@ pub struct CameoRecorder {
     max_bytes: usize,
 }
 
+/// One camera frame as delivered: fitted only when a sample is actually due.
+struct SrcFrame {
+    width: u32,
+    height: u32,
+    rgba: Arc<[u8]>,
+}
+
+/// Most samples one push or tick writes, so a long stall is caught up across passes instead of
+/// freezing the show on one call. At the 15 fps a Cameo records this is two seconds.
+pub const MAX_SAMPLES_PER_CALL: u64 = 30;
+
 impl CameoRecorder {
     /// `target` is in pixels and both sides are made even; the encoder needs that for 4:2:0.
+    ///
+    /// Out-of-range values are clamped, not rejected: sides to 16–1280 and `fps` to 1–60 (the
+    /// sizes a Cameo is captured at). [`crate::H264Mp4Track::new`] rejects instead, because a
+    /// manually built track must not silently change the picture the caller asked for.
     pub fn new(target: (u32, u32), fps: u32, qp: u8, start_ms: u64) -> crate::Result<Self> {
         let width = even(target.0.clamp(16, 1280));
         let height = even(target.1.clamp(16, 1280));
@@ -185,7 +227,9 @@ impl CameoRecorder {
             fps,
             start_ms,
             written: 0,
-            last: None,
+            target: 0,
+            image: None,
+            next_image: None,
             #[cfg(test)]
             last_written: None,
             capped: None,
@@ -228,9 +272,14 @@ impl CameoRecorder {
         self.max_bytes.saturating_sub(margin) as u64
     }
 
-    /// Fit and sample one frame. Frames may arrive late or early; only the target rate is written.
+    /// Take one frame. Frames may arrive late or early; only the target rate is written, and the
+    /// writing itself happens in [`CameoRecorder::tick`] so this call stays cheap however long the
+    /// show was busy.
     pub fn push(&mut self, frame: &CameraFrame, now_ms: u64) -> crate::Result<()> {
-        let need = frame.width as usize * frame.height as usize * 4;
+        let need = (frame.width as usize)
+            .checked_mul(frame.height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| crate::MediaError::Corrupt("a camera frame wider than memory".into()))?;
         if frame.width == 0 || frame.height == 0 || frame.rgba.len() != need {
             return Err(crate::MediaError::Corrupt(format!(
                 "a {}×{} camera frame is {need} bytes, not {}",
@@ -243,37 +292,61 @@ impl CameoRecorder {
             return Ok(());
         }
         let elapsed = now_ms - self.start_ms;
+        let want = (elapsed.saturating_mul(u64::from(self.fps)) / 1000).min(self.max_frames());
+        self.target = self.target.max(want);
+        let src = SrcFrame { width: frame.width, height: frame.height, rgba: frame.rgba.clone() };
+        if self.image.is_none() {
+            // Nothing has been written yet, so there is no earlier image to repeat: the first
+            // frame is the image from now on, never backdated to the slide's start.
+            self.image = Some(src);
+        } else if self.written < self.target {
+            // The samples still due show the frame that was on screen; this one waits its turn.
+            self.next_image = Some(src);
+        } else {
+            self.image = Some(src);
+        }
         if elapsed >= u64::from(MAX_CLIP_MS) {
             self.capped = Some(CameoCap::Duration);
-            let last = self.last.take();
-            let filled = self.fill_to(self.max_frames(), last.as_deref());
-            self.last = last;
-            filled?;
-            return Ok(());
         }
-        let fitted = crate::encode::fitted_rgba(&frame.rgba, frame.width, frame.height, self.width, self.height)?;
-        let want = elapsed.saturating_mul(u64::from(self.fps)) / 1000;
-        // The samples that elapsed before this frame arrived showed the previous one: repeat that
-        // across the gap, so a late frame never shows before its receipt time and the image it
-        // replaces is not lost. The new frame becomes the next sample's image.
-        let prev = self.last.take();
-        self.fill_to(want.min(self.max_frames()), Some(prev.as_deref().unwrap_or(&fitted)))?;
-        self.last = Some(fitted);
         Ok(())
     }
 
-    /// Write the missing frames up to `want`, repeating `frame`. Stops at the byte budget, keeping
-    /// what is written, so an over-long slide keeps a truncated clip.
-    fn fill_to(&mut self, want: u64, frame: Option<&[u8]>) -> crate::Result<()> {
-        while self.written < want {
+    /// Write the samples that are due, up to `budget` pictures. Called once per show pass so a
+    /// stall (or a slow camera) is caught up over several passes without blocking one.
+    pub fn tick(&mut self, budget: u64) -> crate::Result<()> {
+        self.fill_to(self.target, budget)
+    }
+
+    /// Write the missing samples up to `want`, repeating the current image. Stops at `budget`
+    /// samples or the byte budget, keeping what is written, so an over-long slide keeps a
+    /// truncated clip and the rest is written by the next pass.
+    fn fill_to(&mut self, want: u64, budget: u64) -> crate::Result<()> {
+        if self.written >= want {
+            if self.written >= self.target
+                && let Some(next) = self.next_image.take()
+            {
+                self.image = Some(next);
+            }
+            return Ok(());
+        }
+        let Some(src) = self.image.take() else { return Ok(()) };
+        let fitted = crate::encode::fitted_rgba(&src.rgba, src.width, src.height, self.width, self.height)?;
+        let mut left = budget;
+        while self.written < want && left > 0 {
             if self.track.bytes() >= self.byte_budget() {
                 self.capped = Some(CameoCap::Bytes);
                 break;
             }
-            let Some(frame) = frame else { break };
-            self.track.push_rgba(frame)?;
-            self.note_written(frame);
+            self.track.push_rgba(&fitted)?;
+            self.note_written(&fitted);
             self.written += 1;
+            left -= 1;
+        }
+        self.image = Some(src);
+        if self.written >= self.target
+            && let Some(next) = self.next_image.take()
+        {
+            self.image = Some(next);
         }
         Ok(())
     }
@@ -294,13 +367,13 @@ impl CameoRecorder {
 
     /// Close the clip at `now_ms`, filling the last period with the last frame.
     pub fn finish(mut self, now_ms: u64) -> crate::Result<CameoClip> {
-        let Some(last) = self.last.take() else {
+        if self.image.is_none() {
             return Err(crate::MediaError::Missing("camera frames"));
-        };
+        }
         let elapsed = now_ms.saturating_sub(self.start_ms).min(u64::from(MAX_CLIP_MS));
         let duration_ms = u32::try_from(elapsed).unwrap_or(MAX_CLIP_MS);
         let total = (u64::from(duration_ms) * u64::from(self.fps) / 1000).max(1).min(self.max_frames());
-        self.fill_to(total, Some(&last))?;
+        self.fill_to(total, u64::MAX)?;
         let frames = self.written;
         let width = self.width;
         let height = self.height;
@@ -327,6 +400,11 @@ mod tests {
             p.copy_from_slice(&[shade, 255 - shade, shade / 2, 255]);
         }
         CameraFrame { seq, at: Instant::now(), width: w, height: h, rgba: Arc::from(rgba) }
+    }
+
+    /// The image the recorder will write for the samples it is on: fitted to the clip's size.
+    fn fitted_image(rec: &CameoRecorder) -> Option<Vec<u8>> {
+        rec.image.as_ref().map(|f| crate::encode::fitted_rgba(&f.rgba, f.width, f.height, rec.width, rec.height).expect("fit"))
     }
 
     #[test]
@@ -366,12 +444,40 @@ mod tests {
         let fitted = |f: &CameraFrame| crate::encode::fitted_rgba(&f.rgba, f.width, f.height, w, h).expect("fit");
         // 100 ms at 10 fps: one sample elapsed while only the first frame existed.
         rec.push(&late, 100).expect("a late frame");
+        rec.tick(MAX_SAMPLES_PER_CALL).expect("catch up");
         assert_eq!(rec.frames(), 1, "the elapsed sample is written");
         assert_eq!(rec.last_written.as_deref(), Some(fitted(&first).as_slice()), "the gap shows the frame that was on screen");
-        assert_eq!(rec.last.as_deref(), Some(fitted(&late).as_slice()), "the late frame becomes the next sample");
+        assert_eq!(fitted_image(&rec).as_deref(), Some(fitted(&late).as_slice()), "the late frame becomes the next sample");
         rec.push(&late, 200).expect("the next sample");
+        rec.tick(MAX_SAMPLES_PER_CALL).expect("catch up");
         assert_eq!(rec.frames(), 2);
         assert_eq!(rec.last_written.as_deref(), Some(fitted(&late).as_slice()), "then it is shown");
+    }
+
+    /// A frame that arrives before its first sample period does not backdate the picture: no
+    /// sample is written, and the clip starts with the frame that was actually received.
+    #[test]
+    fn the_first_frame_is_not_backdated_to_the_slide_start() {
+        let mut rec = CameoRecorder::new((16, 16), 15, 30, 1_000).expect("recorder");
+        rec.push(&frame(0, 8, 8, 90), 1_200).expect("late first frame");
+        assert_eq!(rec.frames(), 0, "nothing is written before the first sample");
+        assert_eq!(fitted_image(&rec).as_deref(), Some(crate::encode::fitted_rgba(&frame(0, 8, 8, 90).rgba, 8, 8, 16, 16).expect("fit").as_slice()));
+        rec.tick(MAX_SAMPLES_PER_CALL).expect("tick");
+        assert_eq!(rec.frames(), 3, "the elapsed samples are written on the tick, not backdated on push");
+    }
+
+    /// A long stall is caught up over passes: one push/tick writes at most
+    /// [`MAX_SAMPLES_PER_CALL`] pictures, never a whole slide's worth.
+    #[test]
+    fn a_long_stall_is_spread_across_passes() {
+        let mut rec = CameoRecorder::new((16, 16), 15, 30, 0).expect("recorder");
+        rec.push(&frame(0, 8, 8, 10), 0).expect("first");
+        rec.push(&frame(1, 8, 8, 20), 60_000).expect("a minute on one slide");
+        assert_eq!(rec.frames(), 0, "push does no encoding");
+        rec.tick(MAX_SAMPLES_PER_CALL).expect("one pass");
+        assert_eq!(rec.frames(), MAX_SAMPLES_PER_CALL);
+        rec.tick(MAX_SAMPLES_PER_CALL).expect("next pass");
+        assert_eq!(rec.frames(), 2 * MAX_SAMPLES_PER_CALL);
     }
 
     #[test]
@@ -396,6 +502,7 @@ mod tests {
         for i in 0..1_000u64 {
             now = i * 67;
             rec.push(&frame(i, 64, 64, (i % 251) as u8), now).expect("push");
+            rec.tick(MAX_SAMPLES_PER_CALL).expect("tick");
             if rec.capped() {
                 break;
             }
@@ -408,13 +515,49 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_camera_channel_reads_as_closed() {
+    fn a_dropped_camera_channel_reads_as_closed_once() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let session = CameraSession::new(Instant::now(), rx);
+        let mut session = CameraSession::new(Instant::now(), rx);
         drop(tx);
-        let events = session.drain();
-        assert_eq!(events.len(), 1, "{events:?}");
-        assert!(matches!(events.first(), Some(CameraEvent::Closed)));
+        let first = session.drain();
+        assert_eq!(first.events.len(), 1, "{:?}", first.events);
+        assert!(matches!(first.events.first(), Some(CameraEvent::Closed)));
+        assert!(!first.truncated);
+        let second = session.drain();
+        assert!(second.events.is_empty(), "the loss is reported once, not every pass: {:?}", second.events);
+    }
+
+    #[test]
+    fn a_flooded_channel_reports_its_truncation() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for seq in 0..(MAX_DRAIN + 4) {
+            tx.send(CameraEvent::Frame(frame(seq as u64, 16, 16, 1))).expect("send");
+        }
+        let mut session = CameraSession::new(Instant::now(), rx);
+        let d = session.drain();
+        assert_eq!(d.events.len(), MAX_DRAIN);
+        assert!(d.truncated, "the pass stopped at the cap with more waiting");
+        let rest = session.drain();
+        assert_eq!(rest.events.len(), 4, "the rest comes next pass");
+        assert!(!rest.truncated);
+    }
+
+    /// A frame stamped before the slide started is not part of the clip.
+    #[test]
+    fn a_frame_before_the_slide_start_is_dropped() {
+        let mut rec = CameoRecorder::new((16, 16), 15, 30, 5_000).expect("recorder");
+        rec.push(&frame(0, 8, 8, 10), 4_000).expect("push");
+        assert!(rec.image.is_none(), "an early frame is not kept");
+        assert!(rec.finish(6_000).is_err(), "and it cannot make a clip alone");
+    }
+
+    /// The target size and frame rate are clamped, and the clamp is the clip's real size.
+    #[test]
+    fn out_of_range_targets_are_clamped() {
+        let rec = CameoRecorder::new((1, 99_999), 0, 30, 0).expect("recorder");
+        assert_eq!((rec.width(), rec.height()), (16, 1280));
+        let rec = CameoRecorder::new((32, 32), 1_000, 30, 0).expect("recorder");
+        assert_eq!(rec.fps, 60);
     }
 
     #[test]

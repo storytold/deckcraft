@@ -7,8 +7,16 @@ fn only_presets_that_enclose_an_area_can_mask_a_picture() {
     assert!(fills_area("roundRect"));
     assert!(!fills_area("line"));
     assert!(!fills_area("straightConnector1"));
-    let open: Vec<&str> = CATALOG.iter().map(|p| p.name).filter(|n| !fills_area(n)).collect();
-    assert!(open.contains(&"line") && open.len() < CATALOG.len());
+    let mut open: Vec<&str> = CATALOG.iter().map(|p| p.name).filter(|n| !fills_area(n)).collect();
+    open.sort_unstable();
+    // Exactly the presets drawn as bare strokes are excluded from masking: a picture clipped to
+    // one would vanish. (`arc` builds a closed outline here, so it can mask.)
+    assert_eq!(
+        open,
+        ["bentConnector2", "bentConnector3", "curvedConnector3", "line", "lineInv", "straightConnector1"],
+        "the open set is exactly the stroke-only presets"
+    );
+    assert!(open.len() < CATALOG.len());
 }
 
 #[test]

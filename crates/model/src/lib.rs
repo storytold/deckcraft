@@ -255,9 +255,11 @@ pub struct MediaClip {
 }
 
 /// A Cameo (Camera Format tab): PowerPoint's live camera feed on a picture shape. The shape stays
-/// a [`ShapeKind::Picture`] — its `PictureFill` is the placeholder art (an SVG, as PowerPoint
-/// writes) — so picture formatting, cropping and arrangement keep working. The marker in the file
-/// is `alf:liveFeedProps` inside `p:cNvPicPr/a:extLst`.
+/// a [`ShapeKind::Picture`] — its `PictureFill` is the placeholder or poster art — so picture
+/// formatting, cropping and arrangement keep working. The marker in the file is
+/// `alf:liveFeedProps` inside `p:cNvPicPr/a:extLst`. An imported file may use an SVG placeholder
+/// (as PowerPoint writes); a deck we create or record uses the PNG camera poster/fallback, because
+/// our renderers decode rasters but not SVG.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Cameo {
@@ -1137,11 +1139,17 @@ impl Presentation {
     }
     /// Add media bytes, reusing an identical existing item.
     pub fn add_media(&mut self, name: &str, content_type: &str, data: Vec<u8>) -> Option<MediaId> {
-        if let Some(m) = self.media.iter().find(|m| m.data.len() == data.len() && *m.data == data) {
+        self.add_media_shared(name, content_type, Arc::new(data))
+    }
+
+    /// [`Presentation::add_media`] for bytes the caller already keeps behind an [`Arc`]: the
+    /// recorder commits a clip without copying it a second time.
+    pub fn add_media_shared(&mut self, name: &str, content_type: &str, data: Arc<Vec<u8>>) -> Option<MediaId> {
+        if let Some(m) = self.media.iter().find(|m| m.data.len() == data.len() && *m.data == *data) {
             return Some(m.id);
         }
         let id = MediaId(self.alloc_id()?);
-        self.media.push(MediaItem { id, name: name.into(), content_type: content_type.into(), data: Arc::new(data), link: None });
+        self.media.push(MediaItem { id, name: name.into(), content_type: content_type.into(), data, link: None });
         Some(id)
     }
     /// Section index containing a slide (by position), when sections exist.

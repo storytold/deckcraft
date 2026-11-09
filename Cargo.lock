@@ -1263,6 +1263,7 @@ dependencies = [
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-geom",
+ "deckcraft-media",
  "deckcraft-model",
  "image",
  "log",

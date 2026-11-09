@@ -128,19 +128,22 @@ pub fn geometry(w: &mut W, g: &Geom) {
     }
 }
 
-fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
+fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, click: Option<&deckcraft_model::text::Hyperlink>) {
+    // A recorded Cameo that waits for a click needs a PlayMedia link without a clone of the
+    // whole shape: the caller passes the override instead.
+    let click = click.or(s.click.as_ref());
     let a = A::new()
         .a("id", id)
         .a("name", if s.name.is_empty() { format!("Shape {id}") } else { s.name.clone() })
         .o("descr", (!s.descr.is_empty()).then_some(s.descr.as_str()))
         .t("hidden", s.hidden)
         .o("title", (!s.title.is_empty()).then_some(s.title.as_str()));
-    if s.click.is_none() && s.hover.is_none() && !s.decorative {
+    if click.is_none() && s.hover.is_none() && !s.decorative {
         w.empty("p:cNvPr", a);
         return;
     }
     w.open("p:cNvPr", a);
-    if let Some(h) = &s.click {
+    if let Some(h) = click {
         dml::hyperlink(w, x, o, "a:hlinkClick", h);
     }
     if let Some(h) = &s.hover {
@@ -321,24 +324,16 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.open0("p:pic");
             w.open0("p:nvPicPr");
             // A click-waiting clip plays on a click of the shape, as `media()` does for videos.
-            let clicked;
-            let target = if s.click.is_none() && s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && !c.autoplay) {
-                clicked = Shape {
-                    click: Some(deckcraft_model::text::Hyperlink {
-                        action: deckcraft_model::text::Action::PlayMedia,
-                        tooltip: String::new(),
-                        highlight_click: false,
-                        sound: None,
-                        stop_sound: false,
-                        zoom_return: None,
-                    }),
-                    ..s.clone()
-                };
-                &clicked
-            } else {
-                s
+            let play = deckcraft_model::text::Hyperlink {
+                action: deckcraft_model::text::Action::PlayMedia,
+                tooltip: String::new(),
+                highlight_click: false,
+                sound: None,
+                stop_sound: false,
+                zoom_return: None,
             };
-            cnvpr(w, x, o, id, target);
+            let click = (s.click.is_none() && s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && !c.autoplay)).then_some(&play);
+            cnvpr(w, x, o, id, s, click);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
             if let Some(c) = &s.cameo {
@@ -371,7 +366,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             w.open0("p:grpSp");
             w.open0("p:nvGrpSpPr");
-            cnvpr(w, x, o, id, s);
+            cnvpr(w, x, o, id, s, None);
             w.open0("p:cNvGrpSpPr");
             locks(w, "a:grpSpLocks", s, A::new());
             w.close("p:cNvGrpSpPr");
@@ -407,7 +402,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             w.open0("p:cxnSp");
             w.open0("p:nvCxnSpPr");
-            cnvpr(w, x, o, id, s);
+            cnvpr(w, x, o, id, s, None);
             let st = start.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             let en = end.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             if st.is_none() && en.is_none() && !s.locked {
@@ -490,7 +485,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let xf = s.xfrm.unwrap_or_default();
             w.open0("p:grpSp");
             w.open0("p:nvGrpSpPr");
-            cnvpr(w, x, o, id, s);
+            cnvpr(w, x, o, id, s, None);
             w.empty0("p:cNvGrpSpPr");
             w.empty0("p:nvPr");
             w.close("p:nvGrpSpPr");
@@ -518,7 +513,7 @@ fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Optio
 fn write_model_part(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, rid: &str) {
     w.open("p:contentPart", A::new().a("r:id", rid));
     w.open0("p:nvContentPartPr");
-    cnvpr(w, x, o, id, s);
+    cnvpr(w, x, o, id, s, None);
     w.empty0("p:cNvContentPartPr");
     w.empty0("p:nvPr");
     w.close("p:nvContentPartPr");
@@ -693,7 +688,7 @@ fn ink_shape(st: &deckcraft_model::InkStroke, i: usize) -> Option<Shape> {
 fn sp(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, math: bool) {
     w.open("p:sp", A::new().t("useBgFill", matches!(s.fill, Some(Fill::Background))));
     w.open0("p:nvSpPr");
-    cnvpr(w, x, o, id, s);
+    cnvpr(w, x, o, id, s, None);
     let mut cnv = A::new();
     if s.text_box {
         cnv = cnv.a("txBox", "1");
@@ -738,7 +733,7 @@ fn sp(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, math: bool) {
 fn frame_open(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
     w.open0("p:graphicFrame");
     w.open0("p:nvGraphicFramePr");
-    cnvpr(w, x, o, id, s);
+    cnvpr(w, x, o, id, s, None);
     w.open0("p:cNvGraphicFramePr");
     w.empty("a:graphicFrameLocks", A::new().a("noGrp", "1").t("noDrilldown", s.locked).t("noMove", s.locked).t("noResize", s.locked));
     w.close("p:cNvGraphicFramePr");
@@ -856,7 +851,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
             zoom_return: None,
         });
     }
-    cnvpr(w, x, o, id, &s2);
+    cnvpr(w, x, o, id, &s2, None);
     w.open0("p:cNvPicPr");
     w.empty("a:picLocks", A::new().a("noChangeAspect", "1"));
     w.close("p:cNvPicPr");
@@ -968,7 +963,7 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
     if let ShapeKind::Picture { fill } = &s.kind {
         w.open0("p:pic");
         w.open0("p:nvPicPr");
-        cnvpr(w, x, o, id, s);
+        cnvpr(w, x, o, id, s, None);
         w.open0("p:cNvPicPr");
         w.empty("a:picLocks", A::new().a("noChangeAspect", "1"));
         w.close("p:cNvPicPr");

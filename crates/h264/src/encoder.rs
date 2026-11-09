@@ -325,6 +325,12 @@ pub struct Encoder {
     mbh: usize,
     recon: Planes,
     prev: Option<Planes>,
+    /// A spare plane set, so a frame converts into the buffer the previous one vacated.
+    scratch: Option<Planes>,
+    /// The previous picture's RGBA, kept to recognise a repeated frame without converting it.
+    prev_rgba: Vec<u8>,
+    /// `prev_rgba` holds the previous picture and is small enough to compare.
+    prev_rgba_on: bool,
     frame_num: u32,
     idr_id: u32,
     /// TotalCoeff per 4x4 block for this picture: luma (mbw*4 × mbh*4), Cb, Cr (mbw*2 × mbh*2).
@@ -332,6 +338,10 @@ pub struct Encoder {
     nc_u: Vec<u8>,
     nc_v: Vec<u8>,
 }
+
+/// Above this picture size a repeated-frame check would keep a second copy of a huge frame, which
+/// costs more than the conversion it saves; camera clips are far below it.
+const MAX_REPEAT_BYTES: usize = 16 << 20;
 
 /// Why an encoder can't be made.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -404,6 +414,9 @@ impl Encoder {
             mbh,
             recon: Planes::new(mbw * 16, mbh * 16),
             prev: None,
+            scratch: None,
+            prev_rgba: Vec::new(),
+            prev_rgba_on: false,
             frame_num: 0,
             idr_id: 0,
             nc_y: vec![0; mbw * mbh * 16],
@@ -490,11 +503,43 @@ impl Encoder {
         nal(0x68, &b.finish())
     }
 
-    /// Encode one RGBA picture (`width`×`height`, row-major). A key picture (IDR, with SPS and
-    /// PPS) is made when `key` is set and for the first picture.
-    pub fn encode_rgba(&mut self, rgba: &[u8], key: bool) -> EncodedPicture {
-        let src = self.to_yuv(rgba);
+    /// Encode one RGBA picture (`width`×`height`, row-major, exactly `width × height × 4` bytes).
+    /// A key picture (IDR, with SPS and PPS) is made when `key` is set and for the first picture.
+    ///
+    /// A picture identical to the previous one becomes an all-skipped P picture without being
+    /// converted again: a held camera frame costs a few bytes and almost no time.
+    pub fn encode_rgba(&mut self, rgba: &[u8], key: bool) -> Result<EncodedPicture, ConfigError> {
+        let need = (self.cfg.width as usize) * (self.cfg.height as usize) * 4;
+        if rgba.len() != need {
+            return Err(ConfigError("the picture is not width × height × 4 bytes"));
+        }
         let key = key || self.prev.is_none();
+        if !key && self.prev_rgba_on && self.prev_rgba == rgba {
+            self.frame_num = (self.frame_num + 1) % 65_536;
+            self.nc_y.iter_mut().for_each(|n| *n = 0);
+            self.nc_u.iter_mut().for_each(|n| *n = 0);
+            self.nc_v.iter_mut().for_each(|n| *n = 0);
+            let mut b = Bits::default();
+            b.ue(0); // first_mb_in_slice
+            b.ue(5); // slice_type: all P
+            b.ue(0); // pic_parameter_set_id
+            b.put(self.frame_num, 16);
+            b.flag(false); // num_ref_idx_active_override_flag
+            b.flag(false); // ref_pic_list_modification_flag_l0
+            b.flag(false); // adaptive_ref_pic_marking_mode_flag
+            b.se(i32::from(self.cfg.qp) - 26); // slice_qp_delta
+            b.ue(1); // disable_deblocking_filter_idc: off
+            b.ue((self.mbw * self.mbh) as u32); // every macroblock skipped
+            let slice = nal(0x41, &b.finish());
+            return Ok(EncodedPicture { nals: vec![slice], key: false });
+        }
+        let src = match self.scratch.take() {
+            Some(mut p) => {
+                self.to_yuv_into(rgba, &mut p);
+                p
+            }
+            None => self.to_yuv(rgba),
+        };
         if key {
             self.frame_num = 0;
             self.idr_id = (self.idr_id + 1) % 65_536;
@@ -545,15 +590,30 @@ impl Encoder {
             b.ue(skip_run);
         }
         let slice = nal(if key { 0x65 } else { 0x41 }, &b.finish());
-        self.prev = Some(src);
+        // Keep the converted planes for the next frame's comparison and the old ones as scratch.
+        self.scratch = self.prev.replace(src);
+        if rgba.len() <= MAX_REPEAT_BYTES {
+            self.prev_rgba.clear();
+            self.prev_rgba.extend_from_slice(rgba);
+            self.prev_rgba_on = true;
+        } else {
+            self.prev_rgba_on = false;
+            self.prev_rgba = Vec::new();
+        }
         let nals = if key { vec![self.sps(), self.pps(), slice] } else { vec![slice] };
-        EncodedPicture { nals, key }
+        Ok(EncodedPicture { nals, key })
     }
 
     /// RGBA to padded BT.709 limited-range 4:2:0 (edges replicated into the padding).
     fn to_yuv(&self, rgba: &[u8]) -> Planes {
-        let (w, h) = (self.cfg.width as usize, self.cfg.height as usize);
         let mut p = Planes::new(self.mbw * 16, self.mbh * 16);
+        self.to_yuv_into(rgba, &mut p);
+        p
+    }
+
+    /// Convert into an existing plane set of the same size, reusing its allocations.
+    fn to_yuv_into(&self, rgba: &[u8], p: &mut Planes) {
+        let (w, h) = (self.cfg.width as usize, self.cfg.height as usize);
         let px = |x: usize, y: usize| -> (i32, i32, i32) {
             let i = (y.min(h - 1) * w + x.min(w - 1)) * 4;
             match rgba.get(i..i + 3) {
@@ -580,7 +640,6 @@ impl Encoder {
                 p.v[y * cw + x] = ((sv + 2).div_euclid(4) + 128).clamp(0, 255) as u8;
             }
         }
-        p
     }
 
     fn nc_luma(&self, bx: usize, by: usize) -> i32 {
@@ -605,8 +664,18 @@ impl Encoder {
         let stride = self.recon.w;
         let (x0, y0) = (mx * 16, my * 16);
         let (has_top, has_left) = (my > 0, mx > 0);
-        let top: Vec<i32> = if has_top { (0..16).map(|i| i32::from(self.recon.y[(y0 - 1) * stride + x0 + i])).collect() } else { vec![] };
-        let left: Vec<i32> = if has_left { (0..16).map(|i| i32::from(self.recon.y[(y0 + i) * stride + x0 - 1])).collect() } else { vec![] };
+        let mut top = [0i32; 16];
+        let mut left = [0i32; 16];
+        if has_top {
+            for (i, t) in top.iter_mut().enumerate() {
+                *t = i32::from(self.recon.y[(y0 - 1) * stride + x0 + i]);
+            }
+        }
+        if has_left {
+            for (i, l) in left.iter_mut().enumerate() {
+                *l = i32::from(self.recon.y[(y0 + i) * stride + x0 - 1]);
+            }
+        }
         let dc = match (has_top, has_left) {
             (true, true) => (top.iter().sum::<i32>() + left.iter().sum::<i32>() + 16) >> 5,
             (true, false) => (top.iter().sum::<i32>() + 8) >> 4,
@@ -619,15 +688,22 @@ impl Encoder {
             1 => left[y],
             _ => dc,
         };
-        let mut modes = vec![2u32];
+        // DC first, then the two directional predictions; a fixed array keeps this per-macroblock.
+        let mut modes = [2u32; 3];
+        let mut nmodes = 1;
         if has_top {
-            modes.push(0);
+            modes[nmodes] = 0;
+            nmodes += 1;
         }
         if has_left {
-            modes.push(1);
+            modes[nmodes] = 1;
+            nmodes += 1;
         }
-        let mode =
-            modes.iter().copied().min_by_key(|&m| (0..256).map(|i| (s(i % 16, i / 16) - pred_of(m, i % 16, i / 16)).abs()).sum::<i32>()).unwrap_or(2);
+        let mode = modes[..nmodes]
+            .iter()
+            .copied()
+            .min_by_key(|&m| (0..256).map(|i| (s(i % 16, i / 16) - pred_of(m, i % 16, i / 16)).abs()).sum::<i32>())
+            .unwrap_or(2);
         // Luma: transform each 4x4, DC through the Hadamard.
         let qbits = 15 + u32::from(qp / 6);
         let f = (1 << qbits) / 3;
@@ -669,7 +745,10 @@ impl Encoder {
         b.ue(0); // intra_chroma_pred_mode: DC
         b.se(0); // mb_qp_delta
         let (bx0, by0) = (mx * 4, my * 4);
-        let dc_scan: Vec<i32> = ZIGZAG.iter().map(|&r| zdc[r]).collect();
+        let mut dc_scan = [0i32; 16];
+        for (i, &r) in ZIGZAG.iter().enumerate() {
+            dc_scan[i] = zdc[r];
+        }
         let nc0 = self.nc_luma(bx0, by0);
         residual_block(b, &dc_scan, nc0);
         let lw = self.mbw * 4;
@@ -677,9 +756,12 @@ impl Encoder {
             let (bx, by) = blk_xy(idx);
             let blk = by * 4 + bx;
             let total = if cbp_luma {
-                let scan: Vec<i32> = ZIGZAG.iter().skip(1).map(|&r| ac[blk][r]).collect();
+                let mut scan = [0i32; 16];
+                for (k, &r) in ZIGZAG.iter().skip(1).enumerate() {
+                    scan[k] = ac[blk][r];
+                }
                 let nc = self.nc_luma(bx0 + bx, by0 + by);
-                residual_block(b, &scan, nc)
+                residual_block(b, &scan[..15], nc)
             } else {
                 0
             };
@@ -695,10 +777,13 @@ impl Encoder {
             for blk in 0..4 {
                 let (bx, by) = (blk % 2, blk / 2);
                 let total = if cbp_chroma == 2 {
-                    let scan: Vec<i32> = ZIGZAG.iter().skip(1).map(|&r| c.ac[blk][r]).collect();
+                    let mut scan = [0i32; 16];
+                    for (k, &r) in ZIGZAG.iter().skip(1).enumerate() {
+                        scan[k] = c.ac[blk][r];
+                    }
                     let plane = if ci == 0 { &self.nc_u } else { &self.nc_v };
                     let nc = self.nc_chroma(plane, mx * 2 + bx, my * 2 + by);
-                    residual_block(b, &scan, nc)
+                    residual_block(b, &scan[..15], nc)
                 } else {
                     0
                 };
@@ -766,13 +851,23 @@ fn qpc_planes(e: &Encoder, src: &Planes, mx: usize, my: usize, qpc: u8) -> [Chro
     let f = (1 << qbits) / 3;
     let m6 = usize::from(qpc % 6);
     let one = |rec: &[u8], s: &[u8]| -> ChromaMb {
-        let top: Option<Vec<i32>> = (my > 0).then(|| (0..8).map(|i| i32::from(rec[(y0 - 1) * cs + x0 + i])).collect());
-        let left: Option<Vec<i32>> = (mx > 0).then(|| (0..8).map(|i| i32::from(rec[(y0 + i) * cs + x0 - 1])).collect());
+        let mut top = [0i32; 8];
+        let mut left = [0i32; 8];
+        if my > 0 {
+            for (i, t) in top.iter_mut().enumerate() {
+                *t = i32::from(rec[(y0 - 1) * cs + x0 + i]);
+            }
+        }
+        if mx > 0 {
+            for (i, l) in left.iter_mut().enumerate() {
+                *l = i32::from(rec[(y0 + i) * cs + x0 - 1]);
+            }
+        }
         let mut pred = [128; 4];
         for (blk, p) in pred.iter_mut().enumerate() {
             let (xo, yo) = ((blk % 2) * 4, (blk / 2) * 4);
-            let st = top.as_ref().map(|t| t[xo..xo + 4].iter().sum::<i32>());
-            let sl = left.as_ref().map(|l| l[yo..yo + 4].iter().sum::<i32>());
+            let st = (my > 0).then(|| top[xo..xo + 4].iter().sum::<i32>());
+            let sl = (mx > 0).then(|| left[yo..yo + 4].iter().sum::<i32>());
             *p = match ((xo, yo), st, sl) {
                 ((0, 0), Some(a), Some(c)) | ((4, 4), Some(a), Some(c)) => (a + c + 4) >> 3,
                 ((0, 0), _, Some(c)) | ((4, 4), _, Some(c)) => (c + 2) >> 2,
@@ -894,7 +989,7 @@ mod tests {
         let mut sizes = vec![];
         let mut recons = vec![];
         for (i, f) in frames.iter().enumerate() {
-            let p = enc.encode_rgba(f, i == 0);
+            let p = enc.encode_rgba(f, i == 0).expect("encode");
             sizes.push(p.length_prefixed().len());
             stream.extend(p.annex_b());
             recons.push(enc.recon.y.clone());
@@ -920,6 +1015,50 @@ mod tests {
         // An unchanged picture is all skipped: a handful of bytes.
         assert!(sizes[1] < 16, "{sizes:?}");
         assert!(sizes[3] < 16 && sizes[2] < sizes[0], "{sizes:?}");
+    }
+
+    #[test]
+    fn a_short_or_long_input_is_an_error_not_padding() {
+        let mut enc = Encoder::new(EncoderConfig { width: 32, height: 32, fps: 30, qp: 26 }).unwrap();
+        assert!(enc.encode_rgba(&[0; 16], false).is_err(), "a short picture is rejected");
+        assert!(enc.encode_rgba(&[0; 32 * 32 * 4 + 4], false).is_err(), "a long picture is rejected");
+        assert!(enc.encode_rgba(&[0; 32 * 32 * 4], false).is_ok(), "the exact length is accepted");
+    }
+
+    /// A repeated picture is an all-skipped P picture written without converting the frame again,
+    /// and it decodes back to the same picture.
+    #[test]
+    fn a_repeated_picture_is_a_tiny_all_skip_p_picture() {
+        let (w, h) = (64, 32);
+        let mut enc = Encoder::new(EncoderConfig { width: w, height: h, fps: 30, qp: 26 }).unwrap();
+        let img = card(w, h, 0);
+        let key = enc.encode_rgba(&img, true).expect("key");
+        assert!(key.key);
+        let again = enc.encode_rgba(&img, false).expect("repeat");
+        assert!(!again.key);
+        assert!(again.length_prefixed().len() < 16, "an all-skip P picture is a few bytes");
+        let mut dec = crate::Decoder::new();
+        let mut stream = key.annex_b();
+        stream.extend(again.annex_b());
+        let mut pics = dec.decode(&stream, 0).unwrap();
+        // `flush` drains the output queue before waiting on the decode jobs, so a second pass
+        // collects pictures a worker published in between.
+        pics.extend(dec.flush());
+        pics.extend(dec.flush());
+        assert_eq!(pics.len(), 2, "both pictures decode");
+    }
+
+    /// QP and fps are clamped, and the SPS bytes carry the clamped level and timing.
+    #[test]
+    fn the_sps_writes_the_clamped_qp_and_fps() {
+        let e = Encoder::new(EncoderConfig { width: 1920, height: 1080, fps: 1_000, qp: 1 }).unwrap();
+        let sps = e.sps();
+        assert_eq!(sps[0] & 0x1F, 7, "SPS NAL");
+        // 120×68 macroblocks at the clamped 240 fps is 1 958 400 MB/s, beyond 5.1's 983 040:
+        // the SPS carries level 5.2 (52).
+        assert_eq!(sps[3], 52, "level_idc from the clamped rate");
+        assert_eq!(e.cfg.fps, 240, "fps is clamped to the encoder's range");
+        assert_eq!(e.cfg.qp, 10, "qp is clamped to the encoder's range");
     }
 
     #[test]
@@ -970,7 +1109,7 @@ mod tests {
                     *p = p.wrapping_add(((k * 31) % 97) as u8);
                 }
             }
-            stream.extend(enc.encode_rgba(&img, i == 0).annex_b());
+            stream.extend(enc.encode_rgba(&img, i == 0).expect("encode").annex_b());
         }
         let mut pics = dec.decode(&stream, 0).unwrap();
         pics.extend(dec.flush());

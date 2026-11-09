@@ -60,12 +60,14 @@ impl Imp<'_> {
     /// A visible camera placeholder for a recorded Cameo whose poster cannot be read, registered
     /// once per import.
     pub fn cameo_poster(&mut self) -> MediaId {
-        if let Some(id) = self.media.iter().find(|m| m.name == "cameo-poster.png").map(|m| m.id) {
+        let data = Arc::new(crate::png::cameo_poster());
+        // Reuse an identical image only, never a same-named part: an imported deck may hold an
+        // unrelated `cameo-poster.png` that must not stand in for every missing poster.
+        if let Some(id) = matching_poster(&self.media, &data) {
             return id;
         }
         let id = MediaId(self.alloc());
-        let data = crate::png::cameo_poster();
-        self.media.push(MediaItem { id, name: "cameo-poster.png".into(), content_type: "image/png".into(), data: Arc::new(data), link: None });
+        self.media.push(MediaItem { id, name: "cameo-poster.png".into(), content_type: "image/png".into(), data, link: None });
         id
     }
 
@@ -93,6 +95,12 @@ impl Imp<'_> {
         self.media.push(MediaItem { id, name, content_type, data: Arc::new(vec![]), link: Some(url.to_string()) });
         id
     }
+}
+
+/// An existing media item that is exactly the camera placeholder, by content and type. The name
+/// alone is not enough: an imported deck may contain an unrelated `cameo-poster.png`.
+fn matching_poster(media: &[MediaItem], data: &Arc<Vec<u8>>) -> Option<MediaId> {
+    media.iter().find(|m| m.content_type == "image/png" && m.data == *data).map(|m| m.id)
 }
 
 /// One part being read: its name, relationships and root namespace declarations.
@@ -1434,4 +1442,27 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
         }
     }
     hf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(id: u32, name: &str, content_type: &str, data: Vec<u8>) -> MediaItem {
+        MediaItem { id: MediaId(id), name: name.into(), content_type: content_type.into(), data: Arc::new(data), link: None }
+    }
+
+    #[test]
+    fn the_cameo_poster_is_reused_by_content_not_by_name() {
+        let placeholder = Arc::new(crate::png::cameo_poster());
+        // A same-named but unrelated image must not stand in for missing posters.
+        let unrelated = item(1, "cameo-poster.png", "image/png", vec![1, 2, 3]);
+        assert_eq!(matching_poster(&[unrelated], &placeholder), None);
+        // An identical image is reused, whatever its part name.
+        let same = item(2, "image7.png", "image/png", (*placeholder).clone());
+        assert_eq!(matching_poster(&[same], &placeholder), Some(MediaId(2)));
+        // Same bytes under a non-PNG type are not the poster either.
+        let wrong_type = item(3, "cameo-poster.png", "image/svg+xml", (*placeholder).clone());
+        assert_eq!(matching_poster(&[wrong_type], &placeholder), None);
+    }
 }

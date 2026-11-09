@@ -153,14 +153,19 @@ fn an_ordinary_svg_picture_is_not_a_cameo() {
     assert!(xml.contains("<a:blip r:embed=\"rId"), "{xml}");
 }
 
-/// The smallest MP4 header worth writing: the writer only stores bytes, and the reader takes the
-/// type from the package, so no real H.264 payload is needed here (the media tests cover that).
+/// A short real H.264 MP4 from the shared track (the same encoder the recorder uses), so export,
+/// import, probing and poster extraction all see a clip a player could decode.
 fn mp4() -> Vec<u8> {
-    let mut v = vec![0u8, 0, 0, 0x18];
-    v.extend_from_slice(b"ftypisom");
-    v.extend_from_slice(&[0, 0, 2, 0]);
-    v.extend_from_slice(b"isomiso2avc1mp41");
-    v
+    let (w, h) = (32u32, 32u32);
+    let mut track = deckcraft_media::H264Mp4Track::new(w, h, 15, 30).expect("track");
+    for i in 0..6u8 {
+        let mut frame = vec![0u8; (w * h * 4) as usize];
+        for p in frame.chunks_mut(4) {
+            p.copy_from_slice(&[i * 20, 90, 140, 255]);
+        }
+        track.push_rgba(&frame).expect("push");
+    }
+    track.finish().expect("finish")
 }
 
 fn recorded_deck() -> Presentation {
@@ -193,7 +198,12 @@ fn a_recorded_cameo_writes_video_links_and_a_media_timing_node() {
     assert!(xml.contains("<p14:media xmlns:p14="), "the embedded media part: {xml}");
     assert!(xml.contains("<p:video><p:cMediaNode vol=\"100000\" showWhenStopped=\"0\">"), "plays on entry: {xml}");
     assert!(xml.contains("<p:cmd type=\"call\" cmd=\"playFrom(0.0)\">"), "the media-call step PowerPoint uses: {xml}");
-    assert!(xml.contains("<p:spTgt spid=\""), "targets the cameo picture: {xml}");
+    // The timing targets a specific shape id (the cameo picture), not a bare target.
+    assert!(xml.contains("<p:cNvPr id=\""), "{xml}");
+    assert!(xml.contains("name=\"Camera 1\""), "the cameo picture: {xml}");
+    assert!(xml.contains("<p:spTgt spid=\""), "targets a shape: {xml}");
+    let spid = xml.split("<p:spTgt spid=\"").nth(1).and_then(|s| s.split('"').next()).unwrap_or_default();
+    assert!(spid.chars().all(|c| c.is_ascii_digit()) && !spid.is_empty(), "a numeric shape id, got `{spid}`: {xml}");
     // The poster stays the picture's image, not a second part the timing points at.
     assert!(xml.contains("<a:blip r:embed=\"rId"), "{xml}");
     let rels = part(&bytes, "ppt/slides/_rels/slide1.xml.rels");
@@ -214,11 +224,18 @@ fn a_recorded_cameo_writes_video_links_and_a_media_timing_node() {
     assert!(cameo.autoplay, "the p:video node means it plays when the slide appears");
     let recorded = cameo.recorded.expect("recording");
     assert_eq!(q.media(recorded).map(|m| m.content_type.as_str()), Some("video/mp4"));
+    // The imported clip is a real MP4: the media layer probes its picture and timing.
+    let clip = q.media(recorded).expect("video part");
+    let info = deckcraft_media::probe(&clip.data).expect("probe the imported clip");
+    assert_eq!(info.video.as_ref().map(|v| (v.width, v.height)), Some((32, 32)));
+    let ms = info.duration_ms;
+    assert!((399..=401).contains(&ms), "six samples at 15 fps, got {ms} ms");
     let poster = match &sh.kind {
         ShapeKind::Picture { fill } => fill.media,
         _ => panic!("the recording stays a picture shape"),
     };
     assert_eq!(q.media(poster).map(|m| m.content_type.as_str()), Some("image/png"));
+    assert!(q.media(poster).is_some_and(|m| m.data.starts_with(&[0x89, b'P', b'N', b'G'])), "the poster is a PNG image");
 }
 
 #[test]

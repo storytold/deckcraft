@@ -13,13 +13,17 @@ pub(super) fn size_section(app: &mut SlideApp, ui: &mut Ui) {
             let picked = ui.add_enabled_ui(enabled(app, "camera.style"), mask_gallery).inner;
             if let Some(p) = picked {
                 run(app, "shape.change", json!({"preset": p}));
+                ui.close();
             }
             ui.separator();
-            for (label, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
-                if ui.button(label).clicked() {
-                    run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
+            ui.add_enabled_ui(enabled(app, "picture.crop"), |ui| {
+                for (label, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
+                    if ui.button(label).clicked() {
+                        run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
+                        ui.close();
+                    }
                 }
-            }
+            });
         });
     });
     size_group(app, ui);

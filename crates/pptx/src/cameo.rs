@@ -14,24 +14,6 @@ pub(crate) const SVG_BLIP_URI: &str = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}";
 pub(crate) const NS_ALF: &str = "http://schemas.microsoft.com/office/drawing/2021/livefeed";
 pub(crate) const NS_ASVG: &str = "http://schemas.microsoft.com/office/drawing/2016/SVG/main";
 
-/// Our own cameo placeholder: a camera body and lens drawn as an SVG, no vendor artwork. A file
-/// whose Cameo poster cannot be read gets this as its picture, so the exported slide still shows a
-/// picture (and the recording keeps playing over it).
-pub const POSTER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#33404f"/>
-      <stop offset="1" stop-color="#141a22"/>
-    </linearGradient>
-  </defs>
-  <rect width="320" height="320" rx="36" fill="url(#bg)"/>
-  <path d="M104 112h36l14-22h44l14 22h32a18 18 0 0 1 18 18v92a18 18 0 0 1-18 18H104a18 18 0 0 1-18-18v-92a18 18 0 0 1 18-18Z"
-        fill="none" stroke="#e8eef7" stroke-width="11" stroke-linejoin="round"/>
-  <circle cx="160" cy="176" r="40" fill="#0d1218" stroke="#e8eef7" stroke-width="11"/>
-  <circle cx="160" cy="176" r="17" fill="#8fd3ff"/>
-  <circle cx="244" cy="128" r="6" fill="#8fd3ff"/>
-</svg>"##;
-
 fn is_feed_uri(uri: &str) -> bool {
     // PowerPoint writes the GUID; some generators name the schema namespace instead.
     let uri = uri.trim();

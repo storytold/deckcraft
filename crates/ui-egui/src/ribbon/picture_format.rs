@@ -1,5 +1,5 @@
 use super::arrange::{arrange_group, size_group};
-use super::galleries::{cref_param, preset_gallery};
+use super::galleries::{cref_param, mask_gallery};
 use super::{
     Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, Value, big, big_button, color_split, enabled, group, json, pos2, rows, run, scheme,
     small, small_button_ex, theme, vec2, widgets,
@@ -171,18 +171,24 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     arrange_group(app, ui);
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Crop, "Crop", true);
+        let r = big_button(ui, Icon::Crop, "Crop", enabled(app, "picture.crop"));
         egui::Popup::menu(&r).show(|ui| {
             ui.label("Crop to Shape");
-            if let Some(p) = preset_gallery(ui) {
+            // A picture masked to a line or an arc would vanish, so only area-enclosing presets.
+            let picked = ui.add_enabled_ui(enabled(app, "picture.crop"), mask_gallery).inner;
+            if let Some(p) = picked {
                 run(app, "shape.change", json!({"preset": p}));
+                ui.close();
             }
             ui.separator();
-            for (l, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
-                if ui.button(l).clicked() {
-                    run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
+            ui.add_enabled_ui(enabled(app, "picture.crop"), |ui| {
+                for (l, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
+                    if ui.button(l).clicked() {
+                        run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
+                        ui.close();
+                    }
                 }
-            }
+            });
         });
     });
     size_group(app, ui);

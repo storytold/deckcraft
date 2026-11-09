@@ -36,13 +36,19 @@ pub fn specs() -> Vec<CommandSpec> {
             style
         ),
         // Not journaled: the clip arrives as base64 and would sit in the session journal for the
-        // whole run. Nothing replays journal entries to rebuild a document; undo keeps the edit.
+        // whole run. Nothing replays journal entries to rebuild a document; undo keeps the edit,
+        // and the engine's own recorder commits through `commit_recorded` without base64.
         CommandSpec {
             id: "show.cameo",
             label: "Record Cameo",
             menu: &["Slide Show", "Record"],
             shortcut: None,
-            params: "{index?: index, data: base64 mp4 | path, name?, durationMs?, rect?: [x,y,w,h] pt} → the slide's recorded Cameo video",
+            params: "{slide?: index, data: base64 MP4, name?: string, durationMs?: number, rect?: [x,y,w,h] pt} → {slide, id, media, poster, durationMs, width, height}. \
+                     `data` is a base64 MP4 (or QuickTime) with a video track, at most 64 MB; `path` is not accepted. \
+                     `durationMs` may shorten the playback timing but is clamped to the clip's probed length and to 10 minutes. \
+                     The poster is the first frame, or a PNG camera placeholder when no frame decodes. \
+                     The slide's existing Cameo is replaced (keeping its placement, crop and camera background), otherwise a Cameo is created. \
+                     Adds media up to the 512 MB total the deck may hold. One undo step. Not journaled: media is kept in the document, not the journal.",
             enabled: has_slide,
             run: record_cameo,
             journal: false,
@@ -259,60 +265,100 @@ fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
 /// Largest recorded clip one slide's Cameo may hold.
 const MAX_CAMEO_BYTES: usize = deckcraft_media::MAX_CLIP_BYTES;
 
-/// Commit a recorded camera clip as the slide's Cameo: the picture keeps its frame and format,
-/// its fill becomes the poster (first frame), and the MP4 plays from the slide's start.
-fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
-    let (name, bytes) = super::insert::media_bytes(p, "show.cameo")?;
+/// A finished recording ready to commit: the recorder hands over its bytes, so the in-process
+/// path never base64-encodes a 64 MB clip into JSON and decodes it again.
+pub(crate) struct Recorded {
+    pub name: String,
+    /// The clip bytes, already shared with the caller so a failed commit does not copy them.
+    pub bytes: deckcraft_media::Bytes,
+    /// The slide; `None` commits to the selected one.
+    pub slide: Option<usize>,
+    /// The clip length to time the playback node with; clamped to the probed length.
+    pub duration_ms: Option<u32>,
+    pub rect: Option<Xfrm>,
+}
+
+/// Does `add` more media keep the deck inside [`crate::cameo::MAX_TOTAL_BYTES`]?
+fn media_fits(held: usize, add: usize) -> bool {
+    held.saturating_add(add) <= crate::cameo::MAX_TOTAL_BYTES
+}
+
+/// Commit recorded clip bytes as the slide's Cameo: the picture keeps its frame and format, its
+/// fill becomes the poster (first frame), and the MP4 plays from the slide's start.
+///
+/// The command and [`crate::cameo::CameoRun::commit`] share this; the command is the base64 entry
+/// point, the recorder calls it with the bytes it already holds.
+pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> {
+    let Recorded { name, bytes, slide, duration_ms: wanted_ms, rect } = clip;
+    if bytes.len() > MAX_CAMEO_BYTES {
+        return Err(bad("show.cameo", format!("{name} is larger than the {} MB a Cameo may hold", MAX_CAMEO_BYTES >> 20)));
+    }
+    let info = deckcraft_media::probe(&bytes).map_err(|e| bad("show.cameo", format!("{name}: {e}")))?;
     let ct = super::insert::content_type(&name, &bytes);
     if !matches!(ct, "video/mp4" | "video/quicktime") {
         return Err(bad("show.cameo", format!("{name} is not an MP4 video ({ct})")));
     }
-    if bytes.len() > MAX_CAMEO_BYTES {
-        return Err(bad("show.cameo", format!("{name} is larger than the {} MB a Cameo may hold", MAX_CAMEO_BYTES >> 20)));
-    }
-    let data = Arc::new(bytes);
-    let info = deckcraft_media::probe(&data).map_err(|e| bad("show.cameo", format!("{name}: {e}")))?;
     let Some(video) = info.video.as_ref() else {
         return Err(bad("show.cameo", format!("{name} has no video")));
     };
     let (width, height) = (video.width, video.height);
-    let duration_ms = match p.get("durationMs").and_then(Value::as_u64) {
-        Some(v) => v.min(u64::from(u32::MAX)) as u32,
-        None => info.duration_ms.min(u64::from(u32::MAX)) as u32,
+    // The caller may time the node itself, but never longer than the clip really is or than a
+    // Cameo clip may last: a wrong `durationMs` would leave the video playing over black.
+    let probed = u32::try_from(info.duration_ms).unwrap_or(u32::MAX).min(deckcraft_media::MAX_CLIP_MS);
+    let duration_ms = match (wanted_ms, probed) {
+        (Some(ms), 0) => ms.max(1),
+        (Some(ms), probed) => ms.min(probed),
+        (None, probed) => probed,
     };
     if duration_ms == 0 {
         return Err(bad("show.cameo", format!("{name} has no duration")));
     }
-    let (poster, poster_ct) = match crate::cmd::media::poster_png(&data, 0) {
+    let (poster, poster_ct) = match crate::cmd::media::poster_png(&bytes, 0) {
         Some(png) => (png, "image/png"),
         // A clip we cannot decode still plays in PowerPoint; its Cameo shows the raster camera
         // placeholder (the renderer decodes rasters, not SVG).
         None => (deckcraft_pptx::cameo_poster(), "image/png"),
     };
-    let rect = rect_param(p, "rect").filter(|r| r.w >= 1.0 && r.h >= 1.0);
-    let wanted = opt_usize_param(p, "index", "show.cameo")?;
-    let data = Arc::try_unwrap(data).unwrap_or_else(|a| (*a).clone());
+    let data = bytes.clone();
     let (target, id, media, poster_id) = s.edit(move |doc, sel| {
         let n = doc.slides.len();
         if n == 0 {
             return Err(bad("show.cameo", "no slides"));
         }
-        let target = match wanted {
+        let target = match slide {
             Some(i) if i < n => i,
             Some(i) => return Err(bad("show.cameo", format!("no slide {}", i + 1))),
             None => sel.slide.min(n - 1),
         };
+        // The show's copies of every part, not just camera clips, may not pass the cap: a deck
+        // that keeps every recording in memory must not grow without bound.
+        let held: usize = doc.media.iter().map(|m| m.data.len()).sum();
+        if !media_fits(held, data.len().saturating_add(poster.len())) {
+            return Err(bad(
+                "show.cameo",
+                format!(
+                    "the deck already holds {} MB of media; the {} MB camera cap leaves no room",
+                    held >> 20,
+                    crate::cameo::MAX_TOTAL_BYTES >> 20
+                ),
+            ));
+        }
         let size = doc.slide_size;
-        let media = doc.add_media(&name, ct, data).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
+        let media = doc.add_media_shared(&name, ct, data).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
         let poster_media = doc.add_media(&format!("{name}-poster.png"), poster_ct, poster).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
-        let next_id = ShapeId(doc.alloc_id().ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?);
-        let slide = Arc::make_mut(&mut doc.slides[target]);
+        // Find the Cameo before borrowing the slide mutably, and allocate an id only when a shape
+        // is really going to be added.
         let mut existing = None;
-        walk_mut(&mut slide.shapes, &mut |sh| {
+        deckcraft_model::walk(&doc.slides[target].shapes, &mut |sh, _| {
             if existing.is_none() && sh.is_cameo() {
                 existing = Some(sh.id);
             }
         });
+        let new_id = match existing {
+            Some(_) => None,
+            None => Some(ShapeId(doc.alloc_id().ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?)),
+        };
+        let slide = Arc::make_mut(&mut doc.slides[target]);
         let id = match existing {
             Some(id) => {
                 let Some(sh) = slide.shape_mut(id) else {
@@ -332,6 +378,7 @@ fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
                 id
             }
             None => {
+                let next_id = new_id.ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
                 let (taken, count) = slide_names(&slide.shapes);
                 let name = first_free_name("Camera", &taken, count);
                 let box_ = rect.unwrap_or_else(|| default_rect(size));
@@ -357,6 +404,29 @@ fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
         "width": width,
         "height": height,
     }))
+}
+
+/// `show.cameo` for the command line and the web bridge: base64 `data` only, with the clip's name.
+/// A filesystem `path` is not accepted here — a 64 MB recording would travel as an ~85 MB string,
+/// and an arbitrary path is not something a show command should read.
+fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("path").is_some() {
+        return Err(bad("show.cameo", "show.cameo takes base64 `data`, not `path`"));
+    }
+    let name = str_param(p, "name").unwrap_or("cameo.mp4").to_string();
+    let data = str_param(p, "data").ok_or_else(|| bad("show.cameo", "missing base64 `data`"))?;
+    let bytes = super::base64_decode(data).ok_or_else(|| bad("show.cameo", "invalid base64 `data`"))?;
+    let ct = super::insert::content_type(&name, &bytes);
+    if !matches!(ct, "video/mp4" | "video/quicktime") {
+        return Err(bad("show.cameo", format!("{name} is not an MP4 video ({ct})")));
+    }
+    let rect = rect_param(p, "rect");
+    if rect.is_some_and(|r| r.w < 1.0 || r.h < 1.0) {
+        return Err(bad("show.cameo", "rect needs a positive width and height"));
+    }
+    let slide = opt_usize_param(p, "slide", "show.cameo")?;
+    let duration_ms = p.get("durationMs").and_then(Value::as_u64).map(|v| u32::try_from(v).unwrap_or(u32::MAX));
+    commit_recorded(s, Recorded { name, bytes: Arc::new(bytes), slide, duration_ms, rect })
 }
 
 fn style(s: &mut Session, p: &Value) -> Result<Value> {
@@ -445,6 +515,7 @@ pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
 mod tests {
     use serde_json::json;
 
+    use super::*;
     use crate::Session;
 
     fn cameo_shapes(s: &Session) -> Vec<deckcraft_model::Shape> {
@@ -663,7 +734,8 @@ mod tests {
     fn the_all_bypass_needs_a_command_that_declares_all() {
         let mut s = Session::with_new();
         // `arrange.bringToFront` takes no `all`, so the named-target bypass must not let it run.
-        assert!(s.execute("arrange.bringToFront", &json!({"all": true})).is_err());
+        let err = s.execute("arrange.bringToFront", &json!({"all": true})).expect_err("undeclared all").to_string();
+        assert!(err.contains("nothing selected"), "the selection gate still applies: {err}");
         // `camera.style` declares it and works without a selection.
         s.execute("slide.new", &json!({})).expect("slide");
         s.execute("insert.cameo", &json!({"all": true})).expect("cameo");
@@ -675,9 +747,11 @@ mod tests {
     fn style_rejects_an_unknown_name_and_a_non_cameo() {
         let mut s = Session::with_new();
         s.execute("insert.cameo", &json!({})).expect("insert");
-        assert!(s.execute("camera.style", &json!({"style": "nope"})).is_err());
+        let err = s.execute("camera.style", &json!({"style": "nope"})).expect_err("unknown style").to_string();
+        assert!(err.contains("unknown style `nope`"), "{err}");
         s.execute("shape.insert", &json!({"preset": "rect"})).expect("shape");
-        assert!(s.execute("camera.style", &json!({"style": "none"})).is_err());
+        let err = s.execute("camera.style", &json!({"style": "none"})).expect_err("a plain shape is not a Cameo").to_string();
+        assert!(err.contains("no Cameo selected"), "{err}");
     }
 
     #[test]
@@ -687,5 +761,78 @@ mod tests {
         let before = cameo_shapes(&s)[0].kind.clone();
         s.execute("camera.style", &json!({"style": "softEdgeCircle"})).expect("style");
         assert_eq!(cameo_shapes(&s)[0].kind, before);
+    }
+
+    #[test]
+    fn show_cameo_refuses_a_filesystem_path() {
+        let mut s = Session::with_new();
+        let err = s.execute("show.cameo", &json!({"path": "C:/Windows/notepad.exe"})).expect_err("a path is not accepted").to_string();
+        assert!(err.contains("base64 `data`"), "{err}");
+        assert_eq!(cameo_count(&s), 0);
+    }
+
+    #[test]
+    fn show_cameo_refuses_a_zero_duration_override() {
+        let mut s = Session::with_new();
+        let err = s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 0})).expect_err("zero is not a duration").to_string();
+        assert!(err.contains("no duration"), "{err}");
+        assert_eq!(cameo_count(&s), 0);
+    }
+
+    #[test]
+    fn show_cameo_refuses_an_invalid_slide_and_an_invalid_rect() {
+        let mut s = Session::with_new();
+        let err = s.execute("show.cameo", &json!({"data": clip_data(), "slide": 9})).expect_err("no such slide").to_string();
+        assert!(err.contains("no slide 10"), "{err}");
+        let err = s.execute("show.cameo", &json!({"data": clip_data(), "rect": [0, 0, 0, 0]})).expect_err("empty rect").to_string();
+        assert!(err.contains("positive width and height"), "{err}");
+        assert_eq!(cameo_count(&s), 0, "a rejected clip adds nothing");
+    }
+
+    #[test]
+    fn show_cameo_clamps_the_duration_to_the_clip() {
+        let mut s = Session::with_new();
+        // The clip is five 15 fps samples (~333 ms); a claimed hour is clamped to what it holds.
+        let r = s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 3_600_000})).expect("record");
+        let ms = r["durationMs"].as_u64().expect("duration");
+        assert!((300..=400).contains(&ms), "clamped to the clip's own length, got {ms}");
+        assert_eq!(cameo_count(&s), 1);
+    }
+
+    #[test]
+    fn show_cameo_falls_back_to_the_png_poster_when_no_frame_decodes() {
+        let mut s = Session::with_new();
+        // Probe reads the container, so truncating the sample data keeps the clip readable as a
+        // video while our decoder cannot produce a poster from it.
+        let full = {
+            let mut track = deckcraft_media::H264Mp4Track::new(32, 32, 15, 30).expect("track");
+            for i in 0..5 {
+                track.push_rgba(&vec![i as u8; 32 * 32 * 4]).expect("push");
+            }
+            track.finish().expect("finish")
+        };
+        let mut cut = full;
+        let at = cut.windows(4).position(|w| w == b"mdat").expect("mdat") + 4;
+        // Corrupt the sample payload only: the container's sample table still probes, while the
+        // decoder cannot produce a poster.
+        for b in &mut cut[at..] {
+            *b = 0xFF;
+        }
+        let data = crate::cmd::base64_encode(&cut);
+        let r = s.execute("show.cameo", &json!({"data": data})).expect("a clip whose poster cannot be decoded still commits");
+        let poster = deckcraft_model::MediaId(r["poster"].as_u64().expect("poster") as u32);
+        let doc = s.doc().expect("doc");
+        let m = doc.doc.media(poster).expect("poster media");
+        assert_eq!(m.content_type, "image/png");
+        assert_eq!(*m.data, deckcraft_pptx::cameo_poster(), "the raster camera placeholder is the poster");
+    }
+
+    #[test]
+    fn the_total_media_cap_has_a_boundary() {
+        use crate::cameo::MAX_TOTAL_BYTES;
+        assert!(media_fits(MAX_TOTAL_BYTES, 0));
+        assert!(!media_fits(MAX_TOTAL_BYTES, 1), "one byte over the cap is refused");
+        assert!(media_fits(MAX_TOTAL_BYTES - 1, 1));
+        assert!(!media_fits(usize::MAX, 1), "an overflowing sum is refused, not wrapped");
     }
 }
