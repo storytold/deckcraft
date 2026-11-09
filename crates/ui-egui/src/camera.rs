@@ -332,13 +332,11 @@ fn color_image(frame: &CameraFrame) -> Option<ColorImage> {
     Some(ColorImage::new([width, height], pixels))
 }
 
-/// Whether `doc` has a cameo anywhere.
+/// Whether `doc` has a cameo the show would paint: hidden Cameos and Cameos inside hidden
+/// groups are skipped, matching `cameo_boxes`, so a show of only hidden Cameos never starts the
+/// camera (no indicator, no permission prompt, no live image drawn).
 fn deck_has_cameo(doc: &Presentation) -> bool {
-    doc.slides.iter().any(|slide| {
-        let mut found = false;
-        deckcraft_model::walk(&slide.shapes, &mut |shape, _| found |= shape.is_cameo());
-        found
-    })
+    doc.slides.iter().any(|slide| !cameo_boxes(&slide.shapes).is_empty())
 }
 
 /// Paint the live frame in every cameo of editor slide `slide`, in slide coordinates through `xf`.
@@ -842,6 +840,7 @@ mod tests {
         let doc = session.active().expect("document").doc.clone();
         assert!(cameo_boxes(&doc.slides[0].shapes).is_empty(), "a hidden Cameo paints no frame");
         assert!(cameo_ids(&doc, 0).is_empty());
+        assert!(!deck_has_cameo(&doc), "a hidden Cameo must not start the camera");
         // A Cameo inside a hidden group stays hidden too: the renderer draws nothing below a
         // hidden shape, so the overlay must not paint a frame there either.
         let mut grouped = (*doc.slides[0].shapes.iter().find(|s| s.id == id).expect("the Cameo")).clone();
