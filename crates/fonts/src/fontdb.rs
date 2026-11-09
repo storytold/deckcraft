@@ -1517,13 +1517,7 @@ impl FontDb {
         self.resolve_fallback_filtered(c, exclude, &accept, false)
     }
 
-    fn resolve_fallback_filtered(
-        &self,
-        c: char,
-        exclude: u32,
-        accept: &impl Fn(&FontFace) -> bool,
-        remember_miss: bool,
-    ) -> Option<Arc<FontFace>> {
+    fn resolve_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool, remember_miss: bool) -> Option<Arc<FontFace>> {
         if let Some(f) = self.loaded_fallback_filtered(c, exclude, accept) {
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(pos) = self.tried_system_fallback_pos(&f.family)
