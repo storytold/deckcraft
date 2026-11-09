@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top).
+Updated: 2026-11-09. Branch: `collab/pr11`, from `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top), plus the table-text slice `2a91d49e` and its docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -24,6 +24,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
+| `collab/pr11` | `2a91d49e` | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
@@ -32,7 +33,8 @@ insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs),
 (group/ungroup undo), `31d353fe` (align/distribute as one final-bounds step), `5b078c7d`
 (the §8 gates and the non-active-slide fix), `556c00d9` (three-session gate and the reconnect
 catch-up fix), `e007e965` (base transfer after compaction and the three-client soak), `927e773c`
-(`slide.transition.set` as a final-value slice with its undo), plus the docs commits on top. The working tree is clean: the chair's
+(`slide.transition.set` as a final-value slice with its undo), plus the docs commits on top,
+`collab/pr11` = `2a91d49e` (table cell text and row/column edits) plus its docs commit. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
@@ -41,7 +43,9 @@ z-order, animations and triggers), `31842050` sends a commit to the cabinet, whi
 version and keeps the original, `98d9e9ce` makes `arrange.group`/`arrange.ungroup` undoable
 with whole-subtree images on both sides, and `31d353fe` carries `arrange.align`/`arrange.distribute`
 as one final-bounds operation with one undo step. `927e773c` makes `transition.set`
-collaborative as one whole final value with an exact-value undo step.
+collaborative as one whole final value with an exact-value undo step, and `2a91d49e` (on
+`collab/pr11`) carries a table cell address through text operations and adds `table.edit` for
+row/column insert/delete.
 
 The web build now has its side of the cabinet session (`66d4658c`, `crates/collab-web` +
 `apps/deckcraft-web`): the `deckcraft:session` message opens the session, the page's `WebSocket`
@@ -52,7 +56,8 @@ session message.
 The published head of the fork branch `copoka/deckcraft:collab/pr10` is `63ec1ebe`, open as
 [PR #1975](https://github.com/storytold/deckcraft/pull/1975). Local `collab/pr10` is ahead of it by
 `3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce`, `31d353fe`, `5b078c7d` and
-`556c00d9`. `git fetch fork` shows no commit on the fork side that is missing locally, and a
+`556c00d9`, and local `collab/pr11` adds `927e773c`, `922a4bf4`, `2a91d49e` and the docs commits
+on top. `git fetch fork` shows no commit on the fork side that is missing locally, and a
 `git push --dry-run` from this workspace is refused by the environment policy, so publishing the
 new head is a manual step. Nothing was pushed to `storytold/deckcraft`; the PR comes from the
 fork and a human decision still governs merging it. The PR body is prepared in [`pr10.md`](pr10.md):
@@ -128,6 +133,12 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
 - Text: `text.insert`/`text.delete` carry character offsets; the server rebases them against the
   journal tail since `baseVersion` (inserts shift right, deletes pull left and clamp), so two
   people typing in one paragraph keep both texts. Confirmed commands carry the rebased offset.
+  `text.set`, `text.insert` and `text.delete` also carry an optional `(row, col)` table cell: the
+  offset is inside that cell's own body, the local queue reads it from the caret or the cell
+  selection, and the adapter selects the cell before running the command. A `table.edit`
+  (row/column insert/delete above/left of a cell) moves the queued address during rebase; a
+  deletion of the cell's line refuses the queued operation. Two cells of one table never shift
+  each other's offsets.
 - `shape.insert`: preset, final geometry, optional text; ids are deterministic on all replicas.
 - `insert.picture`: the operation carries `sha256`, `name` and an optional final rect, never bytes.
   The server stores one object per digest (`PUT /v1/sessions/{id}/media/{sha256}`), every replica
@@ -148,7 +159,13 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
 - `format.*`: 17 allowlisted commands (`bold`, `italic`, `underline`, `strikethrough`,
   `superscript`, `subscript`, `font`, `size`, `color`, `highlight`, `alignLeft/Center/Right`,
   `justify`, `caps`, `spacing`, `clear`) over one explicit shape's text. Toggles need an explicit
-  `on`; `args` cannot carry `id`/`ids`/`index`; a table or a shape without text is refused.
+  `on`; `args` cannot carry `id`/`ids`/`index`; a table or a shape without text is refused (a
+  cell needs a cell address in `FormatSet`, which is the next formatting slice).
+- `table.insertRowAbove`/`insertRowBelow`/`deleteRow` and the column variants: one structural
+  `table.edit` payload (`axis`, `at`, `insert`) addressed by the table's shape key. The adapter
+  runs the engine's own row/column command with the table id, so every replica makes the same
+  change; the undo image is the whole table (`shape.setField` `field: table`), because a
+  structural edit changes both the cell indices and their values.
 - `slide.duplicate`: structural, addressed by the source slide key; the copy is inserted after it.
 - `arrange.align`/`arrange.distribute`: one `shapes_set_bounds` operation with the final box of
   every moved shape. The client takes the values from the engine's own plan (`align_plan`,
@@ -156,9 +173,12 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   the adapter runs `shape.setBoundsMany`, which checks every id and duplicate before the first
   write and moves the whole selection in one `edit`. A shape whose box does not change is left out;
   an align that moves nothing sends nothing.
-- Undo/redo: move, bounds, align/distribute, text, fill, outline, `format.*` and transition steps. A restore carries the exact
+- Undo/redo: move, bounds, align/distribute, text (shape text and table cells), fill, outline, `format.*` and transition steps. A restore carries the exact
   model value (`shape_field`) and runs through the `shape.setField` engine command, which bounds
-  the JSON and deserialises it into the model type. A group's fill/outline step records an image
+  the JSON and deserialises it into the model type. A cell text step records the cell's whole body
+  text with its address and restores it with `text.set{cell}`, so the shape's own (empty) body is
+  not touched. A `table.edit` step records the whole table (`shape_field` `field: table`) and
+  restores rows, columns and cell text in one write. A group's fill/outline step records an image
   per changed member and restores all of them in one `shape_fields` operation (`shape.setFields`
   validates every value before the first write). `slide.delete`, `slide.new` and `slide.duplicate`
   record the whole slide and undo through `slide_restore` / `slide_delete`. `shape.insert`,
@@ -270,13 +290,13 @@ document as the editors.
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 138 unit + 8 integration |
+| `cargo test -p deckcraft-collab` | 146 unit + 8 integration |
 | `cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1` (on `agents`) | 4 passed in about 2.5 s: the 120-slide/media room and commit; three sessions (two editors on different slides and a viewer) across a conflicting edit, an undo-conflict, a forbidden viewer op and a reconnect with journal catch-up, all converging on version 4; the three-client soak (26 move/bounds/text/fill edits, compaction every 5 steps, a viewer rebuilt from a 5 KiB base at version 25 plus one tail step, a reconnect from a two-step tail, all three at version 28 and the commit reimporting); LibreOffice 26.2 renders 121 pages and round-trips the commit (run on the workstation, see below); on the build host the LibreOffice test skips itself (no `soffice`) |
-| `cargo test -p deckcraft-collab --lib apply::` | 44 (a remote edit on a slide the replica is not looking at applies) |
+| `cargo test -p deckcraft-collab --lib apply::` | 52 (a remote edit on a slide the replica is not looking at applies; two replicas converge on different table cells) |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 4 gates |
-| `cargo test -p deckcraft-collab-proto` | 23 |
+| `cargo test -p deckcraft-collab-proto` | 24 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
-| `cargo test -p deckcraft-engine` | 572 passed, 1 ignored |
+| `cargo test -p deckcraft-engine` | 573 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
 | `cargo fmt --check` | clean |
 | `cargo xtask layers` | 32 crates (`collab-web` L6), no violations |
@@ -327,6 +347,17 @@ Re-run on 2026-11-09 after the transition slice (`927e773c`, on `agents`, rust 1
 run without `soffice` on the build host. `git status` is clean after the docs commit; nothing was
 pushed and CI was not touched.
 
+Re-run on 2026-11-09 after the table-text slice (`2a91d49e`, on `agents`, rust 1.99.1): `fmt
+--check` clean, `collab-proto` 24, `collab` 146 + 8, `collab-server` 10 unit + 4 commit + 4 gates
++ 6 socket, `deckcraft-engine` 573 + 1 ignored; clippy over `collab-proto`, `collab`,
+`collab-server` and `engine` with `-D warnings` clean; `xtask layers` 32 crates. The gates were
+run without `soffice`. The new tests cover two replicas editing different cells of one table, a
+cell operation resent after a reconnect (one version bump, one insertion), a queued cell insert
+rebased past an inserted row, a queued insert refused after its row is deleted, two people in one
+cell keeping both insertions without moving another cell, and undo/redo of cell text and of a
+whole-table row edit. `git status` is clean after the docs commit; nothing was pushed and CI was
+not touched.
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -373,9 +404,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format/duplicate/transition | collab tests |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format/duplicate/transition, table cell text and table row/column edits | collab tests |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text/shape values, align/distribute, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition` |
+| Per-user undo/redo | ✅ text (shape and table cell), shape values, align/distribute, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, table row/column edits | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
@@ -397,16 +428,21 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
 ## What is NOT done (ordered by production impact)
 
 1. **Command surface beyond the new slices.** Fill, line, 17 `format.*` commands over whole shape
-   text, `slide.duplicate` and `transition.set` are collaborative now. Still refused: fonts as a
-   document asset, animations, tables/SmartArt/charts, notes, run-range formatting and relative
-   effects. The design rule stands: only commands whose result is a deterministic function of the
-   authoritative state, expressed as final values, go on the wire; a raw `execute` is not safe
-   (toggles and relative edits diverge). Next candidates: table cell edits and animation steps.
+   text, `slide.duplicate`, `transition.set`, table cell text and table row/column edits are
+   collaborative now. Still refused: fonts as a document asset, animations, the rest of the table
+   surface (style, fill, merge/split, sizing), SmartArt/charts, notes, run-range formatting,
+   formatting a table cell and relative effects. The design rule stands: only commands whose
+   result is a deterministic function of the authoritative state, expressed as final values, go on
+   the wire; a raw `execute` is not safe (toggles and relative edits diverge). Next candidates:
+   animation steps and run-range formatting.
 2. **Media refinement.** Fonts and 3D models are not in the media allowlist, and the browser link
    still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
    a private CA must be in the store or `SSL_CERT_FILE`).
-3. **Text in tables and notes, rich runs.** Shape text is covered; table cells and notes need
-   their own addressing and rebase. Formatting runs need a run-level payload, not whole-body.
+3. **Text in notes, rich runs, table formatting.** Shape text and table-cell text are covered;
+   notes need their own addressing (a slide body, not a shape) and formatting a cell needs a cell
+   address in `FormatSet` plus a cell-aware exact body restore. Formatting runs need a run-level
+   payload, not whole-body. Other table commands (style, fill, merge, sizing) change the table
+   without moving cells and can be the same `shape_field` `field: table` final value later.
 4. **Structural undo is covered; size limits remain.** A group's fill/outline (one image per
    changed member, one `shape_fields`), `slide.delete`/`slide.new`/`slide.duplicate` (whole-slide
    image, `slide_restore`), `shape.insert`/`insert.picture`/`insert.video`/`insert.audio`/
@@ -483,8 +519,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 ## Next session: start here
 
-1. Run the verification table above; if the tree is clean, continue on `collab/pr10` (or branch
-   `collab/pr11` from it).
+1. Run the verification table above; if the tree is clean, continue on `collab/pr11` (or branch
+   `collab/pr12` from it).
 2. **PR #1975 is open from the fork**; the local head is ahead of the PR head. Publishing the new
    head needs a manual push from a checkout that may push; do not touch CI and do not mention
    agents. Merging needs a human decision.
@@ -496,17 +532,58 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `409` and stores the accepted version. For a page on another origin the sync server needs CORS
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Next: table cell text, animation steps,
-   run-range formatting.
-5. Undo is covered for move/bounds/text/fill/line/format/transition, a group's fill/line, slide
-   insert/delete/duplicate, shape insert/delete and group/ungroup (whole-subtree images on both
-   sides). The remaining undo work is table/notes text and run-level formatting, which wait for
-   their command slices.
+   adapter run → confirmed command → test on two clients. Next: animation steps, notes text,
+   run-range formatting, then formatting a table cell.
+5. Undo is covered for move/bounds/text (shape and table cell)/fill/line/format/transition, a
+   group's fill/line, slide insert/delete/duplicate, shape insert/delete, group/ungroup and
+   table row/column edits (whole-table image). The remaining undo work is notes text and
+   run-level formatting, which wait for their command slices.
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — table cell text and row/column edits
+
+- Text in a table cell now travels with its address. `text.set` already carried `cell`;
+  `text.insert`/`text.delete` gained `cell: Option<(row, col)>` (absent for a shape's own body),
+  so the offset is inside that cell's `TextBody`, not the table shape's empty text. The local
+  queue reads the cell from the caret (`TextSel.cell`) or the cell selection and refuses a table
+  command without one; `text.set` falls back to the caret's cell when the command has no `cell`.
+- The adapter resolves the cell's own body before mapping the character offset and puts the
+  engine's `TextSel` on the cell before running `text.insert`/`text.delete`; a cell that is out of
+  range or a table without a cell address is `invalid`. `text.set` passes the cell to the engine,
+  which already understood it.
+- Rebase is per cell: `rebase_text` compares `(shape, cell)` and only shifts offsets of operations
+  in the same cell, so two people in different cells of one table converge. Plain text keys do not
+  include the cell (the shape key addresses the table); the address is part of the operation.
+- Structural table edits are new because a row insert moves cell addresses:
+  `Payload::TableEdit { axis: row|column, at, insert }` runs `table.insertRowAbove/Below`,
+  `table.deleteRow` or the column variants on the table's shape key. Local
+  `table.insertRowAbove/Below`, `table.deleteRow`, `table.insertColumnLeft/Right`,
+  `table.deleteColumn` normalise to it; the address is checked against the table before sending.
+  Structural, so it needs `baseVersion == head`.
+- Rebase of a queued cell operation past a `table.edit`: an insert above/left of the cell moves
+  the address down/right, a delete of the very line refuses the operation `stale` (retryable,
+  the text cannot be placed), a delete above/left pulls it up/left. Operations in another cell of
+  the same table are untouched.
+- Undo: `Change::Shape` with `Image::Text` already carried `cell`; it now gets the cell from an
+  insert/delete too, and the restore is `text.set{cell}`, so the shape's own body is not created
+  or changed. A `table.edit` step records the **whole table** (`Image::Table`, `ShapeField::Table`,
+  engine `shape.setField field: table`), because a structural edit changes the cell indices and
+  their values; the engine validates the table (1–1000 rows/columns, only a table shape) before
+  the write.
+- Tests: two replicas editing different cells of one table converge; a cell operation resent
+  after a reconnect answers the stored result and inserts once; a queued cell insert rebases past
+  an inserted row and lands in the shifted cell; a queued insert is refused after its row is
+  deleted; two people typing in one cell keep both insertions and a second cell's offset does not
+  move; undo/redo of an insert and a delete restores the exact cell text, and a row edit's undo
+  restores the whole table. `collab` 146 + 8, `collab-proto` 24, `engine` 573 + 1 ignored.
+- Commit `2a91d49e` plus this docs commit on `collab/pr11` (from `collab/pr10` at `922a4bf4`);
+  nothing pushed, CI untouched. Still refused: notes text, formatting a table cell (needs a cell
+  address in `FormatSet` and a cell-aware exact body restore), other table commands (style, fill,
+  merge, sizing), run-range formatting and animations.
 
 ### 2026-11-09 — transitions as a final-value slice
 

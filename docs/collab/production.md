@@ -134,8 +134,9 @@ The first release deliberately normalises a small, idempotent command set:
 |---|---|---|
 | `shape.move`, `shape.setBounds` | command | absolute position and size |
 | `arrange.align`, `arrange.distribute` | command | final boxes for the whole selection in one `shape.setBoundsMany` operation: the client computes them from the engine's own plan, so no replica recomputes the slide edge or the gaps; one version and one undo step |
-| `text.set` | command | whole body or one table cell |
-| `text.insert`, `text.delete` | command | character offsets; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts |
+| `text.set` | command | whole body or one table cell (`cell: [row, col]`) |
+| `text.insert`, `text.delete` | command | character offsets inside the shape body or one table cell; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts, and two cells of one table never shift each other |
+| `table.edit` | structural | one row/column insert or delete (`axis`, `at`, `insert`) on a table shape; a queued cell text operation rebases its address past it, and a delete of the line holding the text refuses the operation |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
 | `insert.picture` | structural | the operation carries a sha256 reference, not bytes; see "Media channel" |
 | `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
@@ -152,10 +153,11 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: fonts as a document asset, animation steps,
-tables/SmartArt/charts, notes, run-range formatting and relative effects. The full command surface
-is the next slice; it needs a final-value normalisation for each command, not a raw `execute` on
-the wire.
+values, go on the wire. What is still refused: fonts as a document asset, animation steps, the
+rest of the table surface (style, fill, merge/split, sizing), formatting a table cell,
+SmartArt/charts, notes, run-range formatting and relative effects. The full command surface is the
+next slice; it needs a final-value normalisation for each command, not a raw `execute` on the
+wire.
 
 ## Browser mode
 
@@ -297,8 +299,10 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
 2. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
    models are not. The browser link fetches and uploads them with `fetch` plus the session token;
    the sync server has no CORS headers, so a page on another origin cannot use the channel yet.
-3. **P1 — Text in tables/notes and rich runs** are not normalised; shape text is. Table cells and
-   notes need their own addressing and rebase; formatting runs need a run-level payload.
+3. **P1 — Text in notes, rich runs, table formatting**. Shape text and table-cell text are
+   addressed and rebased now. Notes still need their own address (a slide body, not a shape), and
+   formatting a table cell needs a cell address in `FormatSet` plus a cell-aware exact body
+   restore. Formatting runs need a run-level payload.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
