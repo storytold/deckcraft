@@ -403,7 +403,7 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
     w.finish()
 }
 
-/// The outline of a data part: the `parOf` tree under the document point, depth first.
+/// The outline of a data part: the `parOf` tree under the document point, depth first, or the data points in `ptLst` order when no `parOf` connections exist.
 pub fn outline(data: &El) -> Vec<DiagramNode> {
     outline_ids(data).into_iter().map(|(_, n)| n).collect()
 }
