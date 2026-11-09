@@ -171,11 +171,15 @@ impl ClientSession {
                 self.actor_id = Some(welcome.actor_id);
                 self.role = Some(welcome.role);
                 self.lease = welcome.lease;
-                // A gap between our version and the server's means a resync, not a guess.
+                // A gap between our version and the server's means a resync, not a guess. The
+                // local document is still at `self.version`, so that is the version the resync
+                // must ask the tail from: adopting the server head here would ask for a tail
+                // after the head and leave the replica behind while claiming to be current.
                 if welcome.version > self.version {
                     self.resync_wanted = true;
+                } else {
+                    self.version = self.version.max(welcome.version);
                 }
-                self.version = self.version.max(welcome.version);
                 Effect::Rollback
             }
             ServerMsg::Applied(applied) => {
@@ -347,9 +351,27 @@ mod tests {
     fn a_version_gap_asks_for_the_tail_instead_of_skipping() {
         let mut c = ClientSession::new("d");
         c.on_msg(welcome(1, Role::Editor));
+        assert_eq!(c.version(), 0, "the welcome head is not adopted before the tail arrives");
         assert_eq!(c.on_msg(applied("o1", 4)), Effect::Rollback);
-        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 1 })));
-        assert_eq!(c.version(), 1, "the guessed version is not adopted");
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+        assert_eq!(c.version(), 0, "the guessed version is not adopted");
+    }
+
+    #[test]
+    fn a_reconnect_asks_for_the_tail_from_the_version_the_replica_has() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.on_msg(applied("o1", 1));
+        c.on_msg(applied("o2", 2));
+        assert_eq!(c.version(), 2);
+        c.disconnected();
+        let _ = c.connect("jwt", ClientInfo { name: "t".into(), ver: "1".into() });
+        c.on_msg(welcome(5, Role::Editor));
+        assert_eq!(c.version(), 2, "the server head is not adopted before the tail arrives");
+        assert!(
+            matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 2 })),
+            "the resync names the version the local document actually has"
+        );
     }
 
     #[test]
@@ -408,7 +430,11 @@ mod tests {
     #[test]
     fn the_handshake_carries_the_last_seen_version() {
         let mut c = ClientSession::new("d");
-        c.on_msg(welcome(7, Role::Editor));
+        c.on_msg(welcome(0, Role::Editor));
+        for version in 1..=7 {
+            c.on_msg(applied(&format!("o{version}"), version));
+        }
+        assert_eq!(c.version(), 7);
         let msg = c.connect("jwt", ClientInfo { name: "deckcraft-web".into(), ver: "0.1".into() });
         assert!(matches!(msg, ClientMsg::Hello(_)), "the first message is the handshake");
         if let ClientMsg::Hello(hello) = msg {

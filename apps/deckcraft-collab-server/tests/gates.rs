@@ -1,6 +1,7 @@
-//! The two gates TASK.md §8 asks for beyond the command slices: a 100+ slide deck with media
-//! stays fast through two clients and a commit, and the `.pptx` a commit produces opens in
-//! LibreOffice without repair and survives a LibreOffice round trip.
+//! The gates TASK.md §8 asks for beyond the command slices: a 100+ slide deck with media stays
+//! fast through two clients and a commit, the `.pptx` a commit produces opens in LibreOffice
+//! without repair and survives a LibreOffice round trip, and three real sessions (two editors and
+//! a viewer) converge across a conflicting edit and a reconnect with a journal catch-up.
 //!
 //! The performance numbers are printed (`--nocapture`); the assertions keep generous ceilings, so
 //! the gate catches a pathological regression rather than machine-to-machine noise. The
@@ -15,10 +16,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use deckcraft_collab::{ClientSession, DocSession, SessionConfig};
+use deckcraft_collab::{Adapter, ClientSession, DocSession, SessionConfig};
 use deckcraft_collab_proto::{
-    Capabilities, ClientInfo, ClientMsg, Limits, OpEnvelope, OpKind, PROTO_VERSION, Payload, Role, ServerMsg, ShapeKey, SlideKey, SnapshotMode,
-    SnapshotRef, Target, Welcome,
+    Applied, Capabilities, ClientInfo, ClientMsg, Limits, OpEnvelope, OpKind, PROTO_VERSION, Payload, Role, ServerMsg, ShapeKey, SlideKey,
+    SnapshotMode, SnapshotMsg, SnapshotRef, Target, Welcome,
 };
 use deckcraft_engine::Session;
 use deckcraft_model::{Presentation, ShapeKind};
@@ -235,6 +236,302 @@ fn a_hundred_and_twenty_slide_deck_with_media_stays_fast_and_converges() {
     assert_eq!(cached.bytes, committed.bytes, "an unchanged commit reuses the built file (ADR-0009 §6)");
 }
 
+// ---------------------------------------------------------------- three sessions gate
+
+/// A local replica: the initial document plus every confirmed command the server broadcasts.
+/// The gate checks convergence on real presentation state, not only on version counters.
+struct Replica {
+    session: Session,
+    adapter: Adapter,
+    version: u64,
+    error: Option<String>,
+}
+
+impl Replica {
+    fn open(bytes: &[u8], file_id: &str) -> Self {
+        let mut session = Session::new();
+        let loaded = deckcraft_engine::cmd::file::loaded_file("replica.deck", bytes).expect("load the replica deck");
+        let token = session.stage_loaded(loaded);
+        session.execute("file.adopt", &json!({"path": "replica.deck", "token": token})).expect("adopt the replica deck");
+        let doc = session.doc().expect("replica doc").doc.as_ref().clone();
+        let mut adapter = Adapter::new(format!("{file_id}-"));
+        adapter.join(&doc);
+        Self { session, adapter, version: 0, error: None }
+    }
+
+    /// Run the command the server confirmed, at the version the replica has.
+    fn apply(&mut self, applied: &Applied) {
+        if let Some(command) = &applied.command {
+            let op = OpEnvelope {
+                op_id: applied.op_id.clone(),
+                doc: String::new(),
+                base_version: self.version,
+                kind: deckcraft_collab::class_of(&command.payload),
+                target: command.target.clone(),
+                payload: command.payload.clone(),
+                history: None,
+            };
+            if let Err(rejection) = self.adapter.apply_confirmed(&mut self.session, self.version, &applied.actor_id, &op) {
+                self.error = Some(rejection.message.clone());
+            }
+        }
+        self.version = self.version.max(applied.version);
+    }
+
+    /// Reconnect catch-up: replay the journal tail after the version the replica has.
+    fn catch_up(&mut self, snapshot: &SnapshotMsg) {
+        for applied in &snapshot.tail {
+            self.apply(applied);
+        }
+        self.version = self.version.max(snapshot.version);
+    }
+
+    fn doc(&self) -> &Presentation {
+        self.session.doc().expect("replica doc").doc.as_ref()
+    }
+}
+
+/// One WebSocket participant: the protocol state plus the replica the gate compares.
+struct Live {
+    ws: Option<Client>,
+    client: ClientSession,
+    replica: Replica,
+    actor: String,
+}
+
+impl Live {
+    fn join(addr: SocketAddr, id: &str, actor: &str, role: &str, bytes: &[u8]) -> Self {
+        let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/v1/sessions/{id}/ws")).expect("ws");
+        socket_timeout(&mut ws);
+        let mut client = ClientSession::new(id);
+        let hello = client.connect(token(actor, role, id), ClientInfo { name: actor.into(), ver: "1".into() });
+        ws.send(tungstenite::Message::Text(deckcraft_collab_proto::encode_client(&hello).expect("encode").into())).expect("hello");
+        let welcome = read_socket(&mut ws);
+        let mut live = Self { ws: Some(ws), client, replica: Replica::open(bytes, id), actor: actor.into() };
+        live.on(welcome);
+        live
+    }
+
+    fn on(&mut self, msg: ServerMsg) {
+        match &msg {
+            ServerMsg::Applied(applied) => self.replica.apply(applied),
+            ServerMsg::Snapshot(snapshot) => self.replica.catch_up(snapshot),
+            _ => {}
+        }
+        self.client.on_msg(msg);
+    }
+
+    fn send(&mut self, msg: ClientMsg) {
+        let ws = self.ws.as_mut().expect("a live socket");
+        ws.send(tungstenite::Message::Text(deckcraft_collab_proto::encode_client(&msg).expect("encode").into())).expect("send");
+    }
+
+    fn recv(&mut self) -> ServerMsg {
+        let msg = read_socket(self.ws.as_mut().expect("a live socket"));
+        self.on(msg.clone());
+        msg
+    }
+
+    fn submit(&mut self, op: OpEnvelope) {
+        self.client.submit(op).expect("submit");
+        let msg = self.client.next_outgoing().expect("a queued operation");
+        self.send(msg);
+    }
+
+    /// The socket drops; the client keeps its unacknowledged work, the replica its document.
+    fn hang_up(&mut self) {
+        if let Some(mut ws) = self.ws.take() {
+            let _ = ws.close(None);
+        }
+        self.client.disconnected();
+        // The server removes the old peer after its read loop notices the close. A reconnect that
+        // races that cleanup would be removed by it, so let the loop's 50 ms time slice finish.
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    /// A fresh socket, a hello that names the version the replica has, and the journal tail.
+    fn reconnect(&mut self, addr: SocketAddr, id: &str, role: &str) {
+        self.hang_up();
+        let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/v1/sessions/{id}/ws")).expect("reconnect ws");
+        socket_timeout(&mut ws);
+        let hello = self.client.connect(token(&self.actor, role, id), ClientInfo { name: self.actor.clone(), ver: "1".into() });
+        ws.send(tungstenite::Message::Text(deckcraft_collab_proto::encode_client(&hello).expect("encode").into())).expect("reconnect hello");
+        let welcome = read_socket(&mut ws);
+        self.ws = Some(ws);
+        self.on(welcome);
+        let resync = self.client.next_outgoing().expect("a resync request after a version gap");
+        assert!(matches!(resync, ClientMsg::Resync { .. }), "the reconnected client asks for the tail, got {resync:?}");
+        self.send(resync);
+        let snapshot = self.recv();
+        assert!(matches!(snapshot, ServerMsg::Snapshot(_)), "the reconnect got the tail, not {snapshot:?}");
+    }
+}
+
+fn socket_timeout(ws: &mut Client) {
+    if let MaybeTlsStream::Plain(stream) = ws.get_mut() {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
+    }
+}
+
+/// Two slides, one rectangle each: editors can work on different slides, and two of them can aim
+/// at the same shape on the first one.
+fn three_way_deck() -> Vec<u8> {
+    let mut session = Session::with_new();
+    session.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100.0, 100.0, 200.0, 100.0]})).expect("first rect");
+    session.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("second slide");
+    session.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [300.0, 100.0, 200.0, 100.0]})).expect("second rect");
+    deckcraft_format::save(session.doc().expect("doc").doc.as_ref()).expect("save the gate deck")
+}
+
+/// The wire target of the first shape on `slide_index`, from a replica that shares the server's
+/// key map (same prefix, same document).
+fn rect_target(replica: &Replica, slide_index: usize) -> Target {
+    let doc = replica.doc();
+    let slide = doc.slides.get(slide_index).expect("slide");
+    // The title slide also carries layout placeholders without an explicit transform; the rect
+    // this gate moves is the shape that has one.
+    let shape = slide.shapes.iter().find(|shape| shape.xfrm.is_some()).expect("shape");
+    let keys = replica.adapter.keys();
+    Target {
+        slide: Some(keys.slide_key(slide.id).expect("slide key").clone()),
+        shape: Some(keys.shape_key(slide.id, shape.id).expect("shape key").clone()),
+        ..Target::default()
+    }
+}
+
+fn move_to(op_id: &str, doc: &str, target: Target, x: f64) -> OpEnvelope {
+    OpEnvelope {
+        op_id: op_id.into(),
+        doc: doc.into(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target,
+        payload: Payload::ShapeMove { x, y: 100.0 },
+        history: None,
+    }
+}
+
+fn rect_x(doc: &Presentation, slide_index: usize) -> f64 {
+    doc.slides.get(slide_index).expect("slide").shapes.iter().find(|shape| shape.xfrm.is_some()).expect("shape").xfrm.expect("transform").x
+}
+
+fn expect_applied(live: &mut Live, version: u64) {
+    match live.recv() {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, version),
+        other => panic!("expected applied {version}, got {other:?}"),
+    }
+}
+
+/// Every connected session receives the same authoritative step.
+fn step<const N: usize>(peers: [&mut Live; N], version: u64) {
+    for live in peers {
+        expect_applied(live, version);
+    }
+}
+
+fn assert_rect_x(peers: [&Live; 3], slide_index: usize, x: f64, why: &str) {
+    for live in peers {
+        assert_eq!(rect_x(live.replica.doc(), slide_index), x, "{why} ({} replica)", live.actor);
+    }
+}
+
+/// Alice moves the first slide's rectangle; Bob moves the same shape before seeing that step;
+/// Alice's undo is refused because it would overwrite Bob's later value.
+fn conflicting_edits_of_one_shape(alice: &mut Live, bob: &mut Live, viewer: &mut Live, id: &str, first: &Target) {
+    alice.submit(move_to("a-1", id, first.clone(), 200.0));
+    step([&mut *alice, &mut *bob, &mut *viewer], 1);
+
+    // The step is absolute, so the outcome is deterministic: the later accepted value wins.
+    bob.submit(move_to("b-1", id, first.clone(), 300.0));
+    step([&mut *alice, &mut *bob, &mut *viewer], 2);
+    assert_rect_x([&*alice, &*bob, &*viewer], 0, 300.0, "the deterministic outcome is Bob's later value");
+
+    // The server refuses the undo without touching the document (ADR-0010 §3).
+    alice.send(ClientMsg::Undo);
+    match alice.recv() {
+        ServerMsg::Rejected(rejection) => {
+            assert_eq!(rejection.code, deckcraft_collab_proto::RejectCode::UndoConflict, "{}", rejection.message);
+            assert!(!rejection.retryable);
+        }
+        other => panic!("expected an undo-conflict, got {other:?}"),
+    }
+    assert_eq!(alice.replica.version, 2, "a refusal does not move the version");
+    assert_rect_x([&*alice, &*bob, &*viewer], 0, 300.0, "the refused undo left Bob's value in place");
+}
+
+fn a_viewer_cannot_write(viewer: &mut Live, alice: &Live, id: &str, version: u64) {
+    viewer.send(ClientMsg::Op(move_to("v-1", id, rect_target(&alice.replica, 0), 999.0)));
+    match viewer.recv() {
+        ServerMsg::Rejected(rejection) => {
+            assert_eq!(rejection.code, deckcraft_collab_proto::RejectCode::Forbidden);
+            assert_eq!(rejection.op_id, "v-1");
+        }
+        other => panic!("expected the viewer to be refused, got {other:?}"),
+    }
+    assert_eq!(viewer.replica.version, version, "a forbidden operation does not move the replica");
+}
+
+fn assert_converged(peers: [&Live; 3], version: u64) {
+    for live in peers {
+        assert_eq!(live.client.version(), version, "{} settled at the session head", live.actor);
+        assert_eq!(live.replica.version, version);
+        assert_eq!(live.replica.error, None, "{} applied every confirmed command", live.actor);
+    }
+    assert_eq!(peers[0].replica.doc(), peers[1].replica.doc(), "the editors hold one document");
+    assert_eq!(peers[0].replica.doc(), peers[2].replica.doc(), "the viewer holds the same document");
+}
+
+fn assert_committed_gate_deck(addr: SocketAddr, id: &str, version: u64, first_x: f64, second_x: f64) {
+    let (status, body) = http(addr, "POST", &format!("/v1/sessions/{id}/commit"), Some("service-token"), "");
+    assert_eq!(status, 200, "{body}");
+    let answer: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(answer["version"].as_u64(), Some(version));
+    let committed = base64::engine::general_purpose::STANDARD.decode(answer["bytes"].as_str().expect("inline bytes")).expect("decode");
+    let reopened = deckcraft_pptx::import(&committed).expect("the committed bytes reimport");
+    assert_eq!(reopened.slides.len(), 2);
+    assert_eq!(rect_x(&reopened, 0), first_x);
+    assert_eq!(rect_x(&reopened, 1), second_x);
+}
+
+#[test]
+fn three_sessions_converge_across_a_conflict_and_a_reconnect() {
+    const ID: &str = "gate-three";
+    let bytes = three_way_deck();
+    let handle = deckcraft_collab_server::serve_ephemeral(deckcraft_collab_server::Config::for_tests(SECRET, "service-token")).expect("server");
+    let addr = handle.addr;
+    create(addr, ID, &bytes);
+
+    let mut alice = Live::join(addr, ID, "alice", "editor", &bytes);
+    let mut bob = Live::join(addr, ID, "bob", "editor", &bytes);
+    let mut viewer = Live::join(addr, ID, "victor", "viewer", &bytes);
+    assert_eq!(viewer.client.role(), Some(Role::Viewer));
+
+    let first = rect_target(&alice.replica, 0);
+    conflicting_edits_of_one_shape(&mut alice, &mut bob, &mut viewer, ID, &first);
+
+    // Bob works on the second slide (the editors are not forced onto one slide), version 3.
+    let second = rect_target(&alice.replica, 1);
+    bob.submit(move_to("b-2", ID, second.clone(), 120.0));
+    step([&mut alice, &mut bob, &mut viewer], 3);
+
+    // Bob drops off; Alice keeps editing the second slide while he is away.
+    bob.hang_up();
+    alice.submit(move_to("a-2", ID, second, 150.0));
+    step([&mut alice, &mut viewer], 4);
+
+    a_viewer_cannot_write(&mut viewer, &alice, ID, 4);
+
+    // Bob reconnects with the version his replica has (3); the tail brings him to 4.
+    bob.reconnect(addr, ID, "editor");
+    assert_eq!(bob.replica.version, 4, "the journal tail caught the replica up");
+    assert_eq!(rect_x(bob.replica.doc(), 1), 150.0, "the missed edit is in the caught-up document");
+
+    // All three settle on one version and one document; the viewer only read.
+    assert_converged([&alice, &bob, &viewer], 4);
+    assert_committed_gate_deck(addr, ID, 4, 300.0, 150.0);
+    handle.shutdown();
+}
+
 // ---------------------------------------------------------------- LibreOffice gate
 
 /// The file the service produces for a 120-slide room with media, through the real commit
@@ -244,7 +541,7 @@ fn committed_by_the_service() -> Vec<u8> {
     let initial = deckcraft_pptx::export(&doc).expect("export the initial deck");
     let handle = deckcraft_collab_server::serve_ephemeral(deckcraft_collab_server::Config::for_tests(SECRET, "service-token")).expect("server");
     let addr = handle.addr;
-    create(addr, &initial);
+    create(addr, "gate", &initial);
     let mut editor = join_socket(addr, "gate", "alice", "editor");
     insert_slide(&mut editor, "gate");
     let (status, body) = http(addr, "POST", "/v1/sessions/gate/commit", Some("service-token"), "");
@@ -256,11 +553,11 @@ fn committed_by_the_service() -> Vec<u8> {
     bytes
 }
 
-fn create(addr: SocketAddr, initial: &[u8]) {
+fn create(addr: SocketAddr, id: &str, initial: &[u8]) {
     let body = json!({
-        "fileId": "gate",
+        "fileId": id,
         "app": "deckcraft",
-        "initialName": "gate.pptx",
+        "initialName": format!("{id}.pptx"),
         "initialBytes": base64::engine::general_purpose::STANDARD.encode(initial),
     })
     .to_string();
