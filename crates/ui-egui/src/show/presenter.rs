@@ -1,7 +1,7 @@
 use super::keys::keyboard;
-use super::render::{fit, next_rect};
+use super::render::{below_live, fit, next_rect, render_overlay, render_threads};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, unit_uv, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, live_state, pos2, theme, vec2};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, ShapeId, Show, Stroke, Ui, live_state, pos2, theme, vec2};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -91,6 +91,7 @@ pub(super) fn presenter_window(
     now: f64,
     keep: &mut bool,
     camera: Option<&egui::TextureHandle>,
+    gif_times: &[(ShapeId, f64)],
 ) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
@@ -246,6 +247,23 @@ pub(super) fn presenter_window(
                         let clipped = ui.painter().with_clip_rect(cr);
                         let frame = crate::camera::ShowFrame { srect: cr, uv: unit_uv(), hidden: &[], state: &state };
                         crate::camera::paint_show(&clipped, camera, doc, cur, frame);
+                        // Shapes above a Cameo stay visible, as on the audience screen: the same
+                        // overlay, rendered at this preview's pixel size over the live frame.
+                        let live = crate::camera::cameo_ids(doc, cur);
+                        let skip = below_live(doc, cur, &live);
+                        if !skip.is_empty() {
+                            // `t` here is the slide texture: the animation clock is recomputed.
+                            let step_t = if show.state.playing { now - show.step_start } else { 0.0 };
+                            let ppp = ui.ctx().pixels_per_point();
+                            let size = crate::textures::fit_size(
+                                ((cr.width() * ppp).round().max(1.0) as u32, (cr.height() * ppp).round().max(1.0) as u32),
+                                crate::textures::max_side(ui.ctx()),
+                            );
+                            let ci =
+                                render_overlay(doc, cur, tl.clone(), step, step_t, size, vec![], &skip, gif_times, render_threads(), &plays, &stamps);
+                            let tex = crate::textures::upload(ui.ctx(), "presenter-camera-overlay", ci);
+                            ui.painter().image(tex.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                        }
                     }
                 }
                 if let Some(z) = show.zoom {

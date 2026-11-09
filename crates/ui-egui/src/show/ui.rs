@@ -844,7 +844,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     }
 }
 
-fn draw_extras(app: &SlideApp, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
@@ -865,7 +865,9 @@ fn draw_extras(app: &SlideApp, show: &mut Show, f: &Fr, painter: &egui::Painter,
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep, app.camera.texture());
+        let gifs = app.media.gifs(f.doc_uid, doc, show.state.slide, now, &app.session.gif_paused);
+        let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
+        presenter_window(ctx, show, doc, now, &mut out.keep, app.camera.texture(), &times);
     }
 }
 

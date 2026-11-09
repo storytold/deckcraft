@@ -46,8 +46,8 @@ pub struct CameraHost {
     wanted: bool,
     /// The editor overlay of shapes stacked above a Cameo (repainted over the live frame so the
     /// preview keeps slide z-order): slide identity, texture size, skipped ids, grayscale, GIF
-    /// frames, texture.
-    over: Option<(usize, (u32, u32), Vec<ShapeId>, bool, u64, TextureHandle)>,
+    /// frames, edited shape, texture.
+    over: Option<(usize, (u32, u32), Vec<ShapeId>, bool, u64, Option<ShapeId>, TextureHandle)>,
     /// A one-shot explanation for the status bar, taken by the logic pass.
     notice: Option<String>,
 }
@@ -351,10 +351,11 @@ pub(crate) fn paint_preview(app: &mut SlideApp, painter: &egui::Painter, xf: cra
         return;
     }
     let Some(texture) = app.camera.texture().cloned() else { return };
-    let (doc, idx, ptr) = match app.session.active() {
+    let (doc, idx, ptr, editing) = match app.session.active() {
         Some(d) if d.selection.target == deckcraft_engine::Target::Slides => {
             let ptr = d.doc.slides.get(d.selection.slide).map(|s| std::sync::Arc::as_ptr(s) as usize);
-            (d.doc.clone(), d.selection.slide, ptr)
+            let editing = d.selection.text.as_ref().filter(|t| !t.notes).map(|t| t.shape);
+            (d.doc.clone(), d.selection.slide, ptr, editing)
         }
         _ => return,
     };
@@ -363,7 +364,7 @@ pub(crate) fn paint_preview(app: &mut SlideApp, painter: &egui::Painter, xf: cra
     for (shape, x) in cameo_boxes(&slide.shapes) {
         paint_cameo(painter, &texture, shape, x, 1.0, &|p| xf.to_screen(p));
     }
-    paint_preview_overlay(app, painter, xf, &doc, idx, ptr, ctx);
+    paint_preview_overlay(app, OverlayPaint { painter, xf, doc: &doc, idx, ptr, editing, ctx });
 }
 
 /// Repaint the shapes stacked above a Cameo over its live frame, so the editor preview keeps
@@ -372,15 +373,18 @@ pub(crate) fn paint_preview(app: &mut SlideApp, painter: &egui::Painter, xf: cra
 /// shapes with everything at and below the lowest live Cameo skipped, at the slide texture's
 /// pixel size so it lands texel-aligned, and is cached on the slide identity, size and skip list
 /// (re-rendered while the animation preview moves shapes).
-fn paint_preview_overlay(
-    app: &mut SlideApp,
-    painter: &egui::Painter,
+struct OverlayPaint<'a> {
+    painter: &'a egui::Painter,
     xf: crate::canvas::Xf,
-    doc: &Presentation,
+    doc: &'a Presentation,
     idx: usize,
     ptr: usize,
-    ctx: &egui::Context,
-) {
+    editing: Option<ShapeId>,
+    ctx: &'a egui::Context,
+}
+
+fn paint_preview_overlay(app: &mut SlideApp, o: OverlayPaint<'_>) {
+    let OverlayPaint { painter, xf, doc, idx, ptr, editing, ctx } = o;
     let live: Vec<ShapeId> = cameo_boxes(&doc.slides[idx].shapes).into_iter().map(|(s, _)| s.id).collect();
     let skip = crate::show::render::below_live(doc, idx, &live);
     if skip.is_empty() {
@@ -401,7 +405,9 @@ fn paint_preview_overlay(
     let gifs = app.session.active().map(|d| app.media.gifs(d.uid, &d.doc, idx, now, &app.session.gif_paused)).unwrap_or_default();
     let times: Vec<(ShapeId, f64)> = gifs.iter().map(|g| (g.id, g.t)).collect();
     let gkey = crate::media::gif_key(&gifs);
-    let fresh = app.camera.over.as_ref().is_some_and(|o| o.0 == ptr && o.1 == size && o.2 == skip && o.3 == gray && o.4 == gkey);
+    // The shape being edited draws its text through the UI, not the texture: the overlay must
+    // skip it exactly when the slide texture does, or stale text doubles under the live edit.
+    let fresh = app.camera.over.as_ref().is_some_and(|o| o.0 == ptr && o.1 == size && o.2 == skip && o.3 == gray && o.4 == gkey && o.5 == editing);
     if !fresh || moving {
         let frame = app.anim_preview_draw();
         let state_of = |id: ShapeId| frame.as_ref().map(|(tl, t)| crate::canvas::preview::shape_state_at(tl, id, *t)).unwrap_or_default();
@@ -412,25 +418,27 @@ fn paint_preview_overlay(
             size: Some(size),
             state,
             skip: &skip,
+            editing_text: editing,
             gif_times: &times,
             threads: crate::show::render::render_threads(),
             ..Default::default()
         };
         let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
         let ci = crate::textures::to_color_image(&img, gray);
-        let same_slot = app.camera.over.as_ref().is_some_and(|o| o.0 == ptr && o.1 == size && o.2 == skip && o.3 == gray && o.4 == gkey);
+        let same_slot =
+            app.camera.over.as_ref().is_some_and(|o| o.0 == ptr && o.1 == size && o.2 == skip && o.3 == gray && o.4 == gkey && o.5 == editing);
         if same_slot {
-            if let Some((_, _, _, _, _, tex)) = app.camera.over.as_mut() {
+            if let Some((_, _, _, _, _, _, tex)) = app.camera.over.as_mut() {
                 crate::textures::replace_editor(ctx, tex, ci);
             }
         } else {
-            app.camera.over = Some((ptr, size, skip.clone(), gray, gkey, crate::textures::upload_editor(ctx, "cameo-overlay", ci)));
+            app.camera.over = Some((ptr, size, skip.clone(), gray, gkey, editing, crate::textures::upload_editor(ctx, "cameo-overlay", ci)));
         }
     }
     if app.camera.over.is_some() {
         let w = doc.slide_size.width as f32 * xf.scale;
         let h = doc.slide_size.height as f32 * xf.scale;
-        let tex = app.camera.over.as_ref().map(|(_, _, _, _, _, t)| t.clone());
+        let tex = app.camera.over.as_ref().map(|(_, _, _, _, _, _, t)| t.clone());
         if let Some(tex) = tex {
             painter.image(tex.id(), Rect::from_min_size(xf.origin, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
@@ -964,8 +972,7 @@ mod tests {
                     .execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [0.0, 0.0, 200.0, 200.0]}))
                     .expect("a shape above the Cameo");
             }
-            let mut services = crate::Services::default();
-            services.camera_in = Some(Box::new(FakeCamera::default().sized(64, 48)));
+            let services = crate::Services { camera_in: Some(Box::new(FakeCamera::default().sized(64, 48))), ..crate::Services::default() };
             let mut app = SlideApp::new(session, services);
             app.camera.set_preview(true);
             let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(

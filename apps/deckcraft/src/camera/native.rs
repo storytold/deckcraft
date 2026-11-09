@@ -51,21 +51,28 @@ impl SystemCamera {
     }
 }
 
+/// Hand one `Start` to the worker and take the session's event channel. Fails only when the
+/// worker thread has exited; the caller decides whether to respawn it.
+fn send_start(commands: &Sender<Command>, request: &CameraRequest) -> Result<CameraSession, ()> {
+    let (events, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
+    commands.send(Command::Start(request.clone(), events)).map_err(|_| ())?;
+    Ok(CameraSession { started_at: web_time::Instant::now(), events: receiver })
+}
+
 impl CameraIn for SystemCamera {
     fn start(&mut self, request: &CameraRequest) -> Result<CameraSession, CameraError> {
-        let (events, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
         let commands = self.ensure_worker()?;
         // A failed send means the worker thread has exited (a panic in the capture backend):
-        // drop the dead sender so the retry below spawns a new worker instead of failing every
-        // later `start` until DeckCraft restarts.
-        if commands.send(Command::Start(request.clone(), events)).is_err() {
-            self.commands = None;
-            let commands = self.ensure_worker()?;
-            let (events, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
-            commands.send(Command::Start(request.clone(), events)).map_err(|_| CameraError::Backend("the camera worker stopped".into()))?;
-            return Ok(CameraSession { started_at: web_time::Instant::now(), events: receiver });
+        // drop the dead sender so the retry spawns a new worker instead of failing every later
+        // `start` until DeckCraft restarts.
+        match send_start(&commands, request) {
+            Ok(session) => Ok(session),
+            Err(()) => {
+                self.commands = None;
+                let commands = self.ensure_worker()?;
+                send_start(&commands, request).map_err(|_| CameraError::Backend("the camera worker stopped".into()))
+            }
         }
-        Ok(CameraSession { started_at: web_time::Instant::now(), events: receiver })
     }
 
     fn stop(&mut self) {
@@ -289,7 +296,7 @@ fn stream_config(request: &CameraRequest) -> cameras::StreamConfig {
     let format = request.format_or_default();
     cameras::StreamConfig {
         resolution: cameras::Resolution { width: format.width.max(1), height: format.height.max(1) },
-        framerate: format.fps.clamp(1.0, 240.0).round() as u32,
+        framerate: if format.fps.is_finite() { format.fps.clamp(1.0, 240.0).round() as u32 } else { 30 },
         pixel_format: cameras_pixel(format.pixel_format),
     }
 }
@@ -415,14 +422,15 @@ mod tests {
     }
 
     #[test]
-    fn a_dead_worker_is_replaced_on_the_next_start() {
-        let mut camera = SystemCamera::default();
-        // A sender whose worker is gone: the next `start` must not reuse it.
+    fn a_dead_worker_is_replaced_without_touching_a_camera() {
+        // The failed send is reported without starting the platform camera: the retry path only
+        // respawns the worker, whose `run` loop blocks on commands until a `Start` arrives.
         let (dead, receiver) = mpsc::channel::<Command>();
         drop(receiver);
-        camera.commands = Some(dead);
-        let session = camera.start(&CameraRequest::default()).expect("a new worker serves the start");
-        drop(session);
-        camera.stop();
+        assert!(send_start(&dead, &CameraRequest::default()).is_err(), "a dead worker reports its send failure");
+        let mut camera = SystemCamera::default();
+        let commands = camera.ensure_worker().expect("a worker spawns");
+        assert!(commands.send(Command::Stop).is_ok(), "the respawned worker drains commands");
+        camera.commands = Some(commands);
     }
 }
