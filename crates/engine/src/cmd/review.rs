@@ -1312,7 +1312,9 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
     }
     match &sh.kind {
         ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
-        ShapeKind::Picture { fill } => fill.media == id,
+        // An artistic effect's original is still needed to change or remove the effect
+        // (and to write `a14:imgLayer` on export); dropping it breaks Reset Picture.
+        ShapeKind::Picture { fill } => fill.media == id || fill.artistic.as_ref().is_some_and(|a| a.original == id),
         // A part and a narration clip can share one media item when their bytes are identical:
         // both must count as users, or cleanup drops the part's bytes with the clip.
         ShapeKind::Opaque { preview, parts, .. } => *preview == Some(id) || parts.iter().any(|(_, _, media)| *media == id),
@@ -2115,6 +2117,76 @@ mod tests {
         .unwrap();
         s.execute("show.clearRecording", &json!({"scope": "current", "index": 0})).unwrap();
         assert!(s.doc().unwrap().doc.media.iter().any(|m| m.id == media), "the part still resolves to its media");
+    }
+    /// A narration poster that shares its media item with an artistic picture's original must not
+    /// take that item when the recording is cleared: Reset Picture still needs it to restore or
+    /// re-apply the effect, and PPTX export writes `a14:imgLayer` from it. Second half: the same
+    /// cleanup drops the narration's bytes when no picture references them.
+    #[test]
+    fn clearing_recorded_narration_keeps_an_artistic_original_that_shares_its_media() {
+        use deckcraft_model::style::Artistic;
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let media = {
+            let st = s.doc().unwrap();
+            st.doc.slides[0]
+                .shapes
+                .iter()
+                .find_map(|sh| match &sh.kind {
+                    ShapeKind::Media(c) if c.narration => Some(c.media),
+                    _ => None,
+                })
+                .expect("narration clip")
+        };
+        // An artistic picture whose effect original is the narration's own media item — the
+        // sharing the cleanup must survive, as in the report. A distinct processed copy
+        // keeps the sharing exact (`add_media` dedups identical bytes).
+        let shown = s
+            .edit(|doc, _| {
+                let id = doc.alloc_id().ok_or_else(|| crate::cmd::bad("test", "no id"))?;
+                let shown = doc.add_media("effect.png", "image/png", vec![0x89, 0x50, 0x4E, 0x47]).expect("effect bytes");
+                let sl = std::sync::Arc::make_mut(&mut doc.slides[0]);
+                sl.shapes.push(deckcraft_model::Shape {
+                    id: ShapeId(id),
+                    name: "Artistic picture".into(),
+                    xfrm: Some(deckcraft_geom::Xfrm::new(10.0, 10.0, 100.0, 100.0)),
+                    kind: ShapeKind::Picture {
+                        fill: deckcraft_model::style::PictureFill {
+                            media: shown,
+                            artistic: Some(Artistic { effect: "artisticBlur".into(), original: media }),
+                            ..Default::default()
+                        },
+                    },
+                    ..Default::default()
+                });
+                Ok(shown)
+            })
+            .unwrap();
+        s.execute("show.clearRecording", &json!({"scope": "current", "index": 0})).unwrap();
+        let doc = s.doc().unwrap().doc.clone();
+        assert!(doc.media.iter().any(|m| m.id == media), "the artistic original still resolves to its media");
+        assert!(doc.media.iter().any(|m| m.id == shown), "the picture's processed copy stays");
+        // Without the picture the same cleanup drops the narration's bytes: remove the picture,
+        // re-add narration, and clear again.
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let media2 = s.doc().unwrap().doc.slides[0]
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Media(c) if c.narration => Some(c.media),
+                _ => None,
+            })
+            .expect("second narration clip");
+        s.edit(|doc, _| {
+            let sl = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            sl.shapes.retain(|sh| !matches!(&sh.kind, ShapeKind::Picture { .. }));
+            Ok(())
+        })
+        .unwrap();
+        s.execute("show.clearRecording", &json!({"scope": "current", "index": 0})).unwrap();
+        assert!(s.doc().unwrap().doc.media.iter().all(|m| m.id != media2), "an unused narration item is still dropped");
     }
 
     #[test]
