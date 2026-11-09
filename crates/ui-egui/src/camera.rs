@@ -45,8 +45,8 @@ pub struct CameraHost {
     /// The last value of `preview || show_wants` a start/stop acted on.
     wanted: bool,
     /// The editor overlay of shapes stacked above a Cameo (repainted over the live frame so the
-    /// preview keeps slide z-order): slide identity, texture size, skipped ids, and the texture.
-    over: Option<(usize, (u32, u32), Vec<ShapeId>, TextureHandle)>,
+    /// preview keeps slide z-order): slide identity, texture size, skipped ids, grayscale, texture.
+    over: Option<(usize, (u32, u32), Vec<ShapeId>, bool, TextureHandle)>,
     /// A one-shot explanation for the status bar, taken by the logic pass.
     notice: Option<String>,
 }
@@ -390,7 +390,8 @@ fn paint_preview_overlay(
     let Some(rect) = app.slide_rect else { return };
     let ppp = ctx.pixels_per_point();
     let size = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
-    let fresh = app.camera.over.as_ref().is_some_and(|(p, s, sk, _)| *p == ptr && *s == size && *sk == skip);
+    let gray = app.ui.grayscale;
+    let fresh = app.camera.over.as_ref().is_some_and(|(p, s, sk, g, _)| *p == ptr && *s == size && *sk == skip && *g == gray);
     if !fresh || moving {
         let frame = app.anim_preview_draw();
         let state_of = |id: ShapeId| frame.as_ref().map(|(tl, t)| crate::canvas::preview::shape_state_at(tl, id, *t)).unwrap_or_default();
@@ -405,20 +406,20 @@ fn paint_preview_overlay(
             ..Default::default()
         };
         let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
-        let ci = crate::textures::to_color_image(&img, false);
-        let same_slot = app.camera.over.as_ref().is_some_and(|(p, s, sk, _)| *p == ptr && *s == size && *sk == skip);
+        let ci = crate::textures::to_color_image(&img, gray);
+        let same_slot = app.camera.over.as_ref().is_some_and(|(p, s, sk, g, _)| *p == ptr && *s == size && *sk == skip && *g == gray);
         if same_slot {
-            if let Some((_, _, _, tex)) = app.camera.over.as_mut() {
+            if let Some((_, _, _, _, tex)) = app.camera.over.as_mut() {
                 crate::textures::replace_editor(ctx, tex, ci);
             }
         } else {
-            app.camera.over = Some((ptr, size, skip.clone(), crate::textures::upload_editor(ctx, "cameo-overlay", ci)));
+            app.camera.over = Some((ptr, size, skip.clone(), gray, crate::textures::upload_editor(ctx, "cameo-overlay", ci)));
         }
     }
     if app.camera.over.is_some() {
         let w = doc.slide_size.width as f32 * xf.scale;
         let h = doc.slide_size.height as f32 * xf.scale;
-        let tex = app.camera.over.as_ref().map(|(_, _, _, t)| t.clone());
+        let tex = app.camera.over.as_ref().map(|(_, _, _, _, t)| t.clone());
         if let Some(tex) = tex {
             painter.image(tex.id(), Rect::from_min_size(xf.origin, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
