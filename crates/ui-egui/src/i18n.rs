@@ -191,6 +191,10 @@ pub fn choice_label(lang: Resolved, choice: LanguageChoice) -> &'static str {
 }
 
 /// `(key, English, Traditional Chinese)`. Keys are sorted for the binary search in [`text`].
+///
+/// `tab.home` is the ribbon tab, which PowerPoint in Taiwan calls 「常用」. `nav.home` and
+/// `qat.home` are the Home button (the Backstage/file start and the toolbar's Home command), which
+/// is 「首頁」; the two mean different destinations even though their English label matches.
 const CATALOG: &[(&str, &str, &str)] = &[
     ("nav.about", "About", "關於"),
     ("nav.back", "Back", "返回"),
@@ -415,8 +419,9 @@ mod tests {
             assert!(!traditional.is_empty(), "{key} has no Traditional Chinese text");
             assert_eq!(placeholders(english), placeholders(traditional), "{key} changes its placeholders");
         }
-        // The shell is deliberately small; a large drop means a call site lost its row.
-        assert!(CATALOG.len() >= 70, "the shell catalog shrank to {} strings", CATALOG.len());
+        // The shell is deliberately small; a large drop means a call site lost its row, and the
+        // count matches the 87 strings this PR adds.
+        assert!(CATALOG.len() >= 87, "the shell catalog shrank to {} strings", CATALOG.len());
     }
 
     #[test]

@@ -1344,7 +1344,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.language();
     ui.label(egui::RichText::new(crate::i18n::text(lang, "pref.general")).font(theme::bold(13.0)));
     ui.horizontal(|ui| {
-        ui.label(crate::i18n::text(lang, "pref.language"));
+        let language_label = ui.label(crate::i18n::text(lang, "pref.language"));
         let current = app.ui.language;
         let selected = crate::i18n::choice_label(lang, current);
         let mut chosen = None;
@@ -1361,11 +1361,16 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
             }
         });
-        combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::text(lang, "pref.language")));
+        let _ = combo.response.labelled_by(language_label.id);
         if let Some(choice) = chosen {
             let _ = app.run("app.language", json!({ "language": choice.code() }));
         }
     });
+    // The disabled entry's tooltip is hover-only; say the same thing in the dialog so keyboard
+    // and touch users can read why Traditional Chinese is unavailable.
+    if !crate::i18n::choice_available(crate::i18n::LanguageChoice::TraditionalChinese) {
+        ui.label(egui::RichText::new("Traditional Chinese needs an installed system CJK font; the web build bundles none.").weak());
+    }
     let mut dark = app.ui.brightness == theme::Brightness::Dark;
     if ui.checkbox(&mut dark, crate::i18n::text(lang, "pref.dark")).changed() {
         let _ = app.run("view.dark", json!({"on": dark}));

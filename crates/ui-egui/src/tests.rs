@@ -761,6 +761,19 @@ fn an_older_ui_state_without_a_language_stays_on_system() {
     assert_eq!(unknown.language, i18n::LanguageChoice::System);
 }
 
+/// `app.language` reports its argument errors and returns the canonical codes it saved.
+#[test]
+fn the_language_command_reports_missing_and_unknown_codes() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    assert_eq!(app.run("app.language", json!({})).unwrap_err(), "missing `language`");
+    assert_eq!(app.run("app.language", json!({"language": "ja"})).unwrap_err(), "unknown language `ja`; use system, en or zh-Hant");
+    assert_eq!(app.ui.language, i18n::LanguageChoice::System, "a rejected code changes nothing");
+    let saved = app.run("app.language", json!({"language": "zh-HK"})).unwrap();
+    assert_eq!(saved["language"], "zh-Hant");
+    assert_eq!(saved["resolved"], "zh-Hant");
+    assert_eq!(app.ui.language, i18n::LanguageChoice::TraditionalChinese);
+}
+
 /// About dialog: Close and Cancel each close the dialog.
 #[test]
 fn about_dialog_close_and_cancel_close_it() {
