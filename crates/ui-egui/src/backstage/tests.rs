@@ -393,6 +393,64 @@ fn ctrl_w_asks_before_closing_unsaved_changes() {
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
 }
 
+/// Framed by a page that keeps the files (`?host=parent`), the Close prompt's Save is a real save:
+/// when the page doesn't get the file the presentation stays open with its changes, and when it
+/// does the presentation closes. (A plain browser download closes either way.)
+#[test]
+fn host_close_prompt_keeps_the_presentation_when_the_save_fails() {
+    for fail in [true, false] {
+        let services = Services {
+            host_save: Some(Box::new(move |_: &str, _: &[u8], _: bool| if fail { Err("the page is gone".into()) } else { Ok(()) })),
+            download: Some(Box::new(|_: &str, _: &[u8]| {})),
+            ..Default::default()
+        };
+        let mut h = harness(SlideApp::new(Session::with_new(), services));
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::W);
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+        // Enter is the prompt's Save.
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none(), "fail={fail}");
+        let open = h.state().session.documents().len();
+        assert_eq!(open, usize::from(fail), "fail={fail}: open presentations");
+        if fail {
+            assert!(h.state().session.active().unwrap().is_dirty());
+        }
+    }
+}
+
+/// Framed by a page that keeps the files, Save As › Save under the presentation's own name goes
+/// back to the slide once the page has the file. The bug this prevents: that save leaves the
+/// file and the dirty flag as they were, so the Save As page stayed open and a second click sent
+/// the file again.
+#[test]
+fn host_save_as_under_the_same_name_returns_to_the_slide() {
+    let got: Rc<RefCell<Vec<(String, bool)>>> = Default::default();
+    let saves = got.clone();
+    let services = Services {
+        host_save: Some(Box::new(move |name: &str, _: &[u8], save_as: bool| {
+            saves.borrow_mut().push((name.to_string(), save_as));
+            Ok(())
+        })),
+        download: Some(Box::new(|_: &str, _: &[u8]| {})),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::new(), services);
+    app.start_for_host().unwrap();
+    let deck = deckcraft_engine::cmd::file::save_bytes(&Session::with_new().doc().unwrap().doc, "pptx").unwrap();
+    app.open_from_host(Some("deck.pptx"), &deck);
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*got.borrow(), [("deck.pptx".to_string(), true)]);
+    assert!(h.state().backstage.is_none(), "the save returns to the slide");
+}
+
 /// Info shows the presentation's counts and properties, and edits them through file.properties.
 #[test]
 fn info_shows_and_edits_the_properties() {

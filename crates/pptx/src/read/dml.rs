@@ -322,6 +322,15 @@ pub fn effects(el: &El) -> Effects {
                     end_alpha: pct(e, "endA").unwrap_or(0.0),
                     end_pos: pct(e, "endPos").unwrap_or(1.0),
                     dist: pt(e, "dist").unwrap_or(0.0),
+                    st_pos: e.i64("stPos").and_then(|v| i32::try_from(v).ok()),
+                    dir: e.i64("dir").and_then(|v| i32::try_from(v).ok()),
+                    fade_dir: e.i64("fadeDir").and_then(|v| i32::try_from(v).ok()),
+                    sx: e.i64("sx").and_then(|v| i32::try_from(v).ok()),
+                    sy: e.i64("sy").and_then(|v| i32::try_from(v).ok()),
+                    kx: e.i64("kx").and_then(|v| i32::try_from(v).ok()),
+                    ky: e.i64("ky").and_then(|v| i32::try_from(v).ok()),
+                    align: e.attr("algn").filter(|v| matches!(*v, "tl" | "t" | "tr" | "l" | "ctr" | "r" | "bl" | "b" | "br")).map(str::to_owned),
+                    rotate_with_shape: e.bool("rotWithShape"),
                 })
             }
             _ => {}
@@ -368,6 +377,9 @@ pub fn body_pr(b: &El) -> BodyProps {
         rtl_col: b.bool("rtlCol"),
         upright: b.bool("upright"),
         space_first_last: b.bool("spcFirstLastPara"),
+        compat_ln_spc: b.bool("compatLnSpc"),
+        vert_overflow: b.attr("vertOverflow").and_then(deckcraft_model::text::TextOverflow::from_xml),
+        horz_overflow: b.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml),
         ..Default::default()
     };
     for e in b.elements() {
@@ -553,6 +565,7 @@ fn typeface(e: &El) -> Option<String> {
 pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
     let mut p = RunProps {
         lang: r.attr("lang").map(String::from),
+        alt_lang: r.attr("altLang").map(|lang| lang.chars().take(256).collect()),
         size: r.f64("sz").map(|s| (s / 100.0).clamp(1.0, 4000.0)),
         bold: r.bool("b"),
         italic: r.bool("i"),
@@ -571,6 +584,7 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
         spacing: r.f64("spc").map(|s| (s / 100.0).clamp(-4000.0, 4000.0)),
         kern: r.f64("kern").map(|k| (k / 100.0).clamp(0.0, 4000.0)),
         no_proof: r.bool("noProof"),
+        normalize_height: r.bool("normalizeH"),
         ..Default::default()
     };
     for e in r.elements() {
@@ -615,7 +629,19 @@ pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
 }
 
 pub fn text_body(imp: &mut Imp, part: &Part, tx: &El) -> TextBody {
-    let body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    let mut body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    if let Some(b) = tx.child("bodyPr") {
+        let mut raw3d = String::new();
+        if let Some(sc) = b.child("scene3d") {
+            raw3d.push_str(&part.keep_inner(sc));
+        }
+        if let Some(sp) = b.child("sp3d").or_else(|| b.child("flatTx")) {
+            raw3d.push_str(&part.keep_inner(sp));
+        }
+        if !raw3d.is_empty() && raw3d.len() <= 64 * 1024 {
+            body.raw3d = Some(raw3d);
+        }
+    }
     let list_style = tx.child("lstStyle").map(|l| list_style(imp, part, l)).unwrap_or_default();
     let paragraphs = tx.children_named("p").take(100_000).map(|p| paragraph(imp, part, p)).collect();
     TextBody { body, list_style, paragraphs }
@@ -650,12 +676,22 @@ fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
 /// Appends an Office Math (a14:m) run: its plain text and its OMML.
 fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
     if para.runs.len() < MAX_PARAGRAPH_RUNS {
-        let mut text = String::new();
-        let mut ts = vec![];
-        e.find_all("t", &mut ts);
-        for t in ts {
-            text.push_str(&t.text());
+        // The text of the outermost `t` elements: a `t` nested in another is already part of
+        // the outer one's text, and taking it again would copy it once per nesting level.
+        fn outer_t(e: &El, depth: usize, text: &mut String) {
+            if depth > crate::xml::MAX_DEPTH {
+                return;
+            }
+            for c in e.elements() {
+                if c.is("t") {
+                    text.push_str(&c.text());
+                } else {
+                    outer_t(c, depth + 1, text);
+                }
+            }
         }
+        let mut text = String::new();
+        outer_t(e, 0, &mut text);
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
         para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
     }
@@ -699,6 +735,17 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
 mod tests {
     use super::*;
     use crate::xml::parse;
+
+    #[test]
+    fn nested_math_text_is_taken_once() {
+        // 200 `m:t` nested in each other around one word: the word, not 200 copies of it.
+        let x = format!(r#"<a14:m xmlns:a14="a" xmlns:m="m"><m:oMath>{}word{}</m:oMath></a14:m>"#, "<m:t>".repeat(200), "</m:t>".repeat(200));
+        let d = parse(x.as_bytes()).unwrap();
+        let part = Part { name: "ppt/slides/slide1.xml".into(), rels: Default::default(), ns: vec![], inner_ns: vec![] };
+        let mut para = Paragraph::default();
+        push_math_run(&mut para, &part, &d.root);
+        assert_eq!(para.runs[0].text, "word");
+    }
 
     #[test]
     fn colors_and_transforms() {
