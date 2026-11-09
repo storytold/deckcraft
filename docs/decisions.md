@@ -3,8 +3,9 @@
 > **Last reviewed:** 2026-11-07 · **Last updated:** 2026-11-07 · **Change:** created
 
 The choices behind Slide Show ▸ Captions & Subtitles (#1811), recorded so a later change can see
-what was weighed. The feature and its numbers are in [captions.md](captions.md); the model policy
-the whole batch shares is in the maintainer's `MODEL-POLICY.md`.
+what was weighed. The feature and its numbers are in [captions.md](captions.md); the licence
+policy the whole batch shares is [AGENTS.md](../AGENTS.md#licence-allowlist), and the model's own
+provenance is recorded in [NOTICE](../NOTICE) and in `model::whisper_tiny`.
 
 ## The engine: Whisper tiny through candle
 
@@ -12,7 +13,7 @@ the whole batch shares is in the maintainer's `MODEL-POLICY.md`.
 
 - Offline and permissive. Whisper's weights are Apache-2.0 (the model card at the pinned
   revision); candle is `MIT OR Apache-2.0`; tokenizers and
-  cpal are Apache-2.0. All are inside the shared licence allowlist. No cloud service, no account,
+  cpal are Apache-2.0. All are inside the [shared licence allowlist](../AGENTS.md#licence-allowlist). No cloud service, no account,
   no network call during inference.
 - Pure Rust, no `unsafe`. A binding to whisper.cpp would drag C/C++ and an FFI boundary into a
   workspace that forbids `unsafe`; candle is Rust and the workspace lints hold.
@@ -82,7 +83,7 @@ host-reported `Session::subtitle_status`. Consequences:
 ## Settings are per user, not per deck
 
 `Prefs::subtitles` (in the app's `prefs.json`) holds the on switch, spoken and subtitle language,
-microphone, position and text size. Reasons:
+microphone, position, text size, maximum lines and the processor (accelerator). Reasons:
 
 - They describe the room and the machine: which microphone is plugged in, which language the
   presenter speaks, where the caption fits on this projector. A deck shown on another computer

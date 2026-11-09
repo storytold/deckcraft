@@ -35,17 +35,20 @@ The feature is one row of [slideshow-parity.md](slideshow-parity.md); the choice
 Two paths, both supported:
 
 1. **In the app.** Slide Show ▸ Subtitle Settings ▸ **Download**. The dialog shows the source,
-   size, licence and hashes; the desktop host fetches the files over HTTPS (`ureq`) and reports
-   progress. Each file is written as `<name>.part`, checked against the manifest's size and
-   SHA-256, and only then renamed, so an interrupted download never looks installed. A
-   `manifest.json` provenance sidecar is written beside the files when the set is complete.
+   size, licence and hashes; the desktop host fetches the files over HTTPS (`ureq`) from the
+   model hub only (a manifest URL on another host or a plain-HTTP URL is refused before any
+   request), and reports progress. Each file is written to an exclusive, process-tagged `.part`
+   file, checked against the manifest's size and SHA-256, and only then renamed, so an interrupted
+   download never looks installed and a pre-planted file or symlink is not followed. A
+   `manifest.json` provenance sidecar is written beside the files when the set is complete. The
+   download installs under the first root below; a folder chosen with **Choose Files…** is never a
+   download target.
 2. **By hand.** Put `model.safetensors`, `config.json` and `tokenizer.json` in a `whisper-tiny`
-   folder under one of the roots below, then press **Check Again**, which searches those roots.
-   Or point the app at a folder elsewhere with **Choose Files…** (pick any of the three), which
-   checks that folder immediately. A folder chosen this way is used for the current session only:
-   after a restart discovery searches the roots again, so copy the three files into one of them to
-   keep the model installed. **Check Again** always searches the roots, so it replaces a folder
-   chosen with **Choose Files…**.
+   folder under one of the roots below, then press **Check Again**, which re-checks the folder in
+   use. Or point the app at a folder elsewhere with **Choose Files…** (pick any of the three),
+   which checks that folder immediately. A folder chosen this way is used for the current session
+   only — the dialog labels it so — and after a restart discovery searches the roots again, so
+   copy the three files into one of them to keep the model installed.
 
 The model directory is resolved first hit wins, the same shape as the other Craft apps:
 
@@ -60,10 +63,11 @@ models/whisper-tiny/                                (in the source tree, for dev
 ```
 
 A missing or incomplete set disables the ribbon entry with an explanation; the show itself is
-never blocked and never panics. Discovery and show start check that the three files are present,
-not their size or SHA-256, so a file placed by hand can still enable the entry while its contents
-are wrong; the full check runs on download and when a folder is chosen with **Choose Files…**. The
-app makes no network call at start-up, on file open or when a pane opens.
+never blocked and never panics. Discovery checks presence first (cheap enough for a frame), then
+hashes every file on a worker thread; the entry is enabled only when that check reports `ready`,
+and the loader verifies size and SHA-256 again before it reads anything. The dialog shows
+"Checking the files…" while the hash runs and marks a corrupt set as corrupt, with Download
+available. The app makes no network call at start-up, on file open or when a pane opens.
 
 ## Settings
 
@@ -72,7 +76,7 @@ Settings are per user (`prefs.json`, `Prefs::subtitles`), not part of the presen
 | Setting | Values |
 |---|---|
 | Always use subtitles | off by default |
-| Spoken language | detect, or one of 16 named languages in the dialog; `show.subtitles` accepts any of Whisper's 99 language tokens |
+| Spoken language | detect, or one of 17 named languages in the dialog; `show.subtitles` accepts any of Whisper's 99 language tokens |
 | Subtitle language | the caption's language (translation is not implemented yet) |
 | Microphone | system default, or a named input device |
 | Position | bottom of slide, top of slide, below slide, above slide |
@@ -90,11 +94,12 @@ Both are ordinary engine commands, so the ribbon, the dialog, `deckcraft-cli run
 channel and MCP all use them:
 
 - `show.subtitles {on?, spoken?, subtitle?, position?, microphone?, fontSizePt?, maxLines?,
-  accelerator?}` →
-  `{on, settings, provider}`. Changes only the fields it names.
-- `show.subtitles.state {}` → `{on, settings, provider: {state, detail, model, language,
-  microphone, accelerator, capabilities}}`. `provider` is host-reported: `idle`, `starting`, `running`, `failed` or
-  `stopped`.
+  accelerator?}` → `{settings, provider}`. Changes only the fields it names; a supplied field of
+  the wrong type is a `bad` error, an empty `microphone` is refused (`null` selects the system
+  default), and a language tag outside Whisper's list is refused.
+- `show.subtitles.state {}` → `{settings, provider: {state, detail?, model?, language?,
+  microphone?, accelerator?, capabilities?}}`. Takes no parameters (a non-empty object is an
+  error). `provider` is host-reported: `idle`, `starting`, `running`, `failed` or `stopped`.
 
 ## Processors and the accelerator seam
 
@@ -123,11 +128,13 @@ library, so a machine with OpenVINO installed but no backend behaves exactly lik
 
 ## How it behaves
 
-- `crates/asr-candle` owns a worker thread: it loads the model, runs one silent warm-up decode,
-  opens the microphone (cpal), and keeps the last 30 seconds of 16 kHz mono audio (its own
-  downmix and resampler). After every 0.5 s of new audio it encodes that window and decodes
-  greedily with no timestamps, so a partial appears as fast as a decode finishes (2–3 s in the
-  quiet measurement below; the capture queue holds up to 60 s at 48 kHz stereo and drops the
+- `crates/asr-candle` owns a worker thread: it verifies every model file against the manifest
+  (size and SHA-256) before reading it, runs one silent warm-up decode, opens the microphone
+  (cpal), and keeps the last 30 seconds of 16 kHz mono audio (its own downmix and resampler). It
+  encodes that window and decodes greedily with no timestamps, but never starts a decode sooner
+  than 2 s after the previous one finished: a decode takes 1.2–2.7 s here, so a shorter floor
+  would build a backlog and saturate the CPU. A partial appears when a decode finishes (2–3 s in
+  the quiet measurement below; the capture queue holds up to 60 s at 48 kHz stereo and drops the
   oldest audio when a longer decode outpaces it).
   A line becomes final after ~0.9 s without speech; the window then starts fresh, and while no
   speech has been heard since the last final line the worker keeps only the newest second instead
@@ -136,30 +143,31 @@ library, so a machine with OpenVINO installed but no backend behaves exactly lik
 - The UI thread does not wait for inference while captions run: `crates/ui-egui/src/subtitles.rs`
   polls the channel once a frame, the show draws the caption after the slide (above its media
   controls, below the pen and the bars), and asks egui for a repaint every 120 ms while the stream
-  is running or a download is in progress. Stopping does wait: `stop` joins the worker, so ending
-  the show or turning subtitles off can block the UI thread for as long as the decode already in
-  flight (2–3 s on an idle machine, up to 27 s on a loaded one, per the measurements below). A
-  worker that is still starting stops between its stages — after the load, after the warm-up, or
-  before the microphone opens — so that wait is one stage at most.
+  is running or a download is in progress. Stopping does not wait either: `stop` sets the worker's
+  flag and hands the join to a short-lived reaper thread, so ending the show or turning subtitles
+  off never blocks the UI thread for the length of the decode already in flight (2–3 s on an idle
+  machine, up to 27 s on a loaded one, per the measurements below). A worker that is still
+  starting stops between its stages — after the load, after the warm-up, or before the microphone
+  opens.
 - Captions survive slide changes; they are covered by a blank screen and by See All Slides; they
   end with the show. Ending the show, turning subtitles off, or losing the microphone stops the
-  provider, joins its thread and releases the model and the device.
+  provider and releases the model and the device; the reported status becomes `stopped` (a
+  `failed` status stays visible).
 - A provider that fails after starting (the microphone is unplugged, the model file is damaged)
   reports once in the status bar and is not restarted by itself. To retry, turn subtitles off and
   on again, change the microphone or the spoken language, or start another show; the caption's
   position, text size, line count and subtitle language do not restart the stream. A start that
   fails behaves the same way: it is reported once per show, not once per frame. The show keeps
-  running.
+  running. A completed download, or a background hash check that reports `ready`, clears the
+  failure so the same show retries.
 - The browser build has no provider (no microphone capture, no 153 MB model): the settings and the
   caption overlay compile, and the ribbon entry is disabled with an explanation.
 
 ## Measured behaviour
 
-End-to-end check on 2026-11-07, Windows x64, CPU only, release build, model
-`openai/whisper-tiny` at revision `169d4a4`:
-
-Measured on 2026-11-07, Windows x64 (one CPU, release build, model files on local disk), with
-`DECKCRAFT_WHISPER_MODEL` and `DECKCRAFT_WHISPER_WAV` set:
+Measured on 2026-11-07, Windows x64, CPU only, release build, model `openai/whisper-tiny` at
+revision `169d4a4`, model files on local disk, with `DECKCRAFT_WHISPER_MODEL` and
+`DECKCRAFT_WHISPER_WAV` set:
 
 - Load: **0.55 s** warm (1.37 s the first time after the download; the set is 153.5 MB).
 - Transcript of the 11 s recording, 30 s window (the whole utterance fits): **"And so my fellow

@@ -8,8 +8,12 @@
 //! the ribbon group set them through the `show.subtitles` command, so the control channel, the
 //! CLI and MCP can do the same.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::thread::JoinHandle;
 
 use deckcraft_asr::caption::{self, LayoutInput};
 use deckcraft_asr::{
@@ -24,6 +28,8 @@ use crate::theme;
 /// A download in progress.
 pub struct DownloadJob {
     rx: Receiver<DownloadEvent>,
+    /// Set by Cancel: progress and the result are no longer delivered to the dialog.
+    cancel: Arc<AtomicBool>,
     pub done: u64,
     pub total: u64,
 }
@@ -31,6 +37,14 @@ pub struct DownloadJob {
 enum DownloadEvent {
     Progress(u64, u64),
     Done(Result<(), String>),
+}
+
+/// One background hash check. The cancellation flag stops the worker between blocks, and the
+/// handle is joined by a reaper thread so closing the dialog never waits for 151 MB of hashing.
+struct VerifyJob {
+    stop: Arc<AtomicBool>,
+    rx: Receiver<ModelStatus>,
+    handle: Option<JoinHandle<()>>,
 }
 
 /// The subtitle host: the provider, the caption on screen and the model's state.
@@ -42,15 +56,24 @@ pub struct Subtitles {
     /// is not retried until they change again.
     applied: Option<SubtitleSettings>,
     status: ProviderStatus,
-    /// The model directory in use (found, or where a download goes).
+    /// The model directory in use (found, adopted by hand, or where a download goes).
     pub model_dir: PathBuf,
+    /// Where a download installs: always the host's install root, never a folder the user just
+    /// picked to check (a download must not write manifest names into an arbitrary folder).
+    install_dir: PathBuf,
+    /// The folder the user chose by hand for this session, when one was chosen.
+    adopted: Option<PathBuf>,
     model: ModelStatus,
     checked: bool,
     pub download: Option<DownloadJob>,
     /// Why the last download failed; the dialog shows it until the next attempt.
     pub download_error: Option<String>,
     /// A full hash check running off the UI thread; its result replaces `model`.
-    verifying: Option<Receiver<ModelStatus>>,
+    verify: Option<VerifyJob>,
+    /// The input devices, enumerated once (a device list is not free) and reused.
+    microphones: Option<Vec<String>>,
+    /// The layout the last frame drew, reused while its key is unchanged.
+    pub caption_cache: RefCell<CaptionCache>,
 }
 
 impl Default for Subtitles {
@@ -61,12 +84,22 @@ impl Default for Subtitles {
             applied: None,
             status: ProviderStatus::idle(),
             model_dir: PathBuf::new(),
+            install_dir: PathBuf::new(),
+            adopted: None,
             model: ModelStatus::default(),
             checked: false,
             download: None,
             download_error: None,
-            verifying: None,
+            verify: None,
+            microphones: None,
+            caption_cache: RefCell::new(CaptionCache::default()),
         }
+    }
+}
+
+impl Drop for Subtitles {
+    fn drop(&mut self) {
+        self.cancel_verification();
     }
 }
 
@@ -76,75 +109,150 @@ impl Subtitles {
         self.status.clone()
     }
 
-    /// Whether live subtitles can run: the model is installed (and, in the browser, never).
+    /// Whether live subtitles can run: the model is installed and hash-verified (and, in the
+    /// browser, never). Presence alone is not "installed" until the background check agrees.
     pub fn available(&mut self) -> bool {
         self.ensure_checked();
-        cfg!(not(target_arch = "wasm32")) && self.model.state == ModelState::Ready
+        self.poll_verification();
+        cfg!(not(target_arch = "wasm32")) && self.model.state == ModelState::Ready && !self.is_verifying()
     }
 
-    /// Look for the model once. Presence and size only, so this is cheap enough for a frame.
+    /// Look for the model once. Presence is cheap, but it is not proof: a present directory is
+    /// hashed off the UI thread, and the state stays unverified until the result arrives.
     pub fn ensure_checked(&mut self) {
         if self.checked {
             return;
         }
         self.checked = true;
         self.locate();
+        if self.model.state != ModelState::Absent {
+            let dir = self.model.dir.clone().unwrap_or_else(|| self.install_dir.clone());
+            self.verify_off_thread(dir);
+        }
     }
 
-    /// Look again (after a download, or the user placed files by hand).
+    /// Look again (after a download, or the user placed files by hand). Presence first, then the
+    /// full hash check off the UI thread: a present but damaged file must not report `Ready`.
     pub fn refresh(&mut self) {
         self.checked = true;
         self.locate();
+        let dir = self.model.dir.clone().unwrap_or_else(|| self.install_dir.clone());
+        if self.model.state != ModelState::Absent {
+            self.verify_off_thread(dir);
+        }
     }
 
     fn locate(&mut self) {
-        let (status, dir) = model::discover_files(&model::default_roots(), &whisper_tiny());
+        let roots = model::default_roots();
+        let manifest = whisper_tiny();
+        let (status, dir) = model::discover_files(&roots, &manifest);
+        self.install_dir = model::install_dir(&roots, &manifest);
+        self.adopted = None;
         self.model = status;
         self.model_dir = dir;
         // A pending hash check belongs to the folder it was started for; this one replaced it.
-        self.verifying = None;
+        self.cancel_verification();
     }
 
     /// Use a directory the user chose by hand: any of the model files' folder. It is reported by
-    /// presence at once and hashed off the UI thread, because the full check reads 151 MB.
+    /// presence at once and hashed off the UI thread, because the full check reads 151 MB. It does
+    /// not become the download target: a download only ever installs under the host's root.
     pub fn adopt_dir(&mut self, dir: PathBuf) {
+        self.adopted = Some(dir.clone());
+        self.verify_off_thread(dir);
+    }
+
+    /// The folder the user chose by hand this session, if any. The dialog labels it as
+    /// session-only: it is not searched for again.
+    pub fn adopted_dir(&self) -> Option<&std::path::Path> {
+        self.adopted.as_deref()
+    }
+
+    /// Check Again: re-check the folder in use (including one chosen by hand) without silently
+    /// falling back to the searched roots.
+    pub fn recheck(&mut self) {
+        self.ensure_checked();
+        let dir = if self.model_dir.as_os_str().is_empty() { self.install_dir.clone() } else { self.model_dir.clone() };
         self.verify_off_thread(dir);
     }
 
     /// Report `dir` by presence now and run the full hash check on a worker thread; the result
     /// replaces [`Self::model`] when it arrives.
     fn verify_off_thread(&mut self, dir: PathBuf) {
+        self.cancel_verification();
         self.model = model::check_dir_files(&dir, &whisper_tiny());
-        self.model_dir = dir;
+        self.model_dir = dir.clone();
         self.checked = true;
-        let dir = self.model_dir.clone();
         let (tx, rx) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
         let spawned = std::thread::Builder::new().name("deckcraft-model-check".into()).spawn(move || {
-            let _ = tx.send(model::check_dir(&dir, &whisper_tiny()));
+            if let Some(status) = model::check_dir_until(&dir, &whisper_tiny(), &worker_stop) {
+                let _ = tx.send(status);
+            }
         });
         match spawned {
-            Ok(_) => self.verifying = Some(rx),
+            Ok(handle) => self.verify = Some(VerifyJob { stop, rx, handle: Some(handle) }),
             // No thread available: pay the hash once here rather than report an unverified model.
             Err(_) => {
                 self.model = model::check_dir(&self.model_dir, &whisper_tiny());
-                self.verifying = None;
+                self.verify = None;
             }
         }
     }
 
     /// Whether a background hash check is still running (a repaint is due when it finishes).
     pub fn is_verifying(&self) -> bool {
-        self.verifying.is_some()
+        self.verify.is_some()
+    }
+
+    /// Stop the running check, if any. The worker sees the flag between hash blocks; its handle
+    /// is joined by a reaper thread so the UI thread never waits for the hash.
+    fn cancel_verification(&mut self) {
+        let Some(job) = self.verify.take() else { return };
+        job.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = job.handle {
+            let _ = std::thread::Builder::new().name("deckcraft-model-check-reaper".into()).spawn(move || {
+                let _ = handle.join();
+            });
+        }
     }
 
     /// Take the background check's result, if it has finished.
     fn poll_verification(&mut self) {
-        let Some(rx) = self.verifying.take() else { return };
-        match rx.try_recv() {
-            Ok(status) => self.model = status,
-            Err(TryRecvError::Empty) => self.verifying = Some(rx),
-            Err(TryRecvError::Disconnected) => {}
+        let Some(mut job) = self.verify.take() else { return };
+        match job.rx.try_recv() {
+            Ok(status) => {
+                self.model = status;
+                // A start that failed for a missing or damaged model is retried once the check
+                // says the model is now usable.
+                self.applied = None;
+                if let Some(handle) = job.handle.take() {
+                    let _ = handle.join();
+                }
+            }
+            Err(TryRecvError::Empty) => self.verify = Some(job),
+            Err(TryRecvError::Disconnected) => {
+                if let Some(handle) = job.handle.take() {
+                    let _ = handle.join();
+                }
+            }
         }
+    }
+
+    /// The input devices, enumerated once and cached: enumerating audio devices is not free and
+    /// the dialog asks every frame it is open.
+    pub fn microphones(&mut self) -> &[String] {
+        self.microphones.get_or_insert_with(|| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                deckcraft_asr_candle::WhisperTranscriber::microphones()
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                Vec::new()
+            }
+        })
     }
 
     /// The accelerators this build can use here (the CPU alone until an accelerator backend
@@ -177,30 +285,48 @@ impl Subtitles {
         whisper_tiny()
     }
 
-    /// Start downloading the model through the host's hook.
+    /// Start downloading the model through the host's hook. The target is always the host's
+    /// install root, never a folder the user picked just to check: a download must not write
+    /// manifest names into an arbitrary directory.
     pub fn begin_download(&mut self, hook: ModelDownloadFn) {
         if self.download.is_some() {
             return;
         }
         self.ensure_checked();
         let manifest = whisper_tiny();
-        let dir = self.model_dir.clone();
+        let dir = if self.install_dir.as_os_str().is_empty() { self.model_dir.clone() } else { self.install_dir.clone() };
         let (tx, rx) = channel::<DownloadEvent>();
         let progress = tx.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let report_cancel = cancel.clone();
         let mut report = move |done: u64, total: u64| {
-            let _ = progress.send(DownloadEvent::Progress(done, total));
+            if !report_cancel.load(Ordering::Relaxed) {
+                let _ = progress.send(DownloadEvent::Progress(done, total));
+            }
         };
+        let finish_cancel = cancel.clone();
         let spawned = std::thread::Builder::new().name("deckcraft-model-download".into()).spawn(move || {
             let result = hook(&manifest, &dir, &mut report);
-            let _ = tx.send(DownloadEvent::Done(result));
+            if !finish_cancel.load(Ordering::Relaxed) {
+                let _ = tx.send(DownloadEvent::Done(result));
+            }
         });
         match spawned {
             Ok(_) => {
                 self.download_error = None;
-                self.download = Some(DownloadJob { rx, done: 0, total: whisper_tiny().total_bytes() });
+                self.download = Some(DownloadJob { rx, cancel, done: 0, total: whisper_tiny().total_bytes() });
             }
             Err(e) => self.download_error = Some(format!("cannot start the download: {e}")),
         }
+    }
+
+    /// Stop showing a download's progress. The host's transfer is not interrupted (its hook has
+    /// no cancel seam), but nothing else is written into the dialog or verified as a success.
+    pub fn cancel_download(&mut self) {
+        if let Some(job) = self.download.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+        self.download_error = None;
     }
 
     /// Install a provider as the start path would: `start` runs, the applied settings are
@@ -258,7 +384,9 @@ impl Subtitles {
                 Ok(()) => {
                     // The downloader verified each file; hash again to be sure nothing else
                     // touched the directory. That reads 151 MB, so it runs off the UI thread.
-                    let dir = self.model_dir.clone();
+                    let dir = if self.install_dir.as_os_str().is_empty() { self.model_dir.clone() } else { self.install_dir.clone() };
+                    // A start that failed for the missing model is retried with the same show.
+                    self.applied = None;
                     self.verify_off_thread(dir);
                 }
                 Err(e) => self.download_error = Some(e),
@@ -266,10 +394,16 @@ impl Subtitles {
         }
     }
 
-    /// Stop the provider (the show ended, or subtitles were turned off). Idempotent.
+    /// Stop the provider (the show ended, or subtitles were turned off). Idempotent, and it does
+    /// not block: the provider hands the join of its worker to a background thread.
     pub fn stop(&mut self) {
         if let Some(mut provider) = self.provider.take() {
             provider.stop();
+        }
+        // The host reports the provider's state to the engine: leaving it `Running` after the
+        // show ends would tell every caller captions are still live. A failure stays visible.
+        if self.status.state.is_active() {
+            self.status = ProviderStatus::stopped();
         }
     }
 
@@ -390,9 +524,69 @@ impl SlideApp {
     }
 }
 
+/// The caption text the show may draw now: nothing when captions are off, the show ended, the
+/// grid or a blank screen is up, or the line is blank.
+pub fn caption_line<'a>(on: bool, ended: bool, grid: bool, blank: bool, caption: Option<&'a str>) -> Option<&'a str> {
+    if !on || ended || grid || blank {
+        return None;
+    }
+    caption.map(str::trim).filter(|t| !t.is_empty())
+}
+
+/// The cache key: everything that changes the layout. Text and sizes are compared, not the
+/// transcript's identity, so an unchanged frame reuses the wrapped lines.
+#[derive(Clone, PartialEq, Eq)]
+struct CaptionKey {
+    text: String,
+    font_bits: u64,
+    max_lines: usize,
+    position: deckcraft_asr::Position,
+    screen: [u64; 4],
+    slide: [u64; 4],
+}
+
+fn layout_bits(r: caption::Rect) -> [u64; 4] {
+    [r.x.to_bits(), r.y.to_bits(), r.w.to_bits(), r.h.to_bits()]
+}
+
+/// The last laid-out caption, reused while [`CaptionKey`] is unchanged.
+#[derive(Default)]
+pub struct CaptionCache {
+    key: Option<CaptionKey>,
+    layout: Option<caption::CaptionLayout>,
+}
+
+impl CaptionCache {
+    pub(crate) fn layout(&mut self, input: &LayoutInput) -> &caption::CaptionLayout {
+        let key = CaptionKey {
+            text: input.text.to_string(),
+            font_bits: input.font_pt.to_bits(),
+            max_lines: input.max_lines,
+            position: input.position,
+            screen: layout_bits(input.screen),
+            slide: layout_bits(input.slide),
+        };
+        if self.key.as_ref() != Some(&key) {
+            self.layout = Some(caption::layout(input));
+            self.key = Some(key);
+        }
+        // The key was just set (or already matched), so the layout exists.
+        self.layout.get_or_insert_with(|| caption::layout(input))
+    }
+}
+
+/// How many laid-out lines fit the capped box: the layout caps the box to the screen, so a large
+/// text size or a short screen can hold fewer lines than were wrapped.
+pub(crate) fn visible_lines(laid: &caption::CaptionLayout) -> usize {
+    if laid.line_height <= 0.0 {
+        return 0;
+    }
+    ((laid.rect.h / laid.line_height).floor().max(0.0) as usize).min(laid.lines.len())
+}
+
 /// Draw the caption over the show. Called after the slide (and its media controls) so the text
 /// sits above both; pen strokes and bars are drawn later and stay on top.
-pub fn draw(painter: &egui::Painter, screen: Rect, slide: Rect, settings: &SubtitleSettings, caption: Option<&str>) {
+pub fn draw(painter: &egui::Painter, screen: Rect, slide: Rect, settings: &SubtitleSettings, caption: Option<&str>, cache: &RefCell<CaptionCache>) {
     let Some(text) = caption.map(str::trim).filter(|t| !t.is_empty()) else { return };
     let input = LayoutInput {
         screen: to_points(screen),
@@ -404,15 +598,36 @@ pub fn draw(painter: &egui::Painter, screen: Rect, slide: Rect, settings: &Subti
         margin: caption::DEFAULT_MARGIN,
         width_fraction: caption::DEFAULT_WIDTH_FRACTION,
     };
-    let laid = caption::layout(&input);
+    let mut cache = cache.borrow_mut();
+    let laid = cache.layout(&input);
     if laid.is_empty() {
         return;
     }
+    let fit = visible_lines(laid);
+    if fit == 0 {
+        return;
+    }
+    let line_height = laid.line_height as f32;
+    let height = fit as f32 * line_height;
     let rect = Rect::from_min_size(pos2(laid.rect.x as f32, laid.rect.y as f32), egui::vec2(laid.rect.w as f32, laid.rect.h as f32));
-    painter.rect_filled(rect, CornerRadius::same(6), Color32::from_black_alpha(150));
-    for (i, line) in laid.lines.iter().enumerate() {
-        let center: Pos2 = pos2(rect.center().x, rect.min.y + (i as f32 + 0.5) * laid.line_height as f32);
-        painter.text(center, Align2::CENTER_CENTER, line, theme::font(laid.font_pt as f32), Color32::WHITE);
+    // Keep the box anchored where the layout put it: the bottom positions grow upwards, the top
+    // ones downwards. Without this, hiding the lines that do not fit would move the text off the
+    // edge the presenter expects.
+    let top = match settings.position {
+        deckcraft_asr::Position::BottomOverlay | deckcraft_asr::Position::BelowSlide => rect.bottom() - height,
+        deckcraft_asr::Position::TopOverlay | deckcraft_asr::Position::AboveSlide => rect.top(),
+    };
+    let bg = Rect::from_min_size(pos2(rect.left(), top), egui::vec2(rect.width(), height)).intersect(screen);
+    painter.rect_filled(bg, CornerRadius::same(6), Color32::from_black_alpha(150));
+    // Horizontal padding: the text never touches the background's edge, and it is clipped to the
+    // box, so a wrapped line cannot spill past it.
+    const PAD: f32 = 8.0;
+    let text_area =
+        if bg.width() > 2.0 * PAD { Rect::from_min_max(pos2(bg.left() + PAD, bg.top()), pos2(bg.right() - PAD, bg.bottom())) } else { bg };
+    let text_painter = painter.with_clip_rect(text_area);
+    for (i, line) in laid.lines.iter().take(fit).enumerate() {
+        let center: Pos2 = pos2(bg.center().x, bg.min.y + (i as f32 + 0.5) * line_height);
+        text_painter.text(center, Align2::CENTER_CENTER, line, theme::font(laid.font_pt as f32), Color32::WHITE);
     }
 }
 

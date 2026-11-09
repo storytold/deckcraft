@@ -688,10 +688,11 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
 /// blank screen.
 fn draw_captions(app: &SlideApp, show: &Show, f: &Fr, painter: &egui::Painter) {
     let settings = &app.session.prefs.subtitles;
-    if !settings.on || show.ended || show.grid || show.blank.is_some() {
+    let Some(text) = crate::subtitles::caption_line(settings.on, show.ended, show.grid, show.blank.is_some(), app.subtitles.caption.as_deref())
+    else {
         return;
-    }
-    crate::subtitles::draw(painter, f.full, f.srect, settings, app.subtitles.caption.as_deref());
+    };
+    crate::subtitles::draw(painter, f.full, f.srect, settings, Some(text), &app.subtitles.caption_cache);
 }
 
 fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, pointing: bool) {

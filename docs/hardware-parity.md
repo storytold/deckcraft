@@ -73,8 +73,8 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display: the presenter window covered the show and stalled it. If winit lists none, the setting is kept (#1156) |
 | 2026-11-07 | minor | Microphone input (cpal) feeds live subtitles; audio output is unchanged and narration recording is still absent (#1811) |
+| 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display: the presenter window covered the show and stalled it. If winit lists none, the setting is kept (#1156) |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |
