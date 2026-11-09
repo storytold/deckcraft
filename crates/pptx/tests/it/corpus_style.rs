@@ -363,4 +363,16 @@ fn svg_only_blip_without_primary_embed_falls_back_to_svg_blip() {
         .expect("Picture");
     assert!(pf.svg_media.is_some());
     assert_eq!(Some(pf.media), pf.svg_media);
+
+    let roundtripped = deckcraft_pptx::import(&deckcraft_pptx::export(&back).unwrap()).unwrap();
+    let pf2 = roundtripped.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Picture { fill } => Some(fill),
+            _ => None,
+        })
+        .expect("Picture after round-trip");
+    assert!(pf2.svg_media.is_some());
+    assert_eq!(Some(pf2.media), pf2.svg_media);
 }
