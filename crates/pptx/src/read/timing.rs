@@ -206,6 +206,21 @@ fn behaviour_auto_reverses(c: &El) -> bool {
 
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
+/// Returns whether `st` (`p:stCondLst`) defers playback instead of starting immediately on slide entry.
+fn defers_start(st: &El) -> bool {
+    let is_auto_begin = |c: &El| {
+        c.attr("evt") == Some("onBegin")
+            && c.attr("delay").map(str::trim) == Some("0")
+            && c.child("tgtEl").is_none()
+            && c.child("tn").is_none()
+            && c.child("rtn").is_none()
+    };
+    let has_on_begin = st.children_named("cond").any(is_auto_begin);
+    st.children_named("cond")
+        .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
+}
+
+/// Applies `p:video`/`p:audio` timing node settings and main-sequence autoplay triggers to media shapes.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     fn collect_media<'a>(e: &'a El, deferred: bool, out: &mut Vec<(&'a El, bool)>, depth: usize) {
         if depth > 64 || out.len() >= 10_000 {
@@ -214,21 +229,9 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         let mut deferred = deferred;
         if e.is("cTn")
             && let Some(st) = e.child("stCondLst")
+            && defers_start(st)
         {
-            let is_auto_begin = |c: &El| {
-                c.attr("evt") == Some("onBegin")
-                    && c.attr("delay").map(str::trim) == Some("0")
-                    && c.child("tgtEl").is_none()
-                    && c.child("tn").is_none()
-                    && c.child("rtn").is_none()
-            };
-            let has_on_begin = st.children_named("cond").any(is_auto_begin);
-            if st
-                .children_named("cond")
-                .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
-            {
-                deferred = true;
-            }
+            deferred = true;
         }
         if e.is("video") || e.is("audio") {
             out.push((e, deferred));
@@ -270,18 +273,7 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
             clip.full_screen = true;
         }
     }
-    let root_deferred = timing.path(&["tnLst", "par", "cTn", "stCondLst"]).is_some_and(|st| {
-        let is_auto_begin = |c: &El| {
-            c.attr("evt") == Some("onBegin")
-                && c.attr("delay").map(str::trim) == Some("0")
-                && c.child("tgtEl").is_none()
-                && c.child("tn").is_none()
-                && c.child("rtn").is_none()
-        };
-        let has_on_begin = st.children_named("cond").any(is_auto_begin);
-        st.children_named("cond")
-            .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
-    });
+    let root_deferred = timing.path(&["tnLst", "par", "cTn", "stCondLst"]).is_some_and(defers_start);
     if !root_deferred && let Some(tn) = timing.child("tnLst") {
         let mut found = vec![];
         collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);

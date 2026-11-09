@@ -775,6 +775,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.close("p:timing");
 }
 
+/// Collects media shapes on the slide that have non-default playback settings requiring a `p:video`/`p:audio` timing node.
 fn collect_media<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(u32, &'a deckcraft_model::MediaClip)> {
     let mut media = Vec::new();
     deckcraft_model::walk(shapes, &mut |shape, _| {
@@ -785,7 +786,7 @@ fn collect_media<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(u32, &'a deckcr
                 || clip.loop_play
                 || clip.rewind
                 || clip.play_across_slides
-                || clip.full_screen)
+                || (clip.video && clip.full_screen))
             && let Some(spid) = idmap.get(shape.id)
         {
             media.push((spid, clip));
@@ -794,9 +795,10 @@ fn collect_media<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(u32, &'a deckcr
     media
 }
 
+/// Writes a `p:video` or `p:audio` media timing node (`p:cMediaNode`) for a media shape.
 fn write_media_node(w: &mut W, ids: &mut Ids, spid: u32, clip: &deckcraft_model::MediaClip) {
     let tag = if clip.video { "p:video" } else { "p:audio" };
-    w.open(tag, A::new().t("fullScrn", clip.full_screen));
+    w.open(tag, A::new().t("fullScrn", clip.video && clip.full_screen));
     let mut cm = A::new().a("vol", (clip.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32);
     if clip.volume <= 1e-6 {
         cm = cm.t("mute", true);
