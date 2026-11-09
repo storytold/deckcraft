@@ -58,15 +58,6 @@ pub fn postprocess(logits: &[f32], size: u32, frame_width: u32, frame_height: u3
     Ok(if feather == 0 { matte } else { matte.feather(feather, 1) })
 }
 
-/// The mean coverage of a matte, 0..1. Diagnostics and tests use it to tell an empty mask from a
-/// full one without walking the pixels themselves.
-pub fn coverage_mean(matte: &Matte) -> f64 {
-    if matte.alpha().is_empty() {
-        return 0.0;
-    }
-    matte.alpha().iter().map(|v| f64::from(*v) / 255.0).sum::<f64>() / matte.alpha().len() as f64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,7 +95,7 @@ mod tests {
         let logits = vec![0.0f32; 4];
         let m = postprocess(&logits, 2, 3, 3, 0).expect("postprocess");
         assert_eq!((m.width(), m.height()), (3, 3));
-        assert!((coverage_mean(&m) - 0.5).abs() < 0.06);
+        assert!(m.alpha().iter().all(|v| *v == 128), "a zero logit is half coverage: {:?}", m.alpha());
         assert!(postprocess(&[0.0; 3], 2, 2, 2, 0).is_err(), "a wrongly sized output is rejected");
     }
 }

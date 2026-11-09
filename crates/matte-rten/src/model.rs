@@ -94,7 +94,7 @@ fn present_model(root: &Path) -> Option<PathBuf> {
     (meta.is_file() && meta.len() == manifest::MODEL_BYTES).then_some(path)
 }
 
-fn missing_state(root: &Path) -> ModelState {
+pub(crate) fn missing_state(root: &Path) -> ModelState {
     let m = manifest::MANIFEST;
     ModelState::Missing {
         root: root.display().to_string(),
@@ -106,34 +106,86 @@ fn missing_state(root: &Path) -> ModelState {
 }
 
 /// Copy a user-picked file into `<root>/birefnet-lite-512/onnx/model.onnx`, verifying it first.
-/// The write goes to a temporary file in the same directory and is renamed only after the hash
-/// matches, so a failure never leaves a half file that later looks installed.
+/// The source is opened once and copied from that handle into an exclusive temporary file (random
+/// name, `create_new`) in the same directory; the copy is verified and renamed only after the hash
+/// matches. Symbols links at the source, the target or the temporary name are refused, so the write
+/// cannot land on a path the user did not pick, and a failure never leaves a half file that later
+/// looks installed.
 pub fn install_from(source: &Path, root: &Path) -> Result<PathBuf, String> {
-    if !source.is_file() {
-        return Err(format!("{} is not a file", source.display()));
-    }
-    let size = std::fs::metadata(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?.len();
+    refuse_symlink(source, "the picked file")?;
+    let mut input = std::fs::File::open(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?;
+    let size = input.metadata().map_err(|e| format!("cannot read {}: {e}", source.display()))?.len();
     // Reject the size before hashing: a user who picks a multi-GB video must not pay for reading
     // every byte of it just to be told it is the wrong file.
     if size != manifest::MANIFEST.bytes {
         return Err(format!("the model is {} bytes, {} is {size}", manifest::MANIFEST.bytes, source.display()));
     }
-    manifest::MANIFEST.verify(size, &manifest::sha256_file(source).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let target = manifest::MANIFEST.path_in(root);
     let dir = target.parent().ok_or_else(|| format!("{} has no parent", target.display()))?;
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let tmp = dir.join("model.onnx.part");
-    std::fs::copy(source, &tmp).map_err(|e| {
+    // A pre-planted link at `model.onnx` is not silently replaced either: the caller asked to
+    // install a model into this directory, not to clobber whatever the link points at.
+    refuse_symlink(&target, "the install target")?;
+    // The source is opened once and the bytes are copied from that handle; the copy is verified
+    // (the same bytes, in a file this process created) before the rename, so nothing can swap the
+    // file between a hash and a reopen.
+    let (tmp, mut out) = create_part(dir, &target)?;
+    let copied = std::io::copy(&mut input, &mut out).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("cannot copy to {}: {e}", tmp.display())
     })?;
-    std::fs::rename(&tmp, &target).map_err(|e| {
+    drop(out);
+    if copied != manifest::MANIFEST.bytes {
         let _ = std::fs::remove_file(&tmp);
-        format!("cannot install {}: {e}", target.display())
-    })?;
+        return Err(format!("the model is {} bytes, {} gave {copied}", manifest::MANIFEST.bytes, source.display()));
+    }
+    commit_part(&tmp, &target)?;
     // Best effort: the provenance sidecar the shared policy names.
     write_manifest(root);
     Ok(target)
+}
+
+/// A fresh, exclusive temporary file beside `target`. The name carries the process id, a counter
+/// and the clock, so a pre-planted `model.onnx.part` — or a symbolic link at any fixed name — is
+/// never opened or followed; `create_new` (O_EXCL) refuses a path that already exists.
+fn create_part(dir: &Path, target: &Path) -> Result<(PathBuf, std::fs::File), String> {
+    let stem = target.file_name().and_then(|n| n.to_str()).unwrap_or("model.onnx");
+    for _ in 0..8 {
+        let seq = PART_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+        let path = dir.join(format!("{stem}.{}.{seq}.{nanos}.part", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot write {}: {e}", path.display())),
+        }
+    }
+    Err(format!("cannot create a temporary file in {}", dir.display()))
+}
+
+/// A counter for [`create_part`]; the clock alone can repeat within a tick.
+static PART_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Refuse a symbolic link where the install writes. The model root is a directory the user
+/// controls, and a link planted there would send a write (or a rename) somewhere else.
+fn refuse_symlink(path: &Path, what: &str) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!("{what} {} is a symbolic link; refusing to use it", path.display())),
+        _ => Ok(()),
+    }
+}
+
+/// Verify a temporary file this process created and rename it into place. One cleanup point: every
+/// failure removes the temporary file, so a short body, a hash mismatch or a failed rename never
+/// leaves 192 MB behind under a name that later looks installed.
+fn commit_part(tmp: &Path, target: &Path) -> Result<(), String> {
+    let result = manifest::verify_file(tmp)
+        .map_err(|e| e.to_string())
+        .and_then(|()| std::fs::rename(tmp, target).map_err(|e| format!("cannot install {}: {e}", target.display())));
+    if result.is_err() {
+        let _ = std::fs::remove_file(tmp);
+    }
+    result
 }
 
 fn write_manifest(root: &Path) {
@@ -146,7 +198,18 @@ fn write_manifest(root: &Path) {
         "{{\n  \"id\": \"{}\",\n  \"repo\": \"{}\",\n  \"revision\": \"{}\",\n  \"file\": \"{}\",\n  \"bytes\": {},\n  \"sha256\": \"{}\",\n  \"license\": \"{}\"\n}}\n",
         m.id, m.repo, m.revision, m.file, m.bytes, m.sha256, m.license
     );
-    let _ = std::fs::write(dir.join("manifest.json"), sidecar);
+    // The sidecar is provenance, not trusted input: never write through a link someone planted at
+    // its name. A temporary file plus a rename replaces a link instead of following it.
+    let sidecar_path = dir.join("manifest.json");
+    if std::fs::symlink_metadata(&sidecar_path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return;
+    }
+    let Ok((tmp, mut file)) = create_part(&dir, &sidecar_path) else { return };
+    let written = file.write_all(sidecar.as_bytes()).is_ok();
+    drop(file);
+    if !written || std::fs::rename(&tmp, &sidecar_path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 /// The download agent. ureq's defaults are no limit at all, so a stalled connect or a stalled body
@@ -163,42 +226,86 @@ fn download_agent() -> ureq::Agent {
         .new_agent()
 }
 
-/// Download the model into `root` from the manifest's pinned URL, reporting progress. Blocking:
-/// the caller runs it on a worker thread after the consent screen. A short download is rejected
-/// by the size check and never renamed into place, and no failure leaves `model.onnx.part` behind.
-pub fn download_to(root: &Path, on_progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, String> {
-    let m = manifest::MANIFEST;
-    let target = m.path_in(root);
-    let dir = target.parent().ok_or_else(|| format!("{} has no parent", target.display()))?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let tmp = dir.join("model.onnx.part");
-    // One cleanup point for every failure: a network error, a short body, a write error, a hash
-    // mismatch or a failed rename would otherwise leave up to 192 MB behind.
-    match download_into(&tmp, &target, on_progress) {
-        Ok(()) => {
-            write_manifest(root);
-            Ok(target)
+/// A download the caller can stop, and the total time it may take. A per-read timeout alone only
+/// catches a dead connection: a server that trickles bytes forever would keep the thread — and the
+/// panel's "Downloading" — alive for ever, so a total budget is enforced as well.
+pub struct DownloadControl {
+    cancelled: std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+}
+
+impl DownloadControl {
+    pub fn new(budget: Duration) -> Self {
+        DownloadControl { cancelled: std::sync::atomic::AtomicBool::new(false), deadline: std::time::Instant::now() + budget }
+    }
+
+    /// Ask the transfer to stop at its next read. The thread then fails, removes its temporary file
+    /// and lets the panel retry or install.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Why the transfer must stop now, if it must.
+    fn stopped(&self) -> Option<String> {
+        if self.is_cancelled() {
+            return Some("the download was cancelled".into());
         }
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
-        }
+        (std::time::Instant::now() >= self.deadline)
+            .then(|| format!("the download took longer than {} minutes and was stopped", DOWNLOAD_TIMEOUT.as_secs() / 60))
     }
 }
 
-/// The transfer itself, into `tmp`; the caller removes `tmp` when this returns `Err`.
-fn download_into(tmp: &Path, target: &Path, on_progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
+/// The most a download may take: 191 MB at about 106 KB/s. A live but very slow transfer is cut
+/// off here rather than only by the per-read stall detector; retrying starts a new budget.
+pub const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// Download the model into `root` from the manifest's pinned URL, reporting progress. Blocking:
+/// the caller runs it on a worker thread after the consent screen and can [`DownloadControl::cancel`]
+/// it. A short download is rejected by the size check and never renamed into place, and no failure
+/// — including a cancel or the total deadline — leaves a temporary file behind.
+pub fn download_to(root: &Path, control: &DownloadControl, on_progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, String> {
+    let target = manifest::MANIFEST.path_in(root);
+    download_into(&target, control, on_progress)?;
+    write_manifest(root);
+    Ok(target)
+}
+
+/// The transfer, ending in the verified rename. A failure removes the temporary file it created.
+fn download_into(target: &Path, control: &DownloadControl, on_progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
+    let dir = target.parent().ok_or_else(|| format!("{} has no parent", target.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    refuse_symlink(target, "the model file")?;
+    let (tmp, mut file) = create_part(dir, target)?;
+    let transferred = transfer(&tmp, &mut file, control, on_progress);
+    drop(file);
+    if let Err(e) = transferred {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    commit_part(&tmp, target)
+}
+
+fn transfer(tmp: &Path, file: &mut std::fs::File, control: &DownloadControl, on_progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
     let m = manifest::MANIFEST;
+    if let Some(reason) = control.stopped() {
+        return Err(reason);
+    }
     let mut response = download_agent().get(&m.url()).call().map_err(|e| format!("download failed: {e}"))?;
     let total = response.body().content_length().unwrap_or(0);
     if total > 0 && total != m.bytes {
         return Err(format!("the server offered {total} bytes, the model is {} bytes", m.bytes));
     }
     let mut reader = response.body_mut().as_reader();
-    let mut file = std::fs::File::create(tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
     let mut buf = vec![0u8; 256 * 1024];
     let mut received = 0u64;
     loop {
+        if let Some(reason) = control.stopped() {
+            return Err(reason);
+        }
         let n = reader.read(&mut buf).map_err(|e| format!("download failed: {e}"))?;
         if n == 0 {
             break;
@@ -210,27 +317,28 @@ fn download_into(tmp: &Path, target: &Path, on_progress: &mut dyn FnMut(u64, u64
         file.write_all(buf.get(..n).unwrap_or_default()).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
         on_progress(received, if total == 0 { m.bytes } else { total });
     }
-    drop(file);
-    manifest::verify_file(tmp).map_err(|e| e.to_string())?;
-    std::fs::rename(tmp, target).map_err(|e| format!("cannot install {}: {e}", target.display()))
+    if received != m.bytes {
+        return Err(format!("the download stopped at {received} bytes, the model is {} bytes", m.bytes));
+    }
+    Ok(())
 }
 
 /// The RTen implementation of [`Segmenter`].
 pub struct RtenSegmenter {
     model: rten::Model,
     options: rten::RunOptions,
-    feather: u32,
 }
 
 impl RtenSegmenter {
     /// The name `cameo.background.state` reports for this backend.
     pub const NAME: &'static str = "birefnet-lite-512";
 
-    /// Verify and load the model at `path`. The hash is checked again here even if a caller
-    /// probed it earlier: the bytes are about to be interpreted, so they must match.
+    /// Verify and load the model at `path`. The file is opened once: its bytes are hashed and then
+    /// parsed from the same buffer, so a replacement between the hash and the parse cannot slip
+    /// unverified weights past the check.
     pub fn load(path: &Path) -> Result<Self, String> {
-        manifest::verify_file(path).map_err(|e| e.to_string())?;
-        let model = rten::Model::load_file(path).map_err(|e| format!("cannot load {}: {e}", path.display()))?;
+        let bytes = manifest::read_verified(path).map_err(|e| e.to_string())?;
+        let model = rten::Model::load(bytes).map_err(|e| format!("cannot load {}: {e}", path.display()))?;
         // RTen sizes its pool to the machine's physical cores. A hand-made pool was measured much
         // slower (16.6 s/frame at 21 threads, 3.96 s with RTen's own), so only an explicit cap
         // creates one, for constrained machines and benchmarks.
@@ -243,7 +351,7 @@ impl RtenSegmenter {
         };
         // The matte is feathered once, by the compositor (`CompositeOptions::feather`); a second
         // blur here would widen every requested radius and make `feather: 0` impossible.
-        Ok(RtenSegmenter { model, options, feather: 0 })
+        Ok(RtenSegmenter { model, options })
     }
 
     /// The name `cameo.background.state` reports before anything is loaded: `None` unless a file
@@ -260,11 +368,6 @@ impl RtenSegmenter {
             ModelState::Ready { path, .. } => RtenSegmenter::load(Path::new(&path)),
             other => Err(format!("{} (looked in {})", other.message(), root.display())),
         }
-    }
-
-    pub fn with_feather(mut self, feather: u32) -> Self {
-        self.feather = feather;
-        self
     }
 
     /// Run the model on one frame and return the raw 512x512 logits. Public for the real-model
@@ -288,7 +391,7 @@ impl RtenSegmenter {
 impl Segmenter for RtenSegmenter {
     fn matte(&mut self, frame: &RgbaFrame) -> Result<Matte, MatteError> {
         let logits = self.logits(frame)?;
-        postprocess(&logits, manifest::INPUT_SIZE, frame.width(), frame.height(), self.feather)
+        postprocess(&logits, manifest::INPUT_SIZE, frame.width(), frame.height(), 0)
     }
 
     fn name(&self) -> &'static str {
@@ -296,13 +399,20 @@ impl Segmenter for RtenSegmenter {
     }
 }
 
-/// Timeout for a model load: it reads 192 MB and parses a graph. Not used by the download (which
-/// is a separate, longer operation) but kept here so callers can bound the UI's "loading" state.
-pub const LOAD_TIMEOUT: Duration = Duration::from_secs(60);
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file symbolic link, where the host lets a test make one.
+    #[cfg(windows)]
+    fn symlink_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_file(src, dst)
+    }
+
+    #[cfg(unix)]
+    fn symlink_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(src, dst)
+    }
 
     #[test]
     fn roots_are_absolute_enough_and_the_env_wins() {
@@ -378,5 +488,65 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A temporary file whose size is wrong is removed on the failure path, so a short body or a
+    /// failed copy never leaves 192 MB behind under a name that later looks installed. The
+    /// verify-and-rename is local, so this runs without a network.
+    #[test]
+    fn a_part_that_fails_verification_is_removed() {
+        let dir = crate::test_temp::TempDir::new("commit");
+        let target = manifest::MANIFEST.path_in(dir.path());
+        std::fs::create_dir_all(target.parent().expect("parent")).expect("dir");
+        let (tmp, mut file) = create_part(target.parent().expect("parent"), &target).expect("part");
+        std::io::Write::write_all(&mut file, b"a short body").expect("write");
+        drop(file);
+        let err = commit_part(&tmp, &target).expect_err("wrong size");
+        assert!(err.contains("bytes"), "{err}");
+        assert!(!tmp.exists(), "the temporary file is gone");
+        assert!(!target.exists(), "nothing was renamed into place");
+        assert_eq!(std::fs::read_dir(target.parent().expect("parent")).expect("dir").count(), 0, "no leftovers");
+    }
+
+    /// The temporary name is fresh and exclusive, never the old fixed `model.onnx.part`: a link
+    /// planted at that name is not opened or followed (its target keeps its bytes).
+    #[test]
+    fn a_planted_part_name_is_not_followed() {
+        let dir = crate::test_temp::TempDir::new("part-name");
+        let target = manifest::MANIFEST.path_in(dir.path());
+        let parent = target.parent().expect("parent").clone();
+        std::fs::create_dir_all(&parent).expect("dir");
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, b"keep me").expect("victim");
+        let planted = parent.join("model.onnx.part");
+        // A symbolic link needs a privilege on Windows; without it there is nothing to plant and
+        // the rest of the assertion still checks the fresh name.
+        let linked = symlink_file(&victim, &planted).is_ok();
+        if !linked {
+            let _ = std::fs::remove_file(&planted);
+        }
+        let (first, _) = create_part(&parent, &target).expect("first");
+        let (second, _) = create_part(&parent, &target).expect("second");
+        assert_ne!(first, second, "each temporary file gets its own name");
+        assert_ne!(first, planted, "the fixed name is never used");
+        assert_eq!(std::fs::read(&victim).expect("victim"), b"keep me", "nothing wrote through a planted link");
+        if std::fs::symlink_metadata(&planted).is_ok_and(|m| m.file_type().is_symlink()) {
+            assert_eq!(std::fs::read(&victim).expect("victim"), b"keep me");
+        }
+    }
+
+    /// A picked file that is a symbolic link is refused before anything is read: the install writes
+    /// a model the user picked, not whatever the link points at.
+    #[test]
+    fn a_symlinked_source_is_refused() {
+        let dir = crate::test_temp::TempDir::new("symlink-source");
+        let real = dir.path().join("real.onnx");
+        std::fs::write(&real, b"not the model").expect("real");
+        let link = dir.path().join("link.onnx");
+        if symlink_file(&real, &link).is_err() {
+            return; // no symlink privilege on this host
+        }
+        let err = install_from(&link, dir.path()).expect_err("a link is refused");
+        assert!(err.contains("symbolic link"), "{err}");
     }
 }

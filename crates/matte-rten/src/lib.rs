@@ -45,6 +45,6 @@ pub mod model;
 pub mod service;
 pub mod worker;
 
-pub use model::{RtenSegmenter, download_to, install_from, model_roots, probe};
+pub use model::{DOWNLOAD_TIMEOUT, DownloadControl, RtenSegmenter, download_to, install_from, model_roots, probe};
 pub use service::Service;
 pub use worker::MatteWorker;

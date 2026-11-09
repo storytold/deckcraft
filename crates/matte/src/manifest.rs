@@ -149,14 +149,41 @@ pub fn is_hex_sha256(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Verify an installed file: its size and SHA-256 against [`MANIFEST`]. Reads in bounded chunks,
-/// so a 192 MB model never sits in memory twice.
+/// Verify an installed file: its size and SHA-256 against [`MANIFEST`]. The size is checked first,
+/// so an oversized file (a video the user picked by mistake, a partly written copy) is refused
+/// without reading all of it. Reads in bounded chunks, so a 192 MB model never sits in memory
+/// twice.
 pub fn verify_file(path: &Path) -> Result<(), ManifestError> {
     let meta = std::fs::metadata(path).map_err(|e| ManifestError::Io(e.to_string()))?;
     if !meta.is_file() {
         return Err(ManifestError::Io(format!("{} is not a file", path.display())));
     }
+    if meta.len() != MANIFEST.bytes {
+        return Err(ManifestError::Size { expected: MANIFEST.bytes, found: meta.len() });
+    }
     MANIFEST.verify(meta.len(), &sha256_file(path)?)
+}
+
+/// Read a file entirely, checking its size before reading it and hashing the bytes that were read.
+/// The caller parses the returned bytes, so the file is opened once: a replacement between a hash
+/// and a reopen cannot slip unverified weights past the check.
+pub fn read_verified(path: &Path) -> Result<Vec<u8>, ManifestError> {
+    let mut f = std::fs::File::open(path).map_err(|e| ManifestError::Io(e.to_string()))?;
+    let meta = f.metadata().map_err(|e| ManifestError::Io(e.to_string()))?;
+    if !meta.is_file() {
+        return Err(ManifestError::Io(format!("{} is not a file", path.display())));
+    }
+    if meta.len() != MANIFEST.bytes {
+        return Err(ManifestError::Size { expected: MANIFEST.bytes, found: meta.len() });
+    }
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(MANIFEST.bytes as usize).map_err(|_| ManifestError::Io("not enough memory for the model".into()))?;
+    f.read_to_end(&mut bytes).map_err(|e| ManifestError::Io(e.to_string()))?;
+    if bytes.len() as u64 != MANIFEST.bytes {
+        return Err(ManifestError::Size { expected: MANIFEST.bytes, found: bytes.len() as u64 });
+    }
+    MANIFEST.verify(bytes.len() as u64, &sha256_hex(&bytes))?;
+    Ok(bytes)
 }
 
 /// SHA-256 of a file, read in 1 MiB chunks.
@@ -228,5 +255,23 @@ mod tests {
     fn the_hash_of_known_bytes_is_known() {
         assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert_eq!(sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
+
+    /// The size is checked from the metadata first: an oversized file is refused without being
+    /// read, and a short file is a size error rather than a hash of bytes that could never match.
+    #[test]
+    fn verification_checks_the_size_before_hashing() {
+        let dir = std::env::temp_dir();
+        let short = dir.join(format!("deckcraft-matte-verify-short-{}.onnx", std::process::id()));
+        std::fs::write(&short, b"short").expect("file");
+        assert!(matches!(verify_file(&short), Err(ManifestError::Size { .. })), "{:?}", verify_file(&short));
+        assert!(matches!(read_verified(&short), Err(ManifestError::Size { .. })), "read_verified refuses before reading");
+        let _ = std::fs::remove_file(&short);
+
+        // A sparse file one byte over the manifest's size: no data is read to make it.
+        let over = dir.join(format!("deckcraft-matte-verify-over-{}.onnx", std::process::id()));
+        std::fs::File::create(&over).and_then(|f| f.set_len(MODEL_BYTES + 1)).expect("sparse file");
+        assert!(matches!(verify_file(&over), Err(ManifestError::Size { .. })), "an oversized file is not hashed");
+        let _ = std::fs::remove_file(&over);
     }
 }

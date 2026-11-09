@@ -40,27 +40,9 @@ impl CompositeOptions {
     }
 }
 
-/// Applies one background choice to frames. The segmenter is not held here: the caller runs it
-/// (or reuses its last matte) and hands the coverage in, so a slow model never sits inside the
-/// compositor.
-#[derive(Clone, Debug, Default)]
-pub struct BackgroundProcessor {
-    pub options: CompositeOptions,
-}
-
-impl BackgroundProcessor {
-    pub fn new(options: CompositeOptions) -> Self {
-        BackgroundProcessor { options }
-    }
-
-    /// Composite `frame`. `matte` is required for anything but Normal; `replacement` is used by
-    /// Custom when present.
-    pub fn process(&self, frame: &RgbaFrame, matte: Option<&Matte>, replacement: Option<&RgbaFrame>) -> Result<RgbaFrame, MatteError> {
-        composite(frame, matte, &self.options, replacement)
-    }
-}
-
-/// Composite one frame. See [`BackgroundProcessor`].
+/// Composite one frame: resize and feather the matte, resize the replacement, then composite.
+/// The per-call work here is what [`prepare_matte`] and [`composite_prepared`] split out for a
+/// caller that reuses the same matte for many frames ([`crate::MatteWorker`] does).
 pub fn composite(
     frame: &RgbaFrame,
     matte: Option<&Matte>,
@@ -71,19 +53,47 @@ pub fn composite(
         return Ok(frame.clone());
     }
     let matte = matte.ok_or_else(|| MatteError::InvalidImage("this background needs a matte".into()))?;
-    let matte = if (matte.width(), matte.height()) == (frame.width(), frame.height()) {
-        matte.clone()
-    } else {
-        matte.resize(frame.width(), frame.height())?
-    };
-    let matte = if options.feather == 0 { matte } else { matte.feather(options.feather, 1) };
+    let prepared = prepare_matte(matte, frame.width(), frame.height(), options.feather)?;
+    let replacement = replacement.map(|r| r.resize(frame.width(), frame.height())).transpose()?;
+    composite_prepared(frame, &prepared, options, replacement.as_ref())
+}
+
+/// Resize a matte to the frame and apply the feather once, so a caller that composites several
+/// frames with the same matte does not re-feather (two separable passes over the whole frame) on
+/// every call. Borrows the matte and clones only when a resize or feather is actually needed.
+pub fn prepare_matte(matte: &Matte, width: u32, height: u32, feather: u32) -> Result<Matte, MatteError> {
+    if (matte.width(), matte.height()) == (width, height) && feather == 0 {
+        return Ok(matte.clone());
+    }
+    let matte = if (matte.width(), matte.height()) == (width, height) { matte.clone() } else { matte.resize(width, height)? };
+    Ok(if feather == 0 { matte } else { matte.feather(feather, 1) })
+}
+
+/// Composite with a matte already resized and feathered for this frame ([`prepare_matte`]); the
+/// replacement, when present, must already be this frame's size. The matte is borrowed, not
+/// cloned, and `options.feather` is not applied again.
+pub fn composite_prepared(
+    frame: &RgbaFrame,
+    matte: &Matte,
+    options: &CompositeOptions,
+    replacement: Option<&RgbaFrame>,
+) -> Result<RgbaFrame, MatteError> {
     match options.mode {
         CameraBackgroundMode::Normal => Ok(frame.clone()),
-        CameraBackgroundMode::Removed => removed(frame, &matte),
-        CameraBackgroundMode::Blur => blur(frame, &matte, options.radius_for(frame.width(), frame.height())),
+        CameraBackgroundMode::Removed => removed(frame, matte),
+        CameraBackgroundMode::Blur => blur(frame, matte, options.radius_for(frame.width(), frame.height())),
         CameraBackgroundMode::Custom => {
-            let replacement = replacement.map(|r| r.resize(frame.width(), frame.height())).transpose()?;
-            custom(frame, &matte, replacement.as_ref(), options.color.unwrap_or([0, 0, 0]))
+            let replacement = match replacement {
+                Some(r) if (r.width(), r.height()) == (frame.width(), frame.height()) => Some(r),
+                // A caller that hands us another size gets the documented resize, not a panic and
+                // not a wrong-sized read.
+                Some(r) => {
+                    let resized = r.resize(frame.width(), frame.height())?;
+                    return custom(frame, matte, Some(&resized), options.color.unwrap_or([0, 0, 0]));
+                }
+                None => None,
+            };
+            custom(frame, matte, replacement, options.color.unwrap_or([0, 0, 0]))
         }
     }
 }
@@ -139,7 +149,9 @@ fn custom(frame: &RgbaFrame, matte: &Matte, replacement: Option<&RgbaFrame>, col
     Ok(out)
 }
 
-/// A separable box blur, run three times to approximate a Gaussian. Alpha is left alone.
+/// A separable box blur, run twice to approximate a Gaussian. Alpha is left alone. Two iterations
+/// (12 full-frame plane passes for a 3-channel blur) are visually indistinguishable from three here
+/// and a third of the pass cost cheaper; the radius is the dominant term.
 fn blur_frame(frame: &RgbaFrame, radius: u32) -> Result<RgbaFrame, MatteError> {
     let radius = radius.min(64);
     if radius == 0 {
@@ -159,7 +171,7 @@ fn blur_frame(frame: &RgbaFrame, radius: u32) -> Result<RgbaFrame, MatteError> {
     }
     let mut scratch = vec![0u8; w as usize * h as usize];
     for plane in &mut planes[..3] {
-        for _ in 0..3 {
+        for _ in 0..2 {
             box_blur(plane, &mut scratch, w, h, radius, true);
             box_blur(&scratch, plane, w, h, radius, false);
         }
@@ -206,7 +218,7 @@ mod tests {
     fn normal_ignores_the_matte_and_returns_the_frame() {
         let f = frame(4, 2, [10, 20, 30, 255], [40, 50, 60, 255]);
         let m = half_matte(4, 2);
-        let out = BackgroundProcessor::new(CompositeOptions::new(CameraBackgroundMode::Normal)).process(&f, Some(&m), None).expect("normal");
+        let out = composite(&f, Some(&m), &CompositeOptions::new(CameraBackgroundMode::Normal), None).expect("normal");
         assert_eq!(out, f);
     }
 

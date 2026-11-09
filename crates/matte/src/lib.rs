@@ -16,9 +16,11 @@ pub mod process;
 pub mod segmenter;
 pub mod service;
 
-pub use compositing::{BackgroundProcessor, CompositeOptions};
+pub use compositing::{CompositeOptions, composite, composite_prepared, prepare_matte};
 pub use frame::{MAX_DIM, MAX_PIXELS, Matte, RgbaFrame};
-pub use manifest::{ACCELERATOR_UNAVAILABLE, Accelerator, MANIFEST, MODEL_ID, Manifest, ManifestError, SUPPORTED_ACCELERATORS, verify_file};
+pub use manifest::{
+    ACCELERATOR_UNAVAILABLE, Accelerator, MANIFEST, MODEL_ID, Manifest, ManifestError, SUPPORTED_ACCELERATORS, read_verified, verify_file,
+};
 pub use segmenter::{EllipseSegmenter, NoSegmenter, Segmenter};
 pub use service::{MatteService, ModelState, Timings};
 

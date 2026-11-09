@@ -68,6 +68,9 @@ pub trait MatteService: Send {
     fn install(&mut self, path: &str) -> Result<(), String>;
     /// Start the consented download on a worker; returns before any network work.
     fn start_download(&mut self) -> Result<(), String>;
+    /// Stop a running download. A no-op for a host with no download of its own; the transfer fails
+    /// on its next read and removes its partial file.
+    fn cancel_download(&mut self) {}
     /// Composite one frame with the mode's options. `None` is returned until the first matte is
     /// ready (Normal never waits: it returns the frame unchanged).
     fn process(&mut self, frame: &RgbaFrame, options: &CompositeOptions, replacement: Option<&RgbaFrame>) -> Result<Option<RgbaFrame>, MatteError>;

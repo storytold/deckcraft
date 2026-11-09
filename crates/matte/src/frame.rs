@@ -47,6 +47,12 @@ impl RgbaFrame {
         &self.pixels
     }
 
+    /// The pixels, moved out. Callers that hand the buffer to an encoder (the preview writes a
+    /// PNG from it) do not pay for a second full-frame copy.
+    pub fn into_pixels(self) -> Vec<u8> {
+        self.pixels
+    }
+
     /// The four bytes at `(x, y)`; the caller has already checked the bounds.
     pub fn at(&self, x: u32, y: u32) -> [u8; 4] {
         let i = (y as usize * self.width as usize + x as usize) * 4;
@@ -182,12 +188,6 @@ impl Matte {
             box_blur(&scratch, &mut alpha, self.width, self.height, radius, false);
         }
         Matte { width: self.width, height: self.height, alpha }
-    }
-
-    /// Invert the mask (subject becomes background). Used by tests and by a "remove subject"
-    /// experiment, never by a shipped mode.
-    pub fn inverted(&self) -> Matte {
-        Matte { width: self.width, height: self.height, alpha: self.alpha.iter().map(|v| 255 - v).collect() }
     }
 }
 
