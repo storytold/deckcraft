@@ -1083,7 +1083,6 @@ dependencies = [
  "deckcraft-matte",
  "deckcraft-matte-rten",
  "deckcraft-mcp",
- "image",
  "serde_json",
  "zip 3.0.0",
 ]
