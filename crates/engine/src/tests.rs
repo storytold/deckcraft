@@ -4177,6 +4177,62 @@ fn smartart_text_pane_edits_regenerate_the_diagram() {
 }
 
 #[test]
+fn a_smartart_edit_is_one_whole_value_and_its_exact_restore_brings_the_group_back() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).unwrap();
+    let gid = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(gid).unwrap().clone();
+    let outline = |s: &Session| match s.doc().unwrap().shape(gid).map(|x| &x.diagram) {
+        Some(Some(d)) => d.nodes.iter().map(|n| (n.text.clone(), n.level)).collect::<Vec<_>>(),
+        _ => panic!("the graphic is gone"),
+    };
+    assert_eq!(outline(&s), [("Plan".to_string(), 0), ("Scope".to_string(), 1), ("Build".to_string(), 0)]);
+
+    // A user edit changes the value and regenerates the children with fresh ids.
+    s.execute("smartArt.setNodes", &json!({"id": gid.0, "lines": ["Plan", "\tScope", "\tRisks", "Ship"]})).unwrap();
+    assert_eq!(outline(&s).len(), 4);
+    assert_ne!(s.doc().unwrap().shape(gid).unwrap(), &before);
+
+    // The exact image of the group puts the outline and the generated shapes back with their own
+    // ids and text: an undo must not lose the typed bullets or an imported drawing.
+    let image = serde_json::to_value(&before).unwrap();
+    s.execute("shape.setField", &json!({"ids": [gid.0], "field": "smartArt", "value": image})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(gid).unwrap(), &before);
+
+    // A whole final diagram value changes the layout, the style and the colours in one step.
+    let d =
+        json!({"kind": "hierarchy", "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}], "style": "intense", "colors": "accent3"});
+    s.execute("smartArt.setDiagram", &json!({"id": gid.0, "diagram": d})).unwrap();
+    let g = s.doc().unwrap().shape(gid).unwrap().clone();
+    let d = g.diagram.as_ref().unwrap();
+    assert_eq!((d.kind.as_str(), d.style.as_str(), d.colors.as_str()), ("hierarchy", "intense", "accent3"));
+    assert_eq!(d.nodes.len(), 2);
+
+    // Hostile values are refused before anything is written.
+    let refuse = |s: &mut Session, p: serde_json::Value| {
+        let e = s.execute("smartArt.setDiagram", &p).unwrap_err().to_string();
+        assert!(e.contains("smartArt.setDiagram"), "{e}");
+    };
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "nope", "nodes": []}}));
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "list", "nodes": [], "style": "nope"}}));
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "list", "nodes": [], "colors": "accent9"}}));
+    let many: Vec<_> = (0..5000).map(|i| json!({"text": format!("n{i}"), "level": 0})).collect();
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "list", "nodes": many}}));
+    refuse(&mut s, json!({"id": gid.0, "diagram": "not a diagram"}));
+    assert_eq!(s.doc().unwrap().shape(gid).unwrap().diagram.as_ref().unwrap().kind, "hierarchy", "a refusal writes nothing");
+
+    // A group image that names another shape cannot replace this one.
+    let other = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).unwrap()["id"].as_u64().unwrap();
+    let mut wrong = before.clone();
+    wrong.id = deckcraft_model::ShapeId(other as u32);
+    let e = s
+        .execute("shape.setField", &json!({"ids": [gid.0], "field": "smartArt", "value": serde_json::to_value(&wrong).unwrap()}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("another shape"), "{e}");
+}
+
+#[test]
 fn smartart_round_trips_through_pptx_as_a_diagram() {
     let mut s = session();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();

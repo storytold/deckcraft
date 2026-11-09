@@ -24,9 +24,10 @@ mod nodes;
 mod paint;
 
 use edit::{
-    add_node, change_colors, change_layout, change_style, demote, from_text, nodes, promote, remove_node, set_nodes, set_picture, to_shapes, to_text,
+    add_node, change_colors, change_layout, change_style, demote, from_text, nodes, promote, remove_node, set_diagram, set_nodes, set_picture,
+    to_shapes, to_text,
 };
-pub use edit::{insert, selected};
+pub use edit::{insert, plan, selected, synced};
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};
 #[cfg(test)]
@@ -173,6 +174,15 @@ pub fn is_kind(k: &str) -> bool {
     LAYOUTS.iter().any(|(id, _)| *id == k)
 }
 
+/// The SmartArt group that `id` names: the graphic itself, or the graphic that contains it.
+///
+/// The single-user commands resolve their target through the selection; the collaboration
+/// normaliser resolves the same group from an explicit id, so it can send the whole resulting
+/// diagram value.
+pub fn group_of(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
+    edit::diagram_group(shapes, id)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -192,6 +202,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id?, nodes?: [{text, level}], lines?: [string] (leading tabs set the level), index?, text?, title?} (index + text edits one node; title: its Name and Title box)",
             has_selection,
             set_nodes
+        ),
+        cmd!(
+            "smartArt.setDiagram",
+            "Restore SmartArt",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?, diagram: the whole Diagram value} (the confirmed command of every outline, layout, style and colour edit, and the exact restore of such a step; the group's shapes are regenerated from the value)",
+            has_selection,
+            set_diagram
         ),
         cmd!(
             "smartArt.addNode",

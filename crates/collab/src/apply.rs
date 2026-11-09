@@ -353,6 +353,9 @@ impl Adapter {
             | Payload::TableColumnWidth { .. }
             | Payload::TableRowHeight { .. }
             | Payload::TableOptions { .. } => (None, Image::Table(deckcraft_model::Table::default())),
+            // A SmartArt edit replaces the whole graphic: the outline, layout, style and colours
+            // are one value, and the generated shapes are replaced with it.
+            Payload::SmartArtSet { .. } => (None, Image::SmartArt(Value::Null)),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
@@ -787,6 +790,10 @@ impl Adapter {
                 ShapeKind::Table(t) => Image::Table(t.clone()),
                 _ => return None,
             },
+            // A SmartArt group is one value: its diagram and the shapes generated from it. The
+            // whole model keeps the children's ids and any imported file drawing, which the
+            // diagram value alone cannot reproduce.
+            Image::SmartArt(_) => Image::SmartArt(serde_json::to_value(shape).ok()?),
             Image::Animation(_) => {
                 let slide = doc.slide(slide_id)?;
                 Image::Animation(slide.animations.iter().filter(|a| a.shape == shape_id).cloned().collect())
@@ -1201,6 +1208,21 @@ impl Adapter {
                     head,
                 )
             }
+            Payload::SmartArtSet { diagram } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                // Address the group before the first write: an operation that names a shape which
+                // is not (inside) a SmartArt graphic must not regenerate anything.
+                let group = smartart_group(before, slide, shape);
+                if group.is_none() {
+                    return Err(Rejection::invalid("the shape is not a SmartArt graphic", Some(head)));
+                }
+                let bytes = serde_json::to_vec(diagram).map_err(|e| Rejection::invalid(format!("invalid diagram: {e}"), Some(head)))?;
+                if bytes.len() > MAX_SMARTART_JSON {
+                    return Err(Rejection::invalid("the diagram is too large", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "smartArt.setDiagram", json!({"id": shape.0, "diagram": diagram}), head)
+            }
             Payload::ShapeField { field, value } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 self.select_shapes(session, before, slide, &[shape], head)?;
@@ -1209,6 +1231,7 @@ impl Adapter {
                     ShapeField::Line => "line",
                     ShapeField::Text => "text",
                     ShapeField::Table => "table",
+                    ShapeField::SmartArt => "smartArt",
                 };
                 self.call(session, "shape.setField", json!({"field": name, "value": value, "ids": [shape.0]}), head)
             }
@@ -1249,7 +1272,7 @@ impl Adapter {
                     .map(|(shape, item)| {
                         json!({
                             "id": shape.0,
-                            "field": match item.field { ShapeField::Fill => "fill", ShapeField::Line => "line", ShapeField::Text => "text", ShapeField::Table => "table" },
+                            "field": match item.field { ShapeField::Fill => "fill", ShapeField::Line => "line", ShapeField::Text => "text", ShapeField::Table => "table", ShapeField::SmartArt => "smartArt" },
                             "value": item.value.clone(),
                         })
                     })
@@ -1814,8 +1837,30 @@ fn image_of_field(field: ShapeField) -> Image {
         ShapeField::Line => Image::Line(None),
         ShapeField::Text => Image::Format(TextBody::default()),
         ShapeField::Table => Image::Table(deckcraft_model::Table::default()),
+        ShapeField::SmartArt => Image::SmartArt(Value::Null),
     }
 }
+
+/// The SmartArt group a shape is, or the graphic that contains it.
+fn smartart_group(doc: &Presentation, slide: SlideId, shape: ShapeId) -> Option<&Shape> {
+    let shapes = &doc.slide(slide)?.shapes;
+    let mut id = Some(shape);
+    for _ in 0..64 {
+        let sh = find_shape(shapes, id?)?;
+        if sh.diagram.is_some() {
+            return Some(sh);
+        }
+        // `None` = a top-level shape (nothing above to look at); `Some(None)` = the same.
+        id = match parent_of(shapes, sh.id) {
+            Some(Some(group)) => Some(group),
+            _ => return None,
+        };
+    }
+    None
+}
+
+/// Longest diagram value a `smartArt.setDiagram` may carry, as JSON bytes.
+const MAX_SMARTART_JSON: usize = 128 * 1024;
 
 /// Which kind an operation must carry. Structure-changing operations are exclusive.
 /// Length of a text body in characters, counting one newline between paragraphs.
@@ -1953,7 +1998,8 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::TableSplit { .. }
         | Payload::TableColumnWidth { .. }
         | Payload::TableRowHeight { .. }
-        | Payload::TableOptions { .. } => OpKind::Command,
+        | Payload::TableOptions { .. }
+        | Payload::SmartArtSet { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
@@ -2013,7 +2059,9 @@ fn reorder_index(
 mod tests {
     use super::*;
     use crate::history::ActorHistory;
-    use deckcraft_collab_proto::{CellFillSpec, FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeRestoreItem, TextCursor, TransitionSpec};
+    use deckcraft_collab_proto::{
+        CellFillSpec, FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeField, ShapeRestoreItem, TextCursor, TransitionSpec,
+    };
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
     /// replica so ids and keys line up.
@@ -2048,6 +2096,13 @@ mod tests {
         s.apply_remote("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 300, 300, 100]})).expect("table");
         let table = s.doc().expect("doc").doc.slides[0].shapes[2].id;
         s.apply_remote("text.set", &json!({"id": table.0, "cell": [0, 0], "text": "seed"})).expect("seed");
+        s
+    }
+
+    /// The same deck with a SmartArt graphic as the third shape (Plan, Scope under it, Build).
+    fn smartart_deck() -> Session {
+        let mut s = deck();
+        s.apply_remote("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).expect("smartart");
         s
     }
 
@@ -2972,6 +3027,82 @@ mod tests {
         let table = table_model(&doc, 2);
         assert_eq!((table.first_row, table.last_row, table.band_row), (false, true, false));
         assert_eq!((table.first_col, table.last_col, table.band_col), (true, false, true));
+    }
+
+    #[test]
+    fn two_clients_converge_on_a_smartart_value_and_its_undo_restores_the_whole_group() {
+        let (mut a, mut b) = (smartart_deck(), smartart_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let before = doc_of(&a).slides[0].shapes[2].clone();
+        let before_diagram = serde_json::to_value(before.diagram.as_ref().expect("diagram")).expect("diagram json");
+
+        // One whole final diagram value: the layout, the outline, the style and the colours.
+        let diagram = json!({
+            "kind": "hierarchy",
+            "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}, {"text": "Dev", "level": 2}],
+            "style": "intense",
+            "colors": "accent3",
+        });
+        let envelope = op(OpKind::Command, 0, target, Payload::SmartArtSet { diagram });
+        aa.apply(&mut a, 0, "a", &envelope).expect("a edits the graphic");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed step");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        let after = doc_of(&a).slides[0].shapes[2].clone();
+        assert_eq!(after.diagram.as_ref().expect("diagram").kind, "hierarchy");
+        assert_eq!(after.diagram.as_ref().expect("diagram").nodes.len(), 3);
+        assert_ne!(serde_json::to_value(after.diagram.as_ref().expect("diagram")).expect("value"), before_diagram, "the outline changed too");
+
+        // The undo image is the whole group, so one undo puts the outline, the generated shapes
+        // and their ids back; the redo reapplies the exact stated value on both replicas.
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::SmartArt, .. }), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a applies the undo");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], before, "the whole group came back, children included");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 2, "a", &redo).expect("a applies the redo");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], after);
+    }
+
+    #[test]
+    fn a_smartart_step_is_refused_on_a_plain_shape_and_an_undo_after_a_foreign_edit() {
+        let mut s = smartart_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, group) = key_of(&ad, &doc, 2);
+        let (_, rect) = key_of(&ad, &doc, 0);
+        let diagram = json!({"kind": "hierarchy", "nodes": [{"text": "CEO", "level": 0}]});
+        let plain = op(
+            OpKind::Command,
+            0,
+            Target { slide: Some(slide.clone()), shape: Some(rect), ..Target::default() },
+            Payload::SmartArtSet { diagram: diagram.clone() },
+        );
+        let err = ad.apply(&mut s, 0, "a", &plain).expect_err("a rectangle is not a graphic");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(!err.retryable);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "a refusal records no step");
+
+        // A foreign edit of the same graphic after Alice's step refuses her undo.
+        let target = Target { slide: Some(slide), shape: Some(group), ..Target::default() };
+        let first = op(OpKind::Command, 0, target.clone(), Payload::SmartArtSet { diagram });
+        ad.apply(&mut s, 0, "a", &first).expect("a edits the graphic");
+        let mut second =
+            op(OpKind::Command, 1, target, Payload::SmartArtSet { diagram: json!({"kind": "cycle", "nodes": [{"text": "One", "level": 0}]}) });
+        second.op_id = "op-2".into();
+        ad.apply(&mut s, 1, "b", &second).expect("b edits the same graphic");
+        let err = ad.undo(&s, 2, "a", "u-1").expect_err("b changed the graphic after Alice");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(1), "a refused undo moves nothing");
     }
 
     #[test]

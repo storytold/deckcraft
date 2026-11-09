@@ -123,6 +123,14 @@ impl Hub {
                     "table.split".into(),
                     "table.columnWidth".into(),
                     "table.rowHeight".into(),
+                    "smartArt.setNodes".into(),
+                    "smartArt.addNode".into(),
+                    "smartArt.removeNode".into(),
+                    "smartArt.promote".into(),
+                    "smartArt.demote".into(),
+                    "smartArt.layout".into(),
+                    "smartArt.style".into(),
+                    "smartArt.colors".into(),
                     "shape.insert".into(),
                     "insert.picture".into(),
                     "edit.delete".into(),
@@ -1115,6 +1123,62 @@ mod tests {
         deliver(&mut hub, &mut b, &mut sb, "bob");
         assert_eq!((a.version(), b.version()), (2, 2));
         assert_eq!(table_of(&sa), &before, "the whole table came back");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
+
+    /// One slide with a SmartArt graphic (Plan, Scope under it, Build).
+    fn smartart_session() -> Session {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).expect("smartart");
+        s
+    }
+
+    fn smartart_hub() -> Hub {
+        let doc = smartart_session().doc().expect("doc").doc.as_ref().clone();
+        Hub::new(DocSession::from_document("d", doc, Default::default()).expect("session"))
+    }
+
+    #[test]
+    fn smartart_edits_reach_both_replicas_and_an_undo_is_one_step() {
+        let mut hub = smartart_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = smartart_session();
+        let mut sb = smartart_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let group = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
+        let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+
+        // One command becomes one whole diagram value; both replicas end with the same graphic.
+        a.submit(&sa, "smartArt.layout", &json!({"id": group, "kind": "hierarchy"}), "a-1").expect("submit");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        a.submit(&sa, "smartArt.style", &json!({"id": group, "style": "intense"}), "a-2").expect("submit the style");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (2, 2));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0].diagram.as_ref().expect("diagram").kind, "hierarchy");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same graphic");
+
+        // Each edit is its own step; two undos put the whole group back on both replicas.
+        for version in [3, 4] {
+            a.undo().expect("request an undo");
+            send_all(&mut hub, &mut a, "alice");
+            deliver(&mut hub, &mut a, &mut sa, "alice");
+            deliver(&mut hub, &mut b, &mut sb, "bob");
+            assert_eq!((a.version(), b.version()), (version, version));
+        }
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], before, "the whole graphic came back");
         assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
     }
 }

@@ -368,6 +368,16 @@ pub enum Payload {
     /// operation addresses the table shape alone: no cell address moves and no cell content
     /// changes, so it is merge class.
     TableOptions { header_row: bool, total_row: bool, banded_rows: bool, first_column: bool, last_column: bool, banded_columns: bool },
+    /// Replaces a SmartArt graphic's **whole** diagram value and regenerates its shapes
+    /// (`smartArt.setDiagram`), and is the confirmed command of `smartArt.setNodes`, `addNode`,
+    /// `removeNode`, `promote`, `demote`, `layout`, `style` and `colors`. The sender applies the
+    /// command to the diagram it sees and sends the whole resulting value — layout, outline
+    /// (text, levels, assistants, titles, pictures), style and colours — so every replica
+    /// regenerates from the same final value and no replica's stale copy decides an unnamed
+    /// field. `diagram` is the model `Diagram` (`crates/model/src/lib.rs`) as JSON; the value is
+    /// size-bounded and the layout, style and colours are checked before the first write, like
+    /// any other hostile input. `target.shape` addresses the diagram group.
+    SmartArtSet { diagram: serde_json::Value },
     /// Puts back the exact value an undoable step replaced (ADR 0010). The server builds this
     /// from the actor's history and never a client from a user edit: `value` is the model value
     /// of `field` as JSON (`null` = unset), because the user-facing fill, line and format
@@ -521,6 +531,11 @@ pub enum ShapeField {
     /// The whole table in a table shape, for the undo of a row/column edit: a structural table
     /// step changes the cells' indices and their values, so only the whole table is exact.
     Table,
+    /// The whole SmartArt group — its diagram value and the shapes generated from it — for the
+    /// undo of an outline, layout, style or colour edit. An outline edit regenerates the children
+    /// with fresh ids and replaces any drawing an imported file brought, so the diagram value
+    /// alone cannot reproduce the step; the group can.
+    SmartArt,
 }
 
 /// One shape value in a [`Payload::ShapeFields`] merge restore.
@@ -855,6 +870,7 @@ impl Payload {
             Payload::TableColumnWidth { .. } => "table.columnWidth",
             Payload::TableRowHeight { .. } => "table.rowHeight",
             Payload::TableOptions { .. } => "table.options",
+            Payload::SmartArtSet { .. } => "smartArt.setDiagram",
             Payload::ShapeField { .. } => "shape.setField",
             Payload::CellText { .. } => "shape.setCellBody",
             Payload::CellsText { .. } => "shape.setCellBodies",
@@ -1659,6 +1675,33 @@ mod tests {
         }
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), options);
         assert_eq!(options.command(), "table.options");
+    }
+
+    #[test]
+    fn a_smartart_edit_travels_as_one_whole_diagram_value() {
+        // A SmartArt edit is one whole diagram value: the layout, the outline, the style and the
+        // colours travel together, so every replica regenerates from the same final value.
+        let diagram = Payload::SmartArtSet {
+            diagram: serde_json::json!({
+                "kind": "hierarchy",
+                "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}],
+                "style": "intense",
+                "colors": "accent3",
+            }),
+        };
+        let text = serde_json::to_string(&diagram).expect("encode");
+        assert!(text.contains("\"cmd\":\"smart_art_set\""), "{text}");
+        assert!(text.contains("\"kind\":\"hierarchy\""), "{text}");
+        assert!(text.contains("\"level\":1"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), diagram);
+        assert_eq!(diagram.command(), "smartArt.setDiagram");
+
+        // The exact restore of a SmartArt step names the whole group, not the diagram value.
+        let restore = Payload::ShapeField { field: ShapeField::SmartArt, value: serde_json::json!({"id": 7}) };
+        let text = serde_json::to_string(&restore).expect("encode");
+        assert!(text.contains("\"field\":\"smart_art\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
+        assert_eq!(restore.command(), "shape.setField");
     }
 
     #[test]

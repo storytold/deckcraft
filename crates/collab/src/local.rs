@@ -393,6 +393,13 @@ pub fn normalize_with_painter(
         let (id, payload) = result?;
         return Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, payload)]);
     }
+    // A SmartArt outline, layout, style or colour edit is one whole final diagram value: the
+    // sender applies the command to the graphic it sees and sends every field the result carries,
+    // so the receiving replica never merges arguments against its own (possibly imported) copy.
+    if let Some(result) = smartart_value(cmd, p, slide, st) {
+        let (id, payload) = result?;
+        return Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, payload)]);
+    }
     match cmd {
         "shape.move" => {
             let ids = shape_ids(p, st)?;
@@ -892,6 +899,40 @@ pub fn normalize_with_painter(
         }
         other => Err(LocalError::Unsupported(other.into())),
     }
+}
+
+/// The SmartArt commands that leave the graphic as one value: the outline, its layout, style and
+/// colours. `None` when the command is not one of them. The sender resolves the group from an
+/// explicit id or its own selection and sends the resulting whole `Diagram`, so a replica's
+/// selection and its stale copy decide nothing (RFC §15).
+fn smartart_value(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Option<Result<(ShapeId, Payload), LocalError>> {
+    const COMMANDS: [&str; 8] = [
+        "smartArt.setNodes",
+        "smartArt.addNode",
+        "smartArt.removeNode",
+        "smartArt.promote",
+        "smartArt.demote",
+        "smartArt.layout",
+        "smartArt.style",
+        "smartArt.colors",
+    ];
+    COMMANDS.contains(&cmd).then(|| smartart_payload(cmd, p, slide, st))
+}
+
+fn smartart_payload(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let ids = shape_ids(p, st)?;
+    let group = ids
+        .iter()
+        .find_map(|id| deckcraft_engine::cmd::smartart::group_of(&slide.shapes, *id))
+        .ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a SmartArt graphic")))?;
+    let mut diagram =
+        deckcraft_engine::cmd::smartart::synced(group).ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a SmartArt graphic")))?;
+    // The same plan the single-user command runs, so the value sent is the value that command
+    // would leave; a refusal (an unknown layout, a node that does not exist) happens here, before
+    // anything is queued.
+    deckcraft_engine::cmd::smartart::plan(cmd, p, &mut diagram).map_err(|e| LocalError::BadParams(e.to_string()))?;
+    let value = serde_json::to_value(&diagram).map_err(|e| LocalError::BadParams(format!("{cmd}: {e}")))?;
+    Ok((group.id, Payload::SmartArtSet { diagram: value }))
 }
 
 /// The rest of the table surface, one final value per command: a style, six style options, one
@@ -2327,6 +2368,101 @@ mod tests {
         assert!(normalize(&km, st, "table.options", &json!({"headerRow": 1}), "op", &doc_id).is_err());
         assert!(normalize(&km, st, "table.options", &json!({"headerRow": null}), "op", &doc_id).is_err());
         assert!(normalize(&km, st, "table.options", &json!({}), "op", &doc_id).is_err());
+    }
+
+    /// One slide with a SmartArt graphic (three nodes: Plan, then Scope under it, then Build).
+    fn smartart_deck() -> (Session, String, SlideId, ShapeId) {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        let r = s.apply_remote("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).expect("smartart");
+        let gid = ShapeId(r["id"].as_u64().expect("id") as u32);
+        let slide = s.doc().expect("doc").doc.slides[0].id;
+        (s, "d".into(), slide, gid)
+    }
+
+    #[test]
+    fn smartart_commands_normalise_to_one_final_diagram() {
+        let (s, doc, slide, group) = smartart_deck();
+        let child = match &s.doc().expect("doc").doc.slides[0].shapes[0].kind {
+            ShapeKind::Group { children, .. } => children[1].id,
+            other => panic!("not a group: {other:?}"),
+        };
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // An outline edit sends the whole resulting value: the layout and every node, with the
+        // typed sub-points' levels — not the lines the user typed.
+        let ops = normalize(&km, st, "smartArt.setNodes", &json!({"lines": ["Plan", "\tScope", "\tRisks", "Build"]}), "op", &doc).expect("set nodes");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(group));
+        let Payload::SmartArtSet { diagram } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(diagram["kind"], "blockList");
+        let nodes: Vec<(&str, u64)> =
+            diagram["nodes"].as_array().expect("nodes").iter().map(|n| (n["text"].as_str().unwrap(), n["level"].as_u64().unwrap())).collect();
+        assert_eq!(nodes, [("Plan", 0), ("Scope", 1), ("Risks", 1), ("Build", 0)]);
+
+        // A child shape addresses its group, like the single-user command; an outline step keeps
+        // the layout and changes one node.
+        let ops = normalize(&km, st, "smartArt.promote", &json!({"id": child.0, "index": 1}), "op", &doc).expect("promote");
+        let Payload::SmartArtSet { diagram } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(diagram["kind"], "blockList");
+        assert_eq!(diagram["nodes"][1]["level"], 0, "Scope is promoted");
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(group));
+
+        // Layout, style and colours are the same whole value: the outline is kept.
+        for (cmd, p, check) in [
+            ("smartArt.layout", json!({"kind": "hierarchy"}), "kind"),
+            ("smartArt.style", json!({"style": "intense"}), "style"),
+            ("smartArt.colors", json!({"colors": "accent3"}), "colors"),
+        ] {
+            let ops = normalize(&km, st, cmd, &p, "op", &doc).expect(cmd);
+            let Payload::SmartArtSet { diagram } = &ops[0].payload else { panic!("{cmd}: {:?}", ops[0].payload) };
+            let value = p[check].as_str().unwrap();
+            assert_eq!(diagram[check], value, "{cmd}");
+            assert_eq!(diagram["nodes"].as_array().expect("nodes").len(), 3, "{cmd} keeps the outline");
+        }
+
+        // Add and remove send the resulting list too.
+        let ops = normalize(&km, st, "smartArt.addNode", &json!({"index": 2, "position": "after", "text": "Ship"}), "op", &doc).expect("add");
+        let Payload::SmartArtSet { diagram } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(diagram["nodes"].as_array().expect("nodes").len(), 4);
+        let ops = normalize(&km, st, "smartArt.removeNode", &json!({"index": 0}), "op", &doc).expect("remove");
+        let Payload::SmartArtSet { diagram } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        let texts: Vec<&str> = diagram["nodes"].as_array().expect("nodes").iter().map(|n| n["text"].as_str().unwrap()).collect();
+        assert_eq!(texts, ["Scope", "Build"]);
+    }
+
+    #[test]
+    fn smartart_refusals_happen_before_anything_is_sent() {
+        let (mut s, doc, _slide, group) = smartart_deck();
+        let rect = s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 50, 50]})).expect("rect")["id"].as_u64().unwrap();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        // The selection is a plain rectangle: no graphic to address.
+        assert!(matches!(normalize(&km, st, "smartArt.layout", &json!({"kind": "hierarchy"}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(
+            normalize(&km, st, "smartArt.layout", &json!({"id": rect, "kind": "hierarchy"}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
+        // An unknown layout, style or colour, and a node that does not exist, are refused here.
+        assert!(matches!(normalize(&km, st, "smartArt.layout", &json!({"id": group.0, "kind": "nope"}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "smartArt.style", &json!({"id": group.0, "style": "nope"}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(
+            normalize(&km, st, "smartArt.colors", &json!({"id": group.0, "colors": "accent9"}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
+        assert!(matches!(normalize(&km, st, "smartArt.removeNode", &json!({"id": group.0, "index": 99}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "smartArt.promote", &json!({"id": group.0, "index": 0}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(
+            normalize(&km, st, "smartArt.setNodes", &json!({"id": group.0, "index": 99, "text": "x"}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
+        // A command that is not part of this slice is still refused as unsupported.
+        assert!(matches!(normalize(&km, st, "smartArt.toText", &json!({"id": group.0}), "op", &doc), Err(LocalError::Unsupported(_))));
     }
 
     #[test]

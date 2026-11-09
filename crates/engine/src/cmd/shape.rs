@@ -462,7 +462,7 @@ const MAX_TABLE_LINES: usize = 1_000;
 /// argument), so a lossless restore cannot go through them. The value is still hostile input:
 /// it is size-bounded and deserialised into the model type before anything is touched.
 fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
-    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text, cellText or table)"))?;
+    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text, cellText, table or smartArt)"))?;
     let value = p.get("value").cloned().unwrap_or(Value::Null);
     let bytes = serde_json::to_vec(&value).map_err(|e| bad("shape.setField", format!("invalid value: {e}")))?;
     if bytes.len() > MAX_FIELD_JSON {
@@ -537,7 +537,26 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(())
             })
         }
-        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text, cellText or table)"))),
+        // A whole SmartArt group: its diagram value and the shapes generated from it. An outline
+        // edit regenerates the children with fresh ids and replaces any drawing an imported file
+        // brought, so the diagram value alone is not an exact image of the step; the group is.
+        // The value names the shape it restores, so a stale or forged image cannot land on
+        // another shape.
+        "smartArt" => {
+            let shape = decode_field::<deckcraft_model::Shape>(&value, "smartArt")?
+                .ok_or_else(|| bad("shape.setField", "a SmartArt group cannot be cleared"))?;
+            if shape.diagram.is_none() {
+                return Err(bad("shape.setField", "the value is not a SmartArt group"));
+            }
+            edit_shapes(s, p, "shape.setField", |sh| {
+                if shape.id != sh.id {
+                    return Err(bad("shape.setField", "the value names another shape"));
+                }
+                *sh = shape.clone();
+                Ok(())
+            })
+        }
+        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text, cellText, table or smartArt)"))),
     }
 }
 

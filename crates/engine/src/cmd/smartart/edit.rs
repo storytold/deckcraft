@@ -6,7 +6,7 @@ use super::{
 };
 
 /// The SmartArt group that `id` is, or is inside.
-fn diagram_group(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
+pub(super) fn diagram_group(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
     for sh in shapes {
         if sh.id == id && sh.diagram.is_some() {
             return Some(sh);
@@ -107,63 +107,161 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
 pub(super) fn nodes(s: &mut Session, p: &Value) -> Result<Value> {
     let gid = target_group(s, p, "smartArt.nodes")?;
     let g = shape_of(s, gid)?;
-    let mut d = g.diagram.unwrap_or_default();
-    if let ShapeKind::Group { children, .. } = &g.kind {
+    let d = synced(&g).unwrap_or_default();
+    Ok(json!({"id": gid.0, "kind": d.kind, "nodes": d.nodes}))
+}
+
+/// The value an outline, layout, style or colour command leaves, applied to a `Diagram` value.
+///
+/// The single-user commands below and the collaboration normaliser both call this, so a replica's
+/// final value is exactly the one the author's command produced: the normaliser sends the whole
+/// resulting diagram instead of the command's arguments (RFC §15).
+pub fn plan(cmd: &str, p: &Value, d: &mut Diagram) -> Result<Value> {
+    match cmd {
+        "smartArt.setNodes" => {
+            let given: Option<Vec<DiagramNode>> = match (p.get("nodes"), p.get("lines").and_then(Value::as_array)) {
+                (Some(v), _) => Some(serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))?),
+                (None, Some(a)) => Some(nodes_from_lines(a.iter().filter_map(Value::as_str))),
+                _ => None,
+            };
+            let one = p.get("index").map(|_| index(p, cmd)).transpose()?;
+            let text = str_param(p, "text").map(String::from);
+            let title = str_param(p, "title").map(String::from);
+            if let Some(n) = given {
+                d.nodes = n;
+            }
+            if let (Some(i), Some(t)) = (one, text) {
+                d.nodes.get_mut(i).ok_or_else(|| bad(cmd, "no such node"))?.text = t;
+            }
+            if let (Some(i), Some(t)) = (one, title) {
+                d.nodes.get_mut(i).ok_or_else(|| bad(cmd, "no such node"))?.title = t;
+            }
+            Ok(Value::Null)
+        }
+        "smartArt.addNode" => {
+            let i = p.get("index").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok());
+            let pos = str_param(p, "position").unwrap_or("after").to_string();
+            let text = str_param(p, "text").unwrap_or("").to_string();
+            let at = add(&mut d.nodes, i, &pos, &text);
+            Ok(json!({"index": at}))
+        }
+        "smartArt.removeNode" => {
+            let i = index(p, cmd)?;
+            if remove(&mut d.nodes, i) { Ok(Value::Null) } else { Err(bad(cmd, "no such node")) }
+        }
+        "smartArt.promote" => {
+            let i = index(p, cmd)?;
+            if promote_node(&mut d.nodes, i) { Ok(Value::Null) } else { Err(bad(cmd, "already at the top level")) }
+        }
+        "smartArt.demote" => {
+            let i = index(p, cmd)?;
+            if demote_node(&mut d.nodes, i) { Ok(Value::Null) } else { Err(bad(cmd, "nothing above to demote under")) }
+        }
+        "smartArt.layout" => {
+            let kind = str_param(p, "kind").filter(|k| is_kind(k)).ok_or_else(|| bad(cmd, "unknown layout"))?.to_string();
+            if d.kind != kind {
+                // PowerPoint's own layout no longer applies.
+                d.layout_id.clear();
+                d.layout_xml = None;
+            }
+            d.kind = kind;
+            Ok(Value::Null)
+        }
+        "smartArt.style" => {
+            let v = str_param(p, "style").filter(|k| STYLES.iter().any(|(id, _)| id == k)).ok_or_else(|| bad(cmd, "unknown style"))?.to_string();
+            if d.style != v {
+                d.style_xml = None;
+            }
+            d.style = v;
+            Ok(Value::Null)
+        }
+        "smartArt.colors" => {
+            let v = str_param(p, "colors").filter(|k| COLORS.iter().any(|(id, _)| id == k)).ok_or_else(|| bad(cmd, "unknown colours"))?.to_string();
+            if d.colors != v {
+                d.colors_xml = None;
+            }
+            d.colors = v;
+            Ok(Value::Null)
+        }
+        other => Err(bad(other, "not a SmartArt value command")),
+    }
+}
+
+/// The diagram of a group with the text typed into its shapes synced back, as every outline edit
+/// (and the collaboration normaliser) sees it.
+pub fn synced(group: &Shape) -> Option<Diagram> {
+    let mut d = group.diagram.clone()?;
+    if let ShapeKind::Group { children, .. } = &group.kind {
         sync_text(&mut d, children);
     }
-    Ok(json!({"id": gid.0, "kind": d.kind, "nodes": d.nodes}))
+    Some(d)
 }
 
 pub(super) fn set_nodes(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.setNodes";
-    let given: Option<Vec<DiagramNode>> = match (p.get("nodes"), p.get("lines").and_then(Value::as_array)) {
-        (Some(v), _) => Some(serde_json::from_value(v.clone()).map_err(|e| bad(CMD, e.to_string()))?),
-        (None, Some(a)) => Some(nodes_from_lines(a.iter().filter_map(Value::as_str))),
-        _ => None,
-    };
-    let one = p.get("index").map(|_| index(p, CMD)).transpose()?;
-    let text = str_param(p, "text").map(String::from);
-    let title = str_param(p, "title").map(String::from);
-    edit_diagram(s, p, CMD, |d| {
-        if let Some(n) = given {
-            d.nodes = n;
-        }
-        if let (Some(i), Some(t)) = (one, text) {
-            d.nodes.get_mut(i).ok_or_else(|| bad(CMD, "no such node"))?.text = t;
-        }
-        if let (Some(i), Some(t)) = (one, title) {
-            d.nodes.get_mut(i).ok_or_else(|| bad(CMD, "no such node"))?.title = t;
-        }
-        Ok(Value::Null)
-    })
+    edit_diagram(s, p, CMD, |d| plan(CMD, p, d))
 }
 
 pub(super) fn add_node(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = p.get("index").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok());
-    let pos = str_param(p, "position").unwrap_or("after").to_string();
-    let text = str_param(p, "text").unwrap_or("").to_string();
-    edit_diagram(s, p, "smartArt.addNode", |d| {
-        let at = add(&mut d.nodes, i, &pos, &text);
-        Ok(json!({"index": at}))
-    })
+    edit_diagram(s, p, "smartArt.addNode", |d| plan("smartArt.addNode", p, d))
 }
 
 pub(super) fn remove_node(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.removeNode";
-    let i = index(p, CMD)?;
-    edit_diagram(s, p, CMD, |d| if remove(&mut d.nodes, i) { Ok(Value::Null) } else { Err(bad(CMD, "no such node")) })
+    edit_diagram(s, p, CMD, |d| plan(CMD, p, d))
 }
 
 pub(super) fn promote(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.promote";
-    let i = index(p, CMD)?;
-    edit_diagram(s, p, CMD, |d| if promote_node(&mut d.nodes, i) { Ok(Value::Null) } else { Err(bad(CMD, "already at the top level")) })
+    edit_diagram(s, p, CMD, |d| plan(CMD, p, d))
 }
 
 pub(super) fn demote(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.demote";
-    let i = index(p, CMD)?;
-    edit_diagram(s, p, CMD, |d| if demote_node(&mut d.nodes, i) { Ok(Value::Null) } else { Err(bad(CMD, "nothing above to demote under")) })
+    edit_diagram(s, p, CMD, |d| plan(CMD, p, d))
+}
+
+/// Most nodes one `smartArt.setDiagram` may carry, and the most text they may hold.
+const MAX_NODES: usize = 4096;
+const MAX_NODE_TEXT: usize = 64 * 1024;
+/// Longest diagram value the confirmed command may carry, as JSON bytes.
+const MAX_DIAGRAM_JSON: usize = 128 * 1024;
+
+/// Replace a graphic's whole diagram value and regenerate its shapes (`smartArt.setDiagram`).
+///
+/// This is the confirmed command of every outline, layout, style and colour edit and the exact
+/// restore of a step the collaboration adapter records (ADR 0010): the normaliser sends the whole
+/// `Diagram` the author's command produced, so every replica regenerates from the same final value
+/// instead of merging arguments against its own copy. The value is still hostile input: it is
+/// size-bounded, deserialised into the model type and its layout, style and colours are checked
+/// before the first write.
+pub(super) fn set_diagram(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.setDiagram";
+    let value = p.get("diagram").ok_or_else(|| bad(CMD, "missing `diagram`"))?;
+    let bytes = serde_json::to_vec(value).map_err(|e| bad(CMD, format!("invalid diagram: {e}")))?;
+    if bytes.len() > MAX_DIAGRAM_JSON {
+        return Err(bad(CMD, "the diagram is too large"));
+    }
+    let d: Diagram = serde_json::from_value(value.clone()).map_err(|e| bad(CMD, format!("invalid diagram: {e}")))?;
+    if !is_kind(&d.kind) {
+        return Err(bad(CMD, "unknown layout"));
+    }
+    if d.nodes.len() > MAX_NODES {
+        return Err(bad(CMD, format!("at most {MAX_NODES} nodes")));
+    }
+    if d.nodes.iter().map(|n| n.text.len() + n.title.len()).sum::<usize>() > MAX_NODE_TEXT {
+        return Err(bad(CMD, "the outline is too large"));
+    }
+    if !d.style.is_empty() && !STYLES.iter().any(|(id, _)| id == &d.style) {
+        return Err(bad(CMD, "unknown style"));
+    }
+    if !d.colors.is_empty() && !COLORS.iter().any(|(id, _)| id == &d.colors) {
+        return Err(bad(CMD, "unknown colours"));
+    }
+    edit_diagram(s, p, CMD, |cur| {
+        *cur = d.clone();
+        Ok(Value::Null)
+    })
 }
 
 /// Convert to SmartArt: the selected text shape's paragraphs become the nodes of a new graphic in
@@ -312,11 +410,7 @@ fn selected_for(s: &Session, gid: ShapeId) -> Option<(ShapeId, Diagram)> {
     let st = s.doc().ok()?;
     let shapes = current_shapes(&st.doc, &st.selection)?;
     let g = diagram_group(shapes, gid)?;
-    let mut d = g.diagram.clone()?;
-    if let ShapeKind::Group { children, .. } = &g.kind {
-        sync_text(&mut d, children);
-    }
-    Some((g.id, d))
+    Some((g.id, synced(g)?))
 }
 
 pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
@@ -341,38 +435,15 @@ pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn change_style(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.style";
-    let v = str_param(p, "style").filter(|k| STYLES.iter().any(|(id, _)| id == k)).ok_or_else(|| bad(CMD, "unknown style"))?.to_string();
-    edit_diagram(s, p, CMD, |d| {
-        if d.style != v {
-            d.style_xml = None;
-        }
-        d.style = v;
-        Ok(Value::Null)
-    })
+    edit_diagram(s, p, CMD, |d| plan(CMD, p, d))
 }
 
 pub(super) fn change_colors(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.colors";
-    let v = str_param(p, "colors").filter(|k| COLORS.iter().any(|(id, _)| id == k)).ok_or_else(|| bad(CMD, "unknown colours"))?.to_string();
-    edit_diagram(s, p, CMD, |d| {
-        if d.colors != v {
-            d.colors_xml = None;
-        }
-        d.colors = v;
-        Ok(Value::Null)
-    })
+    edit_diagram(s, p, CMD, |d| plan(CMD, p, d))
 }
 
 pub(super) fn change_layout(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.layout";
-    let kind = str_param(p, "kind").filter(|k| is_kind(k)).ok_or_else(|| bad(CMD, "unknown layout"))?.to_string();
-    edit_diagram(s, p, CMD, |d| {
-        if d.kind != kind {
-            // PowerPoint's own layout no longer applies.
-            d.layout_id.clear();
-            d.layout_xml = None;
-        }
-        d.kind = kind;
-        Ok(Value::Null)
-    })
+    edit_diagram(s, p, CMD, |d| plan(CMD, p, d))
 }

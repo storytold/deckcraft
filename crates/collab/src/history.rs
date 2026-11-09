@@ -42,6 +42,11 @@ pub enum Image {
     /// A whole table, for a structural row/column edit: the cells' indices and values both
     /// change, so only the whole table is an exact image.
     Table(Table),
+    /// A whole SmartArt group — its diagram value and the shapes generated from it — for an
+    /// outline, layout, style or colour edit. An outline edit regenerates the children with fresh
+    /// ids and replaces any drawing an imported file brought, so the diagram value alone is not an
+    /// exact image of the step.
+    SmartArt(serde_json::Value),
     /// One shape's animation steps, in order, as `animation.add`/`animation.remove` leave them.
     /// A file's animations carry preset ids, timings, colours and motion paths that the
     /// `animation.add` arguments cannot repeat, so the step image is the model list itself.
@@ -246,6 +251,10 @@ impl Image {
                 None => Payload::ShapeField { field: ShapeField::Text, value: serde_json::to_value(body).ok()? },
             },
             Image::Table(table) => Payload::ShapeField { field: ShapeField::Table, value: serde_json::to_value(table).ok()? },
+            // A SmartArt group is one value: the diagram and the children generated from it. The
+            // whole group keeps the child ids and any imported drawing, which the diagram value
+            // alone cannot reproduce.
+            Image::SmartArt(value) => Payload::ShapeField { field: ShapeField::SmartArt, value: value.clone() },
             Image::Animation(steps) => Payload::ShapeAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
             Image::SlideAnimations(steps) => {
                 Payload::SlideAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? }
