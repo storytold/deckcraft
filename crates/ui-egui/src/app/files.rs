@@ -183,9 +183,12 @@ impl SlideApp {
     }
 
     /// The name, without extension, a save or export uses: `custom` once cleaned, else the
-    /// presentation's title.
+    /// presentation's title (cleaned the same way, so "Plan.pdf" exports as "Plan.pdf", not "Plan.pdf.pdf").
     fn file_stem(&self, ext: &str, custom: Option<&str>) -> String {
-        custom.and_then(|c| clean_file_stem(c, ext)).or_else(|| self.session.active().map(|d| d.title())).unwrap_or_else(|| "Presentation".into())
+        custom
+            .and_then(|c| clean_file_stem(c, ext))
+            .or_else(|| self.session.active().and_then(|d| clean_file_stem(&d.title(), ext)))
+            .unwrap_or_else(|| "Presentation".into())
     }
 
     /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `pptx`,
@@ -895,5 +898,23 @@ mod print_preview_tests {
 
         assert!(!dir.exists());
         std::fs::remove_dir(base).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod file_stem_tests {
+    use crate::{Services, SlideApp};
+    use deckcraft_engine::Session;
+
+    /// With no usable name typed, a title that already ends in the export's extension isn't doubled.
+    #[test]
+    fn fallback_title_does_not_double_the_extension() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        if let Some(d) = app.session.active_mut() {
+            d.title = "Plan.pdf".into();
+        }
+        assert_eq!(app.suggested_name("pdf", None), "Plan.pdf");
+        assert_eq!(app.suggested_name("pdf", Some("  / ")), "Plan.pdf");
+        assert_eq!(app.suggested_name("pptx", None), "Plan.pdf.pptx");
     }
 }
