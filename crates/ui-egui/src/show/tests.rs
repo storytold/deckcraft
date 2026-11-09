@@ -1400,6 +1400,59 @@ fn selecting_transition_in_gallery_auto_previews_when_enabled() {
     assert_eq!(tr.kind, "push");
 }
 
+/// #1655 review: an automatic preview leaves the editor as it was. With slides 1 and 2 selected,
+/// picking a transition (applied to both) previews it and, once the preview has played out, the
+/// two slides are still selected, so the next Effect Options change still reaches both. And a
+/// preview never auto-advances, whatever "After" timing the slide carries.
+#[test]
+fn auto_preview_keeps_the_slide_selection_and_never_auto_advances() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.execute("slide.selectSlides", &json!({"indices": [0, 1]})).unwrap();
+    // A 50 ms "After" timing on both: a real show would advance almost at once.
+    s.execute("transition.timing", &json!({"after": 50})).unwrap();
+    let mut app = SlideApp::new(s, crate::Services::default());
+    app.ui.tab = "Transitions".into();
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    let start = h.state().session.active().unwrap().selection.slide;
+    h.get_by_label("Push").click();
+    h.run_steps(2);
+    let show = h.state().show.as_ref().expect("auto-preview started");
+    assert!(show.preview_only, "a preview, not a show");
+    assert_eq!(show.state.slide, start, "previewed on the current slide");
+    // Let the preview run well past the transition and the 50 ms timing.
+    let mut advanced = false;
+    for _ in 0..240 {
+        h.step();
+        if let Some(show) = h.state().show.as_ref() {
+            advanced |= show.state.slide != start;
+        } else {
+            break;
+        }
+    }
+    assert!(!advanced, "a preview never auto-advances");
+    assert!(h.state().show.is_none(), "the preview exited on its own");
+    let st = h.state().session.active().unwrap();
+    assert_eq!(st.selection.slide, start, "the current slide is unchanged");
+    assert_eq!(st.selection.slides.len(), 2, "both slides are still selected: {:?}", st.selection.slides);
+    // So an Effect Options change still reaches both.
+    h.state_mut().run("transition.options", json!({"option": "l"})).unwrap();
+    let st = h.state().session.active().unwrap();
+    assert!(
+        st.doc.slides[..2].iter().all(|sl| sl.transition.as_ref().is_some_and(|t| t.kind == "push" && t.option == "l")),
+        "both slides took the option"
+    );
+}
+
 /// #1655: when auto_preview_transitions is disabled, selecting a transition does not play preview.
 #[test]
 fn selecting_transition_does_not_auto_preview_when_disabled() {
