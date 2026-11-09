@@ -276,12 +276,11 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let _ = combo.response.labelled_by(field.id);
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
-    let ty = d.get("type", "speaker");
-    let custom = d.fields.get("custom").cloned().unwrap_or_default();
-    run(app, "show.setup", json!({"type": ty, "loop": lp, "nonNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
-}
-
-ok || cancel
+        let ty = d.get("type", "speaker");
+        let custom = d.fields.get("custom").cloned().unwrap_or_default();
+        run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
+    }
+    ok || cancel
 }
 
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
