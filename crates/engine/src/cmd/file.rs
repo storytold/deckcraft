@@ -33,11 +33,11 @@ pub fn specs() -> Vec<CommandSpec> {
             adopt
         ),
         cmd!(noundo "file.openBytes", "Open Data", [], None, "{name, data: base64}", always, open_bytes),
-        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx}", has_doc, save),
-        cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
-        cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
+        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx, createNew?: bool (refuse replacement atomically)}", has_doc, save),
+        cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?, createNew?: bool (refuse replacement atomically)}", has_doc, save_as),
+        cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path, createNew?: bool (refuse replacement atomically)}", has_doc, save_as),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|rtf|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, createNew?: bool (refuse replacement atomically for each output), format?: png|jpeg|pptx|deckcraft|outline|rtf|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -498,6 +498,14 @@ fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
     crate::io::write_file(path, bytes).map_err(EngineError::Other)
 }
 
+fn write_output(path: &str, bytes: &[u8], p: &Value) -> Result<()> {
+    if bool_or(p, "createNew", false) {
+        crate::io::write_file_new(path, bytes).map_err(EngineError::Other)
+    } else {
+        write_file(path, bytes)
+    }
+}
+
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(String::from).or_else(|| s.active().and_then(|d| d.path.clone()));
     let Some(path) = path else {
@@ -506,7 +514,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let format = str_param(p, "format").unwrap_or(format_for_path(&path));
     let bytes = save_bytes(&s.doc()?.doc, format)?;
-    write_file(&path, &bytes)?;
+    write_output(&path, &bytes, p)?;
     mark_saved(s, Some(path.clone()))?;
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
@@ -627,7 +635,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
                     pth.with_file_name(format!("{stem}{}.{ext}", k + 1)).to_string_lossy().to_string()
                 };
                 // Say which slides made it when one can't be written (disk full part-way).
-                write_file(&out, &bytes)
+                write_output(&out, &bytes, p)
                     .map_err(|e| if written.is_empty() { e } else { EngineError::Other(format!("{e} (slides 1–{k} were written)")) })?;
                 written.push(out);
             }
@@ -635,7 +643,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "pdf" => {
             let bytes = pdf_bytes(&st.doc, p)?;
-            write_file(&path, &bytes)?;
+            write_output(&path, &bytes, p)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
         "gif" => {
@@ -645,7 +653,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
                 gp["slides"] = json!(parse_slide_range(text, st.doc.slides.len())?);
             }
             let out = crate::gif_export::encode(&st.doc, &crate::gif_export::GifOptions::from_params(&gp)?)?;
-            write_file(&path, &out.bytes)?;
+            write_output(&path, &out.bytes, p)?;
             Ok(json!({
                 "path": path,
                 "bytes": out.bytes.len(),
@@ -657,7 +665,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "pptx" | "potx" | "ppsx" | "deckcraft" | "outline" | "txt" | "rtf" => {
             let bytes = save_bytes(&st.doc, &format)?;
-            write_file(&path, &bytes)?;
+            write_output(&path, &bytes, p)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
         other => Err(bad("file.export", format!("unknown format `{other}`"))),
@@ -786,6 +794,33 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::{parse_slide_range, write_file};
+
+    #[test]
+    fn save_and_export_create_new_refuse_a_late_destination() {
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = Scratch(std::env::temp_dir().join(format!("deckcraft-create-new-command-{}-{stamp}", std::process::id())));
+        std::fs::create_dir(&dir.0).unwrap();
+        for (command, format) in [("file.saveAs", "deckcraft"), ("file.export", "outline"), ("file.export", "png")] {
+            let path = dir.0.join(format!("Late.{format}"));
+            let mut session = crate::Session::with_new();
+            let params = serde_json::json!({"path": path, "format": format, "createNew": true, "scale": 0.01});
+            // Another save committed after the picker selected an apparently unused path.
+            std::fs::write(&path, b"other save").unwrap();
+            assert!(session.execute(command, &params).is_err(), "{command} {format}");
+            assert_eq!(std::fs::read(&path).unwrap(), b"other save");
+            assert!(session.active().unwrap().path.is_none(), "a refused Save As must not adopt the path");
+            let mut confirmed = params;
+            confirmed["createNew"] = serde_json::json!(false);
+            session.execute(command, &confirmed).unwrap();
+            assert_ne!(std::fs::read(&path).unwrap(), b"other save");
+        }
+    }
 
     #[test]
     fn broad_and_repeated_slide_ranges_expand_once() {

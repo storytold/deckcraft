@@ -93,13 +93,16 @@ pub(crate) fn with_save_extension(path: String, ext: &str) -> String {
 /// adding the extension lands on a file that already exists, the dialog confirmed replacing the
 /// bare name, not that file, so the save is refused with a message rather than overwriting it
 /// silently; typing the full name (with its extension) goes through the dialog's own replace prompt.
-pub(crate) fn save_path(picked: String, ext: &str) -> Result<String, String> {
+/// Returns the final path and whether its extension was adjusted: callers must pass that flag
+/// as `createNew` so a file appearing after this early check cannot be replaced at commit time.
+pub(crate) fn save_path(picked: String, ext: &str) -> Result<(String, bool), String> {
     let path = with_save_extension(picked.clone(), ext);
-    if path != picked && std::path::Path::new(&path).exists() {
+    let adjusted = path != picked;
+    if adjusted && std::path::Path::new(&path).exists() {
         let name = std::path::Path::new(&path).file_name().map_or_else(|| path.clone(), |n| n.to_string_lossy().to_string());
         return Err(format!("{name} already exists. Type the full name, with its extension, to replace it."));
     }
-    Ok(path)
+    Ok((path, adjusted))
 }
 
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.
@@ -227,7 +230,7 @@ impl SlideApp {
         let suggested = self.suggested_name(ext);
         if self.services.pick_save.is_some() {
             let Some(picked) = self.services.pick_save.as_mut().and_then(|pick| pick(&suggested)) else { return false };
-            let path = match save_path(picked, ext) {
+            let (path, create_new) = match save_path(picked, ext) {
                 Ok(p) => p,
                 Err(e) => {
                     self.set_status(e);
@@ -238,6 +241,7 @@ impl SlideApp {
             if let (Some(o), Some(x)) = (params.as_object_mut(), extra.as_object()) {
                 o.extend(x.clone());
             }
+            params["createNew"] = json!(create_new);
             return match self.run("file.export", params) {
                 Ok(_) => {
                     self.set_status(format!("Exported {path}"));
@@ -482,7 +486,9 @@ impl SlideApp {
         if self.services.pick_save.is_some() {
             let Some(picked) = self.services.pick_save.as_mut().and_then(|pick| pick(&suggested)) else { return };
             match save_path(picked, ext)
-                .and_then(|path| self.session.execute("file.saveAs", &json!({"path": path})).map(|_| path).map_err(|e| e.to_string()))
+                .and_then(|(path, create_new)| {
+                    self.session.execute("file.saveAs", &json!({"path": path, "createNew": create_new})).map(|_| path).map_err(|e| e.to_string())
+                })
             {
                 Ok(path) => {
                     self.set_status(format!("Saved {path}"));
@@ -917,16 +923,40 @@ mod save_extension_tests {
     #[test]
     fn an_added_extension_never_overwrites_an_existing_file_unasked() {
         use super::save_path;
-        let dir = std::env::temp_dir().join(format!("deckcraft-save-path-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let mut cleanup = super::PrintPreviews::default();
+        let owned = cleanup.create("save-path-test").unwrap();
+        let dir = owned.parent().unwrap();
         let full = dir.join("Quarterly.pptx");
         std::fs::write(&full, b"old").unwrap();
         let bare = dir.join("Quarterly").to_string_lossy().to_string();
         let e = save_path(bare, "pptx").unwrap_err();
         assert!(e.starts_with("Quarterly.pptx already exists"), "{e}");
         assert_eq!(std::fs::read(&full).unwrap(), b"old", "untouched");
-        assert_eq!(save_path(full.to_string_lossy().to_string(), "pptx").unwrap(), full.to_string_lossy(), "typed in full: the dialog confirmed it");
-        assert_eq!(save_path(dir.join("Fresh").to_string_lossy().to_string(), "pptx").unwrap(), dir.join("Fresh.pptx").to_string_lossy());
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            save_path(full.to_string_lossy().to_string(), "pptx").unwrap(),
+            (full.to_string_lossy().to_string(), false),
+            "typed in full: the dialog confirmed it"
+        );
+        assert_eq!(
+            save_path(dir.join("Fresh").to_string_lossy().to_string(), "pptx").unwrap(),
+            (dir.join("Fresh.pptx").to_string_lossy().to_string(), true)
+        );
+    }
+
+    #[test]
+    fn two_adjusted_selections_cannot_replace_each_others_save() {
+        let mut cleanup = super::PrintPreviews::default();
+        let owned = cleanup.create("save-race-test").unwrap();
+        let bare = owned.parent().unwrap().join("Quarterly").to_string_lossy().to_string();
+        let (first, first_new) = super::save_path(bare.clone(), "pptx").unwrap();
+        let (second, second_new) = super::save_path(bare, "pptx").unwrap();
+        assert!(first_new && second_new);
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("file.saveAs", &serde_json::json!({"path": first, "createNew": first_new})).unwrap();
+        let bytes = std::fs::read(&first).unwrap();
+        session.execute("file.properties", &serde_json::json!({"title": "Changed"})).unwrap();
+        assert!(session.execute("file.saveAs", &serde_json::json!({"path": second, "createNew": second_new})).is_err());
+        assert_eq!(std::fs::read(&first).unwrap(), bytes);
+        assert!(session.active().unwrap().is_dirty(), "the refused second save remains unsaved");
     }
 }
