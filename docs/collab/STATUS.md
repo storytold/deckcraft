@@ -14,8 +14,9 @@ table-text slice `2a91d49e`, its docs commit, the cell-set rebase `b54eed3d`, th
 slice `f562aea4` with its docs commit on top, the notes-text slice `b7025f9a` with its docs
 commit on top, the table-cell format slice
 `a48c12de` with its docs commit on top, the run-range format slice `b4f13167` with its docs
-commit on top, the N-cell/caret format slice `6ddc0c4f` with its docs commit on top, and the
-whole-slide animation slice `b31bff47` with its docs commit on top.
+commit on top, the N-cell/caret format slice `6ddc0c4f` with its docs commit on top, the
+whole-slide animation slice `b31bff47` with its docs commit on top, and the
+rest-of-the-animation-surface slice `e2a5ef41` with its docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -39,7 +40,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
-| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image |
+| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
 
@@ -267,6 +268,16 @@ human decision.
   before the first write; a list that changes nothing sends no operation. This is a per-slide
   value, so the whole-sequence payload, not the per-shape `shape_animations`, is what keeps
   interleaved steps exact.
+- `animation.options`/`animation.clear`/`animation.painterApply`: the same slide-wide
+  `slide_animations` value. `options` changes exactly the named steps' option codes (resolved in
+  each effect's own terms by the engine's `options_plan`, so no replica guesses a direction),
+  motion path and text build; `clear` sends an empty sequence for the slide it addresses (`index`
+  is a slide, not a step); the painter's clipboard (`Session.anim_painter`) is a session value, so
+  `painterApply` sends the resulting sequence computed with the engine's `painter_plan` — each
+  target's own steps replaced by the picked ones, a paragraph the target does not have becoming
+  the whole shape — and no replica needs the clipboard. A command that changes nothing sends no
+  operation, a missing clipboard or an unaddressable target is refused before anything is sent,
+  and the UI disarms a one-shot pick after it is sent, as the single-user command does.
 - `format.*`: 17 allowlisted commands (`bold`, `italic`, `underline`, `strikethrough`,
   `superscript`, `subscript`, `font`, `size`, `color`, `highlight`, `alignLeft/Center/Right`,
   `justify`, `caps`, `spacing`, `clear`) over one explicit shape's whole text body, over the
@@ -304,7 +315,7 @@ human decision.
 - Undo/redo: move, bounds, align/distribute, text (shape text and table cells), fill, outline,
   `format.*` (a shape's body, one cell's body, N cells of one table, or a character range/caret of
   a body), transition and animation (a shape's step list for add/remove, a slide's whole sequence
-  for set/timing/move). A restore
+  for set/timing/move/options/clear/painter). A restore
   carries the exact model value (`shape_field`) and runs through the `shape.setField` engine
   command, which bounds the JSON and deserialises it into the model type. A cell text step records
   the cell's whole body text with its address and restores it with `text.set{cell}`, so the
@@ -330,7 +341,8 @@ human decision.
   shape's whole step list before and after (model animations in order) and restores it through the
   same `shape_animations` payload, applied by `slide.animation.set`; a later list from another
   participant refuses the undo with `undo-conflict`, while a change to another shape's steps does
-  not. An `animation.set`/`animation.timing`/`animation.move` step records the slide's whole
+  not. An `animation.set`/`animation.timing`/`animation.move`/`animation.options`/
+  `animation.clear`/`animation.painterApply` step records the slide's whole
   ordered sequence before and after and restores it through the same `slide_animations` payload,
   applied by `slide.animations.set`; any animation change on that slide after the step (including
   another shape's) refuses the undo with `undo-conflict`, because the whole order is the value.
@@ -608,6 +620,25 @@ too many steps before any write, the plans matching the single-user commands, th
 emitting the exact sequence and nothing for a no-op, and both wire forms. `git status` is clean
 after the docs commit; nothing was pushed and CI was not touched.
 
+Re-run on 2026-11-09 after the rest-of-the-animation-surface slice (`e2a5ef41`, on `agents`, rust
+1.99.1): `cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D
+warnings` clean, `collab-proto` 30, `collab` 197 + 8, `collab-web` 15, `collab-server` 10 unit +
+4 commit + 4 gates + 6 socket (the four gates in 2.45 s with `--test-threads=1`, LibreOffice
+skipped on the build host), `deckcraft-web` 6, `ui-egui collab::` 20, `ui-egui` full 516 passed +
+4 ignored + the known `ime_tests::korean_composes_in_the_notes_pane` environment failure (no
+`craft-fonts`/Korean font on the build host), `deckcraft-engine` 580 + 1 ignored, `xtask layers`
+32 crates with no violations, `cargo check -p deckcraft-web --target wasm32-unknown-unknown` ok
+(two pre-existing dead-code warnings on wasm32, in untouched fields of `collab-web`/`ui-egui`).
+The new tests cover `animation.options` and `animation.painterApply` through the engine plans
+(options by index leave exactly the planned codes and text build; the painter copies a
+paragraph-level step onto a shape without that paragraph and it becomes a whole-shape step); the
+normaliser turning options, clear and the painter into the slide's whole sequence, sending
+nothing for a no-op and refusing a missing clipboard, an empty target, an unknown target and an
+out-of-range slide; the hub running options, the painter (clipboard in the session) and clear on
+two replicas with an undo of each; and the UI sending the painted sequence over the link and
+disarming a one-shot pick. `git status` is clean after the docs commit; nothing was pushed, CI
+was not touched, and PR #1975 is unchanged.
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -654,9 +685,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list and a slide's whole sequence), table cell text, table row/column edits and slide notes text | collab tests |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits and slide notes text | collab tests |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence), table row/column edits | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/whole-table `shape_field` |
+| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
@@ -683,15 +714,15 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
    (`addresses: [{ cell?, range | caret }]`, rebased, exact-body undo), `slide.duplicate`,
    `transition.set`, table cell text, table
    row/column edits, `animation.add`/`animation.remove` (one shape's whole step list),
-   `animation.set`/`animation.timing`/`animation.move` (one slide's whole ordered sequence) and
+   `animation.set`/`animation.timing`/`animation.move`/`animation.options`/`animation.clear` and
+   the Animation Painter (one slide's whole ordered sequence) and
    slide notes text (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) are
-   collaborative now. Still refused: fonts as a document asset, the rest of the animation surface
-   (`animation.options`, `animation.clear`, the painter), the rest of the table surface (style,
-   fill, merge/split, sizing), SmartArt/charts and relative effects. The design rule stands:
-   only commands whose result is a deterministic function of the authoritative state, expressed
-   as final values, go on the wire; a raw `execute` is not safe (toggles and relative edits
-   diverge). Next candidates: the animation
-   timing commands.
+   collaborative now. Still refused: fonts as a document asset, the rest of the table surface
+   (style, fill, merge/split, sizing), SmartArt/charts and relative effects. The design rule
+   stands: only commands whose result is a deterministic function of the authoritative state,
+   expressed as final values, go on the wire; a raw `execute` is not safe (toggles and relative
+   edits diverge). Next candidates: fonts as a document asset, then the rest of the table
+   surface.
 2. **Media refinement.** Fonts and 3D models are not in the media allowlist, and the browser link
    still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
    a private CA must be in the store or `SSL_CERT_FILE`).
@@ -809,21 +840,56 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `409` and stores the accepted version. For a page on another origin the sync server needs CORS
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Next: the rest of the table
-   surface, then fonts as a document asset, then the remaining animation commands
-   (`animation.options`, `animation.clear`, the painter).
+   adapter run → confirmed command → test on two clients. Next: fonts as a document asset, then
+   the rest of the table surface (style, fill, merge/split, sizing), then SmartArt/charts.
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
    body image)/transition/animation (a shape's step list for add/remove, a slide's whole sequence
-   for set/timing/move) steps, a group's fill/line, slide insert/delete/duplicate, shape
-   insert/delete, group/ungroup and table row/column edits (whole-table image). What is left in
-   this line is only the undo of commands that are not on the wire yet (the animation
-   options/clear commands, fonts, the rest of the table surface).
+   for set/timing/move/options/clear/painter) steps, a group's fill/line, slide
+   insert/delete/duplicate, shape insert/delete, group/ungroup and table row/column edits
+   (whole-table image). What is left in this line is only the undo of commands that are not on
+   the wire yet (fonts, the rest of the table surface).
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — the rest of the animation surface: `animation.options`, `animation.clear`, the painter
+
+- The three commands leave a slide's **whole ordered animation sequence**, so they ride the
+  existing `slide_animations` payload and the `slide.animations.set` confirmed command: no new
+  wire value and no new engine command, and the undo image is the whole sequence (the image the
+  `animation.set`/`timing`/`move` family records), so any animation change on that slide after
+  the step is `undo-conflict`.
+- Engine: `animation.options` moved onto a new public `options_plan(p, animations, index, ids,
+  slide) -> (Vec<Animation>, usize)` (the `timing_plan` pattern); the per-target body — the
+  option resolved in each effect's own terms, the motion path for path-class steps, the text
+  build — is unchanged, so the single-user command and the normaliser compute the same codes.
+  The Animation Painter moved onto a new public `painter_plan(picked, animations, ids,
+  paragraphs)` plus `paragraphs(shapes, id)`: painting replaces each target's own steps with the
+  picked list, and a paragraph the target does not have becomes a whole-shape step, exactly as
+  before. The then-unused `each_target` was removed.
+- Normalise: `normalize_with_painter` (with `normalize` delegating to it with no clipboard)
+  turns `animation.options` into the slide's whole resulting sequence (nothing when it changes
+  nothing), `animation.clear` into an empty sequence for the slide it addresses (`index` is a
+  slide, not a step; a slide with no steps sends nothing) and `animation.painterApply` into the
+  sequence `painter_plan` computes from the session clipboard. The clipboard is a session value,
+  not a document value, so it travels as the resulting sequence and no replica needs it; a
+  missing clipboard, no target and an unaddressable target are refused before anything is sent.
+- UI: `CollabUi::pump` disarms a one-shot pick once the paint is queued, because the confirmed
+  command is `slide.animations.set` and the single-user `painterApply` never runs in a session.
+- Tests: the engine plans match the single-user commands (options by index, the painter's
+  paragraph fallback); the normaliser pins the three forms, their no-ops and their refusals; the
+  hub runs `animation.options`, `animation.painterApply` (clipboard in the session) and
+  `animation.clear`, each with its undo on two replicas; the UI test pins the sequence over the
+  link and the disarm. `collab` 197 + 8, `collab-proto` 30, `engine` 580 + 1 ignored, `ui-egui
+  collab::` 20.
+- Gates (on `agents`, rust 1.99.1): `cargo fmt --all -- --check` clean, `cargo clippy
+  --workspace --all-targets -- -D warnings` clean, the four §8 gates 4/4 in 2.45 s (LibreOffice
+  skipped on the build host), `xtask layers` 32 crates, the wasm32 check of `deckcraft-web` ok.
+  Commit `e2a5ef41` plus this docs commit on `collab/pr11`; `production.md`, `rfc.md` and this
+  file updated. Nothing pushed, CI untouched, PR #1975 unchanged.
 
 ### 2026-11-09 — the rest of the animation surface: `animation.set`, `animation.timing`, `animation.move`
 
