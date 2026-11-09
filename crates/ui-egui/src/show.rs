@@ -26,7 +26,7 @@ use presenter::{NOTES_DEFAULT, PresenterTimer};
 #[cfg(test)]
 use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_notes, presenter_window, wall_clock};
 #[cfg(test)]
-use render::{below_playing_video, next_rect, render_frame, start_prefetch};
+use render::{below_live, next_rect, render_frame, start_prefetch};
 use render::{render_backdrop, render_threads};
 #[cfg(test)]
 use ui::transition_layers;
@@ -609,6 +609,12 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
             })
             .collect(),
     }
+}
+
+/// The show's animation state for a layer the UI paints itself (a live Cameo's camera) rather
+/// than the renderer, so both treat the shape the same way.
+fn live_state<'a>(tl: &'a Timeline, step: usize, t: f64, plays: &'a [TriggerPlay], stamps: &'a [StepStamp]) -> impl Fn(ShapeId) -> ShapeState + 'a {
+    move |id| state_for(tl, id, step, t, plays, stamps)
 }
 
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.

@@ -18,12 +18,32 @@ fn shapes_above_a_playing_video_are_the_overlay() {
     let ids: Vec<ShapeId> = slide.shapes.iter().map(|s| s.id).collect();
     slide.shapes[1].kind = deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, ..Default::default() });
     // Video in the middle: the shape above it is drawn over it.
-    assert_eq!(below_playing_video(&doc, 0, &[ids[1]]), vec![ids[0], ids[1]]);
+    assert_eq!(below_live(&doc, 0, &[ids[1]]), vec![ids[0], ids[1]]);
     // Video on top: nothing above it, the frame is painted last as before.
     std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.swap(1, 2);
-    assert!(below_playing_video(&doc, 0, &[ids[1]]).is_empty());
+    assert!(below_live(&doc, 0, &[ids[1]]).is_empty());
     // No video playing.
-    assert!(below_playing_video(&doc, 0, &[]).is_empty());
+    assert!(below_live(&doc, 0, &[]).is_empty());
+}
+
+/// #1837: a Cameo's live frame is composited where the Cameo sits in the stack, so a shape placed
+/// above it is drawn over the frame instead of being covered by it.
+#[test]
+fn shapes_above_a_cameo_are_the_overlay() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let cameo = crate::camera::cameo_ids(&doc, 0);
+    assert_eq!(cameo.len(), 1);
+    // The Cameo is the topmost object: nothing is above it, so its frame is painted last.
+    assert!(below_live(&doc, 0, &cameo).is_empty());
+    let above = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let above = ShapeId(above["id"].as_u64().unwrap() as u32);
+    let doc = session.active().unwrap().doc.clone();
+    let skip = below_live(&doc, 0, &cameo);
+    assert!(!skip.contains(&above), "the shape above the Cameo goes into the overlay");
+    assert!(skip.contains(&cameo[0]), "the Cameo's own box is left to the camera layer");
+    assert_eq!(skip.len(), doc.slides[0].shapes.len() - 1, "everything at or below it is skipped");
 }
 
 /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
@@ -137,7 +157,7 @@ fn presenter_all_slides_does_not_cover_the_audience_screen() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -361,7 +381,7 @@ fn presenter_navigation_uses_its_own_keyboard_events() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -1232,13 +1252,13 @@ fn the_presenter_next_preview_arrives_without_blocking_the_frame() {
     let mut show = Show::new(&doc, 0, false, true);
     let mut keep = true;
     let ctx = egui::Context::default();
-    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, 0.0, &mut keep)).textures_delta.clear();
+    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, 0.0, &mut keep, None)).textures_delta.clear();
     assert!(show.next_job.is_some() && show.next_tex.is_none(), "the first frame leaves the preview pending");
     assert_eq!(show.preview_spawns, 1);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -1267,7 +1287,7 @@ fn paging_quickly_renders_one_preview_at_a_time_and_lands_on_the_newest() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -1318,7 +1338,7 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );

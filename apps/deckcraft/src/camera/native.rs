@@ -86,16 +86,23 @@ impl Drop for SystemCamera {
     }
 }
 
-/// Run `work` on a short-lived thread so a probe never blocks the UI.
+/// Run `work` on a short-lived thread so a probe never blocks the UI. A thread that cannot start
+/// answers with the reason instead of leaving the receiver to wait for a result that never comes.
 fn probe_async<T, F>(work: F) -> Receiver<Result<T, CameraError>>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, CameraError> + Send + 'static,
 {
     let (tx, rx) = mpsc::channel();
-    let _ = thread::Builder::new().name("deckcraft-camera-probe".into()).spawn(move || {
-        let _ = tx.send(work());
+    let spawned = thread::Builder::new().name("deckcraft-camera-probe".into()).spawn({
+        let tx = tx.clone();
+        move || {
+            let _ = tx.send(work());
+        }
     });
+    if spawned.is_err() {
+        let _ = tx.send(Err(CameraError::Backend("the camera probe thread could not start".into())));
+    }
     rx
 }
 
@@ -131,7 +138,6 @@ fn run(commands: Receiver<Command>) {
                     if !deliver(current, frame) {
                         running = None;
                     }
-                    continue;
                 }
                 Err(cameras::Error::Timeout) => {}
                 Err(error) => {
@@ -140,17 +146,9 @@ fn run(commands: Receiver<Command>) {
                 }
             }
         }
-        let command = match running.is_some() {
-            true => match commands.try_recv() {
-                Ok(command) => command,
-                Err(TryRecvError::Empty) => continue,
-                Err(TryRecvError::Disconnected) => return,
-            },
-            false => match commands.recv() {
-                Ok(command) => command,
-                Err(_) => return,
-            },
-        };
+        // Polled after every frame, not only after a timeout: a stream that never stalls would
+        // otherwise keep `Stop` and `Quit` waiting for a timeout that does not come.
+        let Some(command) = next_command(&commands, running.is_some()) else { continue };
         match command {
             Command::Start(request, events) => {
                 // Drop the old camera before opening the new one: a device cannot be opened twice.
@@ -160,6 +158,19 @@ fn run(commands: Receiver<Command>) {
             Command::Stop => running = None,
             Command::Quit => return,
         }
+    }
+}
+
+/// The next command: blocking while no camera runs (the worker is idle), non-blocking while one
+/// delivers frames. A gone host ends the worker like `Quit`.
+fn next_command(commands: &Receiver<Command>, running: bool) -> Option<Command> {
+    match running {
+        true => match commands.try_recv() {
+            Ok(command) => Some(command),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(Command::Quit),
+        },
+        false => commands.recv().ok(),
     }
 }
 
@@ -202,15 +213,28 @@ fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Runn
     Some(Running { camera, events, device: desc(device), fps, seq: 0, opened: false })
 }
 
+/// The largest frame this preview accepts, in bytes (`4 * width * height`): a device report is not
+/// trusted to be small, and the conversion allocates from it.
+const MAX_FRAME_BYTES: usize = 256 << 20;
+
+/// The pixel count of a device-reported frame, or `None` when its width and height cannot make a
+/// picture: zero, or larger than [`MAX_FRAME_BYTES`]. Checked before the conversion allocates.
+fn frame_pixels(width: u32, height: u32) -> Option<usize> {
+    let pixels = (width as usize).checked_mul(height as usize)?;
+    let bytes = pixels.checked_mul(4)?;
+    (bytes > 0 && bytes <= MAX_FRAME_BYTES).then_some(pixels)
+}
+
 /// Convert and forward one frame. Returns false when the UI dropped the session.
 fn deliver(running: &mut Running, frame: cameras::Frame) -> bool {
     let (width, height) = (frame.width, frame.height);
     let source_format = pixel_format(frame.pixel_format);
     let source_t = (!frame.timestamp.is_zero()).then_some(frame.timestamp);
+    // The device's own numbers: validate them before the conversion allocates a picture from them.
+    let Some(pixels) = frame_pixels(width, height) else { return true };
     // A corrupt compressed frame (MJPEG recovery) is skipped; the stream keeps going.
     let Ok(rgba) = cameras::to_rgba8(&frame) else { return true };
-    let Some(expected) = (width as usize).checked_mul(height as usize).and_then(|pixels| pixels.checked_mul(4)) else { return true };
-    if rgba.len() != expected {
+    if rgba.len() != pixels * 4 {
         return true;
     }
     if !running.opened {
@@ -359,5 +383,25 @@ mod tests {
         let start = std::time::Instant::now();
         send_terminal(&tx, CameraEvent::Failed(CameraError::Lost));
         assert!(start.elapsed() < TERMINAL_WAIT, "gives up as soon as the receiver is gone");
+    }
+
+    #[test]
+    fn a_device_reported_frame_size_is_checked_before_the_conversion_allocates() {
+        assert_eq!(frame_pixels(640, 480), Some(640 * 480));
+        assert_eq!(frame_pixels(8192, 8192), Some(8192 * 8192), "exactly the largest frame accepted");
+        assert_eq!(frame_pixels(0, 480), None);
+        assert_eq!(frame_pixels(640, 0), None);
+        assert_eq!(frame_pixels(8192, 8193), None, "over the bound");
+        assert_eq!(frame_pixels(u32::MAX, u32::MAX), None, "no overflow");
+    }
+
+    #[test]
+    fn commands_are_polled_without_waiting_while_a_camera_delivers_frames() {
+        let (tx, rx) = mpsc::channel();
+        assert!(next_command(&rx, true).is_none(), "nothing queued: the worker keeps reading frames");
+        tx.send(Command::Stop).expect("send");
+        assert!(matches!(next_command(&rx, true), Some(Command::Stop)), "Stop is taken on the next frame");
+        drop(tx);
+        assert!(matches!(next_command(&rx, true), Some(Command::Quit)), "a gone host ends the worker");
     }
 }

@@ -1,0 +1,22 @@
+warning: patch `egui_demo_lib v0.37.0 (https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc7)` was not used in the crate graph
+warning: patch `egui_inspection v0.37.0 (https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc7)` was not used in the crate graph
+warning: patch `egui_system_font_provider v0.37.0 (https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc7)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling deckcraft-fonts v0.15.0 (C:\Users\Francisco Herrera\Downloads\wt-cam2\crates\fonts)
+   Compiling httparse v1.10.1
+warning: deckcraft-fonts@0.15.0: building without craft-fonts: C:\Users\Francisco Herrera\Downloads\wt-cam2\../craft-fonts\fonts/manifest.txt: The system cannot find the path specified. (os error 3)
+    Checking deckcraft-text v0.15.0 (C:\Users\Francisco Herrera\Downloads\wt-cam2\crates\text)
+error: failed to run custom build command for `httparse v1.10.1`
+
+Caused by:
+  could not execute process `C:\Users\Francisco Herrera\Downloads\wt-cam2\target\debug\build\httparse-558dfd3e69618cc1\build-script-build` (never executed)
+
+Caused by:
+  Access is denied. (os error 5)
+warning: build failed, waiting for other jobs to finish...
+    Checking deckcraft-render v0.15.0 (C:\Users\Francisco Herrera\Downloads\wt-cam2\crates\render)
+    Checking deckcraft-pdf v0.15.0 (C:\Users\Francisco Herrera\Downloads\wt-cam2\crates\pdf)
+    Checking deckcraft-engine v0.15.0 (C:\Users\Francisco Herrera\Downloads\wt-cam2\crates\engine)

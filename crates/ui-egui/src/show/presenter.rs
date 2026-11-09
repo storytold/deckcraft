@@ -1,7 +1,7 @@
 use super::keys::keyboard;
 use super::render::{fit, next_rect};
-use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, unit_uv, zoom_frame};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, live_state, pos2, theme, vec2};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -82,10 +82,27 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
+/// `camera` is the live frame: the current-slide preview shows it in every Cameo, as the audience
+/// screen does (the presentation's own texture predates the camera, which is a layer over it).
+pub(super) fn presenter_window(
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    now: f64,
+    keep: &mut bool,
+    camera: Option<&egui::TextureHandle>,
+) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
+    // The current slide's animation state, as the audience screen draws it: a Cameo's live frame
+    // enters, leaves, moves and fades with the slide.
+    let step = show.state.step;
+    let t = if show.state.playing { now - show.step_start } else { 0.0 };
+    let plays = show.state.trigger_plays();
+    let stamps = show.state.trigger_stamps();
+    let tl = show.timeline(doc).clone();
+    let state = live_state(&tl, step, t, &plays, &stamps);
     // The preview wanted: slide `n` of this presentation (an edit replaces it).
     let is = |d: &std::sync::Arc<Presentation>, k: usize, n: usize| std::sync::Arc::ptr_eq(d, doc) && k == n;
     if let Some(n) = next
@@ -224,6 +241,12 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    if let Some(camera) = camera {
+                        // Over the slide's texture, in the Cameo boxes the audience screen uses.
+                        let clipped = ui.painter().with_clip_rect(cr);
+                        let frame = crate::camera::ShowFrame { srect: cr, uv: unit_uv(), hidden: &[], state: &state };
+                        crate::camera::paint_show(&clipped, camera, doc, cur, frame);
+                    }
                 }
                 if let Some(z) = show.zoom {
                     let mark = zoom_frame(cr, z.uv());

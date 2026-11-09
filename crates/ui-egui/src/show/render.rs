@@ -109,15 +109,16 @@ pub(super) fn render_overlay(
 }
 
 /// The shapes of slide `idx` to leave out when drawing what is stacked above the lowest of the
-/// playing `videos` (that video, everything below it and the other videos). Empty when nothing
-/// is above a video: the video frame is then painted last.
-pub(super) fn below_playing_video(doc: &Presentation, idx: usize, videos: &[ShapeId]) -> Vec<ShapeId> {
+/// `live` shapes — those the UI paints itself (a playing video's frame, a Cameo's camera): the
+/// shape itself, everything below it and the other live shapes. Empty when nothing is above a
+/// live shape: its frame is then painted last.
+pub(super) fn below_live(doc: &Presentation, idx: usize, live: &[ShapeId]) -> Vec<ShapeId> {
     let Some(slide) = doc.slides.get(idx) else { return vec![] };
-    let Some(first) = slide.shapes.iter().position(|s| videos.contains(&s.id)) else { return vec![] };
-    if slide.shapes.iter().skip(first + 1).all(|s| videos.contains(&s.id)) {
+    let Some(first) = slide.shapes.iter().position(|s| live.contains(&s.id)) else { return vec![] };
+    if slide.shapes.iter().skip(first + 1).all(|s| live.contains(&s.id)) {
         return vec![];
     }
-    slide.shapes.iter().enumerate().filter(|(i, s)| *i <= first || videos.contains(&s.id)).map(|(_, s)| s.id).collect()
+    slide.shapes.iter().enumerate().filter(|(i, s)| *i <= first || live.contains(&s.id)).map(|(_, s)| s.id).collect()
 }
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.

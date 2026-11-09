@@ -15,6 +15,7 @@ use deckcraft_media::camera::{
     CameraDesc, CameraError, CameraEvent, CameraFormat, CameraFrame, CameraId, CameraIn, CameraRequest, CameraSession, CameraState, CameraStatus,
 };
 use deckcraft_model::{Presentation, Shape, ShapeId};
+use deckcraft_render::ShapeState;
 use egui::{Color32, ColorImage, Mesh, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 
 use crate::SlideApp;
@@ -352,21 +353,60 @@ pub(crate) fn paint_preview(app: &SlideApp, painter: &egui::Painter, xf: crate::
     }
     let Some(slide) = doc.doc.slides.get(doc.selection.slide) else { return };
     for (shape, x) in cameo_boxes(&slide.shapes) {
-        paint_cameo(painter, &texture, shape, x, &|p| xf.to_screen(p));
+        paint_cameo(painter, &texture, shape, x, 1.0, &|p| xf.to_screen(p));
     }
 }
 
-/// Paint the live frame in every cameo of show slide `slide`, through the show's zoom window `uv`.
-pub(crate) fn paint_show(app: &SlideApp, painter: &egui::Painter, doc: &Presentation, slide: usize, hidden: &[ShapeId], srect: Rect, uv: Rect) {
-    let Some(texture) = app.camera.texture().cloned() else { return };
+/// Where a show paints a Cameo's live frame: the slide's rect on screen, the zoom window, the
+/// media hidden until it plays, and the show's animation state (a Cameo enters, leaves, moves and
+/// fades like any other shape). `painter` must be clipped to `srect`, so a Cameo that hangs over
+/// the slide's edge (or out of the zoom window) cannot paint outside it.
+pub(crate) struct ShowFrame<'a> {
+    pub srect: Rect,
+    pub uv: Rect,
+    pub hidden: &'a [ShapeId],
+    pub state: &'a dyn Fn(ShapeId) -> ShapeState,
+}
+
+pub(crate) fn paint_show(painter: &egui::Painter, texture: &TextureHandle, doc: &Presentation, slide: usize, frame: ShowFrame<'_>) {
+    let ShowFrame { srect, uv, hidden, state } = frame;
     let Some(slide) = doc.slides.get(slide) else { return };
     let (sw, sh) = (doc.slide_size.width as f32, doc.slide_size.height as f32);
     for (shape, x) in cameo_boxes(&slide.shapes) {
-        if hidden.contains(&shape.id) {
-            continue;
-        }
-        paint_cameo(painter, &texture, shape, x, &|p| slide_to_screen(srect, uv, p.x as f32 / sw.max(1.0), p.y as f32 / sh.max(1.0)));
+        let st = state(shape.id);
+        let Some(opacity) = live_opacity(hidden, shape.id, &st) else { continue };
+        let centre = Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+        let to_screen = |p: Point| {
+            let p = animated(p, centre, &st);
+            slide_to_screen(srect, uv, p.x as f32 / sw.max(1.0), p.y as f32 / sh.max(1.0))
+        };
+        paint_cameo(painter, texture, shape, x, opacity, &to_screen);
     }
+}
+
+/// The opacity a live frame is painted at, or `None` when the show does not show the Cameo: media
+/// hidden until it plays (`hidden`), or the animation's own visibility and fade.
+fn live_opacity(hidden: &[ShapeId], id: ShapeId, st: &ShapeState) -> Option<f64> {
+    if hidden.contains(&id) || !st.visible || st.opacity <= 0.0 {
+        return None;
+    }
+    Some(st.opacity)
+}
+
+/// The Cameos of show slide `slide`, in stack order: the shapes the UI paints live, so the ones
+/// stacked above them go into the overlay that is drawn over their frames.
+pub(crate) fn cameo_ids(doc: &Presentation, slide: usize) -> Vec<ShapeId> {
+    doc.slides.get(slide).map(|s| cameo_boxes(&s.shapes).into_iter().map(|(shape, _)| shape.id).collect()).unwrap_or_default()
+}
+
+/// `p` after an animation state: scaled and turned about `centre` (slide points), then moved by
+/// the effect's offset.
+fn animated(p: Point, centre: Point, st: &ShapeState) -> Point {
+    let d = p - centre;
+    let (x, y) = (d.x * st.scale.0, d.y * st.scale.1);
+    let a = st.rotate.to_radians();
+    let (sin, cos) = (a.sin(), a.cos());
+    Point::new(centre.x + x * cos - y * sin + st.offset.x, centre.y + x * sin + y * cos + st.offset.y)
 }
 
 /// Cameos on a slide with their slide-space boxes, including cameos inside groups.
@@ -383,13 +423,14 @@ fn slide_to_screen(srect: Rect, uv: Rect, nx: f32, ny: f32) -> Pos2 {
 }
 
 /// Paint `texture` in one Cameo: masked to its Camera Shape, turned with the shape and crop-filled
-/// so a camera fills its frame instead of stretching.
-fn paint_cameo(painter: &egui::Painter, texture: &TextureHandle, shape: &Shape, x: Xfrm, to_screen: &dyn Fn(Point) -> Pos2) {
+/// so a camera fills its frame instead of stretching. `opacity` is the show's animation fade.
+fn paint_cameo(painter: &egui::Painter, texture: &TextureHandle, shape: &Shape, x: Xfrm, opacity: f64, to_screen: &dyn Fn(Point) -> Pos2) {
     let polygons = cameo_polygons(shape, x.w, x.h);
     if polygons.is_empty() {
         return;
     }
-    let mesh = cameo_mesh(&polygons, x, texture.id(), texture.size(), to_screen);
+    let tint = Color32::from_white_alpha((opacity.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let mesh = cameo_mesh(&polygons, x, texture.id(), texture.size(), tint, to_screen);
     if mesh.is_empty() {
         return;
     }
@@ -398,7 +439,8 @@ fn paint_cameo(painter: &egui::Painter, texture: &TextureHandle, shape: &Shape, 
     // fill would only be correct for convex outlines, and Camera Shape offers concave presets.
     let mut backing = Mesh::default();
     backing.indices.clone_from(&mesh.indices);
-    backing.vertices = mesh.vertices.iter().map(|v| egui::epaint::Vertex { pos: v.pos, uv: Pos2::ZERO, color: Color32::BLACK }).collect();
+    backing.vertices =
+        mesh.vertices.iter().map(|v| egui::epaint::Vertex { pos: v.pos, uv: Pos2::ZERO, color: Color32::from_black_alpha(tint.a()) }).collect();
     painter.add(egui::Shape::mesh(backing));
     painter.add(egui::Shape::mesh(mesh));
 }
@@ -436,7 +478,14 @@ fn push_polygon(cur: &mut Vec<Point>, out: &mut Vec<Vec<Point>>) {
 
 /// A textured mesh that covers `polygons` (shape-local) with the whole frame, using the shape's
 /// flip and rotation and the same centre crop as [`cover_uv`].
-fn cameo_mesh(polygons: &[Vec<Point>], x: Xfrm, tex: egui::TextureId, tex_size: [usize; 2], to_screen: &dyn Fn(Point) -> Pos2) -> Mesh {
+fn cameo_mesh(
+    polygons: &[Vec<Point>],
+    x: Xfrm,
+    tex: egui::TextureId,
+    tex_size: [usize; 2],
+    tint: Color32,
+    to_screen: &dyn Fn(Point) -> Pos2,
+) -> Mesh {
     let affine = x.affine();
     let uv = cover_uv(Rect::from_min_size(Pos2::ZERO, vec2(x.w as f32, x.h as f32)), tex_size);
     let uv_at = |p: Point| {
@@ -452,7 +501,7 @@ fn cameo_mesh(polygons: &[Vec<Point>], x: Xfrm, tex: egui::TextureId, tex_size: 
         }
         let base = mesh.vertices.len() as u32;
         for (p, at) in poly.iter().zip(&points) {
-            mesh.vertices.push(egui::epaint::Vertex { pos: *at, uv: uv_at(*p), color: Color32::WHITE });
+            mesh.vertices.push(egui::epaint::Vertex { pos: *at, uv: uv_at(*p), color: tint });
         }
         for [a, b, c] in triangulate_polygon(&points) {
             mesh.add_triangle(base + a, base + b, base + c);
@@ -735,6 +784,49 @@ mod tests {
         assert!((portrait.height() - 480.0 / 640.0).abs() < 1e-5);
     }
 
+    /// The live frame is a layer over the slide texture, so it must follow the animation itself:
+    /// hidden media, an animation-hidden shape and a zero fade paint nothing, and a fade tints both
+    /// the frame and its backing.
+    #[test]
+    fn only_a_visible_cameo_paints_its_live_frame() {
+        let id = ShapeId(7);
+        let shown = ShapeState::default();
+        assert_eq!(live_opacity(&[], id, &shown), Some(1.0));
+        assert_eq!(live_opacity(&[id], id, &shown), None, "media hidden until it plays");
+        assert_eq!(live_opacity(&[], id, &ShapeState { visible: false, ..shown.clone() }), None, "before the entrance");
+        assert_eq!(live_opacity(&[], id, &ShapeState { opacity: 0.0, ..shown.clone() }), None, "faded out");
+        let fading = ShapeState { opacity: 0.4, ..shown };
+        assert_eq!(live_opacity(&[], id, &fading), Some(0.4));
+    }
+
+    /// An entrance that moves and turns the Cameo moves and turns its frame with it.
+    #[test]
+    fn an_animated_cameo_paints_its_frame_moved_and_turned() {
+        let st = ShapeState { scale: (2.0, 2.0), rotate: 90.0, offset: deckcraft_geom::Vec2::new(5.0, -3.0), ..Default::default() };
+        let centre = Point::new(50.0, 50.0);
+        let moved = animated(Point::new(51.0, 50.0), centre, &st);
+        // Measured: the point one unit right of the centre is scaled to two units, turned a
+        // quarter turn (y is down, so it goes down the slide) and moved by the effect's offset,
+        // landing at (55, 49) — the frame arrives moved and turned, not just faded.
+        assert!((moved.x - 55.0).abs() < 1e-9 && (moved.y - 49.0).abs() < 1e-9, "({}, {})", moved.x, moved.y);
+        let none = ShapeState::default();
+        assert_eq!(animated(Point::new(51.0, 50.0), centre, &none), Point::new(51.0, 50.0));
+    }
+
+    /// The Cameo's box appears once in the ids the show's overlay is built from, so shapes stacked
+    /// above it are drawn over the live frame.
+    #[test]
+    fn the_cameo_ids_of_a_slide_are_its_cameos() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("insert.cameo", &serde_json::json!({})).expect("cameo");
+        let doc = session.active().expect("document").doc.clone();
+        let ids = cameo_ids(&doc, 0);
+        assert_eq!(ids.len(), 1);
+        let shape = doc.slides[0].shape(ids[0]).expect("the Cameo");
+        assert!(shape.is_cameo());
+        assert!(cameo_ids(&doc, 9).is_empty(), "a slide that does not exist has no Cameos");
+    }
+
     /// A Cameo with Camera Shape `geom`, and its box, from the command that inserts one.
     fn cameo(geom: &str) -> (Shape, Xfrm) {
         let mut session = deckcraft_engine::Session::with_new();
@@ -755,7 +847,7 @@ mod tests {
     fn the_frame_is_masked_to_the_cameo_shape() {
         // The Cameo is an ellipse by default: no painted vertex may reach the box's corners.
         let (shape, x) = cameo("ellipse");
-        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         assert!(!mesh.indices.is_empty(), "the ellipse is painted");
         let inv = x.affine().inverse();
         let (cx, cy) = (x.w / 2.0, x.h / 2.0);
@@ -770,7 +862,7 @@ mod tests {
     #[test]
     fn a_rectangular_camera_shape_still_fills_its_box() {
         let (shape, x) = cameo("rect");
-        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         for (dx, dy) in [(0.0, 0.0), (x.w, 0.0), (x.w, x.h), (0.0, x.h)] {
             let (px, py) = (x.x + dx, x.y + dy);
             let painted = mesh.vertices.iter().any(|v| (v.pos.x as f64 - px).abs() < 0.01 && (v.pos.y as f64 - py).abs() < 0.01);
@@ -784,7 +876,7 @@ mod tests {
         let (shape, x) = cameo("star5");
         let polygons = cameo_polygons(&shape, x.w, x.h);
         assert_eq!(polygons.len(), 1, "one filled outline");
-        let mesh = cameo_mesh(&polygons, x, egui::TextureId::User(1), [640, 480], &identity);
+        let mesh = cameo_mesh(&polygons, x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         assert!(!mesh.indices.is_empty(), "the star is painted");
         let inv = x.affine().inverse();
         for t in mesh.indices.chunks(3) {
@@ -812,9 +904,9 @@ mod tests {
         let (shape, mut x) = cameo("rect");
         x.w = 200.0;
         x.h = 100.0;
-        let flat = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        let flat = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         x.rot = 45.0;
-        let turned = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        let turned = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         let inv = x.affine().inverse();
         for v in &turned.vertices {
             let p = inv * Point::new(v.pos.x as f64, v.pos.y as f64);

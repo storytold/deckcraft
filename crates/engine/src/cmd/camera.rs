@@ -264,17 +264,26 @@ fn style(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("camera.style", format!("unknown style `{id}`; see camera.styles")));
     }
     if bool_or(p, "all", false) {
-        s.edit(|doc, _| {
+        let styled = s.edit(|doc, _| {
+            let mut styled = 0usize;
             for slide in &mut doc.slides {
                 walk_mut(&mut Arc::make_mut(slide).shapes, &mut |sh| {
                     if sh.is_cameo() {
                         apply(sh, &id);
+                        styled += 1;
                     }
                 });
             }
-            Ok(())
+            // `all` visits slides only, while the enabled state also accepts a master or layout
+            // Cameo: with none on a slide the command would style nothing and still bump the
+            // revision and record an undo step, so it fails instead (an `Err` leaves the
+            // document as it was).
+            if styled == 0 {
+                return Err(bad("camera.style", "no Cameo on slides"));
+            }
+            Ok(styled)
         })?;
-        return Ok(json!({"style": id, "all": true}));
+        return Ok(json!({"style": id, "all": true, "styled": styled}));
     }
     let ids = targets(s, p)?;
     if ids.is_empty() {
@@ -502,5 +511,28 @@ mod tests {
         let before = cameo_shapes(&s)[0].kind.clone();
         s.execute("camera.style", &json!({"style": "softEdgeCircle"})).expect("style");
         assert_eq!(cameo_shapes(&s)[0].kind, before);
+    }
+
+    #[test]
+    fn style_all_reports_how_many_cameos_it_styled() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"all": true})).expect("insert");
+        let r = s.execute("camera.style", &json!({"style": "softEdgeCircle", "all": true})).expect("style");
+        assert_eq!(r["styled"], 2);
+        assert!(cameo_shapes(&s).iter().all(|sh| super::style_of(sh) == Some("softEdgeCircle")));
+    }
+
+    /// `all` visits slides only while the enabled state also accepts a master Cameo: with none on
+    /// a slide the command must fail rather than succeed having styled nothing (and bump the
+    /// revision with an undo step for an edit that changed nothing).
+    #[test]
+    fn style_all_without_a_slide_cameo_fails_and_leaves_the_deck_alone() {
+        let mut s = Session::with_new();
+        let revision = s.doc().expect("doc").revision;
+        let err = s.execute("camera.style", &json!({"style": "softEdgeCircle", "all": true})).expect_err("no cameo");
+        assert!(err.to_string().contains("no Cameo"), "{err}");
+        assert_eq!(s.doc().expect("doc").revision, revision);
+        assert_eq!(cameo_count(&s), 0);
     }
 }

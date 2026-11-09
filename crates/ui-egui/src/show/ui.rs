@@ -3,14 +3,14 @@ use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
-use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
+use super::render::{below_live, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, live_state, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -136,7 +136,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     draw_slide(app, ui, &mut show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
-    draw_extras(&mut show, &f, &painter, &mut out);
+    draw_extras(app, &mut show, &f, &painter, &mut out);
     if out.keep
         && show.presenter
         && !show.reading
@@ -587,13 +587,13 @@ fn draw_videos(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painter: &e
     (framed, full_screen)
 }
 
-fn draw_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, framed: &[ShapeId], full_screen: bool) {
+fn draw_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, live: &[ShapeId], full_screen: bool) {
     let Fr { ctx, doc, srect, .. } = *f;
     let Sl { idx, step, animating, size, .. } = *sl;
     let uv = show.zoom_uv();
-    // Shapes stacked above a playing video show over it, as in PowerPoint (#1005); a video
-    // playing full screen covers the whole slide.
-    let skip = if full_screen { vec![] } else { below_playing_video(doc, idx, framed) };
+    // Shapes stacked above a live frame (a playing video's, a Cameo's camera) show over it, as in
+    // PowerPoint (#1005); a video playing full screen covers the whole slide.
+    let skip = if full_screen { vec![] } else { below_live(doc, idx, live) };
     if skip.is_empty() {
         show.overlay = None;
     } else {
@@ -673,17 +673,31 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         prefetch_next(app, show, f, &sl);
         if !draw_transition(show, f, &sl, painter, &tex) {
             show.trans = None;
-            let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
+            let (mut live, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
             if !full_screen {
-                crate::camera::paint_show(app, painter, f.doc.as_ref(), sl.idx, &sl.hidden, srect, show.zoom_uv());
+                paint_camera(app, show, &sl, f, painter);
+                // The shapes stacked above a Cameo go into the overlay drawn over its frame.
+                live.extend(crate::camera::cameo_ids(f.doc.as_ref(), sl.idx));
             }
-            draw_overlay(show, f, &sl, painter, &framed, full_screen);
+            draw_overlay(show, f, &sl, painter, &live, full_screen);
             draw_media_controls(app, ui, show, f, &sl, painter);
         }
         if sl.animating {
             ctx.request_repaint();
         }
     }
+}
+
+/// Paint the live camera in the Cameos of the current slide, in their animation state, clipped to
+/// the slide: a Cameo may hang over its edge or out of the zoom window.
+fn paint_camera(app: &SlideApp, show: &mut Show, sl: &Sl, f: &Fr, painter: &egui::Painter) {
+    let Fr { doc, srect, .. } = *f;
+    let Some(texture) = app.camera.texture() else { return };
+    let uv = show.zoom_uv();
+    let tl = show.timeline(doc).clone();
+    let state = live_state(&tl, sl.step, sl.t, &sl.plays, &sl.stamps);
+    let frame = crate::camera::ShowFrame { srect, uv, hidden: &sl.hidden, state: &state };
+    crate::camera::paint_show(&painter.with_clip_rect(srect), texture, doc, sl.idx, frame);
 }
 
 fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, pointing: bool) {
@@ -826,7 +840,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     }
 }
 
-fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_extras(app: &SlideApp, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
@@ -847,7 +861,7 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        presenter_window(ctx, show, doc, now, &mut out.keep, app.camera.texture());
     }
 }
 
