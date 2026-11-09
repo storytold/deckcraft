@@ -213,7 +213,7 @@ impl CollabDoc {
         } else {
             params
         };
-        let ops = normalize(self.adapter.keys(), st, cmd, params, op_id, &self.file_id)?;
+        let ops = normalize_with_painter(self.adapter.keys(), st, session.anim_painter.as_ref(), cmd, params, op_id, &self.file_id)?;
         for op in &ops {
             self.client.submit(op.clone())?;
         }
@@ -339,6 +339,21 @@ impl CollabDoc {
 /// whole text bodies, explicit targets); commands with no v1 form are refused rather than sent
 /// in a shape the server cannot reproduce.
 pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_id: &str, doc: &str) -> Result<Vec<OpEnvelope>, LocalError> {
+    normalize_with_painter(keys, st, None, cmd, p, op_id, doc)
+}
+
+/// [`normalize`] with the Animation Painter clipboard, which lives in the session and not in the
+/// document: `animation.painterApply` normalises the picked steps into the slide's whole resulting
+/// sequence, so no replica needs the clipboard itself.
+pub fn normalize_with_painter(
+    keys: &crate::KeyMap,
+    st: &DocState,
+    painter: Option<&(Vec<Animation>, bool)>,
+    cmd: &str,
+    p: &Value,
+    op_id: &str,
+    doc: &str,
+) -> Result<Vec<OpEnvelope>, LocalError> {
     if st.selection.target != EngineTarget::Slides {
         return Err(LocalError::Unsupported(cmd.into()));
     }
@@ -697,6 +712,7 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             }
             animation_list_ops(keys, slide, &animations, &make)
         }
+        "animation.options" | "animation.clear" | "animation.painterApply" => animation_ops(keys, st, slide, painter, cmd, p, &make),
         cmd if cmd.starts_with("format.") => {
             let format = FormatCmd::from_id(cmd).ok_or_else(|| LocalError::Unsupported(cmd.into()))?;
             format_ops(keys, st, slide, format, p, &make)
@@ -1083,6 +1099,19 @@ fn format_addresses(st: &DocState, id: ShapeId, explicit_cell: Option<(u32, u32)
     }
 }
 
+/// The `index` of one animation step in a local animation command (`None` when the command names
+/// its steps by shape instead).
+fn animation_index(p: &Value) -> Result<Option<usize>, LocalError> {
+    match p.get("index") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|v| usize::try_from(v).ok())
+            .map(Some)
+            .ok_or_else(|| LocalError::BadParams(format!("`index` is not a valid animation index: {value}"))),
+    }
+}
+
 fn shape_ids(p: &Value, st: &DocState) -> Result<Vec<ShapeId>, LocalError> {
     if let Some(ids) = p.get("ids").and_then(Value::as_array) {
         return Ok(ids.iter().filter_map(Value::as_u64).map(|v| ShapeId(v as u32)).collect());
@@ -1098,6 +1127,69 @@ fn shape_ids(p: &Value, st: &DocState) -> Result<Vec<ShapeId>, LocalError> {
 
 fn shape_key(keys: &crate::KeyMap, slide: SlideId, id: ShapeId) -> Result<ShapeKey, LocalError> {
     keys.shape_key(slide, id).cloned().ok_or(LocalError::NoDocument)
+}
+
+/// The normalised operations of `animation.options`, `animation.clear` and
+/// `animation.painterApply`: each leaves a slide's whole ordered animation sequence, so the wire
+/// value is the same `slide_animations` the `animation.set`/`timing`/`move` family sends.
+fn animation_ops(
+    keys: &crate::KeyMap,
+    st: &DocState,
+    slide: &deckcraft_model::Slide,
+    painter: Option<&(Vec<Animation>, bool)>,
+    cmd: &str,
+    p: &Value,
+    make: &impl Fn(Target, Payload) -> OpEnvelope,
+) -> Result<Vec<OpEnvelope>, LocalError> {
+    if cmd == "animation.clear" {
+        // `index` is a slide, not a step: the command clears one slide's whole sequence, and the
+        // address is that slide, never the one the sender happens to be looking at.
+        let at = match p.get("index") {
+            None | Some(Value::Null) => st.selection.slide,
+            Some(value) => value
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| LocalError::BadParams(format!("`index` is not a slide index: {value}")))?,
+        };
+        let cleared = st.doc.slides.get(at).ok_or_else(|| LocalError::BadParams("no such slide".into()))?;
+        if cleared.animations.is_empty() {
+            return Ok(Vec::new());
+        }
+        return animation_list_ops(keys, cleared, &[], make);
+    }
+    let animations = match cmd {
+        "animation.options" => {
+            let index = animation_index(p)?;
+            let ids: Vec<ShapeId> = if index.is_none() { shape_ids(p, st)? } else { Vec::new() };
+            let size = (st.doc.slide_size.width, st.doc.slide_size.height);
+            deckcraft_engine::cmd::animation::options_plan(p, &slide.animations, index, &ids, size)
+                .map_err(|e| LocalError::BadParams(e.to_string()))?
+                .0
+        }
+        "animation.painterApply" => {
+            // The clipboard is a session value, not a document value: the picked steps travel as
+            // the slide's whole resulting sequence, computed here with the same plan the
+            // single-user command runs, so every replica can apply it without a clipboard.
+            let Some((picked, _)) = painter else {
+                return Err(LocalError::BadParams("pick animations with the Animation Painter first".into()));
+            };
+            let ids = shape_ids(p, st)?;
+            if ids.is_empty() {
+                return Err(LocalError::BadParams("no target shapes selected".into()));
+            }
+            for id in &ids {
+                find_shape(&slide.shapes, *id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            }
+            deckcraft_engine::cmd::animation::painter_plan(picked, &slide.animations, &ids, |id| {
+                deckcraft_engine::cmd::animation::paragraphs(&slide.shapes, id)
+            })
+        }
+        other => return Err(LocalError::Unsupported(other.into())),
+    };
+    if animations == slide.animations {
+        return Ok(Vec::new());
+    }
+    animation_list_ops(keys, slide, &animations, make)
 }
 
 /// One operation carrying a slide's whole ordered animation list, the normalised form of
@@ -1442,6 +1534,69 @@ mod tests {
         let bare_keys = keys(bare_st.doc.as_ref());
         assert!(matches!(
             normalize(&bare_keys, bare_st, "animation.timing", &json!({"ids": [bare_shapes[0].0], "duration": 10}), "op", &bare_doc),
+            Err(LocalError::BadParams(_))
+        ));
+    }
+
+    #[test]
+    fn animation_options_clear_and_the_painter_normalise_to_the_slides_whole_sequence() {
+        let (mut s, doc, slide, shapes) = deck();
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [shapes[0].0]})).expect("seed fade");
+        s.execute("animation.add", &json!({"effect": "zoom", "ids": [shapes[1].0]})).expect("seed zoom");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let effects = |payload: &Payload| match payload {
+            Payload::SlideAnimations { animations } => {
+                animations.iter().filter_map(|a| a.get("effect").and_then(Value::as_str)).map(String::from).collect::<Vec<_>>()
+            }
+            other => panic!("{other:?}"),
+        };
+
+        // `animation.options` sends the slide's whole sequence with the option the engine resolves
+        // for the named step; the other step keeps its own.
+        let ops = normalize(&km, st, "animation.options", &json!({"index": 0, "option": "fromBottom", "textBuild": "byParagraph"}), "op", &doc)
+            .expect("options");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert!(ops[0].target.shape.is_none(), "a slide-wide list is not a shape's address");
+        assert_eq!(effects(&ops[0].payload), ["fade".to_string(), "zoom".to_string()]);
+        let Payload::SlideAnimations { animations } = &ops[0].payload else { panic!() };
+        assert_eq!(animations[0].get("textBuild").and_then(Value::as_str), Some("byParagraph"));
+        assert_eq!(animations[1].get("textBuild").and_then(Value::as_str), Some("asOne"), "the other step keeps its build mode");
+        // An options edit that changes nothing sends nothing; one that names no step is refused.
+        assert!(normalize(&km, st, "animation.options", &json!({"index": 0}), "op", &doc).expect("no-op options").is_empty());
+        assert!(matches!(normalize(&km, st, "animation.options", &json!({"index": 9, "option": "b"}), "op", &doc), Err(LocalError::BadParams(_))));
+
+        // `animation.clear` addresses the slide it clears and sends an empty sequence.
+        let ops = normalize(&km, st, "animation.clear", &json!({"index": 0}), "op", &doc).expect("clear");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert!(effects(&ops[0].payload).is_empty(), "the slide's sequence is empty");
+        // A slide with no steps has nothing to clear.
+        let (bare, bare_doc, _, _) = deck();
+        let bare_st = bare.doc().expect("doc");
+        let bare_keys = keys(bare_st.doc.as_ref());
+        assert!(normalize(&bare_keys, bare_st, "animation.clear", &json!({"index": 0}), "op", &bare_doc).expect("no-op clear").is_empty());
+        assert!(matches!(normalize(&km, st, "animation.clear", &json!({"index": 9}), "op", &doc), Err(LocalError::BadParams(_))));
+
+        // The painter: the picked steps travel as the slide's resulting sequence, so the target's
+        // own step is replaced and no replica needs the clipboard.
+        let picked: Vec<Animation> = st.doc.slides[0].animations.iter().filter(|a| a.shape == shapes[0]).cloned().collect();
+        let clipboard = (picked.clone(), false);
+        let ops = normalize_with_painter(&km, st, Some(&clipboard), "animation.painterApply", &json!({"ids": [shapes[1].0]}), "op", &doc)
+            .expect("painterApply");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(effects(&ops[0].payload), ["fade".to_string(), "fade".to_string()], "the target's zoom became the picked fade");
+        let Payload::SlideAnimations { animations } = &ops[0].payload else { panic!() };
+        assert_eq!(animations[1].get("shape").and_then(Value::as_u64), Some(shapes[1].0 as u64));
+        // Without a clipboard, with no target and with an unknown target nothing is sent.
+        assert!(matches!(normalize(&km, st, "animation.painterApply", &json!({"ids": [shapes[1].0]}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(
+            normalize_with_painter(&km, st, Some(&clipboard), "animation.painterApply", &json!({"ids": []}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
+        assert!(matches!(
+            normalize_with_painter(&km, st, Some(&clipboard), "animation.painterApply", &json!({"ids": [9_999]}), "op", &doc),
             Err(LocalError::BadParams(_))
         ));
     }

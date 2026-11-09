@@ -412,25 +412,6 @@ pub fn move_plan(animations: &[Animation], index: usize, to: usize) -> Result<Ve
     Ok(out)
 }
 
-fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result<Value> {
-    let index = opt_usize_param(p, "index", "animation")?;
-    let ids = if index.is_none() { targets(s, p)? } else { vec![] };
-    s.edit(|doc, sel| {
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?);
-        let mut n = 0;
-        for (k, a) in sl.animations.iter_mut().enumerate() {
-            if index == Some(k) || (index.is_none() && ids.contains(&a.shape)) {
-                f(a);
-                n += 1;
-            }
-        }
-        if n == 0 {
-            return Err(bad("animation", "no animation to change (select an animated object or give `index`)"));
-        }
-        Ok(json!({"changed": n}))
-    })
-}
-
 fn timing(s: &mut Session, p: &Value) -> Result<Value> {
     let index = opt_usize_param(p, "index", "animation")?;
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
@@ -485,6 +466,29 @@ pub fn timing_plan(p: &Value, animations: &[Animation], index: Option<usize>, id
 }
 
 fn options(s: &mut Session, p: &Value) -> Result<Value> {
+    let index = opt_usize_param(p, "index", "animation")?;
+    let ids = if index.is_none() { targets(s, p)? } else { vec![] };
+    let size = slide_extent(s)?;
+    s.edit(|doc, sel| {
+        let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.options", "no slide"))?;
+        let (animations, changed) = options_plan(p, &sl.animations, index, &ids, size)?;
+        Arc::make_mut(sl).animations = animations;
+        Ok(json!({"changed": changed}))
+    })
+}
+
+/// The slide animation list `animation.options` leaves, and how many steps it changed. Each step
+/// named by `index`, or by the shape ids when `index` is absent, takes the option in its own
+/// effect's terms, the motion path (path-class steps only) and the text build mode; a field left
+/// out keeps its value. Shared with the collaboration normaliser, so every replica gets exactly
+/// the option codes the single-user command resolves.
+pub fn options_plan(
+    p: &Value,
+    animations: &[Animation],
+    index: Option<usize>,
+    ids: &[ShapeId],
+    slide: (f64, f64),
+) -> Result<(Vec<Animation>, usize)> {
     let option = str_param(p, "option").map(String::from);
     let build_mode = str_param(p, "textBuild").map(|b| match b {
         "byParagraph" => TextBuild::ByParagraph,
@@ -492,26 +496,35 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
         "byLetter" => TextBuild::ByLetter,
         _ => TextBuild::AsOne,
     });
-    let path = path_param(p, slide_extent(s)?)?;
-    each_target(s, p, |a| {
-        if let (Some(path), AnimClass::Path) = (&path, a.class) {
-            a.path = Some(path.clone());
-        }
-        if let Some(o) = &option {
-            // Each target takes the option in its own effect's terms; one it has no such
-            // option for keeps its own.
-            let allowed = animation_info(&a.effect, a.class).map(|i| i.5).unwrap_or(&[]);
-            if let Some(o) = resolve_option(allowed, o) {
-                if a.class == AnimClass::Path && path.is_none() {
-                    a.path = Some(default_path(&a.effect, &o));
-                }
-                a.option = o;
+    let path = path_param(p, slide)?;
+    let mut out = animations.to_vec();
+    let mut n = 0;
+    for (k, a) in out.iter_mut().enumerate() {
+        if index == Some(k) || (index.is_none() && ids.contains(&a.shape)) {
+            if let (Some(path), AnimClass::Path) = (&path, a.class) {
+                a.path = Some(path.clone());
             }
+            if let Some(o) = &option {
+                // Each target takes the option in its own effect's terms; one it has no such
+                // option for keeps its own.
+                let allowed = animation_info(&a.effect, a.class).map(|i| i.5).unwrap_or(&[]);
+                if let Some(o) = resolve_option(allowed, o) {
+                    if a.class == AnimClass::Path && path.is_none() {
+                        a.path = Some(default_path(&a.effect, &o));
+                    }
+                    a.option = o;
+                }
+            }
+            if let Some(b) = build_mode {
+                a.text_build = b;
+            }
+            n += 1;
         }
-        if let Some(b) = build_mode {
-            a.text_build = b;
-        }
-    })
+    }
+    if n == 0 {
+        return Err(bad("animation", "no animation to change (select an animated object or give `index`)"));
+    }
+    Ok((out, n))
 }
 
 fn clear(s: &mut Session, p: &Value) -> Result<Value> {
@@ -568,25 +581,37 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.painterApply", "no slide"))?);
-        // As in PowerPoint, painting replaces the target's own animations (painting a shape onto
-        // itself doesn't double them). A paragraph effect keeps its paragraph only if the target
-        // has that paragraph; otherwise it animates the whole shape.
-        sl.animations.retain(|a| !ids.contains(&a.shape));
-        let mut added = 0;
-        for id in &ids {
-            let paras = deckcraft_model::find_shape(&sl.shapes, *id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len());
-            for a in &painted {
-                let mut cloned = a.clone();
-                cloned.shape = *id;
-                if cloned.paragraph.is_some_and(|i| i as usize >= paras) {
-                    cloned.paragraph = None;
-                }
-                sl.animations.push(cloned);
-                added += 1;
-            }
-        }
-        Ok(json!({"applied": added}))
+        let animations = painter_plan(&painted, &sl.animations, &ids, |id| paragraphs(&sl.shapes, id));
+        sl.animations = animations;
+        Ok(json!({"applied": painted.len().saturating_mul(ids.len())}))
     })
+}
+
+/// The slide animation list `animation.painterApply` leaves: every addressed shape's own steps are
+/// replaced by the picked ones, painted in the order they were picked (painting a shape onto itself
+/// does not double its steps). A paragraph effect keeps its paragraph only if the target has that
+/// paragraph; otherwise it animates the whole shape. `paragraphs` answers the paragraph count of an
+/// addressed shape, so the result is a deterministic function of the authoritative slide and the
+/// payload — the collaboration normaliser runs this same function.
+pub fn painter_plan(picked: &[Animation], animations: &[Animation], ids: &[ShapeId], paragraphs: impl Fn(ShapeId) -> usize) -> Vec<Animation> {
+    let mut out: Vec<Animation> = animations.iter().filter(|a| !ids.contains(&a.shape)).cloned().collect();
+    for id in ids {
+        let paras = paragraphs(*id);
+        for a in picked {
+            let mut cloned = a.clone();
+            cloned.shape = *id;
+            if cloned.paragraph.is_some_and(|i| i as usize >= paras) {
+                cloned.paragraph = None;
+            }
+            out.push(cloned);
+        }
+    }
+    out
+}
+
+/// How many paragraphs a shape's own text body has (`0` for a shape without text).
+pub fn paragraphs(shapes: &[deckcraft_model::Shape], id: ShapeId) -> usize {
+    deckcraft_model::find_shape(shapes, id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len())
 }
 
 /// Most animation steps one shape may carry in a `slide.animation.set` image, and the longest
@@ -1114,5 +1139,51 @@ mod tests {
         assert_eq!(current(&mut s), planned);
         let effects = |v: &[Animation]| v.iter().map(|x| x.effect.clone()).collect::<Vec<_>>();
         assert_eq!(effects(&current(&mut s)), ["zoom", "zoom"]);
+    }
+
+    #[test]
+    fn the_options_and_painter_plans_match_the_single_user_commands() {
+        use super::{options_plan, painter_plan};
+        use deckcraft_model::ShapeId;
+
+        let mut s = Session::with_new();
+        let (a, b) = two_shapes(&mut s);
+        s.execute("text.set", &json!({"id": a, "text": "one\ntwo"})).unwrap();
+        s.execute(
+            "slide.animations.set",
+            &json!({"index": 0, "animations": [
+                {"shape": a, "effect": "fade"},
+                {"shape": a, "effect": "pulse", "class": "emphasis", "paragraph": 1},
+                {"shape": b, "effect": "zoom"},
+            ]}),
+        )
+        .unwrap();
+        let current = |s: &mut Session| serde_json::from_value::<Vec<Animation>>(s.execute("animation.get", &json!({})).unwrap()).unwrap();
+        let size = (s.doc().unwrap().doc.slide_size.width, s.doc().unwrap().doc.slide_size.height);
+
+        // `animation.options` by index leaves exactly the planned option and text build; the other
+        // steps keep theirs.
+        let planned = options_plan(&json!({"index": 0, "textBuild": "byParagraph"}), &current(&mut s), Some(0), &[], size).unwrap();
+        s.execute("animation.options", &json!({"index": 0, "textBuild": "byParagraph"})).unwrap();
+        assert_eq!(current(&mut s), planned.0);
+        assert_eq!(planned.1, 1, "one step changed");
+        assert_eq!(current(&mut s)[0].text_build, TextBuild::ByParagraph);
+        assert_eq!(current(&mut s)[1].text_build, TextBuild::AsOne, "another step keeps its build mode");
+        // An options edit that names no step is refused by the plan too.
+        assert!(options_plan(&json!({"index": 9, "option": "b"}), &current(&mut s), Some(9), &[], size).is_err());
+
+        // The painter copies a shape's paragraph-level step onto a shape with one paragraph: the
+        // step falls back to the whole shape, exactly as the single-user command does.
+        let picked: Vec<Animation> = current(&mut s).into_iter().filter(|x| x.shape == ShapeId(a as u32)).collect();
+        assert_eq!(picked.len(), 2, "the picked shape's own steps");
+        let shapes = s.doc().unwrap().doc.slides[0].shapes.clone();
+        let planned = painter_plan(&picked, &current(&mut s), &[ShapeId(b as u32)], |id| paragraphs(&shapes, id));
+        s.execute("animation.painter", &json!({"id": a})).unwrap();
+        let applied = s.execute("animation.painterApply", &json!({"ids": [b]})).unwrap();
+        assert_eq!(applied["applied"], json!(picked.len() as u64));
+        assert_eq!(current(&mut s), planned);
+        let on_b: Vec<Animation> = current(&mut s).into_iter().filter(|x| x.shape == ShapeId(b as u32)).collect();
+        assert_eq!(on_b.len(), 2, "the target's own step was replaced by the picked ones");
+        assert!(on_b.iter().all(|x| x.paragraph.is_none()), "a paragraph the target does not have becomes the whole shape");
     }
 }

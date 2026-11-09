@@ -816,4 +816,98 @@ mod tests {
         assert_eq!(hub.session().version(), head, "a refused undo writes nothing");
         assert_eq!(sequence(&sb), sequence(&sa), "the foreign edit survives");
     }
+
+    #[test]
+    fn animation_options_clear_and_the_painter_reach_both_replicas_and_each_undo_is_one_step() {
+        let mut hub = hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = deck_session();
+        let mut sb = deck_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let shapes: Vec<u32> = sa.doc().expect("doc").doc.slides[0].shapes.iter().map(|s| s.id.0).collect();
+        let (first, second) = (shapes[0], shapes[1]);
+        let sequence = |s: &Session| {
+            s.doc().expect("doc").doc.slides[0]
+                .animations
+                .iter()
+                .map(|x| (x.shape.0, x.effect.clone(), x.option.clone(), x.text_build))
+                .collect::<Vec<_>>()
+        };
+        let effects = |s: &Session| sequence(s).into_iter().map(|x| x.1).collect::<Vec<_>>();
+        #[allow(clippy::too_many_arguments)]
+        fn step(
+            hub: &mut Hub,
+            author: &str,
+            doc: &mut CollabDoc,
+            session: &mut Session,
+            peer_actor: &str,
+            peer: &mut CollabDoc,
+            peer_session: &mut Session,
+            cmd: &str,
+            params: &serde_json::Value,
+            id: &str,
+        ) {
+            doc.submit(session, cmd, params, id).expect("submit");
+            send_all(hub, doc, author);
+            deliver(hub, doc, session, author);
+            deliver(hub, peer, peer_session, peer_actor);
+        }
+
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.add", &json!({"effect": "fade", "ids": [first]}), "a-0");
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.add", &json!({"effect": "zoom", "ids": [second]}), "a-1");
+        assert_eq!(effects(&sb), ["fade", "zoom"]);
+
+        // Effect options: one step's text build changes, the other step keeps its own.
+        step(
+            &mut hub,
+            "alice",
+            &mut a,
+            &mut sa,
+            "bob",
+            &mut b,
+            &mut sb,
+            "animation.options",
+            &json!({"index": 0, "textBuild": "byParagraph"}),
+            "a-2",
+        );
+        assert_eq!(sequence(&sa)[0].3, deckcraft_model::anim::TextBuild::ByParagraph);
+        assert_eq!(sequence(&sa)[1].3, deckcraft_model::anim::TextBuild::AsOne);
+        assert_eq!(sequence(&sb), sequence(&sa), "a remote options edit arrives on the second replica");
+        a.undo().expect("undo the options");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(sequence(&sa)[0].3, deckcraft_model::anim::TextBuild::AsOne, "the undo restored the previous step");
+        assert_eq!(sequence(&sb), sequence(&sa));
+
+        // The painter: the clipboard is a session value, the wire value is the resulting sequence.
+        sa.execute("animation.painter", &json!({"id": first})).expect("pick");
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.painterApply", &json!({"ids": [second]}), "a-3");
+        assert_eq!(effects(&sa), ["fade", "fade"], "the target's own step was replaced by the picked one");
+        assert_eq!(sequence(&sb), sequence(&sa), "both replicas hold the painted sequence");
+        a.undo().expect("undo the paint");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(effects(&sa), ["fade", "zoom"], "the undo restored the whole sequence");
+        assert_eq!(sequence(&sb), sequence(&sa));
+
+        // `animation.clear` empties the slide's whole sequence; the undo puts it back.
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.clear", &json!({}), "a-4");
+        assert!(effects(&sa).is_empty());
+        assert!(effects(&sb).is_empty());
+        a.undo().expect("undo the clear");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(effects(&sa), ["fade", "zoom"], "the undo restored the cleared sequence");
+        assert_eq!(sequence(&sb), sequence(&sa));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
 }

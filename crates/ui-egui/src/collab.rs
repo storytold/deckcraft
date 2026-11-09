@@ -207,7 +207,18 @@ impl CollabUi {
             let result = match cmd.as_str() {
                 "edit.undo" => self.undo(),
                 "edit.redo" => self.redo(),
-                _ => self.submit(session, &cmd, &params).map(|_| ()),
+                _ => match self.submit(session, &cmd, &params) {
+                    Ok(_) => {
+                        // The painter clipboard is a session value and the confirmed command is
+                        // `slide.animations.set`, so the single-user `painterApply` never runs
+                        // here; disarm a one-shot pick as that command would.
+                        if cmd == "animation.painterApply" && session.anim_painter.as_ref().is_some_and(|(_, sticky)| !sticky) {
+                            session.anim_painter = None;
+                        }
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                },
             };
             if let Err(e) = result {
                 self.error = Some(e);
@@ -1130,6 +1141,58 @@ mod tests {
         app.collab.pump(&mut app.session, 1_100);
         assert_eq!(app.session.doc().expect("doc").doc.slides[0].shapes.len(), before + 1, "the server's command created the shape");
         let _ = Payload::ShapeInsert { preset: "rect".into(), rect: [0.0; 4], text: None };
+    }
+
+    #[test]
+    fn applying_the_animation_painter_over_the_link_sends_the_sequence_and_disarms_a_one_shot_pick() {
+        use deckcraft_collab::{CollabDoc, PipeTransport};
+        use deckcraft_collab_proto::{ClientMsg, Payload, ServerMsg};
+
+        let (session, _) = deck();
+        let mut app = SlideApp::new(session, crate::Services::default());
+        let mut doc = CollabDoc::new("d");
+        let (transport, from_ui, to_ui) = PipeTransport::pair();
+        let _ = doc.connect(&app.session, "jwt", deckcraft_collab_proto::ClientInfo { name: "t".into(), ver: "1".into() });
+        app.collab.attach(doc, Box::new(transport));
+        app.sync_collab_gate();
+        to_ui
+            .send(ServerMsg::Welcome(deckcraft_collab_proto::Welcome {
+                v: deckcraft_collab_proto::PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 0,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: deckcraft_collab_proto::SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: deckcraft_collab_proto::Capabilities {
+                    kinds: vec![deckcraft_collab_proto::OpKind::Command, deckcraft_collab_proto::OpKind::Structural],
+                    limits: deckcraft_collab_proto::Limits::default(),
+                    commands: vec![],
+                },
+            }))
+            .expect("welcome");
+        app.collab.pump(&mut app.session, 1_000);
+
+        // A step on the first shape, picked into the painter (the pick is a session value, not a
+        // document change, so it runs even while the queue is on).
+        let shapes: Vec<u64> = app.session.doc().expect("doc").doc.slides[0].shapes.iter().map(|s| s.id.0 as u64).collect();
+        app.session.apply_remote("animation.add", &json!({"effect": "fade", "ids": [shapes[0]]})).expect("seed a step");
+        app.session.execute("animation.painter", &json!({"id": shapes[0]})).expect("pick");
+        assert!(app.session.anim_painter.is_some());
+
+        // The paint is queued, the link carries the slide's whole resulting sequence, and the
+        // one-shot pick is disarmed as the single-user command would disarm it.
+        app.run("animation.painterApply", json!({"ids": [shapes[1]]})).expect("queued");
+        app.collab.pump(&mut app.session, 1_060);
+        let mut op = None;
+        while let Ok(msg) = from_ui.try_recv() {
+            if let ClientMsg::Op(envelope) = msg {
+                op = Some(envelope);
+            }
+        }
+        let op = op.expect("the painted sequence reached the link");
+        assert!(matches!(&op.payload, Payload::SlideAnimations { animations } if animations.len() == 2), "{:?}", op.payload);
+        assert!(app.session.anim_painter.is_none(), "a one-shot pick is disarmed once it is sent");
     }
 
     #[test]
