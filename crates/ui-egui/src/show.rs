@@ -926,20 +926,36 @@ fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
         return None;
     }
     let min_n = (rate as u64).saturating_mul(200) / 1000;
-    let mut sum = 0.0f64;
-    let mut n = 0u64;
-    for s in samples.iter().take((rate as usize).saturating_mul(60 * 10)) {
-        if s.is_finite() {
-            let v = *s as f64;
-            sum += v * v;
-            n += 1;
+    // Ten minutes at the device's own rate: a 96 kHz take holds 57.6M samples, so a fixed
+    // 48 kHz cap would only hear the first five minutes.
+    let len = samples.len().min((rate as usize).saturating_mul(60 * 10));
+    // Audibility is per one-second window: a second of speech must survive even when the rest
+    // of the ten-minute take is silence, which would dilute a whole-take RMS below the gate.
+    let window = (rate as usize).max(1);
+    let mut total = 0u64;
+    let mut audible = false;
+    for w in samples[..len].chunks(window) {
+        let mut sum = 0.0f64;
+        let mut n = 0u64;
+        for s in w {
+            if s.is_finite() {
+                let v = *s as f64;
+                sum += v * v;
+                n += 1;
+            }
+        }
+        total += n;
+        if n > 0 {
+            let rms = (sum / n as f64).sqrt();
+            if rms.is_finite() && rms >= 0.008 {
+                audible = true;
+            }
         }
     }
-    if n < min_n.max(1) {
+    if total < min_n.max(1) {
         return None;
     }
-    let rms = (sum / n as f64).sqrt();
-    if !rms.is_finite() || rms < 0.008 {
+    if !audible {
         return None;
     }
     // Narration is written at NARRATION_RATE whatever the device gave us: the WAV cap is ten

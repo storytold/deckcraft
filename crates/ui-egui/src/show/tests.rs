@@ -1471,6 +1471,19 @@ fn narration_scan_covers_ten_minutes_at_the_device_rate() {
 }
 
 #[test]
+fn narration_keeps_a_second_of_speech_before_ten_minutes_of_silence() {
+    // The scan's audibility gate hears a loud second even when the rest of the ten-minute take
+    // is silence: whole-take RMS would dilute it below the gate.
+    let rate = 96_000u32;
+    let ten_min = (rate as usize) * 60 * 10;
+    let mut samples = vec![0.0f32; ten_min];
+    for (i, s) in samples.iter_mut().enumerate().take(rate as usize) {
+        *s = ((i as f32) * 0.2).sin() * 0.25;
+    }
+    assert!(narration_wav(rate, &samples).is_some());
+}
+
+#[test]
 fn ctrl_shows_the_laser_without_a_trace_and_the_button_can_leave_it_on() {
     assert!(pointer_is_laser(false, true, false));
     assert!(pointer_is_laser(true, false, false));
