@@ -133,16 +133,24 @@ impl CpalIn {
             keep_stream_error(&slot, &e);
         };
         let stream = match cfg.sample_format() {
-            cpal::SampleFormat::F32 => dev.build_input_stream(
-                &config,
-                move |data: &[f32], _| {
-                    if let Ok(mut g) = buf.try_lock() {
-                        push_mono(&mut g.samples, data, channels, cap);
-                    }
-                },
-                err,
-                None,
-            ),
+            cpal::SampleFormat::F32 => {
+                let mut spill: Vec<f32> = Vec::new();
+                dev.build_input_stream(
+                    &config,
+                    move |data: &[f32], _| {
+                        spill.extend_from_slice(data);
+                        if let Ok(mut g) = buf.try_lock() {
+                            let all = std::mem::take(&mut spill);
+                            if g.samples.len() + all.len() / channels.max(1) > cap {
+                                full.store(true, Ordering::Relaxed);
+                            }
+                            push_mono(&mut g.samples, &all, channels, cap);
+                        }
+                    },
+                    err,
+                    None,
+                )
+            }
             cpal::SampleFormat::I16 => {
                 let mut spill: Vec<f32> = Vec::new();
                 dev.build_input_stream(

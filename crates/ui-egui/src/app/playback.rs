@@ -104,9 +104,13 @@ impl SlideApp {
             show.keep_cursor = self.ui.show_keep_cursor;
             self.show = Some(show);
         }
-        // The show that replaces a captured recording goes fullscreen itself: only a reading or
-        // browsed show, which never asks for it, leaves fullscreen here.
-        if !reading {
+        // The show that replaces a captured recording goes fullscreen itself: only a show that
+        // does not fill the screen (reading, or browsed in a window) leaves fullscreen here.
+        if let Some(d) = self.session.active() {
+            if show::show_fills_screen(reading, &d.doc.show.show_type) {
+                self.leave_fullscreen = false;
+            }
+        } else if !reading {
             self.leave_fullscreen = false;
         }
     }

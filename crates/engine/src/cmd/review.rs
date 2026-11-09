@@ -1317,12 +1317,16 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
     if sh.click.as_ref().is_some_and(|h| h.sound == Some(id)) || sh.hover.as_ref().is_some_and(|h| h.sound == Some(id)) {
         return true;
     }
-    if matches!(&sh.fill, Some(deckcraft_model::style::Fill::Picture(p)) if p.media == id) {
-        return true;
-    }
     if let Some(t) = &sh.text {
         for p in &t.paragraphs {
             if matches!(p.props.bullet, Some(deckcraft_model::text::Bullet::Picture { media }) if media == id) {
+                return true;
+            }
+            // A text run's own click/hover action can play a sound (`a:snd` on the run's
+            // hyperlink): the same shared-bytes rule as the shape's own actions applies.
+            if p.runs.iter().any(|r| {
+                r.props.link.as_ref().is_some_and(|h| h.sound == Some(id)) || r.props.hover.as_ref().is_some_and(|h| h.sound == Some(id))
+            }) {
                 return true;
             }
         }
@@ -2043,6 +2047,42 @@ mod tests {
         s.execute("show.clearNarration", &json!({"index": 0})).unwrap();
         assert!(narrations(&s, 0).is_empty(), "the narration clip is gone");
         assert!(s.doc().unwrap().doc.media(clip.media).is_some(), "the hyperlink sound keeps the shared bytes");
+    }
+
+    /// A text run's click sound keeps its bytes through the same cleanup path.
+    #[test]
+    fn clear_narration_keeps_a_shared_text_run_sound() {
+        use deckcraft_model::text::{Action, Hyperlink, Paragraph, Run, RunProps, TextBody};
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let clip = narrations(&s, 0)[0].clone();
+        s.edit(|doc, _| {
+            let Some(sl) = doc.slides.first_mut() else { return Err(crate::cmd::bad("test", "no slide")) };
+            let sl = Arc::make_mut(sl);
+            let sh = sl.shapes.iter_mut().find(|sh| matches!(&sh.kind, ShapeKind::Media(m) if m.narration)).expect("narration shape");
+            let body = sh.text.get_or_insert(TextBody::default());
+            body.paragraphs.push(Paragraph {
+                runs: vec![Run::with(
+                    "play",
+                    RunProps {
+                        link: Some(Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: false, sound: Some(clip.media), stop_sound: false, zoom_return: None }),
+                        ..Default::default()
+                    },
+                )],
+                ..Default::default()
+            });
+            // Drop the narration flag in place: the bytes stay shared without removing the
+            // shape, so the surviving run's sound is the only user left to count.
+            if let ShapeKind::Media(m) = &mut sh.kind {
+                m.narration = false;
+            }
+            Ok(())
+        })
+        .unwrap();
+        s.execute("show.clearNarration", &json!({"index": 0})).unwrap();
+        assert!(s.doc().unwrap().doc.media(clip.media).is_some(), "the run's sound keeps the shared bytes");
     }
 
     /// A shape by id, whichever slide of the deck holds it.
