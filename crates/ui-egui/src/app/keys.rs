@@ -188,11 +188,13 @@ impl SlideApp {
                         continue;
                     }
                     // When an animation effect is selected in the Animation Pane, Delete/Backspace removes
-                    // the animation rather than deleting the underlying shape (#1725).
+                    // the animation rather than deleting the underlying shape (#1725). A held key keeps
+                    // repeating after the last effect is gone: those repeats stay with the pane until the
+                    // key is released, so they can't fall through and delete the shape.
                     if (key == egui::Key::Delete || key == egui::Key::Backspace)
                         && !modifiers.command
                         && !modifiers.ctrl
-                        && self.handle_anim_pane_delete(ctx)
+                        && (self.handle_anim_pane_delete(ctx) || ctx.data(|m| m.get_temp::<bool>(anim_delete_latch()).unwrap_or(false)))
                     {
                         continue;
                     }
@@ -210,17 +212,26 @@ impl SlideApp {
                         self.note_application_edit(ctx);
                     }
                 }
+                egui::Event::Key { key: egui::Key::Delete | egui::Key::Backspace, pressed: false, .. } => {
+                    ctx.data_mut(|m| m.remove::<bool>(anim_delete_latch()));
+                }
                 _ => {}
             }
         }
         self.drain_requests();
     }
 
+    /// Delete/Backspace with an effect picked in the Animation Pane: removes that effect and
+    /// answers true. Not while slide text is being edited (the key edits the text, as in
+    /// PowerPoint) and not without a pick. A handled removal arms [`anim_delete_latch`].
     fn handle_anim_pane_delete(&mut self, ctx: &egui::Context) -> bool {
         if self.ui.pane.as_deref() != Some("animation") {
             return false;
         }
         let Some(st) = self.session.active() else { return false };
+        if st.selection.text.is_some() {
+            return false;
+        }
         let pick_id = egui::Id::unique(("anim_pane_pick", st.uid, st.selection.slide));
         let Some(i) = ctx.data(|m| m.get_temp::<usize>(pick_id)) else { return false };
         let valid = st.current_slide().and_then(|sl| sl.animations.get(i)).is_some_and(|a| st.selection.shapes.contains(&a.shape));
@@ -245,11 +256,18 @@ impl SlideApp {
             } else {
                 ctx.data_mut(|m| m.remove::<usize>(pick_id));
             }
+            ctx.data_mut(|m| m.insert_temp(anim_delete_latch(), true));
         } else {
             ctx.data_mut(|m| m.remove::<usize>(pick_id));
         }
         true
     }
+}
+
+/// Set while a Delete/Backspace that removed an animation is still held (#1725): its repeats belong
+/// to the Animation Pane until the key is released.
+fn anim_delete_latch() -> egui::Id {
+    egui::Id::unique("anim_pane_delete_latch")
 }
 
 /// Engine key name for an egui key.

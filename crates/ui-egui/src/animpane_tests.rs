@@ -236,6 +236,50 @@ fn consecutive_delete_in_the_pane_removes_all_animations_and_keeps_shape() {
     assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shape_count_before);
 }
 
+/// #1725 review: a held Delete keeps repeating after the last effect is removed. Those repeats
+/// stay with the pane until the key is released; they never reach the slide and delete the shape.
+#[test]
+fn held_delete_repeats_after_the_last_animation_do_not_delete_the_shape() {
+    let mut h = harness();
+    let shapes = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+    let key = |pressed, repeat| egui::Event::Key { key: egui::Key::Delete, physical_key: None, pressed, repeat, modifiers: egui::Modifiers::NONE };
+    // Press, then repeats while held: two effects go, the rest of the repeats are swallowed.
+    h.event(key(true, false));
+    h.run_steps(1);
+    for _ in 0..4 {
+        h.event(key(true, true));
+        h.run_steps(1);
+    }
+    let slide = h.state().session.active().unwrap().current_slide().unwrap();
+    assert_eq!(slide.animations.len(), 0, "both effects removed");
+    assert_eq!(slide.shapes.len(), shapes, "the shape survived the repeats");
+    assert!(!h.state().session.active().unwrap().selection.shapes.is_empty(), "and stays selected");
+    // Release, then a fresh press: the pane has no pick, so Delete is the slide's again.
+    h.event(key(false, false));
+    h.run_steps(1);
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shapes - 1, "a new press deletes the shape");
+}
+
+/// #1725 review: while slide text is being edited, Delete and Backspace edit the text even with
+/// an effect picked in the pane.
+#[test]
+fn delete_while_editing_text_edits_the_text_not_the_animation() {
+    let mut h = harness();
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+    let id = h.state().session.active().unwrap().selection.shapes[0];
+    h.state_mut().run("text.edit", json!({"id": id.0})).unwrap();
+    h.state_mut().run("text.insert", json!({"text": "ab"})).unwrap();
+    h.run_steps(1);
+    h.key_press(egui::Key::Backspace);
+    h.run_steps(2);
+    let st = h.state().session.active().unwrap();
+    assert_eq!(st.current_slide().unwrap().animations.len(), 2, "the animation stays");
+    assert!(st.shape(id).and_then(|s| s.text.as_ref()).is_some_and(|t| t.text().ends_with('a')), "Backspace edited the text");
+}
+
 /// #1725: selecting "None" in the animations gallery removes the shape's animations and keeps the shape.
 #[test]
 fn selecting_none_in_animations_gallery_removes_animation_and_keeps_shape() {
