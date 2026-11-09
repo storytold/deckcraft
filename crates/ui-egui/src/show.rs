@@ -15,7 +15,7 @@ use crate::theme;
 mod keys;
 mod media;
 mod presenter;
-mod render;
+pub(crate) mod render;
 mod ui;
 mod zoom;
 pub(crate) use zoom::GRID_CAP;

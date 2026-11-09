@@ -282,7 +282,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     }
     app.perf.render_ms = app.textures.last_render_ms;
     media_frames(app, &painter, xf);
-    crate::camera::paint_preview(app, &painter, xf);
+    crate::camera::paint_preview(app, &painter, xf, ui.ctx());
     // Notes Master view: the current slide inside the slide-image placeholder, as in PowerPoint.
     let notes_preview = app.session.active().filter(|d| d.selection.target == Target::NotesMaster).and_then(|d| {
         let frame = d.doc.notes_master.as_ref()?.shapes.iter().find(|s| s.ph_type() == Some(deckcraft_model::PhType::SlideImage))?.xfrm?;
@@ -387,7 +387,7 @@ fn master_tex(
     Some((crate::textures::upload_editor(ctx, "master-canvas", crate::textures::to_color_image(&img, false)), region))
 }
 
-pub(super) mod preview;
+pub(crate) mod preview;
 pub mod squiggles;
 #[cfg(test)]
 mod tests;

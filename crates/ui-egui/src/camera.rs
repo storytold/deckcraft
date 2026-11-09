@@ -44,6 +44,9 @@ pub struct CameraHost {
     show_wants: bool,
     /// The last value of `preview || show_wants` a start/stop acted on.
     wanted: bool,
+    /// The editor overlay of shapes stacked above a Cameo (repainted over the live frame so the
+    /// preview keeps slide z-order): slide identity, texture size, skipped ids, and the texture.
+    over: Option<(usize, (u32, u32), Vec<ShapeId>, TextureHandle)>,
     /// A one-shot explanation for the status bar, taken by the logic pass.
     notice: Option<String>,
 }
@@ -61,6 +64,7 @@ impl Default for CameraHost {
             show_instance: None,
             show_wants: false,
             wanted: false,
+            over: None,
             notice: None,
         }
     }
@@ -340,18 +344,84 @@ fn deck_has_cameo(doc: &Presentation) -> bool {
 }
 
 /// Paint the live frame in every cameo of editor slide `slide`, in slide coordinates through `xf`.
-pub(crate) fn paint_preview(app: &SlideApp, painter: &egui::Painter, xf: crate::canvas::Xf) {
+pub(crate) fn paint_preview(app: &mut SlideApp, painter: &egui::Painter, xf: crate::canvas::Xf, ctx: &egui::Context) {
     if !app.camera.preview_on() {
+        app.camera.over = None;
         return;
     }
     let Some(texture) = app.camera.texture().cloned() else { return };
-    let Some(doc) = app.session.active() else { return };
-    if doc.selection.target != deckcraft_engine::Target::Slides {
-        return;
-    }
-    let Some(slide) = doc.doc.slides.get(doc.selection.slide) else { return };
+    let (doc, idx, ptr) = match app.session.active() {
+        Some(d) if d.selection.target == deckcraft_engine::Target::Slides => {
+            let ptr = d.doc.slides.get(d.selection.slide).map(|s| std::sync::Arc::as_ptr(s) as usize);
+            (d.doc.clone(), d.selection.slide, ptr)
+        }
+        _ => return,
+    };
+    let Some(ptr) = ptr else { return };
+    let Some(slide) = doc.slides.get(idx) else { return };
     for (shape, x) in cameo_boxes(&slide.shapes) {
         paint_cameo(painter, &texture, shape, x, 1.0, &|p| xf.to_screen(p));
+    }
+    paint_preview_overlay(app, painter, xf, &doc, idx, ptr, ctx);
+}
+
+/// Repaint the shapes stacked above a Cameo over its live frame, so the editor preview keeps
+/// slide z-order as the show does (`below_live` plus its overlay texture): without this, a text
+/// box over a Cameo would vanish while the preview is on. The overlay renders the slide's own
+/// shapes with everything at and below the lowest live Cameo skipped, at the slide texture's
+/// pixel size so it lands texel-aligned, and is cached on the slide identity, size and skip list
+/// (re-rendered while the animation preview moves shapes).
+fn paint_preview_overlay(
+    app: &mut SlideApp,
+    painter: &egui::Painter,
+    xf: crate::canvas::Xf,
+    doc: &Presentation,
+    idx: usize,
+    ptr: usize,
+    ctx: &egui::Context,
+) {
+    let live: Vec<ShapeId> = cameo_boxes(&doc.slides[idx].shapes).into_iter().map(|(s, _)| s.id).collect();
+    let skip = crate::show::render::below_live(doc, idx, &live);
+    if skip.is_empty() {
+        app.camera.over = None;
+        return;
+    }
+    let moving = app.anim_preview_draw().is_some();
+    let Some(rect) = app.slide_rect else { return };
+    let ppp = ctx.pixels_per_point();
+    let size = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
+    let fresh = app.camera.over.as_ref().is_some_and(|(p, s, sk, _)| *p == ptr && *s == size && *sk == skip);
+    if !fresh || moving {
+        let frame = app.anim_preview_draw();
+        let state_of = |id: ShapeId| frame.as_ref().map(|(tl, t)| crate::canvas::preview::shape_state_at(tl, id, *t)).unwrap_or_default();
+        let state: Option<&dyn Fn(ShapeId) -> deckcraft_render::ShapeState> = Some(&state_of);
+        let opts = deckcraft_render::RenderOpts {
+            scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+            edit: true,
+            size: Some(size),
+            state,
+            skip: &skip,
+            threads: crate::show::render::render_threads(),
+            ..Default::default()
+        };
+        let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
+        let ci = crate::textures::to_color_image(&img, false);
+        let same_slot = app.camera.over.as_ref().is_some_and(|(p, s, sk, _)| *p == ptr && *s == size && *sk == skip);
+        if same_slot {
+            if let Some((_, _, _, tex)) = app.camera.over.as_mut() {
+                crate::textures::replace_editor(ctx, tex, ci);
+            }
+        } else {
+            app.camera.over = Some((ptr, size, skip.clone(), crate::textures::upload_editor(ctx, "cameo-overlay", ci)));
+        }
+    }
+    if app.camera.over.is_some() {
+        let w = doc.slide_size.width as f32 * xf.scale;
+        let h = doc.slide_size.height as f32 * xf.scale;
+        let tex = app.camera.over.as_ref().map(|(_, _, _, t)| t.clone());
+        if let Some(tex) = tex {
+            painter.image(tex.id(), Rect::from_min_size(xf.origin, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
     }
 }
 
@@ -430,7 +500,11 @@ fn paint_cameo(painter: &egui::Painter, texture: &TextureHandle, shape: &Shape, 
         return;
     }
     let tint = Color32::from_white_alpha((opacity.clamp(0.0, 1.0) * 255.0).round() as u8);
-    let mesh = cameo_mesh(&polygons, x, texture.id(), texture.size(), tint, to_screen);
+    let crop = match &shape.kind {
+        deckcraft_model::ShapeKind::Picture { fill } => fill.crop,
+        _ => [0.0; 4],
+    };
+    let mesh = cameo_mesh(&polygons, x, crop, texture.id(), texture.size(), tint, to_screen);
     if mesh.is_empty() {
         return;
     }
@@ -476,11 +550,13 @@ fn push_polygon(cur: &mut Vec<Point>, out: &mut Vec<Vec<Point>>) {
     }
 }
 
-/// A textured mesh that covers `polygons` (shape-local) with the whole frame, using the shape's
-/// flip and rotation and the same centre crop as [`cover_uv`].
+/// A textured mesh that covers `polygons` (shape-local) with the frame, using the shape's flip
+/// and rotation, its [`PictureFill::crop`] selection stretched over the box as PowerPoint shows a
+/// cropped video, and the same centre crop as [`cover_uv`] for the rest.
 fn cameo_mesh(
     polygons: &[Vec<Point>],
     x: Xfrm,
+    crop: [f64; 4],
     tex: egui::TextureId,
     tex_size: [usize; 2],
     tint: Color32,
@@ -488,9 +564,15 @@ fn cameo_mesh(
 ) -> Mesh {
     let affine = x.affine();
     let uv = cover_uv(Rect::from_min_size(Pos2::ZERO, vec2(x.w as f32, x.h as f32)), tex_size);
+    let [l, t, r, b] = crop.map(|v| if v.is_finite() { v.clamp(0.0, 0.99) as f32 } else { 0.0 });
+    let cropped = crop.iter().any(|v| *v > 0.0);
     let uv_at = |p: Point| {
-        let u = (p.x / x.w) as f32;
-        let v = (p.y / x.h) as f32;
+        let mut u = (p.x / x.w) as f32;
+        let mut v = (p.y / x.h) as f32;
+        if cropped {
+            u = l + u * ((1.0 - r).max(l + 0.01) - l);
+            v = t + v * ((1.0 - b).max(t + 0.01) - t);
+        }
         pos2(uv.min.x + u * uv.width(), uv.min.y + v * uv.height())
     };
     let mut mesh = Mesh::with_texture(tex);
@@ -857,6 +939,40 @@ mod tests {
         assert!(cameo_boxes(std::slice::from_ref(&group)).is_empty(), "a Cameo in a hidden group paints no frame");
     }
 
+    /// A shape stacked above a Cameo stays visible while the editor preview is on: the canvas
+    /// repaints everything above the live frame into the camera overlay (`over`). With nothing
+    /// above the Cameo no overlay is needed.
+    #[test]
+    fn shapes_above_a_cameo_repaint_over_the_preview() {
+        fn harness_with(above: bool) -> egui_kittest::Harness<'static, SlideApp> {
+            let mut session = deckcraft_engine::Session::with_new();
+            session.execute("insert.cameo", &serde_json::json!({})).expect("cameo");
+            if above {
+                session
+                    .execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [0.0, 0.0, 200.0, 200.0]}))
+                    .expect("a shape above the Cameo");
+            }
+            let mut services = crate::Services::default();
+            services.camera_in = Some(Box::new(FakeCamera::default().sized(64, 48)));
+            let mut app = SlideApp::new(session, services);
+            app.camera.set_preview(true);
+            let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
+            h.run_steps(5);
+            h
+        }
+        let h = harness_with(true);
+        assert!(h.state().camera.texture().is_some(), "the fake camera uploaded a frame");
+        assert!(h.state().camera.over.is_some(), "shapes above the Cameo get an overlay");
+        let h = harness_with(false);
+        assert!(h.state().camera.over.is_none(), "nothing above the Cameo: no overlay");
+    }
+
     /// A Cameo with Camera Shape `geom`, and its box, from the command that inserts one.
     fn cameo(geom: &str) -> (Shape, Xfrm) {
         let mut session = deckcraft_engine::Session::with_new();
@@ -877,7 +993,7 @@ mod tests {
     fn the_frame_is_masked_to_the_cameo_shape() {
         // The Cameo is an ellipse by default: no painted vertex may reach the box's corners.
         let (shape, x) = cameo("ellipse");
-        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         assert!(!mesh.indices.is_empty(), "the ellipse is painted");
         let inv = x.affine().inverse();
         let (cx, cy) = (x.w / 2.0, x.h / 2.0);
@@ -892,7 +1008,7 @@ mod tests {
     #[test]
     fn a_rectangular_camera_shape_still_fills_its_box() {
         let (shape, x) = cameo("rect");
-        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         for (dx, dy) in [(0.0, 0.0), (x.w, 0.0), (x.w, x.h), (0.0, x.h)] {
             let (px, py) = (x.x + dx, x.y + dy);
             let painted = mesh.vertices.iter().any(|v| (v.pos.x as f64 - px).abs() < 0.01 && (v.pos.y as f64 - py).abs() < 0.01);
@@ -901,12 +1017,27 @@ mod tests {
     }
 
     #[test]
+    fn a_cropped_cameo_shows_its_crop_selection() {
+        // Crop 50% off the left: the box's left edge must sample half a frame further right than
+        // the uncropped mesh (which centre-crops the 640x480 frame into the wide box).
+        let (shape, x) = cameo("rect");
+        let polys = cameo_polygons(&shape, x.w, x.h);
+        let plain = cameo_mesh(&polys, x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let cropped = cameo_mesh(&polys, x, [0.5, 0.0, 0.0, 0.0], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let at_left =
+            |m: &Mesh, x0: f64| m.vertices.iter().filter(|v| (v.pos.x as f64 - x0).abs() < 0.01).map(|v| v.uv.x).fold(f32::INFINITY, f32::min);
+        let (u_plain, u_cropped) = (at_left(&plain, x.x), at_left(&cropped, x.x));
+        assert!(u_plain.is_finite() && u_cropped.is_finite(), "both meshes paint the left edge");
+        assert!(u_cropped - u_plain > 0.3, "crop shifts the sample right (plain u={u_plain}, cropped u={u_cropped})");
+    }
+
+    #[test]
     fn a_concave_camera_shape_is_filled_by_its_own_triangles() {
         // Star reachable from Camera Shape: an ear-clipped fill, not a fan that spans the notches.
         let (shape, x) = cameo("star5");
         let polygons = cameo_polygons(&shape, x.w, x.h);
         assert_eq!(polygons.len(), 1, "one filled outline");
-        let mesh = cameo_mesh(&polygons, x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let mesh = cameo_mesh(&polygons, x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         assert!(!mesh.indices.is_empty(), "the star is painted");
         let inv = x.affine().inverse();
         for t in mesh.indices.chunks(3) {
@@ -934,9 +1065,9 @@ mod tests {
         let (shape, mut x) = cameo("rect");
         x.w = 200.0;
         x.h = 100.0;
-        let flat = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let flat = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         x.rot = 45.0;
-        let turned = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let turned = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
         let inv = x.affine().inverse();
         for v in &turned.vertices {
             let p = inv * Point::new(v.pos.x as f64, v.pos.y as f64);

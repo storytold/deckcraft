@@ -676,8 +676,12 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
             let (mut live, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
             if !full_screen {
                 paint_camera(app, show, &sl, f, painter);
-                // The shapes stacked above a Cameo go into the overlay drawn over its frame.
-                live.extend(crate::camera::cameo_ids(f.doc.as_ref(), sl.idx));
+                // Only when a frame was actually painted: with no camera texture nothing covers
+                // the Cameos, so their ids must not join `live` (the overlay would hide shapes
+                // stacked above an unpainted Cameo).
+                if app.camera.texture().is_some() {
+                    live.extend(crate::camera::cameo_ids(f.doc.as_ref(), sl.idx));
+                }
             }
             draw_overlay(show, f, &sl, painter, &live, full_screen);
             draw_media_controls(app, ui, show, f, &sl, painter);

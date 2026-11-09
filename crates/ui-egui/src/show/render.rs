@@ -4,7 +4,7 @@ use super::{
     TriggerPlay, pos2, state_for, vec2,
 };
 
-pub(super) fn render_threads() -> u16 {
+pub(crate) fn render_threads() -> u16 {
     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) }
 }
 
@@ -112,7 +112,7 @@ pub(super) fn render_overlay(
 /// `live` shapes — those the UI paints itself (a playing video's frame, a Cameo's camera): the
 /// shape itself, everything below it and the other live shapes. Empty when nothing is above a
 /// live shape: its frame is then painted last.
-pub(super) fn below_live(doc: &Presentation, idx: usize, live: &[ShapeId]) -> Vec<ShapeId> {
+pub(crate) fn below_live(doc: &Presentation, idx: usize, live: &[ShapeId]) -> Vec<ShapeId> {
     let Some(slide) = doc.slides.get(idx) else { return vec![] };
     let Some(first) = slide.shapes.iter().position(|s| live.contains(&s.id)) else { return vec![] };
     if slide.shapes.iter().skip(first + 1).all(|s| live.contains(&s.id)) {
