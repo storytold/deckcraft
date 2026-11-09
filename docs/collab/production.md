@@ -147,17 +147,19 @@ The first release deliberately normalises a small, idempotent command set:
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
 | `slide.duplicate` | structural | the source slide key; the copy is inserted after it |
 | `transition.set` | command | the slide's **whole** transition as a final value (effect, option, duration, advance timings, embedded sound, kept XML) in one `slide.transition.set`; a `none` with nothing else to keep is the model's "no transition" |
+| `animation.add`, `animation.remove` | command | one shape's **whole** ordered animation step list as a final value in one `slide.animation.set` (`shape_animations`, the model `Animation` values as JSON); the client builds a step with the engine's `animation.add_plan`, appends it, and sends the resulting list; an unaddressable shape is refused before any write |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
 | `shape.restore` | structural | server-built undo/redo image of whole shapes (model JSON, parent, z-order index, animations); a client cannot send it as an edit |
 
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: fonts as a document asset, animation steps, the
-rest of the table surface (style, fill, merge/split, sizing), formatting a table cell,
-SmartArt/charts, notes, run-range formatting and relative effects. The full command surface is the
-next slice; it needs a final-value normalisation for each command, not a raw `execute` on the
-wire.
+values, go on the wire. What is still refused: fonts as a document asset, the rest of the
+animation surface (`animation.set` styles, `animation.timing`, `animation.options`,
+`animation.move`, `animation.clear`, the painter), the rest of the table surface (style, fill,
+merge/split, sizing), formatting a table cell, SmartArt/charts, notes, run-range formatting and
+relative effects. The full command surface is the next slice; it needs a final-value normalisation
+for each command, not a raw `execute` on the wire.
 
 ## Browser mode
 
@@ -274,12 +276,12 @@ cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 138 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
+| `cargo test -p deckcraft-collab` | 156 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation steps), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition/animation slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
-| `cargo test -p deckcraft-engine` | 572 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore`, `slide.restore` and `slide.transition.set` did not change single-user behaviour; `transition.set` and `set_plan` leave the same value; `arrange.align`/`distribute` keep their numbers after the plan refactor |
+| `cargo test -p deckcraft-engine` | 575 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore`, `slide.restore`, `slide.transition.set` and `slide.animation.set` did not change single-user behaviour; `transition.set`/`set_plan` and `animation.add`/`add_plan` leave the same values; `arrange.align`/`distribute` keep their numbers after the plan refactor |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean; `xtask layers` 32 crates (`collab-web` L6), `cargo xtask wasm` 26 crates |
 | `cargo check -p deckcraft-web --target wasm32-unknown-unknown` | ok |
 | `trunk build` in `apps/deckcraft-web` (trunk 0.22.1) | ok in 4m7s (dev profile, cold): `dist/web` with `index.html`, the JS glue and a 49 MB `_bg.wasm` |

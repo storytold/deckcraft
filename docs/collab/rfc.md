@@ -131,6 +131,7 @@ S→C {"type":"applied","opId":"<uuid>","version":42,
 | `shape_fill` | command | `fill: solid{color} \| none \| background` | градиент, картинка, узор, `transparency` (относительна унаследованному стилю), `reset` |
 | `shape_line` | command | `color`, `width`, `dash`, `cap`, `join`, `compound`, `head/tail`, `headSize/tailSize`, `none` | `reset`; пустой набор значений |
 | `slide_transition` | command | `transition`: весь переход как значение модели (`kind`, `option`, `durationMs`, `advanceOnClick`, `advanceAfterMs`, `sound`, `soundLoop`, `stopSound`, `raw`) или `null` (нет перехода); адрес — `target.slide` | неизвестный эффект без сохранённого `raw`, звук, которого нет в документе, образ > 8 KiB → `invalid`/`stale` |
+| `shape_animations` | command | `animations`: полный упорядоченный список шагов одной фигуры (значения модели `Animation` как JSON), пустой список — шагов нет; адрес — `target.slide` + `target.shape` | неизвестный эффект, чужое поле модели, > 256 шагов или > 64 KiB, фигура не на слайде → `invalid`/`stale` |
 | `format_set` | command | `format: <allowlisted FormatCmd>`, `args` только из собственного набора команды | `id/ids/index` в `args`, относительный toggle без `on`, таблица, фигура без текста |
 | `slide_duplicate` | structural | ничего; адрес — `target.slide` | слайд удалён → `stale` |
 | `shape_fields` | command | `items:[{shape, field: fill\|line\|text, value}]` | только undo/redo шага группы; иначе → `invalid`; > 4096 значений или > 192 KiB → `invalid` |
@@ -146,7 +147,9 @@ S→C {"type":"applied","opId":"<uuid>","version":42,
 
 `shape.fill`, `shape.line` и `format_set` входят в per-user undo с точным образом значения (§6): undo/redo несут само значение модели в `shape_field`, а не повторяют пользовательскую команду, потому что `shape.fill`/`shape.line`/`format.*` выражают только часть модели (tile и scaled градиента, custom dash, форматирование ранов). `shape_field` — операция истории, а не пользовательская: адаптер принимает её только как undo/redo и только с тем значением, которое записал последний шаг актора.
 
-То же правило у `shape_fields` (шаг группы: один образ на каждое изменившееся звено), `shape_restore` (structural undo фигуры: полный образ фигуры, её места в z-order и анимаций), `slide_restore` (structural undo слайда: полный образ слайда) и `slide_transition` (образ шага `transition.set`: полный переход, включая сохранённый XML). `slide_transition` — одновременно и пользовательская операция, и образ шага: без `history` это обычная правка, а в undo/redo `check_restore` принимает её только с тем значением, которое записал последний шаг актора. Все эти операции строит только сервер из своей истории; `check_restore` сверяет и адрес (слайд, фигура, список фигур), и payload с записанным образом, поэтому клиент не может через undo подменить объект или значение. Для undo `slide.new`/`slide.duplicate` обратная операция — обычный `slide_delete`, для undo `shape.insert`/`insert.picture`/`insert.video`/`insert.audio` — `shape_delete`; обе тоже проверяются по истории.
+`shape_animations` — тот же приём для шагов анимации. `animation.add`/`animation.remove` нормализуются в **полный список шагов одной фигуры**: новый шаг строит движковая `animation.add_plan` (та же `build`, что у одиночной команды), поэтому каждая реплика получает одинаковые preset-id, тайминги, цвета и motion path, которых аргументы `animation.add` не повторяют. Одна операция адресует одну фигуру (выборка из нескольких — отказ). Адаптер резолвит ключи слайда и фигуры (неизвестный ключ, фигура с другого слайда или отсутствующая — отказ до первой записи), принудительно ставит id фигуры в каждом значении и прогоняет `slide.animation.set`: команда ограничивает список (256 шагов, 64 KiB), принимает только поля модели, требует известный эффект и заменяет шаги фигуры на месте первого; шаги других фигур сохраняют позиции, `[]` очищает. Список — точный образ шага undo (§6), поэтому undo/redo несут его же.
+
+То же правило у `shape_fields` (шаг группы: один образ на каждое изменившееся звено), `shape_restore` (structural undo фигуры: полный образ фигуры, её места в z-order и анимаций), `slide_restore` (structural undo слайда: полный образ слайда), `slide_transition` (образ шага `transition.set`: полный переход, включая сохранённый XML) и `shape_animations` (образ шага `animation.add`/`animation.remove`: полный список шагов фигуры). `slide_transition` и `shape_animations` — одновременно и пользовательские операции, и образы шага: без `history` это обычная правка, а в undo/redo `check_restore` принимает их только с тем значением, которое записал последний шаг актора. Все эти операции строит только сервер из своей истории; `check_restore` сверяет и адрес (слайд, фигура, список фигур), и payload с записанным образом, поэтому клиент не может через undo подменить объект или значение. Для undo `slide.new`/`slide.duplicate` обратная операция — обычный `slide_delete`, для undo `shape.insert`/`insert.picture`/`insert.video`/`insert.audio` — `shape_delete`; обе тоже проверяются по истории.
 
 ### 3.3 Идентификаторы (ADR-0002)
 
@@ -547,6 +550,7 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
 | 15c | undo `shape.insert` после чужой правки соседа | `shape_delete` по вставленной фигуре, правка соседа на месте, обе реплики равны |
 | 15d | undo `edit.delete` при изменённых соседях; undo удаления группы | `shape_restore` с прежним id и z-order, анимации и триггеры возвращаются, группа приходит одним образом; обе реплики равны |
 | 15e | undo `transition.set` на двух репликах; чужая смена перехода | `slide_transition` с прежним полным значением (тайминги, звук, `raw`), обе реплики равны; после чужой смены — `undo-conflict` |
+| 15f | два шага анимации подряд и undo одного из них на двух репликах; чужая смена списка шагов | `shape_animations` с прежним списком, шаги других фигур на месте, обе реплики равны; неадресуемая фигура — отказ до записи; после чужой смены — `undo-conflict` |
 | 16 | 100+ слайдов + медиа | применение < 100 мс p95, снапшот/commit в лимитах |
 | 17 | commit → reopen | `.pptx` открывается, `Opaque`/`raw_ext`/`kept_parts` на месте |
 | 18 | commit при внешнем изменении файла | `409`, файл не перезаписан |
@@ -594,9 +598,11 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
    и `edit.delete` (полный образ фигуры с z-order и анимациями,
    `shape_restore`/`shape_delete`, §6), а также `arrange.group`/`arrange.ungroup`
    (образ всего поддерева с обеих сторон, одна операция `shape_restore` с
-   `remove`, §6) и `transition.set` (полный образ перехода: эффект, опция,
-   длительность, тайминги, звук и сохранённый XML, `slide_transition`, §3.2.1).
-   Открыто: текст в таблицах и заметках, run-level формат.
+   `remove`, §6), `transition.set` (полный образ перехода: эффект, опция,
+   длительность, тайминги, звук и сохранённый XML, `slide_transition`, §3.2.1)
+   и шаги анимации (`animation.add`/`animation.remove`: полный список шагов
+   фигуры, `shape_animations`, §3.2.1).
+   Открыто: текст в заметках, run-level формат, остальные команды анимации.
 5. **Presence во время показа:** показывать ли курсоры других в presenter view
    (сейчас — нет).
 6. **Commit при выходе последнего участника**, если он viewer: коммитить
