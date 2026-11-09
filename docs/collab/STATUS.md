@@ -1,7 +1,8 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr11`, from `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top), plus the table-text slice `2a91d49e`, its docs commit, the cell-set rebase `b54eed3d`, the animation-step slice `f562aea4` with its docs commit on top, the notes-text slice `b7025f9a` with its docs commit on top, and the table-cell format slice
-`a48c12de` with its docs commit on top.
+Updated: 2026-11-09. Branch: `collab/pr11`, from `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top), plus the table-text slice `2a91d49e`, its docs commit, the cell-set rebase `b54eed3d`, the animation-step slice `f562aea4` with its docs commit on top, the notes-text slice `b7025f9a` with its docs commit on top, the table-cell format slice
+`a48c12de` with its docs commit on top, and the run-range format slice `b4f13167` with its docs
+commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -25,7 +26,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
-| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`) |
+| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range: {from, to} }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image) |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
@@ -37,8 +38,9 @@ catch-up fix), `e007e965` (base transfer after compaction and the three-client s
 (`slide.transition.set` as a final-value slice with its undo), plus the docs commits on top,
 `collab/pr11` = `2a91d49e` (table cell text and row/column edits) plus its docs commit, the
 cell-set rebase `b54eed3d`, the animation-step slice `f562aea4` with its docs commit on top, the
-notes-text slice `b7025f9a` with its docs commit on top, and the table-cell format slice
-`a48c12de` with its docs commit on top. The working tree is clean: the chair's
+notes-text slice `b7025f9a` with its docs commit on top, the table-cell format slice
+`a48c12de` with its docs commit on top, and the run-range format slice `b4f13167` with its docs
+commit on top. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
@@ -184,11 +186,19 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   addressed (unknown key, another slide, no shape) is refused before anything is written.
 - `format.*`: 17 allowlisted commands (`bold`, `italic`, `underline`, `strikethrough`,
   `superscript`, `subscript`, `font`, `size`, `color`, `highlight`, `alignLeft/Center/Right`,
-  `justify`, `caps`, `spacing`, `clear`) over one explicit shape's whole text body, or over the
-  whole body of one table cell addressed by `FormatSet { cell: [row, col] }` (a table without an
-  address, a cell the table does not have and a shape that is not a table are refused before any
-  write). Toggles need an explicit `on`; `args` cannot carry `id`/`ids`/`index`/`cell`. A range of
-  cells or a caret range inside a body is a run-range format and is refused, not widened.
+  `justify`, `caps`, `spacing`, `clear`) over one explicit shape's whole text body, over the
+  whole body of one table cell addressed by `FormatSet { cell: [row, col] }`, or over a
+  character range `FormatSet { range: {from, to} }` inside either body (a table without an
+  address, a cell the table does not have, a shape that is not a table, an empty range and a
+  range past the end of the body are refused before any write). Toggles need an explicit `on`;
+  `args` cannot carry `id`/`ids`/`index`/`cell`/`range`. The range is a whole-body character
+  range — paragraph breaks counted as one — the same coordinates `text.insert`/`text.delete`
+  use, because run indices differ between replicas once someone edits the text. A range across
+  cells is still refused, never widened, and a caret in a shape's own body is not an address
+  (the single-user command would widen it to a word). The server rebases both offsets against
+  the journal tail; a range whose characters were removed is refused `invalid` before any write.
+  The command runs on the engine selection placed on the addressed span, and the receiving
+  user's selection is put back afterwards.
 - `table.insertRowAbove`/`insertRowBelow`/`deleteRow` and the column variants: one structural
   `table.edit` payload (`axis`, `at`, `insert`) addressed by the table's shape key. The adapter
   runs the engine's own row/column command with the table id, so every replica makes the same
@@ -202,7 +212,8 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   write and moves the whole selection in one `edit`. A shape whose box does not change is left out;
   an align that moves nothing sends nothing.
 - Undo/redo: move, bounds, align/distribute, text (shape text and table cells), fill, outline,
-  `format.*` (a shape's body and one cell's body), transition and animation steps. A restore
+  `format.*` (a shape's body, one cell's body, or a character range of either), transition and
+  animation steps. A restore
   carries the exact model value (`shape_field`) and runs through the `shape.setField` engine
   command, which bounds the JSON and deserialises it into the model type. A cell text step records
   the cell's whole body text with its address and restores it with `text.set{cell}`, so the
@@ -435,6 +446,22 @@ table without an address, a non-table shape, a deleted slide) refused before any
 undo step recorded; the normaliser and both wire forms are pinned. `git status` is clean after the
 docs commit; nothing was pushed and CI was not touched.
 
+Re-run on 2026-11-09 after the run-range format slice (`b4f13167`, on `agents`, rust 1.99.1):
+`cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings` clean,
+`collab-proto` 28, `collab` 183 + 8, `collab-server` 10 unit + 4 commit + 4 gates + 6 socket
+(4 gates in 1.5–2.5 s, LibreOffice skipped on the build host), `ui-egui collab::` 18. The new tests
+cover two replicas converging on a bold range of a shape's body (text kept, the run boundary at
+the range's end, the rest unformatted), the same for a range inside one table cell with a
+neighbour untouched, an undo and redo that put back and reapply the previous runs while the text
+after the range is untouched, an undo refused with `undo-conflict` after another participant typed
+in the same body, an empty, reversed, past-the-end or missing-cell range refused `invalid` before
+any write with no undo step, the receiving user's selection kept across a remote range format, a
+queued range following text typed before it (offsets shifted, the typed characters not bold) and
+refused `invalid` when its characters were deleted, the normaliser's offsets for a range in a
+shape, across a paragraph break and inside a cell (and a caret or a conflicting explicit cell
+refused), and both wire forms (with and without `cell`/`range`). `git status` is clean after the
+docs commit; nothing was pushed and CI was not touched.
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -481,9 +508,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body and one table cell)/duplicate/transition/animation steps, table cell text, table row/column edits and slide notes text | collab tests |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell and a run range of either)/duplicate/transition/animation steps, table cell text, table row/column edits and slide notes text | collab tests |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body and one cell's body), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation steps, table row/column edits | server history, `undo-conflict`, `shape_field`/`cell_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`notes_set`/whole-table `shape_field` |
+| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, a run range), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation steps, table row/column edits | server history, `undo-conflict`, `shape_field`/`cell_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`notes_set`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
@@ -505,22 +532,23 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
 ## What is NOT done (ordered by production impact)
 
 1. **Command surface beyond the new slices.** Fill, line, 17 `format.*` commands over whole shape
-   text and over one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own
-   body), `slide.duplicate`, `transition.set`, table cell text, table row/column edits,
-   `animation.add`/`animation.remove` (one shape's whole step list) and slide notes text
-   (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) are collaborative
-   now. Still refused: fonts as a document asset, the rest of the animation surface
+   text, over one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own
+   body) and over a character range of a shape or cell body (`FormatSet { range: {from, to} }`,
+   rebased, exact-body undo), `slide.duplicate`, `transition.set`, table cell text, table
+   row/column edits, `animation.add`/`animation.remove` (one shape's whole step list) and slide
+   notes text (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) are
+   collaborative now. Still refused: fonts as a document asset, the rest of the animation surface
    (`animation.set` styles, `animation.timing`, `animation.options`, `animation.move`,
    `animation.clear`, the painter), the rest of the table surface (style, fill, merge/split,
-   sizing), SmartArt/charts, run-range formatting and relative effects. The design rule stands:
+   sizing), SmartArt/charts and relative effects. The design rule stands:
    only commands whose result is a deterministic function of the authoritative state, expressed
    as final values, go on the wire; a raw `execute` is not safe (toggles and relative edits
-   diverge). Next candidates: run-range formatting (a run-level payload) and the animation
+   diverge). Next candidates: the animation
    timing commands.
 2. **Media refinement.** Fonts and 3D models are not in the media allowlist, and the browser link
    still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
    a private CA must be in the store or `SSL_CERT_FILE`).
-3. **Rich runs are left; cell formatting and notes are done.** Shape text, table-cell text and
+3. **Rich runs are in; cell formatting and notes are done.** Shape text, table-cell text and
    slide notes are addressed and rebased. A notes edit addresses `(slide key, notes body)`, is
    refused for an unaddressable slide before any write, keeps the receiving user's selection, and
    its undo image is the slide's whole text body. A `format.*` command on a table addresses one
@@ -528,9 +556,13 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
    table's empty shape text, is refused before any write for a cell the table does not have (and
    for a table with no address), and its undo is the whole body of exactly that cell
    (`cell_text`, `shape.setField { field: cellText }`) with an `undo-conflict` when someone else
-   changed that cell after the step — a neighbouring cell is never touched. What is left in this
-   line: formatting *runs* (a range inside a shape or a cell) needs a run-level payload, not
-   whole-body; a range is currently refused rather than widened. Other table commands (style,
+   changed that cell after the step — a neighbouring cell is never touched. A `format.*` step
+   over a run range (`FormatSet { range: {from, to} }`) addresses whole-body character offsets,
+   rebased against `text.insert`/`text.delete`, is refused `invalid` before any write for an empty
+   range or one past the body, and restores the whole body it changed (the format splits runs at
+   the range's ends), so a later edit of that body by someone else is `undo-conflict`. What is
+   still refused: a range across table cells (N addresses) and a bare caret in a shape's body (the
+   single-user command would widen it to a word). Other table commands (style,
    fill, merge, sizing) change the table without moving cells and can be the same `shape_field`
    `field: table` final value later.
 4. **Structural undo is covered; size limits remain.** A group's fill/outline (one image per
@@ -622,19 +654,67 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `409` and stores the accepted version. For a page on another origin the sync server needs CORS
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Next: run-range formatting (a
-   run-level payload), then the rest of the animation surface (`animation.set`,
-   `animation.timing`, `animation.move`), then the rest of the table surface.
+   adapter run → confirmed command → test on two clients. Next: the rest of the animation
+   surface (`animation.set`, `animation.timing`, `animation.move`), then the rest of the table
+   surface, then fonts as a document asset.
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
-   (shape body and one table cell, with an exact cell-body image)/transition/animation steps, a
-   group's fill/line, slide insert/delete/duplicate, shape insert/delete, group/ungroup and table
-   row/column edits (whole-table image). The remaining undo work is run-level formatting, which
-   waits for its command slice.
+   (shape body, one table cell and a run range, with an exact body image)/transition/animation
+   steps, a group's fill/line, slide insert/delete/duplicate, shape insert/delete,
+   group/ungroup and table row/column edits (whole-table image). What is left in this line is
+   only the undo of commands that are not on the wire yet (the animation timing/options/move/
+   clear commands, fonts, the rest of the table surface).
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — formatting a run range, with the exact-body undo
+
+- `format.*` can address a character range inside one text body: a shape's own body or one table
+  cell. `Payload::FormatSet` gained `range: Option<TextRange>`, `TextRange { from, to }` — whole-body
+  character offsets, a paragraph break counted as one, the same coordinates `text.insert`/
+  `text.delete` and `notes.insert` use. The engine needed no new command: the adapter puts the
+  engine's `TextSel` on the target body with `anchor`/`caret` at the two positions (the table cell
+  in `cell`), runs the single-user `format.*`, and puts the receiving user's selection back —
+  formatting moves no text, so it stays valid.
+- Why offsets, not run indices: an edit on another replica splits and merges runs, so a run index
+  is not deterministic; a character offset is. Every replica turns the same two offsets into a
+  `(paragraph, character)` pair with the existing `offset_position` helper, so the formatted run
+  range is a deterministic function of the authoritative body (RFC §3.2.1, §4.4).
+- Normalise: a text selection (`selection.text.anchor != caret`) in the addressed body becomes
+  `range`; a range in another cell than the explicit `cell` is refused (the command would format
+  characters of a body it does not address); a caret in a shape's own body is refused, because the
+  single-user command would widen it to a word; a caret in a table cell still addresses the whole
+  cell; a range across table cells is still refused, never widened. The address never travels in
+  the formatting `args`.
+- Validation before the first write: `to <= from`, an offset past the body (checked with
+  `position_offset(offset_position(x)) == x`, so a clamped offset is not silently accepted), a
+  shape without text, a table without a cell and a non-table shape with a cell address are refused
+  before the engine call; no undo step is recorded and the document is unchanged.
+- Journal rebase: both offsets shift past the `text.insert`/`text.delete` operations in the same
+  body that arrived after `baseVersion` (the existing `shift`, keyed by shape and cell). A deletion
+  inside the range shrinks it; a deletion that removes every character of it leaves an empty
+  address, and the queued operation is refused `invalid` instead of formatting other characters.
+- Undo: the step image is the **whole body** (a shape's `shape_field{field: text}` or a cell's
+  `cell_text`), because the format splits runs at the range's ends and only the whole body names
+  the previous runs exactly. Undo puts the previous runs back; redo reapplies them; a later edit of
+  that body by another participant makes `same_state` fail and the undo is `undo-conflict`.
+- Tests: two replicas converge on a bold range of a shape (text kept, run boundary at the range's
+  end, the rest unformatted); the same inside one table cell with a neighbour untouched; undo and
+  redo restore and reapply exactly the previous runs while the text after the range is untouched;
+  an undo after someone typed in the body is `undo-conflict` and writes nothing; empty, reversed,
+  past-the-end and missing-cell ranges are `invalid` before any write with no undo step; a remote
+  range format leaves the receiver's caret alone; a queued range follows text typed before it (the
+  typed characters are not bold) and is refused `invalid` when its characters are deleted; the
+  normaliser pins a range in a shape, one across a paragraph break, one in a cell, the refused
+  caret and the contradictory explicit cell; both wire forms round-trip. `collab` 183 + 8,
+  `collab-proto` 28, `ui-egui collab::` 18, gates 4.
+- Gates (on `agents`, rust 1.99.1): `cargo fmt --all -- --check` clean, `cargo clippy --workspace
+  --all-targets -- -D warnings` clean. Commit `b4f13167` plus this docs commit on `collab/pr11`;
+  `production.md` and this file updated. Nothing pushed, CI untouched. Still refused: the
+  animation timing/options/move/clear commands, fonts as a document asset, the rest of the table
+  surface, SmartArt/charts, a range across table cells and a bare caret in a shape's body.
 
 ### 2026-11-09 — formatting a table cell, with an exact cell-body undo
 
