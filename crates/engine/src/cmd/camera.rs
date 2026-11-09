@@ -369,7 +369,9 @@ pub fn has_cameo_or_preview(s: &Session) -> std::result::Result<(), String> {
     if s.camera_status.is_on() {
         return Ok(());
     }
-    has_cameo(s)
+    // The selection exemption (`NOTHING_SELECTED`) means "no explicit `ids`", not "a preview
+    // may start with nothing selected": report it distinctly so the toggle stays disabled.
+    has_cameo(s).map_err(|e| if e == super::NOTHING_SELECTED { "no Cameo selected".into() } else { e })
 }
 
 #[cfg(test)]
@@ -598,5 +600,16 @@ mod tests {
         let sh = second.expect("cameo after second import");
         assert_eq!(sh.geom, deckcraft_model::Geom::preset("hexagon"));
         assert_eq!(super::style_of(&sh), Some("centerShadowHexagon"));
+    }
+
+    /// #1836 review: the preview toggle reports an empty selection distinctly, so the UI
+    /// keeps it disabled; the other Cameo commands keep the shared exemption.
+    #[test]
+    fn preview_toggle_reports_an_empty_selection_distinctly() {
+        use super::super::NOTHING_SELECTED;
+        // A fresh deck selects nothing: the shared exemption fires for the other commands.
+        let s = Session::with_new();
+        assert_eq!(super::has_cameo(&s).unwrap_err(), NOTHING_SELECTED, "the shared exemption stays for the other commands");
+        assert_eq!(super::has_cameo_or_preview(&s).unwrap_err(), "no Cameo selected", "the preview toggle stays disabled");
     }
 }

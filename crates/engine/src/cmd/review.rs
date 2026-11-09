@@ -1324,9 +1324,10 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
             }
             // A text run's own click/hover action can play a sound (`a:snd` on the run's
             // hyperlink): the same shared-bytes rule as the shape's own actions applies.
-            if p.runs.iter().any(|r| {
-                r.props.link.as_ref().is_some_and(|h| h.sound == Some(id)) || r.props.hover.as_ref().is_some_and(|h| h.sound == Some(id))
-            }) {
+            if p.runs
+                .iter()
+                .any(|r| r.props.link.as_ref().is_some_and(|h| h.sound == Some(id)) || r.props.hover.as_ref().is_some_and(|h| h.sound == Some(id)))
+            {
                 return true;
             }
         }
@@ -2067,7 +2068,14 @@ mod tests {
                 runs: vec![Run::with(
                     "play",
                     RunProps {
-                        link: Some(Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: false, sound: Some(clip.media), stop_sound: false, zoom_return: None }),
+                        link: Some(Hyperlink {
+                            action: Action::NextSlide,
+                            tooltip: String::new(),
+                            highlight_click: false,
+                            sound: Some(clip.media),
+                            stop_sound: false,
+                            zoom_return: None,
+                        }),
                         ..Default::default()
                     },
                 )],
