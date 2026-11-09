@@ -9,13 +9,16 @@ use deckcraft_engine::cmd::camera::{STYLES, style_of};
 const TILE: egui::Vec2 = vec2(34.0, 34.0);
 
 pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
-    // A tile is selected only when every selected Cameo has the same style: a mixed selection
-    // shows none, instead of the first shape's style standing for all of them.
+    // A tile is selected only when every selected Cameo has the same gallery style. A custom
+    // frame (`style_of` is `None`) or a plain shape means no tile is selected, instead of the
+    // first shape's style standing for all of them.
     let current = app.session.active().and_then(|d| {
         let selected = d.selected_shapes();
-        let mut styles = selected.iter().filter(|sh| sh.is_cameo()).filter_map(|sh| style_of(sh));
-        let first = styles.next()?;
-        styles.all(|s| s == first).then_some(first)
+        if selected.is_empty() || !selected.iter().all(|sh| sh.is_cameo()) {
+            return None;
+        }
+        let first = style_of(selected.first()?)?;
+        selected.iter().all(|sh| style_of(sh) == Some(first)).then_some(first)
     });
     let selected = current.and_then(|id| STYLES.iter().position(|s| s.id == id));
     group(ui, |ui| {

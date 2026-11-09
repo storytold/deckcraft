@@ -306,7 +306,7 @@ pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> 
     // Cameo clip may last: a wrong `durationMs` would leave the video playing over black.
     let probed = u32::try_from(info.duration_ms).unwrap_or(u32::MAX).min(deckcraft_media::MAX_CLIP_MS);
     let duration_ms = match (wanted_ms, probed) {
-        (Some(ms), 0) => ms.max(1),
+        (Some(ms), 0) => ms.clamp(1, deckcraft_media::MAX_CLIP_MS),
         (Some(ms), probed) => ms.min(probed),
         (None, probed) => probed,
     };

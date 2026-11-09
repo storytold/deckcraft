@@ -472,7 +472,7 @@ mod tests {
         for name in open {
             assert!(!offered.contains(&name), "`{name}` cannot mask a picture but is offered");
         }
-        for name in ["line", "arc", "straightConnector1"] {
+        for name in ["line", "lineInv", "straightConnector1"] {
             assert!(!offered.contains(&name), "open preset `{name}` is offered");
         }
     }
