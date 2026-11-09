@@ -190,6 +190,12 @@ fn next_command(commands: &Receiver<Command>, running: bool) -> Option<Command> 
     }
 }
 
+/// The reported stream rate: the request clamped to the format's range, or the request itself
+/// when the device-reported bounds are malformed (inverted, non-finite) and `clamp` would panic.
+fn clamp_fps(wanted: f64, min: f64, max: f64) -> f64 {
+    if min.is_finite() && max.is_finite() && min <= max { wanted.clamp(min, max) } else { wanted }
+}
+
 fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Running> {
     let devices = match cameras::devices() {
         Ok(devices) => devices,
@@ -202,6 +208,7 @@ fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Runn
         send_terminal(&events, CameraEvent::Failed(CameraError::NoDevice));
         return None;
     };
+
     let capabilities = match cameras::probe(device) {
         Ok(capabilities) => capabilities,
         Err(error) => {
@@ -216,8 +223,9 @@ fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Runn
         Some(found) => (
             cameras::StreamConfig { resolution: found.resolution, framerate: wanted.framerate, pixel_format: found.pixel_format },
             // The stream runs at the requested rate, not the format's maximum: report it clamped
-            // to the range the device really produces, so the status text matches the stream.
-            (wanted.framerate as f64).clamp(found.framerate_range.min, found.framerate_range.max) as f32,
+            // to the range the device really produces, so the status text matches the stream. A
+            // malformed inverted range would make `clamp` panic, so it falls back to the request.
+            clamp_fps(wanted.framerate as f64, found.framerate_range.min, found.framerate_range.max) as f32,
         ),
         None => (wanted, wanted.framerate as f32),
     };
@@ -411,6 +419,16 @@ mod tests {
         assert_eq!(frame_pixels(640, 0), None);
         assert_eq!(frame_pixels(8192, 8193), None, "over the bound");
         assert_eq!(frame_pixels(u32::MAX, u32::MAX), None, "no overflow");
+    }
+
+    #[test]
+    fn a_malformed_framerate_range_falls_back_to_the_request() {
+        assert_eq!(clamp_fps(30.0, 15.0, 60.0), 30.0);
+        assert_eq!(clamp_fps(120.0, 15.0, 60.0), 60.0, "clamped to the range");
+        assert_eq!(clamp_fps(5.0, 15.0, 60.0), 15.0, "clamped to the range");
+        assert_eq!(clamp_fps(30.0, 60.0, 15.0), 30.0, "inverted bounds: no panic, the request");
+        assert_eq!(clamp_fps(30.0, f64::NAN, 60.0), 30.0, "non-finite bounds: the request");
+        assert_eq!(clamp_fps(30.0, 15.0, f64::INFINITY), 30.0, "non-finite bounds: the request");
     }
 
     #[test]
