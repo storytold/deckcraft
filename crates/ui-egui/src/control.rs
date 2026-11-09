@@ -391,6 +391,9 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             // Automation quits without asking (`{"save": true}` saves first). A live take is
             // written into the document before the save, so the file keeps it.
             if p.get("save").and_then(Value::as_bool) == Some(true) {
+                // A description still in the Alt Text pane's draft is unsaved work: commit it
+                // before the save below, as the window-close path does.
+                crate::panes::flush_alt_text(app);
                 app.end_show_now();
                 // A Record ▸ Audio take is part of what "save" must keep: finish and insert it,
                 // and report the failure instead of confirming a quit that lost it.

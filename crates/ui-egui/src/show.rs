@@ -1257,9 +1257,11 @@ pub(crate) fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'sta
             }
             kept.extend(samples.into_iter().take(room));
         }
-        // A replacement clip keeps the same limits as an append.
+        // A replacement clip keeps the same limits as an append. The device rate can change
+        // across a pause (a different default input): the earlier samples are then lost, so
+        // the save must report the take as cut even when the new buffer fits the cap.
         Some(entry) => {
-            if samples.len() > narration_sample_cap() {
+            if !entry.2.is_empty() || samples.len() > narration_sample_cap() {
                 show.narration_cut = true;
             }
             *entry = (slide, rate, samples.into_iter().take(narration_sample_cap()).collect());

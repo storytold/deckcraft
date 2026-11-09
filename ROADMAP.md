@@ -310,7 +310,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | Draw: pen pressure scales ink width when the pointer reports it (a mouse or a missing reading stays at the pen width; a stroke saved as a flat 0.5 still draws at the pen width). Tilt is not read |
 | 2026-10-13 | Saving a presentation keeps the embedded workbook behind an unchanged chart, and the chart part's relationships (#335). Editing the chart drops that workbook instead of writing numbers that no longer match it |
 | 2026-10-13 | A presentation whose object ids are used up refuses to grow instead of handing out duplicate ids (#407) |
-| 2026-11-03 | Laser pointer in an ordinary show: hold Ctrl (or the on-screen button) for a dot in the colour chosen in Set Up Slide Show (red, green or blue; written to PPTX). Clear Timing and Clear Narration on the current slide or all slides. Breadth 84% |
+| 2026-11-03 | Record audio and Record slide show moved to partial (timings, narration, ink and laser kept; camera/screen capture open). Clear Timing and Clear Narration on the current slide or all slides. Breadth 84% |
 | 2026-11-03 | Record Slide Show narration and laser: each slide's microphone audio is embedded and plays in the show (Play Narrations turns it off), and it is written to PPTX; a laser trace is recorded and replayed. Screen capture and camera stay open |
 | 2026-11-03 | Record Slide Show (`show.record`): a recording badge in the show, slide timings kept on exit, and pen ink kept on the slide. Screen capture stays open |
 | 2026-10-13 | macOS: a Finder double-click, Open With, a drop on the Dock icon and `open -a DeckCraft deck.pptx` open the file (#138, #347). `Info.plist` now declares the documents DeckCraft opens (`.deckcraft`, `.pptx`, `.potx`, `.ppsx`, the same set as the Windows installer and the Linux desktop file, kept equal by a test), and the `kAEOpenDocuments` Apple event is handled through the pinned `fmv-macos-events` crate as in GridCraft; the `-psn_` argument older macOS adds on a Finder launch is ignored. PowerPoint stays the default until the user picks DeckCraft |
@@ -445,7 +445,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | trivial | Progress log: Grid Options dialog |
 | 2026-10-14 | trivial | Progress log: pen pressure scales ink width |
 | 2026-10-13 | trivial | Progress log: chart workbook round-trip (#335) |
-| 2026-11-03 | trivial | Breadth 84% after the laser pointer moved to partial; Clear Timing and Clear Narration |
+| 2026-11-03 | trivial | Breadth 84% after Record audio and Record slide show moved to partial; Clear Timing and Clear Narration |
 | 2026-11-03 | trivial | Progress log: Record Slide Show keeps narration and a laser trace |
 | 2026-11-03 | trivial | Progress log: Record Slide Show keeps timings and pen ink |
 | 2026-10-13 | trivial | Progress log: Finder opens presentations on macOS (#138) |
