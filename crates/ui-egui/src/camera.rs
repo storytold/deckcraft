@@ -124,11 +124,11 @@ impl CameraHost {
         self.refresh_want();
     }
 
-    /// Turn the Cameo preview on or off. A click while the preview is on but the session failed
-    /// restarts it instead of turning it off, so one click retries after a start or mid-stream
-    /// failure.
+    /// Turn the Cameo preview on or off. A click while the preview is on but no session runs —
+    /// failed, cleanly closed, or dropped by a dead worker — restarts it instead of turning it
+    /// off, so one click retries instead of needing off-then-on.
     pub fn toggle_preview(&mut self) {
-        if self.preview && matches!(self.status, CameraStatus::Failed(_)) {
+        if self.preview && self.session.is_none() {
             self.restart();
             return;
         }
@@ -803,6 +803,25 @@ mod tests {
     }
 
     #[test]
+    fn start_keeps_the_whole_initial_burst() {
+        // `Opened`, one queued event and three configured frames: all five must arrive, not just
+        // the two a fixed capacity-2 channel would hold.
+        use deckcraft_media::camera::{CameraEvent, CameraRequest};
+        let fake = FakeCamera::default().frames_on_start(3);
+        fake.queue(CameraEvent::Closed);
+        let mut fake = fake;
+        let session = fake.start(&CameraRequest::default()).expect("start");
+        let mut events = vec![];
+        while let Ok(e) = session.events.try_recv() {
+            events.push(e);
+        }
+        assert_eq!(events.len(), 5, "Opened + queued + 3 frames: {events:?}");
+        assert!(matches!(events[0], CameraEvent::Opened(_)));
+        assert!(matches!(events[1], CameraEvent::Closed));
+        assert_eq!(events.iter().filter(|e| matches!(e, CameraEvent::Frame(_))).count(), 3);
+    }
+
+    #[test]
     fn turning_the_preview_off_stops_the_session_and_forgets_the_frame() {
         let fake = FakeCamera::default();
         let ctx = egui::Context::default();
@@ -858,6 +877,10 @@ mod tests {
         assert!(host.tick(&ctx).is_none());
         assert_eq!(host.status(), &CameraStatus::Off);
         assert!(host.frame().is_none());
+        // One click reopens: the preview is still on with no session running.
+        host.toggle_preview();
+        assert!(host.preview_on(), "one click retries instead of switching off");
+        assert_eq!(fake.starts(), 2, "the session reopens");
     }
 
     #[test]

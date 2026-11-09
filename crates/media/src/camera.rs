@@ -461,7 +461,11 @@ pub mod testing {
                 }
                 (st.width, st.height, st.device.clone(), st.frames_on_start, std::mem::take(&mut st.script), st.seq)
             };
-            let (tx, rx) = mpsc::sync_channel(2);
+            // The initial burst is `Opened` plus the queued script and frames: size the channel
+            // for all of it, so a test's configured start is never silently short, keeping the
+            // usual capacity of two as the floor. Later `push_frame`/`emit` calls stay bounded
+            // and latest-wins, as before.
+            let (tx, rx) = mpsc::sync_channel((1 + script.len() + frames as usize).max(2));
             self.lock().sender = Some(tx.clone());
             let _ = tx.try_send(CameraEvent::Opened(info_for(&device, width, height)));
             for event in script {
