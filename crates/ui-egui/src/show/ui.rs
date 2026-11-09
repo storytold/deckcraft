@@ -772,13 +772,13 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         if child.button(tl!("Close")).clicked() {
             out.keep = false;
         }
-        if child.button(tl!("▶")).clicked() {
+        if child.button(tl!(crate::i18n::mirror_glyph("▶"))).clicked() {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
         }
-        if child.button(tl!("◀")).clicked() {
+        if child.button(tl!(crate::i18n::mirror_glyph("◀"))).clicked() {
             let a = show.state.prev(doc);
             show.apply(a, doc, now);
         }
@@ -788,11 +788,11 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         let mut child =
             ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
         let b = |ui: &mut Ui, s: &str| ui.add(egui::Button::new(egui::RichText::new(s).color(Color32::WHITE).size(15.0)).frame(false));
-        if b(&mut child, "◀").clicked() {
+        if b(&mut child, crate::i18n::mirror_glyph("◀")).clicked() {
             let a = show.state.prev(doc);
             show.apply(a, doc, now);
         }
-        if b(&mut child, "▶").clicked() {
+        if b(&mut child, crate::i18n::mirror_glyph("▶")).clicked() {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;

@@ -476,10 +476,11 @@ fn dim(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(tl!(text)).font(theme::font(12.5)).color(t.text_dim));
 }
 
-/// A link with an arrow (More themes →): true when clicked.
+/// A link with an arrow (More themes →, or ← in a right-to-left language): true when clicked.
 fn arrow_link(ui: &mut Ui, text: &str) -> bool {
     let t = Tokens::get(ui.ctx());
-    ui.add(egui::Label::new(RichText::new(format!("{}  →", tl!(text))).font(theme::font(12.5)).color(t.accent)).sense(Sense::click()))
+    let label = format!("{}  {}", tl!(text), crate::i18n::mirror_glyph("→"));
+    ui.add(egui::Label::new(RichText::new(label).font(theme::font(12.5)).color(t.accent)).sense(Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }

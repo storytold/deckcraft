@@ -259,13 +259,13 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut next = None;
         if offset > 1.0 {
             let left = Rect::from_min_max(pos2((r.left() - edge).max(inner.left()), r.top()), pos2(r.left(), r.bottom()));
-            if edge_cue(&mut cui, left, "‹", tl!("Scroll ribbon left"), &t) {
+            if edge_cue(&mut cui, left, crate::i18n::mirror_glyph("‹"), tl!("Scroll ribbon left"), &t) {
                 next = Some(offset - step);
             }
         }
         if overflow - offset > 1.0 {
             let right = Rect::from_min_max(pos2(r.right(), r.top()), pos2((r.right() + edge).min(inner.right()), r.bottom()));
-            if edge_cue(&mut cui, right, "›", tl!("Scroll ribbon right"), &t) {
+            if edge_cue(&mut cui, right, crate::i18n::mirror_glyph("›"), tl!("Scroll ribbon right"), &t) {
                 next = Some(offset + step);
             }
         }

@@ -139,7 +139,24 @@ pub fn normalize_pref(pref: &str) -> Option<&'static str> {
 /// The offered language for a locale tag such as `de_DE.UTF-8` or `de-AT`; `None` when there is
 /// no catalog for it. `C`/`POSIX` mean English.
 pub fn lang_from_tag(tag: &str) -> Option<Lang> {
+    // A test fixture stands in for one embedded catalog (`use_fixture`), so tag matching can run
+    // without `CRAFT_I18N_DIR`. A tag the fixture does not answer falls through to the embedded
+    // catalogs, and a German fixture does not hide an embedded Hebrew tag (or the reverse).
+    #[cfg(test)]
+    if let Some(lang) = fixture_lang_from_tag(tag) {
+        return Some(lang);
+    }
     I18N.match_tag(tag).and_then(|lang| Lang::from_code(I18N.code(lang)))
+}
+
+/// The fixture language for `tag`, when the fixture's own catalogs match it. `None` when no
+/// fixture is installed or the tag is some other language, including English.
+#[cfg(test)]
+fn fixture_lang_from_tag(tag: &str) -> Option<Lang> {
+    let fixture = FIXTURE.get()?;
+    let catalogs = fixture.catalogs?;
+    let code = catalogs.code(catalogs.match_tag(tag)?);
+    (code == fixture.code()).then_some(fixture)
 }
 
 /// The first of the system's preferred languages DeckCraft has, in the user's order: someone
@@ -180,6 +197,28 @@ pub fn set_current(lang: Lang) {
 /// The language the UI is drawn in.
 pub fn current() -> Lang {
     CURRENT.get()
+}
+
+/// Whether the current interface language is written right to left (Hebrew, Arabic, …).
+pub(crate) fn is_rtl() -> bool {
+    let lang = current();
+    lang.i18n().rtl(lang.lang)
+}
+
+/// `ltr` as drawn for the current language. A right-to-left language mirrors the arrow; the
+/// control stays where it is.
+pub(crate) fn mirror_glyph(ltr: &'static str) -> &'static str {
+    if !is_rtl() {
+        return ltr;
+    }
+    match ltr {
+        "→" => "←",
+        "▶" => "◀",
+        "◀" => "▶",
+        "‹" => "›",
+        "›" => "‹",
+        other => other,
+    }
 }
 
 /// Does `lang` have a translation for this string? (English never does: it is the source.)

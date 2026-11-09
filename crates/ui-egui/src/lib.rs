@@ -150,7 +150,10 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.checkUpdates", "Check for Updates…", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
-    ("app.language", "Interface Language", None, "{language?: auto|en|de} → {language, current, available}"),
+    // `he` matches `LANGUAGES`. A build embeds it only when `locales/he/deckcraft.tsv` is in the
+    // craft-i18n checkout, and `available` in the result is that build's list (as #1530 and #1571
+    // list their own codes here).
+    ("app.language", "Interface Language", None, "{language?: auto|en|de|he} → {language, current, available}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
     ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),

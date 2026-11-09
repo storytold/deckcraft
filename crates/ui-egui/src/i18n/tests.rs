@@ -21,6 +21,45 @@ const DE: &str = "@id\tlanguage.name\tDeutsch
 \tSystem language\tSystemsprache
 ";
 
+/// A Hebrew catalog for the tests, in craft-i18n's format. The `{total}` / `{n}` order is the
+/// translator's, not the English order, so placeholder filling is what the assertion checks.
+const HE: &str = "@id\tlanguage.name\tעברית
+\tInsert\tהוספה
+\tNew\\nSlide\tשקופית\\nחדשה
+\tSlide {n} of {total}\t{total} מתוך {n}
+";
+
+/// Puts the interface language and the fixture catalog back, including when an assertion fails.
+struct ResetLang;
+
+impl ResetLang {
+    fn arm() -> Self {
+        set_current(Lang::EN);
+        FIXTURE.set(None);
+        Self
+    }
+}
+
+impl Drop for ResetLang {
+    fn drop(&mut self) {
+        set_current(Lang::EN);
+        FIXTURE.set(None);
+    }
+}
+
+fn hebrew_catalog_embedded() -> bool {
+    CRAFT_I18N.iter().any(|(code, ..)| code.eq_ignore_ascii_case("he"))
+}
+
+/// A build that embedded catalogs (`CRAFT_I18N_DIR`) has to embed Hebrew too. An English-only
+/// build, with no catalogs at all, does not.
+fn require_hebrew_when_catalogs_are_embedded() {
+    assert!(
+        CRAFT_I18N.is_empty() || hebrew_catalog_embedded(),
+        "CRAFT_I18N_DIR embedded interface catalogs but not Hebrew (locales/he/deckcraft.tsv)"
+    );
+}
+
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
     Harness::builder().with_size(egui::vec2(1400.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
@@ -83,8 +122,9 @@ fn app_language_reports_and_changes_the_setting() {
     let v = app.run("app.language", json!({})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some(AUTO), Some("en")));
     let codes: Vec<&str> = v["available"].as_array().unwrap().iter().filter_map(|l| l["code"].as_str()).collect();
-    // Hebrew is listed when its catalogs are embedded (a build with `CRAFT_I18N_DIR`).
-    let expected: Vec<&str> = ["en", "de", "he"].into_iter().filter(|c| *c != "he" || Lang::from_code("he").is_some()).collect();
+    // Hebrew is listed when its catalog is embedded. A checkout that embeds other languages and
+    // omits `locales/he/deckcraft.tsv` fails below, after the German checks have run.
+    let expected: Vec<&str> = ["en", "de", "he"].into_iter().filter(|c| *c != "he" || hebrew_catalog_embedded()).collect();
     assert_eq!(codes, expected);
     let v = app.run("app.language", json!({"language": "DE"})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some("de"), Some("de")));
@@ -95,6 +135,7 @@ fn app_language_reports_and_changes_the_setting() {
     }
     app.run("app.language", json!({"language": "auto"})).unwrap();
     assert_eq!(app.ui.language, AUTO);
+    require_hebrew_when_catalogs_are_embedded();
 }
 
 /// Switching the language redraws the ribbon, status bar and accessible names in German, while
@@ -162,20 +203,96 @@ fn embedded_catalogs_parse_cleanly() {
 }
 
 /// The Hebrew catalog translates core labels from both the shared and DeckCraft rows, and Hebrew
-/// locale tags resolve to it. Skipped in a build without the Hebrew catalogs (`CRAFT_I18N_DIR`).
+/// locale tags resolve to it. Skipped only in a build with no catalogs at all. A `CRAFT_I18N_DIR`
+/// that embeds other languages and omits `locales/he/deckcraft.tsv` fails.
 #[test]
 fn the_hebrew_catalog_translates_core_labels() {
-    let Some(he) = Lang::from_code("he") else {
-        eprintln!("skipped: built without the Hebrew catalogs (CRAFT_I18N_DIR)");
+    if CRAFT_I18N.is_empty() {
+        eprintln!("skipped: built without craft-i18n (CRAFT_I18N_DIR); the interface is English only");
         return;
-    };
+    }
+    // A fixture left by another test on this thread would answer `he` with its own wording.
+    FIXTURE.set(None);
+    require_hebrew_when_catalogs_are_embedded();
+    let he = Lang::from_code("he").expect("Hebrew is embedded");
     assert_eq!(he.name(), "עברית");
-    for tag in ["he", "he-IL", "he_IL.UTF-8"] {
+    for tag in ["he", "HE", "He", "he-IL", "HE-il", "he_IL.UTF-8", "HE_il.utf-8"] {
         assert_eq!(lang_from_tag(tag), Some(he), "{tag}");
     }
+    assert_eq!(lang_from_tag("fr-FR"), None);
+    assert_eq!(first_supported(["fr-FR", "he-IL"]), Some(he));
     // A shared row and DeckCraft rows, one of them a two-line ribbon label.
     assert_eq!(tr(he, "Save"), "שמירה");
     assert_eq!(tr(he, "New Slide"), "שקופית חדשה");
     assert_eq!(tr(he, "New\nSlide"), "שקופית\nחדשה");
     assert_eq!(fmt_plain(tr(he, "Slide {n} of {total}"), &[("n", "2"), ("total", "9")]), "שקופית 2 מתוך 9");
+    // The status bar fills the same string with `fmt`, which isolates each value.
+    let filled = fmt(tr(he, "Slide {n} of {total}"), &[("n", "2"), ("total", "9")]);
+    assert_eq!(fmt_plain(&filled, &[]), "שקופית 2 מתוך 9");
+    assert_ne!(filled, "שקופית 2 מתוך 9", "right-to-left text isolates the values");
+}
+
+/// Lookup, tag resolution and `app.language` for Hebrew, from a fixture catalog, so they run in a
+/// build with no `CRAFT_I18N_DIR`.
+#[test]
+fn hebrew_fixture_covers_lookup_tags_and_app_language() {
+    let _reset = ResetLang::arm();
+    let he = use_fixture("he", HE);
+    assert_eq!(he.name(), "עברית");
+    assert_eq!(tr(he, "Insert"), "הוספה");
+    assert_eq!(tr(he, "New\nSlide"), "שקופית\nחדשה");
+    assert_eq!(tr(he, "Not in the catalog"), "Not in the catalog");
+
+    for tag in ["he", "HE", "He", "he-IL", "HE-il", "he_IL.UTF-8", "HE_il.utf-8"] {
+        assert_eq!(lang_from_tag(tag), Some(he), "{tag}");
+    }
+    for tag in ["fr-FR", "fr", "ar", "xx", ""] {
+        assert_eq!(lang_from_tag(tag), None, "{tag}");
+    }
+    assert_eq!(first_supported(["fr-FR", "he-IL"]), Some(he));
+    assert_eq!(first_supported(["fr-FR", "ja-JP"]), None);
+
+    set_current(he);
+    // The Quick Access Toolbar stores the ribbon's line break as a space.
+    assert_eq!(t_flat("New Slide"), "שקופית חדשה");
+    assert_eq!(t_flat("Insert"), "הוספה");
+    // The translator put `{total}` before `{n}`.
+    assert_eq!(fmt_plain(t("Slide {n} of {total}"), &[("n", "2"), ("total", "9")]), "9 מתוך 2");
+    let filled = fmt(t("Slide {n} of {total}"), &[("n", "2"), ("total", "9")]);
+    assert_eq!(fmt_plain(&filled, &[]), "9 מתוך 2");
+    assert!(filled.contains('\u{2068}'), "a right-to-left template isolates each value");
+
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let v = app.run("app.language", json!({"language": "he"})).unwrap();
+    assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some("he"), Some("he")));
+    assert_eq!(app.ui.language, "he");
+    let v = app.run("app.language", json!({"language": "HE"})).unwrap();
+    assert_eq!(v["current"].as_str(), Some("he"));
+    let names: Vec<&str> = v["available"].as_array().unwrap().iter().filter(|l| l["code"] == "he").filter_map(|l| l["name"].as_str()).collect();
+    assert_eq!(names, ["עברית"]);
+    // The setting is the language code. A regional tag is not a value of it.
+    assert!(app.run("app.language", json!({"language": "he-IL"})).is_err());
+    assert_eq!(app.ui.language, "he");
+}
+
+/// Directional marks turn around for Hebrew and stay put for a left-to-right language.
+#[test]
+fn right_to_left_languages_mirror_directional_symbols() {
+    let _reset = ResetLang::arm();
+    assert!(!is_rtl());
+    for glyph in ["→", "▶", "◀", "‹", "›"] {
+        assert_eq!(mirror_glyph(glyph), glyph);
+    }
+    set_current(use_fixture("de", DE));
+    assert!(!is_rtl());
+    assert_eq!(mirror_glyph("→"), "→");
+
+    set_current(use_fixture("he", HE));
+    assert!(is_rtl());
+    assert_eq!(mirror_glyph("→"), "←");
+    assert_eq!(mirror_glyph("▶"), "◀");
+    assert_eq!(mirror_glyph("◀"), "▶");
+    assert_eq!(mirror_glyph("‹"), "›");
+    assert_eq!(mirror_glyph("›"), "‹");
+    assert_eq!(mirror_glyph("Close"), "Close");
 }
