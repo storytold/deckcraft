@@ -512,7 +512,8 @@ pub struct RunProps {
     /// Soft-edge radius in points (`a:softEdge`).
     pub soft_edge: Option<f64>,
     /// The run carries its own (possibly empty) `a:effectLst`, which replaces the list styles' one:
-    /// no shadow, glow, reflection or soft edge is inherited. How text turns off an inherited shadow.
+    /// no shadow, inner shadow, glow, reflection or soft edge is inherited. How text turns off an
+    /// inherited shadow.
     pub own_effects: Option<bool>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
@@ -561,8 +562,9 @@ impl RunProps {
         self.inherit_effects(p);
     }
 
-    /// Takes `p`'s effect list (shadow, glow, reflection, soft edge) unless this run has its own,
-    /// which replaces it as a whole. Split out of [`RunProps::inherit`] to keep that one simple.
+    /// Takes `p`'s effect list (shadow, inner shadow, glow, reflection, soft edge) unless this run
+    /// has its own, which replaces it as a whole. Split out of [`RunProps::inherit`] to keep that
+    /// one simple.
     fn inherit_effects(&mut self, p: &RunProps) {
         if self.own_effects == Some(true) {
             return;

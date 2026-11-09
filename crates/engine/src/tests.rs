@@ -6570,6 +6570,40 @@ fn text_shadow_on_keeps_an_inherited_glow_through_save_and_reopen() {
     assert_eq!(shown.glow.map(|g| g.radius), Some(5.0), "the inherited glow survives the round trip");
 }
 
+/// #1662: turning off an inherited shadow in a table gives each cell what its own paragraphs
+/// inherit (a glow stays only where it was), only in the selected cells, and leaves a cell with no
+/// inherited shadow alone.
+#[test]
+fn text_shadow_off_in_a_table_uses_each_cells_inherited_effects() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    s.edit(|doc, sel| {
+        let sh = model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), id).unwrap();
+        let model::ShapeKind::Table(t) = &mut sh.kind else { panic!("not a table") };
+        for (r, c, glow) in [(0, 0, true), (0, 1, false), (1, 0, true)] {
+            t.rows[r].cells[c].text.paragraphs[0].def_props = shadowed(glow);
+        }
+        Ok(())
+    })
+    .unwrap();
+    let cell = |s: &Session, r: usize, c: usize| table_of(s, id).rows[r].cells[c].text.paragraphs[0].runs[0].props.clone();
+
+    // Row 0 only: its cells each keep their own glow (or none); row 1 is untouched.
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": false})).unwrap();
+    let (a, b) = (cell(&s, 0, 0), cell(&s, 0, 1));
+    assert!(a.own_effects == Some(true) && a.shadow.is_none() && a.glow.is_some(), "{a:?}");
+    assert!(b.own_effects == Some(true) && b.shadow.is_none() && b.glow.is_none(), "the glow spread to (0, 1): {b:?}");
+    assert_eq!(cell(&s, 1, 0), model::text::RunProps::default(), "outside the selected cells");
+
+    // The whole table: (1, 0) gets its own glow; (1, 1) inherits no shadow, so needs no list.
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": false})).unwrap();
+    let c = cell(&s, 1, 0);
+    assert!(c.own_effects == Some(true) && c.glow.is_some(), "{c:?}");
+    assert_eq!(cell(&s, 1, 1), model::text::RunProps::default());
+}
+
 #[test]
 fn master_body_placeholder_format_keeps_per_level_formatting() {
     let mut s = Session::new();
