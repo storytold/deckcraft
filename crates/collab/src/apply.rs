@@ -938,7 +938,7 @@ impl Adapter {
                 let shift = NotesShift::Delete { from: *from, to: *to };
                 self.call_notes(session, before, slide, Some(sel), shift, "text.delete", json!({}), head)
             }
-            Payload::FormatSet { format, args, cell } => {
+            Payload::FormatSet { format, args, cell, range } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 let target = before.slide(slide).and_then(|s| find_shape(&s.shapes, shape));
                 match target {
@@ -963,8 +963,36 @@ impl Adapter {
                 if !format.accepts(args) {
                     return Err(Rejection::invalid(format!("`{}` does not take these arguments", format.id()), Some(head)));
                 }
-                self.select_format(session, before, slide, shape, *cell, head)?;
-                self.call(session, format.id(), args.clone(), head)
+                let Some(range) = range else {
+                    self.select_format(session, before, slide, shape, *cell, head)?;
+                    return self.call(session, format.id(), args.clone(), head);
+                };
+                if range.to <= range.from {
+                    return Err(Rejection::invalid("the formatted range is empty", Some(head)));
+                }
+                // `range` is a whole-body character range: it must lie inside the authoritative
+                // body as it stands now, or two replicas would turn the same two numbers into
+                // different run ranges. Out-of-range is refused before the first write.
+                let body = self
+                    .text_body(before, slide, shape, *cell, head)?
+                    .ok_or_else(|| Rejection::invalid("the shape has no text to format", Some(head)))?;
+                let start = offset_position(Some(body), range.from as usize);
+                let end = offset_position(Some(body), range.to as usize);
+                if position_offset(Some(body), start) != range.from as usize || position_offset(Some(body), end) != range.to as usize {
+                    return Err(Rejection::invalid("the formatted range is outside the text body", Some(head)));
+                }
+                // `format.*` acts on the engine's text selection: borrow it for the call and put
+                // the receiving user's selection back (formatting moves no text, so it stays
+                // valid). The single-user command is the one that runs, so both paths agree.
+                let saved = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.selection.clone();
+                let sel =
+                    TextSel { shape, anchor: start, caret: end, cell: cell.map(|(r, c)| (r as usize, c as usize)), notes: false, line_end: None };
+                self.select_text(session, before, slide, sel, head)?;
+                let out = self.call(session, format.id(), args.clone(), head);
+                if let Ok(st) = session.doc_mut() {
+                    st.selection = saved;
+                }
+                out
             }
             Payload::TableEdit { axis, at, insert } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
@@ -1902,7 +1930,12 @@ mod tests {
         let doc = doc_of(&a);
         let (slide, shape) = key_of(&aa, &doc, 2);
         let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
-        let bold = op(OpKind::Command, 0, target, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) });
+        let bold = op(
+            OpKind::Command,
+            0,
+            target,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+        );
 
         let da = aa.apply(&mut a, 0, "a", &bold).expect("apply on a");
         let db = bb.apply(&mut b, 0, "b", &bold).expect("apply on b");
@@ -1935,13 +1968,21 @@ mod tests {
         let (slide, shape) = key_of(&ad, &doc, 2);
         let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
 
-        let bold =
-            op(OpKind::Command, 0, target.clone(), Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) });
+        let bold = op(
+            OpKind::Command,
+            0,
+            target.clone(),
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+        );
         ad.apply(&mut s, 0, "a", &bold).expect("a bolds the cell");
         assert_eq!(cell_bold(&doc_of(&s), 2, 0, 0), Some(true));
 
-        let mut italic =
-            op(OpKind::Command, 1, target, Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: Some((1, 1)) });
+        let mut italic = op(
+            OpKind::Command,
+            1,
+            target,
+            Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: Some((1, 1)), range: None },
+        );
         italic.op_id = "op-2".into();
         ad.apply(&mut s, 1, "b", &italic).expect("b italicises the neighbour");
         assert_eq!(cell_italic(&doc_of(&s), 2, 1, 1), Some(true));
@@ -1970,8 +2011,12 @@ mod tests {
         let (slide, shape) = key_of(&ad, &doc, 2);
         let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
 
-        let bold =
-            op(OpKind::Command, 0, target.clone(), Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) });
+        let bold = op(
+            OpKind::Command,
+            0,
+            target.clone(),
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+        );
         ad.apply(&mut s, 0, "a", &bold).expect("a bolds");
         let mut insert = op(OpKind::Command, 1, target, Payload::TextInsert { at: 4, text: "X".into(), cell: Some((0, 0)) });
         insert.op_id = "op-2".into();
@@ -1995,8 +2040,12 @@ mod tests {
         let before = doc_of(&s);
         let target = Target { slide: Some(slide.clone()), shape: Some(shape), ..Target::default() };
 
-        let missing =
-            op(OpKind::Command, 0, target.clone(), Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((5, 5)) });
+        let missing = op(
+            OpKind::Command,
+            0,
+            target.clone(),
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((5, 5)), range: None },
+        );
         let err = ad.apply(&mut s, 0, "a", &missing).expect_err("the table has no cell (5, 5)");
         assert_eq!(err.code, RejectCode::Invalid);
         assert!(err.message.contains("no cell"), "{}", err.message);
@@ -2004,7 +2053,12 @@ mod tests {
         assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "and records no step");
 
         // A table without a cell address has no body of its own to format.
-        let whole = op(OpKind::Command, 0, target.clone(), Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None });
+        let whole = op(
+            OpKind::Command,
+            0,
+            target.clone(),
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None },
+        );
         let err = ad.apply(&mut s, 0, "a", &whole).expect_err("a table needs a cell address");
         assert_eq!(err.code, RejectCode::Unsupported);
         assert_eq!(doc_of(&s), before);
@@ -2015,7 +2069,7 @@ mod tests {
             OpKind::Command,
             0,
             Target { slide: Some(slide), shape: Some(other), ..Target::default() },
-            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
         );
         let err = ad.apply(&mut s, 0, "a", &wrong).expect_err("the shape is not a table");
         assert_eq!(err.code, RejectCode::Invalid);
@@ -2037,11 +2091,200 @@ mod tests {
             OpKind::Command,
             1,
             Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
-            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
         );
         let err = ad.apply(&mut s, 1, "a", &format).expect_err("the slide is gone");
         assert_eq!(err.code, RejectCode::Stale);
         assert_eq!(doc_of(&s), before, "a dead address writes nothing");
+    }
+
+    /// The same deck with text in its first shape, so a run range has something to format.
+    fn text_deck() -> Session {
+        let mut s = deck();
+        let id = doc_of(&s).slides[0].shapes[0].id;
+        s.apply_remote("text.set", &json!({"id": id.0, "text": "Hello world"})).expect("text");
+        s
+    }
+
+    /// `(run text, bold)` for every run of the first shape's paragraph.
+    fn run_bolds(doc: &Presentation, shape: usize) -> Vec<(String, Option<bool>)> {
+        doc.slides[0].shapes[shape]
+            .text
+            .as_ref()
+            .expect("text")
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .map(|r| (r.text.clone(), r.props.bold))
+            .collect()
+    }
+
+    fn range(from: u32, to: u32) -> Option<deckcraft_collab_proto::TextRange> {
+        Some(deckcraft_collab_proto::TextRange { from, to })
+    }
+
+    #[test]
+    fn two_clients_converge_on_formatting_a_run_range() {
+        let (mut a, mut b) = (text_deck(), text_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 0);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let bold =
+            op(OpKind::Command, 0, target, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: range(0, 5) });
+
+        let da = aa.apply(&mut a, 0, "a", &bold).expect("apply on a");
+        let db = bb.apply(&mut b, 0, "b", &bold).expect("apply on b");
+        assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        assert_eq!(doc_of(&a).slides[0].shapes[0].text.as_ref().map(|t| t.text()).as_deref(), Some("Hello world"), "the text is kept");
+        assert_eq!(
+            run_bolds(&doc_of(&a), 0),
+            vec![("Hello".to_string(), Some(true)), (" world".to_string(), None)],
+            "only the addressed runs are bold; the run boundary is where the range ends"
+        );
+    }
+
+    #[test]
+    fn undo_of_a_range_format_restores_the_previous_runs_and_leaves_the_rest() {
+        let mut s = text_deck();
+        // A pre-existing formatting on the whole body: the undo must put back the runs it
+        // replaced (the italic stays, the bold goes) and must not touch the text after them.
+        let id = doc_of(&s).slides[0].shapes[0].id;
+        s.doc_mut().expect("doc").selection.shapes = vec![id];
+        s.apply_remote("format.italic", &json!({})).expect("seed italic");
+        let was = doc_of(&s).slides[0].shapes[0].text.clone();
+        assert!(run_bolds(&doc_of(&s), 0).iter().all(|(_, bold)| bold.is_none()));
+
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, shape) = key_of(&ad, &doc_of(&s), 0);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let bold =
+            op(OpKind::Command, 0, target, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: range(0, 5) });
+        ad.apply(&mut s, 0, "a", &bold).expect("bold the range");
+        assert_eq!(run_bolds(&doc_of(&s), 0), vec![("Hello".to_string(), Some(true)), (" world".to_string(), None)]);
+
+        let undo = ad.undo(&s, 1, "a", "u-1").expect("undo a's range format");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::Text, .. }), "the exact body: {undo:?}");
+        ad.apply(&mut s, 1, "a", &undo).expect("apply the undo");
+        assert_eq!(doc_of(&s).slides[0].shapes[0].text.clone(), was, "the previous runs came back");
+        assert!(run_bolds(&doc_of(&s), 0).iter().all(|(_, bold)| bold.is_none()), "the bold is gone");
+
+        let redo = ad.redo(&s, 2, "a", "r-1").expect("redo a's range format");
+        ad.apply(&mut s, 2, "a", &redo).expect("apply the redo");
+        assert_eq!(
+            run_bolds(&doc_of(&s), 0),
+            vec![("Hello".to_string(), Some(true)), (" world".to_string(), None)],
+            "the redo bolds exactly the range again"
+        );
+    }
+
+    #[test]
+    fn an_undo_of_a_range_format_is_refused_when_someone_else_changed_the_body() {
+        let mut s = text_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, shape) = key_of(&ad, &doc_of(&s), 0);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let bold = op(
+            OpKind::Command,
+            0,
+            target.clone(),
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: range(0, 5) },
+        );
+        ad.apply(&mut s, 0, "a", &bold).expect("a bolds the range");
+        let mut insert = op(OpKind::Command, 1, target, Payload::TextInsert { at: 11, text: "!".into(), cell: None });
+        insert.op_id = "op-2".into();
+        ad.apply(&mut s, 1, "b", &insert).expect("b types after the range");
+        let after = doc_of(&s);
+
+        let err = ad.undo(&s, 2, "a", "u-1").expect_err("b changed the same body");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert!(!err.retryable, "an undo never overwrites someone else's edit");
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(1), "a refused undo moves nothing");
+        assert_eq!(doc_of(&s), after, "and writes nothing");
+    }
+
+    #[test]
+    fn a_run_range_outside_the_body_or_in_a_missing_cell_is_refused_before_any_write() {
+        let mut s = text_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, shape) = key_of(&ad, &doc, 0);
+        let before = doc_of(&s);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        for bad in [range(50, 60), range(5, 5), range(9, 3), range(0, 12)] {
+            let op = op(
+                OpKind::Command,
+                0,
+                target.clone(),
+                Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: bad },
+            );
+            let err = ad.apply(&mut s, 0, "a", &op).expect_err("a range the body does not have");
+            assert_eq!(err.code, RejectCode::Invalid, "{bad:?}: {}", err.message);
+            assert_eq!(doc_of(&s), before, "{bad:?}: a refused range writes nothing");
+        }
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "and records no step");
+
+        // A table cell range past the cell's own body is refused too, and the neighbour is never
+        // touched. Two replicas still converge on a valid range inside one cell.
+        let (mut a, mut b) = (table_deck(), table_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let bad = op(
+            OpKind::Command,
+            0,
+            target.clone(),
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: range(0, 9) },
+        );
+        let err = aa.apply(&mut a, 0, "a", &bad).expect_err("past the cell body");
+        assert_eq!(err.code, RejectCode::Invalid);
+
+        let bold = op(
+            OpKind::Command,
+            0,
+            target,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: range(0, 2) },
+        );
+        aa.apply(&mut a, 0, "a", &bold).expect("bold the first two characters");
+        bb.apply(&mut b, 0, "b", &bold).expect("the other replica too");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(cell_text(&doc_of(&a), 2, 0, 0), "seed", "the cell text is kept");
+        let bolds: Vec<Option<bool>> = cell_body(&doc_of(&a), 2, 0, 0).paragraphs.iter().flat_map(|p| p.runs.iter()).map(|r| r.props.bold).collect();
+        assert_eq!(bolds, vec![Some(true), None], "only the addressed characters are bold");
+        assert_eq!(cell_bold(&doc_of(&a), 2, 0, 1), None, "a neighbouring cell keeps its formatting");
+    }
+
+    #[test]
+    fn a_remote_range_format_leaves_the_receiving_selection_alone() {
+        let (mut a, mut b) = (text_deck(), text_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let id = doc_of(&b).slides[0].shapes[0].id;
+        let caret = TextSel { shape: id, anchor: (0, 11), caret: (0, 11), cell: None, notes: false, line_end: None };
+        b.doc_mut().expect("doc").selection.text = Some(caret.clone());
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 0);
+        let bold = op(
+            OpKind::Command,
+            0,
+            Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: range(0, 5) },
+        );
+        aa.apply(&mut a, 0, "a", &bold).expect("a bolds");
+        bb.apply(&mut b, 0, "b", &bold).expect("b applies a remote format");
+        assert_eq!(b.doc().expect("doc").selection.text, Some(caret), "formatting moves no text, so b's caret stays put");
+        assert_eq!(run_bolds(&doc_of(&b), 0), vec![("Hello".to_string(), Some(true)), (" world".to_string(), None)]);
     }
 
     #[test]
@@ -2152,8 +2395,8 @@ mod tests {
         let steps = [
             (Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }, first.clone()),
             (Payload::ShapeLine { line: LineSpec { color: Some("#0044ff".into()), width: Some(3.0), ..LineSpec::default() } }, first.clone()),
-            (Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None }, first.clone()),
-            (Payload::FormatSet { format: FormatCmd::Size, args: json!({"size": 24.0}), cell: None }, second.clone()),
+            (Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None }, first.clone()),
+            (Payload::FormatSet { format: FormatCmd::Size, args: json!({"size": 24.0}), cell: None, range: None }, second.clone()),
         ];
         for (version, (payload, shape)) in steps.into_iter().enumerate() {
             let envelope =
@@ -2183,7 +2426,7 @@ mod tests {
             OpKind::Command,
             0,
             Target { slide: Some(slide), shape: Some(first), ..Target::default() },
-            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true, "ids": [99]}), cell: None },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true, "ids": [99]}), cell: None, range: None },
         );
         let err = ad.apply(&mut s, 0, "a", &envelope).expect_err("an address in args");
         assert_eq!(err.code, RejectCode::Invalid);
@@ -2521,7 +2764,7 @@ mod tests {
         ad.join(&doc_of(&s));
         let (slide, first) = key_of(&ad, &doc_of(&s), 0);
         let bold = |op_id: &str, base: u64| {
-            command(op_id, base, &slide, &first, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None })
+            command(op_id, base, &slide, &first, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None })
         };
         ad.apply(&mut s, 0, "a", &bold("op-1", 0)).expect("bold");
         let bold_of = |s: &Session| {
@@ -2545,8 +2788,10 @@ mod tests {
         let mut ad = Adapter::new("k");
         ad.join(&doc_of(&s));
         let (slide, first) = key_of(&ad, &doc_of(&s), 0);
-        let bold = command("op-1", 0, &slide, &first, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None });
-        let italic = command("op-2", 1, &slide, &first, Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: None });
+        let bold =
+            command("op-1", 0, &slide, &first, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None });
+        let italic =
+            command("op-2", 1, &slide, &first, Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: None, range: None });
         ad.apply(&mut s, 0, "a", &bold).expect("a bolds");
         ad.apply(&mut s, 1, "b", &italic).expect("b italicises");
         let err = ad.undo(&s, 2, "a", "undo-1").expect_err("b changed the same body");

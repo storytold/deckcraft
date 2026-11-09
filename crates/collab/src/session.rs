@@ -218,7 +218,7 @@ impl DocSession {
             deckcraft_collab_proto::Payload::TextSet { cell, .. } => cell.is_some(),
             // A format step addresses one cell and no offset: only a row or column edit can move
             // it, and it must move, or the step would format the wrong cell.
-            deckcraft_collab_proto::Payload::FormatSet { cell, .. } => cell.is_some(),
+            deckcraft_collab_proto::Payload::FormatSet { cell, range, .. } => cell.is_some() || range.is_some(),
             // Notes edits carry a body offset like shape text; their address is the slide, so a
             // slide move or a shape edit never shifts them.
             deckcraft_collab_proto::Payload::NotesInsert { .. } | deckcraft_collab_proto::Payload::NotesDelete { .. } => true,
@@ -378,6 +378,12 @@ impl DocSession {
                     shift(from, &command.payload, cell);
                     shift(to, &command.payload, cell);
                 }
+                // A run-range format addresses two offsets into the same body; both move by the
+                // edit that arrived before them, so the same characters are formatted (RFC §4.4).
+                Payload::FormatSet { range: Some(range), .. } => {
+                    shift(&mut range.from, &command.payload, cell);
+                    shift(&mut range.to, &command.payload, cell);
+                }
                 _ => {}
             }
         }
@@ -386,13 +392,19 @@ impl DocSession {
             Payload::FormatSet { cell: at, .. } => *at = cell,
             _ => {}
         }
-        let empty = match op.payload {
-            Payload::TextDelete { from, to, .. } => to <= from,
-            Payload::NotesDelete { from, to } => to <= from,
-            _ => false,
+        let empty = match &op.payload {
+            Payload::TextDelete { from, to, .. } => Some((to <= from, "the deleted text was already changed")),
+            Payload::NotesDelete { from, to } => Some((to <= from, "the deleted text was already changed")),
+            // The characters a queued range formats were removed after it was sent: the address
+            // means nothing now, so the operation is refused instead of formatting a different
+            // span (RFC §15).
+            Payload::FormatSet { range: Some(range), .. } => {
+                Some((range.to <= range.from, "the formatted range was removed before this operation arrived"))
+            }
+            _ => None,
         };
-        if empty {
-            return Err(refuse(op, Rejection::invalid("the deleted text was already changed", Some(self.version))));
+        if let Some((true, message)) = empty {
+            return Err(refuse(op, Rejection::invalid(message, Some(self.version))));
         }
         Ok(())
     }
@@ -673,6 +685,18 @@ mod tests {
         s.doc().expect("doc").doc.as_ref().clone()
     }
 
+    /// One blank slide with a shape holding "abc", so a run range has a body to format.
+    fn text_deck() -> Presentation {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("insert");
+        let shape = s.doc().expect("doc").doc.slides[0].shapes[0].id;
+        s.apply_remote("text.set", &json!({"id": shape.0, "text": "abc"})).expect("text");
+        s.doc().expect("doc").doc.as_ref().clone()
+    }
+
     fn table_keys(session: &DocSession) -> (SlideKey, ShapeKey) {
         let doc = session.document().expect("doc");
         let slide = doc.slides.first().expect("slide");
@@ -834,8 +858,13 @@ mod tests {
         let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
         let (slide, shape) = table_keys(&s);
         // A client at version 0 formats the cell it sees ("ab").
-        let queued =
-            cell_op(&slide, &shape, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) }, 0, "bold");
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+            0,
+            "bold",
+        );
         // Someone else types into the same cell first: the format must land on that cell's body
         // as it is now, not on the body the client saw.
         s.apply("b", &cell_op(&slide, &shape, Payload::TextInsert { at: 2, text: "X".into(), cell: Some((0, 0)) }, 0, "typed")).expect("typed");
@@ -851,8 +880,13 @@ mod tests {
     fn a_queued_cell_format_moves_with_an_inserted_row() {
         let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
         let (slide, shape) = table_keys(&s);
-        let queued =
-            cell_op(&slide, &shape, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) }, 0, "bold");
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+            0,
+            "bold",
+        );
         let row = OpEnvelope {
             op_id: "row".into(),
             doc: "d".into(),
@@ -875,8 +909,13 @@ mod tests {
     fn a_queued_cell_format_is_refused_when_its_row_is_deleted() {
         let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
         let (slide, shape) = table_keys(&s);
-        let queued =
-            cell_op(&slide, &shape, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)) }, 0, "bold");
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+            0,
+            "bold",
+        );
         let row = OpEnvelope {
             op_id: "row".into(),
             doc: "d".into(),
@@ -890,6 +929,65 @@ mod tests {
         let err = s.apply("a", &queued).expect_err("the addressed cell is gone");
         assert_eq!(err.code, RejectCode::Stale);
         assert!(err.retryable);
+        assert_eq!(s.version(), 1, "the refused format does not bump the version");
+    }
+
+    #[test]
+    fn a_queued_range_format_follows_the_characters_someone_typed_before_it() {
+        let mut s = DocSession::from_document("d", text_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        // A client at version 0 bolds the "b" of "abc".
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                cell: None,
+                range: Some(deckcraft_collab_proto::TextRange { from: 1, to: 2 }),
+            },
+            0,
+            "bold",
+        );
+        // Someone types before it: the two offsets move right, so the same characters are bold.
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextInsert { at: 0, text: "X".into(), cell: None }, 0, "typed")).expect("typed");
+        s.apply("a", &queued).expect("the queued range format applies after the shift");
+        assert_eq!(s.version(), 2);
+        let doc = s.document().expect("doc");
+        let runs: Vec<(String, Option<bool>)> = doc.slides[0].shapes[0]
+            .text
+            .as_ref()
+            .expect("text")
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .map(|r| (r.text.clone(), r.props.bold))
+            .collect();
+        assert_eq!(runs, vec![("Xa".to_string(), None), ("b".to_string(), Some(true)), ("c".to_string(), None)], "the typed text is not bold");
+        assert_eq!(doc.slides[0].shapes[0].text.as_ref().map(|t| t.text()).as_deref(), Some("Xabc"));
+    }
+
+    #[test]
+    fn a_queued_range_format_is_refused_when_its_text_was_removed() {
+        let mut s = DocSession::from_document("d", text_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                cell: None,
+                range: Some(deckcraft_collab_proto::TextRange { from: 0, to: 3 }),
+            },
+            0,
+            "bold",
+        );
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextDelete { from: 0, to: 3, cell: None }, 0, "delete")).expect("delete the range");
+        let err = s.apply("a", &queued).expect_err("the formatted text is gone");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(err.message.contains("range"), "{}", err.message);
+        assert!(!err.retryable, "an address that no longer exists is meaningless, not retryable");
         assert_eq!(s.version(), 1, "the refused format does not bump the version");
     }
 

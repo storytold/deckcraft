@@ -121,6 +121,17 @@ pub struct TextCursor {
     pub caret: Option<(u32, u32)>,
 }
 
+/// A character range `[from, to)` inside one text body, a paragraph break counting as one
+/// character — the same coordinates as [`Payload::TextInsert`] and [`Payload::TextDelete`]
+/// (RFC §4.4). The body is the operation's own address (`target.shape`, plus `cell` for a table
+/// cell), so the range never carries a shape of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextRange {
+    pub from: u32,
+    pub to: u32,
+}
+
 /// What the operation does. Values are final: no relative `dx/dy`, no "current caret".
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -219,16 +230,26 @@ pub enum Payload {
     NotesInsert { at: u32, text: String },
     /// Removes the characters in `[from, to)` of `target.slide`'s notes.
     NotesDelete { from: u32, to: u32 },
-    /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
-    /// of `target.shape` (§15), or at the whole body of one table cell addressed by `cell`
-    /// (`(row, column)`). A table's own `text` body is empty, so formatting a table without a
-    /// cell address is refused; an address that names no cell of that table is refused before
-    /// anything is written. Run-level ranges are a later slice (RFC §15).
+    /// One allowlisted `format.*` command with absolute arguments, aimed at a text body (§15):
+    /// the whole body of `target.shape`, the whole body of one table cell addressed by `cell`
+    /// (`(row, column)`), or the character range `range` inside that body. A table's own `text`
+    /// body is empty, so formatting a table without a cell address is refused; an address that
+    /// names no cell of that table, and a range past the end of the body, are refused before
+    /// anything is written.
+    ///
+    /// `range` is a whole-body character range (`\n` counts one), the same coordinates as
+    /// [`Payload::TextInsert`]/[`Payload::TextDelete`]: the server rebases it against edits that
+    /// arrived since `baseVersion`, and every replica turns the two offsets into the same
+    /// `(paragraph, character)` pair with the same helper, so the run range that is formatted is
+    /// a deterministic function of the authoritative body. Run indices are not an address: a
+    /// text edit can split and merge runs on another replica.
     FormatSet {
         format: FormatCmd,
         args: serde_json::Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<(u32, u32)>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<TextRange>,
     },
     /// Inserts or deletes one row or column of the table in `target.shape`. Structural: every
     /// cell at or after `at` on the axis moves, so a queued text operation in a cell rebases its
@@ -1371,7 +1392,7 @@ mod tests {
         assert_eq!(line.command(), "shape.line");
         assert_eq!(spec.args(), json!({"color": "#0044ff", "width": 2.0, "dash": "dash"}));
 
-        let format = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None };
+        let format = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None };
         assert_eq!(format.command(), "format.bold");
         assert_eq!(FormatCmd::from_id("format.bold"), Some(FormatCmd::Bold));
         assert_eq!(FormatCmd::from_id("format.nope"), None);
@@ -1380,13 +1401,13 @@ mod tests {
 
     #[test]
     fn a_cell_format_carries_its_address_and_its_body_restore_round_trips() {
-        let format = Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: Some((1, 2)) };
+        let format = Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: Some((1, 2)), range: None };
         let text = serde_json::to_string(&format).expect("encode");
         assert!(text.contains("\"cell\":[1,2]"), "the cell address travels with the command: {text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), format);
 
         // A shape-level format keeps its old wire form: no address, no `cell` key.
-        let plain = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None };
+        let plain = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None };
         assert!(!serde_json::to_string(&plain).expect("encode").contains("cell"));
 
         // The exact restore of a cell body names the same cell and carries the whole body.
@@ -1396,6 +1417,32 @@ mod tests {
         assert!(text.contains("\"cell\":[1,2]"), "{text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
         assert_eq!(restore.command(), "shape.setCellBody");
+    }
+
+    #[test]
+    fn a_run_range_format_carries_its_character_offsets() {
+        // The range is a whole-body character range; run indices never travel because a text
+        // edit splits runs differently on another replica.
+        let ranged = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: Some(TextRange { from: 0, to: 5 }) };
+        assert_eq!(ranged.command(), "format.bold");
+        let text = serde_json::to_string(&ranged).expect("encode");
+        assert!(text.contains("\"range\":{\"from\":0,\"to\":5}"), "{text}");
+        assert!(!text.contains("cell"), "a shape-level range has no cell address: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), ranged);
+
+        let in_cell = Payload::FormatSet {
+            format: FormatCmd::Italic,
+            args: json!({"on": true}),
+            cell: Some((1, 2)),
+            range: Some(TextRange { from: 2, to: 4 }),
+        };
+        let text = serde_json::to_string(&in_cell).expect("encode");
+        assert!(text.contains("\"cell\":[1,2]") && text.contains("\"range\":{\"from\":2,\"to\":4}"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), in_cell);
+
+        // A whole-body format keeps its old form: no `range` key at all.
+        let plain = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None };
+        assert!(!serde_json::to_string(&plain).expect("encode").contains("range"));
     }
 
     #[test]
