@@ -11,7 +11,7 @@ number.
 
 | Number | Value | Kind |
 |---|---|---|
-| **Feature breadth** (weighted checklist) | **84%** over 191 features (P0 92%, P1 82%, P2 55%) | **measured**: `cargo xtask parity` formula over [parity-checklist.md](parity-checklist.md); rows re-scored by the 2026-10-14 community PR wave |
+| **Feature breadth** (weighted checklist) | **84%** over 191 features (P0 92%, P1 82%, P2 58%) | **measured**: `cargo xtask parity` formula over [parity-checklist.md](parity-checklist.md); rows re-scored by the 2026-10-14 community PR wave |
 | Menu-bar coverage | **59%** (128 of 217 app-specific PowerPoint menu items have a DeckCraft command or UI label of the same name) | **measured** (heuristic lower bound): script matching the 2026-10-07 PowerPoint menu dump against the 226 engine command labels of the d556ff9 snapshot (not re-measured since; the registry is 328 now) and the UI's strings; excludes the app, Window and Help menus and the subtitle language lists |
 | **Ready for real work** | **~55%** | **estimated**: weighted dimension table below (was ~56% until the features row was recomputed from written area weights) |
 | **Mainstream practitioner** | **~53%** | **estimated**: [method below](#mainstream-practitioner-and-essentials-user) |
