@@ -222,6 +222,9 @@ impl DocSession {
             deckcraft_collab_proto::Payload::FormatSet { addresses, .. } => {
                 addresses.iter().any(|address| address.cell.is_some() || address.range.is_some() || address.caret.is_some())
             }
+            // A cell fill carries explicit cell addresses: a row or column edit moves them, and a
+            // merge that covered a cell refuses it, like a cell text edit.
+            deckcraft_collab_proto::Payload::TableCellFill { .. } => true,
             // Notes edits carry a body offset like shape text; their address is the slide, so a
             // slide move or a shape edit never shifts them.
             deckcraft_collab_proto::Payload::NotesInsert { .. } | deckcraft_collab_proto::Payload::NotesDelete { .. } => true,
@@ -306,6 +309,7 @@ impl DocSession {
         let mut cells: Vec<Option<(u32, u32)>> = match &op.payload {
             Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => vec![*cell],
             Payload::FormatSet { addresses, .. } => addresses.iter().map(|address| address.cell).collect(),
+            Payload::TableCellFill { cells, .. } => cells.iter().copied().map(Some).collect(),
             _ => vec![None],
         };
         let shift = |point: &mut u32, payload: &Payload, cell: Option<(u32, u32)>| match payload {
@@ -408,8 +412,16 @@ impl DocSession {
                     address.cell = cell;
                 }
             }
+            Payload::TableCellFill { cells: list, .. } => {
+                *list = cells.into_iter().flatten().collect();
+            }
             _ => {}
         }
+        // A merge that arrived after the base may have folded an addressed cell into another one:
+        // the cell's own text now lives in the merge's anchor, so a write into it would land where
+        // nobody can see it. The address is checked against the table as it is now, after every
+        // row/column edit in the tail has moved it.
+        self.refuse_covered_cells(op)?;
         let empty = match &op.payload {
             Payload::TextDelete { from, to, .. } => Some((to <= from, "the deleted text was already changed")),
             Payload::NotesDelete { from, to } => Some((to <= from, "the deleted text was already changed")),
@@ -430,9 +442,41 @@ impl DocSession {
         Ok(())
     }
 
+    /// Refuse an operation addressed to a cell that a merge has covered since the sender's base:
+    /// the cell's own text now lives in the merge's anchor, so a write into it would land where
+    /// nobody can see it. Runs on the rebased operation, after every row/column edit in the tail
+    /// has moved its addresses, against the table as it is now.
+    fn refuse_covered_cells(&self, op: &OpEnvelope) -> Result<(), Rejected> {
+        use deckcraft_collab_proto::Payload;
+        let cells: Vec<(u32, u32)> = match &op.payload {
+            Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => cell.iter().copied().collect(),
+            Payload::FormatSet { addresses, .. } => addresses.iter().filter_map(|address| address.cell).collect(),
+            Payload::TableCellFill { cells, .. } => cells.clone(),
+            _ => return Ok(()),
+        };
+        let (Some(slide_key), Some(shape_key)) = (&op.target.slide, &op.target.shape) else { return Ok(()) };
+        let Ok(state) = self.engine.doc() else { return Ok(()) };
+        let keys = self.adapter.keys();
+        let Some(slide) = keys.slide_id(slide_key) else { return Ok(()) };
+        let Some(shape) = keys.shape_id(slide, shape_key) else { return Ok(()) };
+        let Some(table) =
+            state.doc.slides.iter().find(|s| s.id == slide).and_then(|s| deckcraft_model::find_shape(&s.shapes, shape)).and_then(|sh| {
+                match &sh.kind {
+                    ShapeKind::Table(t) => Some(t),
+                    _ => None,
+                }
+            })
+        else {
+            return Ok(());
+        };
+        if let Some((r, c)) = cells.iter().find(|(r, c)| table.cell(*r as usize, *c as usize).is_some_and(|cell| cell.is_covered())) {
+            return Err(refuse(op, Rejection::stale(format!("the cell ({r}, {c}) was merged into another cell"), Some(self.version))));
+        }
+        Ok(())
+    }
+
     /// What a reconnecting client gets: the base (when the journal can no longer rebuild its
     /// version) and the journal tail above it (ADR-0005, RFC §4.5).
-    ///
     /// A tail answer is used while the journal still covers the client. Once compaction removed
     /// it, the client replaces its replica with the native base, so the session takes a snapshot
     /// on demand when the stored one is too old or missing. A base larger than
@@ -956,6 +1000,65 @@ mod tests {
         assert_eq!(err.code, RejectCode::Stale);
         assert!(err.retryable);
         assert_eq!(s.version(), 1, "the refused format does not bump the version");
+    }
+
+    #[test]
+    fn a_queued_cell_fill_follows_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::TableCellFill { fill: deckcraft_collab_proto::CellFillSpec::Solid { color: "#ff0000".into() }, cells: vec![(1, 1)] },
+            0,
+            "fill",
+        );
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the fill follows its cell");
+        let doc = s.document().expect("doc");
+        let table = match &doc.slides[0].shapes[0].kind {
+            deckcraft_model::ShapeKind::Table(t) => t,
+            other => panic!("not a table: {other:?}"),
+        };
+        assert!(table.cell(2, 1).expect("cell").fill.is_some(), "the addressed cell kept its address through the insert");
+        for (r, c) in [(0, 1), (1, 1), (2, 0)] {
+            assert!(table.cell(r, c).expect("cell").fill.is_none(), "({r}, {c}) is not filled");
+        }
+        assert_eq!(s.version(), 2);
+    }
+
+    #[test]
+    fn a_queued_cell_operation_is_refused_after_a_merge_covers_its_cell() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let text = cell_op(&slide, &shape, Payload::TextInsert { at: 0, text: "x".into(), cell: Some((1, 1)) }, 0, "text");
+        let fill =
+            cell_op(&slide, &shape, Payload::TableCellFill { fill: deckcraft_collab_proto::CellFillSpec::Inherit, cells: vec![(1, 0)] }, 0, "fill");
+        let merge = OpEnvelope {
+            op_id: "merge".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableMerge { from: (0, 0), to: (1, 1) },
+            history: None,
+        };
+        s.apply("b", &merge).expect("merge the table");
+        for (name, op) in [("text", &text), ("fill", &fill)] {
+            let err = s.apply("a", op).expect_err("the addressed cell is covered by the merge");
+            assert_eq!(err.code, RejectCode::Stale, "{name}: {err:?}");
+            assert!(err.retryable, "{name}: the client can resync and retry");
+            assert_eq!(s.version(), 1, "{name}: the refused operation moves no version");
+        }
     }
 
     #[test]

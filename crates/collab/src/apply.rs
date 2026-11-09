@@ -21,7 +21,7 @@ use deckcraft_collab_proto::{
 };
 use deckcraft_engine::{Selection, Session, Target as EngineTarget, TextSel};
 use deckcraft_model::text::TextBody;
-use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
+use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, Table, find_shape, parent_of};
 use serde_json::{Value, json};
 
 use crate::delta::delta;
@@ -341,7 +341,17 @@ impl Adapter {
             Payload::ShapesSetBounds { items } => return self.capture_bounds_step(before, after, op, items),
             Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
             Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => (*cell, Image::Text(String::new())),
-            Payload::TableEdit { .. } => (None, Image::Table(deckcraft_model::Table::default())),
+            // A table is one value: a structural edit changes the cell indices and values, a
+            // style, a cell fill, a merge/split or a column width/row height changes the table
+            // without naming a cell that could be restored on its own, so the whole table is the
+            // exact before/after image of every one of these steps (RFC §15).
+            Payload::TableEdit { .. }
+            | Payload::TableStyle { .. }
+            | Payload::TableCellFill { .. }
+            | Payload::TableMerge { .. }
+            | Payload::TableSplit { .. }
+            | Payload::TableColumnWidth { .. }
+            | Payload::TableRowHeight { .. } => (None, Image::Table(deckcraft_model::Table::default())),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
@@ -1082,13 +1092,7 @@ impl Adapter {
             Payload::CellsText { cells } => self.run_cells_text(session, before, head, op, cells),
             Payload::TableEdit { axis, at, insert } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
-                let table = before
-                    .slide(slide)
-                    .and_then(|s| find_shape(&s.shapes, shape))
-                    .ok_or_else(|| Rejection::stale("the shape is gone", Some(head)))?;
-                if !matches!(&table.kind, ShapeKind::Table(_)) {
-                    return Err(Rejection::invalid("the shape is not a table", Some(head)));
-                }
+                self.table_of(before, slide, shape, head)?;
                 let (cmd, key) = match (axis, insert) {
                     (TableAxis::Row, true) => ("table.insertRowAbove", "row"),
                     (TableAxis::Row, false) => ("table.deleteRow", "row"),
@@ -1097,6 +1101,83 @@ impl Adapter {
                 };
                 self.select_shapes(session, before, slide, &[shape], head)?;
                 self.call(session, cmd, json!({"id": shape.0, key: *at}), head)
+            }
+            Payload::TableStyle { style } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.table_of(before, slide, shape, head)?;
+                if style.is_empty() || style.chars().count() > 255 || style.chars().any(char::is_control) {
+                    return Err(Rejection::invalid("the table style name is not usable", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "table.style", json!({"id": shape.0, "style": style}), head)
+            }
+            Payload::TableCellFill { fill, cells } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let table = self.table_of(before, slide, shape, head)?;
+                if cells.is_empty() {
+                    return Err(Rejection::invalid("a cell fill names no cell", Some(head)));
+                }
+                if let Some((r, c)) = cells.iter().find(|(r, c)| *r as usize >= table.n_rows() || *c as usize >= table.n_cols()) {
+                    return Err(Rejection::invalid(format!("the table has no cell ({r}, {c})"), Some(head)));
+                }
+                // The value is final and the cell list is explicit: the command writes exactly
+                // those cells, so a neighbour and this replica's own selection never decide.
+                let mut args = fill.args();
+                args["id"] = json!(shape.0);
+                args["cells"] = json!(cells);
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "table.cellFill", args, head)
+            }
+            Payload::TableMerge { from, to } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let table = self.table_of(before, slide, shape, head)?;
+                for (r, c) in [from, to] {
+                    if *r as usize >= table.n_rows() || *c as usize >= table.n_cols() {
+                        return Err(Rejection::invalid(format!("the table has no cell ({r}, {c})"), Some(head)));
+                    }
+                }
+                if from == to {
+                    return Err(Rejection::invalid("a merge needs at least two cells", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "table.merge", json!({"id": shape.0, "from": [from.0, from.1], "to": [to.0, to.1]}), head)
+            }
+            Payload::TableSplit { cell } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let table = self.table_of(before, slide, shape, head)?;
+                let (r, c) = (cell.0 as usize, cell.1 as usize);
+                let Some(target) = table.cell(r, c) else {
+                    return Err(Rejection::invalid(format!("the table has no cell ({}, {})", cell.0, cell.1), Some(head)));
+                };
+                if target.grid_span.max(1) == 1 && target.row_span.max(1) == 1 {
+                    return Err(Rejection::invalid("that cell is not merged", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "table.split", json!({"id": shape.0, "cell": [cell.0, cell.1]}), head)
+            }
+            Payload::TableColumnWidth { col, width, keep_total } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let table = self.table_of(before, slide, shape, head)?;
+                if *col as usize >= table.n_cols() {
+                    return Err(Rejection::invalid(format!("the table has no column {col}"), Some(head)));
+                }
+                if !width.is_finite() {
+                    return Err(Rejection::invalid("the column width is not a finite number", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "table.columnWidth", json!({"id": shape.0, "col": col, "width": width, "keepTotal": keep_total}), head)
+            }
+            Payload::TableRowHeight { row, height } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let table = self.table_of(before, slide, shape, head)?;
+                if *row as usize >= table.n_rows() {
+                    return Err(Rejection::invalid(format!("the table has no row {row}"), Some(head)));
+                }
+                if !height.is_finite() {
+                    return Err(Rejection::invalid("the row height is not a finite number", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "table.rowHeight", json!({"id": shape.0, "row": row, "height": height}), head)
             }
             Payload::ShapeField { field, value } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
@@ -1594,6 +1675,17 @@ impl Adapter {
         Ok((slide, ids))
     }
 
+    /// The table a table command addresses, resolved from its slide and shape keys before the
+    /// first write: an unknown key, a shape of another slide, a shape that is not a table and a
+    /// tombstone are refused here, so no table command can act on something else.
+    fn table_of<'a>(&self, doc: &'a Presentation, slide: SlideId, shape: ShapeId, head: u64) -> Result<&'a Table, Rejection> {
+        let target = doc.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).ok_or_else(|| Rejection::stale("the shape is gone", Some(head)))?;
+        match &target.kind {
+            ShapeKind::Table(table) => Ok(table),
+            _ => Err(Rejection::invalid("the shape is not a table", Some(head))),
+        }
+    }
+
     fn slide_index(&self, doc: &Presentation, key: &SlideKey, head: u64) -> Result<usize, Rejection> {
         let id = self.resolve_slide(doc, Some(key), head)?;
         doc.slides.iter().position(|s| s.id == id).ok_or_else(|| Rejection::dead("slide is gone", Some(head)))
@@ -1832,7 +1924,13 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::FontCreate { .. }
         | Payload::FontSet { .. }
         | Payload::FontRemove { .. }
-        | Payload::FontRestore { .. } => OpKind::Command,
+        | Payload::FontRestore { .. }
+        | Payload::TableStyle { .. }
+        | Payload::TableCellFill { .. }
+        | Payload::TableMerge { .. }
+        | Payload::TableSplit { .. }
+        | Payload::TableColumnWidth { .. }
+        | Payload::TableRowHeight { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
@@ -1892,7 +1990,7 @@ fn reorder_index(
 mod tests {
     use super::*;
     use crate::history::ActorHistory;
-    use deckcraft_collab_proto::{FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeRestoreItem, TextCursor, TransitionSpec};
+    use deckcraft_collab_proto::{CellFillSpec, FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeRestoreItem, TextCursor, TransitionSpec};
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
     /// replica so ids and keys line up.
@@ -2754,6 +2852,213 @@ mod tests {
         bb.apply(&mut b, 0, "b", &bold).expect("b applies a remote format");
         assert_eq!(b.doc().expect("doc").selection.text, Some(caret), "formatting moves no text, so b's caret stays put");
         assert_eq!(run_bolds(&doc_of(&b), 0), vec![("Hello".to_string(), Some(true)), (" world".to_string(), None)]);
+    }
+
+    /// The table at `shape` on the first slide.
+    fn table_model(doc: &Presentation, shape: usize) -> &Table {
+        match &doc.slides[0].shapes[shape].kind {
+            ShapeKind::Table(t) => t,
+            other => panic!("shape {shape} is not a table: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn two_clients_converge_on_a_table_style_and_a_cell_fill() {
+        let (mut a, mut b) = (table_deck(), table_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        let style = op(OpKind::Command, 0, target.clone(), Payload::TableStyle { style: "grid".into() });
+        aa.apply(&mut a, 0, "a", &style).expect("a sets the style");
+        bb.apply(&mut b, 0, "b", &style).expect("b sets the style");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        assert_eq!(table_model(&doc_of(&a), 2).style, "grid");
+
+        // One final fill over one explicit cell: the neighbour is never written.
+        let fill = Payload::TableCellFill { fill: CellFillSpec::Solid { color: "#ff0000".into() }, cells: vec![(0, 1)] };
+        aa.apply(&mut a, 1, "a", &op(OpKind::Command, 1, target.clone(), fill.clone())).expect("a fills one cell");
+        bb.apply(&mut b, 1, "b", &op(OpKind::Command, 1, target.clone(), fill)).expect("b fills one cell");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        let doc = doc_of(&a);
+        let table = table_model(&doc, 2);
+        assert!(table.cell(0, 1).expect("cell").fill.is_some(), "the addressed cell is filled");
+        assert!(table.cell(0, 0).expect("cell").fill.is_none(), "the neighbour is untouched");
+        assert!(table.cell(1, 1).expect("cell").fill.is_none());
+
+        // `Inherit` clears the explicit fill again and `None` sets an empty one.
+        let clear = Payload::TableCellFill { fill: CellFillSpec::Inherit, cells: vec![(0, 1)] };
+        aa.apply(&mut a, 2, "a", &op(OpKind::Command, 2, target.clone(), clear.clone())).expect("clear");
+        bb.apply(&mut b, 2, "b", &op(OpKind::Command, 2, target.clone(), clear)).expect("clear");
+        assert!(table_model(&doc_of(&a), 2).cell(0, 1).expect("cell").fill.is_none(), "no explicit fill");
+        let empty = Payload::TableCellFill { fill: CellFillSpec::None, cells: vec![(0, 1)] };
+        aa.apply(&mut a, 3, "a", &op(OpKind::Command, 3, target.clone(), empty.clone())).expect("none");
+        bb.apply(&mut b, 3, "b", &op(OpKind::Command, 3, target, empty)).expect("none");
+        assert!(matches!(table_model(&doc_of(&a), 2).cell(0, 1).expect("cell").fill, Some(deckcraft_model::Fill::None)));
+        assert_eq!(doc_of(&a), doc_of(&b));
+    }
+
+    #[test]
+    fn a_table_merge_and_split_converge_on_two_replicas() {
+        let (mut a, mut b) = (table_deck(), table_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        let merge = op(OpKind::Command, 0, target.clone(), Payload::TableMerge { from: (0, 0), to: (1, 1) });
+        aa.apply(&mut a, 0, "a", &merge).expect("a merges");
+        bb.apply(&mut b, 0, "b", &merge).expect("b merges");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        let doc = doc_of(&a);
+        let table = table_model(&doc, 2);
+        assert_eq!((table.cell(0, 0).expect("anchor").row_span, table.cell(0, 0).expect("anchor").grid_span), (2, 2));
+        assert!(table.cell(1, 1).expect("covered").is_covered(), "the other cells are covered");
+        assert_eq!(table.cell(1, 0).expect("covered").text.text(), "", "an empty covered cell stays empty");
+
+        let split = op(OpKind::Command, 1, target, Payload::TableSplit { cell: (0, 0) });
+        aa.apply(&mut a, 1, "a", &split).expect("a splits");
+        bb.apply(&mut b, 1, "b", &split).expect("b splits");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        let doc = doc_of(&a);
+        let table = table_model(&doc, 2);
+        assert_eq!((table.cell(0, 0).expect("anchor").row_span, table.cell(0, 0).expect("anchor").grid_span), (1, 1));
+        assert!(!table.cell(1, 1).expect("cell").is_covered(), "every cell is its own again");
+        assert_eq!(table.cell(0, 0).expect("cell").text.text(), "seed", "the anchor keeps its text");
+    }
+
+    #[test]
+    fn a_table_sizing_step_converges_on_two_replicas() {
+        let (mut a, mut b) = (table_deck(), table_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let total = table_model(&doc_of(&a), 2).width();
+
+        // Keeping the total, the next column gives the difference: the table's width is unchanged.
+        let width = op(OpKind::Command, 0, target.clone(), Payload::TableColumnWidth { col: 0, width: 200.0, keep_total: true });
+        aa.apply(&mut a, 0, "a", &width).expect("a widens the first column");
+        bb.apply(&mut b, 0, "b", &width).expect("b widens the first column");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        let doc = doc_of(&a);
+        let table = table_model(&doc, 2);
+        assert_eq!(table.cols[0], 200.0);
+        assert_eq!(table.width(), total, "the neighbouring column took the difference");
+
+        let height = op(OpKind::Command, 1, target, Payload::TableRowHeight { row: 1, height: 60.0 });
+        aa.apply(&mut a, 1, "a", &height).expect("a sets the row height");
+        bb.apply(&mut b, 1, "b", &height).expect("b sets the row height");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(table_model(&doc_of(&a), 2).rows[1].height, 60.0);
+        let boxed = doc_of(&a).slides[0].shapes[2].xfrm.expect("box");
+        assert_eq!(boxed.h, table_model(&doc_of(&a), 2).height(), "the box follows the rows");
+    }
+
+    #[test]
+    fn undo_of_a_table_value_step_restores_the_whole_table_on_both_replicas() {
+        let (mut a, mut b) = (table_deck(), table_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let before = table_model(&doc_of(&a), 2).clone();
+
+        let steps = [
+            Payload::TableStyle { style: "grid".into() },
+            Payload::TableCellFill { fill: CellFillSpec::Solid { color: "#00ff00".into() }, cells: vec![(0, 0), (0, 1)] },
+            Payload::TableColumnWidth { col: 1, width: 220.0, keep_total: false },
+            Payload::TableRowHeight { row: 0, height: 30.0 },
+            Payload::TableMerge { from: (0, 0), to: (1, 1) },
+        ];
+        for (i, payload) in steps.into_iter().enumerate() {
+            let version = i as u64;
+            let envelope = op(OpKind::Command, version, target.clone(), payload);
+            aa.apply(&mut a, version, "a", &envelope).expect("a applies the step");
+            bb.apply_confirmed(&mut b, version, "a", &envelope).expect("b applies the confirmed step");
+        }
+        assert_ne!(table_model(&doc_of(&a), 2), &before, "the table changed");
+
+        // Every step's undo is one whole-table restore; a merge, a fill, a style and a size all
+        // come back exactly, and the other replica applies the same confirmed command.
+        for (i, version) in (5..=9).map(|v| v as u64).enumerate() {
+            let undo = aa.undo(&a, version, "a", &format!("u-{i}")).expect("undo");
+            assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::Table, .. }), "{undo:?}");
+            aa.apply(&mut a, version, "a", &undo).expect("a applies the undo");
+            bb.apply_confirmed(&mut b, version, "a", &undo).expect("b applies the undo");
+            assert_eq!(doc_of(&a), doc_of(&b), "the restore converges");
+        }
+        assert_eq!(table_model(&doc_of(&a), 2), &before, "the first step's before image is the original table");
+    }
+
+    #[test]
+    fn a_foreign_table_edit_refuses_the_undo_of_a_table_value_step() {
+        let mut s = table_deck();
+        let id = doc_of(&s).slides[0].shapes[2].id;
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, shape) = key_of(&ad, &doc_of(&s), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, target, Payload::TableStyle { style: "grid".into() })).expect("a styles");
+        // Someone else types in the table before the undo: the table is no longer what the step left.
+        s.apply_remote("text.set", &json!({"id": id.0, "cell": [1, 1], "text": "bob"})).expect("bob types");
+        let err = ad.undo(&s, 1, "a", "u-1").expect_err("the table changed");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(1), "a refused undo moves nothing");
+        assert_eq!(table_model(&doc_of(&s), 2).style, "grid", "the style step is still applied");
+    }
+
+    #[test]
+    fn a_table_value_step_is_validated_before_the_first_write() {
+        let mut s = table_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, shape) = key_of(&ad, &doc_of(&s), 2);
+        let table = Target { slide: Some(slide.clone()), shape: Some(shape), ..Target::default() };
+        let before = doc_of(&s);
+
+        let cases: Vec<(&str, Payload)> = vec![
+            ("a cell the table does not have", Payload::TableCellFill { fill: CellFillSpec::Inherit, cells: vec![(9, 9)] }),
+            ("an empty cell list", Payload::TableCellFill { fill: CellFillSpec::Inherit, cells: Vec::new() }),
+            ("a merge past the table", Payload::TableMerge { from: (0, 0), to: (2, 2) }),
+            ("a one-cell merge", Payload::TableMerge { from: (0, 0), to: (0, 0) }),
+            ("a split of a cell that is not merged", Payload::TableSplit { cell: (0, 0) }),
+            ("a missing column", Payload::TableColumnWidth { col: 2, width: 100.0, keep_total: false }),
+            ("a missing row", Payload::TableRowHeight { row: 9, height: 40.0 }),
+            ("no style", Payload::TableStyle { style: String::new() }),
+        ];
+        for (what, payload) in cases {
+            let err = ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, table.clone(), payload)).expect_err(what);
+            assert_eq!(err.code, RejectCode::Invalid, "{what}: {}", err.message);
+            assert_eq!(doc_of(&s), before, "{what}: a refused step writes nothing");
+        }
+
+        // A shape that is not a table, and a target without a shape, are refused too.
+        let (slide_key, rect_key) = key_of(&ad, &doc_of(&s), 0);
+        let not_a_table = Target { slide: Some(slide_key), shape: Some(rect_key), ..Target::default() };
+        let err =
+            ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, not_a_table, Payload::TableStyle { style: "grid".into() })).expect_err("not a table");
+        assert_eq!(err.code, RejectCode::Invalid);
+        let err = ad
+            .apply(
+                &mut s,
+                0,
+                "a",
+                &op(OpKind::Command, 0, Target { slide: Some(slide), ..Target::default() }, Payload::TableStyle { style: "grid".into() }),
+            )
+            .expect_err("no shape");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(doc_of(&s), before);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "no step was recorded");
     }
 
     #[test]

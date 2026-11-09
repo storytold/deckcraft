@@ -328,6 +328,38 @@ pub enum Payload {
     /// address before it applies. `insert` puts an empty line before `at`; otherwise the line
     /// `at` is removed.
     TableEdit { axis: TableAxis, at: u32, insert: bool },
+    /// Replaces one table's style with a final style name (`table.style`). A style is a value of
+    /// the table, not of a cell, so the operation addresses the table shape alone; no cell
+    /// address moves and a style step is merge class.
+    TableStyle { style: String },
+    /// Replaces the fill of an explicit list of cells of one table with one final value
+    /// (`table.cellFill`). `cells` is never empty and names cells the table has: the sender's
+    /// normaliser expands the user's selection into that list, so a replica's own selection never
+    /// decides which cells change, and a cell that is not listed is never written. A row or
+    /// column edit that arrived since `baseVersion` moves the addresses like a cell text edit's.
+    TableCellFill { fill: CellFillSpec, cells: Vec<(u32, u32)> },
+    /// Merges the rectangle `from`–`to` (inclusive; either order of the corners) into its top-left
+    /// cell (`table.merge`). The rectangle grows over merged cells it overlaps, as the single-user
+    /// command does, and the merged cells' text joins the anchor's. A queued operation addressed
+    /// to a cell the merge covered is refused after it, so its text is never written where nobody
+    /// can see it. Merge class: no cell index moves.
+    TableMerge { from: (u32, u32), to: (u32, u32) },
+    /// Splits the merged cell at `cell` (`table.split`). Cells keep their indices, so no address
+    /// moves; a cell that is not merged is refused before anything is written.
+    TableSplit { cell: (u32, u32) },
+    /// Sets one column's width to a final value in points (`table.columnWidth`). With
+    /// `keep_total` the column to its right absorbs the difference so the table keeps its total
+    /// width, as dragging an inner border does; the pair is recomputed against the authoritative
+    /// widths, so every replica reaches the same pair.
+    TableColumnWidth {
+        col: u32,
+        width: f64,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keep_total: bool,
+    },
+    /// Sets one row's height to a final minimum in points (`table.rowHeight`). A row still grows
+    /// to fit its text, as in single-user editing.
+    TableRowHeight { row: u32, height: f64 },
     /// Puts back the exact value an undoable step replaced (ADR 0010). The server builds this
     /// from the actor's history and never a client from a user edit: `value` is the model value
     /// of `field` as JSON (`null` = unset), because the user-facing fill, line and format
@@ -552,6 +584,30 @@ impl FillSpec {
             FillSpec::Solid { color } => serde_json::json!({"color": color}),
             FillSpec::None => serde_json::json!({"none": true}),
             FillSpec::Background => serde_json::json!({"background": true}),
+        }
+    }
+}
+
+/// A table cell's fill as `table.cellFill` expresses it: one solid colour, an explicit "no fill"
+/// or no explicit fill at all (the table style's own fill shows; the model's `None`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellFillSpec {
+    /// One solid colour, e.g. `#ff0000`.
+    Solid { color: String },
+    /// An explicit empty fill on the cell.
+    None,
+    /// No explicit cell fill: the style's own fill shows through.
+    Inherit,
+}
+
+impl CellFillSpec {
+    /// The `table.cellFill` arguments that reproduce this value.
+    pub fn args(&self) -> serde_json::Value {
+        match self {
+            CellFillSpec::Solid { color } => serde_json::json!({"color": color}),
+            CellFillSpec::None => serde_json::json!({"none": true}),
+            CellFillSpec::Inherit => serde_json::json!({}),
         }
     }
 }
@@ -784,6 +840,12 @@ impl Payload {
             Payload::FontRestore { .. } => "font.restore",
             Payload::FormatSet { format, .. } => format.id(),
             Payload::TableEdit { .. } => "table.edit",
+            Payload::TableStyle { .. } => "table.style",
+            Payload::TableCellFill { .. } => "table.cellFill",
+            Payload::TableMerge { .. } => "table.merge",
+            Payload::TableSplit { .. } => "table.split",
+            Payload::TableColumnWidth { .. } => "table.columnWidth",
+            Payload::TableRowHeight { .. } => "table.rowHeight",
             Payload::ShapeField { .. } => "shape.setField",
             Payload::CellText { .. } => "shape.setCellBody",
             Payload::CellsText { .. } => "shape.setCellBodies",
@@ -1512,6 +1574,57 @@ mod tests {
         assert!(text.contains("\"axis\":\"row\""), "{text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), step);
         assert_eq!(Payload::TableEdit { axis: TableAxis::Column, at: 0, insert: false }.command(), "table.edit");
+    }
+
+    #[test]
+    fn the_rest_of_the_table_surface_travels_as_final_values() {
+        let style = Payload::TableStyle { style: "grid".into() };
+        let text = serde_json::to_string(&style).expect("encode");
+        assert!(text.contains("\"cmd\":\"table_style\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), style);
+        assert_eq!(style.command(), "table.style");
+
+        let fill = Payload::TableCellFill { fill: CellFillSpec::Solid { color: "#ff0000".into() }, cells: vec![(0, 0), (0, 1)] };
+        let text = serde_json::to_string(&fill).expect("encode");
+        assert!(text.contains("\"cmd\":\"table_cell_fill\""), "{text}");
+        assert!(text.contains("\"cells\":[[0,0],[0,1]]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), fill);
+        assert_eq!(fill.command(), "table.cellFill");
+        assert_eq!(CellFillSpec::Solid { color: "#ff0000".into() }.args(), json!({"color": "#ff0000"}));
+        assert_eq!(CellFillSpec::None.args(), json!({"none": true}));
+        assert_eq!(CellFillSpec::Inherit.args(), json!({}));
+        assert_eq!(
+            serde_json::from_str::<Payload>(
+                &serde_json::to_string(&Payload::TableCellFill { fill: CellFillSpec::None, cells: vec![(1, 1)] }).expect("encode")
+            )
+            .expect("decode"),
+            Payload::TableCellFill { fill: CellFillSpec::None, cells: vec![(1, 1)] }
+        );
+
+        let merge = Payload::TableMerge { from: (0, 0), to: (1, 1) };
+        let text = serde_json::to_string(&merge).expect("encode");
+        assert!(text.contains("\"cmd\":\"table_merge\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), merge);
+        assert_eq!(merge.command(), "table.merge");
+
+        let split = Payload::TableSplit { cell: (0, 0) };
+        assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&split).expect("encode")).expect("decode"), split);
+        assert_eq!(split.command(), "table.split");
+
+        let width = Payload::TableColumnWidth { col: 1, width: 120.0, keep_total: true };
+        let text = serde_json::to_string(&width).expect("encode");
+        assert!(text.contains("\"keep_total\":true"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), width);
+        assert_eq!(width.command(), "table.columnWidth");
+        // Without `keepTotal` the field is not on the wire and decodes to the same value.
+        let plain = Payload::TableColumnWidth { col: 0, width: 80.0, keep_total: false };
+        let text = serde_json::to_string(&plain).expect("encode");
+        assert!(!text.contains("keep_total"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), plain);
+
+        let height = Payload::TableRowHeight { row: 3, height: 40.0 };
+        assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&height).expect("encode")).expect("decode"), height);
+        assert_eq!(height.command(), "table.rowHeight");
     }
 
     #[test]

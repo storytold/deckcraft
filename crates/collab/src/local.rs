@@ -14,12 +14,12 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    Applied, BaseSnapshot, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatAddress, FormatCmd, LineSpec, MediaKind, OpEnvelope,
-    OpKind, Payload, ServerMsg, ShapeBounds, ShapeKey, SlideKey, TableAxis, Target, TextRange,
+    Applied, BaseSnapshot, CellFillSpec, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatAddress, FormatCmd, LineSpec, MediaKind,
+    OpEnvelope, OpKind, Payload, ServerMsg, ShapeBounds, ShapeKey, SlideKey, TableAxis, Target, TextRange,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::anim::Animation;
-use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
+use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId, Table, find_shape, parent_of};
 use serde_json::Value;
 
 use crate::apply::{Adapter, class_of, position_offset};
@@ -377,6 +377,7 @@ pub fn normalize_with_painter(
         return Err(LocalError::Unsupported(cmd.into()));
     }
     let slide = st.doc.slides.get(st.selection.slide).ok_or(LocalError::NoDocument)?;
+    let slide_key = keys.slide_key(slide.id).cloned();
     let make = |target: Target, payload: Payload| OpEnvelope {
         op_id: op_id.to_string(),
         doc: doc.to_string(),
@@ -386,7 +387,12 @@ pub fn normalize_with_painter(
         payload,
         history: None,
     };
-    let slide_key = keys.slide_key(slide.id).cloned();
+    // The rest of the table surface: one final value per command, every address resolved from
+    // this replica's selection, so the operation says exactly which table and cells it changes.
+    if let Some(result) = table_value(cmd, p, slide, st) {
+        let (id, payload) = result?;
+        return Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, payload)]);
+    }
     match cmd {
         "shape.move" => {
             let ids = shape_ids(p, st)?;
@@ -886,6 +892,203 @@ pub fn normalize_with_painter(
         }
         other => Err(LocalError::Unsupported(other.into())),
     }
+}
+
+/// The rest of the table surface, one final value per command: a style, one cell fill over an
+/// explicit cell list, a merge or a split, and one column width or row height. `None` when the
+/// command is not one of them. Every address is resolved from the sender's own selection here, so
+/// the operation says which table and which cells it changes and a replica's selection decides
+/// nothing (RFC §15).
+fn table_value(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Option<Result<(ShapeId, Payload), LocalError>> {
+    Some(match cmd {
+        "table.style" => table_style(p, slide, st),
+        "table.cellFill" => table_cell_fill(p, slide, st),
+        "table.merge" => table_merge(p, slide, st),
+        "table.split" => table_split(p, slide, st),
+        "table.columnWidth" => table_column_width(p, slide, st),
+        "table.rowHeight" => table_row_height(p, slide, st),
+        _ => return None,
+    })
+}
+
+fn table_style(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let (id, _) = table_target(slide, st, p, "table.style")?;
+    let style = p.get("style").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    if style.is_empty() || style.chars().count() > 255 || style.chars().any(char::is_control) {
+        return Err(LocalError::BadParams("table.style needs a style name".into()));
+    }
+    Ok((id, Payload::TableStyle { style: style.to_string() }))
+}
+
+fn table_cell_fill(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let (id, table) = table_target(slide, st, p, "table.cellFill")?;
+    let fill = if p.get("none").and_then(Value::as_bool).unwrap_or(false) {
+        CellFillSpec::None
+    } else if let Some(color) = p.get("color").and_then(Value::as_str) {
+        let color = color.trim();
+        if color.is_empty() || color.chars().count() > 64 || color.chars().any(char::is_control) {
+            return Err(LocalError::BadParams("table.cellFill: `color` is not a colour".into()));
+        }
+        CellFillSpec::Solid { color: color.to_string() }
+    } else {
+        CellFillSpec::Inherit
+    };
+    let cells = fill_cells(st, id, table, p)?;
+    Ok((id, Payload::TableCellFill { fill, cells }))
+}
+
+fn table_merge(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let (id, table) = table_target(slide, st, p, "table.merge")?;
+    let selected = st.selection.cells.filter(|c| c.0 == id).map(|c| selection_cell(c.1));
+    let from = cell_param(p.get("from"))?.or(selected).ok_or_else(|| LocalError::BadParams("table.merge needs `from`".into()))?;
+    let to = cell_param(p.get("to"))?
+        .or_else(|| st.selection.cells.filter(|c| c.0 == id).map(|c| selection_cell(c.2)))
+        .ok_or_else(|| LocalError::BadParams("table.merge needs `to`".into()))?;
+    for (r, c) in [from, to] {
+        if r as usize >= table.n_rows() || c as usize >= table.n_cols() {
+            return Err(LocalError::BadParams(format!("the table has no cell ({r}, {c})")));
+        }
+    }
+    if from == to {
+        return Err(LocalError::BadParams("a merge needs at least two cells".into()));
+    }
+    Ok((id, Payload::TableMerge { from, to }))
+}
+
+fn table_split(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let (id, table) = table_target(slide, st, p, "table.split")?;
+    let caret = st.selection.text.as_ref().filter(|t| t.shape == id).and_then(|t| t.cell).map(selection_cell);
+    let selected = st.selection.cells.filter(|c| c.0 == id).map(|c| selection_cell(c.1));
+    let cell = cell_param(p.get("cell"))?.or(caret).or(selected).unwrap_or((0, 0));
+    let Some(target) = table.cell(cell.0 as usize, cell.1 as usize) else {
+        return Err(LocalError::BadParams(format!("the table has no cell ({}, {})", cell.0, cell.1)));
+    };
+    if target.grid_span.max(1) == 1 && target.row_span.max(1) == 1 {
+        return Err(LocalError::BadParams("that cell is not merged".into()));
+    }
+    Ok((id, Payload::TableSplit { cell }))
+}
+
+fn table_column_width(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let (id, table) = table_target(slide, st, p, "table.columnWidth")?;
+    let col = p
+        .get("col")
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .or_else(|| st.selection.text.as_ref().filter(|t| t.shape == id).and_then(|t| t.cell).map(|c| c.1))
+        .or_else(|| st.selection.cells.filter(|c| c.0 == id).map(|c| c.1.1))
+        .unwrap_or(0);
+    if col >= table.n_cols() {
+        return Err(LocalError::BadParams(format!("the table has no column {col}")));
+    }
+    let width = p
+        .get("width")
+        .and_then(Value::as_f64)
+        .filter(|w| w.is_finite())
+        .ok_or_else(|| LocalError::BadParams("table.columnWidth needs a `width`".into()))?;
+    let keep_total = p.get("keepTotal").and_then(Value::as_bool).unwrap_or(false);
+    Ok((
+        id,
+        Payload::TableColumnWidth {
+            col: u32::try_from(col).map_err(|_| LocalError::BadParams("the table is too large".into()))?,
+            // The single-user command clamps the width; send the clamped value so the operation
+            // carries the final width and not a request to clamp it.
+            width: width.clamp(4.0, 4000.0),
+            keep_total,
+        },
+    ))
+}
+
+fn table_row_height(p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let (id, table) = table_target(slide, st, p, "table.rowHeight")?;
+    let row = p
+        .get("row")
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .or_else(|| st.selection.text.as_ref().filter(|t| t.shape == id).and_then(|t| t.cell).map(|c| c.0))
+        .or_else(|| st.selection.cells.filter(|c| c.0 == id).map(|c| c.1.0))
+        .unwrap_or(0);
+    if row >= table.n_rows() {
+        return Err(LocalError::BadParams(format!("the table has no row {row}")));
+    }
+    let height = p
+        .get("height")
+        .and_then(Value::as_f64)
+        .filter(|h| h.is_finite())
+        .ok_or_else(|| LocalError::BadParams("table.rowHeight needs a `height`".into()))?;
+    Ok((
+        id,
+        Payload::TableRowHeight {
+            row: u32::try_from(row).map_err(|_| LocalError::BadParams("the table is too large".into()))?,
+            height: height.clamp(4.0, 4000.0),
+        },
+    ))
+}
+
+/// The table a table command acts on: the explicit `id`, the cell under the caret, the selected
+/// cell range or the one selected shape — in that order, as the single-user commands resolve it.
+fn table_target<'a>(slide: &'a Slide, st: &DocState, p: &Value, cmd: &str) -> Result<(ShapeId, &'a Table), LocalError> {
+    let cell = st.selection.text.as_ref().and_then(|t| t.cell.map(|c| (t.shape, c))).or_else(|| st.selection.cells.map(|c| (c.0, c.1)));
+    let id = p
+        .get("id")
+        .and_then(Value::as_u64)
+        .map(|v| ShapeId(v as u32))
+        .or(cell.map(|c| c.0))
+        .or_else(|| st.selection.shapes.first().copied())
+        .ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a table")))?;
+    let shape = find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams(format!("{cmd}: no such shape")))?;
+    match &shape.kind {
+        ShapeKind::Table(table) => Ok((id, table)),
+        _ => Err(LocalError::BadParams(format!("{cmd} needs a table"))),
+    }
+}
+
+/// One `[row, col]` cell parameter: `Ok(None)` when absent, an error when present but malformed,
+/// so a bad address never falls back to the selection.
+fn cell_param(v: Option<&Value>) -> Result<Option<(u32, u32)>, LocalError> {
+    let Some(v) = v.filter(|v| !v.is_null()) else { return Ok(None) };
+    let idx = |x: &Value| x.as_u64().and_then(|x| u32::try_from(x).ok());
+    match v.as_array().map(Vec::as_slice) {
+        Some([r, c]) if let (Some(r), Some(c)) = (idx(r), idx(c)) => Ok(Some((r, c))),
+        _ => Err(LocalError::BadParams(format!("`{v}` is not a [row, col] cell"))),
+    }
+}
+
+/// A model cell index on the wire. Tables are bounded to 1000 lines, so a `usize` cell always
+/// fits the wire's `u32`.
+fn selection_cell(cell: (usize, usize)) -> (u32, u32) {
+    (u32::try_from(cell.0).unwrap_or(u32::MAX), u32::try_from(cell.1).unwrap_or(u32::MAX))
+}
+
+/// The cells a `table.cellFill` acts on, always explicit: the `cells` list, else every cell of the
+/// selected range (grown over merged cells, the engine's own rule), else the cell under the caret,
+/// else every cell of the table. Bounded, so one operation and its undo always fit the wire.
+fn fill_cells(st: &DocState, id: ShapeId, table: &Table, p: &Value) -> Result<Vec<(u32, u32)>, LocalError> {
+    const MAX_FILL_CELLS: usize = 4096;
+    let cells: Vec<(u32, u32)> = if p.get("cells").is_some_and(|v| !v.is_null()) {
+        let list = p.get("cells").and_then(Value::as_array).ok_or_else(|| LocalError::BadParams("`cells` is a list of [row, col] cells".into()))?;
+        let mut out = Vec::with_capacity(list.len().min(MAX_FILL_CELLS + 1));
+        for cell in list {
+            out.push(cell_param(Some(cell))?.ok_or_else(|| LocalError::BadParams("a `cells` entry is not a [row, col] cell".into()))?);
+        }
+        out
+    } else if let Some(((r0, c0), (r1, c1))) = deckcraft_engine::cmd::table::selected_range(st.selection.cells, id, table) {
+        (r0..=r1).flat_map(|r| (c0..=c1).map(move |c| (r as u32, c as u32))).collect()
+    } else if let Some(cell) = st.selection.text.as_ref().filter(|t| t.shape == id).and_then(|t| t.cell) {
+        vec![(cell.0 as u32, cell.1 as u32)]
+    } else {
+        (0..table.n_rows()).flat_map(|r| (0..table.n_cols()).map(move |c| (r as u32, c as u32))).collect()
+    };
+    if cells.is_empty() {
+        return Err(LocalError::BadParams("table.cellFill names no cell".into()));
+    }
+    if cells.len() > MAX_FILL_CELLS {
+        return Err(LocalError::BadParams(format!("table.cellFill names {} cells; at most {MAX_FILL_CELLS} in one step", cells.len())));
+    }
+    if let Some((r, c)) = cells.iter().find(|(r, c)| *r as usize >= table.n_rows() || *c as usize >= table.n_cols()) {
+        return Err(LocalError::BadParams(format!("the table has no cell ({r}, {c})")));
+    }
+    Ok(cells)
 }
 
 /// Bytes for `insert.picture|insert.audio|insert.video`: base64 `data`, or a local `path` on
@@ -1969,6 +2172,78 @@ mod tests {
         // An address outside the table is refused before anything is sent.
         assert!(normalize(&km, st, "table.deleteRow", &json!({"row": 9}), "op", &doc_id).is_err());
         assert!(normalize(&km, st, "table.deleteColumn", &json!({"col": 9}), "op", &doc_id).is_err());
+    }
+
+    #[test]
+    fn the_rest_of_the_table_surface_normalises_to_final_values() {
+        let (mut s, doc_id, _slide, table) = table_deck();
+        caret(&mut s, table, (0, 0), Some((0, 0)));
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        let ops = normalize(&km, st, "table.style", &json!({"style": "grid"}), "op", &doc_id).expect("style");
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].payload, Payload::TableStyle { style: "grid".into() });
+        assert!(normalize(&km, st, "table.style", &json!({"style": "  "}), "op", &doc_id).is_err());
+
+        // A cell fill is always an explicit cell list: the caret's cell, then every cell of a
+        // selected range, then every cell of the table.
+        let ops = normalize(&km, st, "table.cellFill", &json!({"color": "#ff0000"}), "op", &doc_id).expect("the caret's cell");
+        assert_eq!(ops[0].payload, Payload::TableCellFill { fill: CellFillSpec::Solid { color: "#ff0000".into() }, cells: vec![(0, 0)] });
+        s.doc_mut().expect("doc").selection.cells = Some((table, (0, 0), (1, 1)));
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "table.cellFill", &json!({"none": true}), "op", &doc_id).expect("the range");
+        assert_eq!(ops[0].payload, Payload::TableCellFill { fill: CellFillSpec::None, cells: vec![(0, 0), (0, 1), (1, 0), (1, 1)] });
+        s.doc_mut().expect("doc").selection.cells = None;
+        s.doc_mut().expect("doc").selection.text = None;
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "table.cellFill", &json!({}), "op", &doc_id).expect("every cell");
+        assert!(matches!(&ops[0].payload, Payload::TableCellFill { fill: CellFillSpec::Inherit, cells } if cells.len() == 4), "{:?}", ops[0].payload);
+        let ops = normalize(&km, st, "table.cellFill", &json!({"cells": [[1, 1]]}), "op", &doc_id).expect("an explicit cell");
+        assert_eq!(ops[0].payload, Payload::TableCellFill { fill: CellFillSpec::Inherit, cells: vec![(1, 1)] });
+        assert!(normalize(&km, st, "table.cellFill", &json!({"cells": [[9, 9]]}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.cellFill", &json!({"cells": []}), "op", &doc_id).is_err());
+
+        // A merge takes its corners from the selection, and both corners must be cells of the table.
+        s.doc_mut().expect("doc").selection.cells = Some((table, (0, 0), (1, 1)));
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "table.merge", &json!({}), "op", &doc_id).expect("merge the selection");
+        assert_eq!(ops[0].payload, Payload::TableMerge { from: (0, 0), to: (1, 1) });
+        assert!(normalize(&km, st, "table.merge", &json!({"from": [0, 0], "to": [0, 0]}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.merge", &json!({"from": [0, 0], "to": [2, 2]}), "op", &doc_id).is_err());
+
+        // A split addresses a merged cell: once the table has one, the caret can name it.
+        s.apply_remote("table.merge", &json!({"id": table.0, "from": [0, 0], "to": [1, 1]})).expect("merge");
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "table.split", &json!({"cell": [0, 0]}), "op", &doc_id).expect("split");
+        assert_eq!(ops[0].payload, Payload::TableSplit { cell: (0, 0) });
+        assert!(normalize(&km, st, "table.split", &json!({"cell": [1, 1]}), "op", &doc_id).is_err(), "a covered cell is not a merge anchor");
+
+        // Sizing: final numbers, clamped as the single-user command clamps them.
+        let ops = normalize(&km, st, "table.columnWidth", &json!({"col": 0, "width": 120, "keepTotal": true}), "op", &doc_id).expect("width");
+        assert_eq!(ops[0].payload, Payload::TableColumnWidth { col: 0, width: 120.0, keep_total: true });
+        let ops = normalize(&km, st, "table.columnWidth", &json!({"col": 1, "width": 1}), "op", &doc_id).expect("clamped width");
+        assert_eq!(ops[0].payload, Payload::TableColumnWidth { col: 1, width: 4.0, keep_total: false });
+        let ops = normalize(&km, st, "table.rowHeight", &json!({"row": 1, "height": 40}), "op", &doc_id).expect("height");
+        assert_eq!(ops[0].payload, Payload::TableRowHeight { row: 1, height: 40.0 });
+        assert!(normalize(&km, st, "table.columnWidth", &json!({"col": 9, "width": 100}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.rowHeight", &json!({"row": 9, "height": 40}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.columnWidth", &json!({"col": 0}), "op", &doc_id).is_err());
+
+        // A shape that is not a table is refused for every one of them.
+        let rect =
+            s.execute("shape.insert", &json!({"preset": "rect", "rect": [500, 100, 100, 100]})).expect("rect")["id"].as_u64().expect("id") as u32;
+        let st = s.doc().expect("doc");
+        for (cmd, params) in [
+            ("table.style", json!({"id": rect, "style": "grid"})),
+            ("table.cellFill", json!({"id": rect})),
+            ("table.merge", json!({"id": rect, "from": [0, 0], "to": [0, 1]})),
+            ("table.split", json!({"id": rect})),
+            ("table.columnWidth", json!({"id": rect, "width": 90})),
+            ("table.rowHeight", json!({"id": rect, "height": 40})),
+        ] {
+            assert!(normalize(&km, st, cmd, &params, "op", &doc_id).is_err(), "{cmd} on a rectangle");
+        }
     }
 
     #[test]

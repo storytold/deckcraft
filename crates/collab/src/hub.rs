@@ -116,6 +116,12 @@ impl Hub {
                     "text.insert".into(),
                     "text.delete".into(),
                     "table.edit".into(),
+                    "table.style".into(),
+                    "table.cellFill".into(),
+                    "table.merge".into(),
+                    "table.split".into(),
+                    "table.columnWidth".into(),
+                    "table.rowHeight".into(),
                     "shape.insert".into(),
                     "insert.picture".into(),
                     "edit.delete".into(),
@@ -993,6 +999,85 @@ mod tests {
         assert_eq!((a.version(), b.version()), (5, 5));
         assert!(entry(&sa).is_some_and(|e| e.regular.is_some()));
         assert_eq!(entry(&sb), entry(&sa));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
+
+    /// One slide with a 2×2 table and its top-left cell seeded.
+    fn table_session() -> Session {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 100, 300, 100]})).expect("table");
+        let table = s.doc().expect("doc").doc.slides[0].shapes[0].id;
+        s.apply_remote("text.set", &json!({"id": table.0, "cell": [0, 0], "text": "seed"})).expect("seed");
+        s
+    }
+
+    fn table_hub() -> Hub {
+        let doc = table_session().doc().expect("doc").doc.as_ref().clone();
+        Hub::new(DocSession::from_document("d", doc, Default::default()).expect("session"))
+    }
+
+    fn table_of(session: &Session) -> &deckcraft_model::Table {
+        match &session.doc().expect("doc").doc.slides[0].shapes[0].kind {
+            deckcraft_model::ShapeKind::Table(t) => t,
+            other => panic!("not a table: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_rest_of_the_table_surface_reaches_both_replicas_and_an_undo_is_one_step() {
+        let mut hub = table_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = table_session();
+        let mut sb = table_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let table = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
+
+        let steps: [(&str, serde_json::Value); 3] = [
+            ("table.style", json!({"id": table, "style": "grid"})),
+            ("table.cellFill", json!({"id": table, "color": "#00ff00", "cells": [[0, 1]]})),
+            ("table.rowHeight", json!({"id": table, "row": 0, "height": 30})),
+        ];
+        for (n, (cmd, params)) in steps.iter().enumerate() {
+            let id = format!("a-{n}");
+            a.submit(&sa, cmd, params, &id).expect("submit");
+            send_all(&mut hub, &mut a, "alice");
+            deliver(&mut hub, &mut a, &mut sa, "alice");
+            deliver(&mut hub, &mut b, &mut sb, "bob");
+        }
+        assert_eq!((a.version(), b.version()), (3, 3));
+        assert_eq!(table_of(&sa).style, "grid");
+        assert!(table_of(&sa).cell(0, 1).expect("cell").fill.is_some());
+        assert_eq!(table_of(&sa).rows[0].height, 30.0);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same table");
+
+        // The undo of the height step puts the whole table back to the state the step found: the
+        // style and the fill stay, and both replicas apply the same confirmed command.
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (4, 4));
+        assert_ne!(table_of(&sa).rows[0].height, 30.0);
+        assert_eq!(table_of(&sa).style, "grid");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+
+        // A second undo takes the fill back but keeps the style.
+        a.undo().expect("undo the fill");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (5, 5));
+        assert!(table_of(&sa).cell(0, 1).expect("cell").fill.is_none());
+        assert_eq!(table_of(&sa).style, "grid");
         assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
     }
 }

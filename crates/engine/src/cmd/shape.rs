@@ -528,6 +528,12 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
                     return Err(bad("shape.setField", "the shape is not a table"));
                 }
                 sh.kind = ShapeKind::Table(table.clone());
+                // The box is the table's own size: the single-user row/column commands keep it so,
+                // and an undo that puts back a width or height must move the box with the table.
+                if let Some(x) = sh.xfrm.as_mut() {
+                    x.w = table.width();
+                    x.h = table.height();
+                }
                 Ok(())
             })
         }
@@ -1376,6 +1382,14 @@ mod tests {
         };
         assert_eq!(after.n_rows(), 2, "the whole table came back");
         assert_eq!(after.cell(0, 0).unwrap().text.text(), "a");
+
+        // A column width is the table's own width: the single-user command moves the box with it,
+        // and the whole-table restore puts the box back with the table.
+        s.execute("table.columnWidth", &json!({"id": id.0, "col": 0, "width": 500.0})).unwrap();
+        assert_eq!(s.doc().unwrap().shape(id).unwrap().xfrm.unwrap().w, 600.0);
+        let value = serde_json::to_value(&before).unwrap();
+        s.execute("shape.setField", &json!({"field": "table", "value": value})).unwrap();
+        assert_eq!(s.doc().unwrap().shape(id).unwrap().xfrm.unwrap().w, 200.0, "the box follows the table");
 
         // A shape that is not a table refuses a table value, and a table cannot be cleared.
         let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 100.0, 30.0, 30.0]})).unwrap()["id"].as_u64().unwrap();
