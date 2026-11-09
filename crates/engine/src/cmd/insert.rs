@@ -21,8 +21,9 @@ mod picture;
 mod text_fields;
 
 use album::{photo_album, photo_album_edit};
-pub use chart::chart_type;
-use chart::{chart, chart_data, chart_options, chart_type_cmd};
+pub use chart::plan as chart_plan;
+pub use chart::{MAX_CHART_JSON, chart_type};
+use chart::{chart, chart_data, chart_options, chart_type_cmd, set_whole};
 use links::{action_button, hyperlink, shape_action};
 pub use picture::content_type;
 pub(crate) use picture::media_bytes;
@@ -85,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart…",
             ["Insert", "Illustrations"],
             None,
-            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, rect?, categories?: [..], series?: [{name, values}]}",
+            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, rect?, categories?: [..], series?: [{name, values}], chart?: the whole Chart value (a collaborative insertion: replaces the sample and the typed data)}",
             has_slide,
             chart
         ),
@@ -139,6 +140,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
+        ),
+        cmd!(
+            "chart.setWhole",
+            "Restore Chart",
+            ["Chart Design", "Data"],
+            None,
+            "{id?, chart: the whole Chart value} (the confirmed command of chart.type/chart.data/chart.options and the exact value of a chart step: every replica replaces the whole chart, data, type and options together)",
+            has_selection,
+            set_whole
         ),
         cmd!(
             "insert.smartArt",

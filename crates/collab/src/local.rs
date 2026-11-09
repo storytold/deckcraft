@@ -387,16 +387,11 @@ pub fn normalize_with_painter(
         payload,
         history: None,
     };
-    // The rest of the table surface: one final value per command, every address resolved from
-    // this replica's selection, so the operation says exactly which table and cells it changes.
-    if let Some(result) = table_value(cmd, p, slide, st) {
-        let (id, payload) = result?;
-        return Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, payload)]);
-    }
-    // A SmartArt outline, layout, style or colour edit is one whole final diagram value: the
-    // sender applies the command to the graphic it sees and sends every field the result carries,
-    // so the receiving replica never merges arguments against its own (possibly imported) copy.
-    if let Some(result) = smartart_value(cmd, p, slide, st) {
+    // A whole-value object — the rest of the table surface, a SmartArt graphic and a chart — is one
+    // final value per command, every address resolved from this replica's selection, so the
+    // operation says exactly which object it changes and a replica never merges arguments against
+    // its own (possibly imported) copy.
+    if let Some(result) = whole_value(cmd, p, slide, st) {
         let (id, payload) = result?;
         return Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, payload)]);
     }
@@ -555,6 +550,7 @@ pub fn normalize_with_painter(
             let text = p.get("text").and_then(Value::as_str).map(str::to_string);
             Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::ShapeInsert { preset: preset.to_string(), rect: r, text })])
         }
+        "insert.chart" => Ok(vec![chart_insert(p, slide_key, op_id, doc)?]),
         "insert.picture" | "insert.audio" | "insert.video" => {
             let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a media digest")))?;
             if !crate::media::valid_sha(sha) {
@@ -933,6 +929,78 @@ fn smartart_payload(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Resul
     deckcraft_engine::cmd::smartart::plan(cmd, p, &mut diagram).map_err(|e| LocalError::BadParams(e.to_string()))?;
     let value = serde_json::to_value(&diagram).map_err(|e| LocalError::BadParams(format!("{cmd}: {e}")))?;
     Ok((group.id, Payload::SmartArtSet { diagram: value }))
+}
+
+/// The chart commands that leave the chart as one value: its type, data and options. `None` when
+/// the command is not one of them. The sender resolves the chart from an explicit id or its own
+/// selection, runs the engine's plan on the chart it sees and sends the whole resulting `Chart`,
+/// so a replica's selection and its stale copy decide nothing (RFC §3.2.1).
+fn chart_value(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Option<Result<(ShapeId, Payload), LocalError>> {
+    const COMMANDS: [&str; 3] = ["chart.type", "chart.data", "chart.options"];
+    COMMANDS.contains(&cmd).then(|| chart_payload(cmd, p, slide, st))
+}
+
+fn chart_payload(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Result<(ShapeId, Payload), LocalError> {
+    let ids = shape_ids(p, st)?;
+    let shape = ids
+        .iter()
+        .filter_map(|id| find_shape(&slide.shapes, *id))
+        .find(|sh| matches!(sh.kind, ShapeKind::Chart(_)))
+        .ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a chart")))?;
+    let ShapeKind::Chart(existing) = &shape.kind else {
+        return Err(LocalError::BadParams(format!("{cmd} needs a chart")));
+    };
+    let mut chart = (**existing).clone();
+    // The same plan the single-user command runs, so the value sent is the value that command
+    // would leave; a refusal (a bad bin size, a bad text colour) happens here, before anything is
+    // queued.
+    deckcraft_engine::cmd::insert::chart_plan(cmd, p, &mut chart).map_err(|e| LocalError::BadParams(e.to_string()))?;
+    let value = serde_json::to_value(&chart).map_err(|e| LocalError::BadParams(format!("{cmd}: {e}")))?;
+    Ok((shape.id, Payload::ChartSet { chart: value }))
+}
+
+/// The whole chart a collaborative `insert.chart` creates: the sender runs the single-user plan
+/// on the chart its command would build and sends the resulting value, so every replica creates
+/// exactly that chart instead of running its own sample. A parameter the plan does not carry is
+/// refused rather than silently dropped (RFC §3.2.1).
+fn chart_insert(p: &Value, slide_key: Option<SlideKey>, op_id: &str, doc: &str) -> Result<OpEnvelope, LocalError> {
+    let mut chart = deckcraft_model::chart::Chart::default();
+    deckcraft_engine::cmd::insert::chart_plan("insert.chart", p, &mut chart).map_err(|e| LocalError::BadParams(e.to_string()))?;
+    for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
+        if !matches!(key.as_str(), "type" | "categories" | "series" | "title" | "rect") {
+            return Err(LocalError::Unsupported(format!("insert.chart {key}")));
+        }
+    }
+    let rect = match p.get("rect") {
+        None => None,
+        Some(value) => {
+            let array =
+                value.as_array().filter(|a| a.len() == 4).ok_or_else(|| LocalError::BadParams("insert.chart rect must be [x,y,w,h]".into()))?;
+            let mut r = [0.0; 4];
+            for (i, v) in array.iter().enumerate() {
+                r[i] = v.as_f64().ok_or_else(|| LocalError::BadParams("insert.chart rect values must be numbers".into()))?;
+            }
+            Some(r)
+        }
+    };
+    let chart = serde_json::to_value(&chart).map_err(|e| LocalError::BadParams(format!("insert.chart: {e}")))?;
+    Ok(OpEnvelope {
+        op_id: op_id.to_string(),
+        doc: doc.to_string(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: slide_key, ..Target::default() },
+        payload: Payload::ChartInsert { chart, rect },
+        history: None,
+    })
+}
+
+/// The commands that leave one object as a whole value: the rest of the table surface, a SmartArt
+/// graphic and a chart. `None` when the command is not one of them. The sender resolves the object
+/// from an explicit id or its own selection and sends the whole resulting value, so a replica's
+/// selection and its stale copy decide nothing (RFC §3.2.1, §6).
+fn whole_value(cmd: &str, p: &Value, slide: &Slide, st: &DocState) -> Option<Result<(ShapeId, Payload), LocalError>> {
+    table_value(cmd, p, slide, st).or_else(|| smartart_value(cmd, p, slide, st)).or_else(|| chart_value(cmd, p, slide, st))
 }
 
 /// The rest of the table surface, one final value per command: a style, six style options, one
@@ -2463,6 +2531,99 @@ mod tests {
         ));
         // A command that is not part of this slice is still refused as unsupported.
         assert!(matches!(normalize(&km, st, "smartArt.toText", &json!({"id": group.0}), "op", &doc), Err(LocalError::Unsupported(_))));
+    }
+
+    /// One slide with a chart (a column chart with explicit categories and one series).
+    fn chart_deck() -> (Session, String, SlideId, ShapeId) {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        let r = s
+            .apply_remote("insert.chart", &json!({"type": "column", "categories": ["Q1", "Q2"], "series": [{"name": "Sales", "values": [4.0, 5.0]}]}))
+            .expect("chart");
+        let id = ShapeId(r["id"].as_u64().expect("id") as u32);
+        let slide = s.doc().expect("doc").doc.slides[0].id;
+        (s, "d".into(), slide, id)
+    }
+
+    #[test]
+    fn chart_commands_normalise_to_one_whole_chart_value() {
+        let (s, doc, slide, chart) = chart_deck();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // A type change sends the whole chart: the new type and the data it now draws.
+        let ops = normalize(&km, st, "chart.type", &json!({"type": "pie"}), "op", &doc).expect("type");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(chart));
+        let Payload::ChartSet { chart: value } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(value["kind"], "pie");
+        assert_eq!(value["categories"], json!(["Q1", "Q2"]), "the data travels with the type");
+        assert_eq!(value["series"][0]["values"], json!([4.0, 5.0]));
+
+        // A data change keeps the type; options travel with the type and the data.
+        let ops =
+            normalize(&km, st, "chart.data", &json!({"categories": ["A", "B", "C"], "series": [{"name": "S", "values": [1, 2, 3]}]}), "op", &doc)
+                .expect("data");
+        let Payload::ChartSet { chart: value } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(value["kind"], "column");
+        assert_eq!(value["categories"], json!(["A", "B", "C"]));
+        assert_eq!(value["series"][0]["name"], "S");
+
+        let ops = normalize(&km, st, "chart.options", &json!({"title": "Revenue", "legend": "b"}), "op", &doc).expect("options");
+        let Payload::ChartSet { chart: value } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(value["title"], "Revenue");
+        assert_eq!(value["legend"], "b");
+        assert_eq!(value["categories"], json!(["Q1", "Q2"]), "the data travels with the options");
+    }
+
+    #[test]
+    fn a_chart_insertion_normalises_to_the_whole_chart_it_would_create() {
+        let (s, doc, _slide, _chart) = chart_deck();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(
+            &km,
+            st,
+            "insert.chart",
+            &json!({"type": "bar", "categories": ["A"], "series": [{"name": "S", "values": [2.5]}], "rect": [10, 20, 300, 200]}),
+            "op",
+            &doc,
+        )
+        .expect("insert");
+        assert_eq!(ops[0].kind, OpKind::Structural);
+        let Payload::ChartInsert { chart, rect } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(chart["kind"], "bar");
+        assert_eq!(chart["series"][0]["values"], json!([2.5]));
+        assert_eq!(*rect, Some([10.0, 20.0, 300.0, 200.0]));
+        // Without a box the operation still carries the author's chart; the box is the command's
+        // default on every replica.
+        let ops = normalize(&km, st, "insert.chart", &json!({"type": "line"}), "op", &doc).expect("default box");
+        assert!(matches!(ops[0].payload, Payload::ChartInsert { rect: None, .. }));
+        // A parameter the chart plan does not carry is refused rather than dropped.
+        assert!(matches!(normalize(&km, st, "insert.chart", &json!({"type": "line", "3d": true}), "op", &doc), Err(LocalError::Unsupported(_))));
+        assert!(normalize(&km, st, "insert.chart", &json!({"rect": [1, 2]}), "op", &doc).is_err());
+    }
+
+    #[test]
+    fn chart_refusals_happen_before_anything_is_sent() {
+        let (mut s, doc, _slide, chart) = chart_deck();
+        let rect = s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [400, 100, 50, 50]})).expect("rect")["id"].as_u64().unwrap();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        // A shape that is not a chart is refused for every command of the slice.
+        for cmd in ["chart.type", "chart.data", "chart.options"] {
+            assert!(matches!(normalize(&km, st, cmd, &json!({"id": rect}), "op", &doc), Err(LocalError::BadParams(_))), "{cmd}");
+        }
+        // A bad bin width and a bad text colour are refused here, before anything is queued.
+        assert!(matches!(normalize(&km, st, "chart.options", &json!({"id": chart.0, "binSize": -1}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(
+            normalize(&km, st, "chart.options", &json!({"id": chart.0, "textColor": "reddish"}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
     }
 
     #[test]

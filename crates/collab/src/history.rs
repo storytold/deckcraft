@@ -47,6 +47,11 @@ pub enum Image {
     /// ids and replaces any drawing an imported file brought, so the diagram value alone is not an
     /// exact image of the step.
     SmartArt(serde_json::Value),
+    /// A whole chart shape — its box and its `Chart` value — for a type, data or options edit.
+    /// The user-facing chart commands express only part of the model (a kept chart part and a
+    /// regenerated chart's own fields cannot be replayed from them), so the whole shape is the
+    /// exact image of the step.
+    Chart(serde_json::Value),
     /// One shape's animation steps, in order, as `animation.add`/`animation.remove` leave them.
     /// A file's animations carry preset ids, timings, colours and motion paths that the
     /// `animation.add` arguments cannot repeat, so the step image is the model list itself.
@@ -255,6 +260,9 @@ impl Image {
             // whole group keeps the child ids and any imported drawing, which the diagram value
             // alone cannot reproduce.
             Image::SmartArt(value) => Payload::ShapeField { field: ShapeField::SmartArt, value: value.clone() },
+            // The exact image of a chart step: the whole shape, because the chart commands carry
+            // neither the kept parts nor every field a regenerated chart can hold.
+            Image::Chart(value) => Payload::ShapeField { field: ShapeField::Chart, value: value.clone() },
             Image::Animation(steps) => Payload::ShapeAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
             Image::SlideAnimations(steps) => {
                 Payload::SlideAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? }

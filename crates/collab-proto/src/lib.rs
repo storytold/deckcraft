@@ -378,6 +378,19 @@ pub enum Payload {
     /// size-bounded and the layout, style and colours are checked before the first write, like
     /// any other hostile input. `target.shape` addresses the diagram group.
     SmartArtSet { diagram: serde_json::Value },
+    /// Inserts a chart from its **whole** value (`insert.chart`): the author's normaliser runs the
+    /// single-user command on the chart it would create and sends the resulting value, so every
+    /// replica creates exactly that chart (its type, data, options and sample-derived fields) and
+    /// no replica's own sample decides a field. `rect` is the final box in slide points; without
+    /// it the command places the same default box on every replica. Structural: a shape appears.
+    ChartInsert { chart: serde_json::Value, rect: Option<[f64; 4]> },
+    /// Replaces a chart's **whole** value (`chart.setWhole`) and is the confirmed command of
+    /// `chart.type`, `chart.data` and `chart.options`. The sender applies the command to the chart
+    /// it sees and sends the whole resulting `Chart` model value as JSON — type, categories,
+    /// series, options and any kept part — so every replica ends with the same chart and no
+    /// replica's stale copy decides a field. `target.shape` addresses the chart shape; the value
+    /// is size-bounded and checked before the first write, like any other hostile input.
+    ChartSet { chart: serde_json::Value },
     /// Puts back the exact value an undoable step replaced (ADR 0010). The server builds this
     /// from the actor's history and never a client from a user edit: `value` is the model value
     /// of `field` as JSON (`null` = unset), because the user-facing fill, line and format
@@ -536,6 +549,11 @@ pub enum ShapeField {
     /// with fresh ids and replaces any drawing an imported file brought, so the diagram value
     /// alone cannot reproduce the step; the group can.
     SmartArt,
+    /// The whole chart shape — its box and its `Chart` value (type, data, options and kept parts)
+    /// — for the undo of a type, data or options edit. The user-facing chart commands express only
+    /// part of the model and a kept chart part cannot be replayed from arguments, so the whole
+    /// shape is the exact image of the step. The value names the shape it restores.
+    Chart,
 }
 
 /// One shape value in a [`Payload::ShapeFields`] merge restore.
@@ -871,6 +889,8 @@ impl Payload {
             Payload::TableRowHeight { .. } => "table.rowHeight",
             Payload::TableOptions { .. } => "table.options",
             Payload::SmartArtSet { .. } => "smartArt.setDiagram",
+            Payload::ChartInsert { .. } => "insert.chart",
+            Payload::ChartSet { .. } => "chart.setWhole",
             Payload::ShapeField { .. } => "shape.setField",
             Payload::CellText { .. } => "shape.setCellBody",
             Payload::CellsText { .. } => "shape.setCellBodies",
@@ -1700,6 +1720,46 @@ mod tests {
         let restore = Payload::ShapeField { field: ShapeField::SmartArt, value: serde_json::json!({"id": 7}) };
         let text = serde_json::to_string(&restore).expect("encode");
         assert!(text.contains("\"field\":\"smart_art\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
+        assert_eq!(restore.command(), "shape.setField");
+    }
+
+    #[test]
+    fn a_chart_edit_travels_as_one_whole_chart_value() {
+        // A chart edit is one whole chart value: the type, the data and the options travel
+        // together, so every replica replaces the chart instead of merging arguments against its
+        // own copy.
+        let chart = Payload::ChartSet {
+            chart: serde_json::json!({
+                "kind": "pie",
+                "categories": ["Q1", "Q2"],
+                "series": [{"name": "Sales", "values": [4.2, 2.8]}],
+                "title": "Revenue",
+                "legend": "b",
+            }),
+        };
+        let text = serde_json::to_string(&chart).expect("encode");
+        assert!(text.contains("\"cmd\":\"chart_set\""), "{text}");
+        assert!(text.contains("\"kind\":\"pie\""), "{text}");
+        assert!(text.contains("\"values\":[4.2,2.8]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), chart);
+        assert_eq!(chart.command(), "chart.setWhole");
+
+        // An insertion carries the whole chart and, when the author's command named one, the box.
+        let insert = Payload::ChartInsert {
+            chart: serde_json::json!({"kind": "column", "categories": ["A"], "series": [{"name": "S", "values": [1.0]}]}),
+            rect: Some([10.0, 20.0, 300.0, 200.0]),
+        };
+        let text = serde_json::to_string(&insert).expect("encode");
+        assert!(text.contains("\"cmd\":\"chart_insert\""), "{text}");
+        assert!(text.contains("\"rect\":[10.0,20.0,300.0,200.0]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), insert);
+        assert_eq!(insert.command(), "insert.chart");
+
+        // The exact restore of a chart step names the whole shape, not the chart value.
+        let restore = Payload::ShapeField { field: ShapeField::Chart, value: serde_json::json!({"id": 9}) };
+        let text = serde_json::to_string(&restore).expect("encode");
+        assert!(text.contains("\"field\":\"chart\""), "{text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
         assert_eq!(restore.command(), "shape.setField");
     }

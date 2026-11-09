@@ -462,7 +462,8 @@ const MAX_TABLE_LINES: usize = 1_000;
 /// argument), so a lossless restore cannot go through them. The value is still hostile input:
 /// it is size-bounded and deserialised into the model type before anything is touched.
 fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
-    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text, cellText, table or smartArt)"))?;
+    let field =
+        str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text, cellText, table, smartArt or chart)"))?;
     let value = p.get("value").cloned().unwrap_or(Value::Null);
     let bytes = serde_json::to_vec(&value).map_err(|e| bad("shape.setField", format!("invalid value: {e}")))?;
     if bytes.len() > MAX_FIELD_JSON {
@@ -556,7 +557,26 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(())
             })
         }
-        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text, cellText, table or smartArt)"))),
+        // A whole chart: its type, data, options and every other field of the shape, for the exact
+        // restore of a chart step. `chart.type`/`chart.data`/`chart.options` express only part of
+        // the model (a kept chart part or its drawing cannot be replayed from arguments), and the
+        // step may also move the box with a regenerated chart, so the image is the whole shape —
+        // the same rule as a SmartArt group. The value names the shape it restores, so a stale or
+        // forged image cannot land on another shape.
+        "chart" => {
+            let shape = decode_field::<deckcraft_model::Shape>(&value, "chart")?.ok_or_else(|| bad("shape.setField", "a chart cannot be cleared"))?;
+            if !matches!(shape.kind, ShapeKind::Chart(_)) {
+                return Err(bad("shape.setField", "the value is not a chart"));
+            }
+            edit_shapes(s, p, "shape.setField", |sh| {
+                if shape.id != sh.id {
+                    return Err(bad("shape.setField", "the value names another shape"));
+                }
+                *sh = shape.clone();
+                Ok(())
+            })
+        }
+        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text, cellText, table, smartArt or chart)"))),
     }
 }
 

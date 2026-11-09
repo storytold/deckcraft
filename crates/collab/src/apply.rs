@@ -356,6 +356,10 @@ impl Adapter {
             // A SmartArt edit replaces the whole graphic: the outline, layout, style and colours
             // are one value, and the generated shapes are replaced with it.
             Payload::SmartArtSet { .. } => (None, Image::SmartArt(Value::Null)),
+            // A chart edit replaces the chart's value, and the exact image of the step is the whole
+            // shape: the user-facing chart commands carry only part of the model and a kept chart
+            // part cannot be replayed from them.
+            Payload::ChartSet { .. } => (None, Image::Chart(Value::Null)),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
@@ -373,6 +377,7 @@ impl Adapter {
             Payload::ShapeInsert { .. } | Payload::PictureInsert { .. } | Payload::MediaInsert { .. } => {
                 return self.capture_shape_insert(before, after, op);
             }
+            Payload::ChartInsert { .. } => return self.capture_shape_insert(before, after, op),
             Payload::ShapeDelete {} => return self.capture_shape_delete(before, after, op),
             Payload::Group {} => return self.capture_group(before, after, op),
             Payload::Ungroup {} => return self.capture_ungroup(before, after, op),
@@ -794,6 +799,9 @@ impl Adapter {
             // whole model keeps the children's ids and any imported file drawing, which the
             // diagram value alone cannot reproduce.
             Image::SmartArt(_) => Image::SmartArt(serde_json::to_value(shape).ok()?),
+            // A chart step records the whole shape: its box and its chart value (type, data,
+            // options and kept parts).
+            Image::Chart(_) => Image::Chart(serde_json::to_value(shape).ok()?),
             Image::Animation(_) => {
                 let slide = doc.slide(slide_id)?;
                 Image::Animation(slide.animations.iter().filter(|a| a.shape == shape_id).cloned().collect())
@@ -888,6 +896,21 @@ impl Adapter {
                     args["text"] = json!(text);
                 }
                 self.call(session, "shape.insert", args, head)
+            }
+            Payload::ChartInsert { chart, rect } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                // The whole chart is the author's, so the operation carries exactly the chart its
+                // command would leave; the size bound applies before the first write.
+                let bytes = serde_json::to_vec(chart).map_err(|e| Rejection::invalid(format!("invalid chart: {e}"), Some(head)))?;
+                if bytes.len() > MAX_CHART_JSON {
+                    return Err(Rejection::invalid("the chart is too large", Some(head)));
+                }
+                self.select_slide(session, before, slide, head)?;
+                let mut args = json!({"chart": chart});
+                if let Some(rect) = rect {
+                    args["rect"] = json!(rect);
+                }
+                self.call(session, "insert.chart", args, head)
             }
             Payload::PictureInsert { sha256, name, rect } => {
                 let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
@@ -1223,6 +1246,22 @@ impl Adapter {
                 self.select_shapes(session, before, slide, &[shape], head)?;
                 self.call(session, "smartArt.setDiagram", json!({"id": shape.0, "diagram": diagram}), head)
             }
+            Payload::ChartSet { chart } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                // Address the chart before the first write: a command that names a shape which is
+                // not a chart must not replace anything, whatever the value says.
+                let is_chart =
+                    before.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).is_some_and(|sh| matches!(sh.kind, ShapeKind::Chart(_)));
+                if !is_chart {
+                    return Err(Rejection::invalid("the shape is not a chart", Some(head)));
+                }
+                let bytes = serde_json::to_vec(chart).map_err(|e| Rejection::invalid(format!("invalid chart: {e}"), Some(head)))?;
+                if bytes.len() > MAX_CHART_JSON {
+                    return Err(Rejection::invalid("the chart is too large", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "chart.setWhole", json!({"id": shape.0, "chart": chart}), head)
+            }
             Payload::ShapeField { field, value } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 self.select_shapes(session, before, slide, &[shape], head)?;
@@ -1232,6 +1271,7 @@ impl Adapter {
                     ShapeField::Text => "text",
                     ShapeField::Table => "table",
                     ShapeField::SmartArt => "smartArt",
+                    ShapeField::Chart => "chart",
                 };
                 self.call(session, "shape.setField", json!({"field": name, "value": value, "ids": [shape.0]}), head)
             }
@@ -1272,7 +1312,7 @@ impl Adapter {
                     .map(|(shape, item)| {
                         json!({
                             "id": shape.0,
-                            "field": match item.field { ShapeField::Fill => "fill", ShapeField::Line => "line", ShapeField::Text => "text", ShapeField::Table => "table", ShapeField::SmartArt => "smartArt" },
+                            "field": match item.field { ShapeField::Fill => "fill", ShapeField::Line => "line", ShapeField::Text => "text", ShapeField::Table => "table", ShapeField::SmartArt => "smartArt", ShapeField::Chart => "chart" },
                             "value": item.value.clone(),
                         })
                     })
@@ -1838,6 +1878,7 @@ fn image_of_field(field: ShapeField) -> Image {
         ShapeField::Text => Image::Format(TextBody::default()),
         ShapeField::Table => Image::Table(deckcraft_model::Table::default()),
         ShapeField::SmartArt => Image::SmartArt(Value::Null),
+        ShapeField::Chart => Image::Chart(Value::Null),
     }
 }
 
@@ -1861,6 +1902,9 @@ fn smartart_group(doc: &Presentation, slide: SlideId, shape: ShapeId) -> Option<
 
 /// Longest diagram value a `smartArt.setDiagram` may carry, as JSON bytes.
 const MAX_SMARTART_JSON: usize = 128 * 1024;
+/// Longest chart value a `chart.setWhole` or a `chart_insert` may carry, as JSON bytes (a kept
+/// chart part travels inside the value; the engine applies the same bound).
+const MAX_CHART_JSON: usize = deckcraft_engine::cmd::insert::MAX_CHART_JSON;
 
 /// Which kind an operation must carry. Structure-changing operations are exclusive.
 /// Length of a text body in characters, counting one newline between paragraphs.
@@ -1999,10 +2043,12 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::TableColumnWidth { .. }
         | Payload::TableRowHeight { .. }
         | Payload::TableOptions { .. }
-        | Payload::SmartArtSet { .. } => OpKind::Command,
+        | Payload::SmartArtSet { .. }
+        | Payload::ChartSet { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
+        | Payload::ChartInsert { .. }
         | Payload::ShapeDelete {}
         | Payload::ShapeRestore { .. }
         | Payload::Reorder { .. }
@@ -2096,6 +2142,14 @@ mod tests {
         s.apply_remote("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 300, 300, 100]})).expect("table");
         let table = s.doc().expect("doc").doc.slides[0].shapes[2].id;
         s.apply_remote("text.set", &json!({"id": table.0, "cell": [0, 0], "text": "seed"})).expect("seed");
+        s
+    }
+
+    /// The same deck with a chart as the third shape.
+    fn chart_deck() -> Session {
+        let mut s = deck();
+        s.apply_remote("insert.chart", &json!({"type": "column", "categories": ["Q1", "Q2"], "series": [{"name": "Sales", "values": [4.0, 5.0]}]}))
+            .expect("chart");
         s
     }
 
@@ -3103,6 +3157,116 @@ mod tests {
         let err = ad.undo(&s, 2, "a", "u-1").expect_err("b changed the graphic after Alice");
         assert_eq!(err.code, RejectCode::UndoConflict);
         assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(1), "a refused undo moves nothing");
+    }
+
+    #[test]
+    fn two_clients_converge_on_a_chart_value_and_its_undo_restores_the_whole_shape() {
+        let (mut a, mut b) = (chart_deck(), chart_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, shape) = key_of(&aa, &doc_of(&a), 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+        let before = doc_of(&a).slides[0].shapes[2].clone();
+
+        // One whole final chart value: a pie with new data and captions travels together, so no
+        // replica merges the arguments against its own copy.
+        let chart = json!({
+            "kind": "pie",
+            "categories": ["A", "B", "C"],
+            "series": [{"name": "S", "values": [1.0, 2.0, 3.0]}],
+            "title": "Revenue",
+            "legend": "b",
+        });
+        let envelope = op(OpKind::Command, 0, target, Payload::ChartSet { chart });
+        aa.apply(&mut a, 0, "a", &envelope).expect("a edits the chart");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed step");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        let after = doc_of(&a).slides[0].shapes[2].clone();
+        let ShapeKind::Chart(c) = &after.kind else { panic!("shape 2 is not a chart") };
+        assert_eq!(c.kind, deckcraft_model::chart::ChartType::Pie);
+        assert_eq!(c.categories, ["A", "B", "C"]);
+        assert_eq!(c.title.as_deref(), Some("Revenue"));
+        assert_eq!(c.series.len(), 1);
+
+        // The undo image is the whole shape: one undo puts the prior type, data and options back
+        // on both replicas, and the redo reapplies the exact stated value.
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::Chart, .. }), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a applies the undo");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], before, "the whole chart shape came back");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 2, "a", &redo).expect("a applies the redo");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], after);
+    }
+
+    #[test]
+    fn a_chart_step_is_refused_on_a_plain_shape_and_an_undo_after_a_foreign_edit() {
+        let mut s = chart_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, chart) = key_of(&ad, &doc, 2);
+        let (_, rect) = key_of(&ad, &doc, 0);
+        let value = json!({"kind": "line", "categories": ["A"], "series": [{"name": "S", "values": [1.0]}]});
+        let plain = op(
+            OpKind::Command,
+            0,
+            Target { slide: Some(slide.clone()), shape: Some(rect), ..Target::default() },
+            Payload::ChartSet { chart: value.clone() },
+        );
+        let err = ad.apply(&mut s, 0, "a", &plain).expect_err("a rectangle is not a chart");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "a refusal records no step");
+
+        // A foreign edit of the same chart after Alice's step refuses her undo.
+        let target = Target { slide: Some(slide), shape: Some(chart), ..Target::default() };
+        let first = op(OpKind::Command, 0, target.clone(), Payload::ChartSet { chart: value });
+        ad.apply(&mut s, 0, "a", &first).expect("a edits the chart");
+        let mut second = op(
+            OpKind::Command,
+            1,
+            target,
+            Payload::ChartSet { chart: json!({"kind": "bar", "categories": ["B"], "series": [{"name": "T", "values": [2.0]}]}) },
+        );
+        second.op_id = "op-2".into();
+        ad.apply(&mut s, 1, "b", &second).expect("b edits the same chart");
+        let err = ad.undo(&s, 2, "a", "u-1").expect_err("b changed the chart after Alice");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+    }
+
+    #[test]
+    fn a_chart_insertion_reaches_both_replicas_as_the_same_shape() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let chart = json!({"kind": "bar", "categories": ["A", "B"], "series": [{"name": "S", "values": [1.0, 2.0]}]});
+        let target = Target { slide: Some(key_of(&aa, &doc_of(&a), 0).0), ..Target::default() };
+        let envelope = op(OpKind::Structural, 0, target, Payload::ChartInsert { chart, rect: Some([50.0, 60.0, 300.0, 200.0]) });
+        aa.apply(&mut a, 0, "a", &envelope).expect("a inserts the chart");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed insertion");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same chart");
+        let inserted = &doc_of(&a).slides[0].shapes[2];
+        let ShapeKind::Chart(c) = &inserted.kind else { panic!("the inserted shape is a chart") };
+        assert_eq!(c.kind, deckcraft_model::chart::ChartType::Bar);
+        assert_eq!(c.categories, ["A", "B"]);
+        assert_eq!(c.series[0].values, [Some(1.0), Some(2.0)]);
+        let xfrm = inserted.xfrm.expect("box");
+        assert_eq!((xfrm.x, xfrm.y, xfrm.w, xfrm.h), (50.0, 60.0, 300.0, 200.0));
+
+        // Its undo removes the chart again as one structural step, on both replicas.
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo the insertion");
+        aa.apply(&mut a, 1, "a", &undo).expect("a applies the undo");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes.len(), 2, "the chart is gone");
     }
 
     #[test]

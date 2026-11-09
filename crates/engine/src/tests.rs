@@ -4233,6 +4233,74 @@ fn a_smartart_edit_is_one_whole_value_and_its_exact_restore_brings_the_group_bac
 }
 
 #[test]
+fn a_chart_edit_is_one_whole_value_and_its_exact_restore_brings_the_chart_back() {
+    let mut s = session();
+    let r = s
+        .execute("insert.chart", &json!({"type": "column", "categories": ["Q1", "Q2"], "series": [{"name": "Sales", "values": [4.0, 5.0]}]}))
+        .unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(id).unwrap().clone();
+    let chart_of = |s: &Session| match &s.doc().unwrap().shape(id).unwrap().kind {
+        deckcraft_model::ShapeKind::Chart(c) => (**c).clone(),
+        _ => panic!("the shape is not a chart"),
+    };
+    let c = chart_of(&s);
+    assert_eq!(c.kind, deckcraft_model::chart::ChartType::Column);
+    assert_eq!(c.categories, ["Q1", "Q2"]);
+    assert_eq!(c.series[0].values, [Some(4.0), Some(5.0)]);
+
+    // A user edit changes one field; a whole value replaces type, data and options in one write.
+    s.execute("chart.type", &json!({"id": id.0, "type": "pie"})).unwrap();
+    assert_eq!(chart_of(&s).kind, deckcraft_model::chart::ChartType::Pie);
+    let value = json!({
+        "kind": "line",
+        "categories": ["A", "B", "C"],
+        "series": [{"name": "S", "values": [1.0, 2.0, 3.0]}],
+        "title": "Revenue",
+        "legend": "b",
+    });
+    s.execute("chart.setWhole", &json!({"id": id.0, "chart": value})).unwrap();
+    let after = s.doc().unwrap().shape(id).unwrap().clone();
+    let c = chart_of(&s);
+    assert_eq!(c.kind, deckcraft_model::chart::ChartType::Line);
+    assert_eq!(c.categories, ["A", "B", "C"]);
+    assert_eq!(c.title.as_deref(), Some("Revenue"));
+    assert_ne!(after, before);
+
+    // The exact image of the shape puts the whole chart back: an undo must not lose the type the
+    // chart had or a kept part the chart commands cannot replay.
+    let image = serde_json::to_value(&before).unwrap();
+    s.execute("shape.setField", &json!({"ids": [id.0], "field": "chart", "value": image})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(id).unwrap(), &before);
+
+    // Hostile values are refused before anything is written.
+    let refuse = |s: &mut Session, p: serde_json::Value| {
+        let e = s.execute("chart.setWhole", &p).unwrap_err().to_string();
+        assert!(e.contains("chart.setWhole"), "{e}");
+    };
+    refuse(&mut s, json!({"id": id.0, "chart": {"kind": "nope"}}));
+    refuse(&mut s, json!({"id": id.0, "chart": "not a chart"}));
+    let many: Vec<_> = (0..5000).map(|_| json!({"name": "S", "values": [1.0]})).collect();
+    refuse(&mut s, json!({"id": id.0, "chart": {"kind": "column", "series": many}}));
+    let big = "x".repeat(200 * 1024);
+    refuse(&mut s, json!({"id": id.0, "chart": {"kind": "column", "title": big}}));
+    assert_eq!(chart_of(&s).kind, deckcraft_model::chart::ChartType::Column, "a refusal writes nothing");
+
+    // A chart value cannot be set on a plain shape, and a shape image that names another shape
+    // cannot replace this chart.
+    let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("chart.setWhole", &json!({"ids": [rect], "chart": {"kind": "column"}})).unwrap_err().to_string();
+    assert!(e.contains("not a chart"), "{e}");
+    let mut wrong = before.clone();
+    wrong.id = deckcraft_model::ShapeId(rect as u32);
+    let e = s
+        .execute("shape.setField", &json!({"ids": [id.0], "field": "chart", "value": serde_json::to_value(&wrong).unwrap()}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("another shape"), "{e}");
+}
+
+#[test]
 fn smartart_round_trips_through_pptx_as_a_diagram() {
     let mut s = session();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
