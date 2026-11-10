@@ -5,8 +5,9 @@ commit and its docs commit): **optimistic preview** (RFC §3) — with `DECKCRAF
 one local operation is shown before the room answers, settled by `applied`, rolled back exactly on
 a refusal and abandoned for a `resync` when another participant's step lands in between; the wire
 carries an optional `preview` local id that the server never stores, so a client without it behaves
-exactly as before. On top of `1b057cbf` is a local review pass: the CodeRabbit findings of #2012
-(11 Major + 7 Minor) triaged and fixed, with the table in §PR publication. `collab/pr14` is branched from `collab/pr13` at `baa845ec` (the
+exactly as before. On top of `1b057cbf` are two review-pass commits — `5b6fcfcd` (code) and
+`9b43c611` (docs) — pushed as the new PR head `9b43c611a`: the CodeRabbit findings of #2012
+(11 Major + 7 Minor) are triaged and fixed, with the table in §PR publication. `collab/pr14` is branched from `collab/pr13` at `baa845ec` (the
 chunked-base slice and its docs commit): Save in a live desktop session now commits the room —
 one commit in flight, the document stays dirty until `commit-result`, a refusal keeps the edits
 and offers a copy — with its docs commit on top. `collab/pr13`, branched from `collab/pr12` at
@@ -82,11 +83,16 @@ description is [`pr10.md`](pr10.md).
 ## PR publication (2026-11-10)
 
 **[PR #2012](https://github.com/storytold/deckcraft/pull/2012)** is open from
-`copoka/deckcraft:collab/pr15` (head `1b057cbf`) into `storytold/deckcraft:main` and is **ready**
-(not a draft); its body is [`pr10.md`](pr10.md). GitHub reports `MERGEABLE` at `1b057cbf`; the PR
-carries 100 commits, 104 ahead of `origin/main`. The review pass below is two local commits —
-`5b6fcfcd` (code) and this docs commit — and is **not pushed**, so the PR head is unchanged;
-pushing it and merging are human steps.
+`copoka/deckcraft:collab/pr15` (head `9b43c611a`) into `storytold/deckcraft:main` and is **ready**
+(not a draft); its body is [`pr10.md`](pr10.md). GitHub reports `MERGEABLE` at `9b43c611a`; the PR
+carries 106 commits, 97 files, +39 834/−522, and is 106 ahead of `origin/main`. The review pass
+below is two commits — `5b6fcfcd` (code) and `9b43c611` (docs) — **pushed** on 2026-11-10
+(`git ls-remote fork refs/heads/collab/pr15` → `9b43c611a`), so the PR head is `9b43c611a`.
+The **gate on that head is not green**: the four workflow runs (CI, House rules, Nix, SonarCloud)
+are `completed / action_required` (created 17:19:49Z) — they wait for a maintainer's approval —
+and CodeRabbit's check run is `completed / success` but its second review left five actionable
+findings untriaged (§Second review). Merging is a human step. This STATUS correction is a local
+commit on top of `9b43c611a` and is **not pushed**, so the fork head stays `9b43c611a`.
 
 [PR #1998](https://github.com/storytold/deckcraft/pull/1998) still points at
 `copoka/deckcraft:collab/pr11` (head `6e9d10e7`) and is superseded by #2012.
@@ -95,10 +101,10 @@ pushing it and merging are human steps.
 
 ### CodeRabbit triage on #2012 (`1b057cbf`, 11 Major + 7 Minor)
 
-Every finding was checked against the code first. All 18 are addressed in this pass: 13 code
-fixes with a regression test where one is meaningful, 4 documentation corrections and one
-deliberately documented behaviour (the journal order). "Fixed" means the code changed in this
-local commit; nothing is pushed.
+Every finding was checked against the code first. All 18 are addressed in `5b6fcfcd` (code) and
+`9b43c611` (docs), now the PR head: 13 code fixes with a regression test where one is meaningful,
+4 documentation corrections and one deliberately documented behaviour (the journal order).
+"Fixed" means the change is in those two commits; they are pushed as `9b43c611a`.
 
 | # | Finding (path:line) | Severity | Disposition |
 |---|---|---|---|
@@ -121,13 +127,27 @@ local commit; nothing is pushed.
 | 17 | `docs/collab/production.md:104` — token validation overstated (`sessionId`, `app`/`fileId`) | Minor | **Fixed in docs**: signature/`exp`/`sub`/`aud` checked, `app`/`fileId` only when present, session id not checked |
 | 18 | `docs/collab/study.md:281` — option A/B labels differ from `options.md` | Minor | **Fixed in docs**: an explicit mapping note (study B = options A) |
 
-Verification of this pass on the `agents` host, no push: `cargo fmt --all` clean; `cargo clippy
+Verification of this pass on the `agents` host, before the push: `cargo fmt --all` clean; `cargo clippy
 --workspace --all-targets -- -D warnings` clean; `collab` 283 + 8; `collab-server` 13 unit + 5
 commit + 5 gates + 18 socket; `engine` 594 + 1 ignored (+ 6 + 8 integration); `pptx` 69 + 5 + 145;
 `ui-egui collab::` 24 and `host_save` 12; `deckcraft-web` 6; `xtask layers` 32 crates. The whole
 `ui-egui` library run has one environment failure — `ime_tests::korean_composes_in_the_notes_pane`
 needs a CJK face and the build host has no `craft-fonts` — unrelated to this diff and present
 before it.
+
+### Second CodeRabbit review on the new head (`9b43c611a`)
+
+The review posted at 17:33Z on `9b43c611a` reports five actionable comments and is **not triaged**;
+its check run is `success`, so it does not gate the PR. Four are Major:
+`apps/deckcraft-collab-server/src/lib.rs:846` (the authorisation of the commit path),
+`docs/collab/production.md:348` (the claim that a journal replay restores undo history — the replay
+calls `apply_confirmed`, which does not rebuild actor history), `docs/collab/production.md:353`
+(the recovery procedure — recreating a room does not necessarily reopen the cabinet file, and a
+damaged journal answers `500`), and `crates/engine/src/tools/drag.rs:225-240` (shape drags bypass
+the ordered path: a viewer's drag moves locally and an editor's release submits nothing). One is
+Minor: `crates/collab/src/client.rs:441` (an operation queued across a resync). A typo nit outside
+the diff ("SafeArt") is fixed in this STATUS correction. These are the first items of the next
+session (§Next session, item 2).
 
 This file is the handoff between sessions: what is done, how it was verified, what is not done,
 and what to do next. Update it at the end of every collaboration session.
@@ -1008,9 +1028,10 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `1b057cbf`), rebased onto `origin/main`; the review pass is local and unpushed | [`pr10.md`](pr10.md); merge and the push are human decisions |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `9b43c611a`), rebased onto `origin/main`; the review pass is pushed and is the PR head; the head's four CI runs are `action_required` (awaiting approval) | [`pr10.md`](pr10.md); merge is a human decision |
 
-Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`1b057cbf` + a local commit, on
+Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
+pass pushed as `9b43c611a`, on
 `agents`, rust 1.99.1): `cargo fmt --all` clean; `cargo clippy --workspace --all-targets -- -D
 warnings` clean (EXIT=0); `cargo test -p deckcraft-collab` 283 + 8 passed / 0 failed / 0 ignored
 (EXIT=0); `cargo test -p deckcraft-collab-server` 13 unit + 5 commit + 5 gates (17.1 s,
@@ -1288,11 +1309,14 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `1b057cbf`,
-   `MERGEABLE`); the CodeRabbit triage in §PR publication is a local commit on top and is not
-   pushed, so the head stays `1b057cbf` until a human pushes. #1998 and #1975 are superseded but
-   still open. Pushing, closing them and merging are human steps. Do not touch CI and do not
-   mention agents.
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `9b43c611a`,
+   `MERGEABLE`, 106 commits, 97 files, +39 834/−522); the review pass (`5b6fcfcd` + `9b43c611`)
+   is pushed and is the head. The gate on that head is **not green**: CI, House rules, Nix and
+   SonarCloud wait in `action_required` for a maintainer's approval, and CodeRabbit's second
+   review left five actionable findings untriaged (§Second review). A STATUS correction follows
+   the head locally and is not pushed. #1998 and #1975 are superseded but still open. Pushing
+   that correction, closing them and merging are human steps. Do not touch CI and do not mention
+   agents.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
@@ -1347,20 +1371,23 @@ token from the cabinet.
   no longer share one queue; the read-only and collab-queue gates apply only at `depth == 0` so a
   remote list lead formats in place; the model camera's `pos`/`lookAt`/`up` and a SmartArt picture
   crop reject non-finite values; a chunk size from the cabinet uses checked arithmetic;
-  `WsTransport::Drop` detaches instead of blocking on a connect without a timeout; a SafeArt node
+  `WsTransport::Drop` detaches instead of blocking on a connect without a timeout; a SmartArt node
   picture's opacity round-trips as `a:alphaModFix`; `file.save` reports a refused commit as a
   refusal; a focus loss with no changed value no longer runs a cell-size command.
 - **Docs.** `production.md` states the token validation exactly (signature/`exp`/`sub`/`aud`;
   `app`/`fileId` only when present; no session-id check), the journal-after-apply durability
   limit, the 64 MiB assembled-base ceiling and the wider replay preload. `study.md` maps its
   A/B labels to `options.md`.
-- **Gates on `agents`, no push.** fmt clean; clippy `-D warnings` clean; `collab` 283 + 8;
+- **Gates on `agents`, run before the push.** fmt clean; clippy `-D warnings` clean; `collab` 283 + 8;
   `collab-server` 13 unit + 5 commit + 5 gates + 18 socket; `engine` 594 + 1 ignored; `pptx`
   69 + 5 + 145; `ui-egui collab::` 24 and `host_save` 12; `deckcraft-web` 6; `xtask layers` 32
   crates. The full `ui-egui` library run still has the Korean IME test failing for a missing CJK
   face on the build host (no `craft-fonts`), before and after this diff.
-- Commits `5b6fcfcd` (code and tests) + this docs commit on `collab/pr15`; PR head stays
-  `1b057cbf`. Nothing pushed, CI untouched.
+- Commits `5b6fcfcd` (code and tests) + `9b43c611` (docs) on `collab/pr15`, **pushed**: the fork
+  branch and the PR head are `9b43c611a` (106 commits, 97 files, +39 834/−522). CI was not
+  touched; the head's four runs are `action_required` (awaiting approval), and CodeRabbit's
+  second review on `9b43c611a` left five actionable findings for the next session. The STATUS
+  correction that records this is local and unpushed.
 
 ### 2026-11-10 — optimistic preview: a local edit shown before the room confirms it
 
