@@ -23,6 +23,8 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+#[cfg(target_os = "macos")]
+mod panel_menu;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
@@ -105,9 +107,6 @@ fn save_prefs(app: &SlideApp) {
         deckcraft_ui_egui::settings::save(&dir, &app.ui, &app.session.prefs);
     }
 }
-
-#[cfg(target_os = "macos")]
-mod panel_menu;
 
 /// Run a blocking system file panel; on macOS with the Edit menu its text boxes need.
 fn with_panel_menu<T>(pick: impl FnOnce() -> T) -> T {
