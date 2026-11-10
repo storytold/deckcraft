@@ -79,7 +79,7 @@ pub(super) fn wheel_slide_target(events: &[egui::Event], current: usize, slides:
     handled.then_some(target)
 }
 
-pub(super) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
+pub(crate) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
     events.iter().fold(egui::Vec2::ZERO, |sum, event| match event {
         egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, modifiers, .. } if !modifiers.ctrl && !modifiers.command => sum + *delta,
         _ => sum,

@@ -30,8 +30,8 @@ pub use ime::ime_area;
 use ime::ime_output;
 #[cfg(test)]
 use input::resize_cursor;
-pub(crate) use input::{page_flick, trackpad_twist};
-use input::{pointer, trackpad_scroll, wheel_slide_target};
+pub(crate) use input::{page_flick, trackpad_scroll, trackpad_twist};
+use input::{pointer, wheel_slide_target};
 use media::{gif_buttons, media_bar, media_frames};
 use overlays::overlays;
 #[cfg(test)]
@@ -299,7 +299,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             vec2(w as f32 * scale, h as f32 * scale),
         );
         let mut budget = 2;
-        if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (r.width() * ppp).round().max(1.0) as u32, &mut budget) {
+        if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (r.width() * ppp).round().max(1.0) as u32, app.ui.grayscale, &mut budget) {
             painter.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
     }

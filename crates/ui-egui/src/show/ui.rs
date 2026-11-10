@@ -80,6 +80,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         && !show.reading
         && let Some(host) = app.services.presenter.as_mut()
     {
+        if show.remote_opened && show.presenter_grid && !host.is_open() {
+            // A grid left open in the closed popup would hold auto-advance for the rest of the show.
+            show.presenter_grid = false;
+        }
         if !show.remote_opened {
             show.remote_opened = true;
             if let Err(message) = host.open() {
@@ -94,10 +98,19 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     show.zoom_arm = false;
                 }
                 crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
-                    if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
+                    if let Some(key) = egui::Key::from_name(&name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
-                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
+                        // The popup is the Presenter View: G opens All slides there, not on the audience screen (#1866).
+                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], true).0;
                     }
+                }
+                crate::presenter::Command::Goto { slide } if show.presenter_grid && slide < doc.slides.len() => {
+                    show.presenter_grid = false;
+                    show.blank = None;
+                    show.zoom = None;
+                    show.zoom_arm = false;
+                    let action = show.state.goto(&doc, slide);
+                    out.keep &= show.apply(action, &doc, now);
                 }
                 _ => {}
             }
@@ -143,6 +156,20 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 );
                 show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
             }
+            if !show.presenter_grid {
+                show.remote_grid.clear();
+            } else if show.remote_grid.len() < grid_indices(doc.slides.len()).len() {
+                // A few thumbnails per update keep the audience window responsive on the web.
+                for i in grid_indices(doc.slides.len()).into_iter().skip(show.remote_grid.len()).take(4) {
+                    // At most 96 px on the long side: 48 thumbnails stay well under the popup's message limit.
+                    let (w, h) = (doc.slide_size.width.max(1.0), doc.slide_size.height.max(1.0));
+                    let scale = REMOTE_THUMB / w.max(h);
+                    let size = (((w * scale).round() as u32).max(1), ((h * scale).round() as u32).max(1));
+                    let image = deckcraft_render::render_slide(&doc, i, &RenderOpts { scale, size: Some(size), ..Default::default() });
+                    let preview = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false));
+                    show.remote_grid.push(preview.unwrap_or(crate::presenter::Preview { width: 1, height: 1, rgba: vec![0; 4] }));
+                }
+            }
             host.update(crate::presenter::Snapshot {
                 slide: show.state.slide,
                 total: doc.slides.len(),
@@ -152,10 +179,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 paused: show.timer.paused(),
                 notes_px: show.notes_px,
                 blank: show.blank_name().map(str::to_owned),
-                grid: show.grid,
+                grid: show.presenter_grid,
                 zoom_armed: show.zoom_arm,
-                current: show.remote_preview.clone(),
-                next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next).map(|(_, image)| image.clone()),
+                // The grid replaces both previews in the popup; leaving them out keeps one message small.
+                current: show.remote_preview.clone().filter(|_| !show.presenter_grid),
+                next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next && !show.presenter_grid).map(|(_, image)| image.clone()),
+                slides: show.presenter_grid.then(|| show.remote_grid.clone()),
             });
             show.remote_sent = now;
         }
@@ -163,6 +192,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     finish(app, show, &f, out.keep);
 }
+
+/// Longest side of an All slides thumbnail sent to the web presenter window (#1866).
+const REMOTE_THUMB: f64 = 96.0;
 
 fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     if show.started {
@@ -301,8 +333,8 @@ fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32, mut visit: impl Fn
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     let Fr { ctx, doc, now, srect, pointer, .. } = *f;
-    // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
-    // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
+    // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286).
+    // Both navigation paths below ignore these modified wheel events.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
     if !show.grid
         && !show.ended
@@ -343,9 +375,10 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
             return;
         }
     }
-    // A trackpad swipe turns the page. The pen is drawing, so a flick there stays on the slide.
+    // Read only raw Point events: egui can emit a Line-wheel smoothing tail even after
+    // the cooldown, especially on a stalled frame. The pen ignores swipes while drawing.
     if !show.pen
-        && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
+        && let Some(next) = crate::canvas::page_flick(ctx.input(|i| crate::canvas::trackpad_scroll(&i.events)))
         && now - show.last_swipe > 0.35
     {
         show.last_swipe = now;
@@ -910,28 +943,29 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
 mod wheel_tests {
     use super::*;
 
-    fn wheel(show: &mut Show, doc: &std::sync::Arc<Presentation>, deltas: &[f32]) -> bool {
-        let ctx = egui::Context::default();
-        let input = egui::RawInput {
-            events: deltas.iter().map(|&y| egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Line,
-                delta: vec2(0.0, y),
-                phase: egui::TouchPhase::Move,
-                source: egui::MouseWheelSource::Wheel,
-                modifiers: egui::Modifiers::NONE,
-            }).collect(),
-            ..Default::default()
-        };
+    fn wheel_event(unit: egui::MouseWheelUnit, y: f32, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::MouseWheel { unit, delta: vec2(0.0, y), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Unknown, modifiers }
+    }
+
+    fn wheel_frame(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, events: Vec<egui::Event>) -> bool {
+        let input = egui::RawInput { time: Some(now), events, ..Default::default() };
         let mut out = Out { keep: true, actions: vec![] };
         ctx.run_ui(input, |ui| {
             let full = ui.max_rect();
-            let f = Fr {
-                ctx: ui.ctx(), doc, doc_uid: 0, now: 1.0, full, srect: full,
-                clicked: false, secondary: false, pointer: None,
-            };
+            let f = Fr { ctx: ui.ctx(), doc, doc_uid: 0, now, full, srect: full, clicked: false, secondary: false, pointer: Some(full.center()) };
             handle_wheel_and_swipe(show, &f, &mut out);
-        }).textures_delta.clear();
+            for action in out.actions.drain(..) {
+                out.keep &= show.apply(action, doc, now);
+            }
+        })
+        .textures_delta
+        .clear();
         out.keep
+    }
+
+    fn wheel(show: &mut Show, doc: &std::sync::Arc<Presentation>, deltas: &[f32]) -> bool {
+        let events = deltas.iter().map(|&y| wheel_event(egui::MouseWheelUnit::Line, y, egui::Modifiers::NONE)).collect();
+        wheel_frame(&egui::Context::default(), show, doc, 1.0, events)
     }
 
     #[test]
@@ -955,8 +989,12 @@ mod wheel_tests {
         let mut doc = session.active().unwrap().doc.clone();
         let id = doc.slides[0].shapes[0].id;
         std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut doc).slides[0]).animations = vec![deckcraft_model::Animation {
-            shape: id, class: deckcraft_model::AnimClass::Media, effect: "play".into(),
-            delay_ms: 2000, duration_ms: 5000, ..Default::default()
+            shape: id,
+            class: deckcraft_model::AnimClass::Media,
+            effect: "play".into(),
+            delay_ms: 2000,
+            duration_ms: 5000,
+            ..Default::default()
         }];
         let mut show = Show::new(&doc, 0, false, false);
         let action = show.state.next(&doc);
@@ -965,5 +1003,55 @@ mod wheel_tests {
         assert!(wheel(&mut show, &doc, &[-2.0]));
         assert_eq!(show.state.slide, 1);
         assert_eq!(show.media_cues, [(id, "play".to_string())], "the interrupted step cues the original slide's media");
+    }
+
+    #[test]
+    fn stalled_line_wheel_residual_does_not_swipe_but_later_point_input_does() {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..4 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        let doc = session.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, false);
+        let ctx = egui::Context::default();
+        ctx.options_mut(|o| o.input_options.line_scroll_speed = 40.0);
+        assert!(wheel_frame(&ctx, &mut show, &doc, 0.99, vec![]));
+        let line = wheel_event(egui::MouseWheelUnit::Line, -2.0, egui::Modifiers::NONE);
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.0, vec![line]));
+        assert_eq!(show.state.slide, 2, "both wheel steps apply immediately");
+
+        // No intermediate frames drain egui's smoothing before the swipe cooldown expires.
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.5, vec![]));
+        assert_eq!(show.state.slide, 2, "a smoothed wheel tail is not another physical gesture");
+
+        let point = || wheel_event(egui::MouseWheelUnit::Point, -24.0, egui::Modifiers::NONE);
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.6, vec![point()]));
+        assert_eq!(show.state.slide, 3, "real Point input still swipes after the wheel");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.7, vec![point()]));
+        assert_eq!(show.state.slide, 3, "the Point gesture retains its cooldown");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 2.1, vec![point()]));
+        assert_eq!(show.state.slide, 4, "a later Point gesture advances again");
+    }
+
+    #[test]
+    fn point_zoom_modifiers_do_not_swipe_and_pen_ignores_point_input() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let doc = session.active().unwrap().doc.clone();
+        for modifiers in [egui::Modifiers::CTRL, egui::Modifiers::COMMAND] {
+            let mut show = Show::new(&doc, 1, false, false);
+            let ctx = egui::Context::default();
+            let point = wheel_event(egui::MouseWheelUnit::Point, 80.0, modifiers);
+            assert!(wheel_frame(&ctx, &mut show, &doc, 1.0, vec![point]));
+            assert!(show.zoom_view().is_some(), "{modifiers:?}: Point input still zooms");
+            assert!(wheel_frame(&ctx, &mut show, &doc, 1.5, vec![]));
+            assert_eq!(show.state.slide, 1, "{modifiers:?}: zoom and its tail do not navigate");
+
+            show.set_pen(true);
+            let point = wheel_event(egui::MouseWheelUnit::Point, -24.0, egui::Modifiers::NONE);
+            assert!(wheel_frame(&ctx, &mut show, &doc, 2.0, vec![point]));
+            assert_eq!(show.state.slide, 1, "drawing ignores Point swipes");
+            assert!(!show.ended, "drawing cannot enter the end screen");
+        }
     }
 }
