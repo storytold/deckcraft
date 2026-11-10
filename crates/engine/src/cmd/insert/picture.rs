@@ -264,7 +264,8 @@ pub(super) fn model3d(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let rect = rect_param(p, "rect").unwrap_or_else(|| default_rect(s, 320.0, 240.0));
     let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad(cmd, NO_ID_SPACE)))?;
-    let shape = Shape { xfrm: Some(rect), kind: ShapeKind::Model3d { media, poster: None, camera: None }, descr: name, ..Default::default() };
+    let shape =
+        Shape { xfrm: Some(rect), kind: ShapeKind::Model3d { media, poster: None, camera: None, scene: None }, descr: name, ..Default::default() };
     let id = add_shape(s, cmd, shape, true)?;
     Ok(json!({"id": id, "contentType": ct}))
 }

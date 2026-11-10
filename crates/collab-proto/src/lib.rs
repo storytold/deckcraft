@@ -222,6 +222,12 @@ pub enum Payload {
     /// from the others, so the operation carries the resulting view and nothing else (the same
     /// rule as `transition.set`, RFC §3.2.1). The undo image is the whole model shape.
     Model3dCamera { camera: Option<ModelCamera> },
+    /// Changes one 3-D model's scene (`model3d.scene`): the whole final scene — one light (type,
+    /// direction, intensity and a spot's angle) and the environment (ambient and an optional
+    /// background) — or `None` for the reader's default scene. There is no relative form: a
+    /// replica that merged "dimmer" or "turn the light 10°" against its own scene would drift
+    /// away from the others. The undo image is the whole model shape.
+    Model3dScene { scene: Option<ModelScene> },
     /// Replaces one shape's fill with a final value. Absolute only: no "next theme colour", no
     /// transparency relative to an inherited style.
     ShapeFill { fill: FillSpec },
@@ -603,11 +609,11 @@ pub enum ShapeField {
     /// part of the model and a kept chart part cannot be replayed from arguments, so the whole
     /// shape is the exact image of the step. The value names the shape it restores.
     Chart,
-    /// The whole 3-D model shape — its box, its media part, its poster and its camera — for the
-    /// undo of a `model3d.camera` step. The command carries final values, but the image is the
-    /// whole shape: a restore must not depend on the reader's default view, and the whole value
-    /// is what turns a foreign edit of the model into an `undo-conflict`. The value names the
-    /// shape it restores.
+    /// The whole 3-D model shape — its box, its media part, its poster, its camera and its
+    /// scene — for the undo of a `model3d.camera` or `model3d.scene` step. The commands carry
+    /// final values, but the image is the whole shape: a restore must not depend on the reader's
+    /// default view or lighting, and the whole value is what turns a foreign edit of the model
+    /// into an `undo-conflict`. The value names the shape it restores.
     Model3d,
 }
 
@@ -668,6 +674,51 @@ pub struct ModelCamera {
     pub target: [f64; 3],
     pub up: [f64; 3],
     pub fov: f64,
+}
+
+/// What kind of light a 3-D model's scene is lit by. The wire uses the human-readable name so a
+/// frame reads like the value it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelLightKind {
+    Directional,
+    Point,
+    Spot,
+}
+
+/// One light in a 3-D model's scene, as it travels on the wire: the type, a non-zero direction
+/// vector, the intensity as a fraction of full power and — for a spot light only — the cone's
+/// angle in degrees. Every member is a final value; the engine re-checks all of them before the
+/// first write.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelLight {
+    #[serde(rename = "type")]
+    pub kind: ModelLightKind,
+    pub direction: [f64; 3],
+    pub intensity: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f64>,
+}
+
+/// The environment a 3-D model sits in: the ambient level as a fraction of full power and an
+/// optional sRGB background colour. Both are final values.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelEnvironment {
+    pub ambient: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<[u8; 3]>,
+}
+
+/// A 3-D model's scene as it travels on the wire: one light and the environment. The engine
+/// re-checks every number (finite, in range, a spot's angle present only for a spot) before the
+/// first write.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelScene {
+    pub light: ModelLight,
+    pub environment: ModelEnvironment,
 }
 
 /// One shape in a [`Payload::ShapesSetBounds`] step: the final box in slide points. The shape is
@@ -964,6 +1015,7 @@ impl Payload {
                 MediaKind::Model => "insert.model3d",
             },
             Payload::Model3dCamera { .. } => "model3d.camera",
+            Payload::Model3dScene { .. } => "model3d.scene",
             Payload::ShapeFill { .. } => "shape.fill",
             Payload::ShapeLine { .. } => "shape.line",
             Payload::SlideTransition { .. } => "slide.transition.set",
@@ -1862,6 +1914,36 @@ mod tests {
         assert!(serde_json::from_str::<Payload>(hostile).is_err(), "a relative camera decodes");
         let relative = r#"{"cmd":"model3d_camera","camera":{"orbit":15}}"#;
         assert!(serde_json::from_str::<Payload>(relative).is_err(), "an orbit decodes");
+    }
+
+    #[test]
+    fn a_model_scene_travels_as_one_final_value_and_a_relative_field_is_refused() {
+        // The whole scene: one light and the environment, all final values.
+        let payload = Payload::Model3dScene {
+            scene: Some(ModelScene {
+                light: ModelLight { kind: ModelLightKind::Spot, direction: [0.0, -1.0, -0.25], intensity: 0.65, angle: Some(27.0) },
+                environment: ModelEnvironment { ambient: 0.2, background: Some([255, 239, 213]) },
+            }),
+        };
+        let text = serde_json::to_string(&payload).expect("encode");
+        assert!(text.contains("\"cmd\":\"model3d_scene\""), "{text}");
+        assert!(text.contains("\"type\":\"spot\""), "{text}");
+        assert!(text.contains("\"ambient\":0.2"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
+        assert_eq!(payload.command(), "model3d.scene");
+
+        // `null` is the reader's default scene, not a relative edit.
+        let clear = Payload::Model3dScene { scene: None };
+        let text = serde_json::to_string(&clear).expect("encode");
+        assert!(text.contains("\"scene\":null"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), clear);
+
+        // A relative field is not a value this build decodes: the operation is refused as a bad
+        // frame instead of being merged against a replica's own scene.
+        let hostile = r#"{"cmd":"model3d_scene","scene":{"light":{"type":"point","direction":[0,-1,0],"intensity":0.5,"dimmer":-0.1},"environment":{"ambient":0.2}}}"#;
+        assert!(serde_json::from_str::<Payload>(hostile).is_err(), "a relative light decodes");
+        let relative = r#"{"cmd":"model3d_scene","scene":{"light":{"type":"point","direction":[0,-1,0],"intensity":0.5},"environment":{"ambient":0.2},"rotate":10}}"#;
+        assert!(serde_json::from_str::<Payload>(relative).is_err(), "a scene rotation decodes");
     }
 
     #[test]

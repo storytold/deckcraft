@@ -1795,7 +1795,7 @@ fn a_3d_model_draws_its_poster_or_a_placeholder_cube() {
         let sh = Shape {
             id: ShapeId(600),
             xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)),
-            kind: ShapeKind::Model3d { media: model, poster, camera: None },
+            kind: ShapeKind::Model3d { media: model, poster, camera: None, scene: None },
             ..Default::default()
         };
         std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];

@@ -10,8 +10,8 @@ use std::net::TcpStream;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    ChangeKind, ClientInfo, ClientMsg, Hello, MediaKind, ModelCamera, OpEnvelope, OpKind, PROTO_VERSION, Payload, PicturePlace, ServerMsg,
-    SmartArtPictureMedia, Target, decode_server, encode_client,
+    ChangeKind, ClientInfo, ClientMsg, Hello, MediaKind, ModelCamera, ModelEnvironment, ModelLight, ModelLightKind, ModelScene, OpEnvelope, OpKind,
+    PROTO_VERSION, Payload, PicturePlace, ServerMsg, SmartArtPictureMedia, Target, decode_server, encode_client,
 };
 use deckcraft_collab_server::{Config, Handle, TokenClaims, serve_ephemeral};
 use tungstenite::stream::MaybeTlsStream;
@@ -1169,6 +1169,180 @@ fn a_model_camera_travels_over_the_socket_and_a_viewer_is_refused() {
     match read(&mut a) {
         ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
         other => panic!("expected invalid, got {other:?}"),
+    }
+    let (status, committed) = http(addr, "POST", &format!("/v1/sessions/{id}/commit"), Some("service-token"), "");
+    assert_eq!(status, 200, "{committed}");
+    let value: serde_json::Value = serde_json::from_str(&committed).expect("json");
+    assert_eq!(value["version"], 2, "the refusals moved no version");
+    handle.shutdown();
+}
+
+#[test]
+fn a_model_scene_travels_over_the_socket_and_a_viewer_is_refused() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = native_deck();
+    let body = serde_json::json!({
+        "fileId": "file-3d-scene",
+        "app": "deckcraft",
+        "initialBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let doc = deckcraft_format::load(&bytes).expect("load");
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{id}-"));
+    let mut keys = deckcraft_collab::KeyMap::new();
+    keys.sync(&doc, &mut issuer);
+    let slide = keys.slide_key(doc.slides[0].id).expect("slide key").clone();
+
+    // The model's bytes go to the media channel first; the operation names only the digest.
+    let model = glb();
+    let sha = sha256(&model);
+    let editor = token("alice", "editor", &id);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/{id}/media/{sha}"), Some(&editor), &model);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut b = join(addr, &id, "bob", "editor");
+    let mut viewer = join(addr, &id, "victor", "viewer");
+
+    // One structural step puts the model on every replica, the viewer included.
+    let insert = ClientMsg::Op(OpEnvelope {
+        op_id: "ms-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::MediaInsert {
+            kind: MediaKind::Model,
+            sha256: sha.clone(),
+            name: "block.glb".into(),
+            rect: Some([120.0, 90.0, 320.0, 240.0]),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
+    let applied = match read(&mut a) {
+        ServerMsg::Applied(applied) => applied,
+        other => panic!("expected applied, got {other:?}"),
+    };
+    assert_eq!(applied.version, 1);
+    let model_key = applied
+        .delta
+        .changes
+        .iter()
+        .find_map(|change| matches!(change.kind, ChangeKind::Inserted).then(|| change.shape.clone()).flatten())
+        .expect("the insertion names the model");
+    for ws in [&mut b, &mut viewer] {
+        match read(ws) {
+            ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 1),
+            other => panic!("expected the broadcast, got {other:?}"),
+        }
+    }
+
+    // The scene is one final value: one light and the environment.
+    let target = Target { slide: Some(slide.clone()), shape: Some(model_key.clone()), ..Target::default() };
+    let scene = ModelScene {
+        light: ModelLight { kind: ModelLightKind::Spot, direction: [0.0, -1.0, -0.25], intensity: 0.65, angle: Some(27.0) },
+        environment: ModelEnvironment { ambient: 0.2, background: Some([255, 239, 213]) },
+    };
+    let step = ClientMsg::Op(OpEnvelope {
+        op_id: "ms-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Command,
+        target: target.clone(),
+        payload: Payload::Model3dScene { scene: Some(scene) },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&step).expect("encode").into())).expect("send");
+    for ws in [&mut a, &mut b, &mut viewer] {
+        match read(ws) {
+            ServerMsg::Applied(applied) => assert_eq!(applied.version, 2),
+            other => panic!("expected applied at version 2, got {other:?}"),
+        }
+    }
+
+    // The authoritative file carries the scene: the development-mode commit returns the bytes and
+    // the reimported model has the light and the environment the operation stated.
+    let (status, committed) = http(addr, "POST", &format!("/v1/sessions/{id}/commit"), Some("service-token"), "");
+    assert_eq!(status, 200, "{committed}");
+    let value: serde_json::Value = serde_json::from_str(&committed).expect("json");
+    let bytes = base64::engine::general_purpose::STANDARD.decode(value["bytes"].as_str().expect("bytes")).expect("decode");
+    let committed_doc = deckcraft_pptx::import(&bytes).expect("the committed file");
+    let shape = committed_doc.slides[0].shapes.iter().find(|s| matches!(s.kind, deckcraft_model::ShapeKind::Model3d { .. })).expect("the model");
+    match &shape.kind {
+        deckcraft_model::ShapeKind::Model3d { scene: Some(saved), .. } => {
+            assert_eq!(saved.light.kind, deckcraft_model::ModelLightKind::Spot);
+            assert_eq!(saved.light.direction, [0.0, -1.0, -0.25]);
+            assert_eq!(saved.light.intensity, 0.65);
+            assert_eq!(saved.light.angle, Some(27.0));
+            assert_eq!(saved.environment.ambient, 0.2);
+            assert_eq!(saved.environment.background, Some([255, 239, 213]));
+        }
+        other => panic!("the committed model has no scene: {other:?}"),
+    }
+
+    // A viewer's scene step is refused before the engine: no version moves.
+    let viewer_step = ClientMsg::Op(OpEnvelope {
+        op_id: "ms-3".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Command,
+        target: target.clone(),
+        payload: Payload::Model3dScene { scene: None },
+        history: None,
+    });
+    viewer.send(tungstenite::Message::Text(encode_client(&viewer_step).expect("encode").into())).expect("send");
+    match read(&mut viewer) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Forbidden),
+        other => panic!("expected forbidden, got {other:?}"),
+    }
+
+    // A relative light is not a frame this build decodes (the wire type refuses unknown fields),
+    // so it never becomes an operation; the version stays where it was.
+    let hostile = serde_json::json!({
+        "type": "op",
+        "opId": "ms-4",
+        "doc": id,
+        "baseVersion": 2,
+        "kind": "command",
+        "target": {"slide": slide, "shape": model_key},
+        "payload": {"cmd": "model3d_scene", "scene": {
+            "light": {"type": "point", "direction": [0.0, -1.0, 0.0], "intensity": 0.5, "dimmer": -0.1},
+            "environment": {"ambient": 0.2}
+        }},
+    })
+    .to_string();
+    a.send(tungstenite::Message::Text(hostile.into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Error(error) => assert_eq!(error.code, "invalid", "{error:?}"),
+        other => panic!("expected the frame to be refused, got {other:?}"),
+    }
+
+    // A spot without a cone and an angle on a point light are refused by the engine as invalid,
+    // again with no write.
+    for (op_id, light) in [
+        ("ms-5", ModelLight { kind: ModelLightKind::Spot, direction: [0.0, -1.0, 0.0], intensity: 0.5, angle: None }),
+        ("ms-6", ModelLight { kind: ModelLightKind::Point, direction: [0.0, -1.0, 0.0], intensity: 0.5, angle: Some(30.0) }),
+    ] {
+        let degenerate = ClientMsg::Op(OpEnvelope {
+            op_id: op_id.into(),
+            doc: id.clone(),
+            base_version: 2,
+            kind: OpKind::Command,
+            target: target.clone(),
+            payload: Payload::Model3dScene { scene: Some(ModelScene { light, environment: ModelEnvironment { ambient: 0.2, background: None } }) },
+            history: None,
+        });
+        a.send(tungstenite::Message::Text(encode_client(&degenerate).expect("encode").into())).expect("send");
+        match read(&mut a) {
+            ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
+            other => panic!("expected invalid, got {other:?}"),
+        }
     }
     let (status, committed) = http(addr, "POST", &format!("/v1/sessions/{id}/commit"), Some("service-token"), "");
     assert_eq!(status, 200, "{committed}");

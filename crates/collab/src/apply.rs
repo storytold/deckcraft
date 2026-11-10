@@ -362,7 +362,7 @@ impl Adapter {
             Payload::ChartSet { .. } => (None, Image::Chart(Value::Null)),
             // A camera step records the whole model shape: the view, the box and the media part
             // it belongs to, so an undo puts back exactly the model the step found.
-            Payload::Model3dCamera { .. } => (None, Image::Model3d(Value::Null)),
+            Payload::Model3dCamera { .. } | Payload::Model3dScene { .. } => (None, Image::Model3d(Value::Null)),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
@@ -1416,6 +1416,19 @@ impl Adapter {
                 self.select_shapes(session, before, slide, &[shape], head)?;
                 self.call(session, "model3d.camera", json!({"ids": [shape.0], "camera": camera}), head)
             }
+            Payload::Model3dScene { scene } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                // The scene follows the same rule as the camera: the shape is checked before the
+                // first write, and the engine checks the light and the environment (finite, in
+                // range, an angle only on a spot, no relative fields) before it touches anything.
+                let is_model =
+                    before.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).is_some_and(|sh| matches!(sh.kind, ShapeKind::Model3d { .. }));
+                if !is_model {
+                    return Err(Rejection::invalid("the shape is not a 3-D model", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "model3d.scene", json!({"ids": [shape.0], "scene": scene}), head)
+            }
             Payload::ChartSet { chart } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 // Address the chart before the first write: a command that names a shape which is
@@ -2253,6 +2266,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::TextInsert { .. }
         | Payload::TextDelete { .. }
         | Payload::Model3dCamera { .. }
+        | Payload::Model3dScene { .. }
         | Payload::ShapeFill { .. }
         | Payload::ShapeLine { .. }
         | Payload::FormatSet { .. }
@@ -2345,8 +2359,8 @@ mod tests {
     use super::*;
     use crate::history::ActorHistory;
     use deckcraft_collab_proto::{
-        CellFillSpec, FillSpec, FormatCmd, LineSpec, ModelCamera, PicturePlace, ShapeBounds, ShapeField, ShapeRestoreItem, SmartArtPictureMedia,
-        TextCursor, TransitionSpec,
+        CellFillSpec, FillSpec, FormatCmd, LineSpec, ModelCamera, ModelEnvironment, ModelLight, ModelLightKind, ModelScene, PicturePlace,
+        ShapeBounds, ShapeField, ShapeRestoreItem, SmartArtPictureMedia, TextCursor, TransitionSpec,
     };
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
@@ -4366,6 +4380,86 @@ mod tests {
         let target = Target { slide: Some(slide.clone()), shape: Some(model.clone()), ..Target::default() };
         let first = op(OpKind::Command, 0, target.clone(), Payload::Model3dCamera { camera: Some(camera) });
         ad.apply(&mut s, 0, "a", &first).expect("a sets the view");
+        let after_alice = doc_of(&s).slides[0].shapes[2].clone();
+        let mut foreign = op(OpKind::Command, 1, target, Payload::ShapeSetBounds { x: 150.0, y: 120.0, w: 320.0, h: 240.0 });
+        foreign.op_id = "op-2".into();
+        ad.apply(&mut s, 1, "b", &foreign).expect("b moves the model");
+        let moved = doc_of(&s).slides[0].shapes[2].clone();
+        assert_ne!(moved, after_alice, "b's move changed the model");
+        let err = ad.undo(&s, 2, "a", "u-1").expect_err("b changed the model after Alice");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert_eq!(doc_of(&s).slides[0].shapes[2], moved, "the refused undo wrote nothing");
+    }
+
+    #[test]
+    fn two_replicas_converge_on_a_model_scene_and_undo_restores_the_whole_shape() {
+        let (mut a, mut b, mut aa, mut bb, slide, model) = model_deck();
+        let before = doc_of(&a).slides[0].shapes[2].clone();
+        let scene = ModelScene {
+            light: ModelLight { kind: ModelLightKind::Spot, direction: [0.0, -1.0, -0.25], intensity: 0.65, angle: Some(27.0) },
+            environment: ModelEnvironment { ambient: 0.2, background: Some([255, 239, 213]) },
+        };
+
+        // One final scene: the light and the environment the user ended up with, not the drag
+        // that produced it.
+        let step = op(
+            OpKind::Command,
+            1,
+            Target { slide: Some(slide.clone()), shape: Some(model.clone()), ..Target::default() },
+            Payload::Model3dScene { scene: Some(scene) },
+        );
+        aa.apply(&mut a, 1, "a", &step).expect("a sets the scene");
+        bb.apply_confirmed(&mut b, 1, "a", &step).expect("b applies the confirmed step");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        let after = doc_of(&a).slides[0].shapes[2].clone();
+        let ShapeKind::Model3d { scene: Some(set), .. } = &after.kind else { panic!("shape 2 is not a model with a scene") };
+        assert_eq!(set.light.kind, deckcraft_model::ModelLightKind::Spot);
+        assert_eq!(set.light.angle, Some(27.0));
+        assert_eq!(set.environment.background, Some([255, 239, 213]));
+
+        // The undo image is the whole shape: one undo puts the model back exactly, and the redo
+        // returns the stated scene.
+        let undo = aa.undo(&a, 2, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::Model3d, .. }), "{undo:?}");
+        aa.apply(&mut a, 2, "a", &undo).expect("a applies the undo");
+        bb.apply_confirmed(&mut b, 2, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], before, "the whole model came back, scene included");
+        let redo = aa.redo(&a, 3, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 3, "a", &redo).expect("a applies the redo");
+        bb.apply_confirmed(&mut b, 3, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], after);
+    }
+
+    #[test]
+    fn a_model_scene_refuses_a_plain_shape_and_a_foreign_edit_turns_the_undo_into_a_conflict() {
+        let (mut s, _, mut ad, _, slide, model) = model_deck();
+        let doc = doc_of(&s);
+        let (_, rect) = key_of(&ad, &doc, 0);
+        let scene = ModelScene {
+            light: ModelLight { kind: ModelLightKind::Directional, direction: [0.0, -1.0, 0.0], intensity: 0.8, angle: None },
+            environment: ModelEnvironment { ambient: 0.1, background: None },
+        };
+
+        // A rectangle is not a 3-D model: refused before the first write, no step recorded.
+        let steps = ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0);
+        let plain = op(
+            OpKind::Command,
+            0,
+            Target { slide: Some(slide.clone()), shape: Some(rect), ..Target::default() },
+            Payload::Model3dScene { scene: Some(scene) },
+        );
+        let err = ad.apply(&mut s, 0, "a", &plain).expect_err("a rectangle has no scene");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), steps, "a refusal records no step");
+        assert!(doc_of(&s).slides[0].shapes.iter().all(|sh| !matches!(sh.kind, ShapeKind::Model3d { scene: Some(_), .. })), "nothing was written");
+
+        // Alice's step, then a foreign edit of the same model: her undo is a conflict and writes
+        // nothing, because the image is the whole shape.
+        let target = Target { slide: Some(slide.clone()), shape: Some(model.clone()), ..Target::default() };
+        let first = op(OpKind::Command, 0, target.clone(), Payload::Model3dScene { scene: Some(scene) });
+        ad.apply(&mut s, 0, "a", &first).expect("a sets the scene");
         let after_alice = doc_of(&s).slides[0].shapes[2].clone();
         let mut foreign = op(OpKind::Command, 1, target, Payload::ShapeSetBounds { x: 150.0, y: 120.0, w: 320.0, h: 240.0 });
         foreign.op_id = "op-2".into();

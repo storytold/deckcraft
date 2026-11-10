@@ -7430,6 +7430,84 @@ fn a_model_camera_is_one_final_view_and_a_relative_edit_is_refused() {
 }
 
 #[test]
+fn a_model_scene_is_one_final_value_and_a_relative_edit_is_refused() {
+    let mut s = session();
+    let data = cmd::base64_encode(b"glTF\x02\0\0\0\x0c\0\0\0");
+    let r = s.execute("insert.model3d", &json!({"name": "block.glb", "data": data, "rect": [10.0, 10.0, 320.0, 240.0]})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let scene = |s: &mut Session| {
+        let st = s.doc().unwrap();
+        let sh = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(id as u32)).unwrap();
+        match &sh.kind {
+            deckcraft_model::ShapeKind::Model3d { scene, .. } => *scene,
+            other => panic!("not a 3-D model: {other:?}"),
+        }
+    };
+    assert_eq!(scene(&mut s), None, "an inserted model has no scene of its own");
+
+    // The whole final scene: one light and the environment, all final values.
+    let value = json!({
+        "light": {"type": "spot", "direction": [0.0, -1.0, -0.25], "intensity": 0.65, "angle": 27.0},
+        "environment": {"ambient": 0.2, "background": [255, 239, 213]},
+    });
+    s.execute("model3d.scene", &json!({"scene": value, "ids": [id]})).unwrap();
+    let set = scene(&mut s).expect("a scene");
+    assert_eq!(set.light.kind, deckcraft_model::ModelLightKind::Spot);
+    assert_eq!(set.light.direction, [0.0, -1.0, -0.25]);
+    assert_eq!(set.light.intensity, 0.65);
+    assert_eq!(set.light.angle, Some(27.0));
+    assert_eq!(set.environment.ambient, 0.2);
+    assert_eq!(set.environment.background, Some([255, 239, 213]));
+
+    // A relative edit, a light that cannot be drawn and a value out of range are refused before
+    // the first write: the scene on the model does not move.
+    let light = |extra: Value| {
+        let mut light = json!({"type": "point", "direction": [0.0, -1.0, 0.0], "intensity": 0.5});
+        if let (Some(base), Some(extra)) = (light.as_object_mut(), extra.as_object()) {
+            for (k, v) in extra {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+        light
+    };
+    for bad in [
+        json!({"light": light(json!({})), "environment": {"ambient": 0.2}, "dimmer": 0.5}),
+        json!({"light": light(json!({"zoom": 2.0})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"type": "area"})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"direction": [0.0, 0.0, 0.0]})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"direction": [0.0, 1e12, 0.0]})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"intensity": 1.5})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"intensity": -0.1})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"type": "spot"})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"angle": 27.0})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"type": "spot", "angle": 0.0})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({"type": "spot", "angle": 180.0})), "environment": {"ambient": 0.2}}),
+        json!({"light": light(json!({})), "environment": {"ambient": 2.0}}),
+        json!({"light": light(json!({})), "environment": {"ambient": 0.2, "background": [256, 0, 0]}}),
+        json!({"light": light(json!({})), "environment": {"ambient": 0.2, "background": [0, 0]}}),
+        json!({"light": light(json!({})), "environment": {"ambient": 0.2, "rotate": 10.0}}),
+        json!({"light": light(json!({})), "environment": {"ambient": 0.2}, "background": null}),
+        json!({"light": light(json!({}))}),
+        json!({"environment": {"ambient": 0.2}}),
+    ] {
+        let mut params = bad.clone();
+        params["ids"] = json!([id]);
+        assert!(s.execute("model3d.scene", &params).is_err(), "refused: {bad}");
+        assert_eq!(scene(&mut s).expect("the scene is unchanged").light.intensity, 0.65, "the refusal wrote nothing");
+    }
+
+    // A plain shape is not a model, and an unknown id changes nothing either.
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).unwrap();
+    let rect = r["id"].as_u64().unwrap();
+    assert!(s.execute("model3d.scene", &json!({"scene": null, "ids": [rect]})).is_err());
+    assert!(s.execute("model3d.scene", &json!({"scene": null, "ids": [9999]})).is_err());
+
+    // `null` is the reader's default scene again.
+    s.execute("model3d.scene", &json!({"scene": null, "ids": [id]})).unwrap();
+    assert_eq!(scene(&mut s), None);
+}
+
+#[test]
 fn a_whole_model_restore_is_checked_before_it_is_written() {
     let mut s = session();
     let data = cmd::base64_encode(b"glTF\x02\0\0\0\x0c\0\0\0");

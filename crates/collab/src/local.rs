@@ -15,7 +15,8 @@ use std::sync::Arc;
 use base64::Engine as _;
 use deckcraft_collab_proto::{
     Applied, BaseSnapshot, CellFillSpec, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatAddress, FormatCmd, LineSpec, MediaKind,
-    OpEnvelope, OpKind, Payload, PicturePlace, ServerMsg, ShapeBounds, ShapeKey, SlideKey, SmartArtPictureMedia, TableAxis, Target, TextRange,
+    ModelEnvironment, ModelLight, ModelLightKind, ModelScene, OpEnvelope, OpKind, Payload, PicturePlace, ServerMsg, ShapeBounds, ShapeKey, SlideKey,
+    SmartArtPictureMedia, TableAxis, Target, TextRange,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::anim::Animation;
@@ -24,6 +25,20 @@ use serde_json::Value;
 
 use crate::apply::{Adapter, class_of, position_offset};
 use crate::client::{ClientSession, Effect};
+
+/// A model scene as the wire carries it: the model types are the engine's, the wire types are
+/// `collab-proto`'s, and the operation carries exactly the final value the engine checked.
+fn wire_scene(scene: deckcraft_model::ModelScene) -> ModelScene {
+    let kind = match scene.light.kind {
+        deckcraft_model::ModelLightKind::Directional => ModelLightKind::Directional,
+        deckcraft_model::ModelLightKind::Point => ModelLightKind::Point,
+        deckcraft_model::ModelLightKind::Spot => ModelLightKind::Spot,
+    };
+    ModelScene {
+        light: ModelLight { kind, direction: scene.light.direction, intensity: scene.light.intensity, angle: scene.light.angle },
+        environment: ModelEnvironment { ambient: scene.environment.ambient, background: scene.environment.background },
+    }
+}
 
 /// Why a local command could not be turned into an operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -661,6 +676,25 @@ pub fn normalize_with_painter(
             Ok(vec![make(
                 Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, *id)?), ..Target::default() },
                 Payload::Model3dCamera { camera },
+            )])
+        }
+        "model3d.scene" => {
+            // The whole final scene, validated by the same function the single-user command runs:
+            // a relative field (dimmer/rotate/zoom), a light that cannot be drawn or a value out
+            // of range is refused here, before an operation is sent, and the address must be one
+            // 3-D model.
+            let ids = shape_ids(p, st)?;
+            let [id] = ids.as_slice() else {
+                return Err(LocalError::Unsupported("a 3-D model scene on several shapes".into()));
+            };
+            let shape = find_shape(&slide.shapes, *id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            if !matches!(shape.kind, ShapeKind::Model3d { .. }) {
+                return Err(LocalError::BadParams("the shape is not a 3-D model".into()));
+            }
+            let scene = deckcraft_engine::cmd::model3d::scene_param(p).map_err(|e| LocalError::BadParams(e.to_string()))?.map(wire_scene);
+            Ok(vec![make(
+                Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, *id)?), ..Target::default() },
+                Payload::Model3dScene { scene },
             )])
         }
         "shape.fill" => {
@@ -3318,6 +3352,75 @@ mod tests {
         }
         viewer.on_msg(&mut s, msg);
         assert_eq!(viewer.submit(&s, "model3d.camera", &view, "v-1"), Err(LocalError::ReadOnly));
+    }
+
+    #[test]
+    fn a_model_scene_normalises_to_the_whole_final_value_and_a_relative_edit_is_refused() {
+        let (mut s, doc, _slide, shapes) = deck();
+        let data = base64::engine::general_purpose::STANDARD.encode(glb());
+        let id = s.apply_remote("insert.model3d", &json!({"name": "block.glb", "data": data})).expect("model")["id"].as_u64().unwrap();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // The whole final scene travels; the address is the model, the command is a value command.
+        let value = json!({
+            "id": id,
+            "scene": {
+                "light": {"type": "spot", "direction": [0.0, -1.0, -0.25], "intensity": 0.65, "angle": 27.0},
+                "environment": {"ambient": 0.2, "background": [255, 239, 213]},
+            },
+        });
+        let ops = normalize(&km, st, "model3d.scene", &value, "op", &doc).expect("scene");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].payload.command(), "model3d.scene");
+        match &ops[0].payload {
+            Payload::Model3dScene { scene: Some(scene) } => {
+                assert_eq!(scene.light.kind, deckcraft_collab_proto::ModelLightKind::Spot);
+                assert_eq!(scene.light.direction, [0.0, -1.0, -0.25]);
+                assert_eq!(scene.light.intensity, 0.65);
+                assert_eq!(scene.light.angle, Some(27.0));
+                assert_eq!(scene.environment.ambient, 0.2);
+                assert_eq!(scene.environment.background, Some([255, 239, 213]));
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // `null` is the reader's default scene, not a relative edit.
+        let ops = normalize(&km, st, "model3d.scene", &json!({"id": id, "scene": null}), "op-2", &doc).expect("reset");
+        assert!(matches!(ops[0].payload, Payload::Model3dScene { scene: None }));
+
+        // A relative field, a light that cannot be drawn, a missing scene and a plain shape are
+        // all refused on this replica, before any operation is sent.
+        let light = |extra: Value| {
+            let mut light = json!({"type": "point", "direction": [0.0, -1.0, 0.0], "intensity": 0.5});
+            if let (Some(base), Some(extra)) = (light.as_object_mut(), extra.as_object()) {
+                for (k, v) in extra {
+                    base.insert(k.clone(), v.clone());
+                }
+            }
+            light
+        };
+        for bad in [
+            json!({"id": id, "scene": {"light": light(json!({})), "environment": {"ambient": 0.2}, "dimmer": 0.5}}),
+            json!({"id": id, "scene": {"light": light(json!({"zoom": 2.0})), "environment": {"ambient": 0.2}}}),
+            json!({"id": id, "scene": {"light": light(json!({"type": "spot"})), "environment": {"ambient": 0.2}}}),
+            json!({"id": id, "scene": {"light": light(json!({"angle": 27.0})), "environment": {"ambient": 0.2}}}),
+            json!({"id": id}),
+            json!({"id": shapes[0].0, "scene": null}),
+        ] {
+            assert!(matches!(normalize(&km, st, "model3d.scene", &bad, "op-3", &doc), Err(LocalError::BadParams(_))), "{bad}");
+        }
+
+        // A viewer's scene step is refused on the client, before anything is queued.
+        let mut viewer = CollabDoc::new("d");
+        viewer.connect(&s, "jwt-v", ClientInfo { name: "viewer".into(), ver: "1".into() });
+        let mut msg = welcome(0);
+        if let ServerMsg::Welcome(ref mut welcome) = msg {
+            welcome.role = deckcraft_collab_proto::Role::Viewer;
+        }
+        viewer.on_msg(&mut s, msg);
+        assert_eq!(viewer.submit(&s, "model3d.scene", &value, "v-1"), Err(LocalError::ReadOnly));
     }
 
     #[test]

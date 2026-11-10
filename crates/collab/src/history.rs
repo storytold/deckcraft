@@ -52,10 +52,11 @@ pub enum Image {
     /// regenerated chart's own fields cannot be replayed from them), so the whole shape is the
     /// exact image of the step.
     Chart(serde_json::Value),
-    /// A whole 3-D model shape — its box, its media part, its poster and its camera — for a
-    /// `model3d.camera` step. The camera command carries final values, but the whole shape is
-    /// the exact image: a restore must not depend on the reader's default view, and comparing the
-    /// whole shape is what makes a foreign edit of the model an `undo-conflict`.
+    /// A whole 3-D model shape — its box, its media part, its poster, its camera and its scene —
+    /// for a `model3d.camera` or `model3d.scene` step. The commands carry final values, but the
+    /// whole shape is the exact image: a restore must not depend on the reader's default view or
+    /// lighting, and comparing the whole shape is what makes a foreign edit of the model an
+    /// `undo-conflict`.
     Model3d(serde_json::Value),
     /// One shape's animation steps, in order, as `animation.add`/`animation.remove` leave them.
     /// A file's animations carry preset ids, timings, colours and motion paths that the

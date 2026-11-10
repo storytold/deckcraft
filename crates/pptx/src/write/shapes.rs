@@ -488,6 +488,30 @@ fn write_model_part(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, rid
         w.empty("am3d:perspective", A::new().a("fov", deg(cam.fov)));
         w.close("am3d:camera");
     }
+    // The scene the model is lit by, next to the camera: one light (`type`, `direction`,
+    // `intensity`, and a spot's `angle`) and the environment (`ambient`, an optional
+    // background). Intensity and ambient use Office's thousandths of a percent; the angle uses
+    // 1/60000 degree like the camera's `fov`; an absent scene leaves the reader's default.
+    if let ShapeKind::Model3d { scene: Some(scene), .. } = &s.kind {
+        let pct = |v: f64| ((v * 100_000.0).round() as i64).to_string();
+        let deg = |v: f64| ((v * 60_000.0).round() as i64).to_string();
+        let light = &scene.light;
+        let mut attrs = A::new().a("type", light.kind.name()).a("intensity", pct(light.intensity));
+        if let Some(angle) = light.angle {
+            attrs = attrs.a("angle", deg(angle));
+        }
+        w.open("am3d:scene", A::new());
+        w.open("am3d:light", attrs);
+        w.empty("am3d:dir", A::new().a("dx", light.direction[0]).a("dy", light.direction[1]).a("dz", light.direction[2]));
+        w.close("am3d:light");
+        let env = &scene.environment;
+        let mut attrs = A::new().a("ambient", pct(env.ambient));
+        if let Some([r, g, b]) = env.background {
+            attrs = attrs.a("color", format!("{r:02X}{g:02X}{b:02X}"));
+        }
+        w.empty("am3d:environment", attrs);
+        w.close("am3d:scene");
+    }
     w.close("p:contentPart");
 }
 

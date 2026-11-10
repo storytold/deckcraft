@@ -311,7 +311,7 @@ fn content_part(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<S
         s.xfrm = Some(dml::xfrm(x).0);
     }
     let camera = model_camera(e);
-    s.kind = ShapeKind::Model3d { media, poster: None, camera };
+    s.kind = ShapeKind::Model3d { media, poster: None, camera, scene: model_scene(e) };
     Some(s)
 }
 
@@ -336,6 +336,68 @@ fn model_camera(e: &El) -> Option<deckcraft_model::ModelCamera> {
     (fov.is_finite() && fov > 0.0).then_some(deckcraft_model::ModelCamera { position, target, up, fov })
 }
 
+/// The scene of a 3-D model: `am3d:scene` in the slide part next to the content part — one light
+/// (`type`, `direction`, `intensity`, and a spot's `angle`) and the environment (`ambient`, an
+/// optional background). A scene with a missing or malformed member is dropped whole rather than
+/// half-read, so a scene this build cannot reproduce is never written back as a different one.
+fn model_scene(e: &El) -> Option<deckcraft_model::ModelScene> {
+    use deckcraft_model::{ModelEnvironment, ModelLight, ModelLightKind, ModelScene};
+    let scene = e.child("scene")?;
+    let light = scene.child("light")?;
+    let kind = ModelLightKind::parse(light.attr("type")?)?;
+    let dir = light.child("dir")?;
+    let mut direction = [0.0; 3];
+    for (i, key) in ["dx", "dy", "dz"].iter().enumerate() {
+        direction[i] = dir.attr(key)?.parse::<f64>().ok()?;
+        if !direction[i].is_finite() {
+            return None;
+        }
+    }
+    if direction.iter().all(|v| *v == 0.0) {
+        return None;
+    }
+    let intensity = light.attr("intensity")?.parse::<f64>().ok()? / 100_000.0;
+    if !(0.0..=1.0).contains(&intensity) {
+        return None;
+    }
+    // The angle belongs to a spot light and to nothing else; a spot without one cannot be drawn.
+    let angle = match light.attr("angle") {
+        Some(angle) => {
+            let value = angle.parse::<f64>().ok()? / 60_000.0;
+            if !(1.0..=179.0).contains(&value) {
+                return None;
+            }
+            Some(value)
+        }
+        None => None,
+    };
+    if (kind == ModelLightKind::Spot) != angle.is_some() {
+        return None;
+    }
+    let env = scene.child("environment")?;
+    let ambient = env.attr("ambient")?.parse::<f64>().ok()? / 100_000.0;
+    if !(0.0..=1.0).contains(&ambient) {
+        return None;
+    }
+    let background = match env.attr("color") {
+        Some(hex) => Some(srgb(hex)?),
+        None => None,
+    };
+    Some(ModelScene { light: ModelLight { kind, direction, intensity, angle }, environment: ModelEnvironment { ambient, background } })
+}
+
+/// An sRGB colour as `RRGGBB`, the way Office writes `a:srgbClr`.
+fn srgb(hex: &str) -> Option<[u8; 3]> {
+    if hex.len() != 6 {
+        return None;
+    }
+    let mut rgb = [0u8; 3];
+    for (i, slot) in rgb.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(rgb)
+}
+
 /// A 3-D model wrapped in `mc:AlternateContent`: the model choice, plus the fallback picture.
 /// If the model part is missing, the fallback picture is the shape.
 fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<Shape> {
@@ -347,8 +409,8 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
             fb.find_all("blip", &mut pics);
             pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
         });
-        if let ShapeKind::Model3d { media, camera, .. } = s.kind {
-            s.kind = ShapeKind::Model3d { media, poster, camera };
+        if let ShapeKind::Model3d { media, camera, scene, .. } = s.kind {
+            s.kind = ShapeKind::Model3d { media, poster, camera, scene };
         }
         return Some(s);
     }

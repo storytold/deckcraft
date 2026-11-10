@@ -309,12 +309,16 @@ pub enum ShapeKind {
     /// A 3-D model (`p:contentPart` with a `model3d` relationship, usually a `.glb`).
     /// `poster` is the fallback picture an `mc:AlternateContent` choice carried for older readers.
     /// `camera` is the view the file shows the model from; absent = the reader's default view.
+    /// `scene` is the light it is lit by and the environment it sits in; absent = the reader's
+    /// default scene.
     Model3d {
         media: MediaId,
         #[serde(default)]
         poster: Option<MediaId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         camera: Option<ModelCamera>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scene: Option<ModelScene>,
     },
     /// Something we read but don't model (SmartArt without fallback, OLE…): its XML is kept and its
     /// fallback picture, if any, is shown.
@@ -442,6 +446,77 @@ pub struct ModelCamera {
     pub target: [f64; 3],
     pub up: [f64; 3],
     pub fov: f64,
+}
+
+/// What kind of light a 3-D model's scene is lit by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelLightKind {
+    /// Parallel rays from one direction (the sun).
+    Directional,
+    /// One point emitting in every direction.
+    Point,
+    /// One point emitting inside a cone.
+    Spot,
+}
+
+impl ModelLightKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            ModelLightKind::Directional => "directional",
+            ModelLightKind::Point => "point",
+            ModelLightKind::Spot => "spot",
+        }
+    }
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "directional" => Some(ModelLightKind::Directional),
+            "point" => Some(ModelLightKind::Point),
+            "spot" => Some(ModelLightKind::Spot),
+            _ => None,
+        }
+    }
+}
+
+/// One light in a 3-D model's scene: its type, the direction the light travels, its intensity
+/// as a fraction of full power and, for a spot light, the cone's angle in degrees.
+///
+/// Every field is a **final** value. There is no relative form: two replicas applying "dimmer"
+/// or "turn the light 10°" to their own scene would end in two different scenes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelLight {
+    #[serde(rename = "type")]
+    pub kind: ModelLightKind,
+    /// A non-zero direction vector in the model's own space; not an angle and not a delta.
+    pub direction: [f64; 3],
+    /// Full power is `1.0`.
+    pub intensity: f64,
+    /// The spot cone's angle in degrees; `None` for every other kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f64>,
+}
+
+/// The environment a 3-D model sits in: the ambient level as a fraction and an optional sRGB
+/// background colour. Both are final values.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelEnvironment {
+    /// Ambient light, full power at `1.0`.
+    pub ambient: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<[u8; 3]>,
+}
+
+/// A 3-D model's scene: one light and the environment it sits in.
+///
+/// Like the camera, the scene is one value with no relative form (RFC §3.2.1): a replica that
+/// merged "dimmer" or a colour shift against its own scene would drift away from the others.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelScene {
+    pub light: ModelLight,
+    pub environment: ModelEnvironment,
 }
 
 impl Default for Shape {
