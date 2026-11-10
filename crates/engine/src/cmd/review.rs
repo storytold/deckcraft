@@ -1253,8 +1253,9 @@ fn used_media(doc: &deckcraft_model::Presentation) -> HashSet<deckcraft_model::M
     }
     // A function, not a closure: a closure would hold `used` mutably across the shape walks.
     fn background(bg: Option<&deckcraft_model::Background>, used: &mut HashSet<deckcraft_model::MediaId>) {
-        if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::style::Fill::Picture(p) }) = bg {
-            used.insert(p.media);
+        if let Some(deckcraft_model::Background::Fill { fill }) = bg {
+            // A background picture carries its artistic effect's original like a shape's fill.
+            fill_media(Some(fill), used);
         }
     }
     for sl in &doc.slides {
@@ -1909,6 +1910,8 @@ mod tests {
         let shown = add(&mut doc, "shown.png");
         let artistic_original = add(&mut doc, "artistic-original.png");
         let note_bullet = add(&mut doc, "note-bullet.png");
+        let background_picture = add(&mut doc, "background.png");
+        let background_original = add(&mut doc, "background-original.png");
         let cell =
             deckcraft_model::table::Cell { fill: Some(fill(cell_fill)), borders: [Some(line(cell_border)), None, None, None], ..Default::default() };
         let table = deckcraft_model::table::Table {
@@ -1927,6 +1930,14 @@ mod tests {
         let mut note = deckcraft_model::text::Paragraph::default();
         note.props.bullet = Some(deckcraft_model::text::Bullet::Picture { media: note_bullet });
         let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        // A slide background picture whose artistic effect keeps an original.
+        slide.background = Some(deckcraft_model::Background::Fill {
+            fill: deckcraft_model::style::Fill::Picture(deckcraft_model::style::PictureFill {
+                media: background_picture,
+                artistic: Some(deckcraft_model::style::Artistic { effect: "artisticBlur".into(), original: background_original }),
+                ..Default::default()
+            }),
+        });
         slide.shapes.push(table_shape);
         slide.shapes.push(picture_shape);
         slide.notes.paragraphs.push(note);
@@ -1939,6 +1950,8 @@ mod tests {
         assert!(used.contains(&shown), "the picture fill itself");
         assert!(used.contains(&artistic_original), "the original an artistic effect keeps");
         assert!(used.contains(&note_bullet), "a note's picture bullet");
+        assert!(used.contains(&background_picture), "a slide background picture");
+        assert!(used.contains(&background_original), "the original a background artistic effect keeps");
     }
 
     /// Recording a new take on a slide replaces the old audio: the old media must not stay in the
