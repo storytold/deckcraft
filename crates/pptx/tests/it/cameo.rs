@@ -262,6 +262,29 @@ fn a_recorded_cameos_playback_limit_round_trips() {
     assert_eq!(later.and_then(|c| c.duration_ms), Some(250), "the limit comes back with the clip");
 }
 
+/// An imported recording can carry sound: its timing node volume/mute survives an edit and a
+/// re-export, while a take this app recorded (no audio track) keeps the plain full-volume default.
+#[test]
+fn a_recorded_cameos_volume_round_trips() {
+    let mut p = recorded_deck();
+    {
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        let shape = slide.shapes.iter_mut().find(|s| s.cameo.is_some()).expect("cameo");
+        shape.cameo.as_mut().expect("cameo").volume = Some(0.25);
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains("vol=\"25000\""), "the imported level is written: {xml}");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut later = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) {
+            later = sh.cameo.clone();
+        }
+    });
+    assert_eq!(later.and_then(|c| c.volume), Some(0.25), "the level comes back with the clip");
+}
+
 #[test]
 fn a_recorded_cameo_keeps_the_camera_background_it_was_imported_with() {
     let raw = concat!(

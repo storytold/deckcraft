@@ -593,7 +593,7 @@ pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
 
 /// The shapes a recorded Cameo plays on, in document order, each with whether it starts with the
 /// slide (`autoplay`) or waits for a click, and how much of the clip plays (`p:cTn/@dur`).
-fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool, Option<u32>)>, depth: usize) {
+fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool, Option<u32>, Option<f64>)>, depth: usize) {
     if depth > super::shapes::MAX_SHAPE_DEPTH {
         return;
     }
@@ -601,7 +601,7 @@ fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool, Option
         if let Some(c) = s.cameo.as_ref().filter(|c| c.recorded.is_some())
             && let Some(spid) = idmap.get(s.id)
         {
-            out.push((spid, c.autoplay, c.duration_ms));
+            out.push((spid, c.autoplay, c.duration_ms, c.volume));
         }
         cameo_spids(s.children(), idmap, out, depth + 1);
     }
@@ -609,11 +609,15 @@ fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool, Option
 
 /// One `p:video`/`p:audio` time node for a media shape. `entry` starts it with the slide;
 /// otherwise it waits for a click in the show, as a non-autoplaying recording does.
-fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool, entry: bool, dur: Option<u32>) {
+fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool, entry: bool, dur: Option<u32>, vol: Option<f64>) {
     let tag = if video { "p:video" } else { "p:audio" };
     w.open0(tag);
     // A click-waiting clip shows its poster until it starts; an entry clip starts at once.
-    w.open("p:cMediaNode", A::new().a("vol", "100000").a("showWhenStopped", if entry { "0" } else { "1" }));
+    // An imported recording keeps the level it came with; a take this app recorded has no audio
+    // track, and stays at the full-volume default PowerPoint writes for a clip without sound.
+    let level = vol.map(|v| (v.clamp(0.0, 1.0) * 100_000.0).round() as u32);
+    let level = level.unwrap_or(100_000).to_string();
+    w.open("p:cMediaNode", A::new().a("vol", &level).a("showWhenStopped", if entry { "0" } else { "1" }));
     let mut ctn = A::new().a("id", ids.next()).a("fill", "hold").a("display", "0");
     // A recording cut by `show.cameo` plays only that much, so the seek bar and the following
     // media agree with the slide's timing.
@@ -788,8 +792,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
-    for (spid, entry, dur) in media_spids {
-        media_node(w, &mut ids, spid, true, entry, dur);
+    for (spid, entry, dur, vol) in media_spids {
+        media_node(w, &mut ids, spid, true, entry, dur, vol);
     }
     for (trig, effs) in triggered {
         // The first step starts with the button's click. Later On Click effects must remain

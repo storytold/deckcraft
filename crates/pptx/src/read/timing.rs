@@ -243,6 +243,12 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
                 cameo.autoplay = own && !click;
                 // How much of the clip plays (`p:cTn/@dur`); absent: the whole recording.
                 cameo.duration_ms = cm.path(&["cTn"]).and_then(|t| t.u32("dur")).filter(|ms| *ms > 0);
+                // An imported recording can carry sound: keep its level (mute is a zero volume).
+                cameo.volume = if cm.bool("mute") == Some(true) {
+                    Some(0.0)
+                } else {
+                    cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()).map(|v| (v / 100_000.0).clamp(0.0, 1.0))
+                };
             }
             continue;
         };

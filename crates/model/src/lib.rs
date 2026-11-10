@@ -281,6 +281,10 @@ pub struct Cameo {
     /// to the clip and to ten minutes. `None` plays the whole clip (`p:cTn/@dur` in the file).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u32>,
+    /// Volume of a recording (0–1, from the timing node's `vol`/`mute`). `None` is a take this app
+    /// recorded, which has no audio track; an imported Cameo keeps its own level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
 }
 
 impl Cameo {

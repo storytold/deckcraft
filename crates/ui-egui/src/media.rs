@@ -411,7 +411,8 @@ pub fn cameo_clip(shape: &Shape) -> Option<MediaClip> {
         autoplay: cameo.autoplay,
         // The length `show.cameo` accepted, so the show stops where the command said it would.
         duration_ms: cameo.duration_ms.unwrap_or(0),
-        volume: 0.0,
+        // A take this app recorded has no audio track (silent); an imported Cameo keeps its level.
+        volume: cameo.volume.unwrap_or(0.0),
         ..Default::default()
     })
 }
@@ -941,6 +942,7 @@ mod tests {
     #[test]
     fn a_recorded_cameo_plays_its_clip_inside_its_picture_frame() {
         let (mut doc, id, media) = cameo_deck(true, true);
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shape_mut(id).expect("shape").cameo.as_mut().expect("cameo").volume = Some(0.4);
         // The length `show.cameo` accepted is the playback limit, not just a JSON answer.
         std::sync::Arc::make_mut(&mut doc.slides[0]).shape_mut(id).expect("shape").cameo.as_mut().expect("cameo").duration_ms = Some(2_500);
         let listed = slide_media(&doc, 0);
@@ -950,7 +952,7 @@ mod tests {
         assert!(clip.video, "the recording is painted as frames");
         assert!(clip.autoplay, "a recorded Cameo starts with its slide");
         assert_eq!(clip.crop, [0.1, 0.0, 0.1, 0.0], "the picture's crop still applies");
-        assert_eq!(clip.volume, 0.0, "the recorder writes no audio track");
+        assert_eq!(clip.volume, 0.4, "an imported level is kept, so the clip's sound plays");
         assert_eq!(clip.duration_ms, 2_500, "the accepted length limits playback");
         assert_eq!(find_clip(&doc, id, None).map(|c| c.media), Some(media), "a media cue finds it too");
         assert!(
