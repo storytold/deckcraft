@@ -549,14 +549,14 @@ mod tests {
     /// instead, leaving the table as it was; a small merge still works.
     #[test]
     fn merge_expansion_stops_at_its_work_bound() {
-        let mut t = Table::new(10_000, 10, 400.0, 30.0);
+        let mut t = Table::new(1_000, 10, 400.0, 30.0);
         for row in &mut t.rows {
             for c in &mut row.cells {
                 c.row_span = 2;
             }
         }
         let before = t.clone();
-        assert!(!t.merge(9_998, 0, 9_999, 9));
+        assert!(!t.merge(998, 0, 999, 9));
         assert_eq!(t, before);
         let mut small = Table::new(4, 4, 400.0, 30.0);
         assert!(small.merge(0, 0, 1, 1));
