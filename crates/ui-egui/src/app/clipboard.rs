@@ -11,6 +11,52 @@ pub(crate) fn system_clipboard_text(t: &str) -> String {
     if t.is_empty() { OBJECTS_MARKER.to_string() } else { t.to_string() }
 }
 
+/// Whether pasted `text` (and the clipboard's `html`) only name a picture that is on the clipboard
+/// too, as a browser's Copy Image leaves them: the picture's address, perhaps followed by its alt
+/// text, or HTML that is a lone `<img>`. Then Ctrl+V pastes the picture, as PowerPoint does.
+/// Text with NULs is UTF-16 read as UTF-8 (Firefox's `text/x-moz-url`), never words to keep.
+pub(crate) fn names_a_picture(text: &str, html: Option<&str>) -> bool {
+    if text.contains('\0') {
+        return true;
+    }
+    if let Some(h) = html
+        && h.to_ascii_lowercase().contains("<img")
+        && visible_text(h).trim().is_empty()
+    {
+        return true;
+    }
+    let mut lines = text.trim().lines();
+    let first = lines.next().unwrap_or("").trim();
+    let link = ["http://", "https://", "file://", "data:image/"].iter().any(|p| first.to_ascii_lowercase().starts_with(p));
+    link && !first.contains(char::is_whitespace) && lines.count() <= 1
+}
+
+/// The text of an HTML fragment outside its tags (and outside comments and `<style>`/`<script>`
+/// bodies, which browsers sometimes put around a copied picture).
+fn visible_text(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < html.len() {
+        let rest = &lower[i..];
+        let skip_to = |end: &str| rest.find(end).map(|e| i + e + end.len()).unwrap_or(html.len());
+        if rest.starts_with("<!--") {
+            i = skip_to("-->");
+        } else if rest.starts_with("<style") {
+            i = skip_to("</style>");
+        } else if rest.starts_with("<script") {
+            i = skip_to("</script>");
+        } else if rest.starts_with('<') {
+            i = skip_to(">");
+        } else {
+            let end = rest.find('<').map_or(html.len(), |e| i + e);
+            out.push_str(&html[i..end]);
+            i = end;
+        }
+    }
+    out.replace("&nbsp;", " ")
+}
+
 impl SlideApp {
     /// Offer the copy or cut on the system clipboard.
     ///

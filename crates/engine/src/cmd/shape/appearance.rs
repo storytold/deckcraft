@@ -1,11 +1,11 @@
 use super::{
     ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PictureFill, PictureMode,
     Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value, edit_geometry,
-    edit_shapes, f64_param, inherited_fills, json, requested_fill, str_param, targets, usize_param,
+    edit_shapes, f64_param, inherited_fills, json, opt_usize_param, requested_fill, str_param, targets,
 };
 
 pub(super) fn adjust(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").unwrap_or(0).min(16);
+    let i = opt_usize_param(p, "index", "shape.adjust")?.unwrap_or(0).min(16);
     let v = f64_param(p, "value").ok_or_else(|| bad("shape.adjust", "missing `value`"))?;
     edit_geometry(s, p, "shape.adjust", |sh| {
         if let Geom::Preset { name, adj } = &mut sh.geom {
@@ -74,7 +74,8 @@ pub(super) fn change(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// `{stops: [[pos 0–1, color], …], kind?: linear|radial|rectangular|path, angle?: deg (linear),
 /// focus?: [l, t, r, b] fractions (radial/rectangular/path: where the first stop sits),
-/// rotateWithShape?}`.
+/// rotateWithShape?}`. The renderer keeps only linear and radial gradients upright when
+/// `rotateWithShape` is false; rectangular and path gradients turn with the shape.
 pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     let stops: Vec<GradientStop> = v
         .get("stops")?
@@ -371,9 +372,9 @@ pub(super) fn effects(s: &mut Session, p: &Value) -> Result<Value> {
     let soft = p.get("softEdges").map(|v| v.as_f64().filter(|x| *x > 0.0).map(|x| x.min(100.0)));
     let refl = str_param(p, "reflection").map(|r| match r {
         "none" => None,
-        "half" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.55, dist: 4.0 }),
-        "full" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.9, dist: 4.0 }),
-        _ => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.35, dist: 0.0 }),
+        "half" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.55, dist: 4.0, ..Default::default() }),
+        "full" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.9, dist: 4.0, ..Default::default() }),
+        _ => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.35, dist: 0.0, ..Default::default() }),
     });
     let three_d = p.get("threeD").filter(|v| v.is_object());
     let bevel = str_param(p, "bevel").map(|b| if b == "none" { None } else { Some(b.to_string()) });
@@ -467,7 +468,14 @@ pub(super) fn effects(s: &mut Session, p: &Value) -> Result<Value> {
             e.glow = (g.radius > 0.0).then_some(g);
         }
         if let Some(v) = &refl_props {
-            let mut r = e.reflection.take().unwrap_or(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.35, dist: 0.0 });
+            let mut r = e.reflection.take().unwrap_or(Reflection {
+                blur: 0.5,
+                start_alpha: 0.5,
+                end_alpha: 0.0,
+                end_pos: 0.35,
+                dist: 0.0,
+                ..Default::default()
+            });
             if let Some(t) = num(v, "transparency") {
                 r.start_alpha = 1.0 - t.clamp(0.0, 1.0);
             }
@@ -548,7 +556,7 @@ pub fn quick_style_for(index: usize) -> (ShapeStyle, Option<Fill>, Option<Line>)
 }
 
 pub(super) fn quick_style(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").unwrap_or(1).min(41);
+    let i = opt_usize_param(p, "index", "shape.quickStyle")?.unwrap_or(1).min(41);
     let (st, f, l) = quick_style_for(i);
     edit_shapes(s, p, "shape.quickStyle", |sh| {
         sh.style = Some(st.clone());

@@ -1,7 +1,7 @@
 use super::{
     Ctx, Fields, Fill, Image, Opts, PathMorph, Point, RENDERER, Rect, Region, RenderOpts, Renderer, Rgba, ShapeState, SlideFields, TextMorph,
     crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, parse_path, pasteboard_region, place_slide,
-    render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
+    place_slide_with, render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
 };
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
@@ -513,6 +513,56 @@ fn glow_of_a_shape_with_no_fill_and_no_line_is_not_drawn() {
         let px = img.pixel(x, y);
         assert!(px[2] > 245, "({x}, {y}): {px:?}");
     }
+}
+
+#[test]
+fn shadow_and_glow_keep_an_even_odd_shapes_hole() {
+    // #1596: a donut is one even-odd subpath — its hole exists only under the
+    // even-odd rule. The effects were cast from a merged silhouette filled
+    // NonZero, so the shadow and the glow filled the hole solid. The hole's
+    // centre must stay the slide's white in both, while the effects still draw.
+    let donut = |effects: deckcraft_model::Effects| {
+        let mut sh = Shape {
+            id: ShapeId(612),
+            xfrm: Some(Xfrm::new(50.0, 50.0, 200.0, 200.0)),
+            geom: Geom::preset("donut"),
+            fill: Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 160, 0)))),
+            ..Default::default()
+        };
+        sh.effects = Some(effects);
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let img = donut(deckcraft_model::Effects {
+        outer_shadow: Some(deckcraft_model::style::Shadow {
+            color: ColorRef::rgb(deckcraft_color::Rgba::BLACK),
+            blur: 8.0,
+            dist: 0.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "shadow in the hole: {hole:?}");
+    // The shadow still falls around the shape (just below its bottom edge).
+    let below = img.pixel(150, 251);
+    assert!(below[0] < 200 && below[0] == below[2], "no shadow below: {below:?}");
+
+    let img = donut(deckcraft_model::Effects {
+        glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)), radius: 8.0 }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "glow in the hole: {hole:?}");
+    // The ring itself is the shape's orange.
+    let ring = img.pixel(150, 75);
+    assert!(ring[0] > 200 && ring[1] > 100 && ring[2] < 100, "ring: {ring:?}");
 }
 
 #[test]
@@ -2919,6 +2969,27 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(!changed.is_empty(), "an empty bullet must be visible");
     assert!(changed.iter().any(|(px, _)| px[0] == 179 && px[1] == 179 && px[2] == 179));
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
+}
+
+#[test]
+fn placed_text_holds_the_field_value_not_the_saved_placeholder() {
+    let mut p = deck_with(vec![field_shape(Some("slidenum"), "<#>")]);
+    let second = p.slides[0].clone();
+    p.slides.push(second);
+    let placed = place_slide(&p, 1);
+    assert_eq!(placed.texts.len(), 1);
+    assert_eq!(placed.texts[0].body.text(), "2");
+    // The layout was drawn from the same value, so the offsets agree with the body.
+    assert_eq!(placed.texts[0].layout.runs.iter().map(|r| r.chars.1).max(), Some(1));
+}
+
+#[test]
+fn placed_text_takes_its_date_from_the_given_render_options() {
+    use deckcraft_text::datetime::DateTime;
+    let p = deck_with(vec![field_shape(Some("datetime1"), "1/1/2000")]);
+    let at = |now: DateTime| place_slide_with(&p, 0, &RenderOpts { now: Some(now), ..Default::default() });
+    assert_eq!(at(DateTime::new(2026, 10, 9, 20, 5, 7)).texts[0].body.text(), "10/9/2026");
+    assert_eq!(at(DateTime::new(2027, 3, 4, 0, 0, 0)).texts[0].body.text(), "3/4/2027");
 }
 
 /// A chart that has no text colour of its own takes PowerPoint's default, the theme's text colour

@@ -3,6 +3,13 @@
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-09 · **Change:** minor (cross-process slide paste uses clipboard-specific inflation limits; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (progress log: fix for a workflow-breaking regression: Ctrl+C/X/V use the system clipboard again, broken for all text and objects from 0.11.1 to 0.15.0; pasted and duplicated placeholders keep their look; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (progress log: dragging several selected slides moves them all; previous: trivial, progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option set the point type; previous: trivial, progress log: scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -149,6 +156,22 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | What landed |
 |---|---|
 | 2026-11-09 | Cross-process slide paste caps inflated manifests at 8 MiB and media/chart payloads together at 32 MiB and 4,096 items, stopping on damaged media; native-file loading limits and recovery stay unchanged (#1372) |
+| 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
+| 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
+| 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
+| 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
+| 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
+| 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
+| 2026-11-02 | Deleting slides removes their IDs from every custom show; the cleanup is undoable and survives native save/reopen |
+| 2026-11-02 | Reused slides scale their geometry and content dimensions to the destination slide, including kept source masters and layouts; the reuse picker still lacks thumbnails |
+| 2026-11-02 | File › About replaces the unused Account page, with version, project links, contributor/model credits and appearance preferences |
+| 2026-11-02 | PPTX reflection effects keep their authored start position, affine scale/skew, direction and fade, alignment, and rotation flag through native and PPTX saves |
+| 2026-11-03 | Reuse Slides brings along referenced custom table styles, including grouped tables, and remaps conflicting style ids without changing destination tables |
+| 2026-11-02 | Tiled picture fills in groups: a tile (`a:blipFill` with `a:tile`) keeps its size, offset and anchor in slide points whatever the group's child-coordinate scale, uniform or stretched unevenly, nested or flipped (also a group's own tile fill passed to its members, and a picture shape's own tile, with its shadow and reflection), and tiles with `rotWithShape="0"` keep their size in points at any zoom, as PowerPoint draws them (measured on its own PNG export of a synthetic probe deck: every grouped case within ~3/255 of the ungrouped control's own difference from PowerPoint, which is ~13/255 from resampling). Before, a group whose child space was ~1800 times smaller than its box showed one flat texel of the texture (a Venn diagram with paper-textured circles and a hatched intersection) |
+| 2026-11-01 | Ctrl+V of a picture copied in a browser (Copy Image) pastes the picture, not a text box with its link and alt text; the link still pastes as text when no picture came with it |
+| 2026-11-01 | Copy, Cut, Paste, Duplicate and Alt+drag of a title, body or other placeholder on a slide keep its look: the copy is a regular shape that takes the size, font, bullets, indents, autofit and box its layout and master gave it, instead of 18 pt unbulleted text |
+| 2026-11-01 | Clipboard: Ctrl+C, Ctrl+X and Ctrl+V use the system clipboard again, so text and pictures paste from other apps and in-app copies paste back. Since the egui 0.37 migration (#1350) the desktop build had a clipboard that only worked inside the app. On native Wayland, text goes through egui's Wayland clipboard; HTML stays on X11, macOS and Windows |
+| 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
@@ -319,6 +342,14 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
+| 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
+| 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
+| 2026-11-03 | trivial | Progress log: web `?host=parent` bridge to a framing page; scores unchanged |
+| 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
+| 2026-11-02 | trivial | Progress log: tiled picture fills keep their size in scaled groups. Scores and milestone names unchanged |
+| 2026-11-01 | trivial | Workflow-breaking regression fixed: the desktop build uses the system clipboard again (eframe `clipboard` feature) |
+| 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Progress log: the Picture Styles row leaves room for Crop and Size (#1232). Scores and milestone names unchanged |

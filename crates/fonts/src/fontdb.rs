@@ -30,12 +30,15 @@ pub fn bundled() -> Vec<&'static [u8]> {
 /// Open substitutes for families documents often ask for but we can't ship (metric-compatible
 /// where one exists), tried in order after the family itself.
 pub fn substitutes(family: &str) -> &'static [&'static str] {
-    match family.to_ascii_lowercase().as_str() {
+    let f = family.to_ascii_lowercase();
+    if is_monospace_family(&f) {
+        return &["Liberation Mono", "Courier New", "Menlo", "Courier", "DejaVu Sans Mono"];
+    }
+    match f.as_str() {
         "calibri" | "calibri light" => &["Carlito", "Liberation Sans", "Arial", "Inter"],
         "cambria" | "cambria math" => &["Caladea", "Liberation Serif", "Times New Roman", "Merriweather"],
         "arial" | "helvetica" | "helvetica neue" | "arial nova" => &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"],
         "times new roman" | "times" => &["Liberation Serif", "Times New Roman", "Times", "Merriweather"],
-        "courier new" | "courier" | "consolas" | "menlo" => &["Liberation Mono", "Courier New", "Menlo", "Courier"],
         "aptos" | "aptos display" | "aptos narrow" | "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => {
             &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"]
         }
@@ -52,12 +55,77 @@ pub fn substitutes(family: &str) -> &'static [&'static str] {
     }
 }
 
+/// Families that are monospaced: when not installed, documents keep a monospaced substitute
+/// ([`substitutes`]) so code blocks and columns stay aligned instead of falling back to
+/// proportional Calibri.
+pub fn is_monospace_family(family: &str) -> bool {
+    let f = family.to_ascii_lowercase();
+    let s = f.trim();
+    if matches!(
+        s,
+        "courier new"
+            | "courier"
+            | "cousine"
+            | "consolas"
+            | "menlo"
+            | "monaco"
+            | "source code pro"
+            | "jetbrains mono"
+            | "cascadia code"
+            | "cascadia code pl"
+            | "cascadia mono"
+            | "cascadia mono pl"
+            | "fira code"
+            | "fira mono"
+            | "inconsolata"
+            | "dejavu sans mono"
+            | "sf mono"
+            | "roboto mono"
+            | "hack"
+            | "ubuntu mono"
+            | "pt mono"
+            | "liberation mono"
+            | "andale mono"
+            | "lucida console"
+            | "lucida sans typewriter"
+            | "fixedsys"
+            | "terminal"
+            | "monospace"
+            | "iosevka"
+            | "monolisa"
+            | "envy code r"
+            | "hasklig"
+    ) {
+        return true;
+    }
+    s.starts_with("courier")
+        || s.starts_with("consolas")
+        || s.starts_with("inconsolata")
+        || s.starts_with("iosevka")
+        || s.ends_with(" mono")
+        || s.ends_with(" code")
+        || s.ends_with(" console")
+        || s.ends_with(" typewriter")
+        || s.ends_with(" monospace")
+        || s.split_whitespace().any(|w| w == "mono" || w == "terminal" || w == "monospace")
+}
+
 /// Families whose open substitutes ([`substitutes`]) keep their metrics, so text drawn with
 /// them breaks into the same lines.
 fn has_metric_twin(family: &str) -> bool {
     matches!(
         family.to_ascii_lowercase().as_str(),
-        "calibri" | "calibri light" | "cambria" | "cambria math" | "arial" | "helvetica" | "times new roman" | "times" | "courier new" | "courier"
+        "calibri"
+            | "calibri light"
+            | "cambria"
+            | "cambria math"
+            | "arial"
+            | "helvetica"
+            | "times new roman"
+            | "times"
+            | "courier new"
+            | "courier"
+            | "cousine"
     )
 }
 
@@ -300,7 +368,7 @@ struct CatalogEntry {
 /// Process-wide font database.
 pub struct FontDb {
     faces: RwLock<Vec<Arc<FontFace>>>,
-    outlines: Mutex<HashMap<(u32, u32), Arc<BezPath>>>,
+    outlines: Mutex<OutlineCache>,
     #[cfg(not(target_arch = "wasm32"))]
     catalog: RwLock<Vec<CatalogEntry>>,
     /// The folders the system font scan reads (the platform's font folders for [`FontDb::global`]).
@@ -371,6 +439,38 @@ const SYSTEM_FALLBACKS: &[&str] = &[
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 const OUTLINE_CACHE_MAX: usize = 50_000;
+/// Most path elements one glyph outline may expand to. Composite and `VARC` glyphs can draw a
+/// shared outline many times over; a glyph past this draws nothing rather than holding megabytes.
+const MAX_OUTLINE_ELEMENTS: usize = 1 << 15;
+/// Most path elements the outline cache holds across all glyphs (about 230 MB at most) before it
+/// starts over: distinct glyph ids can each expand one dense outline.
+const OUTLINE_CACHE_MAX_ELEMENTS: usize = 1 << 22;
+
+/// Glyph outlines by (face, glyph), with the path elements they hold.
+#[derive(Default)]
+struct OutlineCache {
+    paths: HashMap<(u32, u32), Arc<BezPath>>,
+    elements: usize,
+}
+
+impl OutlineCache {
+    fn get(&self, key: &(u32, u32)) -> Option<Arc<BezPath>> {
+        self.paths.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: (u32, u32), path: Arc<BezPath>) {
+        let n = path.elements().len();
+        if let Some(old) = self.paths.remove(&key) {
+            self.elements = self.elements.saturating_sub(old.elements().len());
+        }
+        if self.paths.len() >= OUTLINE_CACHE_MAX || self.elements.saturating_add(n) > OUTLINE_CACHE_MAX_ELEMENTS {
+            self.paths.clear();
+            self.elements = 0;
+        }
+        self.paths.insert(key, path);
+        self.elements = self.elements.saturating_add(n);
+    }
+}
 
 fn name(font: &skrifa::FontRef<'_>, ids: &[StringId]) -> Option<String> {
     ids.iter().find_map(|id| font.localized_strings(*id).english_or_first().map(|s| s.to_string()).filter(|s| !s.is_empty()))
@@ -626,6 +726,10 @@ const MAX_COLLECTION_FACES: u32 = 256;
 const MAX_COLLECTION_ENTRIES_SCANNED: u32 = 16_384;
 /// Maximum named instances read from a single face.
 const MAX_NAMED_INSTANCES_PER_FACE: usize = 1024;
+/// Maximum faces (named instances counted separately) enumerated from one font file, across all
+/// of a collection's faces: the per-collection and per-face limits multiply, and each face found
+/// is then built with its own shaper.
+const MAX_ENUMERATED_FACES: usize = 4096;
 
 fn distinct_face_indices(entries: impl IntoIterator<Item = (u32, u32)>) -> Vec<u32> {
     let mut offsets = std::collections::HashSet::new();
@@ -662,21 +766,30 @@ fn enumerate_faces(data: &[u8]) -> Vec<Found> {
         Err(_) => Vec::new(),
     };
     let mut out = Vec::new();
+    // Named instances read and plain faces kept, across the whole file.
+    let mut budget = MAX_ENUMERATED_FACES;
     for i in indices {
+        if budget == 0 {
+            break;
+        }
         let Ok(f) = skrifa::FontRef::from_index(data, i) else { continue };
         let Some((family, style)) = face_names(&f) else { continue };
         let axes = f.axes();
         let mut named = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let instances = f.named_instances();
         for ni in instances.iter().take(capped_named_instance_count(instances.len())) {
+            let Some(left) = budget.checked_sub(1) else { break };
+            budget = left;
             let Some(style) = name(&f, &[ni.subfamily_name_id()]) else { continue };
-            if named.iter().any(|(_, s, _): &(u32, String, _)| s.eq_ignore_ascii_case(&style)) {
+            if !seen.insert(style.to_ascii_lowercase()) {
                 continue;
             }
             let coords: Vec<([u8; 4], f32)> = axes.iter().zip(ni.user_coords()).map(|(a, v)| (a.tag().to_be_bytes(), v)).collect();
             named.push((i, style, coords));
         }
         if named.is_empty() {
+            budget = budget.saturating_sub(1);
             out.push((i, family, style, Vec::new()));
         } else {
             out.extend(named.into_iter().map(|(i, s, c)| (i, family.clone(), s, c)));
@@ -837,7 +950,7 @@ impl FontDb {
         }
         Self {
             faces: RwLock::new(faces),
-            outlines: Mutex::new(HashMap::new()),
+            outlines: Mutex::new(OutlineCache::default()),
             #[cfg(not(target_arch = "wasm32"))]
             catalog: RwLock::new(Vec::new()),
             font_dirs,
@@ -1080,6 +1193,7 @@ impl FontDb {
     /// when it is installed or bundled, or a metric-compatible stand-in (Carlito for Calibri,
     /// Liberation Sans for Arial…), or the family PowerPoint maps it to (Liberation Sans as Arial,
     /// see `office_twin`); any other missing family is drawn in Calibri (or Carlito).
+    /// Monospaced families keep a monospaced substitute instead of falling back to Calibri.
     /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
         if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
@@ -1087,6 +1201,9 @@ impl FontDb {
         }
         if let Some(twin) = office_twin(family) {
             return self.face(twin, style);
+        }
+        if is_monospace_family(family) {
+            return self.face(family, style);
         }
         self.face(MISSING_FONT_FAMILY, style)
     }
@@ -1143,9 +1260,8 @@ impl FontDb {
     fn instance(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         let open = style.find('{')?;
         let base = self.find(family, style[..open].trim())?;
-        if base.skrifa().is_none_or(|f| f.axes().is_empty()) {
-            return Some(base);
-        }
+        let Some(font) = base.skrifa().filter(|f| !f.axes().is_empty()) else { return Some(base) };
+        let axis_tags: Vec<[u8; 4]> = font.axes().iter().map(|a| a.tag().to_be_bytes()).collect();
         let mut coords = base.coords.clone();
         for kv in style[open + 1..].trim_end_matches('}').split(',') {
             let (k, v) = kv.split_once(':')?;
@@ -1155,6 +1271,11 @@ impl FontDb {
                 return None;
             }
             let tag = [k[0], k[1], k[2], k[3]];
+            // A tag the font has no axis for changes nothing; keeping it would grow the list with
+            // every distinct tag in the style text.
+            if !axis_tags.contains(&tag) {
+                continue;
+            }
             match coords.iter_mut().find(|(t, _)| *t == tag) {
                 Some(c) => c.1 = v,
                 None => coords.push((tag, v)),
@@ -1441,41 +1562,72 @@ impl FontDb {
     pub fn outline(&self, face: &FontFace, gid: u32) -> Arc<BezPath> {
         let key = (face.id, gid);
         if let Some(p) = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
-            return p.clone();
+            return p;
         }
-        let mut pen = FlipPen(BezPath::new());
+        let mut pen = FlipPen::new(MAX_OUTLINE_ELEMENTS);
         if let Some(f) = face.skrifa()
             && let Some(g) = f.outline_glyphs().get(GlyphId::new(gid))
         {
             let _ = g.draw(DrawSettings::unhinted(Size::unscaled(), face.location()), &mut pen);
         }
-        let p = Arc::new(pen.0);
-        let mut cache = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if cache.len() >= OUTLINE_CACHE_MAX {
-            cache.clear();
-        }
-        cache.insert(key, p.clone());
+        let p = Arc::new(pen.finish());
+        self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, p.clone());
         p
     }
 }
 
-struct FlipPen(BezPath);
+/// Collects a glyph outline, y flipped, up to `limit` path elements. Past the limit it ignores
+/// what follows and [`FlipPen::finish`] gives an empty path: a cut-off outline would fill wrongly.
+struct FlipPen {
+    path: BezPath,
+    limit: usize,
+    over: bool,
+}
+
+impl FlipPen {
+    fn new(limit: usize) -> Self {
+        FlipPen { path: BezPath::new(), limit, over: false }
+    }
+
+    /// Room for one more element?
+    fn room(&mut self) -> bool {
+        if !self.over && self.path.elements().len() >= self.limit {
+            self.over = true;
+            self.path = BezPath::new();
+        }
+        !self.over
+    }
+
+    fn finish(self) -> BezPath {
+        if self.over { BezPath::new() } else { self.path }
+    }
+}
 
 impl OutlinePen for FlipPen {
     fn move_to(&mut self, x: f32, y: f32) {
-        self.0.move_to((x as f64, -y as f64));
+        if self.room() {
+            self.path.move_to((x as f64, -y as f64));
+        }
     }
     fn line_to(&mut self, x: f32, y: f32) {
-        self.0.line_to((x as f64, -y as f64));
+        if self.room() {
+            self.path.line_to((x as f64, -y as f64));
+        }
     }
     fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
-        self.0.quad_to((cx0 as f64, -cy0 as f64), (x as f64, -y as f64));
+        if self.room() {
+            self.path.quad_to((cx0 as f64, -cy0 as f64), (x as f64, -y as f64));
+        }
     }
     fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
-        self.0.curve_to((cx0 as f64, -cy0 as f64), (cx1 as f64, -cy1 as f64), (x as f64, -y as f64));
+        if self.room() {
+            self.path.curve_to((cx0 as f64, -cy0 as f64), (cx1 as f64, -cy1 as f64), (x as f64, -y as f64));
+        }
     }
     fn close(&mut self) {
-        self.0.close_path();
+        if self.room() {
+            self.path.close_path();
+        }
     }
 }
 
@@ -1501,6 +1653,55 @@ mod font_dir_tests {
         assert_eq!(capped_named_instance_count(0), 0);
         assert_eq!(capped_named_instance_count(MAX_NAMED_INSTANCES_PER_FACE), MAX_NAMED_INSTANCES_PER_FACE);
         assert_eq!(capped_named_instance_count(MAX_NAMED_INSTANCES_PER_FACE + 1), MAX_NAMED_INSTANCES_PER_FACE);
+    }
+
+    #[test]
+    fn faces_of_one_file_are_bounded_across_the_collection() {
+        // The per-collection and per-face limits together would allow far more.
+        assert!((MAX_COLLECTION_FACES as usize) * MAX_NAMED_INSTANCES_PER_FACE > 16 * MAX_ENUMERATED_FACES);
+        for data in bundled() {
+            assert!(enumerate_faces(data).len() <= MAX_ENUMERATED_FACES);
+        }
+    }
+
+    #[test]
+    fn an_outline_past_the_element_limit_draws_nothing() {
+        let mut pen = FlipPen::new(8);
+        pen.move_to(0.0, 0.0);
+        pen.line_to(1.0, 1.0);
+        pen.close();
+        assert_eq!(pen.finish().elements().len(), 3);
+        // A shared outline drawn over and over (composite and VARC glyphs).
+        let mut pen = FlipPen::new(8);
+        for i in 0..1_000_000 {
+            pen.move_to(0.0, 0.0);
+            pen.line_to(i as f32, 1.0);
+            pen.close();
+        }
+        assert_eq!(pen.path.elements().len(), 0);
+        assert!(pen.finish().elements().is_empty());
+    }
+
+    #[test]
+    fn outline_cache_is_bounded_by_elements() {
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        for i in 1..MAX_OUTLINE_ELEMENTS {
+            path.line_to((i as f64, 0.0));
+        }
+        let path = Arc::new(path);
+        let mut cache = OutlineCache::default();
+        let glyphs = 4 * OUTLINE_CACHE_MAX_ELEMENTS / MAX_OUTLINE_ELEMENTS;
+        for gid in 0..glyphs as u32 {
+            cache.insert((1, gid), path.clone());
+            assert!(cache.elements <= OUTLINE_CACHE_MAX_ELEMENTS);
+            assert_eq!(cache.elements, cache.paths.values().map(|p| p.elements().len()).sum::<usize>());
+        }
+        assert!(cache.get(&(1, glyphs as u32 - 1)).is_some());
+        // Replacing an entry does not count it twice.
+        let before = cache.elements;
+        cache.insert((1, glyphs as u32 - 1), path.clone());
+        assert_eq!(cache.elements, before);
     }
 
     #[test]

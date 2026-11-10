@@ -214,6 +214,368 @@ fn clipboard_copy_paste_shapes_and_slides() {
     assert!(s.doc().unwrap().doc.validate().is_empty());
 }
 
+/// The resolved look of every paragraph and run of shape `id` on the current slide: size, font,
+/// colour, bold, bullet, indent, alignment, and the box's insets and anchor.
+fn resolved_look(s: &Session, id: ShapeId) -> String {
+    use deckcraft_model::resolve;
+    let st = s.doc().unwrap();
+    let slide = st.current_slide().unwrap();
+    let ctx = resolve::Ctx::for_slide(&st.doc, slide).unwrap();
+    let sh = st.shape(id).unwrap();
+    let t = sh.text.as_ref().unwrap();
+    let b = resolve::body(&ctx, sh);
+    let mut out = format!("body {:?} {:?} {:?}\n", b.anchor, b.inset_l, b.autofit);
+    for p in &t.paragraphs {
+        let pp = resolve::para(&ctx, sh, p);
+        out += &format!("para {:?} {:?} {:?} {:?}\n", pp.align, pp.margin_left, pp.indent, pp.bullet);
+        for r in &p.runs {
+            let rp = resolve::run(&ctx, sh, p, &r.props);
+            out += &format!("  run {:?} {:?} {:?} {:?}\n", rp.size, rp.font, rp.bold, rp.fill);
+        }
+    }
+    out
+}
+
+/// A placeholder pasted or duplicated on a slide becomes a regular shape, and keeps the look its
+/// layout and master gave it: the title's size and font, the body's bullets and indents. Before,
+/// the copy fell back to the master's other-text style (18 pt, no bullets).
+#[test]
+fn a_pasted_or_duplicated_placeholder_keeps_its_inherited_look() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let phs: Vec<ShapeId> = s.doc().unwrap().current_slide().unwrap().shapes.iter().filter(|x| x.ph.is_some()).map(|x| x.id).collect();
+    assert!(phs.len() >= 2, "a title and a body placeholder");
+    for (k, id) in phs.iter().enumerate() {
+        s.execute("text.set", &json!({"id": id.0, "text": format!("Placeholder {k}\nSecond line")})).unwrap();
+    }
+    for id in phs {
+        let want = resolved_look(&s, id);
+        for cmd in ["paste", "duplicate"] {
+            s.execute("selection.select", &json!({"id": id.0})).unwrap();
+            if cmd == "paste" {
+                s.execute("edit.copy", &json!({})).unwrap();
+                s.execute("edit.paste", &json!({})).unwrap();
+            } else {
+                s.execute("edit.duplicate", &json!({})).unwrap();
+            }
+            let copy = s.doc().unwrap().selection.shapes[0];
+            assert_ne!(copy, id);
+            assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "{cmd}: the copy is a regular shape");
+            assert_eq!(resolved_look(&s, copy), want, "{cmd} of placeholder {}", id.0);
+        }
+    }
+    assert!(s.doc().unwrap().doc.validate().is_empty());
+}
+
+/// Dragging a copy of a placeholder off it keeps the look too: the title's size and font, the
+/// body's bullets. `edit.duplicate` is not the only way to duplicate.
+#[test]
+fn a_placeholder_duplicated_by_dragging_keeps_its_look() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let phs: Vec<ShapeId> = s.doc().unwrap().current_slide().unwrap().shapes.iter().filter(|x| x.ph.is_some()).map(|x| x.id).collect();
+    assert!(phs.len() >= 2, "a title and a body placeholder");
+    for id in phs {
+        s.execute("text.set", &json!({"id": id.0, "text": "First\nSecond"})).unwrap();
+        let want = resolved_look(&s, id);
+        s.execute("selection.select", &json!({"id": id.0})).unwrap();
+        let st = s.doc().unwrap();
+        let x = crate::cmd::xfrm_of(&st.doc, &st.selection, st.shape(id).unwrap());
+        let (cx, cy) = (x.x + x.w / 2.0, x.y + x.h / 2.0);
+        let alt = |kind, x, y| PointerEvent { mods: Mods { alt: true, ..Default::default() }, ..tev(kind, x, y) };
+        s.pointer(alt(PointerKind::Down, cx, cy)).unwrap();
+        s.pointer(alt(PointerKind::Drag, cx + 30.0, cy + 30.0)).unwrap();
+        s.pointer(alt(PointerKind::Up, cx + 30.0, cy + 30.0)).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_ne!(copy, id, "the drag made a copy");
+        assert!(s.doc().unwrap().shape(id).unwrap().ph.is_some(), "the original stays a placeholder");
+        assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "the copy is a regular shape");
+        assert_eq!(resolved_look(&s, copy), want, "placeholder {}", id.0);
+    }
+}
+
+/// Keep Source Formatting fixes a copy's theme colours as the source drew them: through the colour
+/// map of its slide or layout, not the master's. A title's inherited `tx1` stays the light colour
+/// an override gave it.
+#[test]
+fn keep_source_formatting_uses_the_slides_colour_map() {
+    use deckcraft_model::resolve;
+    let first_run_colour = |s: &Session, id: ShapeId| {
+        let st = s.doc().unwrap();
+        let ctx = resolve::Ctx::for_slide(&st.doc, st.current_slide().unwrap()).unwrap();
+        let sh = st.shape(id).unwrap();
+        let p = &sh.text.as_ref().unwrap().paragraphs[0];
+        resolve::text_color(&ctx, &resolve::run(&ctx, sh, p, &p.runs[0].props))
+    };
+    for on_layout in [false, true] {
+        let mut s = session();
+        s.execute("slide.new", &json!({})).unwrap();
+        let title = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.ph.is_some()).unwrap().id;
+        s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+        let plain = first_run_colour(&s, title);
+        let st = s.doc_mut().unwrap();
+        let at = st.selection.slide;
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        if on_layout {
+            let layout = doc.slides[at].layout;
+            let m = std::sync::Arc::make_mut(&mut doc.masters[0]);
+            m.layouts.iter_mut().find(|l| l.id == layout).unwrap().color_map = swapped_colour_map();
+        } else {
+            std::sync::Arc::make_mut(&mut doc.slides[at]).color_map = swapped_colour_map();
+        }
+        let want = first_run_colour(&s, title);
+        assert_ne!(want, plain, "the override changes how the title draws");
+
+        s.execute("selection.select", &json!({"id": title.0})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.pasteSpecial", &json!({"as": "keepSource"})).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_ne!(copy, title);
+        assert_eq!(first_run_colour(&s, copy), want, "override on the layout: {on_layout}");
+    }
+}
+
+/// A colour map that swaps text and background, as a dark slide or layout has.
+fn swapped_colour_map() -> Option<Vec<(String, String)>> {
+    Some([("bg1", "dk1"), ("tx1", "lt1"), ("bg2", "dk2"), ("tx2", "lt2")].map(|(a, b)| (a.to_string(), b.to_string())).to_vec())
+}
+
+/// A new rectangle in the edited tree, filled with theme colour `slot`.
+fn rect_filled_with(s: &mut Session, slot: deckcraft_color::SchemeSlot) -> ShapeId {
+    use deckcraft_model::{ColorRef, Fill};
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(u32::try_from(id).unwrap());
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        list.iter_mut().find(|x| x.id == id).unwrap().fill = Some(Fill::solid(ColorRef::scheme(slot)));
+        Ok(())
+    })
+    .unwrap();
+    id
+}
+
+/// How shape `id`'s fill draws in the edited tree.
+fn drawn_fill(s: &Session, id: ShapeId) -> deckcraft_color::Rgba {
+    use deckcraft_model::{Fill, resolve};
+    let st = s.doc().unwrap();
+    let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection).unwrap();
+    match resolve::fill(&ctx, st.shape(id).unwrap()).0 {
+        Some(Fill::Solid { color }) => ctx.color(&color, None),
+        other => panic!("not a solid fill: {other:?}"),
+    }
+}
+
+/// Copy the selected shape and paste it with Keep Source Formatting; the copy's id.
+fn keep_source_copy(s: &mut Session, id: ShapeId) -> ShapeId {
+    s.execute("selection.select", &json!({"id": id.0})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("edit.pasteSpecial", &json!({"as": "keepSource"})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert_ne!(copy, id);
+    copy
+}
+
+/// A colour map renames only `tx1`, `bg1`, `tx2` and `bg2`. Keep Source Formatting fixes every slot
+/// as it draws: `tx1` follows the map, while a direct `dk1` stays the theme's dark colour.
+#[test]
+fn keep_source_formatting_maps_only_the_alias_colours() {
+    use deckcraft_color::SchemeSlot::{self, *};
+    let mut s = session();
+    let st = s.doc_mut().unwrap();
+    let at = st.selection.slide;
+    std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[at]).color_map = swapped_colour_map();
+    let slots: [SchemeSlot; 9] = [Dk1, Lt1, Dk2, Lt2, Tx1, Bg1, Tx2, Bg2, Accent1];
+    let mut drawn = vec![];
+    for slot in slots {
+        let id = rect_filled_with(&mut s, slot);
+        let want = drawn_fill(&s, id);
+        let copy = keep_source_copy(&mut s, id);
+        assert_eq!(drawn_fill(&s, copy), want, "{slot:?}");
+        drawn.push(want);
+    }
+    assert_ne!(drawn[0], drawn[4], "the map sets `tx1` apart from `dk1`");
+}
+
+/// In Slide Master view a copy draws through the edited master's map, not an override on the slide
+/// that happens to be current.
+#[test]
+fn keep_source_formatting_in_slide_master_view_ignores_the_slides_colour_map() {
+    use deckcraft_color::SchemeSlot::Tx1;
+    for master in [false, true] {
+        let mut s = session();
+        let st = s.doc_mut().unwrap();
+        let at = st.selection.slide;
+        std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[at]).color_map = swapped_colour_map();
+        s.execute("view.slideMaster", &if master { json!({"master": 0}) } else { json!({}) }).unwrap();
+        let id = rect_filled_with(&mut s, Tx1);
+        let want = drawn_fill(&s, id);
+        let copy = keep_source_copy(&mut s, id);
+        assert_eq!(drawn_fill(&s, copy), want, "editing the master: {master}");
+    }
+}
+
+/// A slide's placeholder pasted in Slide Master view stays a placeholder that inherits from where
+/// it lands; only a paste on a slide turns it into a regular shape with the look it had.
+#[test]
+fn a_slide_placeholder_pasted_in_slide_master_view_stays_a_placeholder() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.ph.is_some()).unwrap().id;
+    s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+    let want = resolved_look(&s, title);
+    let source = s.doc().unwrap().shape(title).unwrap().clone();
+    s.execute("selection.select", &json!({"id": title.0})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+
+    s.execute("view.slideMaster", &json!({})).unwrap();
+    for paste in ["edit.paste", "edit.pasteSpecial"] {
+        s.execute(paste, &json!({"as": "keepSource"})).unwrap();
+        let st = s.doc().unwrap();
+        let copy = st.shape(st.selection.shapes[0]).unwrap();
+        assert_eq!(copy.ph.as_ref().map(|p| p.kind), source.ph.as_ref().map(|p| p.kind), "{paste} keeps the placeholder");
+        let list = copy.text.as_ref().map(|t| t.list_style.clone());
+        assert_eq!(list, source.text.as_ref().map(|t| t.list_style.clone()), "{paste} adds no baked styles");
+    }
+    s.execute("view.closeMaster", &json!({})).unwrap();
+
+    s.execute("edit.paste", &json!({})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "on a slide the copy is a regular shape");
+    assert_eq!(resolved_look(&s, copy), want);
+}
+
+/// The resolved fill, line and effects of shape `id` on the current slide, with their style colours.
+fn resolved_box(s: &Session, id: ShapeId) -> String {
+    use deckcraft_model::resolve;
+    let st = s.doc().unwrap();
+    let ctx = resolve::Ctx::for_slide(&st.doc, st.current_slide().unwrap()).unwrap();
+    let sh = st.shape(id).unwrap();
+    format!("{:?}\n{:?}\n{:?}", resolve::fill(&ctx, sh), resolve::line(&ctx, sh), resolve::effects(&ctx, sh))
+}
+
+/// Edit the title placeholders the current slide's title inherits from: its layout's and its
+/// master's. Returns the slide title's id.
+fn edit_title_parents(
+    s: &mut Session,
+    layout: impl FnOnce(&mut deckcraft_model::Shape),
+    master: impl FnOnce(&mut deckcraft_model::Shape),
+) -> ShapeId {
+    let st = s.doc_mut().unwrap();
+    let slide = st.current_slide().unwrap().clone();
+    let title = slide.shapes.iter().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap().id;
+    let doc = std::sync::Arc::make_mut(&mut st.doc);
+    let m = std::sync::Arc::make_mut(&mut doc.masters[0]);
+    let lay = m.layouts.iter_mut().find(|l| l.id == slide.layout).unwrap();
+    layout(lay.shapes.iter_mut().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap());
+    master(m.shapes.iter_mut().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap());
+    title
+}
+
+/// A copied placeholder takes each of fill, line and effects from where the original does: a
+/// style on the layout's placeholder (or on the slide's own) wins over an explicit value on the
+/// master's, as `resolve::fill`, `resolve::line` and `resolve::effects` decide.
+#[test]
+fn a_pasted_placeholder_keeps_the_style_precedence_of_its_box() {
+    use deckcraft_color::SchemeSlot;
+    use deckcraft_model::{ColorRef, Effects, Fill, Line, ShapeStyle};
+    for style_on_slide in [false, true] {
+        let mut s = session();
+        s.execute("slide.new", &json!({})).unwrap();
+        let style = ShapeStyle {
+            line_ref: (1, ColorRef::scheme(SchemeSlot::Accent2)),
+            fill_ref: (1, ColorRef::scheme(SchemeSlot::Accent1)),
+            effect_ref: (0, ColorRef::scheme(SchemeSlot::Accent3)),
+            font_ref: ("minor".into(), None),
+        };
+        let layout_style = (!style_on_slide).then(|| style.clone());
+        let title = edit_title_parents(
+            &mut s,
+            |l| l.style = layout_style,
+            |m| {
+                m.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Accent4)));
+                m.line = Some(Line::solid(ColorRef::scheme(SchemeSlot::Accent5), 20.0));
+                m.effects = Some(Effects { soft_edge: Some(5.0), ..Default::default() });
+            },
+        );
+        if style_on_slide {
+            s.edit(|doc, sel| {
+                let list = crate::shapes_mut(doc, sel).unwrap();
+                list.iter_mut().find(|x| x.id == title).unwrap().style = Some(style.clone());
+                Ok(())
+            })
+            .unwrap();
+        }
+        s.execute("text.set", &json!({"id": title.0, "text": "Styled title"})).unwrap();
+        let want = (resolved_box(&s, title), resolved_look(&s, title));
+        s.execute("selection.select", &json!({"id": title.0})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.paste", &json!({})).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_eq!((resolved_box(&s, copy), resolved_look(&s, copy)), want, "style on the slide: {style_on_slide}");
+    }
+}
+
+/// The master's placeholder style never reaches the copy's text: the original's text ignores it
+/// (only the shape's or the layout's font reference counts), so the copy must too.
+#[test]
+fn a_pasted_placeholder_ignores_the_masters_font_reference() {
+    use deckcraft_color::SchemeSlot;
+    use deckcraft_model::{ColorRef, ShapeStyle};
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let title = edit_title_parents(
+        &mut s,
+        |l| l.style = None,
+        |m| {
+            m.style = Some(ShapeStyle {
+                line_ref: (0, ColorRef::scheme(SchemeSlot::Accent2)),
+                fill_ref: (0, ColorRef::scheme(SchemeSlot::Accent1)),
+                effect_ref: (0, ColorRef::scheme(SchemeSlot::Accent3)),
+                font_ref: ("minor".into(), Some(ColorRef::scheme(SchemeSlot::Accent6))),
+            })
+        },
+    );
+    s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+    let want = (resolved_box(&s, title), resolved_look(&s, title));
+    assert!(want.1.contains("+mj-lt"), "the title draws in the heading font: {}", want.1);
+    s.execute("selection.select", &json!({"id": title.0})).unwrap();
+    s.execute("edit.duplicate", &json!({})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert_eq!((resolved_box(&s, copy), resolved_look(&s, copy)), want);
+}
+
+/// The same on every text placeholder of the sample deck (titles, bulleted bodies, subtitles).
+#[test]
+fn sample_placeholders_paste_with_their_look() {
+    let mut s = Session::new();
+    crate::sample::open_sample(&mut s).unwrap();
+    let slides = s.doc().unwrap().doc.slides.len();
+    let mut checked = 0;
+    for i in 0..slides {
+        s.execute("slide.go", &json!({"index": i})).unwrap();
+        let phs: Vec<ShapeId> = s
+            .doc()
+            .unwrap()
+            .current_slide()
+            .unwrap()
+            .shapes
+            .iter()
+            .filter(|x| x.ph.is_some() && x.text.as_ref().is_some_and(|t| !t.is_empty()))
+            .map(|x| x.id)
+            .collect();
+        for id in phs {
+            let want = resolved_look(&s, id);
+            s.execute("selection.select", &json!({"id": id.0})).unwrap();
+            s.execute("edit.copy", &json!({})).unwrap();
+            s.execute("edit.paste", &json!({})).unwrap();
+            let copy = s.doc().unwrap().selection.shapes[0];
+            assert_eq!(resolved_look(&s, copy), want, "slide {i}, placeholder {}", id.0);
+            checked += 1;
+        }
+    }
+    assert!(checked >= 3, "the sample has text placeholders ({checked})");
+}
+
 #[test]
 fn pasted_shapes_get_the_next_automatic_name() {
     let mut s = session();
@@ -1349,6 +1711,31 @@ fn tab_moves_between_cells_skipping_merged_ones() {
     s.execute("text.edit", &json!({"id": id, "cell": [1, 2]})).unwrap();
     s.key("Tab", Mods::default()).unwrap();
     assert_eq!((cell(&s), table_of(&s, id).n_rows()), (Some((2, 0)), 3), "Tab in the last cell adds a row");
+}
+
+#[test]
+fn format_paragraph_align_names_match_format_align() {
+    use deckcraft_model::text::Align;
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    let para = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes[0].text.as_ref().unwrap().paragraphs[0].props.align;
+    for (name, want) in [
+        ("justLow", Align::JustLow),
+        ("justifyLow", Align::JustLow),
+        ("thaiDist", Align::ThaiDistributed),
+        ("ctr", Align::Center),
+        ("centre", Align::Center),
+        ("r", Align::Right),
+        ("just", Align::Justify),
+        ("dist", Align::Distributed),
+        ("distributed", Align::Distributed),
+        ("left", Align::Left),
+    ] {
+        s.execute("format.paragraph", &json!({"align": name})).unwrap();
+        assert_eq!(para(&s), Some(want), "{name}");
+    }
+    assert!(s.execute("format.paragraph", &json!({"align": "bogus"})).is_err());
 }
 
 #[test]
@@ -2597,6 +2984,23 @@ fn pdf_options_take_paper_and_orientation() {
     assert!(cmd::file::pdf_options(&json!({"orientation": "sideways"}), 1).is_err());
 }
 
+/// Handout `perPage` accepts only 1, 2, 3, 4, 6 and 9; anything else is an error, not a 9-up page.
+#[test]
+fn pdf_options_reject_unsupported_per_page() {
+    for n in [1, 2, 3, 4, 6, 9] {
+        let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap();
+        assert!(matches!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page } if per_page as usize == n));
+    }
+    for n in [0, 5, 7, 8, 10] {
+        let e = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap_err();
+        assert!(e.to_string().contains("1, 2, 3, 4, 6, 9"), "perPage {n}: {e}");
+    }
+    // Not a count at all: refused too, instead of falling back to 6.
+    for v in [json!(-1), json!(5.5), json!("6")] {
+        assert!(cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": v}), 1).is_err(), "perPage {v}");
+    }
+}
+
 #[test]
 fn shape_line_sets_compound_and_arrow_sizes() {
     // The Format Shape pane's Line page: compound type, arrowheads and their sizes.
@@ -3393,6 +3797,7 @@ fn numbering_takes_color_and_size() {
         props.bullet_font_follow_text = Some(true);
         props.bullet_color_follow_text = Some(true);
         props.bullet_size_follow_text = Some(true);
+        props.bullet_size_points = Some(12.0);
     }
     s.execute("format.numbering", &json!({"on": true, "scheme": "romanUcPeriod", "start": 3, "color": "accent2", "size": 150})).unwrap();
     let para = |s: &Session| {
@@ -3406,9 +3811,11 @@ fn numbering_takes_color_and_size() {
     assert_eq!(pp.bullet_font_follow_text, Some(true));
     assert_eq!(pp.bullet_color_follow_text, None);
     assert_eq!(pp.bullet_size_follow_text, None);
+    assert_eq!(pp.bullet_size_points, None);
     assert_eq!(pp.bullet_color, Some(deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent2)));
     s.execute("format.bullets", &json!({"on": true, "char": "★", "size": 9000})).unwrap();
     assert_eq!(para(&s).bullet_size, Some(4.0));
+    assert_eq!(para(&s).bullet_size_points, None);
     assert_eq!(para(&s).bullet_font_follow_text, None);
 }
 
@@ -4481,6 +4888,41 @@ fn a_params_doc_spells_out_each_parameter() {
     );
 }
 
+/// `shape.fill`'s params doc names each key and kind its `gradient` takes.
+#[test]
+fn shape_fill_documents_each_gradient_key_and_kind() {
+    use deckcraft_model::style::GradientShape;
+    let params = cmd::parse_params(find_command("shape.fill").unwrap().params).unwrap();
+    let about = params.iter().find(|p| p.name == "gradient").unwrap().about;
+    assert_eq!(cmd::param_keys(about).unwrap(), ["stops", "kind", "angle", "focus", "rotateWithShape"]);
+    // The renderer keeps only linear and radial gradients upright (`paint::fill_path`).
+    let rotate = cmd::parse_params(about).unwrap().into_iter().find(|p| p.name == "rotateWithShape").unwrap().about;
+    assert!(rotate.contains("rectangular and path gradients turn with the shape"), "{rotate}");
+    for kind in ["linear", "radial", "rectangular", "path"] {
+        assert!(about.contains(kind), "{kind}: {about}");
+        let g = cmd::shape::gradient_param(&json!({
+            "stops": [[0, "#ffffff"], [1, "#000000"]],
+            "kind": kind,
+            "angle": 30,
+            "focus": [0, 0, 1, 1],
+            "rotateWithShape": false
+        }))
+        .unwrap();
+        assert!(!g.rotate_with_shape, "{kind}");
+        match g.shape {
+            GradientShape::Linear { angle, .. } => assert_eq!((kind, angle), ("linear", 30.0)),
+            GradientShape::Path { path, focus } => {
+                let expected = match kind {
+                    "radial" => "circle",
+                    "rectangular" => "rect",
+                    _ => "shape",
+                };
+                assert_eq!((path.as_str(), focus), (expected, [0.0, 0.0, 1.0, 1.0]), "{kind}");
+            }
+        }
+    }
+}
+
 #[test]
 fn what_a_command_acts_on_names_only_keys_it_takes() {
     for c in command_specs() {
@@ -5497,7 +5939,8 @@ fn opening_a_file_caps_absurd_effect_sizes() {
                 e.soft_edge = Some(f64::NAN);
                 let sw = e.outer_shadow.as_mut().unwrap();
                 (sw.blur, sw.dist, sw.sx) = (huge, huge, huge);
-                *e.reflection.as_mut().unwrap() = Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge };
+                *e.reflection.as_mut().unwrap() =
+                    Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge, ..Default::default() };
             }
             let glow = Some(Glow { color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::BLACK), radius: huge });
             let runs: Vec<&mut deckcraft_model::text::Run> = match &mut sh.kind {
@@ -5759,6 +6202,170 @@ fn edit_points_conversion_is_one_undo_step() {
     assert!(preset(&s), "the only step was the conversion");
 }
 
+/// #1621: build overlapping objects with an ordinary quick style on the foreground shape.
+fn no_fill_overlap(s: &mut Session, text: bool) -> (ShapeId, ShapeId) {
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let under = s
+        .execute(
+            if text { "insert.textBox" } else { "shape.insert" },
+            &json!({"preset": "rect", "rect": [100, 300, 300, 60], "text": if text { "UNDERLYING TEXT" } else { "" }}),
+        )
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let over = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80, 270, 350, 140]})).unwrap()["id"].as_u64().unwrap();
+    (ShapeId(under as u32), ShapeId(over as u32))
+}
+
+/// No Fill passes interior clicks through while preserving outline and actual-fill targets.
+#[test]
+fn no_fill_shape_allows_selecting_and_editing_underlying_text() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, true);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    assert!(s.doc().unwrap().shape(over).unwrap().style.is_some(), "the ordinary quick style remains");
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let p = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, p.x, p.y)).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    // The transparent foreground also leaves an already-active text editor's caret alone.
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, p.x + 20.0, p.y)).unwrap();
+    }
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    s.execute("edit.deselect", &json!({})).unwrap();
+    // The rectangle's outline is still a target, and selecting it does not remove its style.
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, 80.0, 330.0)).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![over]);
+    assert!(s.doc().unwrap().shape(over).unwrap().style.is_some());
+    // A real fill still catches clicks, even with 100% transparency (distinct from No Fill).
+    for transparency in [0.0, 1.0] {
+        s.execute("edit.select", &json!({"ids": [over.0]})).unwrap();
+        s.execute("shape.fill", &json!({"color": "#336699", "transparency": transparency})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over));
+    }
+}
+
+/// Rotation and pointer tolerance must preserve both pass-through interiors and outline hits.
+#[test]
+fn no_fill_shape_hit_testing_respects_rotation_and_pointer_tolerance() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, false);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("shape.rotate", &json!({"deg": 30})).unwrap();
+    let x = s.doc().unwrap().shape(over).unwrap().xfrm.unwrap();
+    let p = x.affine() * deckcraft_geom::Point::new(x.w / 2.0, x.h / 2.0);
+    let edge = x.affine() * deckcraft_geom::Point::new(0.0, x.h / 4.0);
+    for tol in [0.5, 3.0, 8.0] {
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, tol), Some(tools::Hit::Shape { id, .. }) if id == under));
+        assert!(matches!(s.hit_test(edge, tol), Some(tools::Hit::Shape { id, .. }) if id == over));
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(PointerEvent { tol, ..tev(kind, p.x, p.y) }).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    }
+}
+
+/// Style, theme and absent fills follow rendering, with explicit fill taking precedence.
+#[test]
+fn no_fill_hit_testing_resolves_style_and_theme_fills() {
+    use std::sync::Arc;
+    for source in ["style", "theme", "absent"] {
+        let mut s = session();
+        let (under, over) = no_fill_overlap(&mut s, true);
+        {
+            let st = s.doc_mut().unwrap();
+            let doc = Arc::make_mut(&mut st.doc);
+            if source == "theme" {
+                Arc::make_mut(&mut doc.masters[0]).theme.format.fills[0] = model::Fill::None;
+            }
+            let sh = Arc::make_mut(&mut doc.slides[st.selection.slide]).shapes.iter_mut().find(|sh| sh.id == over).unwrap();
+            assert!(sh.fill.is_none(), "the shape has no explicit fill override");
+            if source == "absent" {
+                sh.style = None;
+            } else {
+                sh.style.as_mut().unwrap().fill_ref.0 = if source == "style" { 0 } else { 1 };
+            }
+        }
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let p = deckcraft_geom::Point::new(200.0, 310.0);
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under), "{source}");
+        // An explicit fill takes precedence over the no-fill style/theme.
+        s.execute("edit.select", &json!({"ids": [over.0]})).unwrap();
+        s.execute("shape.fill", &json!({"color": "#336699"})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over), "{source}");
+    }
+}
+
+/// Text on a foreground No Fill shape retains its selection and editing target.
+#[test]
+fn no_fill_text_shapes_keep_their_interior_text_target() {
+    let mut s = session();
+    let (_, over) = no_fill_overlap(&mut s, true);
+    s.execute("text.set", &json!({"id": over.0, "text": "FOREGROUND TEXT"})).unwrap();
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let p = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, text: true }) if id == over));
+    s.pointer(tev(PointerKind::DoubleClick, p.x, p.y)).unwrap();
+    assert_eq!(text_sel(&s).unwrap().shape, over);
+}
+
+/// A locked No Fill shape remains selectable on its outline, but dragging cannot move it.
+#[test]
+fn no_fill_locked_shape_keeps_outline_selection_without_moving() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, true);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("shape.lock", &json!({"locked": true})).unwrap();
+    let before = s.doc().unwrap().shape(over).unwrap().xfrm;
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let inside = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(inside, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, inside.x, inside.y)).unwrap();
+    }
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let edge = deckcraft_geom::Point::new(80.0, 330.0);
+    assert!(matches!(s.hit_test(edge, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over));
+    s.pointer(tev(PointerKind::Down, edge.x, edge.y)).unwrap();
+    s.pointer(tev(PointerKind::Drag, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    s.pointer(tev(PointerKind::Up, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![over]);
+    assert_eq!(st.shape(over).unwrap().xfrm, before);
+    assert!(st.shape(over).unwrap().locked);
+}
+
+/// Removing both fill and outline leaves the empty interior transparent to clicks, locked or not.
+#[test]
+fn no_fill_shape_without_text_or_outline_passes_interior_clicks() {
+    for locked in [false, true] {
+        let mut s = session();
+        let (under, _) = no_fill_overlap(&mut s, false);
+        s.execute("shape.fill", &json!({"none": true})).unwrap();
+        s.execute("shape.line", &json!({"none": true})).unwrap();
+        s.execute("shape.lock", &json!({"locked": locked})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let p = deckcraft_geom::Point::new(200.0, 310.0);
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(tev(kind, p.x, p.y)).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    }
+}
+
 /// #931: while the text of a placeholder is being edited, a shape in front of it still takes a
 /// click (as in PowerPoint); a click on the text where nothing is in front still moves the caret.
 #[test]
@@ -5830,6 +6437,204 @@ fn snap_scene(rect: [f64; 4], other: [f64; 4]) -> (Session, u64) {
 /// The slide box (`x`, `y`, `w`, `h`) of shape `id`, as `shape.inspect` reports it.
 fn box_of(s: &mut Session, id: u64) -> serde_json::Value {
     s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone()
+}
+
+/// Two selected boxes with different sizes and aligned right edges, on a blank slide.
+fn resize_selection_scene() -> (Session, [u64; 2]) {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.prefs.smart_guides = false;
+    s.prefs.snap_to_grid = false;
+    let ids = [[100, 100, 100, 80], [120, 300, 80, 100]]
+        .map(|rect| s.execute("shape.insert", &json!({"preset": "rect", "rect": rect, "text": "Resize test"})).unwrap()["id"].as_u64().unwrap());
+    s.execute("edit.select", &json!({"ids": ids})).unwrap();
+    (s, ids)
+}
+
+/// Simulate file-loaded shapes whose stored boxes have not yet been fitted to their text.
+fn pending_resize_autofit(s: &mut Session, ids: &[u64]) {
+    s.edit(|doc, sel| {
+        let shapes = crate::shapes_mut(doc, sel).unwrap();
+        for id in ids {
+            let sh = deckcraft_model::find_shape_mut(shapes, ShapeId(*id as u32)).unwrap();
+            sh.text.as_mut().unwrap().body.autofit = Some(deckcraft_model::text::AutoFit::Shape);
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// Resizing multiple selected shapes scales them proportionally around their anchors in one undo step.
+#[test]
+fn resizing_selected_shapes_is_one_undo_step() {
+    let (mut s, [a, b]) = resize_selection_scene();
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    let down = drag_gesture(&mut s, (200.0, 180.0), (250.0, 210.0));
+    assert_eq!(down["hit"]["kind"], "resize");
+    assert_eq!(down["hit"]["id"], a);
+    for (id, expected) in [(a, [100.0, 100.0, 150.0, 110.0]), (b, [120.0, 300.0, 120.0, 137.5])] {
+        let actual = box_of(&mut s, id);
+        for (key, value) in ["x", "y", "w", "h"].into_iter().zip(expected) {
+            assert_eq!(actual[key], value, "{id}: {key}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+    let after = s.doc().unwrap().doc.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before, "one undo restores both shapes");
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, after, "one redo resizes both shapes again");
+}
+
+/// Resizing selected shapes refits their text boxes inside the same undo transaction.
+#[test]
+fn resizing_selected_shapes_refits_text_in_the_same_undo_step() {
+    let (mut s, ids) = resize_selection_scene();
+    pending_resize_autofit(&mut s, &ids);
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    // An east-handle drag changes width only; a height change must come from text fitting.
+    drag_gesture(&mut s, (200.0, 140.0), (250.0, 140.0));
+    for (id, old_height) in ids.into_iter().zip([80.0, 100.0]) {
+        assert_ne!(box_of(&mut s, id)["h"], old_height, "both shapes' text is refitted");
+    }
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+    let after = s.doc().unwrap().doc.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, after, "redo includes the final text fit");
+}
+
+/// Clicking a resize handle without dragging neither modifies shapes nor triggers text autofit.
+#[test]
+fn clicking_a_resize_handle_does_not_change_or_refit_selected_shapes() {
+    let (mut s, ids) = resize_selection_scene();
+    pending_resize_autofit(&mut s, &ids);
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    let revision = s.doc().unwrap().revision;
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(PointerEvent { kind, x: 200.0, y: 180.0, tol: 3.0, ..Default::default() }).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().doc, before);
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps, "a click creates no undo entry");
+    assert_eq!(s.doc().unwrap().revision, revision);
+    assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &before), "a click does not dirty the document");
+    // Ensure this fixture would catch an accidental refit on release.
+    for id in ids {
+        cmd::text::fit_text_box(&mut s, ShapeId(id as u32)).unwrap();
+    }
+    assert_ne!(s.doc().unwrap().doc, before);
+}
+
+/// Locked shapes in a multi-selection are excluded from both resizing and post-resize text fitting.
+#[test]
+fn resizing_selected_shapes_skips_locked_shapes_and_their_text_fit() {
+    let (mut s, [a, b]) = resize_selection_scene();
+    pending_resize_autofit(&mut s, &[b]);
+    s.execute("shape.lock", &json!({"ids": [b], "locked": true})).unwrap();
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    let locked = s.doc().unwrap().shape(ShapeId(b as u32)).unwrap().clone();
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    drag_gesture(&mut s, (200.0, 180.0), (250.0, 210.0));
+    assert_eq!(box_of(&mut s, a)["w"], 150.0);
+    assert_eq!(box_of(&mut s, a)["h"], 110.0);
+    assert_eq!(s.doc().unwrap().shape(ShapeId(b as u32)).unwrap(), &locked, "the locked shape is neither resized nor refitted");
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+}
+
+/// Resizing selected shapes excludes other selected resize targets from smart-guide snapping.
+#[test]
+fn resizing_selected_shapes_does_not_snap_to_other_resize_targets() {
+    for reverse in [false, true] {
+        let (mut s, [a, b]) = resize_selection_scene();
+        s.prefs.smart_guides = true;
+        let ids = if reverse { [b, a] } else { [a, b] };
+        s.execute("edit.select", &json!({"ids": ids})).unwrap();
+        // Within snap tolerance of the other selected shape's original right edge.
+        drag_gesture(&mut s, (200.0, 140.0), (203.0, 140.0));
+        assert_eq!(box_of(&mut s, a)["w"], 103.0, "first shape must not snap back");
+        assert_eq!(box_of(&mut s, b)["w"], 82.4, "selection order must not affect snapping");
+    }
+}
+
+/// Resizing selected shapes snaps the active shape against unselected stationary shapes and scales others proportionally.
+#[test]
+fn resizing_selected_shapes_still_snaps_to_stationary_shapes() {
+    let (mut s, [a, b]) = resize_selection_scene();
+    let fixed = s.execute("shape.insert", &json!({"preset": "rect", "rect": [207, 430, 100, 80]})).unwrap()["id"].as_u64().unwrap();
+    let fixed_before = box_of(&mut s, fixed);
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    s.prefs.smart_guides = true;
+    drag_gesture(&mut s, (200.0, 140.0), (203.0, 140.0));
+    assert_eq!(box_of(&mut s, a)["w"], 107.0);
+    assert!((box_of(&mut s, b)["w"].as_f64().unwrap() - 85.6).abs() < 1e-9);
+    assert_eq!(box_of(&mut s, fixed), fixed_before);
+}
+
+/// Secondary pictures resize uniformly around their anchor, preserving independent flips
+/// and keeping the complete multi-selection resize in one undo step.
+#[test]
+fn resizing_selected_shapes_resizes_secondary_pictures() {
+    // Pointer destination, Alt, expected rectangle, expected picture, expected flips.
+    let cases = [
+        ((180.0, 200.0), false, [100.0, 100.0, 80.0, 100.0], [300.0, 300.0, 80.0, 80.0], [false, false]),
+        ((200.0, 180.0), false, [100.0, 100.0, 100.0, 80.0], [300.0, 300.0, 80.0, 80.0], [false, false]),
+        ((220.0, 200.0), false, [100.0, 100.0, 120.0, 100.0], [300.0, 300.0, 120.0, 120.0], [false, false]),
+        ((200.0, 220.0), false, [100.0, 100.0, 100.0, 120.0], [300.0, 300.0, 120.0, 120.0], [false, false]),
+        ((180.0, 200.0), true, [120.0, 100.0, 60.0, 100.0], [320.0, 320.0, 60.0, 60.0], [false, false]),
+        ((200.0, 180.0), true, [100.0, 120.0, 100.0, 60.0], [320.0, 320.0, 60.0, 60.0], [false, false]),
+        ((80.0, 200.0), false, [80.0, 100.0, 20.0, 100.0], [280.0, 300.0, 20.0, 20.0], [true, false]),
+        ((200.0, 80.0), false, [100.0, 80.0, 100.0, 20.0], [300.0, 280.0, 20.0, 20.0], [false, true]),
+    ];
+
+    for (to, alt, expected_rect, expected_picture, flips) in cases {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.prefs.smart_guides = false;
+        s.prefs.snap_to_grid = false;
+
+        let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+        let picture = ramp_picture(&mut s, 1, [300, 300, 100, 100]).as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [rect, picture]})).unwrap();
+
+        let before = s.doc().unwrap().doc.clone();
+        let steps = s.doc().unwrap().history.undo.len();
+        let mods = Mods { alt, ..Default::default() };
+        let ev = |kind, (x, y): (f64, f64)| PointerEvent { kind, x, y, mods, tol: 3.0, pressure: None };
+
+        let down = s.pointer(ev(PointerKind::Down, (200.0, 200.0))).unwrap();
+        assert_eq!(down["hit"]["kind"], "resize");
+        assert_eq!(down["hit"]["id"], rect);
+        assert_eq!(down["hit"]["handle"], 4);
+
+        s.pointer(ev(PointerKind::Drag, ((200.0 + to.0) / 2.0, (200.0 + to.1) / 2.0))).unwrap();
+        s.pointer(ev(PointerKind::Drag, to)).unwrap();
+        s.pointer(ev(PointerKind::Up, to)).unwrap();
+
+        for (id, expected) in [(rect, expected_rect), (picture, expected_picture)] {
+            let actual = box_of(&mut s, id);
+            for (key, value) in ["x", "y", "w", "h"].into_iter().zip(expected) {
+                let got = actual[key].as_f64().unwrap();
+                assert!((got - value).abs() < 1e-9, "{to:?}, alt={alt}, shape={id}, {key}: expected {value}, got {got}");
+            }
+
+            let xfrm = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
+            assert_eq!([xfrm.flip_h, xfrm.flip_v], flips, "{to:?}, alt={alt}, shape={id}");
+        }
+
+        assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+        let after = s.doc().unwrap().doc.clone();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, after);
+    }
 }
 
 /// #961: dragging the east handle snaps the dragged (right) edge, even when the fixed left edge
@@ -6250,4 +7055,204 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+#[test]
+fn slide_master_view_rejects_invalid_indices() {
+    let mut s = Session::with_new();
+    for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
+        let r = s.execute("view.slideMaster", &p);
+        assert!(r.is_err(), "invalid index accepted for {p}: {r:?}");
+    }
+    assert!(s.execute("view.slideMaster", &json!({})).is_ok());
+    assert!(s.execute("view.slideMaster", &json!({"master": 0})).is_ok());
+}
+
+#[test]
+fn save_to_image_path_is_an_error_not_zip_bytes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-img-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (cmd, name) in [("file.save", "a.png"), ("file.saveAs", "a.jpg"), ("file.save", "a.jpeg")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        assert!(s.execute(cmd, &json!({"path": path})).is_err(), "{cmd} {name} should fail");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
+/// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
+/// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
+/// and the sites of a grouped shape were computed in the group's child space.
+#[test]
+fn shape_connect_glues_to_a_shape_inside_a_group() {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let glue = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        match st.shape(ShapeId(id as u32)).unwrap().kind {
+            ShapeKind::Connector { start, end } => (start.map(|(i, _)| i.0 as u64), end.map(|(i, _)| i.0 as u64)),
+            _ => (None, None),
+        }
+    };
+    let near = |p: deckcraft_geom::Point, x: f64, y: f64| (p.x - x).abs() < 1e-6 && (p.y - y).abs() < 1e-6;
+    // A new connector into the group.
+    let r = s.execute("shape.connect", &json!({"from": c, "to": a})).unwrap();
+    let k = r["id"].as_u64().unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "{r}");
+    let (p0, p1) = line_ends(&s, k);
+    assert!(near(p0, 400.0, 35.0), "from C's left site: {p0:?}");
+    assert!(near(p1, 110.0, 35.0), "to A's right site in slide space: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dy": 100})).unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "the glue survives the move");
+    let (_, p1) = line_ends(&s, k);
+    assert!(near(p1, 110.0, 135.0), "the connector follows the grouped shape: {p1:?}");
+    // Re-gluing an existing line with `id`.
+    let l = s.execute("shape.insert", &json!({"preset": "straightConnector1", "rect": [600, 400, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"id": l, "from": c, "to": b})).unwrap();
+    assert_eq!(r["id"], l, "{r}");
+    assert_eq!(glue(&s, l), (Some(c), Some(b)), "{r}");
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 110.0, 325.0), "to B's right site (C is mostly to its right) in slide space, B moved with the group: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dx": 50})).unwrap();
+    assert_eq!(glue(&s, l), (Some(c), Some(b)));
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 160.0, 325.0), "{p1:?}");
+    // shape.sites answers in slide space, as shape.connect uses them: A's right site, A moved
+    // with the group.
+    let v = s.execute("shape.sites", &json!({"id": a})).unwrap();
+    assert!(
+        v.as_array().unwrap().iter().any(|q| near(deckcraft_geom::Point::new(q[0].as_f64().unwrap(), q[1].as_f64().unwrap()), 160.0, 135.0)),
+        "{v}"
+    );
+    // A line inside a group is refused as `id`: its ends would be written in slide space into
+    // the group's space, and rerouting does not follow grouped connectors.
+    let m = s.execute("shape.insert", &json!({"preset": "line", "rect": [600, 300, 50, 0]})).unwrap()["id"].as_u64().unwrap();
+    let n = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600, 450, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("arrange.group", &json!({"ids": [m, n]})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    let e = s.execute("shape.connect", &json!({"id": m, "from": c, "to": b})).unwrap_err().to_string();
+    assert!(e.contains("inside a group"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+    // A grouped shape that is not a line is refused as not a line, not as a grouped line.
+    let e = s.execute("shape.connect", &json!({"id": n, "from": c, "to": b})).unwrap_err().to_string();
+    assert!(e.contains("not a line"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+}
+
+#[test]
+fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.textBox", &json!({"text": "Goals\nRevenue"})).unwrap();
+    let gid = s.execute("smartArt.fromText", &json!({"kind": "blockList"})).unwrap()["id"].as_u64().unwrap();
+    for cmd in ["arrange.flipHorizontal", "arrange.flipVertical", "shape.flip"] {
+        let e = s.execute(cmd, &json!({"ids": [gid]})).unwrap_err().to_string();
+        assert!(e.contains("SmartArt") && e.contains("smartArt.layout"), "{cmd}: {e}");
+    }
+    // Grouped with another shape it cannot be flipped either: ungrouping would hand it the flip.
+    let other = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
+    let group = s.execute("arrange.group", &json!({"ids": [gid, other]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("shape.flip", &json!({"ids": [group]})).unwrap_err().to_string();
+    assert!(e.contains("SmartArt"), "{e}");
+    s.execute("arrange.ungroup", &json!({"ids": [group]})).unwrap();
+    // Still a SmartArt graphic: smartArt commands keep working.
+    s.execute("smartArt.layout", &json!({"id": gid, "kind": "cycle"})).unwrap();
+    // Ordinary shapes still flip.
+    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap();
+    let id = b["id"].as_u64().unwrap();
+    assert_eq!(s.execute("arrange.flipHorizontal", &json!({"ids": [id]})).unwrap(), json!(1));
+}
+
+/// Table cell commands refuse a `cells` that is not a list of [row, col] cells in the table,
+/// instead of dropping the entry or reading the list as absent (which acts on the selection).
+#[test]
+fn table_cell_commands_refuse_a_malformed_cells_list() {
+    let mut s = session();
+    let t = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let rev = s.doc().unwrap().revision;
+    for cells in [
+        json!([[-1, 0]]),
+        json!([[0]]),
+        json!([[0, 0], "x"]),
+        json!([[0, 0, "x"]]),
+        json!([[0, 2]]),
+        json!([[0, u64::MAX]]),
+        json!("0,0"),
+        json!({"0": 0}),
+    ] {
+        for (cmd, extra) in [
+            ("table.cellFill", json!({"color": "#FF0000"})),
+            ("table.cellMargins", json!({"left": 4})),
+            ("table.cellAlign", json!({"align": "center"})),
+            ("table.borders", json!({"which": "right"})),
+        ] {
+            let mut p = extra.clone();
+            p["id"] = json!(t);
+            p["cells"] = cells.clone();
+            let e = s.execute(cmd, &p).unwrap_err().to_string();
+            assert!(e.contains(cmd) && e.contains("cell"), "{cmd} {cells}: {e}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().revision, rev, "nothing changed");
+    let many = json!(vec![[0, 0]; 100_001]);
+    assert!(s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": many})).unwrap_err().to_string().contains("at most"));
+    s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": [[1, 1]]})).unwrap();
+    assert!(table_of(&s, t).cell(1, 1).unwrap().fill.is_some() && table_of(&s, t).cell(0, 0).unwrap().fill.is_none());
+}
+
+/// The outline exports (PowerPoint's outline view) holds titles and body text only: footer,
+/// date and slide-number placeholders are not body lines.
+#[test]
+fn outline_export_skips_footer_date_and_slide_number() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "First point\nSecond point"})).unwrap();
+    s.execute(
+        "design.headerFooter",
+        &json!({"footer": true, "footerText": "Company Confidential", "slideNumber": true, "date": true, "dateText": "1 May 2026"}),
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-outline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.md");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "outline"})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(text.contains("Agenda") && text.contains("First point") && text.contains("Second point"), "{text:?}");
+    assert!(!text.contains("Company Confidential"), "footer text is not a body line: {text:?}");
+    assert!(!text.contains("‹#›"), "the slide-number field is not a body line: {text:?}");
+    assert!(!text.contains("1 May 2026"), "the date is not a body line: {text:?}");
+    // The RTF outline (Save As ▸ Outline/RTF) too.
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.rtf");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "rtf"})).unwrap();
+    let rtf = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rtf.contains("Agenda") && rtf.contains("First point"), "{rtf:?}");
+    assert!(!rtf.contains("Company Confidential") && !rtf.contains("1 May 2026"), "{rtf:?}");
+}
+
+#[test]
+fn shape_adjust_and_quick_style_reject_invalid_index() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 100, 200, 100]})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(id).unwrap().clone();
+    for bad in [json!(-1), json!(1.5)] {
+        assert!(s.execute("shape.adjust", &json!({"index": bad, "value": 0.4})).is_err(), "adjust accepted {bad}");
+        assert!(s.execute("shape.quickStyle", &json!({"index": bad})).is_err(), "quickStyle accepted {bad}");
+    }
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, before.geom);
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
+    s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
 }
