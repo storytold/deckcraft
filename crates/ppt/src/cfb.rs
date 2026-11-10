@@ -334,28 +334,68 @@ fn parse_entry(b: &[u8], version: u16) -> Option<Entry> {
 /// mini stream cutoff is set to 0), one flat directory under the root.
 #[cfg(test)]
 pub(crate) fn build(streams: &[(&str, &[u8])]) -> Vec<u8> {
-    const SS: usize = 512;
+    build_with(streams, 9, 0)
+}
+
+/// A chain of whole `ss`-byte sectors holding `data`, appended to `sectors` and `fat`; returns its
+/// first sector.
+#[cfg(test)]
+fn push_chain(sectors: &mut Vec<Vec<u8>>, fat: &mut Vec<u32>, ss: usize, data: &[u8]) -> u32 {
+    let n = data.len().div_ceil(ss).max(1);
+    let first = sectors.len() as u32;
+    for k in 0..n {
+        let mut s = data.get(k * ss..((k + 1) * ss).min(data.len())).unwrap_or(&[]).to_vec();
+        s.resize(ss, 0);
+        sectors.push(s);
+        fat.push(if k + 1 == n { ENDOFCHAIN } else { first + k as u32 + 1 });
+    }
+    first
+}
+
+/// Builds a compound file with `1 << shift` byte sectors (9: version 3, 12: version 4). Streams
+/// shorter than `mini_cutoff` go in the mini stream. When the FAT outgrows the header's 109
+/// slots, the rest are listed in DIFAT sectors. Layout: streams, mini stream, mini FAT,
+/// directory, DIFAT, then the FAT last.
+#[cfg(test)]
+pub(crate) fn build_with(streams: &[(&str, &[u8])], shift: u16, mini_cutoff: u32) -> Vec<u8> {
+    let ss = 1usize << shift;
+    let per = ss / 4;
     let mut sectors: Vec<Vec<u8>> = Vec::new();
     let mut fat: Vec<u32> = Vec::new();
+    let mut mini = Vec::new();
+    let mut minifat: Vec<u32> = Vec::new();
     let mut starts = Vec::new();
     for (_, data) in streams {
-        let n = data.len().div_ceil(SS).max(1);
-        let first = sectors.len() as u32;
-        starts.push(if data.is_empty() { ENDOFCHAIN } else { first });
-        for k in 0..n {
-            let mut s = data.get(k * SS..((k + 1) * SS).min(data.len())).unwrap_or(&[]).to_vec();
-            s.resize(SS, 0);
-            sectors.push(s);
-            fat.push(if k + 1 == n { ENDOFCHAIN } else { first + k as u32 + 1 });
+        if data.is_empty() {
+            starts.push(ENDOFCHAIN);
+        } else if (data.len() as u64) < u64::from(mini_cutoff) {
+            let n = data.len().div_ceil(MINI_SECTOR_SIZE);
+            let first = minifat.len() as u32;
+            for k in 0..n {
+                minifat.push(if k + 1 == n { ENDOFCHAIN } else { first + k as u32 + 1 });
+            }
+            mini.extend_from_slice(data);
+            mini.resize(minifat.len() * MINI_SECTOR_SIZE, 0);
+            starts.push(first);
+        } else {
+            starts.push(push_chain(&mut sectors, &mut fat, ss, data));
         }
     }
-    // Directory: root + streams, 4 entries per sector. Root's child is entry 1; siblings are chained
-    // as right children in name order (a valid, if unbalanced, tree).
+    let (root_start, root_size) = if mini.is_empty() { (ENDOFCHAIN, 0) } else { (push_chain(&mut sectors, &mut fat, ss, &mini), mini.len() as u32) };
+    let minifat_first = if minifat.is_empty() {
+        ENDOFCHAIN
+    } else {
+        minifat.resize(minifat.len().div_ceil(per) * per, FREESECT);
+        let bytes: Vec<u8> = minifat.iter().flat_map(|v| v.to_le_bytes()).collect();
+        push_chain(&mut sectors, &mut fat, ss, &bytes)
+    };
+    let minifat_sectors = (minifat.len() / per) as u32;
+    // Directory: root + streams. Root's child is entry 1; siblings are chained as right children in
+    // name order (a valid, if unbalanced, tree).
     let mut order: Vec<usize> = (0..streams.len()).collect();
     order.sort_by(|&a, &b| compare_names(streams[a].0, streams[b].0));
     let n_entries = streams.len() + 1;
-    let dir_first = sectors.len() as u32;
-    let mut dir = vec![0u8; n_entries.div_ceil(4) * SS];
+    let mut dir = vec![0u8; n_entries.div_ceil(ss / 128) * ss];
     let mut put = |idx: usize, name: &str, kind: u8, left: u32, right: u32, child: u32, start: u32, size: u32| {
         let e = idx * 128;
         let units: Vec<u16> = name.encode_utf16().collect();
@@ -371,42 +411,50 @@ pub(crate) fn build(streams: &[(&str, &[u8])]) -> Vec<u8> {
         dir[e + 120..e + 124].copy_from_slice(&size.to_le_bytes());
     };
     let first_child = order.first().map_or(NOSTREAM, |&i| i as u32 + 1);
-    put(0, "Root Entry", 5, NOSTREAM, NOSTREAM, first_child, ENDOFCHAIN, 0);
+    put(0, "Root Entry", 5, NOSTREAM, NOSTREAM, first_child, root_start, root_size);
     for (k, &i) in order.iter().enumerate() {
         let right = order.get(k + 1).map_or(NOSTREAM, |&j| j as u32 + 1);
         put(i + 1, streams[i].0, 2, NOSTREAM, right, NOSTREAM, starts[i], streams[i].1.len() as u32);
     }
-    let dir_sectors = dir.len() / SS;
-    for k in 0..dir_sectors {
-        sectors.push(dir[k * SS..(k + 1) * SS].to_vec());
-        fat.push(if k + 1 == dir_sectors { ENDOFCHAIN } else { dir_first + k as u32 + 1 });
-    }
-    // FAT sectors at the end, marked FATSECT; one FAT sector covers 128 sectors.
+    let dir_first = push_chain(&mut sectors, &mut fat, ss, &dir);
+    // FAT and DIFAT sectors: enough FAT entries for every sector, including their own.
+    let difat_for = |n_fat: usize| n_fat.saturating_sub(109).div_ceil(per - 1);
     let mut n_fat = 1;
-    while (sectors.len() + n_fat) > n_fat * (SS / 4) {
+    while sectors.len() + difat_for(n_fat) + n_fat > n_fat * per {
         n_fat += 1;
     }
-    assert!(n_fat <= 109, "test file too large");
-    let fat_first = sectors.len() as u32;
+    let n_difat = difat_for(n_fat);
+    let difat_first = sectors.len() as u32;
+    let fat_first = difat_first + n_difat as u32;
+    fat.extend(std::iter::repeat_n(0xFFFF_FFFC, n_difat));
     fat.extend(std::iter::repeat_n(0xFFFF_FFFD, n_fat));
-    fat.resize(n_fat * SS / 4, FREESECT);
-    for k in 0..n_fat {
-        sectors.push(fat[k * SS / 4..(k + 1) * SS / 4].iter().flat_map(|v| v.to_le_bytes()).collect());
+    fat.resize(n_fat * per, FREESECT);
+    let fat_ids: Vec<u32> = (0..n_fat as u32).map(|k| fat_first + k).collect();
+    for d in 0..n_difat {
+        let mut v: Vec<u32> = fat_ids.iter().skip(109 + d * (per - 1)).take(per - 1).copied().collect();
+        v.resize(per - 1, FREESECT);
+        v.push(if d + 1 == n_difat { ENDOFCHAIN } else { difat_first + d as u32 + 1 });
+        sectors.push(v.iter().flat_map(|x| x.to_le_bytes()).collect());
     }
-    let mut out = vec![0u8; SS];
+    for k in 0..n_fat {
+        sectors.push(fat[k * per..(k + 1) * per].iter().flat_map(|v| v.to_le_bytes()).collect());
+    }
+    let mut out = vec![0u8; ss];
     out[..8].copy_from_slice(&SIGNATURE);
     out[24..26].copy_from_slice(&0x3Eu16.to_le_bytes());
-    out[26..28].copy_from_slice(&3u16.to_le_bytes());
+    out[26..28].copy_from_slice(&(if shift == 12 { 4u16 } else { 3 }).to_le_bytes());
     out[28..30].copy_from_slice(&0xFFFEu16.to_le_bytes());
-    out[30..32].copy_from_slice(&9u16.to_le_bytes());
+    out[30..32].copy_from_slice(&shift.to_le_bytes());
     out[32..34].copy_from_slice(&6u16.to_le_bytes());
     out[44..48].copy_from_slice(&(n_fat as u32).to_le_bytes());
     out[48..52].copy_from_slice(&dir_first.to_le_bytes());
-    out[56..60].copy_from_slice(&0u32.to_le_bytes()); // mini stream cutoff 0: no mini streams
-    out[60..64].copy_from_slice(&ENDOFCHAIN.to_le_bytes());
-    out[68..72].copy_from_slice(&ENDOFCHAIN.to_le_bytes());
+    out[56..60].copy_from_slice(&mini_cutoff.to_le_bytes());
+    out[60..64].copy_from_slice(&minifat_first.to_le_bytes());
+    out[64..68].copy_from_slice(&minifat_sectors.to_le_bytes());
+    out[68..72].copy_from_slice(&(if n_difat == 0 { ENDOFCHAIN } else { difat_first }).to_le_bytes());
+    out[72..76].copy_from_slice(&(n_difat as u32).to_le_bytes());
     for i in 0..109 {
-        let v = if i < n_fat { fat_first + i as u32 } else { FREESECT };
+        let v = fat_ids.get(i).copied().unwrap_or(FREESECT);
         out[76 + i * 4..80 + i * 4].copy_from_slice(&v.to_le_bytes());
     }
     for s in sectors {
@@ -465,5 +513,40 @@ mod tests {
         let fat_at = g.len() - 512;
         g[fat_at + 4..fat_at + 8].copy_from_slice(&1u32.to_le_bytes());
         assert!(CompoundFile::open(&g).is_err());
+    }
+
+    /// Streams under the cutoff are read from the mini stream, through the mini FAT.
+    #[test]
+    fn reads_mini_streams() {
+        let big: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+        let small: Vec<u8> = (0..200u8).collect();
+        let f = build_with(&[("PowerPoint Document", &big), ("Current User", &small), ("Tiny", b"x")], 9, 4096);
+        let cf = CompoundFile::open(&f).unwrap();
+        assert!(!cf.minifat.is_empty() && !cf.mini_stream.is_empty(), "the small streams went in the mini stream");
+        assert_eq!(cf.read_root_stream("PowerPoint Document").unwrap(), big);
+        assert_eq!(cf.read_root_stream("Current User").unwrap(), small);
+        assert_eq!(cf.read_root_stream("Tiny").unwrap(), b"x");
+    }
+
+    /// Version 4 files use 4096-byte sectors, the header filling the first.
+    #[test]
+    fn reads_4096_byte_sectors() {
+        let big: Vec<u8> = (0..10_000u32).map(|i| (i % 253) as u8).collect();
+        let f = build_with(&[("PowerPoint Document", &big), ("Current User", b"hello")], 12, 4096);
+        let cf = CompoundFile::open(&f).unwrap();
+        assert_eq!(cf.sector_size, 4096);
+        assert_eq!(cf.read_root_stream("PowerPoint Document").unwrap(), big);
+        assert_eq!(cf.read_root_stream("Current User").unwrap(), b"hello");
+    }
+
+    /// Past 109 FAT sectors (about 7 MB at 512-byte sectors), the rest are found through the
+    /// DIFAT chain.
+    #[test]
+    fn reads_fat_sectors_listed_in_the_difat() {
+        let big: Vec<u8> = (0..7_500_000u32).map(|i| (i % 249) as u8).collect();
+        let f = build_with(&[("PowerPoint Document", &big)], 9, 0);
+        assert_ne!(u32_at(&f, 68), Some(ENDOFCHAIN), "the file has a DIFAT chain");
+        let cf = CompoundFile::open(&f).unwrap();
+        assert_eq!(cf.read_root_stream("PowerPoint Document").unwrap(), big);
     }
 }
