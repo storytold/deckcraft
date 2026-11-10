@@ -633,3 +633,63 @@ fn placeholder_text_can_come_from_the_slide_list() {
     let body = shapes[1].text.as_ref().expect("the body has the second block");
     assert_eq!(body.paragraphs[0].runs[0].text, "Second block");
 }
+
+/// The newest edit wins: a later edit's persist directory that gives the slide's persist id a new
+/// slide replaces the old one.
+#[test]
+fn a_later_edit_replaces_a_slide() {
+    let (_, mut stream, pics) = streams(0xE391_C05F);
+    let first_edit = stream.len() as u32 - 36; // the test document's UserEditAtom (8 + 28 bytes)
+    let title = container(rt::SP_CONTAINER, 0, &[fsp(1, 2049, 0xA00), anchor(400, 500, 5260, 1200), placeholder(0x0D), text_box(0, "Edited", &[])]);
+    let slide_at = stream.len() as u32;
+    stream.extend_from_slice(&container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[title])]));
+    // Persist id 3 (the slide) only.
+    let dir_at = stream.len() as u32;
+    stream.extend_from_slice(&atom(rt::PERSIST_DIRECTORY, 0, &le32(&[3 | (1 << 20), slide_at])));
+    let edit_at = stream.len() as u32;
+    let mut edit = le32(&[0, 0x0300_03F4, first_edit, dir_at, 1, 5]);
+    edit.extend_from_slice(&[0; 4]);
+    stream.extend_from_slice(&atom(rt::USER_EDIT, 0, &edit));
+    let cu = atom(rt::CURRENT_USER, 0, &le32(&[0x14, 0xE391_C05F, edit_at, 0, 0]));
+    let p = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &stream), ("Pictures", &pics)])).unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(p.slides[0].shapes[0].text.as_ref().unwrap().paragraphs[0].runs[0].text, "Edited");
+    // The master, from the first edit's directory, is still there.
+    assert_eq!(p.masters.len(), 1);
+}
+
+/// Two more signs of an encrypted file besides the Current User token: an edit record long enough
+/// to hold `encryptSessionPersistIdRef`, and a `CryptSession` object in the persist directory.
+#[test]
+fn encryption_is_found_in_the_edit_and_the_persist_directory() {
+    let open = |doc: &[u8], pics: &[u8]| {
+        let cu = atom(rt::CURRENT_USER, 0, &le32(&[0x14, 0xE391_C05F, doc.len() as u32 - 36, 0, 0]));
+        crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", doc), ("Pictures", pics)]))
+    };
+    let (_, stream, pics) = streams(0xE391_C05F);
+    assert!(open(&stream, &pics).is_ok());
+    // The edit record with a fifth reference: 28 bytes become 32. The Current User points at the
+    // new last record, 40 bytes from the end.
+    let mut long_edit = stream.clone();
+    let edit_at = long_edit.len() - 36;
+    long_edit.truncate(edit_at);
+    let mut edit = le32(&[0, 0x0300_03F4, 0, 0, 1, 5]);
+    edit[12..16].copy_from_slice(&stream[edit_at + 8 + 12..edit_at + 8 + 16]); // offsetPersistDirectory
+    edit.extend_from_slice(&[0; 4]);
+    edit.extend_from_slice(&6u32.to_le_bytes()); // encryptSessionPersistIdRef
+    long_edit.extend_from_slice(&atom(rt::USER_EDIT, 0, &edit));
+    let cu = atom(rt::CURRENT_USER, 0, &le32(&[0x14, 0xE391_C05F, edit_at as u32, 0, 0]));
+    let r = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &long_edit), ("Pictures", &pics)]));
+    assert!(matches!(r, Err(crate::PptError::Encrypted)), "{:?}", r.err());
+    // A CryptSession container given a persist id by a later edit.
+    let mut crypt = stream.clone();
+    let first_edit = crypt.len() as u32 - 36;
+    let session_at = crypt.len() as u32;
+    crypt.extend_from_slice(&container(rt::CRYPT_SESSION, 0, &[atom(0x0FFF, 0, &[0; 8])]));
+    let dir_at = crypt.len() as u32;
+    crypt.extend_from_slice(&atom(rt::PERSIST_DIRECTORY, 0, &le32(&[9 | (1 << 20), session_at])));
+    let mut edit = le32(&[0, 0x0300_03F4, first_edit, dir_at, 1, 9]);
+    edit.extend_from_slice(&[0; 4]);
+    crypt.extend_from_slice(&atom(rt::USER_EDIT, 0, &edit));
+    assert!(matches!(open(&crypt, &pics), Err(crate::PptError::Encrypted)));
+}
