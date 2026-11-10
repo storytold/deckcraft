@@ -50,11 +50,8 @@ fn write_file_impl(path: &str, bytes: &[u8], create_new: bool) -> Result<(), Str
     let err = |e: std::io::Error| format!("{path}: {e}");
 
     // A no-replace save must also refuse symlinks, not resolve and write their targets.
-    let target_path = if create_new {
-        std::path::PathBuf::from(path)
-    } else {
-        std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path))
-    };
+    let target_path =
+        if create_new { std::path::PathBuf::from(path) } else { std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path)) };
     let existing_perms = std::fs::metadata(&target_path).ok().map(|m| m.permissions());
 
     let mut attempts = 0;

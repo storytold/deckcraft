@@ -499,11 +499,7 @@ fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
 }
 
 fn write_output(path: &str, bytes: &[u8], p: &Value) -> Result<()> {
-    if bool_or(p, "createNew", false) {
-        crate::io::write_file_new(path, bytes).map_err(EngineError::Other)
-    } else {
-        write_file(path, bytes)
-    }
+    if bool_or(p, "createNew", false) { crate::io::write_file_new(path, bytes).map_err(EngineError::Other) } else { write_file(path, bytes) }
 }
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {

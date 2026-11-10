@@ -485,11 +485,9 @@ impl SlideApp {
         let suggested = format!("{name}.{ext}");
         if self.services.pick_save.is_some() {
             let Some(picked) = self.services.pick_save.as_mut().and_then(|pick| pick(&suggested)) else { return };
-            match save_path(picked, ext)
-                .and_then(|(path, create_new)| {
-                    self.session.execute("file.saveAs", &json!({"path": path, "createNew": create_new})).map(|_| path).map_err(|e| e.to_string())
-                })
-            {
+            match save_path(picked, ext).and_then(|(path, create_new)| {
+                self.session.execute("file.saveAs", &json!({"path": path, "createNew": create_new})).map(|_| path).map_err(|e| e.to_string())
+            }) {
                 Ok(path) => {
                     self.set_status(format!("Saved {path}"));
                     self.ui.recent.retain(|p| *p != path);
