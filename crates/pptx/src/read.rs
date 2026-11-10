@@ -366,7 +366,7 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
                         });
                     }
                 }
-                if !capped {
+                if !capped && out.len() < 400 {
                     out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
                 }
             }
