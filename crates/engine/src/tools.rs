@@ -162,10 +162,12 @@ enum Drag {
         orig: Xfrm,
     },
     Rotate {
-        ids: Vec<ShapeId>,
+        /// Slide coordinates to the shared rotation frame.
+        to_frame: Affine,
         center: Point,
         start: f64,
-        origs: Vec<(ShapeId, Xfrm)>,
+        /// Original boxes and their parent-to-frame transforms.
+        origs: Vec<(ShapeId, Xfrm, Affine)>,
     },
     Adjust {
         id: ShapeId,

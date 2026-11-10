@@ -95,29 +95,8 @@ impl Session {
                     Ok(())
                 })?;
             }
-            Drag::Rotate { ids, center, start, origs } => {
-                let st = self.doc()?;
-                let parent = ids.first().map(|id| cmd::parent_transform(st, *id));
-                let p = parent.unwrap_or(Affine::IDENTITY).inverse() * p;
-                let ang = (p.y - center.y).atan2(p.x - center.x);
-                let mut delta = (ang - start).to_degrees();
-                for (id, o) in &origs {
-                    let mut r = o.rot + delta;
-                    if mods.shift {
-                        r = (r / 15.0).round() * 15.0;
-                        delta = r - o.rot;
-                    }
-                    let mut nx = *o;
-                    nx.rot = ((r % 360.0) + 360.0) % 360.0;
-                    if ids.len() > 1 {
-                        // Rotate positions around the common centre too.
-                        let c = o.center();
-                        let rc = Affine::translate(center.to_vec2()) * Affine::rotate(delta.to_radians()) * Affine::translate(-center.to_vec2()) * c;
-                        nx.x = rc.x - o.w / 2.0;
-                        nx.y = rc.y - o.h / 2.0;
-                    }
-                    self.set_xfrm(*id, nx)?;
-                }
+            Drag::Rotate { to_frame, center, start, origs } => {
+                self.drag_rotate(to_frame, center, start, &origs, p, mods)?;
             }
             Drag::Adjust { id, index, orig } => return self.drag_adjust(id, index, orig, p),
             Drag::Vertex { id, path, index } => {
@@ -206,6 +185,52 @@ impl Session {
             }
         }
         Ok(Value::Null)
+    }
+
+    /// Rotate in the captured frame and map each box back to its own parent.
+    fn drag_rotate(&mut self, to_frame: Affine, center: Point, start: f64, origs: &[(ShapeId, Xfrm, Affine)], p: Point, mods: Mods) -> Result<()> {
+        let p = to_frame * p;
+        let ang = (p.y - center.y).atan2(p.x - center.x);
+        let mut delta = (ang - start).to_degrees();
+        let mixed = origs.iter().any(|(_, _, parent)| *parent != Affine::IDENTITY);
+        let axis = |parent: Affine, rot: f64| parent.with_translation(Vec2::ZERO) * Affine::rotate(rot.to_radians()) * Point::new(0.0, -1.0);
+        if mixed
+            && mods.shift
+            && let Some((_, o, parent)) = origs.first()
+        {
+            let ray = axis(*parent, o.rot);
+            let heading = ray.x.atan2(-ray.y).to_degrees();
+            delta = ((heading + delta) / 15.0).round() * 15.0 - heading;
+        }
+        for (id, o, parent) in origs {
+            if !mixed && mods.shift {
+                delta = ((o.rot + delta) / 15.0).round() * 15.0 - o.rot;
+            }
+            let mut nx = *o;
+            if delta != 0.0 {
+                let spin = Affine::rotate(delta.to_radians());
+                let inverse = parent.inverse();
+                let r = if *parent == Affine::IDENTITY {
+                    o.rot + delta
+                } else {
+                    // Map the turned handle axis back through the member's own parent,
+                    // including reflections and unequal scale along the two axes.
+                    let ray = inverse.with_translation(Vec2::ZERO) * spin * axis(*parent, o.rot);
+                    ray.x.atan2(-ray.y).to_degrees()
+                };
+                nx.rot = r.rem_euclid(360.0);
+                if origs.len() > 1 {
+                    let orbit = Affine::translate(center.to_vec2()) * spin * Affine::translate(-center.to_vec2());
+                    let rc = inverse * orbit * *parent * o.center();
+                    nx.x = rc.x - o.w / 2.0;
+                    nx.y = rc.y - o.h / 2.0;
+                }
+            }
+            if self.doc()?.shape(*id).and_then(|sh| sh.xfrm) != Some(nx) {
+                self.set_xfrm(*id, nx)?;
+            }
+        }
+        Ok(())
     }
 
     /// Move each selected shape by the slide displacement expressed in its containing group.

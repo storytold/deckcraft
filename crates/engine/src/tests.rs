@@ -1299,6 +1299,65 @@ fn wrap_test_member_in_group(s: &mut Session, id: ShapeId, xfrm: deckcraft_geom:
     .unwrap();
 }
 
+#[test]
+fn rotation_drag_across_groups_uses_a_common_frame() {
+    use deckcraft_geom::{Affine, Point, Vec2, Xfrm};
+    let quarter_turn = |v: Vec2| Vec2::new(-v.y, v.x);
+    for nested in [false, true] {
+        for grabbed in [1, 0] {
+            let mut s = session();
+            s.execute("slide.new", &json!({"layout":"blank"})).unwrap();
+            let groups = [Xfrm::new(250.0, 100.0, 160.0, 120.0), Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(600.0, 280.0, 120.0, 60.0) }];
+            let ids = groups.map(|x| {
+                let id = s.execute("shape.insert", &json!({"preset":"rect", "rect":[0,0,80,60]})).unwrap()["id"].as_u64().unwrap();
+                let id = ShapeId(id as u32);
+                wrap_test_member_in_group(&mut s, id, x, nested && x.flip_h);
+                id
+            });
+            s.execute("edit.select", &json!({"ids":ids.map(|id| id.0)})).unwrap();
+            let snapshot = |s: &Session| ids.map(|id| s.doc().unwrap().shape(id).unwrap().xfrm.unwrap());
+            let handles = |s: &Session, xs: [Xfrm; 2]| {
+                let st = s.doc().unwrap();
+                std::array::from_fn::<_, 2, _>(|i| {
+                    let parent = cmd::parent_transform(st, ids[i]);
+                    (parent * xs[i].center(), parent * tools::box_handles(&xs[i]).1)
+                })
+            };
+            let orig = snapshot(&s);
+            let before = handles(&s, orig);
+            let (pivot, start) = before[grabbed];
+            assert_eq!(s.hit_test(start, 1.0), Some(tools::Hit::Rotate { id: ids[grabbed] }));
+            let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() };
+            s.pointer(ev(PointerKind::Down, start)).unwrap();
+            s.pointer(ev(PointerKind::Drag, start)).unwrap();
+            assert_eq!(snapshot(&s), orig, "a stationary pointer must not rotate or move either member");
+            let target = pivot + quarter_turn(start - pivot);
+            s.pointer(ev(PointerKind::Drag, target)).unwrap();
+            let turned = handles(&s, snapshot(&s));
+            for ((old_center, old_handle), (center, handle)) in before.into_iter().zip(turned) {
+                assert!((center - (pivot + quarter_turn(old_center - pivot))).hypot() < 1e-8, "members must orbit the same slide pivot");
+                let expected = quarter_turn(old_handle - old_center);
+                let actual = handle - center;
+                assert!((actual / actual.hypot() - expected / expected.hypot()).hypot() < 1e-8, "visible handle angles must turn together");
+            }
+            s.pointer(ev(PointerKind::Drag, start)).unwrap();
+            assert_eq!(snapshot(&s), orig, "returning to the initial pointer restores the original boxes");
+            let offset = Affine::rotate(86_f64.to_radians()) * (Point::ZERO + (start - pivot));
+            s.pointer(PointerEvent { mods: Mods { shift: true, ..Default::default() }, ..ev(PointerKind::Drag, pivot + offset.to_vec2()) }).unwrap();
+            for ((center, handle), (expected_center, expected_handle)) in handles(&s, snapshot(&s)).into_iter().zip(turned) {
+                assert!(
+                    (center - expected_center).hypot() < 1e-8 && (handle - expected_handle).hypot() < 1e-8,
+                    "Shift must snap the whole mixed selection to one turn"
+                );
+            }
+            s.pointer(ev(PointerKind::Drag, target)).unwrap();
+            s.pointer(ev(PointerKind::Up, target)).unwrap();
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(snapshot(&s), orig);
+        }
+    }
+}
+
 /// A selected callout inside the same transformed/nested fixture used for grouped text.
 fn grouped_callout_adjust_fixture(w: f64, h: f64, nested: bool) -> (Session, ShapeId) {
     use deckcraft_geom::Xfrm;
