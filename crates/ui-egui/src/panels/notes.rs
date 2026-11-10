@@ -213,7 +213,7 @@ pub fn editor(
 /// The (min y, max y) of the row holding char index `at`; `walk` (row index, chars through that
 /// row) carries over between calls, so successive non-decreasing `at`s cost one pass in all.
 fn row_span_at(galley: &Galley, walk: &mut (usize, usize), at: usize) -> (f32, f32) {
-    while walk.1 <= at && walk.0 + 1 < galley.rows.len() {
+    while walk.0 + 1 < galley.rows.len() && (walk.1 < at || (walk.1 == at && galley.rows[walk.0].char_count_including_newline().0 > 0)) {
         walk.0 += 1;
         walk.1 += galley.rows[walk.0].char_count_including_newline().0;
     }
