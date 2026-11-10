@@ -162,6 +162,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `smartArt.fromText` | structural | the **whole diagram** the conversion would create — layout, nodes with their text and outline levels — plus the final box, in a `smart_art_from_text`; the client builds it with the engine's `smartart::from_text_plan` (the same plan the single-user command runs, including the grown box), the engine checks the value and box before the first write, and the source text shape is replaced in place; the undo image is the whole source shape, and the redo puts the converted graphic back |
 | `smartArt.toText` | structural | the **whole text body** the outline becomes — paragraphs with their levels, bullets, runs and title/bullet sizes — plus the final box, in a `smart_art_to_text`; the client builds it with the engine's `smartart::to_text_plan`, the engine checks the JSON size, paragraph/run counts and box before the first write, and the graphic is replaced by a text box; the undo image is the whole graphic (diagram and generated children with their ids) |
 | `smartArt.toShapes` | structural | no value: the drawing stays and only the outline is dropped, in a `smart_art_to_shapes` addressed by the graphic; the engine refuses a shape that is not a SmartArt graphic before the first write; the undo image is the whole prior graphic and the redo puts the detached group back |
+| `smartArt.picture` | command | one top-level node's picture as a **final value** — the media channel's digest, the file name and the picture's final place (source crop and opacity) — in one `smart_art_picture`; the bytes go to the media channel first, as `insert.picture` runs, and the operation stays small; the normaliser maps a selected sub-point to its top-level node and refuses a plain shape, a nested graphic, an unknown node, a digest that is not a sha256 and a place without a visible area before sending; the engine checks the top-level group, the node, the picture allowlist and its 8 MiB budget, the place and that the layout did not change before the first write, then installs the bytes with the same `add_media` call (the same id on every replica, deduplicated by content); the undo image is the whole group (`shape_field{field: smartArt}`), so an undo puts the original node back with its children and picture and the redo returns the result; the place lives on the node and round-trips as `a:srcRect` in the diagram data part |
 | `chart.type`, `chart.data`, `chart.options` | command | the chart's **whole** value — type, categories (with outer levels), series, element options and any kept part — in one `chart.setWhole`; the client runs the engine's `chart::plan`, the same plan the single-user command uses, so it sends the value that command would leave; the adapter requires a chart shape and bounds the value (category/series/point counts, text, JSON size) before the first write; the undo image is the whole chart shape (`shape_field{field: chart}`), because a kept chart part cannot be replayed from arguments |
 | `insert.chart` | structural | the **whole chart** the insertion would create (its sample and typed data) plus the final box, in a `chart_insert`; every replica creates that chart instead of running its own sample; the undo is the ordinary shape-delete step |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
@@ -191,9 +192,9 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: the picture in a node (`smartArt.picture`, a
-media-channel slice), and relative effects; a 3-D model can be inserted (`insert.model3d`, drawn
-as its poster or a stand-in cube), but its camera and scene are not editable in v1.
+values, go on the wire. What is still refused: relative effects; a 3-D model can be inserted
+(`insert.model3d`, drawn as its poster or a stand-in cube), but its camera and scene are not
+editable in v1.
 
 A few commands are **queries**, not operations: they answer a read-only question and change no
 document. `smartArt.nodes` is one of them, and the server answers only queries on an explicit
@@ -396,10 +397,12 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    the same `table.columnWidth`/`table.rowHeight` commands a border drag does. A SmartArt graphic
    can be inserted now (`insert.smartArt` as one whole diagram value, the whole shape as the undo
    image), the three conversions are in (`smartArt.fromText`/`toText`/`toShapes`, each one
-   structural step with the whole source shape as its undo image) and `smartArt.nodes` is
+   structural step with the whole source shape as its undo image), a node's picture is in
+   (`smartArt.picture`: the media channel's digest and the picture's final place, the whole group
+   as the undo image) and `smartArt.nodes` is
    answered by the server as a read-only query; charts are in too
    (type/data/options and an insertion as one whole chart value, the whole chart shape as the undo
-   image). What is left in this line: the picture in a node.
+   image). What is left in this line: a model's camera/scene and relative effects.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
