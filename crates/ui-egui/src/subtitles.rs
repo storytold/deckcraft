@@ -546,7 +546,7 @@ impl SlideApp {
 
 /// The caption text the show may draw now: nothing when captions are off, the show ended, the
 /// grid or a blank screen is up, or the line is blank.
-pub fn caption_line<'a>(on: bool, ended: bool, grid: bool, blank: bool, caption: Option<&'a str>) -> Option<&'a str> {
+pub fn caption_line(on: bool, ended: bool, grid: bool, blank: bool, caption: Option<&str>) -> Option<&str> {
     if !on || ended || grid || blank {
         return None;
     }
