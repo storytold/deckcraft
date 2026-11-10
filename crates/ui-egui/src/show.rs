@@ -606,7 +606,7 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
             .into_iter()
             .map(|p| {
                 let a = tl.state(id, Some(p), step, t);
-                (p, ParaState { visible: a.visible, opacity: a.opacity, offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y) })
+                (p, ParaState::from_anim(&a))
             })
             .collect(),
     }

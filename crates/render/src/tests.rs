@@ -3105,3 +3105,22 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+#[test]
+fn a_paragraph_fades_in_where_its_effect_closes_in_from_the_edges_and_is_whole_otherwise() {
+    use crate::ParaState;
+    use deckcraft_anim::{AnimState, Reveal, RevealShape};
+    // A paragraph has no bounds of its own to reveal through: the "in" directions (Box, Split and
+    // Shape In) fade it in by the effect's progress, as they did before the soft edge.
+    let inward = AnimState { reveal: Some(Reveal::new(RevealShape::Box, true, 0.4)), ..Default::default() };
+    let p = ParaState::from_anim(&inward);
+    assert!(p.visible && (p.opacity - 0.4).abs() < 1e-9, "{p:?}");
+    // The other directions and Wipe show the paragraph whole, as they did (a clip was ignored).
+    for r in [Reveal::new(RevealShape::Box, false, 0.4), Reveal::new(RevealShape::WipeLeft, false, 0.4)] {
+        assert_eq!(ParaState::from_anim(&AnimState { reveal: Some(r), ..Default::default() }).opacity, 1.0);
+    }
+    // The rest of the state carries over, and a fade multiplies the opacity.
+    let a = AnimState { opacity: 0.5, offset_x: 3.0, offset_y: -2.0, visible: false, ..inward };
+    let p = ParaState::from_anim(&a);
+    assert!(!p.visible && (p.opacity - 0.2).abs() < 1e-9 && (p.offset.x, p.offset.y) == (3.0, -2.0), "{p:?}");
+}

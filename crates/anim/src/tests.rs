@@ -1339,3 +1339,18 @@ fn paragraph_states_of_a_large_build_stay_linear() {
     }
     assert_eq!(tl.animated_shapes(), [ShapeId(1)]);
 }
+
+#[test]
+fn a_reveals_progress_is_the_progress_it_was_made_at_in_either_direction() {
+    use RevealShape::*;
+    for shape in [Box, Circle, WipeLeft, SplitVertical] {
+        for inward in [false, true] {
+            for p in [0.0, 0.1, 0.43, 0.8, 1.0] {
+                let got = Reveal::new(shape, inward, p).progress();
+                assert!((got - p).abs() < 1e-9, "{shape:?} inward={inward} at {p}: {got}");
+            }
+        }
+    }
+    // A hostile edge is not progress.
+    assert_eq!(Reveal { shape: Box, inward: false, edge: f64::NAN }.progress(), 0.0);
+}
