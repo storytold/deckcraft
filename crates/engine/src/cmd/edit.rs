@@ -325,7 +325,7 @@ fn load_slides(b64: &str) -> Option<(Vec<Slide>, Vec<MediaItem>)> {
         return None;
     }
     // A payload missing a part (media without its bytes) is refused rather than pasted half.
-    let (deck, damaged) = deckcraft_format::load_checked(&super::base64_decode(b64)?).ok()?;
+    let (deck, damaged) = deckcraft_format::load_clipboard_checked(&super::base64_decode(b64)?).ok()?;
     if !damaged.is_empty() {
         return None;
     }

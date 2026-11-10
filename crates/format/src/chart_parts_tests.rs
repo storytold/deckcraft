@@ -235,3 +235,53 @@ fn duplicate_physical_zip_names_are_indexed_and_inflated_once() {
     assert_eq!(chart.kept.parts[0].bytes, vec![4; 10]);
     assert!(chart.kept.parts[1].bytes.is_empty());
 }
+
+#[test]
+fn clipboard_chart_parts_share_a_stricter_media_budget_than_native_files() {
+    let mut p = fixture(vec![7; 32 << 20]);
+    p.add_media("a.bin", "application/octet-stream", vec![8]).unwrap();
+    let bytes = save(&p).unwrap();
+    assert!(super::load_clipboard_checked(&bytes).is_err(), "the chart and media together exceed 32 MiB");
+    assert_eq!(load(&bytes).unwrap(), p, "native files retain their larger budget");
+    // The exact boundary remains usable when no media consumes the shared budget.
+    p.media.clear();
+    assert!(super::load_clipboard_checked(&save(&p).unwrap()).is_ok());
+}
+
+#[test]
+fn clipboard_manifest_inflation_is_bounded_separately() {
+    let bytes = save(&Presentation::default()).unwrap();
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+    let mut manifest = read_entry(&mut z, "presentation.json").unwrap();
+    // JSON permits trailing whitespace: a tiny compressed archive can inflate a large manifest.
+    manifest.resize((8 << 20) + 1, b' ');
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    out.start_file(
+        "presentation.json",
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
+    )
+    .unwrap();
+    out.write_all(&manifest).unwrap();
+    let bytes = out.finish().unwrap().into_inner();
+    assert!(bytes.len() < 16 << 20);
+    assert!(super::load_clipboard_checked(&bytes).is_err());
+    assert!(load(&bytes).is_ok(), "native manifest limits are unchanged");
+}
+
+#[test]
+fn clipboard_stops_on_corrupt_media_and_caps_payload_items() {
+    let mut p = Presentation::default();
+    p.add_media("a.png", "image/png", b"CLIPBOARD-MEDIA-CRC".to_vec()).unwrap();
+    let mut bytes = save(&p).unwrap();
+    let at = bytes.windows(19).position(|w| w == b"CLIPBOARD-MEDIA-CRC").unwrap();
+    bytes[at] ^= 0xff;
+    assert!(super::load_clipboard_checked(&bytes).is_err());
+    assert_eq!(load_checked(&bytes).unwrap().1.len(), 1, "native damage recovery stays available");
+    p.media.clear();
+    for i in 0_u32..4097 {
+        p.add_media("item.bin", "application/octet-stream", i.to_le_bytes().to_vec()).unwrap();
+    }
+    let bytes = save(&p).unwrap();
+    assert!(super::load_clipboard_checked(&bytes).is_err());
+    assert!(load_checked(&bytes).is_ok());
+}

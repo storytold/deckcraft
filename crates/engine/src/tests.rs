@@ -2420,6 +2420,22 @@ mod copy_remap {
         assert_eq!(b.doc().unwrap().doc.slides.len(), 1, "no slide with missing pictures");
     }
 
+    #[test]
+    fn an_oversized_inflated_slide_payload_pastes_as_text() {
+        let mut deck = deckcraft_model::Presentation::default();
+        deck.add_media("large.bin", "application/octet-stream", vec![0; (32 << 20) + 1]).unwrap();
+        let bytes = deckcraft_format::save(&deck).unwrap();
+        let b64 = crate::cmd::base64_encode(&bytes);
+        assert!(b64.len() < 16 << 20, "the compressed payload fits the transport limit");
+        let html = format!("<!--deckcraft-slides:1:{b64}-->");
+        let mut b = Session::with_new();
+        b.execute("edit.paste", &json!({"text": "Safe fallback", "html": html})).unwrap();
+        let d = b.doc().unwrap();
+        assert_eq!(d.doc.slides.len(), 1, "no oversized foreign slide is pasted");
+        assert!(d.doc.media.is_empty());
+        assert!(b.clipboard.slides.is_empty(), "rejected payloads do not replace the local clipboard");
+    }
+
     /// Media saved as is that can't fit the payload isn't serialized only to be dropped.
     #[test]
     fn slides_with_too_much_stored_media_stay_in_this_window() {

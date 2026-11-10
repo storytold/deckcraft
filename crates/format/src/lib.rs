@@ -109,6 +109,7 @@ pub fn sniff(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK") && [MIMETYPE, LEGACY_MIMETYPE].iter().any(|m| bytes.windows(m.len()).take(200).any(|w| w == m.as_bytes()))
 }
 
+#[cfg(test)]
 fn read_entry(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>> {
     read_entry_max(z, name, MAX_ENTRY)
 }
@@ -142,9 +143,20 @@ pub fn load_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     load_within(bytes, Budget { total: MAX_TOTAL_MEDIA, items: MAX_MEDIA_ITEMS })
 }
 
+/// Read untrusted clipboard slides with an 8 MiB manifest, 32 MiB of media and chart
+/// payloads together, and at most 4,096 payload items. Native file limits are unchanged.
+/// Stop at the first damaged media entry so failed inflation cannot reuse the byte budget.
+pub fn load_clipboard_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
+    load_with_limits(bytes, Budget { total: 32 << 20, items: 4096 }, 8 << 20, true)
+}
+
 fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String>)> {
+    load_with_limits(bytes, budget, MAX_ENTRY, false)
+}
+
+fn load_with_limits(bytes: &[u8], budget: Budget, manifest_max: u64, stop_on_damage: bool) -> Result<(Presentation, Vec<String>)> {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| FormatError::NotOurs(e.to_string()))?;
-    let json = read_entry(&mut z, "presentation.json").map_err(|_| FormatError::NotOurs("no presentation.json".into()))?;
+    let json = read_entry_max(&mut z, "presentation.json", manifest_max).map_err(|_| FormatError::NotOurs("no presentation.json".into()))?;
     let m = parse_manifest(&json)?;
     if m.format != "deckcraft" {
         return Err(FormatError::NotOurs(m.format));
@@ -172,6 +184,7 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
                 item.data = Arc::new(data);
             }
             Err(_) if linked_only => {}
+            Err(e) if stop_on_damage => return Err(e),
             Err(e) => damaged.push(e.to_string()),
         }
     }

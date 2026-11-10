@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-09 · **Change:** minor (clipboard-specific native inflation budgets; previous: native chart payloads stored in bounded ZIP members) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -68,6 +68,9 @@ overlays an invisible real-text layer with embedded font subsets.
   `chart-parts/<index>`. Chart relationships and payload references stay in the manifest; binary
   chart parts use bounded ZIP reads and share the media byte/item budgets. Earlier inline chart
   bytes still load and migrate on save; `.slidecraft` files from before the rename still open.
+  Cross-process slide clipboard loads use a separate 8 MiB manifest limit and a shared 32 MiB,
+  4,096-item media/chart budget, stopping on damaged media; native-file limits and recovery stay
+  unchanged. Clipboard HTML remains capped at 16 MiB of base64; refused payloads fall back to text.
 - Formats and their gaps: [file-format-parity.md](file-format-parity.md).
 
 ## Quality gates
@@ -81,6 +84,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-09 | minor | Cross-process slide paste bounds decompressed manifests and cumulative media/chart payloads separately from native file loading; damaged media stops clipboard inflation immediately |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |
