@@ -39,13 +39,18 @@ impl PanelMenu {
     }
 }
 
+/// Puts the usual menu bar back however the panel ends, a panic included.
+impl Drop for PanelMenu {
+    fn drop(&mut self) {
+        self.sync(false);
+    }
+}
+
 /// Run a blocking file panel with its menu bar up.
 pub fn while_open<T>(pick: impl FnOnce() -> T) -> T {
     let mut menu = PanelMenu::default();
     menu.sync(true);
-    let picked = pick();
-    menu.sync(false);
-    picked
+    pick()
 }
 
 /// AppKit treats a menu bar's first menu as the application menu, so Edit comes second.
