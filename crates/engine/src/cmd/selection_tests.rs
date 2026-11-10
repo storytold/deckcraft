@@ -192,6 +192,36 @@ fn locked_objects_refuse_moving_sizing_rotating_but_take_formatting() {
     assert_eq!(bx(&mut s, a), before);
 }
 
+/// Ids are unique in the presentation, so shape.move and shape.sizePosition reach a shape on
+/// another slide (#298): the lock must hold there too, with the same answer as on the current
+/// slide, and a mixed list still moves only the unlocked shapes.
+#[test]
+fn locked_objects_on_another_slide_still_refuse_moving_and_sizing() {
+    let (mut s, ids) = deck();
+    let (a, b) = (ids[0], ids[1]);
+    s.execute("shape.lock", &json!({"id": a, "locked": true})).unwrap();
+    let before = bx(&mut s, a);
+    let bb = bx(&mut s, b);
+    // The fixture's shapes are on slide 1; the new slide 2 becomes current.
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 2);
+    let e = s.execute("shape.move", &json!({"ids": [a], "dx": 50})).unwrap_err().to_string();
+    assert!(e.contains("the object is locked"), "{e}");
+    let e = s.execute("shape.sizePosition", &json!({"id": a, "w": 300})).unwrap_err().to_string();
+    assert!(e.contains("the object is locked"), "{e}");
+    assert_eq!(s.doc().unwrap().selection.slide, 2, "a refused edit leaves the current slide alone");
+    // The unlocked shape on slide 1 moves and that slide becomes current; the locked one stays.
+    s.execute("shape.move", &json!({"ids": [a, b], "dx": 10})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    assert_eq!(bx(&mut s, a), before);
+    assert_eq!(bx(&mut s, b)["x"].as_f64().unwrap(), bb["x"].as_f64().unwrap() + 10.0);
+    // sizePosition reaches an unlocked shape on another slide too.
+    s.execute("slide.go", &json!({"index": 2})).unwrap();
+    s.execute("shape.sizePosition", &json!({"id": b, "w": 300})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    assert_eq!(bx(&mut s, b)["w"], 300.0);
+}
+
 #[test]
 fn locked_objects_are_picked_on_the_canvas_but_not_dragged() {
     let (mut s, ids) = deck();

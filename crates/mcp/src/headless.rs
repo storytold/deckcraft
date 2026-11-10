@@ -105,7 +105,12 @@ impl Headless {
             last = self.session.pointer(PointerEvent { kind, x, y, mods, tol: 3.0, pressure }).map_err(|e| e.to_string())?;
         }
         self.session.ui_requests.clear();
-        Ok(json!({"result": last, "selection": self.session.active().map(|d| serde_json::to_value(&d.selection).unwrap_or_default())}))
+        let st = self.session.active();
+        Ok(json!({
+            "result": last,
+            "selection": st.map(|d| serde_json::to_value(&d.selection).unwrap_or_default()),
+            "selected": st.map(deckcraft_engine::DocState::selected_boxes).unwrap_or_default(),
+        }))
     }
 
     fn render(&mut self, p: &Value) -> Result<Value, String> {

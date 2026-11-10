@@ -1,6 +1,6 @@
 use super::{
     EngineError, MediaClip, NO_ID_SPACE, PictureFill, Result, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, base64_decode, default_rect,
-    json, rect_param, str_param, xfrm_of,
+    json, rect_json, rect_param, str_param, xfrm_of,
 };
 
 /// Read media bytes from `data` (base64) or `path`.
@@ -152,10 +152,10 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
             sel.shapes = vec![ph_id];
             Ok(())
         })?;
-        return Ok(json!({"id": ph_id}));
+        return Ok(json!({"id": ph_id, "rect": rect_json(&rect)}));
     }
     let id = add_shape(s, "insert.picture", shape, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {

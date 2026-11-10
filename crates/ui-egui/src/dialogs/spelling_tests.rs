@@ -179,7 +179,7 @@ fn squiggles_in_table_cells_and_notes_and_on_the_ui_thread() {
     assert_eq!(h.state_mut().squiggles.settle(&st).len(), 1);
     // The Spelling dialog's list has the cell and the notes too.
     let v = h.state_mut().session.execute("review.spelling", &json!({})).unwrap();
-    let words: Vec<&str> = v.as_array().unwrap().iter().filter_map(|w| w["word"].as_str()).collect();
+    let words: Vec<&str> = v["issues"].as_array().unwrap().iter().filter_map(|w| w["word"].as_str()).collect();
     assert_eq!(words, vec!["Soth", "Remmeber", "totl"]);
 }
 

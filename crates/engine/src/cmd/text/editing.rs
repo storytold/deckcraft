@@ -2,7 +2,7 @@ use super::autocorrect::autocorrect;
 use super::layout::{ctx_for, pos_param};
 use super::{
     Align, Pos, Result, Run, RunKind, RunProps, Session, ShapeId, ShapeKind, TextBody, TextSel, Value, bad, body_of, bool_or, ed, edit_text,
-    id_param, json, ok, resolve, shape_of,
+    id_param, json, ok, resolve,
 };
 
 pub(super) fn edit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -19,7 +19,11 @@ pub(super) fn edit(s: &mut Session, p: &Value) -> Result<Value> {
         Some(i) => i,
         None => s.doc()?.selection.shapes.first().copied().ok_or_else(|| bad("text.edit", "select a shape with text"))?,
     };
-    let sh = shape_of(s, id)?;
+    // The text cursor goes in a shape on the current slide; one elsewhere is refused saying where.
+    let sh = {
+        let st = s.doc()?;
+        st.shape(id).cloned().ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, "text.edit"))?
+    };
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
     let body = match (&sh.kind, cell) {
         (ShapeKind::Table(t), Some((r, c))) => t.cell(r, c).map(|x| x.text.clone()).ok_or_else(|| bad("text.edit", "no such cell"))?,

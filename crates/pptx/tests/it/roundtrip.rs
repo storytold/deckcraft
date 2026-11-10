@@ -2308,3 +2308,41 @@ fn reflection_angles_and_skews_out_of_range_are_written_inside_the_schema() {
     let r = round(&p).slides.last().and_then(|sl| by_name(sl, "Reflected").effects.clone()).and_then(|fx| fx.reflection).expect("reflection");
     assert_eq!((r.st_pos, r.dir, r.fade_dir, r.kx, r.ky), (Some(100_000), Some(21_599_995), Some(0), Some(5_399_999), Some(-5_399_999)));
 }
+
+/// PowerPoint keeps a shape id unique within its slide only, so two slides of a file can share
+/// one. The reader gives a later slide's repeat a fresh id, unique in the presentation and below
+/// the next id the engine hands out, and that slide's connector and animation follow it.
+#[test]
+fn shape_ids_repeated_across_slides_are_renumbered() {
+    let mut p = defaults::new_presentation(None);
+    let mut first = new_slide(&mut p, "One");
+    let mut second = new_slide(&mut p, "Two");
+    let at = |name: &str, id: u32, x: f64| Shape {
+        id: ShapeId(id),
+        name: name.into(),
+        xfrm: Some(Xfrm::new(x, 100.0, 100.0, 100.0)),
+        ..Default::default()
+    };
+    first.shapes.extend([at("A", 900, 0.0), at("B", 901, 200.0)]);
+    let mut cx = at("Connector", 902, 100.0);
+    cx.kind = ShapeKind::Connector { start: Some((ShapeId(900), 3)), end: Some((ShapeId(901), 1)) };
+    cx.geom = Geom::preset("straightConnector1");
+    second.shapes.extend([at("C", 900, 0.0), at("D", 901, 200.0), cx]);
+    second.animations = vec![Animation { shape: ShapeId(900), effect: "fade".into(), ..Default::default() }];
+    p.slides = vec![Arc::new(first), Arc::new(second)];
+    p.next_id = p.next_id.max(902);
+    let q = round(&p);
+    let mut seen = std::collections::HashSet::new();
+    for s in &q.slides {
+        deckcraft_model::walk(&s.shapes, &mut |x, _| {
+            assert!(seen.insert(x.id), "{:?} repeats", x.id);
+            assert!(x.id.0 <= q.next_id, "{:?} is past the next id {}", x.id, q.next_id);
+        });
+    }
+    assert_eq!((by_name(&q.slides[0], "A").id, by_name(&q.slides[0], "B").id), (ShapeId(900), ShapeId(901)), "the first slide keeps its ids");
+    let (c, d) = (by_name(&q.slides[1], "C").id, by_name(&q.slides[1], "D").id);
+    assert!(c != ShapeId(900) && d != ShapeId(901), "{c:?} {d:?}");
+    let k = &by_name(&q.slides[1], "Connector").kind;
+    assert!(matches!(k, ShapeKind::Connector { start: Some((s, 3)), end: Some((e, 1)) } if *s == c && *e == d), "{k:?}");
+    assert_eq!(q.slides[1].animations.iter().map(|a| a.shape).collect::<Vec<_>>(), vec![c]);
+}

@@ -36,7 +36,7 @@ fn picture_mode(h: &Harness<'_, SlideApp>) -> PictureMode {
 #[test]
 fn picture_fill_shows_transparency_and_tiling() {
     let mut s = Session::with_new();
-    s.execute("design.background", &json!({"picture": PNG, "name": "dot.png"})).unwrap();
+    s.execute("design.background", &json!({"picture": PNG})).unwrap();
     let mut h = harness(SlideApp::new(s, Services::default()));
     assert!(h.query_all_by_label("Format Background").next().is_some(), "the pane is open");
     let _ = h.get_by_label("Picture or texture fill");
@@ -63,7 +63,7 @@ fn solid_fill_shows_transparency_without_tile_options() {
 #[test]
 fn apply_to_all_copies_the_picture() {
     let mut s = Session::with_new();
-    s.execute("design.background", &json!({"picture": PNG, "name": "dot.png"})).unwrap();
+    s.execute("design.background", &json!({"picture": PNG})).unwrap();
     s.execute("slide.new", &json!({})).unwrap();
     s.execute("slide.go", &json!({"index": 0})).unwrap();
     let mut h = harness(SlideApp::new(s, Services::default()));
