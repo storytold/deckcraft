@@ -508,7 +508,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     ui.separator();
-    ui.label(if tab == "hover" { "Action on mouse over" } else { "Action on click" });
+    ui.label(if tab == "hover" { tl!("Action on mouse over") } else { tl!("Action on click") });
     let kind = d.get("kind", cur_kind);
     let hyperlink = !matches!(kind.as_str(), "none" | "program" | "playMedia");
     let pick = |d: &mut Dialog, ui: &mut Ui, k: &str, l: &str| {
