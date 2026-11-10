@@ -32,6 +32,32 @@ pub enum SubmitError {
     Rebuilding,
 }
 
+/// Why a commit was not asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommitError {
+    /// A viewer may not commit the file (ADR 0008, 0009).
+    ReadOnly,
+    /// The link is not live: the request has nowhere to go.
+    Offline,
+}
+
+impl std::fmt::Display for CommitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommitError::ReadOnly => f.write_str("view only: you cannot commit the presentation"),
+            CommitError::Offline => f.write_str("the session is offline: Save a copy keeps your work"),
+        }
+    }
+}
+
+/// A host's Save: the cabinet version the file was opened from, or the one the last commit was
+/// accepted with. `None` leaves the check to the server, which compares against the version it
+/// restored from `meta.json` — the version this room was opened from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CommitRequest {
+    expected: Option<String>,
+}
+
 /// What the application should do after [`ClientSession::on_msg`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Effect {
@@ -84,6 +110,13 @@ pub struct ClientSession {
     /// Journal steps that arrived while the base was assembling. They are not applied to the
     /// stale replica; the catch-up tail asked for after the base is installed carries them.
     missed_while_rebuilding: bool,
+    /// A commit the host asked for and this client has not sent yet (ADR 0009).
+    commit_pending: Option<CommitRequest>,
+    /// Whether the commit is on the wire: a Save while it is there is the same request, not a
+    /// second file version.
+    commit_in_flight: bool,
+    /// The cabinet's file version the last commit was accepted with; the next commit expects it.
+    file_version: Option<String>,
 }
 
 /// A base assembled from a chain of chunks, ready for the host to install in place of its replica
@@ -167,6 +200,9 @@ impl ClientSession {
             pending_snapshot: None,
             ready_base: None,
             missed_while_rebuilding: false,
+            commit_pending: None,
+            commit_in_flight: false,
+            file_version: None,
         }
     }
 
@@ -238,6 +274,35 @@ impl ClientSession {
         Ok(())
     }
 
+    /// Ask the server to commit the room as a new cabinet file version (ADR 0009). Only a writer
+    /// may ask, and a Save while a commit is already on its way is the same request: one file
+    /// version, not two. `expected` is the cabinet version the file was opened from, or the one
+    /// the last commit was accepted with; `None` leaves the check to the server, which compares
+    /// against the version it restored from `meta.json`.
+    pub fn commit(&mut self, expected: Option<String>) -> Result<(), CommitError> {
+        if self.role.is_some_and(|role| !role.may_write()) {
+            return Err(CommitError::ReadOnly);
+        }
+        if self.state != Link::Live {
+            return Err(CommitError::Offline);
+        }
+        if self.commit_pending.is_none() && !self.commit_in_flight {
+            self.commit_pending = Some(CommitRequest { expected });
+        }
+        Ok(())
+    }
+
+    /// Whether a commit is queued or on the wire (a Save now would be the same request).
+    pub fn commit_in_flight(&self) -> bool {
+        self.commit_pending.is_some() || self.commit_in_flight
+    }
+
+    /// The cabinet file version the last commit was accepted with. The next commit expects it,
+    /// so a file changed outside the session after that commit is a `409` (ADR 0009 §4).
+    pub fn file_version(&self) -> Option<&str> {
+        self.file_version.as_deref()
+    }
+
     /// The next message the application should send, if any.
     pub fn next_outgoing(&mut self) -> Option<ClientMsg> {
         if self.state != Link::Live {
@@ -260,6 +325,15 @@ impl ClientSession {
             // Nothing may be submitted while the base is assembling, and a resend of an operation
             // from the old replica would be normalised against a document the room no longer has.
             return None;
+        }
+        // A commit waits until every edit is acknowledged: the file the server builds is the one
+        // the user pressed Save on, not one missing the last keystroke.
+        if self.queued.is_empty()
+            && self.in_flight.is_empty()
+            && let Some(request) = self.commit_pending.take()
+        {
+            self.commit_in_flight = true;
+            return Some(ClientMsg::Commit { expected_file_version: request.expected });
         }
         if self.in_flight.len() >= self.max_in_flight {
             return None;
@@ -314,6 +388,13 @@ impl ClientSession {
                 Effect::Settled
             }
             ServerMsg::Rejected(rejected) => {
+                if rejected.op_id == "commit" {
+                    // The cabinet refused this commit (a `409` after an external change, a build
+                    // failure): the answer is final for the request, so a later Save may ask
+                    // again. The expected version is kept untouched — a retry against a file that
+                    // moved on must be refused again, never overwrite it (ADR 0009 §4).
+                    self.commit_in_flight = false;
+                }
                 if self.pending_snapshot.is_some() && rejected.op_id.starts_with("base@") {
                     // The server no longer serves the base this chain belongs to (compaction moved
                     // it). The partial prefix is useless, so the client drops it and asks for a new
@@ -400,8 +481,15 @@ impl ClientSession {
             ServerMsg::Presence(_) => Effect::None,
             ServerMsg::QueryResult { .. } => Effect::None,
             ServerMsg::Pong => Effect::None,
-            ServerMsg::CommitResult(_) => Effect::None,
+            ServerMsg::CommitResult(result) => {
+                self.commit_in_flight = false;
+                if let Some(version) = &result.file_version {
+                    self.file_version = Some(version.clone());
+                }
+                Effect::None
+            }
             ServerMsg::Error(error) => {
+                self.commit_in_flight = false;
                 self.last_error = Some(error.message);
                 self.state = Link::Down;
                 Effect::Rollback
@@ -424,6 +512,9 @@ impl ClientSession {
         }
         self.resync_wanted = false;
         self.base_request = None;
+        // A commit that was sent has no answer to resend: the user is told it did not finish and
+        // presses Save again. One that never left stays queued for the next connection.
+        self.commit_in_flight = false;
     }
 
     /// One chunk of a chained base: append it, ask for the next one, and hand the base to the host
@@ -927,5 +1018,79 @@ mod tests {
         let ready = c.take_ready_base().expect("the assembled base");
         assert_eq!(ready.snapshot.version, 8);
         assert_eq!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 8 }), "the missed step is asked for from the base");
+    }
+
+    // ------------------------------------------------------------ a Save becomes a commit
+
+    fn commit_result(version: u64, file_version: Option<&str>) -> ServerMsg {
+        ServerMsg::CommitResult(deckcraft_collab_proto::CommitResult {
+            sha256: "ab".repeat(32),
+            version,
+            file_version: file_version.map(str::to_string),
+            bytes_base64: None,
+            blob: None,
+            warnings: vec![],
+        })
+    }
+
+    #[test]
+    fn a_commit_waits_for_the_journal_and_travels_once() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.submit(op("o1", 0)).expect("queue");
+        c.commit(Some("etag-0".into())).expect("commit");
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Op(_))), "the edit goes first");
+        assert_eq!(c.next_outgoing(), None, "the commit waits for the answer to the edit");
+        c.on_msg(applied("o1", 1));
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Commit { expected_file_version: Some("etag-0".into()) }));
+        assert_eq!(c.next_outgoing(), None);
+        // A second Save while the commit is on its way is the same request.
+        c.commit(Some("etag-0".into())).expect("deduped");
+        assert_eq!(c.next_outgoing(), None, "one commit in flight, not two");
+        assert_eq!(c.on_msg(commit_result(1, Some("etag-1"))), Effect::None);
+        assert!(!c.commit_in_flight());
+        assert_eq!(c.file_version(), Some("etag-1"));
+        // The next Save expects the version the cabinet accepted.
+        c.commit(c.file_version().map(str::to_string)).expect("second");
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Commit { expected_file_version: Some("etag-1".into()) }));
+    }
+
+    #[test]
+    fn a_commit_with_an_empty_journal_is_still_allowed() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.commit(None).expect("commit");
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Commit { expected_file_version: None }), "a version is created from unchanged bytes");
+    }
+
+    #[test]
+    fn a_viewer_and_an_offline_session_are_refused_before_anything_is_sent() {
+        let mut c = ClientSession::new("d");
+        assert_eq!(c.commit(None), Err(CommitError::Offline), "no handshake yet");
+        c.on_msg(welcome(0, Role::Viewer));
+        assert_eq!(c.commit(None), Err(CommitError::ReadOnly));
+        assert_eq!(c.next_outgoing(), None, "the server is never asked");
+    }
+
+    #[test]
+    fn a_refused_commit_is_not_retried_by_itself_and_keeps_its_expected_version() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.commit(Some("etag-0".into())).expect("commit");
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Commit { .. })));
+        c.on_msg(ServerMsg::Rejected(Rejected {
+            op_id: "commit".into(),
+            code: RejectCode::Conflict,
+            message: "the file changed outside the session".into(),
+            retryable: false,
+            hint: None,
+        }));
+        assert!(!c.commit_in_flight(), "the refusal frees the request");
+        assert_eq!(c.next_outgoing(), None, "a refusal is not retried by itself");
+        assert_eq!(c.file_version(), None, "nothing was accepted");
+        // The user may press Save again; the expected version is still the old one, so the
+        // server refuses again instead of overwriting the version that moved on.
+        c.commit(Some("etag-0".into())).expect("retry");
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Commit { expected_file_version: Some("etag-0".into()) }));
     }
 }

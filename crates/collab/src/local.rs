@@ -220,6 +220,23 @@ impl CollabDoc {
         Ok(())
     }
 
+    /// Ask the server to commit the room as a new cabinet file version (ADR 0009). One commit in
+    /// flight; a repeated Save is the same request. `expected` is the cabinet version the session
+    /// was opened from, or the one the last commit was accepted with.
+    pub fn commit(&mut self, expected: Option<String>) -> Result<(), crate::CommitError> {
+        self.client.commit(expected)
+    }
+
+    /// Whether a commit is queued or on the wire.
+    pub fn commit_in_flight(&self) -> bool {
+        self.client.commit_in_flight()
+    }
+
+    /// The cabinet file version the last commit was accepted with.
+    pub fn file_version(&self) -> Option<&str> {
+        self.client.file_version()
+    }
+
     /// The socket dropped: keep unacknowledged operations for the resend and wait for a new
     /// handshake. The caller starts it with [`Self::connect`].
     pub fn disconnected(&mut self) {

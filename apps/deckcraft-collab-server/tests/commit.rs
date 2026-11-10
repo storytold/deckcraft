@@ -450,3 +450,60 @@ fn a_client_commit_is_answered_after_the_cabinet_took_the_file() {
     }
     handle.shutdown();
 }
+
+/// The desktop Save path end to end: a client asks for a commit with no version of its own (it
+/// never saw the cabinet), the server compares against the version `meta.json` restored, and
+/// after a restart that version still refuses a file changed outside the session (ADR 0009 §4).
+#[test]
+fn the_accepted_version_survives_a_restart_and_refuses_an_external_change() {
+    let original = native_deck();
+    let cabinet = FakeCabinet::start(&[("file-s", &original)]);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("deckcraft-commit-restart-{}-{nanos}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut config = Config::for_tests(SECRET, "service-token");
+    config.store_dir = Some(dir.clone());
+    config.cabinet = Some(CabinetConfig {
+        url: format!("http://{}/api/v1/internal/office/sessions/{{sessionId}}/commit", cabinet.addr),
+        token: "cabinet-token".into(),
+        timeout: Duration::from_secs(5),
+    });
+    let handle = serve_ephemeral(config.clone()).expect("server");
+    let addr = handle.addr;
+    create(addr, "file-s", &original, "etag-0", "talk.pptx");
+
+    let mut editor = join(addr, "file-s", "alice", "editor");
+    insert_slide(&mut editor, "file-s", "slide-1");
+    editor
+        .send(tungstenite::Message::Text(encode_client(&ClientMsg::Commit { expected_file_version: None }).expect("encode").into()))
+        .expect("commit");
+    match read(&mut editor) {
+        ServerMsg::CommitResult(result) => {
+            assert_eq!(result.file_version.as_deref(), Some("etag-1"), "the cabinet's answer reaches the client");
+            assert_eq!(result.version, 1);
+        }
+        other => panic!("expected commit-result, got {other:?}"),
+    }
+    drop(editor);
+    handle.shutdown();
+
+    // `meta.json` names the version the cabinet accepted.
+    let room = dir.join(sha256(b"file-s"));
+    let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(room.join("meta.json")).expect("meta.json")).expect("json");
+    assert_eq!(meta["fileEtag"], "etag-1", "{meta}");
+
+    // A restart restores the room (a create without an expected version must not forget the
+    // version the cabinet holds); the file then changes outside the session.
+    let handle = serve_ephemeral(config).expect("restart");
+    let (status, info) = http(handle.addr, "POST", "/v1/sessions", Some("service-token"), "{\"fileId\":\"file-s\",\"app\":\"deckcraft\"}");
+    assert_eq!(status, 201, "{info}");
+    cabinet.external_change("file-s");
+    let (status, body) = http(handle.addr, "POST", "/v1/sessions/file-s/commit", Some("service-token"), "");
+    assert_eq!(status, 409, "a commit with no expected version still compares against the restored one: {body}");
+    let posted = cabinet.versions("file-s");
+    assert!(posted.last().expect("attempt").refused, "the attempt was refused");
+    assert!(posted.last().expect("attempt").bytes.is_empty(), "nothing was written over the external change");
+    assert_eq!(posted[posted.len() - 2].etag, "etag-ext", "the external version is still the one the cabinet holds");
+    handle.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

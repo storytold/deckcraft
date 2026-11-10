@@ -26,6 +26,10 @@ impl SlideApp {
             // A live session behind the host bridge: Save is a commit, as from the ribbon.
             self.save();
             Ok(json!({"committed": true}))
+        } else if id == "file.save" && params.get("path").is_none() && self.collab.owns_save() {
+            // A live native session: Save commits the room, not the local copy (ADR 0009).
+            self.save();
+            Ok(json!({"committed": true}))
         } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
             // A page that keeps the files (`?host=parent`): Save by id (the command palette) goes
             // to the page like Ctrl+S. The engine would write to the presentation's path, which a

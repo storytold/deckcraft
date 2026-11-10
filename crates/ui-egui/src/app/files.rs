@@ -501,6 +501,16 @@ impl SlideApp {
             });
             return;
         }
+        // A live collaboration session on the desktop: the cabinet owns the file, so Save asks
+        // the server to commit the room as a new version (ADR 0009) instead of writing the local
+        // copy, which the cabinet would never see. Save As and Export stay local below.
+        if self.collab.owns_save() {
+            match self.collab.commit(&self.session) {
+                Ok(()) => self.set_status("Committing…"),
+                Err(e) => self.set_status(e),
+            }
+            return;
+        }
         if self.services.host_save.is_some() {
             let _ = self.save_to_host(None);
             return;

@@ -321,6 +321,9 @@ impl SlideApp {
         self.sync_collab_gate();
         let collab_now = now_ms() as u64;
         self.collab.pump(&mut self.session, collab_now);
+        if let Some(note) = self.collab.take_commit_notice() {
+            self.set_status(note);
+        }
         self.sync_collab_gate();
         self.keyboard(&ctx);
         self.sync_backstage();

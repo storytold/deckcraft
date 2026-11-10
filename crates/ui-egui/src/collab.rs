@@ -59,6 +59,32 @@ impl SyncStatus {
     }
 }
 
+/// How the last Save to the cabinet ended (ADR 0009).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommitState {
+    /// No commit has been asked for in this session.
+    Idle,
+    /// The server is building the file and the cabinet has not answered yet.
+    Committing,
+    /// The cabinet took the file; the number is the document version it represents.
+    Committed(u64),
+    /// The cabinet refused the commit (a `409` after an external change, a build failure). The
+    /// document stays dirty and the user is offered a copy, never an overwrite (ADR 0009 §4).
+    Refused(String),
+}
+
+impl CommitState {
+    /// The status-bar line for this state, if it has one worth showing.
+    pub fn label(&self) -> Option<String> {
+        match self {
+            CommitState::Idle => None,
+            CommitState::Committing => Some("Committing…".into()),
+            CommitState::Committed(version) => Some(format!("Committed v{version}")),
+            CommitState::Refused(reason) => Some(format!("Commit refused: {reason}")),
+        }
+    }
+}
+
 /// Collaboration state the UI draws. Disabled until the host turns the feature flag on.
 pub struct CollabUi {
     enabled: bool,
@@ -89,6 +115,13 @@ pub struct CollabUi {
     op_seq: u64,
     /// The last committed file, for the host to store (sha256, bytes, warnings).
     commit: Option<(String, Vec<u8>, Vec<String>)>,
+    /// How the last Save to the cabinet ended, and the line the status bar shows once.
+    commit_state: CommitState,
+    commit_notice: Option<String>,
+    /// The document and revision the commit was asked for. The answer clears the dirty mark only
+    /// while the document is still that revision: edits typed while the file was being built are
+    /// not in the committed bytes.
+    commit_mark: Option<(u64, u64)>,
 }
 
 impl Default for CollabUi {
@@ -115,6 +148,9 @@ impl Default for CollabUi {
             sent_presence_ms: 0,
             op_seq: 0,
             commit: None,
+            commit_state: CommitState::Idle,
+            commit_notice: None,
+            commit_mark: None,
         }
     }
 }
@@ -186,6 +222,45 @@ impl CollabUi {
     /// The committed file, if a `commit-result` arrived and the host has not taken it yet.
     pub fn take_commit(&mut self) -> Option<(String, Vec<u8>, Vec<String>)> {
         self.commit.take()
+    }
+
+    /// Save in a live session: ask the server to build the file and commit it as a new cabinet
+    /// version (ADR 0009). The local file is not written; Save As and Export still are.
+    ///
+    /// Only a writer may ask — a viewer (and a commenter, which is a viewer in this protocol) is
+    /// refused before anything is sent. A second Save while the commit is on its way is the same
+    /// request, so it creates no second file version.
+    pub fn commit(&mut self, session: &deckcraft_engine::Session) -> Result<(), String> {
+        if self.doc.is_none() {
+            return Err("collaboration is not connected".into());
+        }
+        if self.link != Link::Live {
+            return Err("the session is offline: Save a copy keeps your work".into());
+        }
+        if !self.may_write() {
+            return Err("View only: you cannot commit the presentation".into());
+        }
+        let expected = self.doc.as_ref().and_then(|doc| doc.file_version()).map(str::to_string);
+        self.doc.as_mut().ok_or("collaboration is not connected")?.commit(expected).map_err(|e| e.to_string())?;
+        self.commit_state = CommitState::Committing;
+        self.commit_notice = Some("Committing…".into());
+        self.commit_mark = session.active().map(|d| (d.uid, d.revision));
+        Ok(())
+    }
+
+    /// Whether Save belongs to the cabinet: a live native session in which this client writes.
+    pub fn owns_save(&self) -> bool {
+        self.enabled && self.doc.is_some() && self.link == Link::Live
+    }
+
+    /// How the last Save to the cabinet ended.
+    pub fn commit_state(&self) -> &CommitState {
+        &self.commit_state
+    }
+
+    /// The status line for the last commit transition, for the host to show once.
+    pub fn take_commit_notice(&mut self) -> Option<String> {
+        self.commit_notice.take()
     }
 
     /// Pump the link: send what the client queued, apply what the server sent, and keep presence
@@ -277,15 +352,21 @@ impl CollabUi {
                 }
                 deckcraft_collab_proto::ServerMsg::Rejected(r) => {
                     self.error = Some(r.message.clone());
+                    if r.op_id == "commit" {
+                        self.on_commit_refused(r.message.clone());
+                    }
                     if r.retryable {
                         self.link = Link::Connecting;
                     }
                 }
-                deckcraft_collab_proto::ServerMsg::CommitResult(r) => self.on_commit_result(r),
+                deckcraft_collab_proto::ServerMsg::CommitResult(r) => self.on_commit_result(session, r),
                 deckcraft_collab_proto::ServerMsg::Error(e) => {
                     self.error = Some(e.message.clone());
                     self.link = Link::Down;
                     self.pending.clear();
+                    if matches!(self.commit_state, CommitState::Committing) {
+                        self.on_commit_refused("the session dropped before the cabinet answered".into());
+                    }
                     if let Some(doc) = &mut self.doc {
                         doc.disconnected();
                     }
@@ -315,7 +396,7 @@ impl CollabUi {
         self.presence.expire(now_ms) > 0
     }
 
-    fn on_commit_result(&mut self, r: deckcraft_collab_proto::CommitResult) {
+    fn on_commit_result(&mut self, session: &mut deckcraft_engine::Session, r: deckcraft_collab_proto::CommitResult) {
         self.warnings_hidden = false;
         self.warnings = r.warnings.clone();
         if let Some(encoded) = r.bytes_base64.as_deref() {
@@ -324,6 +405,26 @@ impl CollabUi {
                 self.commit = Some((r.sha256, bytes, r.warnings));
             }
         }
+        // The cabinet took the file: only now is the document saved. Edits typed while the file
+        // was being built are not in those bytes, so a changed revision stays dirty.
+        let unchanged = self.commit_mark.is_some() && self.commit_mark == session.active().map(|d| (d.uid, d.revision));
+        self.commit_mark = None;
+        self.commit_state = CommitState::Committed(r.version);
+        let saved = unchanged && deckcraft_engine::cmd::file::mark_saved(session, None).is_ok();
+        self.commit_notice = Some(match (r.version, unchanged) {
+            (version, true) if saved => format!("Committed v{version}"),
+            (version, _) => format!("Committed v{version} — newer edits are not saved"),
+        });
+    }
+
+    /// The cabinet (or the server) refused the commit. The document stays dirty: the user's
+    /// edits are intact and Save As keeps them (ADR 0009 §4: never overwrite a version that moved
+    /// on). A banner says so until dismissed.
+    fn on_commit_refused(&mut self, reason: String) {
+        self.commit_mark = None;
+        self.commit_state = CommitState::Refused(reason.clone());
+        self.commit_notice = Some(format!("Commit refused: {reason}"));
+        self.warnings_hidden = false;
     }
 
     fn keys(&self) -> &KeyMap {
@@ -482,10 +583,20 @@ impl CollabUi {
 
     pub fn dismiss_banner(&mut self) {
         self.warnings_hidden = true;
+        if matches!(self.commit_state, CommitState::Refused(_)) {
+            self.commit_state = CommitState::Idle;
+        }
     }
 
     pub fn banner_text(&self) -> Option<String> {
-        if self.warnings_hidden || self.warnings.is_empty() {
+        if self.warnings_hidden {
+            return None;
+        }
+        // A refused commit outranks warnings: the file was not saved, and the way out is a copy.
+        if let CommitState::Refused(reason) = &self.commit_state {
+            return Some(format!("Commit refused: {reason}. Save a copy (File › Save As) keeps your edits."));
+        }
+        if self.warnings.is_empty() {
             return None;
         }
         let n = self.warnings.len();
@@ -1378,5 +1489,130 @@ mod tests {
         assert_eq!(parse_color("nope"), None);
         // Six bytes of multi-byte text: a bad colour must be ignored, never panic.
         assert_eq!(parse_color("#ééé"), None);
+    }
+
+    // ------------------------------------------------------------ Save becomes a commit
+
+    /// A session joined over a test pipe, with a local edit the cabinet has not seen yet.
+    fn live(role: Role) -> (SlideApp, std::sync::mpsc::Receiver<ClientMsg>, std::sync::mpsc::Sender<ServerMsg>) {
+        use deckcraft_collab::{CollabDoc, PipeTransport};
+
+        let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
+        app.run("shape.insert", json!({"preset": "rect", "rect": [40, 40, 80, 60]})).expect("a local edit");
+        let mut doc = CollabDoc::new("d");
+        let (transport, from_ui, to_ui) = PipeTransport::pair();
+        let _ = doc.connect(&app.session, "jwt", deckcraft_collab_proto::ClientInfo { name: "t".into(), ver: "1".into() });
+        app.collab.attach(doc, Box::new(transport));
+        app.sync_collab_gate();
+        to_ui
+            .send(ServerMsg::Welcome(deckcraft_collab_proto::Welcome {
+                v: deckcraft_collab_proto::PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role,
+                lease: None,
+                version: 0,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: deckcraft_collab_proto::SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: deckcraft_collab_proto::Capabilities {
+                    kinds: vec![deckcraft_collab_proto::OpKind::Command, deckcraft_collab_proto::OpKind::Structural],
+                    limits: deckcraft_collab_proto::Limits::default(),
+                    commands: vec![],
+                },
+            }))
+            .expect("welcome");
+        app.collab.pump(&mut app.session, 1_000);
+        (app, from_ui, to_ui)
+    }
+
+    /// Every commit that reached the link, with the version it expected.
+    fn commits(from_ui: &std::sync::mpsc::Receiver<ClientMsg>) -> Vec<Option<String>> {
+        let mut out = Vec::new();
+        while let Ok(msg) = from_ui.try_recv() {
+            if let ClientMsg::Commit { expected_file_version } = msg {
+                out.push(expected_file_version);
+            }
+        }
+        out
+    }
+
+    fn commit_result(version: u64, file_version: &str) -> ServerMsg {
+        ServerMsg::CommitResult(deckcraft_collab_proto::CommitResult {
+            sha256: "ab".repeat(32),
+            version,
+            file_version: Some(file_version.into()),
+            bytes_base64: None,
+            blob: None,
+            warnings: vec![],
+        })
+    }
+
+    #[test]
+    fn save_in_a_live_session_sends_one_commit_and_the_document_stays_dirty_until_the_answer() {
+        let (mut app, from_ui, to_ui) = live(Role::Editor);
+        assert!(app.session.active().expect("doc").is_dirty(), "there are unsaved edits");
+
+        app.save();
+        app.collab.pump(&mut app.session, 1_060);
+        assert_eq!(commits(&from_ui), vec![None], "one commit, expecting the version the room was opened from");
+        assert_eq!(app.collab.commit_state(), &CommitState::Committing);
+
+        // A second Save while the first is on the wire is the same request, not a second version.
+        app.save();
+        app.collab.pump(&mut app.session, 1_100);
+        assert!(commits(&from_ui).is_empty(), "no second commit in flight");
+        assert!(app.session.active().expect("doc").is_dirty(), "dirty until the cabinet answers");
+
+        to_ui.send(commit_result(7, "etag-1")).expect("commit result");
+        app.collab.pump(&mut app.session, 1_120);
+        assert!(!app.session.active().expect("doc").is_dirty(), "the cabinet has the file: now it is saved");
+        assert_eq!(app.collab.commit_state(), &CommitState::Committed(7));
+        assert_eq!(app.collab.take_commit_notice().as_deref(), Some("Committed v7"));
+
+        // The next Save expects the version the cabinet accepted.
+        app.save();
+        app.collab.pump(&mut app.session, 1_160);
+        assert_eq!(commits(&from_ui), vec![Some("etag-1".into())]);
+    }
+
+    #[test]
+    fn a_refused_commit_keeps_the_edits_dirty_and_offers_a_copy() {
+        let (mut app, from_ui, to_ui) = live(Role::Editor);
+        let before = app.session.doc().expect("doc").doc.slides[0].shapes.len();
+        app.save();
+        app.collab.pump(&mut app.session, 1_060);
+        assert_eq!(commits(&from_ui), vec![None]);
+
+        to_ui
+            .send(ServerMsg::Rejected(deckcraft_collab_proto::Rejected {
+                op_id: "commit".into(),
+                code: deckcraft_collab_proto::RejectCode::Conflict,
+                message: "the file changed outside the session: expected etag-0, current etag-ext".into(),
+                retryable: false,
+                hint: None,
+            }))
+            .expect("refusal");
+        app.collab.pump(&mut app.session, 1_100);
+        assert!(app.session.active().expect("doc").is_dirty(), "nothing was saved");
+        assert_eq!(app.session.doc().expect("doc").doc.slides[0].shapes.len(), before, "the edits are intact");
+        assert!(matches!(app.collab.commit_state(), CommitState::Refused(_)));
+        assert!(app.collab.take_commit_notice().expect("notice").starts_with("Commit refused:"));
+        let banner = app.collab.banner_text().expect("banner");
+        assert!(banner.contains("Save a copy"), "{banner}");
+
+        // The request is not stuck: Save asks again, and there is still no accepted version to
+        // expect, so the server compares against the version it restored for the room.
+        app.save();
+        app.collab.pump(&mut app.session, 1_140);
+        assert_eq!(commits(&from_ui), vec![None]);
+    }
+
+    #[test]
+    fn a_viewer_save_never_reaches_the_cabinet() {
+        let (mut app, from_ui, _to_ui) = live(Role::Viewer);
+        app.save();
+        app.collab.pump(&mut app.session, 1_060);
+        assert!(commits(&from_ui).is_empty(), "a viewer may not commit");
+        assert!(app.session.active().expect("doc").is_dirty(), "the edits are left as they were");
+        assert_eq!(app.collab.commit_state(), &CommitState::Idle);
     }
 }
