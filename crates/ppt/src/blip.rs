@@ -202,4 +202,73 @@ mod tests {
         assert_eq!(img.dimensions(), (1, 1));
         assert_eq!(img.get_pixel(0, 0).0, [255, 0, 0, 255]);
     }
+
+    /// JPEG (RGB and CMYK), TIFF and a PNG with a second UID: the instance says how many UIDs come
+    /// before the tag byte, and the bytes after it are the file.
+    #[test]
+    fn decodes_each_bitmap_kind() {
+        let file = b"the picture file";
+        for (kind, instance, uids, ext) in [
+            (0xF01D, 0x46A, 16, "jpg"),
+            (0xF01D, 0x46B, 32, "jpg"),
+            (0xF02A, 0x6E2, 16, "jpg"),
+            (0xF029, 0x6E4, 16, "tif"),
+            (0xF029, 0x6E5, 32, "tif"),
+            (0xF01E, 0x6E1, 32, "png"),
+        ] {
+            let body = [&vec![0xAAu8; uids][..], &[0xFF], file].concat();
+            let p = decode_all(&Rec::at(&atom(kind, instance, &body), 0).unwrap()).unwrap();
+            assert_eq!((p.ext, p.data.as_slice()), (ext, &file[..]), "{kind:#x}/{instance:#x}");
+        }
+    }
+
+    /// A metafile stored without compression (compression byte 0xFE) is copied as it is, up to its
+    /// stated size; with two UIDs the header starts 32 bytes in.
+    #[test]
+    fn decodes_an_uncompressed_metafile() {
+        let emf = b"\x01\x00\x00\x00 an enhanced metafile".to_vec();
+        let mut header = vec![0u8; 34];
+        header[..4].copy_from_slice(&(emf.len() as u32).to_le_bytes());
+        header[28..32].copy_from_slice(&(emf.len() as u32).to_le_bytes());
+        header[32] = 0xFE;
+        for (instance, uids) in [(0x3D4, 16), (0x3D5, 32)] {
+            let body = [&vec![0u8; uids][..], &header, &emf, b"trailing"].concat();
+            let p = decode_all(&Rec::at(&atom(0xF01A, instance, &body), 0).unwrap()).unwrap();
+            assert_eq!((p.ext, &p.data), ("emf", &emf));
+        }
+    }
+
+    /// A metafile whose inflated size would pass the remaining budget is refused, compressed or not.
+    #[test]
+    fn a_metafile_over_the_budget_is_refused() {
+        let wmf = vec![9u8; 4000];
+        let z = miniz_oxide::deflate::compress_to_vec_zlib(&wmf, 6);
+        let mut header = vec![0u8; 34];
+        header[..4].copy_from_slice(&(wmf.len() as u32).to_le_bytes());
+        let deflated = atom(0xF01B, 0x216, &[&[0u8; 16][..], &header, &z].concat());
+        assert!(decode(&Rec::at(&deflated, 0).unwrap(), 3999).is_none());
+        assert_eq!(decode(&Rec::at(&deflated, 0).unwrap(), 4000).map(|p| p.data.len()), Some(4000));
+        header[32] = 0xFE;
+        let raw = atom(0xF01B, 0x216, &[&[0u8; 16][..], &header, &wmf].concat());
+        assert!(decode(&Rec::at(&raw, 0).unwrap(), 3999).is_none());
+        assert!(decode(&Rec::at(&raw, 0).unwrap(), 4000).is_some());
+    }
+
+    /// An FBSE may hold its blip itself, after its name, instead of pointing into the Pictures
+    /// stream.
+    #[test]
+    fn a_blip_inside_its_fbse_is_read() {
+        let png = [&[0u8; 17][..], b"\x89PNG inside"].concat();
+        let blip = atom(0xF01E, 0x6E0, &png);
+        let name = "p".encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>();
+        let mut fbse = [0u8; 36];
+        fbse[20..24].copy_from_slice(&(blip.len() as u32).to_le_bytes());
+        fbse[33] = name.len() as u8;
+        let entry = atom(rt::FBSE, 6, &[&fbse[..], &name, &blip].concat());
+        let dgg = container(rt::DGG_CONTAINER, 0, &[container(rt::BSTORE, 1, &[entry])]);
+        // The Pictures stream is empty: the blip can only come from the FBSE.
+        let mut store = Store::new(Rec::at(&dgg, 0), &[]);
+        let p = store.take(0).unwrap();
+        assert_eq!((p.ext, &p.data[..]), ("png", &b"\x89PNG inside"[..]));
+    }
 }
