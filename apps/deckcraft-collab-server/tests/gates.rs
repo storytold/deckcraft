@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use deckcraft_collab::{Adapter, ClientSession, DocSession, SessionConfig};
+use deckcraft_collab::{Adapter, ClientSession, DocSession, ReadyBase, SessionConfig};
 use deckcraft_collab_proto::{
     Applied, BaseSnapshot, Capabilities, ClientInfo, ClientMsg, FillSpec, Limits, OpEnvelope, OpKind, PROTO_VERSION, Payload, Role, ServerMsg,
     ShapeKey, SlideKey, SnapshotMode, SnapshotMsg, SnapshotRef, Target, Welcome,
@@ -318,54 +318,93 @@ struct Live {
     last_base: Option<(u64, usize)>,
     /// How many journal steps the last `resync` delivered.
     last_tail: usize,
+    /// How many chunks the last chained base arrived in (`None` when it came inline).
+    last_chunks: Option<usize>,
+    /// The chunk the client asked for last, so a resumed chain can be checked.
+    last_chunk_request: Option<u32>,
 }
 
 impl Live {
     fn join(addr: SocketAddr, id: &str, actor: &str, role: &str, bytes: &[u8]) -> Self {
+        let mut live = Self::connect(addr, id, actor, role, bytes);
+        live.catch_up_after_join();
+        live
+    }
+
+    /// A connected participant that has not caught up yet: the caller pumps what it asks for, so a
+    /// gate can drop the socket half-way through a chained base.
+    fn connect(addr: SocketAddr, id: &str, actor: &str, role: &str, bytes: &[u8]) -> Self {
         let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/v1/sessions/{id}/ws")).expect("ws");
         socket_timeout(&mut ws);
         let mut client = ClientSession::new(id);
         let hello = client.connect(token(actor, role, id), ClientInfo { name: actor.into(), ver: "1".into() });
         ws.send(tungstenite::Message::Text(deckcraft_collab_proto::encode_client(&hello).expect("encode").into())).expect("hello");
         let welcome = read_socket(&mut ws);
-        let mut live = Self { ws: Some(ws), client, replica: Replica::open(bytes, id), actor: actor.into(), last_base: None, last_tail: 0 };
+        let mut live = Self {
+            ws: Some(ws),
+            client,
+            replica: Replica::open(bytes, id),
+            actor: actor.into(),
+            last_base: None,
+            last_tail: 0,
+            last_chunks: None,
+            last_chunk_request: None,
+        };
         live.on(welcome);
-        live.catch_up_after_join();
         live
     }
 
     /// A client that joins a room that already moved asks for the state before it reports
-    /// anything else: the journal tail, or the base plus the tail when compaction removed it.
+    /// anything else: the journal tail, or the base plus the tail when compaction removed it. A
+    /// base above the inline limit arrives as a chain, so the catch-up also asks for its chunks.
     fn catch_up_after_join(&mut self) {
-        while let Some(msg) = self.client.next_outgoing() {
-            match msg {
-                ClientMsg::Resync { .. } => {
-                    self.send(msg);
-                    let snapshot = self.recv();
-                    assert!(matches!(snapshot, ServerMsg::Snapshot(_)), "the join got the catch-up, not {snapshot:?}");
-                }
-                other => panic!("a fresh join sent {other:?}"),
-            }
-        }
+        self.pump_catch_up();
+    }
+
+    /// The replica the session assembled from a chain, installed exactly as the desktop host
+    /// installs it: replace the document, take the key map, replay the tail above the base.
+    fn install_ready_base(&mut self, ready: ReadyBase) {
+        let base = ready.snapshot.base.clone().expect("an assembled base carries its snapshot");
+        self.replica.rebuild(&ready.bytes, &base).expect("the assembled base reloads");
+        self.last_base = Some((base.version, ready.bytes.len()));
+        self.last_tail = ready.snapshot.tail.len();
+        self.replica.catch_up(&ready.snapshot);
     }
 
     fn on(&mut self, msg: ServerMsg) {
+        let mut deferred = false;
         match &msg {
             ServerMsg::Applied(applied) => self.replica.apply(applied),
             ServerMsg::Snapshot(snapshot) => {
                 self.last_tail = snapshot.tail.len();
                 self.last_base = None;
-                if let Some(base) = &snapshot.base {
-                    let encoded = base.bytes_base64.as_deref().expect("the gate's base is inline");
-                    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).expect("base64");
-                    self.last_base = Some((base.version, bytes.len()));
-                    self.replica.rebuild(&bytes, base).expect("the base reloads");
+                self.last_chunks = None;
+                match &snapshot.base {
+                    Some(base) if base.is_chained() => {
+                        // The base travels in chunks: the client state machine assembles it and the
+                        // host installs it once it is whole, exactly like the desktop app does.
+                        let chain = base.chunks.as_ref().expect("a chained base names its chain");
+                        self.last_chunks = Some(chain.count as usize);
+                        deferred = true;
+                    }
+                    Some(base) => {
+                        let encoded = base.bytes_base64.as_deref().expect("the gate's inline base carries bytes");
+                        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).expect("base64");
+                        self.last_base = Some((base.version, bytes.len()));
+                        self.replica.rebuild(&bytes, base).expect("the base reloads");
+                    }
+                    None => {}
                 }
-                self.replica.catch_up(snapshot);
+                if !deferred {
+                    self.replica.catch_up(snapshot);
+                }
             }
             _ => {}
         }
         self.client.on_msg(msg);
+        if let Some(ready) = self.client.take_ready_base() {
+            self.install_ready_base(ready);
+        }
     }
 
     fn send(&mut self, msg: ClientMsg) {
@@ -396,8 +435,9 @@ impl Live {
         std::thread::sleep(Duration::from_millis(300));
     }
 
-    /// A fresh socket, a hello that names the version the replica has, and the journal tail.
-    fn reconnect(&mut self, addr: SocketAddr, id: &str, role: &str) {
+    /// A fresh socket and a hello that names the version the replica has; nothing is pumped yet,
+    /// so a caller can see what the client asks for first (a tail, or the chunk it is missing).
+    fn reopen(&mut self, addr: SocketAddr, id: &str, role: &str) {
         self.hang_up();
         let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/v1/sessions/{id}/ws")).expect("reconnect ws");
         socket_timeout(&mut ws);
@@ -406,11 +446,38 @@ impl Live {
         let welcome = read_socket(&mut ws);
         self.ws = Some(ws);
         self.on(welcome);
-        let resync = self.client.next_outgoing().expect("a resync request after a version gap");
-        assert!(matches!(resync, ClientMsg::Resync { .. }), "the reconnected client asks for the tail, got {resync:?}");
-        self.send(resync);
-        let snapshot = self.recv();
-        assert!(matches!(snapshot, ServerMsg::Snapshot(_)), "the reconnect got the tail, not {snapshot:?}");
+    }
+
+    /// One catch-up message: the resync the client asked for, or one chunk of a chained base.
+    /// `false` when the client has nothing left to ask for.
+    fn pump_one(&mut self) -> bool {
+        let Some(msg) = self.client.next_outgoing() else { return false };
+        match msg {
+            ClientMsg::Resync { .. } => {
+                self.send(msg);
+                let snapshot = self.recv();
+                assert!(matches!(snapshot, ServerMsg::Snapshot(_)), "the catch-up sent {snapshot:?}, not the state");
+            }
+            ClientMsg::BaseChunk { version, index } => {
+                self.last_chunk_request = Some(index);
+                self.send(ClientMsg::BaseChunk { version, index });
+                let answer = self.recv();
+                assert!(matches!(answer, ServerMsg::BaseChunk { .. }), "the catch-up sent {answer:?}, not a chunk");
+            }
+            other => panic!("a catching-up client sent {other:?}"),
+        }
+        true
+    }
+
+    fn pump_catch_up(&mut self) {
+        while self.pump_one() {}
+    }
+
+    /// A fresh socket, a hello that names the version the replica has, and the catch-up: the
+    /// journal tail, or the rest of a chained base the replica already started.
+    fn reconnect(&mut self, addr: SocketAddr, id: &str, role: &str) {
+        self.reopen(addr, id, role);
+        self.pump_catch_up();
     }
 }
 
@@ -721,6 +788,249 @@ fn three_clients_soak_across_compaction_and_a_base_transfer() {
 
     assert_converged([&alice, &bob, &viewer], 28);
     assert_committed_gate_deck(addr, ID, 28, 420.0, 350.0);
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------- the big deck with media
+
+const BIG_SLIDES: usize = 120;
+/// Side of a square picture. 160×160 of noise encodes to ~100 KiB, so 120 distinct pictures push
+/// the native base past the 8 MiB inline limit (measured: ~12 MiB).
+const BIG_SIDE: usize = 160;
+
+/// A square PNG of pseudo-random pixels: noise does not compress, so every slide really adds
+/// weight to the base. The generator is a local LCG — a gate must not depend on a random crate to
+/// stay reproducible.
+fn noise_png(n: usize) -> Vec<u8> {
+    let mut pixels = vec![0u8; BIG_SIDE * BIG_SIDE * 4];
+    let mut state = 0x2545_f491_4f6c_dd1du64 ^ (n as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    for px in pixels.chunks_mut(4) {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        px[0] = (state >> 24) as u8;
+        px[1] = (state >> 16) as u8;
+        px[2] = (state >> 8) as u8;
+        px[3] = 255;
+    }
+    deckcraft_render::Image { width: BIG_SIDE as u32, height: BIG_SIDE as u32, pixels }.to_png()
+}
+
+/// The initial `.pptx` of the big room: `BIG_SLIDES` slides, each with its own picture and a
+/// rectangle (so text, fill and bounds edits have a second object per slide).
+fn media_deck() -> (Vec<u8>, f64) {
+    let started = Instant::now();
+    let pictures: Vec<Vec<u8>> = (0..BIG_SLIDES).map(noise_png).collect();
+    let mut session = Session::with_new();
+    for (i, picture) in pictures.iter().enumerate() {
+        if i > 0 {
+            session.apply_remote("slide.new", &json!({"layout": "blank", "at": i})).expect("slide");
+        }
+        let data = base64::engine::general_purpose::STANDARD.encode(picture);
+        session
+            .apply_remote("insert.picture", &json!({"name": format!("noise-{i}.png"), "data": data, "rect": [40.0, 60.0, 480.0, 270.0]}))
+            .expect("picture");
+        session.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [560.0, 80.0, 300.0, 120.0]})).expect("rect");
+    }
+    let doc = session.doc().expect("doc").doc.as_ref().clone();
+    let bytes = deckcraft_pptx::export(&doc).expect("export the big deck");
+    (bytes, started.elapsed().as_secs_f64() * 1000.0)
+}
+
+/// The wire target of a slide's picture or of its rectangle.
+fn media_target(replica: &Replica, slide_index: usize, picture: bool) -> Target {
+    let doc = replica.doc();
+    let slide = doc.slides.get(slide_index).expect("slide");
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| matches!(shape.kind, ShapeKind::Picture { .. }) == picture && shape.xfrm.is_some())
+        .expect("the shape the gate edits");
+    let keys = replica.adapter.keys();
+    Target {
+        slide: Some(keys.slide_key(slide.id).expect("slide key").clone()),
+        shape: Some(keys.shape_key(slide.id, shape.id).expect("shape key").clone()),
+        ..Target::default()
+    }
+}
+
+/// Every replica holds one document, at the head, with no failed command — for any number of
+/// participants.
+fn assert_all_converged(peers: &[&Live], version: u64) {
+    for live in peers {
+        assert_eq!(live.client.version(), version, "{} settled at the session head", live.actor);
+        assert_eq!(live.replica.version, version, "{} replica is at the head", live.actor);
+        assert_eq!(live.replica.error, None, "{} applied every confirmed command", live.actor);
+    }
+    for live in peers.iter().skip(1) {
+        assert_eq!(live.replica.doc(), peers[0].replica.doc(), "{} holds the same document", live.actor);
+    }
+}
+
+/// `steps` edits by three editors on a 120-slide deck: move and bounds on the slide's picture,
+/// text and fill on its rectangle, each on a slide that comes round again. Returns the head.
+fn soak_the_big_deck(peers: &mut [&mut Live; 3], pictures: &[Target], rectangles: &[Target], id: &str, steps: usize) -> u64 {
+    let mut version = 0u64;
+    for step in 0..steps {
+        let slide = step % BIG_SLIDES;
+        let op = match step % 4 {
+            0 => move_to(&format!("big-{step}"), id, pictures[slide].clone(), 120.0 + (step % 40) as f64),
+            1 => bounds_to(&format!("big-{step}"), id, pictures[slide].clone(), 130.0, 90.0, 400.0 + (step % 7) as f64, 240.0),
+            2 => text_to(&format!("big-{step}"), id, rectangles[slide].clone(), &format!("slide {slide} step {step}")),
+            _ => fill_to(&format!("big-{step}"), id, rectangles[slide].clone(), &format!("#{:02x}40{:02x}", (step % 200) as u8, (step % 90) as u8)),
+        };
+        version += 1;
+        peers[step % 3].submit(op);
+        for peer in peers.iter_mut() {
+            expect_applied(peer, version);
+        }
+    }
+    version
+}
+
+/// A participant that joins on the chained base, drops after three chunks and resumes at the
+/// chunk it is missing instead of starting the chain over.
+fn a_fifth_participant_resumes_the_chain(addr: SocketAddr, id: &str, initial: &[u8], chunks: usize, base_version: u64) -> Live {
+    let mut dave = Live::connect(addr, id, "dave", "editor", initial);
+    assert!(dave.pump_one(), "the join asks for the state");
+    assert_eq!(dave.last_chunks, Some(chunks), "the same chain");
+    for _ in 0..3 {
+        assert!(dave.pump_one(), "a chunk");
+    }
+    let resumed_at = dave.last_chunk_request.expect("the chunk just asked for") + 1;
+    dave.hang_up();
+    dave.reopen(addr, id, "editor");
+    let Some(msg @ ClientMsg::BaseChunk { version: asked_version, index }) = dave.client.next_outgoing() else {
+        panic!("the reconnected client asks for the chunk it is missing");
+    };
+    assert_eq!((asked_version, index), (base_version, resumed_at), "the chain resumes where it stopped");
+    dave.send(msg);
+    let answer = dave.recv();
+    assert!(matches!(answer, ServerMsg::BaseChunk { .. }), "the resumed chunk arrives, not {answer:?}");
+    dave.pump_catch_up();
+    assert_eq!(dave.last_chunks, Some(chunks));
+    assert_eq!(dave.last_tail as u64, dave.client.version() - base_version, "the tail above the base follows the chain");
+    dave
+}
+
+/// Commit through the real endpoint and check the file reimports with the values every replica
+/// holds, slide by slide.
+fn commit_the_big_deck(addr: SocketAddr, id: &str, version: u64, reference: &Live) {
+    let committing = Instant::now();
+    let (status, body) = http(addr, "POST", &format!("/v1/sessions/{id}/commit"), Some("service-token"), "");
+    assert_eq!(status, 200, "{body}");
+    let answer: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(answer["version"].as_u64(), Some(version));
+    let committed = base64::engine::general_purpose::STANDARD.decode(answer["bytes"].as_str().expect("inline bytes")).expect("decode");
+    eprintln!(
+        "deckcraft gate: commit at version {version} built {} KiB in {:.0} ms",
+        committed.len() / 1024,
+        committing.elapsed().as_secs_f64() * 1000.0
+    );
+    let reopened = deckcraft_pptx::import(&committed).expect("the committed bytes reimport");
+    assert_eq!(reopened.slides.len(), BIG_SLIDES);
+    assert_eq!(picture_count(&reopened), BIG_SLIDES, "every picture survived the file");
+    let picture_xfrm = |doc: &Presentation, slide: usize| {
+        doc.slides[slide].shapes.iter().find(|shape| matches!(shape.kind, ShapeKind::Picture { .. })).and_then(|shape| shape.xfrm)
+    };
+    for slide in 0..BIG_SLIDES {
+        assert_eq!(picture_xfrm(&reopened, slide), picture_xfrm(reference.replica.doc(), slide), "slide {slide} kept the value every replica holds");
+    }
+}
+
+/// Three editors make hundreds of edits across a 120-slide deck with media, so the journal is
+/// compacted many times and the native base grows past the inline limit. A viewer that joins after
+/// all of it is rebuilt from the base **sent in chunks**, a fifth participant drops mid-chain and
+/// resumes at the missing chunk, and the commit at the end reimports with the final values.
+#[test]
+fn a_hundred_and_twenty_slide_deck_with_media_soaks_for_hundreds_of_steps_and_a_chained_base() {
+    const ID: &str = "gate-big";
+    const STEPS: usize = 322;
+    const SNAPSHOT_EVERY: u64 = 40;
+    const CHUNK: usize = 256 << 10;
+    let (initial, build_ms) = media_deck();
+    eprintln!(
+        "deckcraft gate: built {BIG_SLIDES} slides with {} media objects into {} KiB of .pptx in {build_ms:.0} ms",
+        BIG_SLIDES,
+        initial.len() / 1024
+    );
+
+    let mut config = deckcraft_collab_server::Config::for_tests(SECRET, "service-token");
+    config.snapshot_every = SNAPSHOT_EVERY;
+    config.max_base_chunk = CHUNK;
+    let handle = deckcraft_collab_server::serve_ephemeral(config).expect("server");
+    let addr = handle.addr;
+    create(addr, ID, &initial);
+
+    let opened = Instant::now();
+    let mut alice = Live::join(addr, ID, "alice", "editor", &initial);
+    let mut bob = Live::join(addr, ID, "bob", "editor", &initial);
+    let mut carol = Live::join(addr, ID, "carol", "editor", &initial);
+    eprintln!("deckcraft gate: three editors opened the room in {:.0} ms", opened.elapsed().as_secs_f64() * 1000.0);
+    let pictures: Vec<Target> = (0..BIG_SLIDES).map(|i| media_target(&alice.replica, i, true)).collect();
+    let rectangles: Vec<Target> = (0..BIG_SLIDES).map(|i| media_target(&alice.replica, i, false)).collect();
+
+    let soak = Instant::now();
+    let mut version = {
+        let mut peers: [&mut Live; 3] = [&mut alice, &mut bob, &mut carol];
+        soak_the_big_deck(&mut peers, &pictures, &rectangles, ID, STEPS)
+    };
+    let soak_s = soak.elapsed().as_secs_f64();
+    eprintln!(
+        "deckcraft gate: {version} edits by three editors on {BIG_SLIDES} slides in {soak_s:.2} s ({:.1} ms per step), \
+         snapshots every {SNAPSHOT_EVERY} steps",
+        soak_s * 1000.0 / STEPS as f64
+    );
+    assert_eq!(version, STEPS as u64);
+    let base_version = (STEPS as u64) / SNAPSHOT_EVERY * SNAPSHOT_EVERY;
+    assert_eq!(base_version, 320, "the last compaction is at 320; two steps sit above it");
+    assert_eq!(alice.client.version(), STEPS as u64);
+
+    // A viewer joins at version 0: the journal no longer covers it, the native base is above the
+    // inline limit, so it arrives as a chain of chunks and the tail above it follows.
+    let joined = Instant::now();
+    let mut viewer = Live::join(addr, ID, "victor", "viewer", &initial);
+    let join_ms = joined.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(viewer.client.version(), STEPS as u64);
+    let (viewer_base_version, base_bytes) = viewer.last_base.expect("the viewer received a base");
+    assert_eq!(viewer_base_version, base_version, "the base is the snapshot below the head");
+    assert!(base_bytes > 8 << 20, "the native base is above the 8 MiB inline limit: {base_bytes} B");
+    let chunks = viewer.last_chunks.expect("the base travels as a chain");
+    assert_eq!(chunks, base_bytes.div_ceil(CHUNK), "one chunk per 256 KiB");
+    assert_eq!(viewer.last_tail as u64, STEPS as u64 - base_version, "the steps above the base travel as a tail");
+    eprintln!(
+        "deckcraft gate: a viewer rebuilt {:.1} MiB of base in {chunks} chunks plus {} step(s) of tail in {join_ms:.1} ms",
+        base_bytes as f64 / (1024.0 * 1024.0),
+        viewer.last_tail
+    );
+    let (status, metrics) = http(addr, "GET", "/metrics", None, "");
+    assert_eq!(status, 200);
+    assert!(!metrics.contains("deckcraft_collab_base_chunks_total 0"), "the server counts the chunks it served: {metrics}");
+    assert!(metrics.contains("deckcraft_collab_base_bytes_total 0"), "a chained base moves no inline bytes: {metrics}");
+
+    let mut dave = a_fifth_participant_resumes_the_chain(addr, ID, &initial, chunks, base_version);
+
+    // The editors keep working while the two newcomers settle; every participant receives the
+    // same two steps and everyone converges.
+    version += 1;
+    alice.submit(move_to("big-final-move", ID, pictures[0].clone(), 222.0));
+    for peer in [&mut alice, &mut bob, &mut carol] {
+        expect_applied(peer, version);
+    }
+    expect_applied(&mut viewer, version);
+    expect_applied(&mut dave, version);
+    version += 1;
+    bob.submit(bounds_to("big-final-bounds", ID, pictures[1].clone(), 240.0, 100.0, 300.0, 200.0));
+    for peer in [&mut alice, &mut bob, &mut carol] {
+        expect_applied(peer, version);
+    }
+    expect_applied(&mut viewer, version);
+    expect_applied(&mut dave, version);
+    let all: [&Live; 5] = [&alice, &bob, &carol, &viewer, &dave];
+    assert_all_converged(&all, version);
+    assert_eq!(all[0].replica.doc().slides.len(), BIG_SLIDES);
+    assert_eq!(picture_count(all[0].replica.doc()), BIG_SLIDES);
+    commit_the_big_deck(addr, ID, version, &alice);
     handle.shutdown();
 }
 

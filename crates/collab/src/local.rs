@@ -16,7 +16,7 @@ use base64::Engine as _;
 use deckcraft_collab_proto::{
     Applied, BaseSnapshot, CellFillSpec, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatAddress, FormatCmd, LineSpec, MediaKind,
     ModelEnvironment, ModelLight, ModelLightKind, ModelScene, OpEnvelope, OpKind, Payload, PicturePlace, ServerMsg, ShapeBounds, ShapeKey, SlideKey,
-    SmartArtPictureMedia, TableAxis, Target, TextRange,
+    SmartArtPictureMedia, SnapshotKeys, TableAxis, Target, TextRange,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::anim::Animation;
@@ -24,7 +24,7 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId, T
 use serde_json::Value;
 
 use crate::apply::{Adapter, class_of, position_offset};
-use crate::client::{ClientSession, Effect};
+use crate::client::{ClientSession, Effect, ReadyBase};
 
 /// A model scene as the wire carries it: the model types are the engine's, the wire types are
 /// `collab-proto`'s, and the operation carries exactly the final value the engine checked.
@@ -47,6 +47,8 @@ pub enum LocalError {
     ReadOnly,
     /// Too many operations are waiting for an answer.
     Busy,
+    /// The replica is being rebuilt from a base the server is sending in chunks.
+    Rebuilding,
     /// No presentation open (or not a slide view).
     NoDocument,
     /// This command has no normalised form in collaboration v1.
@@ -59,6 +61,7 @@ impl fmt::Display for LocalError {
         match self {
             LocalError::ReadOnly => f.write_str("view only: you cannot change the presentation"),
             LocalError::Busy => f.write_str("too many operations are waiting for the server"),
+            LocalError::Rebuilding => f.write_str("the presentation is being rebuilt from the server's copy, try again in a moment"),
             LocalError::NoDocument => f.write_str("no slide is open"),
             LocalError::Unsupported(cmd) => write!(f, "`{cmd}` is not available in a shared session yet"),
             LocalError::BadParams(m) => f.write_str(m),
@@ -73,6 +76,7 @@ impl From<crate::SubmitError> for LocalError {
         match e {
             crate::SubmitError::ReadOnly => LocalError::ReadOnly,
             crate::SubmitError::Busy => LocalError::Busy,
+            crate::SubmitError::Rebuilding => LocalError::Rebuilding,
         }
     }
 }
@@ -326,9 +330,16 @@ impl CollabDoc {
 
     /// Handle one server message: move the client state machine, apply the confirmed command and
     /// replay a snapshot tail. Presence and commit results are left to the caller.
+    ///
+    /// A base the server sends as a chain of chunks (RFC §4.5.1) is assembled by the client state
+    /// machine; this host installs it through [`Self::take_ready_base`] once it is whole, so a
+    /// snapshot that arrives with `chunks` changes nothing here yet.
     pub fn on_msg(&mut self, session: &mut Session, msg: ServerMsg) -> Effect {
         let echo = msg.clone();
         let effect = self.client.on_msg(msg);
+        if let Some(ready) = self.client.take_ready_base() {
+            self.install_base(session, ready);
+        }
         match echo {
             ServerMsg::Welcome(welcome) => {
                 if welcome.version > self.version {
@@ -340,6 +351,12 @@ impl CollabDoc {
             }
             ServerMsg::Applied(applied) => self.apply_broadcast(session, &applied),
             ServerMsg::Snapshot(snapshot) => {
+                if snapshot.base.as_ref().is_some_and(BaseSnapshot::is_chained) {
+                    // The base is on its way in chunks: the tail above it is replayed by
+                    // `install_base` together with the base, so nothing may be applied to the old
+                    // replica now.
+                    return effect;
+                }
                 let mut usable = true;
                 if let Some(base) = &snapshot.base {
                     match self.replace_from_base(session, base) {
@@ -371,6 +388,38 @@ impl CollabDoc {
         effect
     }
 
+    /// The base this session assembled from a chain of chunks, for the host to install. At most
+    /// once per chain; `None` while a chain is still being assembled.
+    pub fn take_ready_base(&mut self) -> Option<ReadyBase> {
+        self.client.take_ready_base()
+    }
+
+    /// Whether a chained base is being assembled right now (the status bar can say "rebuilding").
+    pub fn rebuilding(&self) -> bool {
+        self.client.rebuilding()
+    }
+
+    /// Replace the replica with an assembled base and replay the tail that came with its
+    /// snapshot, so the host ends at the head the snapshot named.
+    fn install_base(&mut self, session: &mut Session, ready: ReadyBase) {
+        let base = ready.snapshot.base.clone();
+        let installed = match &base {
+            Some(base) => self.replace_from_bytes(session, &ready.bytes, &base.keys).map(|()| base.version),
+            None => Err(LocalError::BadParams("the assembled base has no snapshot".into())),
+        };
+        match installed {
+            Ok(base_version) => {
+                self.version = base_version;
+                self.last_apply_error = None;
+                for applied in &ready.snapshot.tail {
+                    self.apply_broadcast(session, applied);
+                }
+                self.version = self.version.max(ready.snapshot.version);
+            }
+            Err(e) => self.last_apply_error = Some(e.to_string()),
+        }
+    }
+
     /// Rebuild the replica from the native base the server sent after compaction (ADR-0005
     /// §4.5). The base carries the session key map, so operations above it address the same
     /// objects as on every other replica.
@@ -385,10 +434,15 @@ impl CollabDoc {
         }
         let bytes =
             base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| LocalError::BadParams("the session base is not base64".into()))?;
-        let loaded = deckcraft_engine::cmd::file::loaded_file(&format!("{}.base", self.file_id), &bytes)
+        self.replace_from_bytes(session, &bytes, &base.keys)
+    }
+
+    /// Load native base bytes into the replica and take the session key map they carry.
+    fn replace_from_bytes(&mut self, session: &mut Session, bytes: &[u8], keys: &SnapshotKeys) -> Result<(), LocalError> {
+        let loaded = deckcraft_engine::cmd::file::loaded_file(&format!("{}.base", self.file_id), bytes)
             .map_err(|e| LocalError::BadParams(format!("the session base does not load: {e}")))?;
         session.replace_active_document(loaded.doc).map_err(|e| LocalError::BadParams(e.to_string()))?;
-        self.adapter.restore_keys(&base.keys);
+        self.adapter.restore_keys(keys);
         Ok(())
     }
 
@@ -3632,5 +3686,106 @@ mod tests {
         assert_eq!(*s.doc().expect("doc").doc, *server.document().expect("doc"), "the replica matches the room");
         let moved = find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shapes[0]).expect("shape");
         assert_eq!(moved.xfrm.expect("xfrm").x, 300.0, "the tail step applied on top of the base");
+    }
+
+    #[test]
+    fn a_chained_base_rebuilds_the_replica_and_resumes_across_a_reconnect() {
+        use deckcraft_collab_proto::{Capabilities, Limits, PROTO_VERSION, Role, SnapshotMode, Welcome};
+
+        let (mut s, _doc, _slide, shapes) = deck();
+        let presentation = s.doc().expect("doc").doc.as_ref().clone();
+        let mut server = crate::DocSession::from_document(
+            "d",
+            presentation,
+            crate::SessionConfig { snapshot_every: 2, max_base_inline: 1, max_base_chunk: 256, ..crate::SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide_key, shape_key) = {
+            let doc = server.document().expect("doc");
+            let slide_ref = doc.slides.first().expect("slide");
+            (server.keys().slide_key(slide_ref.id).expect("slide").clone(), server.keys().shape_key(slide_ref.id, shapes[0]).expect("shape").clone())
+        };
+        let move_to = |id: &str, x: f64, base: u64| OpEnvelope {
+            op_id: id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide_key.clone()), shape: Some(shape_key.clone()), ..Target::default() },
+            payload: Payload::ShapeMove { x, y: 100.0 },
+            history: None,
+        };
+        for (i, x) in [200.0, 250.0, 300.0].iter().enumerate() {
+            server.apply("alice", &move_to(&format!("a-{i}"), *x, i as u64)).expect("apply");
+        }
+        let snapshot = server.resync(0);
+        let chain = snapshot.base.as_ref().and_then(|base| base.chunks.clone()).expect("a chained base");
+        assert!(chain.count > 1, "{} chunks", chain.count);
+        let base_version = snapshot.base.as_ref().map(|base| base.version).expect("base version");
+
+        let mut local = CollabDoc::new("d");
+        let hello = local.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        assert!(matches!(hello, ClientMsg::Hello(_)));
+        local.on_msg(
+            &mut s,
+            ServerMsg::Welcome(Welcome {
+                v: PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 3,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: Capabilities { kinds: vec![OpKind::Command], limits: Limits::default(), commands: vec![] },
+            }),
+        );
+        assert!(matches!(local.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+        local.on_msg(&mut s, ServerMsg::Snapshot(snapshot));
+        assert!(local.rebuilding(), "the replica is rebuilt from the chain, not from the frame");
+        assert_eq!(local.version(), 0, "nothing is installed before the base is whole");
+        assert!(matches!(local.submit(&s, "shape.move", &json!({"x": 10.0, "y": 10.0}), "local-1"), Err(LocalError::Rebuilding)));
+
+        // One chunk arrives, then the socket drops: the chain resumes at the missing index.
+        let mut chunks = 0;
+        let Some(ClientMsg::BaseChunk { version, index }) = local.next_outgoing() else { panic!("a chunk request") };
+        let (count, data) = server.base_chunk(version, index).expect("a chunk");
+        local.on_msg(&mut s, ServerMsg::BaseChunk { version, index, count, data });
+        chunks += 1;
+        local.disconnected();
+        let _ = local.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        local.on_msg(
+            &mut s,
+            ServerMsg::Welcome(Welcome {
+                v: PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 3,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: Capabilities { kinds: vec![OpKind::Command], limits: Limits::default(), commands: vec![] },
+            }),
+        );
+        while let Some(msg) = local.next_outgoing() {
+            match msg {
+                ClientMsg::BaseChunk { version, index } => {
+                    assert_eq!(version, base_version);
+                    let (count, data) = server.base_chunk(version, index).expect("a chunk");
+                    local.on_msg(&mut s, ServerMsg::BaseChunk { version, index, count, data });
+                    chunks += 1;
+                }
+                ClientMsg::Resync { last_version } => {
+                    let snapshot = server.resync(last_version);
+                    local.on_msg(&mut s, ServerMsg::Snapshot(snapshot));
+                }
+                other => panic!("a rebuilding host sends {other:?}"),
+            }
+        }
+        assert_eq!(chunks, chain.count, "every chunk arrived once, and none was asked for twice after the reconnect");
+        assert_eq!(local.last_apply_error(), None);
+        assert!(!local.rebuilding());
+        assert_eq!(local.version(), 3, "the base plus its tail land on the head");
+        assert_eq!(*s.doc().expect("doc").doc, *server.document().expect("doc"), "the replica matches the room");
+        let moved = find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shapes[0]).expect("shape");
+        assert_eq!(moved.xfrm.expect("xfrm").x, 300.0, "the tail step applied on top of the assembled base");
     }
 }

@@ -1153,6 +1153,14 @@ pub enum ClientMsg {
         #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
         params: serde_json::Value,
     },
+    /// Ask for one chunk of a base the server sent as a chain (RFC §4.5.1): `version` is the
+    /// base's version from the snapshot and `index` the chunk this replica is missing. The answer
+    /// is [`ServerMsg::BaseChunk`], or a `stale` rejection when compaction replaced the base
+    /// (then the client asks for a new snapshot instead of finishing the old chain).
+    BaseChunk {
+        version: u64,
+        index: u32,
+    },
     Ping,
 }
 
@@ -1425,10 +1433,82 @@ pub struct BaseSnapshot {
     /// The version the base represents; the tail carries the steps after it.
     pub version: u64,
     /// The native `.deckcraft` file. Absent when it is larger than the server's inline limit, in
-    /// which case the client has to reopen the file from the cabinet.
+    /// which case the client either asks for the base in chunks ([`Self::chunks`]) or, when the
+    /// server cannot chain it, has to reopen the file from the cabinet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes_base64: Option<String>,
     pub keys: SnapshotKeys,
+    /// Present when the base is larger than the server's inline limit but still inside the chain
+    /// limits: the client asks for one chunk at a time with [`ClientMsg::BaseChunk`], so a base
+    /// above `maxBaseInline` still reaches a replica that missed the compaction (RFC §4.5.1).
+    /// Absent when the bytes are inline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunks: Option<BaseChunks>,
+}
+
+impl BaseSnapshot {
+    /// Whether the base travels inline or as a chain of chunks.
+    pub fn is_chained(&self) -> bool {
+        self.chunks.is_some()
+    }
+}
+
+/// Shape of a base the server hands out in chunks instead of one frame (RFC §4.5.1).
+///
+/// The chain is the native base cut into `chunk_size`-byte pieces: chunk `index` is
+/// `bytes[index * chunk_size .. min((index + 1) * chunk_size, len)]`. `count` is the chain's
+/// depth (`ceil(len / chunk_size)`), `sha256` is the digest of the whole base, so a client that
+/// assembled the chain checks it before replacing its replica, and the digest of one chunk is
+/// implied by its index and the whole digest. A client asks for the chunk it is missing, so a
+/// socket that drops mid-chain resumes at that index instead of starting over.
+///
+/// The constants are the protocol's ceilings: a server must not announce a chain above them and a
+/// client must not accept one (a hostile or misconfigured server would otherwise make a replica
+/// allocate without a cap).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseChunks {
+    /// Digest of the assembled base, hex, as the media channel names objects.
+    pub sha256: String,
+    /// Size of the assembled base in bytes.
+    pub len: u64,
+    /// Bytes of every chunk except the last one, which carries the remainder.
+    pub chunk_size: u32,
+    /// The chain's depth: `ceil(len / chunk_size)`.
+    pub count: u32,
+}
+
+impl BaseChunks {
+    /// Largest chunk a server may hand out (8 MiB decoded).
+    pub const MAX_CHUNK_SIZE: u32 = 8 << 20;
+    /// Deepest chain a client accepts.
+    pub const MAX_COUNT: u32 = 4096;
+    /// Largest base a client assembles from a chain (64 MiB, the same ceiling it applies to an
+    /// inline base).
+    pub const MAX_LEN: u64 = 64 << 20;
+
+    /// Whether the announced chain is consistent with itself and inside the protocol's ceilings.
+    pub fn is_well_formed(&self) -> bool {
+        self.chunk_size > 0
+            && self.chunk_size <= Self::MAX_CHUNK_SIZE
+            && self.count > 0
+            && self.count <= Self::MAX_COUNT
+            && self.len > 0
+            && self.len <= Self::MAX_LEN
+            && u64::from(self.count) == self.len.div_ceil(u64::from(self.chunk_size))
+            && self.sha256.len() == 64
+            && self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    /// The decoded size of one chunk; `None` for an index the chain does not have.
+    pub fn chunk_len(&self, index: u32) -> Option<usize> {
+        if index >= self.count {
+            return None;
+        }
+        let size = u64::from(self.chunk_size);
+        let start = u64::from(index) * size;
+        Some(self.len.saturating_sub(start).min(size) as usize)
+    }
 }
 
 /// Current state for a reconnecting client: a base and, optionally, the journal tail.
@@ -1493,6 +1573,16 @@ pub enum ServerMsg {
         result: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<ServerError>,
+    },
+    /// One chunk of a base the snapshot announced ([`BaseChunks`], RFC §4.5.1). `version` and
+    /// `index` echo the request, so an answer for a chain the client abandoned is ignored; `data`
+    /// is the chunk's bytes in base64 and `count` the chain's depth, so a client can notice a
+    /// server that changed its mind about the base.
+    BaseChunk {
+        version: u64,
+        index: u32,
+        count: u32,
+        data: String,
     },
     Error(ServerError),
     Pong,
@@ -1655,12 +1745,53 @@ mod tests {
             version: 9,
             snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@4".into() },
             tail: vec![],
-            base: Some(BaseSnapshot { version: 4, bytes_base64: Some("UEsD".into()), keys: keys.clone() }),
+            base: Some(BaseSnapshot { version: 4, bytes_base64: Some("UEsD".into()), keys: keys.clone(), chunks: None }),
         });
         let text = encode_server(&msg).expect("encode");
         assert!(text.contains("\"mode\":\"base\""), "{text}");
         assert!(text.contains("\"next\":2"), "{text}");
         assert_eq!(decode_server(&text).expect("decode"), msg);
+    }
+
+    #[test]
+    fn a_chained_base_announces_its_chain_and_the_client_asks_for_one_chunk() {
+        let chain = BaseChunks { sha256: "ab".repeat(32), len: 2_621_440, chunk_size: 262_144, count: 10 };
+        assert!(chain.is_well_formed(), "a ten-chunk chain inside the ceilings");
+        assert_eq!(chain.chunk_len(0), Some(262_144));
+        assert_eq!(chain.chunk_len(9), Some(2_621_440 - 9 * 262_144), "the last chunk carries the remainder");
+        assert_eq!(chain.chunk_len(10), None);
+        let keys = SnapshotKeys::default();
+        let msg = ServerMsg::Snapshot(SnapshotMsg {
+            version: 9,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@4".into() },
+            tail: vec![],
+            base: Some(BaseSnapshot { version: 4, bytes_base64: None, keys, chunks: Some(chain.clone()) }),
+        });
+        let text = encode_server(&msg).expect("encode");
+        assert!(text.contains("\"chunks\":{"), "{text}");
+        assert!(!text.contains("bytesBase64"), "a chained base carries no inline bytes: {text}");
+        assert_eq!(decode_server(&text).expect("decode"), msg);
+
+        let ask = ClientMsg::BaseChunk { version: 4, index: 3 };
+        let text = encode_client(&ask).expect("encode");
+        assert_eq!(text, r#"{"type":"base_chunk","version":4,"index":3}"#);
+        assert_eq!(decode_client(&text).expect("decode"), ask);
+        let answer = ServerMsg::BaseChunk { version: 4, index: 3, count: 10, data: "UEsD".into() };
+        let text = encode_server(&answer).expect("encode");
+        assert_eq!(decode_server(&text).expect("decode"), answer);
+    }
+
+    #[test]
+    fn a_chain_outside_the_ceilings_is_not_well_formed() {
+        let good = BaseChunks { sha256: "cd".repeat(32), len: 100, chunk_size: 64, count: 2 };
+        assert!(good.is_well_formed());
+        assert!(!BaseChunks { chunk_size: 0, ..good.clone() }.is_well_formed(), "a zero chunk size");
+        assert!(!BaseChunks { chunk_size: BaseChunks::MAX_CHUNK_SIZE + 1, ..good.clone() }.is_well_formed(), "a chunk above the ceiling");
+        assert!(!BaseChunks { count: 0, ..good.clone() }.is_well_formed(), "an empty chain");
+        assert!(!BaseChunks { count: BaseChunks::MAX_COUNT + 1, ..good.clone() }.is_well_formed(), "a chain deeper than the ceiling");
+        assert!(!BaseChunks { len: BaseChunks::MAX_LEN + 1, ..good.clone() }.is_well_formed(), "a base above the ceiling");
+        assert!(!BaseChunks { count: 3, ..good.clone() }.is_well_formed(), "a depth that does not match len and chunk_size");
+        assert!(!BaseChunks { sha256: "zz".repeat(32), ..good.clone() }.is_well_formed(), "a digest that is not hex");
     }
 
     #[test]

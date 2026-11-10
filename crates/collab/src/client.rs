@@ -15,7 +15,10 @@
 
 use std::collections::VecDeque;
 
-use deckcraft_collab_proto::{ClientInfo, ClientMsg, Hello, Lease, OpEnvelope, PROTO_VERSION, RejectCode, Role, ServerMsg, SnapshotMode};
+use base64::Engine as _;
+use deckcraft_collab_proto::{
+    BaseChunks, ClientInfo, ClientMsg, Hello, Lease, OpEnvelope, PROTO_VERSION, RejectCode, Role, ServerMsg, SnapshotMode, SnapshotMsg,
+};
 
 /// Why a submitted operation was not accepted by the client.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +27,9 @@ pub enum SubmitError {
     ReadOnly,
     /// Too many operations are waiting; the user is typing faster than the link moves.
     Busy,
+    /// The replica is being rebuilt from a base the server is sending in chunks; an edit made now
+    /// would be normalised against a document the room no longer has.
+    Rebuilding,
 }
 
 /// What the application should do after [`ClientSession::on_msg`].
@@ -54,12 +60,90 @@ pub struct ClientSession {
     lease: Option<Lease>,
     state: Link,
     version: u64,
+    /// The version the host's document actually holds. It is below [`Self::version`] only while a
+    /// chained base is being assembled; a reconnect asks for the catch-up from this version, so
+    /// the server answers with the base the chain belongs to.
+    replica_version: u64,
     in_flight: VecDeque<OpEnvelope>,
     queued: VecDeque<OpEnvelope>,
     max_in_flight: usize,
     max_queued: usize,
     resync_wanted: bool,
     last_error: Option<String>,
+    /// A base the server is sending as a chain of chunks (RFC §4.5.1): the prefix assembled so
+    /// far and the index the client is missing.
+    base_download: Option<BaseDownload>,
+    /// The chunk the client has asked for and not yet been answered. Cleared when the socket
+    /// drops, so the same index is asked again and the chain resumes instead of restarting.
+    base_request: Option<u32>,
+    /// The snapshot whose base is being assembled: its key map, tail and head reach the host only
+    /// when the base is whole (`take_ready_base`).
+    pending_snapshot: Option<SnapshotMsg>,
+    /// A base that finished assembling, for the host to install.
+    ready_base: Option<ReadyBase>,
+    /// Journal steps that arrived while the base was assembling. They are not applied to the
+    /// stale replica; the catch-up tail asked for after the base is installed carries them.
+    missed_while_rebuilding: bool,
+}
+
+/// A base assembled from a chain of chunks, ready for the host to install in place of its replica
+/// (RFC §4.5.1). Its snapshot carries the key map, the tail above the base and the head; the
+/// bytes are the native `.deckcraft` file, already checked against the digest the server named.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReadyBase {
+    pub snapshot: SnapshotMsg,
+    pub bytes: Vec<u8>,
+}
+
+/// The prefix of a chained base, and where the client is in the chain.
+#[derive(Clone, Debug, PartialEq)]
+struct BaseDownload {
+    version: u64,
+    sha256: String,
+    len: usize,
+    chunk_size: usize,
+    count: usize,
+    next: u32,
+    bytes: Vec<u8>,
+}
+
+impl BaseDownload {
+    /// Start assembling a chain the snapshot announced; a chain outside the protocol's ceilings is
+    /// refused before the replica allocates anything for it.
+    fn start(version: u64, chain: &BaseChunks) -> Result<Self, String> {
+        if !chain.is_well_formed() {
+            return Err("the session base is announced as a chain this client cannot accept".into());
+        }
+        Ok(BaseDownload {
+            version,
+            sha256: chain.sha256.to_ascii_lowercase(),
+            len: chain.len as usize,
+            chunk_size: chain.chunk_size as usize,
+            count: chain.count as usize,
+            next: 0,
+            bytes: Vec::with_capacity((chain.len as usize).min(4 << 20)),
+        })
+    }
+
+    /// Whether `chain` describes the base this download is already assembling, so a second
+    /// snapshot for it continues at the index the client is missing instead of starting over.
+    fn continues(&self, version: u64, chain: &BaseChunks) -> bool {
+        self.version == version
+            && self.sha256 == chain.sha256.to_ascii_lowercase()
+            && self.len == chain.len as usize
+            && self.chunk_size == chain.chunk_size as usize
+            && self.count == chain.count as usize
+    }
+
+    /// The decoded size the chunk at `index` must have.
+    fn chunk_len(&self, index: u32) -> usize {
+        let start = index as usize * self.chunk_size;
+        self.len.saturating_sub(start).min(self.chunk_size)
+    }
+
+    fn finished(&self) -> bool {
+        self.next as usize >= self.count
+    }
 }
 
 impl ClientSession {
@@ -71,12 +155,18 @@ impl ClientSession {
             lease: None,
             state: Link::Down,
             version: 0,
+            replica_version: 0,
             in_flight: VecDeque::new(),
             queued: VecDeque::new(),
             max_in_flight: 8,
             max_queued: 256,
             resync_wanted: false,
             last_error: None,
+            base_download: None,
+            base_request: None,
+            pending_snapshot: None,
+            ready_base: None,
+            missed_while_rebuilding: false,
         }
     }
 
@@ -127,7 +217,9 @@ impl ClientSession {
             doc: self.file_id.clone(),
             jwt: jwt.into(),
             client,
-            last_version: Some(self.version),
+            // The version the document actually holds, not the head of a base still being
+            // assembled: the catch-up must start where the replica is.
+            last_version: Some(self.replica_version),
         })
     }
 
@@ -135,6 +227,9 @@ impl ClientSession {
     pub fn submit(&mut self, op: OpEnvelope) -> Result<(), SubmitError> {
         if self.role.is_some_and(|role| !role.may_write()) {
             return Err(SubmitError::ReadOnly);
+        }
+        if self.pending_snapshot.is_some() {
+            return Err(SubmitError::Rebuilding);
         }
         if self.queued.len() >= self.max_queued {
             return Err(SubmitError::Busy);
@@ -150,7 +245,21 @@ impl ClientSession {
         }
         if self.resync_wanted {
             self.resync_wanted = false;
-            return Some(ClientMsg::Resync { last_version: self.version });
+            return Some(ClientMsg::Resync { last_version: self.replica_version });
+        }
+        // A chained base is fetched one chunk at a time, before any new work: the replica cannot
+        // address the room until the base is installed. One request is outstanding at a time.
+        if self.base_request.is_none()
+            && let Some(download) = self.base_download.as_ref()
+            && !download.finished()
+        {
+            self.base_request = Some(download.next);
+            return Some(ClientMsg::BaseChunk { version: download.version, index: download.next });
+        }
+        if self.pending_snapshot.is_some() {
+            // Nothing may be submitted while the base is assembling, and a resend of an operation
+            // from the old replica would be normalised against a document the room no longer has.
+            return None;
         }
         if self.in_flight.len() >= self.max_in_flight {
             return None;
@@ -187,15 +296,35 @@ impl ClientSession {
                 if let Some(index) = settled {
                     self.in_flight.remove(index);
                 }
+                if self.pending_snapshot.is_some() {
+                    // The replica is being rebuilt from a chained base. This step is either in the
+                    // snapshot's tail or above it; either way it must not move a replica that is
+                    // still the old document, so it is collected by the catch-up asked for when
+                    // the base is installed.
+                    self.missed_while_rebuilding = true;
+                    return Effect::None;
+                }
                 if applied.version > self.version + 1 {
                     // Something between was missed: ask for the tail instead of skipping.
                     self.resync_wanted = true;
                     return Effect::Rollback;
                 }
                 self.version = self.version.max(applied.version);
+                self.replica_version = self.replica_version.max(applied.version);
                 Effect::Settled
             }
             ServerMsg::Rejected(rejected) => {
+                if self.pending_snapshot.is_some() && rejected.op_id.starts_with("base@") {
+                    // The server no longer serves the base this chain belongs to (compaction moved
+                    // it). The partial prefix is useless, so the client drops it and asks for a new
+                    // snapshot instead of retrying the same index forever.
+                    self.last_error = Some(rejected.message.clone());
+                    self.base_download = None;
+                    self.base_request = None;
+                    self.pending_snapshot = None;
+                    self.resync_wanted = true;
+                    return Effect::Rollback;
+                }
                 let position = self.in_flight.iter().position(|op| op.op_id == rejected.op_id);
                 let op = position.and_then(|i| self.in_flight.remove(i));
                 self.last_error = Some(rejected.message.clone());
@@ -230,8 +359,44 @@ impl ClientSession {
                     // offset the base does not have.
                     self.queued.clear();
                 }
+                // A base larger than the frame limit travels as a chain of chunks: the host gets
+                // this snapshot only once the base is whole (`take_ready_base`), and until then
+                // the replica is the old document.
+                match snapshot.base.as_ref().and_then(|base| base.chunks.clone().map(|chain| (base.version, chain))) {
+                    Some((version, chain)) => {
+                        // A second snapshot for the base this client is already assembling (the
+                        // catch-up after a reconnect) continues the chain at the missing index.
+                        let keep = self.base_download.as_ref().is_some_and(|download| download.continues(version, &chain));
+                        if !keep {
+                            match BaseDownload::start(version, &chain) {
+                                Ok(download) => {
+                                    self.base_download = Some(download);
+                                    self.base_request = None;
+                                }
+                                Err(message) => {
+                                    self.base_download = None;
+                                    self.base_request = None;
+                                    self.pending_snapshot = None;
+                                    self.missed_while_rebuilding = false;
+                                    self.last_error = Some(message);
+                                    return Effect::Rollback;
+                                }
+                            }
+                        }
+                        self.pending_snapshot = Some(snapshot);
+                    }
+                    None => {
+                        self.base_download = None;
+                        self.base_request = None;
+                        self.pending_snapshot = None;
+                        self.missed_while_rebuilding = false;
+                        // The host applies this snapshot (base and tail) as it arrives.
+                        self.replica_version = self.replica_version.max(snapshot.version);
+                    }
+                }
                 Effect::Rollback
             }
+            ServerMsg::BaseChunk { version, index, count, data } => self.on_base_chunk(version, index, count, &data),
             ServerMsg::Presence(_) => Effect::None,
             ServerMsg::QueryResult { .. } => Effect::None,
             ServerMsg::Pong => Effect::None,
@@ -247,6 +412,9 @@ impl ClientSession {
     /// Drop everything for a reconnect: unacknowledged operations stay queued with their ids, so
     /// the server dedups them if they did arrive (ADR 0003). They go back to the **front** in
     /// their original order: after the handshake the client must resend them before newer work.
+    ///
+    /// A chained base keeps its assembled prefix: only the outstanding request is forgotten, so
+    /// the next connection asks for the same chunk and the chain resumes instead of restarting.
     pub fn disconnected(&mut self) {
         self.state = Link::Down;
         self.lease = None;
@@ -255,6 +423,90 @@ impl ClientSession {
             self.queued.push_front(op);
         }
         self.resync_wanted = false;
+        self.base_request = None;
+    }
+
+    /// One chunk of a chained base: append it, ask for the next one, and hand the base to the host
+    /// when the chain is whole.
+    fn on_base_chunk(&mut self, version: u64, index: u32, count: u32, data: &str) -> Effect {
+        if self.base_download.as_ref().is_none_or(|download| download.version != version) {
+            // An answer for a chain this client abandoned; the next chunk request is the truth.
+            return Effect::None;
+        }
+        self.base_request = None;
+        let mut failure = None;
+        {
+            let Some(download) = self.base_download.as_mut() else { return Effect::None };
+            if download.count != count as usize {
+                failure = Some(format!("the base at version {version} changed its chain while it was being sent"));
+            } else if index == download.next {
+                match base64::engine::general_purpose::STANDARD.decode(data) {
+                    Ok(bytes) if bytes.len() == download.chunk_len(index) && download.bytes.len() + bytes.len() <= download.len => {
+                        download.bytes.extend_from_slice(&bytes);
+                        download.next += 1;
+                    }
+                    Ok(_) => failure = Some("a base chunk is not the size the chain announced".into()),
+                    Err(_) => failure = Some("a base chunk is not base64".into()),
+                }
+            }
+            // Any other index is a duplicate or a chunk from the future; the next request fixes it.
+        }
+        if let Some(message) = failure {
+            return self.abandon_base(message);
+        }
+        if self.base_download.as_ref().is_some_and(BaseDownload::finished) { self.finish_base() } else { Effect::None }
+    }
+
+    /// The whole base arrived: check its size and digest, clear the chain metadata from the
+    /// snapshot and hand it to the host through [`Self::take_ready_base`].
+    fn finish_base(&mut self) -> Effect {
+        let Some(download) = self.base_download.take() else { return Effect::None };
+        let Some(mut snapshot) = self.pending_snapshot.take() else {
+            self.missed_while_rebuilding = false;
+            return self.abandon_base("the base finished without the snapshot it belongs to");
+        };
+        if download.bytes.len() != download.len {
+            self.missed_while_rebuilding = false;
+            return self.abandon_base(format!("the base is {} bytes, not {}", download.bytes.len(), download.len));
+        }
+        if crate::media::sha256_hex(&download.bytes) != download.sha256 {
+            self.missed_while_rebuilding = false;
+            return self.abandon_base("the assembled base does not match the digest the server announced");
+        }
+        if let Some(base) = snapshot.base.as_mut() {
+            base.chunks = None;
+            base.bytes_base64 = None;
+        }
+        self.replica_version = snapshot.version;
+        self.ready_base = Some(ReadyBase { snapshot, bytes: download.bytes });
+        if self.missed_while_rebuilding {
+            // Steps arrived while the base was assembling and were not applied to the stale
+            // replica; ask for the tail above the base now that it is installed.
+            self.missed_while_rebuilding = false;
+            self.resync_wanted = true;
+        }
+        Effect::Rollback
+    }
+
+    /// Give up on a chain: the replica stays at the old document and the reason is kept for the
+    /// status bar (the host may reopen the file instead).
+    fn abandon_base(&mut self, message: impl Into<String>) -> Effect {
+        self.base_download = None;
+        self.base_request = None;
+        self.pending_snapshot = None;
+        self.last_error = Some(message.into());
+        Effect::Rollback
+    }
+
+    /// The base the session assembled from a chain, for the host to install in place of its
+    /// replica; at most once per chain. `None` while a chain is still being assembled.
+    pub fn take_ready_base(&mut self) -> Option<ReadyBase> {
+        self.ready_base.take()
+    }
+
+    /// Whether a chained base is being assembled right now (the status bar says "rebuilding").
+    pub fn rebuilding(&self) -> bool {
+        self.pending_snapshot.is_some()
     }
 }
 
@@ -452,7 +704,7 @@ mod tests {
                 Applied { op_id: "o8".into(), version: 8, actor_id: "a".into(), command: None, delta: Delta::default() },
                 Applied { op_id: "o9".into(), version: 9, actor_id: "a".into(), command: None, delta: Delta::default() },
             ],
-            base: Some(BaseSnapshot { version: 6, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default() }),
+            base: Some(BaseSnapshot { version: 6, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default(), chunks: None }),
         });
         assert_eq!(c.on_msg(snapshot), Effect::Rollback);
         assert_eq!(c.version(), 9, "after the base and its tail the client is at the head");
@@ -474,5 +726,206 @@ mod tests {
             assert_eq!(hello.app, "deckcraft");
             assert_eq!(hello.doc, "d");
         }
+    }
+
+    // ------------------------------------------------------------ a base sent as a chain
+
+    /// The bytes of a chained base, as the server would cut them.
+    fn base_bytes(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    fn chain_of(bytes: &[u8], chunk_size: u32) -> BaseChunks {
+        BaseChunks {
+            sha256: crate::media::sha256_hex(bytes),
+            len: bytes.len() as u64,
+            chunk_size,
+            count: bytes.len().div_ceil(chunk_size as usize) as u32,
+        }
+    }
+
+    fn chained_snapshot(head: u64, base_version: u64, chain: &BaseChunks, tail: Vec<Applied>) -> ServerMsg {
+        use deckcraft_collab_proto::{BaseSnapshot, SnapshotKeys};
+        ServerMsg::Snapshot(SnapshotMsg {
+            version: head,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: format!("base@{base_version}") },
+            tail,
+            base: Some(BaseSnapshot { version: base_version, bytes_base64: None, keys: SnapshotKeys::default(), chunks: Some(chain.clone()) }),
+        })
+    }
+
+    /// A client that joined a room at `head` and was answered with the base at `base_version`
+    /// sent as a chain.
+    fn chained_client(head: u64, base_version: u64, chain: &BaseChunks, tail: Vec<Applied>) -> ClientSession {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(head, Role::Editor));
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 }), "the join asks for the state");
+        c.on_msg(chained_snapshot(head, base_version, chain, tail));
+        c
+    }
+
+    /// One chunk answer, exactly as the server cuts it.
+    fn chunk_answer(version: u64, bytes: &[u8], chain: &BaseChunks, index: u32) -> ServerMsg {
+        let start = index as usize * chain.chunk_size as usize;
+        let end = (start + chain.chunk_size as usize).min(bytes.len());
+        ServerMsg::BaseChunk { version, index, count: chain.count, data: base64::engine::general_purpose::STANDARD.encode(&bytes[start..end]) }
+    }
+
+    /// Ask for one chunk and feed the answer back.
+    fn take_chunk(c: &mut ClientSession, version: u64, bytes: &[u8], chain: &BaseChunks) -> u32 {
+        let Some(ClientMsg::BaseChunk { version: asked, index }) = c.next_outgoing() else { panic!("a chunk request") };
+        assert_eq!(asked, version);
+        assert_eq!(c.next_outgoing(), None, "one chunk request at a time");
+        c.on_msg(chunk_answer(version, bytes, chain, index));
+        index
+    }
+
+    #[test]
+    fn a_chained_base_is_assembled_chunk_by_chunk_and_then_handed_to_the_host() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        let tail = vec![
+            Applied { op_id: "o7".into(), version: 7, actor_id: "a".into(), command: None, delta: Delta::default() },
+            Applied { op_id: "o8".into(), version: 8, actor_id: "a".into(), command: None, delta: Delta::default() },
+        ];
+        let mut c = chained_client(8, 6, &chain, tail.clone());
+        assert!(c.rebuilding(), "the snapshot with a chain does not replace the replica yet");
+        assert_eq!(c.take_ready_base(), None, "no base before the first chunk");
+        assert_eq!(c.submit(op("q1", 0)), Err(SubmitError::Rebuilding), "an edit against the stale replica is refused");
+
+        let mut asked = Vec::new();
+        for _ in 0..chain.count {
+            asked.push(take_chunk(&mut c, 6, &bytes, &chain));
+        }
+        assert_eq!(asked, (0..chain.count).collect::<Vec<_>>(), "the chain is asked in order");
+        let ready = c.take_ready_base().expect("the assembled base");
+        assert_eq!(ready.bytes, bytes);
+        let base = ready.snapshot.base.clone().expect("the snapshot travels with its base");
+        assert!(!base.is_chained(), "the host gets a plain base");
+        assert_eq!(base.version, 6);
+        assert_eq!(ready.snapshot.tail, tail, "and the tail above it");
+        assert_eq!(ready.snapshot.version, 8, "and the head the snapshot named");
+        assert_eq!(c.take_ready_base(), None, "the base is handed over once");
+        assert!(!c.rebuilding());
+        assert_eq!(c.queued(), 0, "an edit from the old replica is not replayed onto the base");
+        assert_eq!(c.submit(op("q2", 0)), Ok(()), "edits are accepted again once the base is installed");
+    }
+
+    #[test]
+    fn a_chain_interrupted_mid_way_resumes_at_the_missing_chunk() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        assert_eq!(chain.count, 3, "three chunks to interrupt");
+        let mut c = chained_client(6, 6, &chain, vec![]);
+        for _ in 0..2 {
+            take_chunk(&mut c, 6, &bytes, &chain);
+        }
+        // The socket drops with two of the three chunks assembled.
+        c.disconnected();
+        let _ = c.connect("jwt", ClientInfo { name: "t".into(), ver: "1".into() });
+        c.on_msg(welcome(6, Role::Editor));
+        let Some(ClientMsg::BaseChunk { version, index }) = c.next_outgoing() else { panic!("the chain resumes") };
+        assert_eq!((version, index), (6, 2), "the client asks for the chunk it is missing, not for the first");
+        c.on_msg(chunk_answer(6, &bytes, &chain, index));
+        let ready = c.take_ready_base().expect("the assembled base");
+        assert_eq!(ready.bytes, bytes, "the resumed chain assembles into the whole base");
+    }
+
+    #[test]
+    fn a_second_snapshot_for_the_same_chain_continues_it_instead_of_restarting() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        let mut c = chained_client(6, 6, &chain, vec![]);
+        take_chunk(&mut c, 6, &bytes, &chain);
+        // The catch-up after a reconnect names the same base again: the prefix is kept.
+        c.on_msg(chained_snapshot(
+            7,
+            6,
+            &chain,
+            vec![Applied { op_id: "o7".into(), version: 7, actor_id: "a".into(), command: None, delta: Delta::default() }],
+        ));
+        let Some(ClientMsg::BaseChunk { version, index }) = c.next_outgoing() else { panic!("the chain continues") };
+        assert_eq!((version, index), (6, 1), "the assembled prefix is not thrown away");
+        assert_eq!(c.take_ready_base(), None);
+    }
+
+    #[test]
+    fn a_base_the_server_stops_serving_drops_the_partial_chain_and_asks_for_the_session_again() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        let mut c = chained_client(6, 6, &chain, vec![]);
+        let Some(ClientMsg::BaseChunk { index, .. }) = c.next_outgoing() else { panic!("a chunk request") };
+        c.on_msg(ServerMsg::Rejected(Rejected {
+            op_id: format!("base@6/{index}"),
+            code: RejectCode::Stale,
+            message: "the base was replaced by a newer snapshot".into(),
+            retryable: true,
+            hint: None,
+        }));
+        assert!(!c.rebuilding(), "the partial chain is dropped");
+        assert!(c.last_error().is_some_and(|error| error.contains("replaced")), "{:?}", c.last_error());
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 }), "a fresh snapshot, from the replica");
+        assert_eq!(c.take_ready_base(), None);
+    }
+
+    #[test]
+    fn a_chain_outside_the_ceilings_is_refused_before_anything_is_allocated() {
+        let bytes = base_bytes(2_500);
+        let mut c = chained_client(6, 6, &chain_of(&bytes, 1024), vec![]);
+        take_chunk(&mut c, 6, &bytes, &chain_of(&bytes, 1024));
+        // A depth that does not match len and chunk size: a hostile or broken server.
+        let broken = BaseChunks { count: 1, ..chain_of(&bytes, 1024) };
+        c.on_msg(chained_snapshot(7, 6, &broken, vec![]));
+        assert!(!c.rebuilding(), "a chain outside the ceilings is not assembled");
+        assert_eq!(c.last_error().map(str::to_string), Some("the session base is announced as a chain this client cannot accept".into()));
+        assert_eq!(c.next_outgoing(), None, "nothing is asked for");
+        // A chunk size above the protocol ceiling is refused the same way.
+        let too_big =
+            BaseChunks { sha256: crate::media::sha256_hex(&bytes), len: bytes.len() as u64, chunk_size: BaseChunks::MAX_CHUNK_SIZE + 1, count: 1 };
+        c.on_msg(chained_snapshot(7, 6, &too_big, vec![]));
+        assert!(!c.rebuilding());
+        assert_eq!(c.take_ready_base(), None);
+    }
+
+    #[test]
+    fn a_chunk_of_the_wrong_size_or_digest_abandons_the_chain() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        let mut c = chained_client(6, 6, &chain, vec![]);
+        let Some(ClientMsg::BaseChunk { index, .. }) = c.next_outgoing() else { panic!("a chunk request") };
+        // A short chunk is not the one the chain announced.
+        c.on_msg(ServerMsg::BaseChunk { version: 6, index, count: chain.count, data: "UEsD".into() });
+        assert!(!c.rebuilding(), "a chunk that does not match the chain stops it");
+        assert!(c.last_error().is_some_and(|error| error.contains("size")), "{:?}", c.last_error());
+
+        // A whole chain whose bytes do not hash to the announced digest is refused at the end.
+        let wrong = BaseChunks { sha256: crate::media::sha256_hex(b"something else"), ..chain };
+        c.on_msg(chained_snapshot(6, 6, &wrong, vec![]));
+        for _ in 0..wrong.count {
+            take_chunk(&mut c, 6, &bytes, &wrong);
+        }
+        assert_eq!(c.take_ready_base(), None, "a base that does not match its digest is not installed");
+        assert!(c.last_error().is_some_and(|error| error.contains("digest")), "{:?}", c.last_error());
+    }
+
+    #[test]
+    fn steps_that_arrive_while_the_base_assembles_are_collected_by_a_catch_up() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        let tail = vec![
+            Applied { op_id: "o7".into(), version: 7, actor_id: "a".into(), command: None, delta: Delta::default() },
+            Applied { op_id: "o8".into(), version: 8, actor_id: "a".into(), command: None, delta: Delta::default() },
+        ];
+        let mut c = chained_client(8, 6, &chain, tail);
+        take_chunk(&mut c, 6, &bytes, &chain);
+        // Someone else's step arrives while the base is on its way: it must not move the replica.
+        assert_eq!(c.on_msg(applied("o9", 9)), Effect::None);
+        assert_eq!(c.version(), 8, "the head does not move on a step the replica cannot apply");
+        for _ in 1..chain.count {
+            take_chunk(&mut c, 6, &bytes, &chain);
+        }
+        let ready = c.take_ready_base().expect("the assembled base");
+        assert_eq!(ready.snapshot.version, 8);
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 8 }), "the missed step is asked for from the base");
     }
 }

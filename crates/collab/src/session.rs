@@ -14,7 +14,8 @@ use std::collections::{HashMap, VecDeque};
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    Applied, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, ServerError, SnapshotMode, SnapshotMsg, SnapshotRef, Target,
+    Applied, BaseChunks, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, ServerError, SnapshotMode, SnapshotMsg,
+    SnapshotRef, Target,
 };
 use deckcraft_engine::Session;
 use deckcraft_engine::cmd::file::{Damage, LoadedFile};
@@ -32,23 +33,50 @@ pub struct SessionConfig {
     pub dedup_window: usize,
     /// How many applied operations the journal tail keeps between snapshots.
     pub max_tail: usize,
-    /// Largest native base sent inline to a client whose tail was compacted. Above it the
-    /// snapshot names the base but carries no bytes, and the client reopens the file instead.
+    /// Largest native base sent inline to a client whose tail was compacted. Above it the base
+    /// travels as a chain of chunks ([`Self::max_base_chunk`], [`Self::max_base_chunks`]) and,
+    /// when it does not fit that either, the snapshot only names it and the client reopens the
+    /// file instead.
     pub max_base_inline: usize,
+    /// Bytes of one chunk of a chained base. A chunk is base64-encoded into one frame, so this is
+    /// also what keeps one base frame well below the frame limit.
+    pub max_base_chunk: usize,
+    /// Deepest chain the server hands out. A base larger than
+    /// `max_base_chunk * max_base_chunks` is named without bytes (or inline, if it is small).
+    pub max_base_chunks: usize,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
-        SessionConfig { snapshot_every: 200, dedup_window: 10_000, max_tail: 10_000, max_base_inline: 8 << 20 }
+        SessionConfig {
+            snapshot_every: 200,
+            dedup_window: 10_000,
+            max_tail: 10_000,
+            max_base_inline: 8 << 20,
+            max_base_chunk: 1 << 20,
+            max_base_chunks: 1024,
+        }
     }
 }
 
-/// A stored base: the native file and the version it represents.
+/// A stored base: the native file, its digest and the version it represents.
 #[derive(Clone, Debug)]
 pub struct SnapshotState {
     pub version: u64,
     pub bytes: Vec<u8>,
     pub cursor: String,
+    /// Hex digest of `bytes`, so a chained transfer announces it without hashing per request.
+    pub sha256: String,
+}
+
+/// One base in the form the snapshot carries it: inline bytes, a chain of chunks, or (when it is
+/// too large for both) only its version and cursor.
+struct BaseTransfer {
+    version: u64,
+    cursor: String,
+    bytes_base64: Option<String>,
+    keys: deckcraft_collab_proto::SnapshotKeys,
+    chunks: Option<BaseChunks>,
 }
 
 /// What a commit produced. The bytes are the `.pptx` the cabinet stores.
@@ -494,8 +522,10 @@ impl DocSession {
     /// A tail answer is used while the journal still covers the client. Once compaction removed
     /// it, the client replaces its replica with the native base, so the session takes a snapshot
     /// on demand when the stored one is too old or missing. A base larger than
-    /// [`SessionConfig::max_base_inline`] travels as a cursor without bytes; the client then has
-    /// to reopen the file from the cabinet instead of rebuilding from the wire.
+    /// [`SessionConfig::max_base_inline`] travels as a chain of chunks the client asks for one at a
+    /// time (RFC §4.5.1); when it is too large even for that chain the snapshot names it without
+    /// bytes and the client has to reopen the file from the cabinet instead of rebuilding from the
+    /// wire.
     pub fn resync(&mut self, last_version: u64) -> SnapshotMsg {
         let head = self.version;
         if self.tail_covers(last_version) {
@@ -521,7 +551,7 @@ impl DocSession {
                 base: None,
             };
         }
-        let Some((base_version, cursor, bytes_base64, keys)) = self.base_transfer() else {
+        let Some(base) = self.base_transfer() else {
             // No base is stored; the tail-only answer is all this session has.
             return SnapshotMsg {
                 version: head,
@@ -532,18 +562,59 @@ impl DocSession {
         };
         SnapshotMsg {
             version: head,
-            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor },
-            tail: self.tail_after(base_version),
-            base: Some(BaseSnapshot { version: base_version, bytes_base64, keys }),
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: base.cursor },
+            tail: self.tail_after(base.version),
+            base: Some(BaseSnapshot { version: base.version, bytes_base64: base.bytes_base64, keys: base.keys, chunks: base.chunks }),
         }
     }
 
     /// The stored base in wire form, with the key map every replica needs to address it.
-    fn base_transfer(&self) -> Option<(u64, String, Option<String>, deckcraft_collab_proto::SnapshotKeys)> {
+    fn base_transfer(&self) -> Option<BaseTransfer> {
         let snapshot = self.snapshot.as_ref()?;
-        let bytes_base64 =
-            (snapshot.bytes.len() <= self.config.max_base_inline).then(|| base64::engine::general_purpose::STANDARD.encode(&snapshot.bytes));
-        Some((snapshot.version, snapshot.cursor.clone(), bytes_base64, self.adapter.snapshot_keys()))
+        let inline = snapshot.bytes.len() <= self.config.max_base_inline;
+        let bytes_base64 = inline.then(|| base64::engine::general_purpose::STANDARD.encode(&snapshot.bytes));
+        let chunks = (!inline).then(|| self.base_chain(snapshot)).flatten();
+        Some(BaseTransfer { version: snapshot.version, cursor: snapshot.cursor.clone(), bytes_base64, keys: self.adapter.snapshot_keys(), chunks })
+    }
+
+    /// The chain parameters for a base that is too large to inline, or `None` when it is also too
+    /// large for a chain — the session then names the base and the client reopens the file.
+    fn base_chain(&self, snapshot: &SnapshotState) -> Option<BaseChunks> {
+        let chunk_size = self.config.max_base_chunk.max(1);
+        let len = snapshot.bytes.len() as u64;
+        let count = len.div_ceil(chunk_size as u64);
+        let chain = BaseChunks { sha256: snapshot.sha256.clone(), len, chunk_size: chunk_size as u32, count: count as u32 };
+        (chunk_size <= BaseChunks::MAX_CHUNK_SIZE as usize
+            && count <= self.config.max_base_chunks as u64
+            && count <= BaseChunks::MAX_COUNT as u64
+            && chain.is_well_formed())
+        .then_some(chain)
+    }
+
+    /// One chunk of the stored base, for a client assembling a chain (RFC §4.5.1). The base must
+    /// still be the one the snapshot named: when compaction replaced it the answer is a retryable
+    /// `stale`, and the client asks for a fresh snapshot instead of finishing the old chain.
+    pub fn base_chunk(&self, version: u64, index: u32) -> Result<(u32, String), ServerError> {
+        let Some(snapshot) = self.snapshot.as_ref().filter(|snapshot| snapshot.version == version) else {
+            return Err(ServerError {
+                code: "stale".into(),
+                message: "the base was replaced by a newer snapshot; ask for the session again".into(),
+                retryable: true,
+            });
+        };
+        let Some(chain) = self.base_chain(snapshot) else {
+            return Err(ServerError { code: "invalid".into(), message: "this base does not travel as a chain".into(), retryable: false });
+        };
+        let Some(len) = chain.chunk_len(index) else {
+            return Err(ServerError {
+                code: "invalid".into(),
+                message: format!("the base has {} chunks, not {index}", chain.count),
+                retryable: false,
+            });
+        };
+        let start = index as usize * self.config.max_base_chunk.max(1);
+        let data = base64::engine::general_purpose::STANDARD.encode(&snapshot.bytes[start..start + len]);
+        Ok((chain.count, data))
     }
 
     /// Does the tail hold every step after `version` (so replaying it rebuilds the head)?
@@ -565,7 +636,8 @@ impl DocSession {
         let doc = self.engine.doc().map_err(|e| e.to_string())?;
         let bytes = deckcraft_format::save(&doc.doc).map_err(|e| e.to_string())?;
         let cursor = format!("base@{}", self.version);
-        self.snapshot = Some(SnapshotState { version: self.version, bytes, cursor });
+        let sha256 = crate::media::sha256_hex(&bytes);
+        self.snapshot = Some(SnapshotState { version: self.version, bytes, cursor, sha256 });
         // The tail before the base is no longer needed to rebuild the state.
         self.tail.retain(|a| a.version > self.version);
         self.snapshot.as_ref().ok_or_else(|| "the snapshot was just written".to_string())
@@ -1423,16 +1495,89 @@ mod tests {
     }
 
     #[test]
-    fn a_base_larger_than_the_limit_travels_without_bytes() {
-        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 1, max_base_inline: 1, ..SessionConfig::default() })
-            .expect("session");
+    fn a_base_above_the_inline_limit_travels_as_a_chain_of_chunks() {
+        let mut s = DocSession::from_document(
+            "d",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 1024, ..SessionConfig::default() },
+        )
+        .expect("session");
         let (slide, shape) = keys(&s);
         s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
         let snapshot = s.resync(0);
-        let base = snapshot.base.expect("a base cursor");
+        let base = snapshot.base.expect("a base");
+        assert_eq!(base.version, 1);
+        assert!(base.bytes_base64.is_none(), "over the inline limit no bytes ride in the snapshot frame");
+        let chain = base.chunks.expect("the base travels as a chain");
+        assert!(chain.is_well_formed(), "{chain:?}");
+        let len = s.snapshot().expect("base").bytes.len();
+        assert_eq!(chain.len, len as u64);
+        assert_eq!(chain.count as usize, len.div_ceil(1024), "1000 bytes per chunk");
+        assert!(chain.count > 1, "the base is bigger than one chunk");
+        assert!(!base.keys.shapes.is_empty(), "the key map is small and still travels");
+
+        // The chain assembles into exactly the base the snapshot was taken from.
+        let mut assembled = Vec::new();
+        for index in 0..chain.count {
+            let (count, data) = s.base_chunk(1, index).expect("a chunk");
+            assert_eq!(count, chain.count);
+            let bytes = base64::engine::general_purpose::STANDARD.decode(data).expect("base64");
+            assert_eq!(bytes.len(), chain.chunk_len(index).expect("length"));
+            assembled.extend_from_slice(&bytes);
+        }
+        assert_eq!(assembled, s.snapshot().expect("base").bytes, "the chunks are the base");
+        assert_eq!(crate::media::sha256_hex(&assembled), chain.sha256, "and match the announced digest");
+        let reloaded = DocSession::open("d", &assembled).expect("the assembled base loads");
+        assert_eq!(*reloaded.document().expect("doc"), *s.document().expect("doc"));
+    }
+
+    #[test]
+    fn a_base_too_deep_for_a_chain_travels_without_bytes() {
+        // One chunk is allowed, the base is bigger than that: the depth limit leaves the base
+        // named but not served, and the client reopens the file from the cabinet.
+        let mut s = DocSession::from_document(
+            "d",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 1024, max_base_chunks: 1, ..SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let base = s.resync(0).base.expect("a base cursor");
         assert_eq!(base.version, 1);
         assert!(base.bytes_base64.is_none(), "over the inline limit the client reopens the file");
+        assert!(base.chunks.is_none(), "and above the chain's depth the server does not offer one");
         assert!(!base.keys.shapes.is_empty(), "the key map is small and still travels");
+        assert!(s.base_chunk(1, 0).is_err(), "a base that does not travel as a chain has no chunks");
+    }
+
+    #[test]
+    fn a_chunk_of_a_base_that_moved_or_a_chunk_past_the_chain_is_refused() {
+        let mut s = DocSession::from_document(
+            "d",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 512, ..SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let base = s.resync(0).base.expect("a base");
+        let chain = base.chunks.expect("a chain");
+        assert!(s.base_chunk(0, 0).is_err(), "no base at version 0");
+        let error = s.base_chunk(base.version + 1, 0).expect_err("a refusal");
+        assert_eq!(error.code, "stale");
+        assert!(error.retryable, "the client asks for a fresh snapshot");
+        let error = s.base_chunk(base.version, chain.count).expect_err("a refusal");
+        assert_eq!(error.code, "invalid", "{}", error.message);
+        assert!(!error.retryable);
+
+        // Compaction replaces the base: a chunk of the old one is stale, never a slice of the new.
+        s.apply("a", &move_op(&slide, &shape, 340.0, 1, "op-2")).expect("apply");
+        s.resync(0);
+        let current = s.snapshot().expect("base").version;
+        assert!(current > base.version);
+        assert_eq!(s.base_chunk(base.version, 0).expect_err("a refusal").code, "stale");
+        assert!(s.base_chunk(current, 0).is_ok(), "the current base is served");
     }
 
     #[test]

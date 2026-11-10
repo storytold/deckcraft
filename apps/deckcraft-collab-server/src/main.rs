@@ -75,6 +75,8 @@ fn main() -> ExitCode {
         store_dir: std::env::var("COLLAB_STORE_DIR").ok().filter(|d| !d.is_empty()).map(PathBuf::from),
         snapshot_every: number("COLLAB_SNAPSHOT_EVERY", 200) as u64,
         max_base_inline: number("COLLAB_MAX_BASE_INLINE", 8 << 20),
+        max_base_chunk: number("COLLAB_MAX_BASE_CHUNK", 1 << 20),
+        max_base_chunks: number("COLLAB_MAX_BASE_CHUNKS", 1024),
         cabinet,
         cors_origins: deckcraft_collab_server::parse_cors_origins(&std::env::var("DECKCRAFT_CORS_ORIGINS").unwrap_or_default()),
     };

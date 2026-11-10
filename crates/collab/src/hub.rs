@@ -42,11 +42,13 @@ pub struct Hub {
     last_applied: Option<deckcraft_collab_proto::Applied>,
     /// Bytes of the last base a `resync` sent, for the server's counters.
     last_base_transfer: Option<u64>,
+    /// Bytes of the last base chunk handed out, for the server's counters.
+    last_base_chunk: Option<u64>,
 }
 
 impl Hub {
     pub fn new(session: DocSession) -> Self {
-        Hub { session, peers: BTreeMap::new(), out: HashMap::new(), last_applied: None, last_base_transfer: None }
+        Hub { session, peers: BTreeMap::new(), out: HashMap::new(), last_applied: None, last_base_transfer: None, last_base_chunk: None }
     }
 
     pub fn session(&self) -> &DocSession {
@@ -214,6 +216,32 @@ impl Hub {
                 self.send(actor, ServerMsg::Snapshot(snapshot));
                 Ok(())
             }
+            ClientMsg::BaseChunk { version, index } => {
+                // A base chunk is read-only: like a query it moves no version and a viewer may ask
+                // for it (a viewer whose journal was compacted still has to rebuild its replica).
+                match self.session.base_chunk(version, index) {
+                    Ok((count, data)) => {
+                        self.last_base_chunk = Some(data.len() as u64);
+                        self.send(actor, ServerMsg::BaseChunk { version, index, count, data });
+                    }
+                    Err(error) => {
+                        // `stale` is retryable: the client drops the chain and asks for a new
+                        // snapshot. The refusal is answered like any other, so the client's own
+                        // retry rule decides.
+                        self.send(
+                            actor,
+                            ServerMsg::Rejected(Rejected {
+                                op_id: format!("base@{version}/{index}"),
+                                code: if error.retryable { RejectCode::Stale } else { RejectCode::Invalid },
+                                message: error.message,
+                                retryable: error.retryable,
+                                hint: None,
+                            }),
+                        );
+                    }
+                }
+                Ok(())
+            }
             ClientMsg::Undo => self.history(actor, true),
             ClientMsg::Redo => self.history(actor, false),
             ClientMsg::Query { id, cmd, target, params } => {
@@ -301,6 +329,11 @@ impl Hub {
     /// The size of the last base a `resync` sent (inline bytes; `0` for a cursor without bytes).
     pub fn take_last_base_transfer(&mut self) -> Option<u64> {
         self.last_base_transfer.take()
+    }
+
+    /// The encoded size of the last base chunk handed out, for the server's counters.
+    pub fn take_last_base_chunk(&mut self) -> Option<u64> {
+        self.last_base_chunk.take()
     }
 
     /// Build the file and queue a `commit-result`. Errors become a `rejected` for the requester;
@@ -510,6 +543,58 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(hub.version(), 0);
+    }
+
+    #[test]
+    fn a_viewer_may_ask_for_a_base_chunk_and_a_moved_base_is_refused_as_stale() {
+        let session = DocSession::from_document(
+            "d",
+            deck_doc(),
+            crate::session::SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 256, ..crate::session::SessionConfig::default() },
+        )
+        .expect("session");
+        let mut hub = Hub::new(session);
+        let _ = join(&mut hub, "victor", Role::Viewer);
+        let (slide, shape) = keys_of(&hub);
+        // A step so there is something to compact, then a resync from zero: a base is needed.
+        assert!(hub.session_mut().apply("alice", &move_op("op-1", 0, &slide, &shape, 250.0)).is_ok());
+        hub.receive("victor", ClientMsg::Resync { last_version: 0 }).expect("resync");
+        let Some(ServerMsg::Snapshot(snapshot)) = hub.poll("victor") else { panic!("a snapshot") };
+        let base = snapshot.base.expect("a base");
+        let chain = base.chunks.expect("the base travels as a chain");
+        assert!(chain.count > 1, "{} chunks", chain.count);
+
+        // A viewer rebuilding its replica is a reader: asking for a chunk is allowed.
+        hub.receive("victor", ClientMsg::BaseChunk { version: base.version, index: 0 }).expect("chunk");
+        match hub.poll("victor").expect("the chunk") {
+            ServerMsg::BaseChunk { version, index, count, data } => {
+                assert_eq!((version, index), (base.version, 0));
+                assert_eq!(count, chain.count);
+                assert_eq!(data.len(), chain.chunk_len(0).expect("length").div_ceil(3) * 4, "base64 of one chunk");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(hub.take_last_base_chunk().is_some(), "the server counts chunks");
+
+        // A base compaction replaced is not served: the client is told to ask again.
+        hub.receive("victor", ClientMsg::BaseChunk { version: base.version + 1, index: 0 }).expect("chunk");
+        match hub.poll("victor").expect("the refusal") {
+            ServerMsg::Rejected(rejection) => {
+                assert_eq!(rejection.code, RejectCode::Stale);
+                assert!(rejection.retryable, "a fresh snapshot is the fix");
+                assert_eq!(rejection.op_id, format!("base@{}/0", base.version + 1));
+            }
+            other => panic!("{other:?}"),
+        }
+        hub.receive("victor", ClientMsg::BaseChunk { version: base.version, index: chain.count }).expect("chunk");
+        match hub.poll("victor").expect("the refusal") {
+            ServerMsg::Rejected(rejection) => {
+                assert_eq!(rejection.code, RejectCode::Invalid);
+                assert!(!rejection.retryable);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(hub.version(), 1, "asking for a chunk moves no version");
     }
 
     #[test]

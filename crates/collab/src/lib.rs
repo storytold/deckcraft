@@ -26,7 +26,7 @@ pub mod transition;
 pub mod transport;
 
 pub use apply::{Adapter, Rejection, class_of};
-pub use client::{ClientSession, Effect, Link, SubmitError};
+pub use client::{ClientSession, Effect, Link, ReadyBase, SubmitError};
 pub use deckcraft_collab_proto::FontFace;
 pub use delta::delta;
 pub use history::{ActorHistory, Histories, Image, Snapshot, Step};

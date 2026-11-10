@@ -93,6 +93,19 @@ fn pump(server: &mut DocSession, peer: &mut Peer, others: &mut [&mut Peer]) {
                 };
                 peer.client.on_msg(answer);
             }
+            ClientMsg::BaseChunk { version, index } => {
+                let answer = match server.base_chunk(version, index) {
+                    Ok((count, data)) => ServerMsg::BaseChunk { version, index, count, data },
+                    Err(error) => ServerMsg::Rejected(deckcraft_collab_proto::Rejected {
+                        op_id: format!("base@{version}/{index}"),
+                        code: deckcraft_collab_proto::RejectCode::Stale,
+                        message: error.message,
+                        retryable: error.retryable,
+                        hint: None,
+                    }),
+                };
+                peer.client.on_msg(answer);
+            }
             ClientMsg::Ping | ClientMsg::Commit { .. } | ClientMsg::Presence(_) | ClientMsg::Hello(_) | ClientMsg::Undo | ClientMsg::Redo => return,
         }
     }

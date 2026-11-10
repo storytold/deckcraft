@@ -86,8 +86,15 @@ pub struct Config {
     pub store_dir: Option<PathBuf>,
     /// Operations between base snapshots.
     pub snapshot_every: u64,
-    /// Largest native base sent inline to a client whose journal tail was compacted.
+    /// Largest native base sent inline to a client whose journal tail was compacted. Above it the
+    /// base travels in chunks of `max_base_chunk` up to `max_base_chunks` deep.
     pub max_base_inline: usize,
+    /// Bytes of one chunk of a base that is too large to inline.
+    pub max_base_chunk: usize,
+    /// Deepest chain of chunks for one base. A base larger than
+    /// `max_base_chunk * max_base_chunks` is only named in the snapshot; the client reopens the
+    /// file from the cabinet instead.
+    pub max_base_chunks: usize,
     /// Where a commit becomes a cabinet file version. `None` keeps commits inside the process.
     pub cabinet: Option<cabinet::CabinetConfig>,
     /// Origins a browser page may call this server from (`DECKCRAFT_CORS_ORIGINS`, comma
@@ -110,6 +117,8 @@ impl Config {
             store_dir: None,
             snapshot_every: 200,
             max_base_inline: 8 << 20,
+            max_base_chunk: 1 << 20,
+            max_base_chunks: 1024,
             cabinet: None,
             cors_origins: Vec::new(),
         }
@@ -170,6 +179,7 @@ struct Metrics {
     media_bytes: AtomicU64,
     base_transfers: AtomicU64,
     base_bytes: AtomicU64,
+    base_chunks: AtomicU64,
     cabinet_commits: AtomicU64,
     cabinet_conflicts: AtomicU64,
     cabinet_failures: AtomicU64,
@@ -194,6 +204,7 @@ impl Metrics {
         out.push_str(&row("media_bytes_total", self.media_bytes.load(Ordering::Relaxed)));
         out.push_str(&row("base_transfers_total", self.base_transfers.load(Ordering::Relaxed)));
         out.push_str(&row("base_bytes_total", self.base_bytes.load(Ordering::Relaxed)));
+        out.push_str(&row("base_chunks_total", self.base_chunks.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_commits_total", self.cabinet_commits.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_conflicts_total", self.cabinet_conflicts.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_failures_total", self.cabinet_failures.load(Ordering::Relaxed)));
@@ -581,6 +592,8 @@ fn create_session(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Re
     session.set_config(SessionConfig {
         snapshot_every: shared.config.snapshot_every,
         max_base_inline: shared.config.max_base_inline,
+        max_base_chunk: shared.config.max_base_chunk,
+        max_base_chunks: shared.config.max_base_chunks,
         ..SessionConfig::default()
     });
     if let Some(name) = body.initial_name.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
@@ -1070,6 +1083,9 @@ fn handle_client_message(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ClientMsg, sha
     if let Some(bytes) = hub.take_last_base_transfer() {
         shared.metrics.base_transfers.fetch_add(1, Ordering::Relaxed);
         shared.metrics.base_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+    if hub.take_last_base_chunk().is_some() {
+        shared.metrics.base_chunks.fetch_add(1, Ordering::Relaxed);
     }
     if is_op {
         shared.metrics.ops.fetch_add(1, Ordering::Relaxed);
