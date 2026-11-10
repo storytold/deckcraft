@@ -3,7 +3,7 @@ use super::insert::chart_menu_types;
 use super::{Icon, SlideApp, Ui, big, big_button, group, json};
 
 pub(super) fn chart_design(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Data", |ui| {
         let r = big_button(ui, Icon::ChangeChartType, "Change\nChart Type", true);
         egui::Popup::menu(&r).show(|ui| {
             for k in chart_menu_types() {

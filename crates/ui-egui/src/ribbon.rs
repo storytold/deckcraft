@@ -9,7 +9,8 @@ use crate::SlideApp;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 use crate::widgets::{
-    self, RIBBON_H, big_button, big_button_ex, color_split, dropdown, group, icon_toggle, rows, small_button, small_button_ex, small_button_named,
+    self, RIBBON_CARD_H, big_button, big_button_ex, color_split, dropdown, group, icon_toggle, rows, small_button, small_button_ex,
+    small_button_named,
 };
 
 mod animations;
@@ -126,7 +127,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) {
         app.ui.tab = "Home".into();
     }
-    let h = 28.0 + if app.ui.ribbon_collapsed { 4.0 } else { RIBBON_H + 20.0 };
+    let h = 28.0 + if app.ui.ribbon_collapsed { 4.0 } else { RIBBON_CARD_H + 20.0 };
     egui::Panel::top("ribbon").exact_size(h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         // Tabs. File comes first and opens the File tab's full-window view (Backstage), as in
@@ -182,10 +183,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             return;
         }
         // The white card.
-        let card = Rect::from_min_max(pos2(rect.min.x + 8.0, rect.min.y + 30.0), pos2(rect.max.x - 8.0, rect.min.y + 30.0 + RIBBON_H + 10.0));
+        let card = Rect::from_min_max(pos2(rect.min.x + 8.0, rect.min.y + 30.0), pos2(rect.max.x - 8.0, rect.min.y + 30.0 + RIBBON_CARD_H + 10.0));
         ui.painter().rect_filled(card.translate(vec2(0.0, 1.0)), CornerRadius::same(10), t.card_border);
         ui.painter().rect_filled(card, CornerRadius::same(10), t.card);
-        let inner = Rect::from_min_size(pos2(card.min.x + 10.0, card.min.y + 5.0), vec2(card.width() - 20.0, RIBBON_H));
+        let inner = Rect::from_min_size(pos2(card.min.x + 10.0, card.min.y + 5.0), vec2(card.width() - 20.0, RIBBON_CARD_H));
         let mut cui = ui.new_child(egui::UiBuilder::new().max_rect(inner));
         cui.set_clip_rect(inner.expand2(vec2(0.0, 3.0)));
         // Reserve a gutter on both sides for the overflow chevrons. They are painted and
@@ -208,7 +209,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         let scroll =
             area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).auto_shrink([false, false]).show(&mut sui, |ui| {
-                ui.set_min_height(RIBBON_H);
+                ui.set_min_height(RIBBON_CARD_H);
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
                     match tab.as_str() {

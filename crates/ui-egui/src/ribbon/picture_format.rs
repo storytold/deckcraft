@@ -8,7 +8,7 @@ use super::{
 /// Render the Picture Format tab's corrections, colour, artistic effects, transparency, styles,
 /// border, and picture actions.
 pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Adjust", |ui| {
         let r = big_button(ui, Icon::RemoveBackground, "Remove\nBackground", enabled(app, "picture.removeBackground"));
         egui::Popup::menu(&r).show(|ui| {
             for (label, tol) in [("Remove Background", 20.0), ("Remove More (looser)", 35.0), ("Remove Less (tighter)", 10.0)] {
@@ -97,7 +97,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Picture Styles", |ui| {
         use deckcraft_engine::cmd::picture_style::{STYLES, look};
         let names: Vec<String> = STYLES.iter().map(|(_, l)| l.to_string()).collect();
         let tiles = |ui: &mut Ui, n: usize| {
@@ -128,7 +128,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "picture.style", json!({"style": id}));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Picture Styles", |ui| {
         let sc = scheme(app);
         let (m, a) = color_split(ui, Icon::QuickStyles, "Picture Border", Color32::BLACK, true);
         if m.clicked() {
@@ -170,7 +170,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::AltText, "Alt\nText", "app.dialog", json!({"id": "altText"}));
     });
     arrange_group(app, ui);
-    group(ui, |ui| {
+    group(ui, "Crop", |ui| {
         let r = big_button(ui, Icon::Crop, "Crop", true);
         egui::Popup::menu(&r).show(|ui| {
             ui.label("Crop to Shape");

@@ -10,7 +10,7 @@ use super::{
 pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
     let themes = deckcraft_model::theme::builtin_themes();
     let cur = app.session.active().and_then(|d| d.doc.masters.first().map(|m| m.theme.name.clone())).unwrap_or_default();
-    group(ui, |ui| {
+    group(ui, "Themes", |ui| {
         let sel = themes.iter().position(|th| th.name == cur);
         let names: Vec<String> = themes.iter().map(|t| t.name.clone()).collect();
         if let Some(i) = widgets::gallery(
@@ -38,7 +38,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
         let tiles: Vec<deckcraft_model::Theme> = variants.iter().map(|c| deckcraft_model::Theme { colors: c.clone(), ..th.clone() }).collect();
         let names: Vec<String> = variants.iter().map(|c| c.name.clone()).collect();
         let sel = variants.iter().position(|c| c.colors == th.colors.colors);
-        group(ui, |ui| {
+        group(ui, "Variants", |ui| {
             if let Some(i) = widgets::gallery(
                 ui,
                 tiles.len(),
@@ -55,7 +55,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     }
-    group(ui, |ui| {
+    group(ui, "Customize", |ui| {
         let r = big_button(ui, Icon::Colors, "Colors", true);
         r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Colors"));
         egui::Popup::menu(&r).width(240.0).show(|ui| {
@@ -140,7 +140,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Slide Size", |ui| {
         let r = big_button(ui, Icon::SlideSize, "Slide\nSize", true);
         egui::Popup::menu(&r).show(|ui| {
             if ui.button("Standard (4:3)").clicked() {
@@ -155,7 +155,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
         });
         big(app, ui, Icon::FormatBackground, "Format\nBackground", "view.pane", json!({"pane": "background"}));
     });
-    group(ui, |ui| {
+    group(ui, "Design Ideas", |ui| {
         big(app, ui, Icon::DesignIdeas, "Design\nIdeas", "view.pane", json!({"pane": "designer"}));
     });
 }

@@ -13,14 +13,14 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let id = d.selection.shapes.first()?;
         s.animations.iter().find(|a| a.shape == *id).cloned()
     });
-    group(ui, |ui| {
+    group(ui, "Preview", |ui| {
         let playing = app.anim_preview_active();
         let (resp, _) = big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
         if resp.on_hover_text("Play this slide's animations on the canvas").clicked() {
             run(app, "animation.preview", json!({}));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Animation", |ui| {
         let quick: Vec<_> = deckcraft_model::anim::ANIMATIONS
             .iter()
             .filter(|a| {
@@ -101,7 +101,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Advanced Animation", |ui| {
         let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
         // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
         // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
@@ -155,7 +155,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    group(ui, |ui| {
+    group(ui, "Timing", |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Start:");

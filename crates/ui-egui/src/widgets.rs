@@ -11,6 +11,13 @@ use crate::theme::{self, Tokens};
 /// Height of the ribbon's content area.
 pub const RIBBON_H: f32 = 66.0;
 
+/// Height of the group-name band below the content area. Office keeps this band at every window
+/// width; narrow windows scroll the groups instead of dropping their names.
+pub const RIBBON_LABEL_H: f32 = 18.0;
+
+/// Height of the ribbon card's contents: the command band plus the group-name band.
+pub const RIBBON_CARD_H: f32 = RIBBON_H + RIBBON_LABEL_H;
+
 fn bg(ui: &Ui, r: &Response, selected: bool, t: &Tokens) -> Option<Color32> {
     if !r.sense.senses_click() && !r.sense.senses_drag() {
         return None;
@@ -303,19 +310,26 @@ pub fn color_split(ui: &mut Ui, icon: Icon, tip: &str, color: Color32, enabled: 
     (main.on_hover_text(tip), arrow)
 }
 
-/// A ribbon group: contents, then a thin vertical separator.
-pub fn group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+/// A ribbon group: its contents, its name centred in the band below them, then a thin vertical
+/// separator. Office's card has three bands (tabs, commands, group names); the name band is part
+/// of every group, at every window width.
+pub fn group<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    let label_y = ui.max_rect().min.y + RIBBON_H + RIBBON_LABEL_H * 0.5;
     let r = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
         add(ui)
     });
+    if !label.is_empty() {
+        ui.painter().text(pos2(r.response.rect.center().x, label_y), Align2::CENTER_CENTER, label, theme::font(11.0), t.text_dim);
+    }
     separator(ui);
     r.inner
 }
 
 pub fn separator(ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(13.0, RIBBON_H - 6.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(13.0, RIBBON_CARD_H - 6.0), Sense::hover());
     ui.painter().line_segment([pos2(rect.center().x, rect.min.y + 6.0), pos2(rect.center().x, rect.max.y - 4.0)], Stroke::new(1.0, t.separator));
 }
 
@@ -841,5 +855,53 @@ mod tests {
         let stored = Some(("old".to_string(), "old plus typing".to_string()));
         assert_eq!(text_draft(stored, "undone"), "undone");
         assert_eq!(text_draft(None, "fresh"), "fresh");
+    }
+
+    /// Office's ribbon card has three bands: tabs, commands and group names. A group paints its
+    /// name centred under its contents, and the card reserves the name band at every width.
+    #[test]
+    fn a_group_paints_its_name_below_its_contents() {
+        assert_eq!(RIBBON_CARD_H, RIBBON_H + RIBBON_LABEL_H, "the card is the command band plus the name band");
+
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(320.0, 120.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            ui.horizontal_top(|ui| {
+                group(ui, "Clipboard", |ui| {
+                    ui.label("Paste");
+                });
+            });
+        });
+        out.textures_delta.clear();
+
+        let label = out
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Text(s) if s.galley.text() == "Clipboard" => Some(s),
+                _ => None,
+            })
+            .expect("the group paints its name");
+        let band = RIBBON_H..=RIBBON_CARD_H;
+        assert!(
+            label.pos.y >= *band.start() && label.pos.y + label.galley.size().y <= *band.end(),
+            "the name sits in the band below the commands: {:?} not in {band:?}",
+            label.pos
+        );
+        let section = label.galley.job.sections.first().expect("laid out text");
+        assert_eq!(section.format.color, Tokens::get(&ctx).text_dim);
+        assert_eq!(section.format.font_id.size, 11.0);
+
+        let rule = out
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::LineSegment { points, .. } if (points[0].x - points[1].x).abs() < 0.01 => Some(points),
+                _ => None,
+            })
+            .expect("the group paints its separator");
+        let (top, bottom) = (rule[0].y.min(rule[1].y), rule[0].y.max(rule[1].y));
+        assert!(top <= RIBBON_H && bottom > RIBBON_H, "the rule runs from the commands through the name band: {top}..{bottom}");
     }
 }

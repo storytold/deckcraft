@@ -110,7 +110,7 @@ fn stroke_guide(p: &egui::Painter, g: &deckcraft_geom::warp::Guide, color: Color
 pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
     let sel = enabled(app, "shape.fill");
-    group(ui, |ui| {
+    group(ui, "Insert Shapes", |ui| {
         let r = big_button(ui, Icon::Shapes, "Shapes", true);
         egui::Popup::menu(&r).show(|ui| {
             if let Some(p) = shapes_gallery(ui) {
@@ -143,7 +143,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Shape Styles", |ui| {
         let r = big_button(ui, Icon::QuickStyles, "Shape\nStyles", sel);
         egui::Popup::menu(&r).width(330.0).show(|ui| quick_styles(app, ui));
         rows(ui, |ui| {
@@ -183,7 +183,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "WordArt Styles", |ui| {
         rows(ui, |ui| {
             let (main, arrow) = small_button_ex(ui, Icon::TextFill, "Text Fill", sel, false, true);
             if let Some(arrow) = arrow {
@@ -216,12 +216,12 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
             });
         });
     });
-    group(ui, |ui| {
+    group(ui, "Accessibility", |ui| {
         big(app, ui, Icon::AltText, "Alt\nText", "app.dialog", json!({"id": "altText"}));
     });
     arrange_group(app, ui);
     size_group(app, ui);
-    group(ui, |ui| {
+    group(ui, "Format", |ui| {
         big(app, ui, Icon::FormatBackground, "Format\nPane", "view.pane", json!({"pane": "format"}));
     });
 }

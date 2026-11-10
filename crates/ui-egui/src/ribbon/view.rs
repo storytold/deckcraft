@@ -2,7 +2,7 @@ use super::{Icon, SlideApp, Target, Ui, big_button, big_button_ex, group, json, 
 
 pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
     use crate::ViewMode;
-    group(ui, |ui| {
+    group(ui, "Presentation Views", |ui| {
         for (icon, label, id, mode) in [
             (Icon::ViewNormal, "Normal", "view.normal", Some(ViewMode::Normal)),
             (Icon::ViewOutline, "Outline\nView", "view.outline", Some(ViewMode::Outline)),
@@ -16,7 +16,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    group(ui, |ui| {
+    group(ui, "Master Views", |ui| {
         let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
         if big_button_ex(ui, Icon::SlideMaster, "Slide\nMaster", true, false, in_master).0.clicked() {
             let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
@@ -30,7 +30,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Show", |ui| {
         rows(ui, |ui| {
             let mut r = app.ui.ruler;
             if ui.checkbox(&mut r, "Ruler").changed() {
@@ -53,7 +53,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             app.ui.notes = !n;
         }
     });
-    group(ui, |ui| {
+    group(ui, "Zoom", |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, "Zoom", true, true, false);
         if main.on_hover_text("Zoom").clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
@@ -76,7 +76,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             app.ui.zoom = None;
         }
     });
-    group(ui, |ui| {
+    group(ui, "Window", |ui| {
         let has = app.session.active().is_some();
         let on = app.doc_window.is_some();
         let resp = big_button_ex(ui, Icon::NewWindow, "New\nWindow", has, false, on).0;
@@ -84,7 +84,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             let _ = app.run("view.newWindow", json!({}));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Color/Grayscale", |ui| {
         let gs = app.ui.grayscale;
         if big_button_ex(ui, Icon::Grayscale, "Grayscale", true, false, gs).0.clicked() {
             app.ui.grayscale = !gs;

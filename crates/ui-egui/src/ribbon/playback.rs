@@ -5,14 +5,14 @@ pub(super) fn playback(app: &mut SlideApp, ui: &mut Ui) {
         .session
         .active()
         .and_then(|d| d.selected_shapes().into_iter().find_map(|s| if let ShapeKind::Media(m) = &s.kind { Some(m.clone()) } else { None }));
-    group(ui, |ui| {
+    group(ui, "Preview", |ui| {
         let playing = app.session.active().and_then(|d| d.selection.shapes.first().copied()).is_some_and(|id| app.media.is_playing(id));
         if big_button(ui, if playing { Icon::Pause } else { Icon::Play }, if playing { "Pause" } else { "Play" }, m.is_some()).clicked() {
             run(app, "media.toggle", json!({}));
         }
         big(app, ui, Icon::TrimMedia, "Trim", "app.dialog", json!({"id": "trim"}));
     });
-    group(ui, |ui| {
+    group(ui, "Options", |ui| {
         rows(ui, |ui| {
             let mut auto = m.as_ref().is_some_and(|x| x.autoplay);
             if ui.checkbox(&mut auto, "Start Automatically").changed() {
@@ -42,7 +42,7 @@ pub(super) fn playback(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Volume", |ui| {
         let r = big_button(ui, Icon::Volume, "Volume", m.is_some());
         egui::Popup::menu(&r).show(|ui| {
             for (l, v) in [("Low", 0.25), ("Medium", 0.5), ("High", 1.0), ("Mute", 0.0)] {

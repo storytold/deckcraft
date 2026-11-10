@@ -30,7 +30,7 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
 // ---------- Insert ----------
 
 pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Slides", |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
         if main.clicked() {
             run(app, "slide.new", json!({}));
@@ -39,7 +39,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             egui::Popup::menu(&a).width(420.0).show(|ui| layout_menu(app, ui, "slide.new"));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Tables", |ui| {
         let r = big_button(ui, Icon::Table, "Table", enabled(app, "insert.table"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some((rr, cc)) = table_grid_picker(ui) {
@@ -57,13 +57,13 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Images", |ui| {
         big(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
         photo_album_button(app, ui);
         let r = big_button(ui, Icon::Screenshot, "Screenshot", false);
         let _ = r.on_hover_text("Screenshot (not available yet)");
     });
-    group(ui, |ui| {
+    group(ui, "Illustrations", |ui| {
         let r = big_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some(p) = shapes_gallery(ui) {
@@ -87,7 +87,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Links", |ui| {
         let r = big_button(ui, Icon::Zoom, "Zoom", enabled(app, "insert.zoom"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(300.0).show(|ui| zoom_menu(app, ui));
         big(app, ui, Icon::Link, "Link", "app.dialog", json!({"id": "hyperlink"}));
@@ -105,10 +105,10 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Comments", |ui| {
         big(app, ui, Icon::Comment, "Comment", "app.dialog", json!({"id": "comment"}));
     });
-    group(ui, |ui| {
+    group(ui, "Text", |ui| {
         big(app, ui, Icon::TextBox, "Text\nBox", "insert.textBox", json!({}));
         big(app, ui, Icon::HeaderFooter, "Header &\nFooter", "app.dialog", json!({"id": "headerFooter"}));
         let r = big_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"));
@@ -122,11 +122,11 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::DateTime, "Date &\nTime", "insert.dateTime", json!({}));
         big(app, ui, Icon::SlideNumber, "Slide\nNumber", "insert.slideNumber", json!({}));
     });
-    group(ui, |ui| {
+    group(ui, "Symbols", |ui| {
         big(app, ui, Icon::Equation, "Equation", "app.dialog", json!({"id": "equation"}));
         big(app, ui, Icon::Symbol, "Symbol", "app.dialog", json!({"id": "symbol"}));
     });
-    group(ui, |ui| {
+    group(ui, "Media", |ui| {
         big(app, ui, Icon::Video, "Video", "app.insertVideoDialog", json!({}));
         big(app, ui, Icon::Audio, "Audio", "app.insertAudioDialog", json!({}));
     });

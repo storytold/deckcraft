@@ -8,7 +8,7 @@ use super::{
 // ---------- Home ----------
 
 fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Clipboard", |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::Paste, "Paste", enabled(app, "edit.paste"), true, false);
         if main.on_hover_text("Paste (⌘V)").clicked() {
             run(app, "edit.paste", json!({}));
@@ -98,7 +98,7 @@ pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
 
 /// Render the Home Slides group: New Slide, Layout, Reset, and Section controls.
 fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Slides", |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
         if main.on_hover_text("New Slide (⇧⌘N)").clicked() {
             run(app, "slide.new", json!({}));
@@ -163,7 +163,7 @@ pub fn font_families(app: &SlideApp) -> Vec<String> {
 
 fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
     let en = enabled(app, "format.bold");
-    group(ui, |ui| {
+    group(ui, "Font", |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
@@ -270,7 +270,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
 /// Render paragraph formatting controls using the current paragraph state.
 fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
     let en = enabled(app, "format.bullets");
-    group(ui, |ui| {
+    group(ui, "Paragraph", |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 1.0;
@@ -396,7 +396,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
 
 /// Render drawing controls for shapes, text, arrange, quick styles, fill, and outline.
 fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Images", |ui| {
         let en = enabled(app, "shape.insert");
         let r = big_button(ui, Icon::Shapes, "Shapes", en).on_hover_text("Shapes");
         egui::Popup::menu(&r).show(|ui| {
@@ -452,12 +452,12 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui) {
     slides_group(app, ui);
     font_group(app, ui, &st);
     paragraph_group(app, ui, &st);
-    group(ui, |ui| {
+    group(ui, "Drawing", |ui| {
         big(app, ui, Icon::Picture, "Picture", "app.insertPictureDialog", json!({}));
     });
     drawing_group(app, ui);
     // Editing, as in PowerPoint: Find, Replace and Replace Fonts, then the Selection Pane.
-    group(ui, |ui| {
+    group(ui, "Editing", |ui| {
         ui.vertical(|ui| {
             small(app, ui, Icon::Search, "Find", "app.find", json!({}));
             small(app, ui, Icon::Spelling, "Replace", "app.replace", json!({}));
@@ -468,7 +468,7 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui) {
         // Also under Arrange, but that is disabled until something is selected (#132).
         big(app, ui, Icon::SelectionPane, "Selection\nPane", "view.pane", json!({"pane": "selection"}));
     });
-    group(ui, |ui| {
+    group(ui, "Designer", |ui| {
         big(app, ui, Icon::DesignIdeas, "Design\nIdeas", "view.pane", json!({"pane": "designer"}));
     });
 }

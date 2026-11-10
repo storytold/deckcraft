@@ -18,19 +18,19 @@ fn comment_nav(app: &mut SlideApp, ui: &mut Ui, forward: bool) {
 }
 
 pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Proofing", |ui| {
         big(app, ui, Icon::Spelling, "Spelling", "app.dialog", json!({"id": "spelling"}));
         big(app, ui, Icon::Thesaurus, "Thesaurus", "review.thesaurusPane", json!({}));
     });
-    group(ui, |ui| {
+    group(ui, "Accessibility", |ui| {
         big(app, ui, Icon::Accessibility, "Check\nAccessibility", "app.dialog", json!({"id": "accessibility"}));
     });
-    group(ui, |ui| {
+    group(ui, "Language", |ui| {
         let r = big_button(ui, Icon::Translate, "Translate", false);
         let _ = r.on_hover_text("Translation needs a language model (not bundled)");
         big(app, ui, Icon::Language, "Language", "app.dialog", json!({"id": "language"}));
     });
-    group(ui, |ui| {
+    group(ui, "Compare", |ui| {
         big(app, ui, Icon::Compare, "Compare", "app.compareDialog", json!({}));
         let comparing = enabled(app, "review.endCompare");
         if big_button(ui, Icon::Check, "Accept\nAll", comparing).clicked() {
@@ -43,7 +43,7 @@ pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    group(ui, |ui| {
+    group(ui, "Comments", |ui| {
         big(app, ui, Icon::NewComment, "New\nComment", "app.dialog", json!({"id": "comment"}));
         rows(ui, |ui| {
             comment_nav(app, ui, false);

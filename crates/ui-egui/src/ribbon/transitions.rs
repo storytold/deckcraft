@@ -11,7 +11,7 @@ use super::{
 pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
     let cur = app.session.active().and_then(|d| d.current_slide().and_then(|s| s.transition.clone()));
     let kind = cur.as_ref().map(|t| t.kind.clone()).unwrap_or_else(|| "none".into());
-    group(ui, |ui| {
+    group(ui, "Preview", |ui| {
         let playing = app.show.as_ref().is_some_and(|s| s.preview_only);
         let (resp, _) = widgets::big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
         if resp.on_hover_text("Play this slide's transition").clicked() {
@@ -23,7 +23,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    group(ui, |ui| {
+    group(ui, "Transition to This Slide", |ui| {
         let list = deckcraft_model::anim::TRANSITIONS;
         let shown: Vec<_> = list.iter().take(12).collect();
         let sel = shown.iter().position(|x| x.0 == kind);
@@ -58,7 +58,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Effect Options", |ui| {
         let selected = cur.as_ref().map(|t| t.option.as_str());
         let rows = transition_effect_rows(&kind, selected);
         let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !rows.is_empty());
@@ -71,7 +71,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Timing", |ui| {
         // Sound in its own column, so the timing column keeps its three rows.
         rows(ui, |ui| {
             ui.horizontal(|ui| {
