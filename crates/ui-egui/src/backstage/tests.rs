@@ -379,11 +379,14 @@ fn change_file_type_exports_all_slides_as_pictures() {
     h.run_steps(3);
     click_on_page(&h, "PNG Pictures, all slides (*.png)");
     h.run_steps(2);
-    assert!(h.query_by_label("Transparent background").is_some(), "all-slides PNG keeps the option");
+    h.get_by_label("Transparent background").click();
+    h.run_steps(2);
     click_on_page(&h, "Save As");
     h.run_steps(3);
     for k in 1..=3 {
-        assert!(dir.join(format!("{title}{k}.png")).is_file(), "slide {k} as PNG");
+        let png = std::fs::read(dir.join(format!("{title}{k}.png"))).unwrap();
+        let img = deckcraft_render::decode_image(&png).unwrap();
+        assert_eq!(img.get_pixel(2, 2).0[3], 0, "slide {k} leaves the background out");
     }
     assert_eq!(*asked.borrow(), vec![format!("{title}.jpg"), format!("{title}.png")]);
     let _ = std::fs::remove_dir_all(&dir);
