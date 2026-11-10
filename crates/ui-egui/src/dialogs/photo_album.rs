@@ -68,10 +68,10 @@ fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
 /// newly chosen key; the caller supplies the visible label.
 fn album_choice(ui: &mut Ui, d: &mut Dialog, id: &str, name: &str, key: &str, default: &str, choices: &[(&str, &str)]) {
     let cur = d.get(key, default);
-    let label = choices.iter().find(|(k, _)| *k == cur).map(|(_, l)| *l).unwrap_or(default);
+    let label = choices.iter().find(|(k, _)| *k == cur).map(|(_, l)| tl!(l)).unwrap_or(default);
     let opened = craft_ui::ComboBox::from_id_salt(id).selected_text(label).width(220.0).show_ui(ui, |ui| {
         for (k, l) in choices {
-            if ui.selectable_label(cur == *k, *l).clicked() {
+            if ui.selectable_label(cur == *k, tl!(l)).clicked() {
                 d.fields.insert(key.into(), (*k).to_string());
             }
         }
@@ -79,7 +79,7 @@ fn album_choice(ui: &mut Ui, d: &mut Dialog, id: &str, name: &str, key: &str, de
     let access = name.to_string();
     let shown = label.to_string();
     opened.response.widget_info(move || {
-        let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, access.clone());
+        let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!(&access));
         info.current_text_value = Some(shown.clone());
         info
     });

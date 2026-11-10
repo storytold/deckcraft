@@ -262,3 +262,6 @@ pub(crate) fn use_fixture(code: &'static str, source: &'static str) -> Lang {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod labels_tests;

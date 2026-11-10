@@ -219,8 +219,12 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
                 toggle(app, ui, Icon::AlignRight, "Align Right", "format.alignRight", false);
             });
             ui.horizontal(|ui| {
-                for (l, a) in [("Top", "top"), ("Center", "middle"), ("Bottom", "bottom")] {
-                    if ui.small_button(l).on_hover_text(format!("Align text to the {l} of the cell").to_lowercase()).clicked() {
+                for (l, a, tip) in [
+                    ("Top", "top", "Align text to the top of the cell"),
+                    ("Center", "middle", "Align text to the center of the cell"),
+                    ("Bottom", "bottom", "Align text to the bottom of the cell"),
+                ] {
+                    if ui.small_button(tl!(l)).on_hover_text(tl!(tip)).clicked() {
                         run(app, "table.cellAlign", json!({"anchor": a}));
                     }
                 }

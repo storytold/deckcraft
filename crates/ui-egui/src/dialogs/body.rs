@@ -66,7 +66,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "themeFonts" => theme_fonts_dialog(app, ui, d),
         "dateTime" => date_time_dialog(app, ui, d),
         _ => {
-            ui.label(format!("“{}” is not available yet.", d.id));
+            ui.label(crate::i18n::fmt(tl!("“{name}” is not available yet."), &[("name", d.id.as_str())]));
             let (ok, cancel) = buttons(ui, "OK");
             ok || cancel
         }
@@ -198,13 +198,13 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let slide_default = seed.slide.to_string();
     let mode = d.get("mode", seed.mode);
     ui.horizontal(|ui| {
-        if ui.selectable_label(mode == "url", "Web Page or File").clicked() {
+        if ui.selectable_label(mode == "url", tl!("Web Page or File")).clicked() {
             d.fields.insert("mode".into(), "url".into());
         }
-        if ui.selectable_label(mode == "slide", "This Document").clicked() {
+        if ui.selectable_label(mode == "slide", tl!("This Document")).clicked() {
             d.fields.insert("mode".into(), "slide".into());
         }
-        if ui.selectable_label(mode == "email", "Email Address").clicked() {
+        if ui.selectable_label(mode == "email", tl!("Email Address")).clicked() {
             d.fields.insert("mode".into(), "email".into());
         }
     });
@@ -374,7 +374,7 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let tab = d.get("tab", if numbered { "numbered" } else { "bulleted" });
     ui.horizontal(|ui| {
         for (k, l) in [("bulleted", "Bulleted"), ("numbered", "Numbered")] {
-            if ui.selectable_label(tab == k, l).clicked() {
+            if ui.selectable_label(tab == k, tl!(l)).clicked() {
                 d.fields.insert("tab".into(), k.into());
             }
         }
@@ -429,10 +429,10 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(tl!("Color:")));
         let combo = craft_ui::ComboBox::from_id_salt("bullet-color")
-            .selected_text(colors.iter().find(|c| c.0 == color).map_or("Automatic", |c| c.1))
+            .selected_text(tl!(colors.iter().find(|c| c.0 == color).map_or("Automatic", |c| c.1)))
             .show_ui(ui, |ui| {
                 for (k, l) in colors {
-                    if ui.selectable_label(color == k, l).clicked() {
+                    if ui.selectable_label(color == k, tl!(l)).clicked() {
                         d.fields.insert("color".into(), k.into());
                     }
                 }
@@ -501,7 +501,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     };
     ui.horizontal(|ui| {
         for (k, l) in [("click", "Mouse Click"), ("hover", "Mouse Over")] {
-            if ui.selectable_label(tab == k, l).clicked() && tab != k {
+            if ui.selectable_label(tab == k, tl!(l)).clicked() && tab != k {
                 d.fields.clear();
                 d.fields.insert("tab".into(), k.into());
             }
@@ -512,13 +512,13 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let kind = d.get("kind", cur_kind);
     let hyperlink = !matches!(kind.as_str(), "none" | "program" | "playMedia");
     let pick = |d: &mut Dialog, ui: &mut Ui, k: &str, l: &str| {
-        if ui.radio(d.get("kind", cur_kind) == k, l).clicked() {
+        if ui.radio(d.get("kind", cur_kind) == k, tl!(l)).clicked() {
             d.fields.insert("kind".into(), k.into());
         }
     };
     pick(d, ui, "none", "None");
     ui.horizontal(|ui| {
-        let field = ui.radio(hyperlink, "Hyperlink to:");
+        let field = ui.radio(hyperlink, tl!("Hyperlink to:"));
         if field.clicked() && !hyperlink {
             d.fields.insert("kind".into(), "next".into());
         }
@@ -533,11 +533,11 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ("slide", "Slide…"),
             ("url", "URL…"),
         ];
-        let shown = targets.iter().find(|t| t.0 == kind).map_or("Next Slide", |t| t.1);
+        let shown = tl!(targets.iter().find(|t| t.0 == kind).map_or("Next Slide", |t| t.1));
         ui.add_enabled_ui(hyperlink, |ui| {
             let combo = craft_ui::ComboBox::from_id_salt("action-target").selected_text(shown).show_ui(ui, |ui| {
                 for (k, l) in targets {
-                    if ui.selectable_label(kind == k, l).clicked() {
+                    if ui.selectable_label(kind == k, tl!(l)).clicked() {
                         d.fields.insert("kind".into(), k.into());
                     }
                 }
@@ -644,7 +644,7 @@ fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         })
         .unwrap_or_default();
     let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(path.clone());
-    ui.label(format!("Insert slides from {name} after the current slide:"));
+    ui.label(crate::i18n::fmt(tl!("Insert slides from {name} after the current slide:"), &[("name", name.as_str())]));
     // Unticked slides are remembered by index; everything starts ticked.
     let off = |d: &Dialog, i: usize| d.fields.get(&format!("off{i}")).is_some_and(|v| v == "1");
     ui.horizontal(|ui| {
@@ -720,7 +720,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ("Animated GIF (.gif)", "gif"),
         ("Outline/RTF (.rtf)", "rtf"),
     ] {
-        if ui.radio(fmt == f, l).clicked() {
+        if ui.radio(fmt == f, tl!(l)).clicked() {
             d.fields.insert("fmt".into(), f.into());
         }
     }
@@ -730,7 +730,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ui.horizontal(|ui| {
             let field = ui.label(tl!("Print layout:"));
             let combo = craft_ui::ComboBox::from_id_salt("pdf_layout")
-                .selected_text(match pdf_layout.as_str() {
+                .selected_text(tl!(match pdf_layout.as_str() {
                     "notes" => "Notes Pages",
                     "h1" => "Handouts (1 slide per page)",
                     "h2" => "Handouts (2 slides per page)",
@@ -739,7 +739,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     "h6" => "Handouts (6 slides per page)",
                     "h9" => "Handouts (9 slides per page)",
                     _ => "Full Page Slides",
-                })
+                }))
                 .show_ui(ui, |ui| {
                     for (k, l) in [
                         ("slides", "Full Page Slides"),
@@ -751,7 +751,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                         ("h6", "Handouts (6 slides per page)"),
                         ("h9", "Handouts (9 slides per page)"),
                     ] {
-                        if ui.selectable_label(pdf_layout == k, l).clicked() {
+                        if ui.selectable_label(pdf_layout == k, tl!(l)).clicked() {
                             d.fields.insert("pdfLayout".into(), k.into());
                         }
                     }
@@ -909,7 +909,7 @@ fn dlg_paste_special(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label(tl!("As:"));
     for (id, label) in OPTS {
         let ok = has_shapes || matches!(id, "destinationTheme" | "text");
-        ui.add_enabled_ui(ok, |ui| ui.radio_value(&mut cur, id.to_string(), label));
+        ui.add_enabled_ui(ok, |ui| ui.radio_value(&mut cur, id.to_string(), tl!(label)));
     }
     d.fields.insert("as".into(), cur.clone());
     let (ok, cancel) = buttons(ui, "OK");
@@ -928,19 +928,28 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let info = app.session.execute("review.dictionary", &json!({})).unwrap_or_default();
     let available = info.get("available").and_then(Value::as_bool).unwrap_or(false);
     match info.get("found").and_then(Value::as_str) {
-        Some(f) if available => ui.label(egui::RichText::new(format!("Dictionary: {}", f.rsplit(['/', '\\']).next().unwrap_or(f))).small().weak()),
-        _ if available => {
-            ui.label(egui::RichText::new(format!("Dictionary: {}", info.get("lang").and_then(Value::as_str).unwrap_or(""))).small().weak())
-        }
+        Some(f) if available => ui.label(
+            egui::RichText::new(crate::i18n::fmt(tl!("Dictionary: {name}"), &[("name", f.rsplit(['/', '\\']).next().unwrap_or(f))])).small().weak(),
+        ),
+        _ if available => ui.label(
+            egui::RichText::new(crate::i18n::fmt(tl!("Dictionary: {name}"), &[("name", info.get("lang").and_then(Value::as_str).unwrap_or(""))]))
+                .small()
+                .weak(),
+        ),
         _ => ui.label(
-            egui::RichText::new(format!(
-                "No {} dictionary is installed, so only common misspellings are found. Put a Hunspell .aff/.dic pair in {}.",
-                info.get("lang").and_then(Value::as_str).unwrap_or("en-US"),
-                info.get("folders")
-                    .and_then(Value::as_array)
-                    .and_then(|a| a.get(1).or(a.first()))
-                    .and_then(Value::as_str)
-                    .unwrap_or("a dictionaries folder")
+            egui::RichText::new(crate::i18n::fmt(
+                tl!("No {lang} dictionary is installed, so only common misspellings are found. Put a Hunspell .aff/.dic pair in {folder}."),
+                &[
+                    ("lang", info.get("lang").and_then(Value::as_str).unwrap_or("en-US")),
+                    (
+                        "folder",
+                        info.get("folders")
+                            .and_then(Value::as_array)
+                            .and_then(|a| a.get(1).or(a.first()))
+                            .and_then(Value::as_str)
+                            .unwrap_or(tl!("a dictionaries folder")),
+                    ),
+                ],
             ))
             .small()
             .weak(),
@@ -956,7 +965,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let slide = item.get("slide").cloned().unwrap_or_default();
             let shape = item.get("shape").cloned().unwrap_or_default();
             ui.horizontal(|ui| {
-                ui.label(format!("Slide {}: “{w}”", slide.as_u64().unwrap_or(0) + 1));
+                ui.label(crate::i18n::fmt(tl!("Slide {n}: “{word}”"), &[("n", &(slide.as_u64().unwrap_or(0) + 1).to_string()), ("word", w)]));
                 if ui.small_button(tl!("Go to")).clicked() {
                     let _ = app.run("slide.go", json!({"index": slide}));
                     let _ = app.run("edit.select", json!({"ids": [shape]}));
@@ -1071,12 +1080,14 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
         for item in &list {
             ui.horizontal(|ui| {
-                ui.label(format!(
-                    "Slide {}: {}{}",
-                    item.get("slide").and_then(Value::as_u64).unwrap_or(0) + 1,
-                    item.get("issue").and_then(Value::as_str).unwrap_or(""),
-                    item.get("name").and_then(Value::as_str).map(|n| format!(" — {n}")).unwrap_or_default()
-                ));
+                // The issue text comes from the engine and stays English for now.
+                let slide = (item.get("slide").and_then(Value::as_u64).unwrap_or(0) + 1).to_string();
+                let issue = item.get("issue").and_then(Value::as_str).unwrap_or("");
+                let line = match item.get("name").and_then(Value::as_str) {
+                    Some(name) => crate::i18n::fmt(tl!("Slide {n}: {issue} — {name}"), &[("n", &slide), ("issue", issue), ("name", name)]),
+                    None => crate::i18n::fmt(tl!("Slide {n}: {issue}"), &[("n", &slide), ("issue", issue)]),
+                };
+                ui.label(line);
                 if ui.small_button(tl!("Go to")).clicked() {
                     let _ = app.run("slide.go", json!({"index": item.get("slide").cloned().unwrap_or_default()}));
                     if let Some(id) = item.get("shape") {
@@ -1100,16 +1111,16 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut all = !has_sel || d.get("scope", "") == "all";
     ui.horizontal(|ui| {
         ui.label(tl!("Apply to:"));
-        if ui.add_enabled(has_sel, egui::RadioButton::new(!all, "Selected text")).clicked() {
+        if ui.add_enabled(has_sel, egui::RadioButton::new(!all, tl!("Selected text"))).clicked() {
             d.fields.insert("scope".into(), "sel".into());
             all = false;
         }
-        if ui.radio(all, "Whole presentation").clicked() {
+        if ui.radio(all, tl!("Whole presentation")).clicked() {
             d.fields.insert("scope".into(), "all".into());
             all = true;
         }
     });
-    ui.label(if all { "Mark all text in the presentation as:" } else { "Mark selected text as:" });
+    ui.label(if all { tl!("Mark all text in the presentation as:") } else { tl!("Mark selected text as:") });
     egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
         // The selection's own language first when the list doesn't have it.
         let own = (!crate::squiggles::LANGS.iter().any(|(_, t)| t.eq_ignore_ascii_case(&cur))).then(|| (cur.clone(), cur.clone()));
@@ -1143,7 +1154,10 @@ fn dlg_custom_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut started = false;
     for s in &shows {
         ui.horizontal(|ui| {
-            ui.label(format!("{} ({} slides)", s.name, s.slides.len()));
+            ui.label(crate::i18n::fmt(
+                &crate::i18n::tn(s.slides.len() as u64, "{name} ({n} slide)", "{name} ({n} slides)"),
+                &[("name", s.name.as_str())],
+            ));
             if ui.small_button(tl!("Show")).clicked() {
                 run(app, "show.start", json!({"custom": s.name}));
                 started = true;
@@ -1254,7 +1268,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ("pyramid", "Pyramid"),
             ("matrix", "Matrix"),
         ] {
-            if ui.selectable_label(kind == k, l).clicked() {
+            if ui.selectable_label(kind == k, tl!(l)).clicked() {
                 d.fields.insert("kind".into(), k.into());
             }
         }

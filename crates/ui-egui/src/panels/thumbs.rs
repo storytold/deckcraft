@@ -193,7 +193,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
             });
         }
         let (row, resp) = ui.allocate_exact_size(vec2(width, th + 16.0), Sense::click_and_drag());
-        let label = format!("Slide {}", i + 1);
+        let label = crate::i18n::fmt(tl!("Slide {n}"), &[("n", &(i + 1).to_string())]);
         resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
         let img = crate::textures::device_pixel_rect(Rect::from_min_size(pos2(row.min.x + 30.0, row.min.y + 6.0), vec2(tw, th)), ppp);
         rects.push((i, row));

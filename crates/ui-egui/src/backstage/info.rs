@@ -156,28 +156,28 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     ui.horizontal(|ui| {
         craft_ui::ComboBox::from_id_salt("backstage_save_type")
             .width(340.0)
-            .selected_text(current)
+            .selected_text(tl!(current))
             .show_ui(ui, |ui| {
                 for (id, label, _) in SAVE_TYPES {
-                    if ui.selectable_label(bs.file_type == id, label).clicked() {
+                    if ui.selectable_label(bs.file_type == id, tl!(label)).clicked() {
                         bs.file_type = id;
                     }
                 }
             })
             .response
-            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Save as type"));
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Save as type")));
         // A page that keeps the files (`host_save`) saves; plain web downloads.
         let web = app.services.pick_save.is_none() && app.services.host_save.is_none();
-        let label = if web { "Download" } else { "Save" };
+        let label = if web { tl!("Download") } else { tl!("Save") };
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
         if save
-            .on_hover_text(if web {
+            .on_hover_text(tl!(if web {
                 "Download the file"
             } else if app.services.host_save.is_some() {
                 "Save to the page"
             } else {
                 "Choose where to save"
-            })
+            }))
             .clicked()
         {
             let fmt = bs.file_type;
@@ -232,16 +232,16 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             let dark = app.ui.brightness == theme::Brightness::Dark;
             craft_ui::ComboBox::from_id_salt("backstage_appearance")
                 .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
+                .selected_text(if dark { tl!("Dark") } else { tl!("Light") })
                 .show_ui(ui, |ui| {
                     for (on, label) in [(false, "Light"), (true, "Dark")] {
-                        if ui.selectable_label(dark == on, label).clicked() {
+                        if ui.selectable_label(dark == on, tl!(label)).clicked() {
                             let _ = app.run("view.dark", json!({"on": on}));
                         }
                     }
                 })
                 .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Appearance")));
         });
     });
 }

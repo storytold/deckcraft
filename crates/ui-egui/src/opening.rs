@@ -107,7 +107,7 @@ impl SlideApp {
             ui.set_width(320.0);
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(18.0));
-                ui.label(format!("Opening {name}…"));
+                ui.label(crate::i18n::fmt(tl!("Opening {name}…"), &[("name", name.as_str())]));
             });
             ui.add_space(6.0);
             ui.weak(format!("Reading the file: {secs:.0} s"));

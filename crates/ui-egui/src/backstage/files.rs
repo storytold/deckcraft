@@ -131,7 +131,11 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
                 p.text(pos2(visible_right - 82.0, rect.center().y), Align2::RIGHT_CENTER, "(missing)", theme::font(11.0), t.text_dim);
             }
         }
-        let resp = if missing { resp.on_hover_text(format!("{path} — this file can't be found")) } else { resp.on_hover_text(&path) };
+        let resp = if missing {
+            resp.on_hover_text(crate::i18n::fmt(tl!("{path} — this file can't be found"), &[("path", path.as_str())]))
+        } else {
+            resp.on_hover_text(&path)
+        };
         // Remove from the list: a real labelled widget on top of the row, with a code-drawn icon
         // (a text glyph would need a font that has it).
         let x = ui.allocate_rect(

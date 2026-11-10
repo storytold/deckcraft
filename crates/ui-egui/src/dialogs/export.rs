@@ -6,12 +6,14 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
     use deckcraft_engine::gif_export::{MAX_SECONDS, MAX_WIDTH, MIN_SECONDS, MIN_WIDTH, SIZE_PRESETS};
     let n = app.session.active().map_or(0, |s| s.doc.slides.len());
     let size = d.get("gifSize", "medium");
-    let size_label = |k: &str| match k {
-        "small" => "Small (640 px wide)",
-        "large" => "Large (1280 px wide)",
-        "extraLarge" => "Extra Large (1920 px wide)",
-        "custom" => "Custom width",
-        _ => "Medium (960 px wide)",
+    let size_label = |k: &str| {
+        tl!(match k {
+            "small" => "Small (640 px wide)",
+            "large" => "Large (1280 px wide)",
+            "extraLarge" => "Extra Large (1920 px wide)",
+            "custom" => "Custom width",
+            _ => "Medium (960 px wide)",
+        })
     };
     ui.add_space(4.0);
     ui.horizontal(|ui| {

@@ -237,7 +237,9 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         let x = bar.min.x + pos as f32 * bar.width();
         let r = Rect::from_center_size(pos2(x, marks.center().y), vec2(10.0, 12.0));
         let resp = ui.interact(r, ui.scope_id().with((id, "mark", i)), Sense::click_and_drag());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Gradient stop {}", i + 1)));
+        resp.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::fmt(tl!("Gradient stop {n}"), &[("n", &(i + 1).to_string())]))
+        });
         let fill = c32(&s.color, sc);
         let stroke = if i == sel { Stroke::new(2.0, t.accent) } else { Stroke::new(1.0, t.handle_stroke) };
         let tri = vec![pos2(x, r.min.y), pos2(r.max.x, r.min.y + 4.0), pos2(r.max.x, r.max.y), pos2(r.min.x, r.max.y), pos2(r.min.x, r.min.y + 4.0)];

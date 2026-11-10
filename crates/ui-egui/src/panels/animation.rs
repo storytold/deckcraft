@@ -92,9 +92,13 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             );
             let edge = Rect::from_min_max(pos2(bar.max.x - 3.0, bar.min.y - 3.0), pos2(bar.max.x + 4.0, bar.max.y + 3.0));
             let body_resp = ui.interact(bar, ui.scope_id().with(("anim_bar", i)), Sense::drag()).on_hover_text(animtimeline::label(b));
-            body_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, format!("Timing bar {}", i + 1)));
+            body_resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Unknown, true, crate::i18n::fmt(tl!("Timing bar {n}"), &[("n", &(i + 1).to_string())]))
+            });
             let edge_resp = ui.interact(edge, ui.scope_id().with(("anim_edge", i)), Sense::drag());
-            edge_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, format!("Duration handle {}", i + 1)));
+            edge_resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Unknown, true, crate::i18n::fmt(tl!("Duration handle {n}"), &[("n", &(i + 1).to_string())]))
+            });
             if edge_resp.hovered() || edge_resp.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             } else if body_resp.hovered() || body_resp.dragged() {

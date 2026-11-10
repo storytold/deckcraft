@@ -94,7 +94,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::Action, "Action", enabled(app, "insert.actionButton"));
         egui::Popup::menu(&r).show(|ui| {
             for k in ["back", "forward", "beginning", "end", "home", "information", "return", "movie", "document", "sound", "help", "custom"] {
-                if ui.button(format!("Action Button: {k}")).clicked() {
+                if ui.button(crate::i18n::fmt(tl!("Action Button: {kind}"), &[("kind", tl!(k))])).clicked() {
                     run(app, "insert.actionButton", json!({"kind": k}));
                 }
             }
@@ -114,7 +114,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"));
         egui::Popup::menu(&r).show(|ui| {
             for i in 0..6 {
-                if ui.button(format!("WordArt style {}", i + 1)).clicked() {
+                if ui.button(crate::i18n::fmt(tl!("WordArt style {n}"), &[("n", &(i + 1).to_string())])).clicked() {
                     run(app, "insert.wordArt", json!({"style": i}));
                 }
             }

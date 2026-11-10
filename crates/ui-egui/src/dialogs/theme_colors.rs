@@ -26,7 +26,8 @@ fn theme_color_row(ui: &mut Ui, d: &mut Dialog, slot: SchemeSlot) {
         let resp = ui.add(egui::TextEdit::singleline(&mut v).desired_width(84.0).id_salt(("theme-hex", key)));
         let shown = v.clone();
         resp.widget_info(move || {
-            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, format!("{} hex", slot.label()));
+            let mut info =
+                egui::WidgetInfo::labeled(egui::Role::TextInput, true, crate::i18n::fmt(tl!("{color} hex"), &[("color", tl!(slot.label()))]));
             info.current_text_value = Some(shown.clone());
             info
         });

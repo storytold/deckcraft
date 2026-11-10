@@ -207,7 +207,10 @@ impl View {
         let key = |name: &str| Command::Key { name: name.into(), command: false, shift: false, alt: false, ctrl: false };
         ui.horizontal_wrapped(|ui| {
             ui.heading(&snapshot.elapsed);
-            ui.label(format!("Slide {} of {}", snapshot.slide.saturating_add(1), snapshot.total));
+            ui.label(crate::i18n::fmt(
+                tl!("Slide {n} of {total}"),
+                &[("n", &snapshot.slide.saturating_add(1).to_string()), ("total", &snapshot.total.to_string())],
+            ));
             for (label, name) in [("◀ Previous", "ArrowLeft"), ("Next ▶", "ArrowRight")] {
                 if ui.button(label).clicked() {
                     commands.push(key(name));
@@ -308,7 +311,7 @@ impl View {
         ui.heading(tl!("All slides"));
         ui.label(tl!("Choose a slide to show it, or press G to return."));
         if snapshot.total > crate::show::GRID_CAP {
-            ui.label(format!("First {} slides", crate::show::GRID_CAP));
+            ui.label(crate::i18n::tn(crate::show::GRID_CAP as u64, "First {n} slide", "First {n} slides"));
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

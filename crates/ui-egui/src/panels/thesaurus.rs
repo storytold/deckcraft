@@ -16,7 +16,7 @@ pub(super) fn thesaurus(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     if senses.is_empty() {
-        ui.label(egui::RichText::new(format!("No synonyms for \"{}\".", q.trim())).color(t.text_dim));
+        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("No synonyms for \"{word}\"."), &[("word", q.trim())])).color(t.text_dim));
         return;
     }
     let editing = app.session.active().is_some_and(|d| d.selection.text.is_some());

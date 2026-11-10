@@ -9,7 +9,7 @@ pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
         return;
     };
     let changes = v["changes"].as_array().cloned().unwrap_or_default();
-    ui.label(egui::RichText::new(format!("Compared with {}", v["name"].as_str().unwrap_or("?"))).color(t.text_dim));
+    ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Compared with {name}"), &[("name", v["name"].as_str().unwrap_or("?"))])).color(t.text_dim));
     if v["byPosition"].as_bool() == Some(true) {
         ui.label(egui::RichText::new(tl!("Not a copy of this presentation: slides are matched by position.")).size(11.0).color(t.text_faint));
     }
@@ -23,10 +23,10 @@ pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     ui.horizontal(|ui| {
-        if ui.button(format!("Accept All ({})", changes.len())).clicked() {
+        if ui.button(crate::i18n::fmt(tl!("Accept All ({n})"), &[("n", &changes.len().to_string())])).clicked() {
             run(app, "review.accept", json!({"all": true}));
         }
-        if ui.button(format!("Reject All ({})", changes.len())).clicked() {
+        if ui.button(crate::i18n::fmt(tl!("Reject All ({n})"), &[("n", &changes.len().to_string())])).clicked() {
             run(app, "review.reject", json!({"all": true}));
         }
     });
@@ -81,7 +81,7 @@ pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
     }
     let focus = app.ui.comment_focus;
     for (si, list) in threads {
-        ui.label(egui::RichText::new(format!("Slide {}", si + 1)).font(theme::bold(12.0)).color(t.text_dim));
+        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Slide {n}"), &[("n", &(si + 1).to_string())])).font(theme::bold(12.0)).color(t.text_dim));
         ui.add_space(2.0);
         for (i, c) in list.iter().enumerate() {
             comment_card(app, ui, si, i, c, focus == Some((si, i)));

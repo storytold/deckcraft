@@ -217,15 +217,15 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         ui.label(tl!("Show"));
         for m in NameMode::ALL {
-            if ui.selectable_label(v.names == m, m.label()).clicked() {
+            if ui.selectable_label(v.names == m, tl!(m.label())).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
         let field = ui.label(tl!("Sort"));
-        let combo = craft_ui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
+        let combo = craft_ui::ComboBox::from_id_salt("credits_sort").selected_text(tl!(v.key.label().0)).show_ui(ui, |ui| {
             for k in SortKey::ALL {
-                if ui.selectable_label(v.key == k, k.label().0).clicked() {
+                if ui.selectable_label(v.key == k, tl!(k.label().0)).clicked() {
                     v.key = k;
                     v.ascending = k.default_ascending();
                 }
@@ -244,7 +244,12 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
         }
     });
     let list = sorted(CONTRIBUTORS, v.names, v.key, v.ascending);
-    ui.label(RichText::new(format!("{} contributors · {} commits", list.len(), group(TOTAL_COMMITS))).small().weak());
+    let counts = format!(
+        "{} · {}",
+        crate::i18n::tn(list.len() as u64, "{n} contributor", "{n} contributors"),
+        crate::i18n::tn(TOTAL_COMMITS, "{n} commit", "{n} commits")
+    );
+    ui.label(RichText::new(counts).small().weak());
     ui.separator();
     if list.is_empty() {
         ui.label(tl!("No contributor data was built into this copy."));
@@ -363,7 +368,7 @@ fn cells(c: &Contributor) -> [String; 9] {
 /// A contributor-table header. The sorted column is highlighted; its direction shows on the
 /// toolbar's sort-order button, so no arrow widens the column.
 fn header_text(k: SortKey) -> RichText {
-    RichText::new(k.label().1).strong()
+    RichText::new(tl!(k.label().1)).strong()
 }
 
 fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
@@ -381,7 +386,7 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
         .header(h + 4.0, |mut header| {
             for k in SortKey::ALL {
                 header.col(|ui| {
-                    let r = aligned(ui, k != SortKey::Name, |ui| ui.selectable_label(v.key == k, header_text(k))).on_hover_text(k.label().0);
+                    let r = aligned(ui, k != SortKey::Name, |ui| ui.selectable_label(v.key == k, header_text(k))).on_hover_text(tl!(k.label().0));
 
                     if r.clicked() {
                         if v.key == k {

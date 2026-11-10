@@ -201,7 +201,7 @@ fn place_slides(app: &mut SlideApp, ui: &mut Ui, g: &Grid<'_>, budget: &mut u32,
             for c in 0..cols {
                 let Some(&i) = g.indices.get(row * cols + c) else { break };
                 let (cell, resp) = ui.allocate_exact_size(vec2(g.tw + 36.0, g.th + 36.0), Sense::click_and_drag());
-                let label = format!("Slide {}", i + 1);
+                let label = crate::i18n::fmt(tl!("Slide {n}"), &[("n", &(i + 1).to_string())]);
                 resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
                 let img = crate::textures::device_pixel_rect(Rect::from_min_size(cell.min + vec2(18.0, 8.0), vec2(g.tw, g.th)), ppp);
                 rects.push((i, cell));
