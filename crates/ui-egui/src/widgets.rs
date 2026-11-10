@@ -360,7 +360,7 @@ pub fn dropdown(ui: &mut Ui, label: &str, current: &str, width: f32, enabled: bo
     chevron(&painter, pos2(rect.max.x - 9.0, rect.center().y), 3.0, t.text_dim);
     resp.widget_info(|| egui::WidgetInfo {
         current_text_value: (!current.is_empty()).then(|| current.to_string()),
-        ..egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, label)
+        ..egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, crate::i18n::tr(label))
     });
     egui::Popup::menu(&resp).width(width.max(140.0)).show(|ui| {
         egui::ScrollArea::vertical().max_height(360.0).show(ui, add_items);
