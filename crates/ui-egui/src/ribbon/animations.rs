@@ -1,6 +1,6 @@
 use super::{
-    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big_button, big_button_ex, dropdown, enabled, group, icons, json,
-    pos2, rows, run, theme, vec2, widgets,
+    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big_button, big_button_ex, dropdown, enabled, group, icons, json, pos2,
+    rows, run, theme, vec2, widgets,
 };
 
 // ---------- Animations ----------
