@@ -193,7 +193,23 @@ impl SlideApp {
                     }
                     let name = key_name(key);
                     let revision = self.session.active().map(|d| d.revision);
-                    match self.session.key(name, mods) {
+                    let result = if key == egui::Key::Delete
+                        && !mods.cmd
+                        && !mods.shift
+                        && !mods.alt
+                        && self.slides_list_focused()
+                        && self.session.active().is_some_and(|d| {
+                            d.selection.target == super::Target::Slides
+                                && !d.selection.slides.is_empty()
+                                && d.selection.text.is_none()
+                                && d.selection.shapes.is_empty()
+                        })
+                    {
+                        self.session.execute("edit.delete", &json!({"scope": "slides"}))
+                    } else {
+                        self.session.key(name, mods)
+                    };
+                    match result {
                         Ok(_) => {}
                         Err(e) => self.set_status(e.to_string()),
                     }
