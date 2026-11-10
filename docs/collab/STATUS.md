@@ -1,7 +1,9 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-10. Branch: `collab/pr11`, **rebased onto `origin/main` at `0623b430`** (heads
-`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `6e9d10e7` plus the publication
+Updated: 2026-11-10. Branch: `collab/pr12`, two commits from `collab/pr11` at `fe7bcbca` (the 3-D
+model camera slice `c406a329` and its docs commit). `collab/pr11` is **rebased onto `origin/main`
+at `0623b430`** (heads `collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` =
+`6e9d10e7` plus the publication
 docs commit, the 3-D model slice, the CORS slice, the SmartArt insertion slice, the SmartArt
 conversions slice, the SmartArt node-picture slice and this docs
 commit; pre-rebase hashes are kept in the slice
@@ -48,7 +50,13 @@ image is the whole group, and then the 3-D model camera slice `c406a329`: `model
 **one final view** — `position`, `target`, `up` in slide EMU and `fov` in degrees, or `null` for
 the reader's default view, never a relative edit — checked by the engine's own `camera_param` on
 the client and again before the first write, written into the slide part as `am3d:camera`, with
-the **whole model shape** as the undo image — with this docs commit on top.
+the **whole model shape** as the undo image, and then the 3-D model scene slice `7b51e65d`:
+`model3d.scene` as **one final scene** — one light (`type` directional/point/spot, a non-zero
+`direction`, `intensity` 0–1 and a spot's cone `angle` in degrees 1–179) and the environment
+(`ambient` 0–1 and an optional sRGB `background`), or `null` for the reader's default — never a
+relative edit, checked by the engine's own `scene_param` on the client and again before the first
+write, written into the slide part as `am3d:scene`, with the **whole model shape** as the undo
+image — with this docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -58,13 +66,14 @@ description is [`pr10.md`](pr10.md).
 Draft **[PR #1998](https://github.com/storytold/deckcraft/pull/1998)** is open from
 `copoka/deckcraft:collab/pr11` (head `6e9d10e7`, 83 commits ahead of `origin/main` at `0623b430`)
 into `storytold/deckcraft:main`; its body is [`pr10.md`](pr10.md). GitHub reports the PR
-`MERGEABLE`/`CLEAN` at creation.
+`MERGEABLE`/`CLEAN` at creation. This session's two commits live on the local `collab/pr12`
+(branched from `collab/pr11` at `fe7bcbca`) and are not pushed, so the PR head is unchanged.
 
 [PR #1975](https://github.com/storytold/deckcraft/pull/1975) still points at the pre-rebase
 `collab/pr10` head `be706a11`; it does not contain the last 28 commits and is superseded by
 #1998. It stays open — **closing #1975 is a human decision**. Pushing new commits to
-`collab/pr11`, marking #1998 ready and merging are also manual steps; this file only records the
-state.
+`collab/pr11` (or a new `collab/pr12` branch), marking #1998 ready and merging are also manual
+steps; this file only records the state.
 
 Verification of the slice at `6e9d10e7` ran on the `agents` host, no push: `cargo fmt --all --
 --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `collab-proto` 34;
@@ -91,6 +100,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
+| `collab/pr12` | `7b51e65d` (+ docs) | `model3d.scene` as one final scene — one light (type, direction, intensity and a spot's angle) and the environment (ambient and an optional sRGB background) — checked on the client and in the engine before the first write, written as `am3d:scene` into the slide part, with the whole model shape as the undo image |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs), `44489f34` (+ docs), `c406a329` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`); the SmartArt node-picture slice `44489f34`: `smartArt.picture` as one final value (the top-level graphic, one top-level node, the media channel's digest and the picture's final place), the engine checks the target, the node, the picture allowlist and budget, the place's finite positive area and that the layout does not change before the first write, and the whole group is the undo image; and the 3-D model camera slice `c406a329`: `model3d.camera` as one final view (`position`/`target`/`up` in EMU, `fov` in degrees, or `null`), relative edits refused on the client, on the wire and in the engine before the first write, the view written as `am3d:camera`, and the whole model shape as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
@@ -806,6 +816,25 @@ write, the exact `shape.setField{field: chart}` restore, and the same steps and 
 in-memory hub. `git status` is clean after the docs commit; nothing was pushed, CI was not
 touched, and PR #1975 is unchanged.
 
+Re-run on 2026-11-10 after the model-scene slice (`7b51e65d`, on `agents`, rust 1.99.1): `cargo
+fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings` clean,
+`collab-proto` 39, `collab` 258 + 8, `collab-server` 10 unit + 4 commit + 4 gates + 17 socket,
+`ui-egui collab::` 20, `deckcraft-engine` 592 + 1 ignored, `pptx` 67 + 145 + 5, `render` 209 + the
+known host-without-`craft-fonts` failure, `collab-web` 15, `deckcraft-web` 6, `xtask layers` 32
+crates. The new tests cover two replicas converging on one whole scene value (both deltas equal),
+an undo that restores the whole model shape and a redo that reapplies it on both, an undo refused
+`undo-conflict` after another participant edited the same model, a scene on a plain shape refused
+`invalid` with no history step, the normaliser's whole-scene form and its refusals (a relative
+field, a spot without an angle, an angle on a point light, a missing scene, a plain shape, a
+viewer), the wire round trip and its refusal of unknown fields, the engine's checks (unknown type,
+zero direction, intensity/ambient out of range, the angle/type mismatch, a bad background) before
+any write, a camera and a scene on one model written as `am3d:camera`/`am3d:scene` and read back
+through two pptx round trips, and a real socket: upload the `.glb`, insert the model, set the
+scene on two editors and the viewer, commit and reimport the file with the same numbers, refuse a
+viewer's step `forbidden`, a relative frame as a bad frame and a spot without an angle `invalid`,
+with the version staying at 2. `git status` is clean after the docs commit; nothing was pushed,
+CI was not touched, and PR #1975/#1998 are unchanged.
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -992,15 +1021,19 @@ was not touched, and PR #1975 is unchanged.
    the undo image) and the three SmartArt conversions (`smartArt.fromText`/`toText`/`toShapes`,
    each one structural step with the whole source shape as its undo image), and a node's picture
    (`smartArt.picture` as one final value — the media channel's digest and the picture's place,
-   with the whole group as the undo image), and a 3-D model's camera (`model3d.camera` as one
+   with the whole group as the undo image), a 3-D model's camera (`model3d.camera` as one
    final view — `position`/`target`/`up` in EMU and `fov` in degrees, or `null`, with the whole
-   model shape as the undo image and `am3d:camera` written into the slide part); `smartArt.nodes`
-   is a read-only query the server answers against the authoritative document. Still refused: a
-   model's **scene** (lighting) and relative effects. The design
+   model shape as the undo image and `am3d:camera` written into the slide part) and its scene
+   (`model3d.scene` as one final scene — one light with a type, a non-zero direction, an
+   intensity and a spot's cone angle, plus the environment with an ambient level and an optional
+   sRGB background, or `null`, with the same whole model shape as the undo image and
+   `am3d:scene` written into the slide part); `smartArt.nodes`
+   is a read-only query the server answers against the authoritative document. Still refused:
+   relative effects stay off the wire by design. The design
    rule stands: only
    commands whose result is a deterministic function of the authoritative state, expressed as
    final values, go on the wire; a raw `execute` is not safe (toggles and relative edits
-   diverge). Next: model scene/lighting.
+   diverge). The command surface of this line is complete: a model's camera and scene are both in.
 2. **Media refinement.** Pictures, video, audio, font faces and 3-D models are all in the media
    allowlist, each with its own budget; `GET /media` normalises the path and answers with the
    content type the signature implies. The channel's deployment gap for a browser page is closed:
@@ -1110,8 +1143,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 ## Next session: start here
 
-1. Run the verification table above; if the tree is clean, continue on `collab/pr11` (or branch
-   `collab/pr12` from it).
+1. Run the verification table above; if the tree is clean, continue on `collab/pr12` (or branch
+   `collab/pr13` from it).
 2. **Draft PR #1998 is open from `copoka/deckcraft:collab/pr11`** (head `6e9d10e7`,
    `MERGEABLE`/`CLEAN`); #1975 still points at the pre-rebase `collab/pr10` head and is
    superseded. Pushing this file's commit, marking #1998 ready and closing #1975 are human steps.
@@ -1132,8 +1165,9 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    place), charts (type,
    data, options and insertion as one whole `Chart` value) and the insertion of a 3-D model
    (`insert.model3d`, a binary glTF on the media channel, drawn as its poster or a stand-in cube)
-   are done; `smartArt.nodes` is answered by the server as a read-only query. Next is a model's
-   camera/scene.
+   are done; `smartArt.nodes` is answered by the server as a read-only query, and a model's
+   camera and scene are both in. Nothing is left on this line; the next slice comes from items
+   2–3 (media transport and the cabinet callback).
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
    body image)/transition/animation (a shape's step list for add/remove, a slide's whole sequence
@@ -1143,14 +1177,67 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    a document font entry, a SmartArt outline/layout/style/colour or node-picture step (the whole
    group), a
    SmartArt insertion (the whole shape), a SmartArt conversion (the whole source shape) and a
-   chart type/data/options step (the whole chart shape) and a model camera step (the whole model
-   shape). Every command on the wire has its undo image now; what is left in this line is what is
-   not on the wire (a model's scene/lighting).
+   chart type/data/options step (the whole chart shape) and a model camera or scene step (the
+   whole model shape). Every command on the wire has its undo image; relative effects are not on
+   the wire by design.
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — a 3-D model's scene as one final value
+
+- `model3d.scene` is collaborative on top of `insert.model3d`. The operation addresses one
+  `Model3d` shape and carries the **whole final scene** — one light and the environment — or
+  `null` for the reader's default scene. The light is `type` (`directional`, `point` or `spot`), a
+  non-zero `direction` vector, `intensity` 0–1 and, for a spot only, the cone's `angle` in degrees
+  1–179; the environment is `ambient` 0–1 and an optional sRGB `background` as three 0–255
+  channels. There is deliberately no relative form: two replicas applying "dimmer", "warmer" or
+  "turn the light 10°" to their own scenes would end in two different scenes, which is what the
+  final-value rule exists to prevent (RFC §3.2.1).
+- Validation happens in three places, all before the first write. The client normaliser runs the
+  engine's own `scene_param`, so a relative field (`dimmer`, `rotate`, `zoom`), an unknown light
+  type, a zero or non-finite direction, intensity/ambient out of 0–1, a background that is not
+  three integers 0–255, an angle on a non-spot or a spot without one and a plain shape are
+  refused before an operation is sent. The wire type (`collab_proto::ModelScene`) is
+  `deny_unknown_fields` on the scene, the light and the environment, so a hostile frame with a
+  relative field is a bad frame instead of a silently merged value. The engine command re-checks
+  every number and the angle/type pairing and addresses every target before it writes; a failing
+  `edit` clones, so a refusal leaves the document untouched.
+- The scene is part of the model: `ShapeKind::Model3d { media, poster, camera, scene }` with a
+  new `ModelScene` value. The writer puts it into the slide part next to the camera as
+  `am3d:scene` (`am3d:light` with `type`, `intensity` and a spot's `angle`, and `am3d:dir` with
+  `dx`/`dy`/`dz`; `am3d:environment` with `ambient` and `color`; intensity and ambient in
+  thousandths of a percent, the angle in 1/60000 degree like `fov`) and the reader parses it back
+  exactly; a scene with a malformed member is dropped whole rather than half-read, so a scene this
+  build cannot reproduce is never written back as a different one. An absent scene is the
+  reader's default lighting.
+- Undo: the step image is the **whole model shape** (`Image::Model3d` / `ShapeField::Model3d`,
+  restored by `shape.setField { field: "model3d" }` of the recorded `Shape`, which checks the id
+  and that the value is a model). One undo puts the scene, the camera and every other field of the
+  object back, a redo returns the stated scene, and a foreign edit of the model after the step
+  makes the undo `undo-conflict` with nothing written.
+- Tests: two replicas converge on one scene (a 3-D model inserted from the media channel first)
+  and the undo/redo restore the whole shape; a rectangle is refused `invalid` before any write
+  with no history step, and a foreign move of the model turns the undo into `undo-conflict` with
+  nothing written; the client normaliser pins the whole final scene, the `null` reset and the
+  refused relative/spot/plain-shape cases; the proto round trip pins the wire form and the
+  refusal of a relative field; the engine sets the scene, refuses a relative key, an unknown
+  type, a zero direction, intensity/ambient out of range, the angle/type mismatch, a bad
+  background and a plain shape without writing, and clears with `null`; the pptx corpus writes a
+  camera and a scene on a model and reads both back through two round trips; the socket gate
+  uploads the `.glb`, inserts the model, sets the scene on two editors and the viewer, commits
+  and reimports the file with the same numbers, refuses a viewer's step `forbidden`, a relative
+  field as a bad frame and a spot without an angle `invalid`, with the version staying at 2.
+- Gates on `agents`: `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets
+  -- -D warnings` clean; `collab` 258 + 8, `collab-proto` 39, `collab-server` 10 unit + 4 commit
+  + 4 gates + 17 socket, `engine` 592 + 1 ignored, `pptx` 67 + 145 + 5, `render` 209 + the known
+  host-without-`craft-fonts` failure (`east_asian_vertical_text_stands_ideographs_upright`),
+  `ui-egui collab::` 20, `collab-web` 15, `deckcraft-web` 6, `xtask layers` 32 crates.
+- Commit `7b51e65d` plus this docs commit on `collab/pr12`, branched from `collab/pr11` at
+  `fe7bcbca`; `rfc.md`, `production.md` and this file updated. Nothing pushed, CI untouched,
+  PR #1975 and #1998 unchanged.
 
 ### 2026-11-10 — a 3-D model's camera as one final view
 

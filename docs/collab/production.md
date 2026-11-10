@@ -170,6 +170,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
 | `insert.model3d` | structural | same reference (`kind: model`); the bytes are one binary glTF by signature with a budget of their own, and the shape draws its poster or a stand-in cube |
 | `model3d.camera` | command | the model's **whole final view** — `position`, `target`, `up` in slide EMU and `fov` in degrees, or `null` for the reader's default view — in one `model3d_camera`; there is no relative form, the client validates it with the engine's own `camera_param` before sending, the wire type refuses unknown fields and the engine re-checks every number before the first write; the camera is written into the slide part as `am3d:camera`, and the undo image is the whole model shape |
+| `model3d.scene` | command | the model's **whole final scene** — one light (`type` `directional`/`point`/`spot`, a non-zero `direction`, `intensity` 0–1 and a spot's cone `angle` in degrees 1–179) and the environment (`ambient` 0–1 plus an optional sRGB `background`) — or `null` for the reader's default scene — in one `model3d_scene`; there is no relative form, the client validates it with the engine's own `scene_param` before sending, the wire type refuses unknown fields, and the engine re-checks every number and that the angle belongs to a spot before the first write; the scene is written into the slide part as `am3d:scene`, and the undo image is the whole model shape |
 | `shape.fill` | command | a final fill: solid colour, `none` or `background`; gradients, pictures, patterns and relative transparency are refused |
 | `shape.line` | command | final outline values (`color`, `width`, `dash`, `cap`, `join`, `compound`, heads) or `none` |
 | `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's whole text body or on N table cells of one table (`FormatSet { addresses: [{ cell: [row, col] }] }`); a table without a cell address, an empty address list, a repeated cell and a cell the table does not have are refused before any write instead of being widened; toggles need an explicit `on`, `args` cannot carry an address |
@@ -193,10 +194,9 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: relative effects and a 3-D model's **scene**
-(lighting). A model's camera is collaborative now (`model3d.camera`, the whole final view, the
-whole model shape as the undo image); the model itself is still drawn as its poster or a
-stand-in cube.
+values, go on the wire. What is still refused: relative effects. A model's camera and scene are
+collaborative now (`model3d.camera` and `model3d.scene`, each the whole final value with the whole
+model shape as the undo image); the model itself is still drawn as its poster or a stand-in cube.
 
 A few commands are **queries**, not operations: they answer a read-only question and change no
 document. `smartArt.nodes` is one of them, and the server answers only queries on an explicit
@@ -363,7 +363,8 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
 2. **P1 — Media refinement**: pictures, video, audio, font faces and 3-D models are on the
    channel. A model is one binary glTF by signature (`.glb`, `glTF` v2) with its own budget —
    `insert.model3d` on the operation stream, `MediaType::Model` in the cache — its view is
-   `model3d.camera` (a final `position`/`target`/`up`/`fov`, written as `am3d:camera`), and it
+   `model3d.camera` (a final `position`/`target`/`up`/`fov`, written as `am3d:camera`) and its
+   scene is `model3d.scene` (one final light and environment, written as `am3d:scene`), and it
    draws its `mc:Fallback` poster when the file has one, else a stand-in cube; `GET /media` normalises the
    path (extension, query, trailing slash) and answers with the content type the signature
    implies. The browser link fetches and uploads them with `fetch` plus the session token; the
@@ -405,7 +406,7 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    as the undo image) and `smartArt.nodes` is
    answered by the server as a read-only query; charts are in too
    (type/data/options and an insertion as one whole chart value, the whole chart shape as the undo
-   image). What is left in this line: a model's camera/scene and relative effects.
+   image). A model's camera and scene are in; what is left in this line is relative effects.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
