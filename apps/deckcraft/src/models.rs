@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn a_url_off_the_model_hub_is_refused_before_a_request() {
-        let file = manifest_with(b"x", "https://huggingface.co/owner/test/x").files[0].clone();
+        let file = manifest_with(b"x", "https://example.com/owner/test/x").files[0].clone();
         let mut done = 0;
         let err = fetch(&file, Path::new("."), 1, &mut done, &mut |_, _| {}).unwrap_err();
         assert!(err.contains("model hub"), "{err}");
@@ -253,9 +253,9 @@ mod tests {
         let d = temp("injected");
         let manifest = manifest_with(b"weights", "https://huggingface.co/owner/test/model.safetensors");
         let model_dir = d.join(&manifest.id);
-        let mut calls = 0;
+        let calls = std::cell::Cell::new(0usize);
         download_with(&manifest, &model_dir, &mut |_, _| {}, |file, dir, _, done, progress| {
-            calls += 1;
+            calls.set(calls.get() + 1);
             let part = dir.join(format!("{}.test.part", file.name));
             std::fs::write(&part, b"weights").unwrap();
             *done = file.bytes;
@@ -264,7 +264,7 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(calls, 1);
+        assert_eq!(calls.get(), 1);
         assert!(model_dir.join("manifest.json").is_file());
     }
 

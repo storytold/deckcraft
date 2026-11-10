@@ -89,6 +89,16 @@ impl WhisperTranscriber {
     fn set_status(&self, new: ProviderStatus) {
         *self.status.lock().unwrap_or_else(PoisonError::into_inner) = new;
     }
+
+    /// Claim the next generation *and* publish `starting` in one critical section: a stale
+    /// worker's [`publish`] checks the generation under the same lock, so it cannot slip between
+    /// the check and the write.
+    fn begin_generation(&self, starting: ProviderStatus) -> u64 {
+        let mut status = self.status.lock().unwrap_or_else(PoisonError::into_inner);
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        *status = starting;
+        generation
+    }
 }
 
 impl Transcriber for WhisperTranscriber {
@@ -114,12 +124,11 @@ impl Transcriber for WhisperTranscriber {
         let caps = capabilities(self.settings.accelerator);
         // A new generation owns the shared status from here on: the previous worker (join handed
         // to a reaper) may still be decoding and must not overwrite this stream's state.
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let worker_generation = self.generation.clone();
         let mut starting = ProviderStatus::starting(manifest.id, self.settings.language_hint().map(str::to_string));
         starting.accelerator = Some(caps.chosen);
         starting.capabilities = Some(caps);
-        self.set_status(starting);
+        let generation = self.begin_generation(starting);
+        let worker_generation = self.generation.clone();
         let worker_stop = stop.clone();
         let handle = std::thread::Builder::new()
             .name("deckcraft-subtitles".into())
@@ -151,6 +160,9 @@ impl Transcriber for WhisperTranscriber {
         }
         self.events = None;
         let mut status = self.status.lock().unwrap_or_else(PoisonError::into_inner);
+        // Retire this stream's generation under the same lock: an old worker still decoding can
+        // no longer publish once the flag is seen.
+        self.generation.fetch_add(1, Ordering::SeqCst);
         if status.state != ProviderState::Failed {
             *status = ProviderStatus::stopped();
         }
@@ -335,13 +347,14 @@ fn rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
-/// Write `new` as the provider status only while `generation` still owns it. A worker whose
-/// stream was stopped and replaced must not overwrite the replacement's status.
+/// Write `new` as the provider status only while `generation` still owns it. The check and the
+/// write share the status lock with [`WhisperTranscriber::begin_generation`], so a replacement
+/// cannot interleave. A worker whose stream was stopped and replaced must not overwrite the
+/// replacement's status.
 fn publish(status: &Arc<Mutex<ProviderStatus>>, current: &AtomicU64, generation: u64, new: ProviderStatus) {
-    if current.load(Ordering::SeqCst) != generation {
-        return;
-    }
-    if let Ok(mut s) = status.lock() {
+    if let Ok(mut s) = status.lock()
+        && current.load(Ordering::SeqCst) == generation
+    {
         *s = new;
     }
 }
@@ -419,6 +432,16 @@ mod tests {
         assert!(!decode_due(now, now), "a decode that just finished is not restarted");
         assert!(!decode_due(now, now + MIN_DECODE_INTERVAL / 2), "the floor is measured from the finish");
         assert!(decode_due(now, now + MIN_DECODE_INTERVAL));
+    }
+
+    #[test]
+    fn a_stale_worker_cannot_publish_its_status() {
+        let status = Arc::new(Mutex::new(ProviderStatus::idle()));
+        let generation = Arc::new(AtomicU64::new(2));
+        publish(&status, &generation, 1, ProviderStatus::failed("the old stream"));
+        assert_eq!(status.lock().unwrap_or_else(PoisonError::into_inner).state, ProviderState::Idle, "the retired stream is ignored");
+        publish(&status, &generation, 2, ProviderStatus::stopped());
+        assert_eq!(status.lock().unwrap_or_else(PoisonError::into_inner).state, ProviderState::Stopped, "the current stream publishes");
     }
 
     #[test]
