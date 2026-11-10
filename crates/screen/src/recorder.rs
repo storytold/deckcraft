@@ -19,8 +19,20 @@ use crate::{CaptureRegion, ScreenFrame};
 pub const MAX_FRAMES: u64 = 2 * 60 * 60 * 60;
 /// Largest recording file: 1 GiB. The sink refuses a write past it, so a take can never fill the
 /// disk however long the screen changes; two hours at 60 fps of a busy screen reaches it first,
-/// and the take keeps what it recorded up to that point.
+/// and the take keeps what it recorded up to that point. The index the finished file needs is
+/// kept free of the cap while recording, so reaching it never loses the take.
 pub const MAX_BYTES: u64 = 1 << 30;
+/// Index bytes a take's `moov` needs per picture: a sample size, a chunk offset, a sync entry and
+/// a time-to-sample entry, with room for 64-bit chunk offsets on a take near the cap.
+const INDEX_BYTES_PER_FRAME: u64 = 32;
+/// The fixed part of a `moov` (mvhd, trak, stsd…).
+const INDEX_BYTES_MIN: u64 = 8 << 10;
+
+/// Room kept free while recording for the index `finish_faststart` puts in front of the media
+/// data at the end.
+fn index_reserve(frames: u64) -> u64 {
+    frames.saturating_mul(INDEX_BYTES_PER_FRAME).saturating_add(INDEX_BYTES_MIN)
+}
 /// Largest recording side: the H.264 encoder's limit.
 pub const MAX_SIDE: u32 = 8192;
 /// The H.264 encoder's smallest side.
@@ -44,22 +56,30 @@ impl<T: Read + Write + Seek + Send> RecorderSink for T {}
 
 /// A sink that refuses a write past a byte limit, so a take cannot fill the disk. The writer sees
 /// a plain I/O error; the recorder maps the shared `over` flag to [`RecorderError::TooLarge`].
+///
+/// The limit is on the finished file, so what counts is how far the file reaches — not the total
+/// ever written: finishing rewrites the header in front of the media data, and summing writes
+/// would charge those bytes twice. While recording, the index the header will need is kept free
+/// (see `index_reserve`) so a take that reaches the cap still finalizes instead of losing its file.
 struct LimitedSink {
     inner: Box<dyn RecorderSink>,
     limit: u64,
     bytes: Arc<AtomicU64>,
+    /// Index room kept free while recording; zeroed when the file is being finalized.
+    reserve: Arc<AtomicU64>,
     over: Arc<AtomicBool>,
 }
 
 impl Write for LimitedSink {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let written = self.bytes.load(Ordering::Relaxed);
-        if written.saturating_add(buf.len() as u64) > self.limit {
+        let at = self.inner.stream_position()?;
+        let end = at.saturating_add(buf.len() as u64);
+        if end.saturating_add(self.reserve.load(Ordering::Relaxed)) > self.limit {
             self.over.store(true, Ordering::Relaxed);
             return Err(std::io::Error::other("the screen recording reached its size limit"));
         }
         let n = self.inner.write(buf)?;
-        self.bytes.fetch_add(n as u64, Ordering::Relaxed);
+        self.bytes.fetch_max(at.saturating_add(n as u64), Ordering::Relaxed);
         Ok(n)
     }
 
@@ -150,6 +170,8 @@ pub struct ScreenRecorder {
     bytes: Arc<AtomicU64>,
     /// The size cap was reached: every later push answers [`RecorderError::TooLarge`].
     over: Arc<AtomicBool>,
+    /// Index room kept free of the size cap while recording, shared with the size-capped sink.
+    reserve: Arc<AtomicU64>,
     /// Reused BGRA→RGBA buffer (one frame).
     rgba: Vec<u8>,
 }
@@ -172,6 +194,7 @@ impl ScreenRecorder {
             frames: 0,
             bytes: Arc::new(AtomicU64::new(0)),
             over: Arc::new(AtomicBool::new(false)),
+            reserve: Arc::new(AtomicU64::new(index_reserve(0))),
             rgba: Vec::new(),
         })
     }
@@ -223,6 +246,8 @@ impl ScreenRecorder {
         }
         r.map_err(|e| RecorderError::Muxer(e.to_string()))?;
         self.frames += 1;
+        // The index grows with every picture: keep its room free of the size cap.
+        self.reserve.store(index_reserve(self.frames), Ordering::Relaxed);
         Ok(())
     }
 
@@ -293,8 +318,13 @@ impl ScreenRecorder {
         let entry =
             SampleEntry::video(FourCc(*b"avc1"), CodecConfig::Avc(avc), u16::try_from(w).unwrap_or(u16::MAX), u16::try_from(h).unwrap_or(u16::MAX));
         let Some(sink) = self.sink.take() else { return Err(RecorderError::Muxer("the recording sink is gone".into())) };
-        let sink: Box<dyn RecorderSink> =
-            Box::new(LimitedSink { inner: sink, limit: self.cfg.max_bytes, bytes: self.bytes.clone(), over: self.over.clone() });
+        let sink: Box<dyn RecorderSink> = Box::new(LimitedSink {
+            inner: sink,
+            limit: self.cfg.max_bytes,
+            bytes: self.bytes.clone(),
+            reserve: self.reserve.clone(),
+            over: self.over.clone(),
+        });
         // The writer writes the file header here: a byte cap smaller than it is reported as the
         // cap, not as a generic muxer failure.
         let mut mux = Mp4Writer::new(sink, WriterOptions::new(Brand::Mp4))
@@ -370,6 +400,9 @@ impl ScreenRecorder {
         let Some(mux) = self.mux else { return Err(RecorderError::Empty) };
         let (w, h) = self.size;
         let over = self.over.clone();
+        // The index is what finishing writes: it may use the room kept free for it, so a take
+        // that reached the cap still finalizes instead of failing and being deleted.
+        self.reserve.store(0, Ordering::Relaxed);
         let mut sink = mux
             .finish_faststart()
             .map_err(|e| if over.load(Ordering::Relaxed) { RecorderError::TooLarge } else { RecorderError::Muxer(e.to_string()) })?;
@@ -561,6 +594,59 @@ mod tests {
         let mut rec = ScreenRecorder::new(Box::new(create(&scratch("cap"))), cfg).expect("recorder");
         assert_eq!(rec.push(&ScreenFrame::solid(64, 64, [0, 0, 255, 255])), Err(RecorderError::TooLarge));
         assert_eq!(rec.push(&ScreenFrame::solid(64, 64, [0, 0, 255, 255])), Err(RecorderError::TooLarge));
+    }
+
+    /// A take that runs past half its cap still finalizes inside it: the index the writer puts in
+    /// front of the media data uses the room kept free for it, and the rewritten header is not
+    /// charged a second time.
+    #[test]
+    fn a_take_past_half_its_cap_finalizes_within_it() {
+        let mut cfg = RecorderConfig::new(30);
+        cfg.max_bytes = 64 << 10;
+        let path = scratch("past-half");
+        let mut rec = ScreenRecorder::new(Box::new(create(&path)), cfg.clone()).expect("recorder");
+        // A changing picture every frame: a repeated one is a skip picture of a few bytes.
+        let frame = |i: u64| ScreenFrame::solid(640, 480, [(i % 251) as u8, 200, 30, 255]);
+        let mut frames = 0u64;
+        while rec.bytes.load(Ordering::Relaxed) <= cfg.max_bytes / 2 {
+            rec.push(&frame(frames)).expect("a take with half its cap left still records");
+            frames += 1;
+            assert!(frames < 2_000, "the take reached half its cap");
+        }
+        let out = rec.finish().expect("a take past half its cap finalizes");
+        assert_eq!(out.frames, frames);
+        let bytes = std::fs::read(&path).expect("read");
+        assert!(bytes.len() as u64 <= cfg.max_bytes, "the finished file is within the cap: {} bytes", bytes.len());
+        assert!(bytes.len() as u64 > cfg.max_bytes / 2, "and past half of it");
+        deckcraft_isobmff::open(bytes.as_slice()).expect("it demuxes");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Reaching the cap refuses further pictures but must not lose the take: the frames it
+    /// accepted are finalized with the index, and the file stays within the cap.
+    #[test]
+    fn a_take_that_reaches_the_cap_keeps_the_frames_it_accepted() {
+        let mut cfg = RecorderConfig::new(30);
+        cfg.max_bytes = 64 << 10;
+        let path = scratch("at-cap");
+        let mut rec = ScreenRecorder::new(Box::new(create(&path)), cfg.clone()).expect("recorder");
+        let frame = |i: u64| ScreenFrame::solid(640, 480, [200, (i % 251) as u8, 30, 255]);
+        let mut frames = 0u64;
+        loop {
+            match rec.push(&frame(frames)) {
+                Ok(()) => frames += 1,
+                Err(RecorderError::TooLarge) => break,
+                Err(e) => panic!("{e}"),
+            }
+            assert!(frames < 5_000, "the cap refused a picture");
+        }
+        assert!(frames > 0, "the cap accepted pictures before refusing one");
+        let out = rec.finish().expect("a capped take still finalizes instead of being deleted");
+        assert_eq!(out.frames, frames);
+        let bytes = std::fs::read(&path).expect("read");
+        assert!(bytes.len() as u64 <= cfg.max_bytes, "the finished file stays within the cap: {} bytes", bytes.len());
+        deckcraft_isobmff::open(bytes.as_slice()).expect("a capped take demuxes");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

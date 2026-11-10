@@ -432,7 +432,21 @@ impl SlideApp {
             log::debug!("ignoring SlideApp::ui for render-only viewport {:?}", ctx.viewport_id());
             return;
         }
+        // A control-channel click is an automation caller, not the user at the window: while its
+        // injected batch is this pass's input, the commands it reaches must not start screen
+        // capture or read window titles. The gate covers the queued events themselves — clearing
+        // the caller for the request that queued them would be undone long before they arrive.
+        // A pass carrying the window's own input has no live synthetic batch and keeps its caller,
+        // and the caller state is put back however this pass ends.
+        let synthetic = self.synthetic_batch_is_live(&ctx);
+        let was = self.session.ui_caller();
+        if synthetic {
+            self.session.set_ui_caller(false);
+        }
         self.ui_inner(ui);
+        if synthetic {
+            self.session.set_ui_caller(was);
+        }
         // The last writer (all panels, dialogs, the custom producer and deferred child windows)
         // has run. Observe the actual custom descriptor for this pass, then reconcile the reset
         // lifetime against the actual committed output. This also runs for discarded passes.

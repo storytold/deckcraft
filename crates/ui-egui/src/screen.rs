@@ -82,6 +82,8 @@ pub struct ScreenUi {
     /// The host picks the capture source itself (Linux: `scap` lists no targets and chooses when
     /// the recorder is built), so the picker can start without a listed target.
     implicit: bool,
+    /// The recording window is collapsed to a small status bar (the take keeps running).
+    compact: bool,
     error: Option<String>,
 }
 
@@ -98,6 +100,7 @@ impl Default for ScreenUi {
             quality: 24,
             status: String::new(),
             implicit: false,
+            compact: false,
             error: None,
         }
     }
@@ -160,7 +163,8 @@ fn start(app: &mut SlideApp) {
         p["targetKind"] = serde_json::json!(t.kind);
     }
     if !app.screen.full {
-        p["region"] = serde_json::json!(app.screen.region);
+        let [x, y, width, height] = app.screen.region;
+        p["region"] = serde_json::json!({"x": x, "y": y, "width": width, "height": height});
     }
     match app.run("show.screenRecord", p) {
         Ok(_) => app.screen.error = None,
@@ -210,6 +214,7 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
     let mut cancel_now = false;
     let mut permission = false;
     let mut close = false;
+    let mut refresh = false;
     // The status bar is not drawn during a slide show: a message it would carry (the path of a
     // take that could not be inserted, for instance) belongs here too, and it has to expire like
     // the status bar's does. `fresh_status` needs `&mut app`, so read it before the closure holds
@@ -229,42 +234,72 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                 .corner_radius(egui::CornerRadius::same(10)),
         )
         .show(ctx, |ui| {
-            ui.set_min_width(300.0);
+            if !app.screen.compact {
+                ui.set_min_width(300.0);
+            }
             ui.visuals_mut().override_text_color = Some(text);
             ui.horizontal(|ui| {
                 let dot = if recording { accent } else { Color32::from_gray(120) };
                 ui.label(RichText::new("●").color(dot).size(16.0));
                 ui.label(RichText::new("Screen Recording").strong().size(15.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if !recording && ui.small_button("✕").clicked() {
-                        close = true;
+                    if !recording {
+                        let close_button = ui.small_button("✕");
+                        if close_button.clicked() {
+                            close = true;
+                        }
+                        close_button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
+                        close_button.on_hover_text("Close the screen recording window");
                     }
                 });
             });
             ui.add_space(6.0);
             if recording {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(clock(app.session.screen.elapsed_ms())).monospace().size(26.0));
-                    ui.add_space(8.0);
-                    if app.session.screen.is_paused() {
-                        if ui.button("Resume").clicked() {
-                            resume_now = true;
+                if app.screen.compact {
+                    // A small status bar: the take keeps running, the window stops taking space.
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("●").color(accent).size(16.0));
+                        ui.label(RichText::new(clock(app.session.screen.elapsed_ms())).monospace().size(18.0));
+                        if ui.add(egui::Button::new(RichText::new("Stop").color(Color32::WHITE)).fill(accent)).clicked() {
+                            stop_now = true;
                         }
-                    } else if ui.button("Pause").clicked() {
-                        pause_now = true;
-                    }
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new("Stop and insert").color(Color32::WHITE)).fill(accent)).clicked() {
-                        stop_now = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel_now = true;
-                    }
-                });
-                ui.add_space(4.0);
-                ui.label(RichText::new(format!("{} frames", app.session.screen.frames())).size(11.0).color(Color32::from_gray(170)));
+                        let expand = ui.small_button("▸");
+                        expand.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Show the recording controls"));
+                        if expand.on_hover_text("Show the recording controls").clicked() {
+                            app.screen.compact = false;
+                        }
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(clock(app.session.screen.elapsed_ms())).monospace().size(26.0));
+                        ui.add_space(8.0);
+                        if app.session.screen.is_paused() {
+                            if ui.button("Resume").clicked() {
+                                resume_now = true;
+                            }
+                        } else if ui.button("Pause").clicked() {
+                            pause_now = true;
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let collapse = ui.small_button("▾");
+                            collapse.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Collapse to a status bar"));
+                            if collapse.on_hover_text("Collapse to a status bar").clicked() {
+                                app.screen.compact = true;
+                            }
+                        });
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::Button::new(RichText::new("Stop and insert").color(Color32::WHITE)).fill(accent)).clicked() {
+                            stop_now = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_now = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(format!("{} frames", app.session.screen.frames())).size(11.0).color(Color32::from_gray(170)));
+                }
             } else {
                 if app.screen.status == "permissionDenied" {
                     ui.label(RichText::new("DeckCraft needs permission to record the screen.").size(12.0));
@@ -291,6 +326,11 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                             }
                         });
                     }
+                    // The list is read when the picker opens and after Grant permission; a display
+                    // plugged in (or a window opened) since then needs a way to appear.
+                    if ui.small_button("Refresh").on_hover_text("List displays and windows again").clicked() {
+                        refresh = true;
+                    }
                 });
                 ui.checkbox(&mut app.screen.full, "Full screen");
                 ui.add_enabled_ui(!app.screen.full, |ui| {
@@ -316,6 +356,16 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                             };
                             if ui.add(egui::DragValue::new(&mut v).range(lo..=hi).speed(1.0)).changed() {
                                 app.screen.region[i] = v.clamp(lo, hi);
+                                // The origin and the size are clamped together: x + w (or y + h)
+                                // may not run past the target, or the recorder clips the region
+                                // below 64 px and Start fails.
+                                if known != 0 {
+                                    let span = i64::from(known).max(64);
+                                    let (origin, size) = if along_width { (0, 2) } else { (1, 3) };
+                                    app.screen.region[origin] = app.screen.region[origin].clamp(0, (span - 64).max(0));
+                                    let room = span - app.screen.region[origin];
+                                    app.screen.region[size] = app.screen.region[size].clamp(64, room.max(64));
+                                }
                             }
                         }
                     });
@@ -327,8 +377,8 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut app.screen.cursor, "Pointer");
                     ui.add_space(10.0);
-                    ui.label("Quality");
-                    ui.add(egui::Slider::new(&mut app.screen.quality, 10..=51));
+                    let quality = ui.add(egui::Slider::new(&mut app.screen.quality, 10..=51));
+                    quality.on_hover_text("Quality: 10 is the sharpest and largest file, 51 the smallest; lower values are better");
                 });
                 ui.add_space(8.0);
                 let ready = can_record(&app.screen.status, app.screen.targets.len(), app.screen.implicit);
@@ -355,6 +405,9 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
         });
     if close {
         open = false;
+    }
+    if refresh {
+        reload(app);
     }
     if permission {
         command(app, "permission");
@@ -391,6 +444,28 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::can_record;
+
+    /// A control-channel click is automation, not the window: the pass that carries its queued
+    /// events runs with `ui_caller` false, so the picker's own Record path must be refused — a
+    /// click cannot start screen capture — while the window's caller reaches the capture path and
+    /// fails only on the device.
+    #[test]
+    fn a_control_click_cannot_start_a_screen_recording_from_the_picker() {
+        let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.session.execute("slide.new", &serde_json::json!({})).expect("slide");
+        // What `SlideApp::ui` sets while the control channel's synthetic batch is the live input.
+        app.session.set_ui_caller(false);
+        super::start(&mut app);
+        let why = app.screen.error.clone().unwrap_or_default();
+        assert!(why.contains("only available from the DeckCraft window"), "the control click is refused as automation: {why:?}");
+        assert!(!app.session.screen.is_recording(), "a control click does not record the screen");
+        // The window's own click is the window: the gate is not the capture path's only answer.
+        app.screen.error = None;
+        app.session.set_ui_caller(true);
+        super::start(&mut app);
+        let mine = app.screen.error.clone().unwrap_or_default();
+        assert!(!mine.contains("only available from the DeckCraft window"), "the window's own click passes the gate: {mine:?}");
+    }
 
     /// A host that picks its own source lists no targets and still records: the picker must not
     /// disable Record for a missing list (Linux, where `scap` chooses when the recorder is built).
