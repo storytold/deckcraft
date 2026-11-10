@@ -241,8 +241,10 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
     // The button is drawn only while the pointer is awake; a hidden button takes no click.
     let gif_click =
         if clicked && on_slide && doc.show.show_media_controls && show.pointer_awake(now) { gif_hit(ctx, ui, show, doc_uid, doc, app) } else { None };
-    let media_click = if clicked && on_slide && gif_click.is_none() { media_hit(ctx, ui, show, doc) } else { None };
-    let under = if on_slide && gif_click.is_none() && media_click.is_none() { shapes_under_pointer(ctx, ui, show, doc, now) } else { None };
+    // One hit test per click: it decides a waiting Cameo's click (it must be the topmost shown
+    // shape there) and then the shape, link or trigger under the pointer.
+    let under = if on_slide && gif_click.is_none() { shapes_under_pointer(ctx, ui, show, doc, now) } else { None };
+    let media_click = if clicked && on_slide && gif_click.is_none() { media_hit(ctx, ui, show, doc, under.as_ref()) } else { None };
     let pointing = under.as_ref().is_some_and(|u| u.pick.is_some());
     if let Some(id) = gif_click {
         let _ = app.run("media.gifPlay", json!({"id": id}));

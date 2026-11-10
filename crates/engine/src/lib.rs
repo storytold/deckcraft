@@ -572,7 +572,7 @@ impl Session {
     }
     /// Hand a recorded Cameo clip to the next `show.cameo` run (`staged: true`): the command path
     /// with its undo step and guards, and no base64 copy of the clip.
-    pub fn stage_cameo(&mut self, clip: cmd::camera::Recorded) {
+    pub(crate) fn stage_cameo(&mut self, clip: cmd::camera::Recorded) {
         self.staged_cameo = Some(clip);
     }
 
