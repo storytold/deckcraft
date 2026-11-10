@@ -346,7 +346,9 @@ pub struct TextBlock {
 }
 
 /// Read a text block from a run of records starting at its `TextHeaderAtom` (inside a client text
-/// box, or in the slide list). Stops at the next header or slide persist atom.
+/// box, or in the slide list). Stops at the next header or slide persist atom. A client text box
+/// may hold only an `OutlineTextRefAtom` ([MS-PPT] OfficeArtClientTextbox), with no header: that
+/// is still a block, so the caller can follow the reference.
 pub fn read_block<'a>(records: impl Iterator<Item = Rec<'a>>) -> Option<TextBlock> {
     let mut b = TextBlock::default();
     let mut started = false;
@@ -369,7 +371,7 @@ pub fn read_block<'a>(records: impl Iterator<Item = Rec<'a>>) -> Option<TextBloc
             _ => {}
         }
     }
-    if !started {
+    if !started && b.outline_ref.is_none() {
         return None;
     }
     if let Some(st) = style {

@@ -184,6 +184,12 @@ fn streams_listing(token: u32, times: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 /// The test document with `slide` as its slide and, when given, a title master (persist id 5,
 /// slide id `TITLE_MASTER_ID`) listed after the main master.
 fn streams_of(token: u32, times: usize, slide: Vec<u8>, title_master: Option<Vec<u8>>) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    streams_with_outline(token, times, slide, title_master, &[])
+}
+
+/// As [`streams_of`], with `outline` (text blocks: header, characters, styles) following the
+/// slide's persist atom in the slide list.
+fn streams_with_outline(token: u32, times: usize, slide: Vec<u8>, title_master: Option<Vec<u8>>, outline: &[Vec<u8>]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let pictures = atom(0xF01E, 0x6E0, &[&[0u8; 17][..], &png()].concat());
     let mut fbse = vec![0u8; 36];
     fbse[0] = 6;
@@ -226,7 +232,7 @@ fn streams_of(token: u32, times: usize, slide: Vec<u8>, title_master: Option<Vec
             container(rt::ENVIRONMENT, 0, &[container(rt::FONT_COLLECTION, 0, &[atom(rt::FONT_ENTITY, 0, &font), atom(rt::FONT_ENTITY, 1, &wing)])]),
             container(rt::DRAWING_GROUP, 0, &[container(rt::DGG_CONTAINER, 0, &[bstore])]),
             container(rt::SLIDE_LIST_WITH_TEXT, 1, &if title_master.is_some() { vec![persist(2), persist(5)] } else { vec![persist(2)] }),
-            container(rt::SLIDE_LIST_WITH_TEXT, 0, &vec![persist(3); times]),
+            container(rt::SLIDE_LIST_WITH_TEXT, 0, &[vec![persist(3); times], outline.to_vec()].concat()),
             container(rt::SLIDE_LIST_WITH_TEXT, 2, &[persist(4)]),
         ],
     );
@@ -576,4 +582,54 @@ fn the_pps_fixture_is_a_built_presentation() {
     assert!(!p.slides[0].hidden);
     let title = p.slides[0].shapes[0].text.as_ref().unwrap();
     assert_eq!(title.paragraphs[0].runs[0].text, "Old talk");
+}
+
+/// A placeholder whose client text box holds only an `OutlineTextRefAtom` takes its text and
+/// formatting from that block of the slide list ([MS-PPT] OfficeArtClientTextbox allows the
+/// reference alone). A text box that also has a header but no characters falls back the same way.
+#[test]
+fn placeholder_text_can_come_from_the_slide_list() {
+    let mut style = vec![];
+    style.extend_from_slice(&7u32.to_le_bytes()); // the text and its closing paragraph mark
+    style.extend_from_slice(&0u16.to_le_bytes());
+    style.extend_from_slice(&pf_bytes(1, false));
+    for (n, bold) in [(2u32, true), (5, false)] {
+        style.extend_from_slice(&n.to_le_bytes());
+        style.extend_from_slice(&cf_bytes(bold, 0, 40, [0x12, 0x34, 0x56]));
+    }
+    let outline = [
+        atom(rt::TEXT_HEADER, 0, &0u32.to_le_bytes()),
+        atom(rt::TEXT_CHARS, 0, &utf16("Hi all")),
+        atom(rt::STYLE_TEXT_PROP, 0, &style),
+        atom(rt::TEXT_HEADER, 0, &1u32.to_le_bytes()),
+        atom(rt::TEXT_CHARS, 0, &utf16("Second block")),
+    ];
+    let reference = |n: u32| atom(rt::OUTLINE_TEXT_REF, 0, &n.to_le_bytes());
+    let only_ref = container(
+        rt::SP_CONTAINER,
+        0,
+        &[fsp(1, 2049, 0xA00), anchor(400, 500, 5260, 1200), placeholder(0x0D), container(rt::CLIENT_TEXTBOX, 0, &[reference(0)])],
+    );
+    let header_and_ref = container(
+        rt::SP_CONTAINER,
+        0,
+        &[
+            fsp(1, 2050, 0xA00),
+            anchor(1300, 500, 5260, 3000),
+            placeholder(0x0E),
+            container(rt::CLIENT_TEXTBOX, 0, &[atom(rt::TEXT_HEADER, 0, &1u32.to_le_bytes()), reference(1)]),
+        ],
+    );
+    let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[only_ref, header_and_ref])]);
+    let (cu, doc, pics) = streams_with_outline(0xE391_C05F, 1, slide, None, &outline);
+    let p = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap();
+    let shapes = &p.slides[0].shapes;
+    let title = shapes[0].text.as_ref().expect("the title has the outline text");
+    let runs = &title.paragraphs[0].runs;
+    assert_eq!((runs[0].text.as_str(), runs[0].props.bold), ("Hi", Some(true)));
+    assert_eq!((runs[1].text.as_str(), runs[1].props.bold), (" all", Some(false)));
+    assert_eq!(runs[0].props.size, Some(40.0));
+    assert_eq!(title.paragraphs[0].props.align, Some(Align::Center));
+    let body = shapes[1].text.as_ref().expect("the body has the second block");
+    assert_eq!(body.paragraphs[0].runs[0].text, "Second block");
 }
