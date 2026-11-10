@@ -375,7 +375,8 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
                 // Failures count too: with keepGoing, a remote backend's large errors add up.
                 used = used.saturating_add(json!(entry.to_string()).to_string().len());
                 if used > MAX_BATCH_BYTES {
-                    out.push(json!({"command": id, "ok": false, "error": "the batch's results passed 64 MiB; stopped here"}));
+                    let shown: String = id.chars().take(128).collect();
+                    out.push(json!({"command": shown, "ok": false, "error": "the batch's results passed 64 MiB; stopped here"}));
                     return ToolResult { content: vec![json!({"type": "text", "text": Value::Array(out).to_string()})], is_error: true };
                 }
                 out.push(entry);
