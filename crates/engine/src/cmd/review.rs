@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use deckcraft_geom::Xfrm;
-use deckcraft_model::{Comment, InkStroke, LaserSample, LaserTrace, MediaClip, Rgba, Shape, ShapeId, ShapeKind};
+use deckcraft_model::{Comment, InkStroke, LaserSample, LaserTrace, MediaClip, Rgba, Shape, ShapeId, ShapeKind, Table};
 use serde_json::{Value, json};
 
 use super::{
@@ -1269,6 +1269,8 @@ fn used_media(doc: &deckcraft_model::Presentation) -> HashSet<deckcraft_model::M
             }
         }
         background(sl.background.as_ref(), &mut used);
+        // The notes' own text carries picture bullets and link sounds too.
+        text_media(Some(&sl.notes), &mut used);
         collect_shape_media(&sl.shapes, &mut used);
     }
     for m in &doc.masters {
@@ -1286,40 +1288,79 @@ fn used_media(doc: &deckcraft_model::Presentation) -> HashSet<deckcraft_model::M
     used
 }
 
-/// Add every media id `shapes` refers to: fills, action sounds, text bullets and links, media,
-/// picture, OLE and 3-D references.
+/// Add the media a fill refers to: a picture fill's image and, when an artistic effect is applied,
+/// the original it keeps so the effect can be changed or removed.
+fn fill_media(fill: Option<&deckcraft_model::style::Fill>, used: &mut HashSet<deckcraft_model::MediaId>) {
+    if let Some(deckcraft_model::style::Fill::Picture(p)) = fill {
+        used.insert(p.media);
+        if let Some(artistic) = &p.artistic {
+            used.insert(artistic.original);
+        }
+    }
+}
+
+/// Add the media a line refers to (a picture fill on the outline).
+fn line_media(line: Option<&deckcraft_model::style::Line>, used: &mut HashSet<deckcraft_model::MediaId>) {
+    if let Some(line) = line {
+        fill_media(line.fill.as_ref(), used);
+    }
+}
+
+/// Add the media a text body refers to: picture bullets and the sounds its links play.
+fn text_media(text: Option<&deckcraft_model::text::TextBody>, used: &mut HashSet<deckcraft_model::MediaId>) {
+    let Some(text) = text else { return };
+    for p in &text.paragraphs {
+        if let Some(deckcraft_model::text::Bullet::Picture { media }) = p.props.bullet {
+            used.insert(media);
+        }
+        for r in &p.runs {
+            for link in [r.props.link.as_ref(), r.props.hover.as_ref()].into_iter().flatten() {
+                if let Some(id) = link.sound {
+                    used.insert(id);
+                }
+            }
+        }
+    }
+}
+
+/// Add the media a table refers to: its own background, and every cell's fill, borders, diagonals
+/// and text.
+fn table_media(table: &Table, used: &mut HashSet<deckcraft_model::MediaId>) {
+    fill_media(table.background.as_ref(), used);
+    for c in table.rows.iter().flat_map(|r| r.cells.iter()) {
+        text_media(Some(&c.text), used);
+        fill_media(c.fill.as_ref(), used);
+        for border in c.borders.iter().flatten() {
+            line_media(Some(border), used);
+        }
+        for diagonal in [c.diag_down.as_ref(), c.diag_up.as_ref()].into_iter().flatten() {
+            line_media(Some(diagonal), used);
+        }
+    }
+}
+
+/// Add every media id `shapes` refers to: fills (including picture fills on outlines, table cells
+/// and table backgrounds), action sounds, text bullets and links, media and posters, picture and
+/// artistic originals, OLE parts, 3-D references and SmartArt node pictures.
 fn collect_shape_media(shapes: &[Shape], used: &mut HashSet<deckcraft_model::MediaId>) {
     deckcraft_model::walk(shapes, &mut |sh, _| {
-        if let Some(deckcraft_model::style::Fill::Picture(p)) = &sh.fill {
-            used.insert(p.media);
-        }
+        fill_media(sh.fill.as_ref(), used);
+        line_media(sh.line.as_ref(), used);
         for link in [sh.click.as_ref(), sh.hover.as_ref()].into_iter().flatten() {
             if let Some(id) = link.sound {
                 used.insert(id);
             }
         }
-        let mut text = |t: Option<&deckcraft_model::text::TextBody>| {
-            let Some(t) = t else { return };
-            for p in &t.paragraphs {
-                if let Some(deckcraft_model::text::Bullet::Picture { media }) = p.props.bullet {
-                    used.insert(media);
+        text_media(sh.text.as_ref(), used);
+        if let Some(diagram) = &sh.diagram {
+            for node in &diagram.nodes {
+                if let Some(picture) = node.picture {
+                    used.insert(picture);
                 }
-                for r in &p.runs {
-                    for link in [r.props.link.as_ref(), r.props.hover.as_ref()].into_iter().flatten() {
-                        if let Some(id) = link.sound {
-                            used.insert(id);
-                        }
-                    }
-                }
-            }
-        };
-        text(sh.text.as_ref());
-        if let ShapeKind::Table(t) = &sh.kind {
-            for c in t.rows.iter().flat_map(|r| r.cells.iter()) {
-                text(Some(&c.text));
             }
         }
         match &sh.kind {
+            ShapeKind::Table(t) => table_media(t, used),
             ShapeKind::Media(c) => {
                 used.insert(c.media);
                 if let Some(p) = c.poster {
@@ -1328,6 +1369,9 @@ fn collect_shape_media(shapes: &[Shape], used: &mut HashSet<deckcraft_model::Med
             }
             ShapeKind::Picture { fill } => {
                 used.insert(fill.media);
+                if let Some(artistic) = &fill.artistic {
+                    used.insert(artistic.original);
+                }
             }
             ShapeKind::Opaque { preview, parts, .. } => {
                 if let Some(p) = preview {
@@ -1816,6 +1860,85 @@ mod tests {
         }
         assert_eq!(s.execute("show.clearNarrationAll", &json!({})).unwrap()["cleared"], 1);
         assert!(s.doc().unwrap().doc.media(media).is_some(), "the table cell and the link still use this media");
+    }
+
+    /// A table cell's picture fill that shares its media with a narration keeps it when the
+    /// narration is cleared: the cell still paints that picture.
+    #[test]
+    fn clear_narration_keeps_media_a_table_cell_fill_points_to() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let media = narrations(&s, 0)[0].media;
+        {
+            let state = s.doc_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let cell = deckcraft_model::table::Cell {
+                fill: Some(deckcraft_model::style::Fill::Picture(deckcraft_model::style::PictureFill { media, ..Default::default() })),
+                ..Default::default()
+            };
+            let table =
+                deckcraft_model::table::Table { rows: vec![deckcraft_model::table::Row { height: 20.0, cells: vec![cell] }], ..Default::default() };
+            std::sync::Arc::make_mut(&mut doc.slides[1]).shapes.push(Shape { kind: ShapeKind::Table(table), ..Default::default() });
+        }
+        assert_eq!(s.execute("show.clearNarrationAll", &json!({})).unwrap()["cleared"], 1);
+        assert!(s.doc().unwrap().doc.media(media).is_some(), "the table cell still paints this media");
+    }
+
+    /// `used_media` is the guard clearing or replacing a narration leans on, so it must see every
+    /// reference a shape can hold — not only fills and bullets, but table cell fills and borders,
+    /// the table's own background, a picture outline, an artistic effect's original, and a note's
+    /// picture bullet.
+    #[test]
+    fn used_media_sees_every_reference_a_clear_must_respect() {
+        fn add(doc: &mut deckcraft_model::Presentation, name: &str) -> deckcraft_model::MediaId {
+            doc.add_media(name, "image/png", vec![0u8; 8]).expect("media")
+        }
+        fn fill(media: deckcraft_model::MediaId) -> deckcraft_model::style::Fill {
+            deckcraft_model::style::Fill::Picture(deckcraft_model::style::PictureFill { media, ..Default::default() })
+        }
+        fn line(media: deckcraft_model::MediaId) -> deckcraft_model::style::Line {
+            deckcraft_model::style::Line { fill: Some(fill(media)), ..Default::default() }
+        }
+        let mut doc = deckcraft_model::Presentation::default();
+        let cell_fill = add(&mut doc, "cell-fill.png");
+        let cell_border = add(&mut doc, "cell-border.png");
+        let table_background = add(&mut doc, "table-background.png");
+        let shape_line = add(&mut doc, "shape-line.png");
+        let shown = add(&mut doc, "shown.png");
+        let artistic_original = add(&mut doc, "artistic-original.png");
+        let note_bullet = add(&mut doc, "note-bullet.png");
+        let cell =
+            deckcraft_model::table::Cell { fill: Some(fill(cell_fill)), borders: [Some(line(cell_border)), None, None, None], ..Default::default() };
+        let table = deckcraft_model::table::Table {
+            rows: vec![deckcraft_model::table::Row { height: 20.0, cells: vec![cell] }],
+            background: Some(fill(table_background)),
+            ..Default::default()
+        };
+        let mut table_shape = Shape { kind: ShapeKind::Table(table), ..Default::default() };
+        table_shape.line = Some(line(shape_line));
+        let picture_fill = deckcraft_model::style::PictureFill {
+            media: shown,
+            artistic: Some(deckcraft_model::style::Artistic { effect: "artisticBlur".into(), original: artistic_original }),
+            ..Default::default()
+        };
+        let picture_shape = Shape { kind: ShapeKind::Picture { fill: picture_fill }, ..Default::default() };
+        let mut note = deckcraft_model::text::Paragraph::default();
+        note.props.bullet = Some(deckcraft_model::text::Bullet::Picture { media: note_bullet });
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        slide.shapes.push(table_shape);
+        slide.shapes.push(picture_shape);
+        slide.notes.paragraphs.push(note);
+
+        let used = used_media(&doc);
+        assert!(used.contains(&cell_fill), "a table cell's picture fill");
+        assert!(used.contains(&cell_border), "a table cell's picture border");
+        assert!(used.contains(&table_background), "the table's own background");
+        assert!(used.contains(&shape_line), "a picture outline's fill");
+        assert!(used.contains(&shown), "the picture fill itself");
+        assert!(used.contains(&artistic_original), "the original an artistic effect keeps");
+        assert!(used.contains(&note_bullet), "a note's picture bullet");
     }
 
     /// Recording a new take on a slide replaces the old audio: the old media must not stay in the
