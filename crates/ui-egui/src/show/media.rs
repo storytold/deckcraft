@@ -85,6 +85,8 @@ pub(super) fn slide_media_bars(srect: Rect, doc: &Presentation, slide: usize) ->
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
     crate::media::slide_media(doc, slide)
         .into_iter()
+        // A recorded Cameo plays as the picture it is: PowerPoint gives it no media bar.
+        .filter(|(id, ..)| !crate::media::is_recorded_cameo(doc, slide, *id))
         .map(|(id, x, clip)| {
             let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
             let bar = media_bar_rect(r);
@@ -129,10 +131,15 @@ pub(super) fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Present
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, doc);
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
-    crate::media::slide_media(doc, show.state.slide).into_iter().rev().find_map(|(id, x, clip)| {
-        let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
-        r.contains(p).then_some((id, clip))
-    })
+    crate::media::slide_media(doc, show.state.slide)
+        .into_iter()
+        // A click on a recorded Cameo keeps advancing the show, as on any picture.
+        .filter(|(id, ..)| !crate::media::is_recorded_cameo(doc, show.state.slide, *id))
+        .rev()
+        .find_map(|(id, x, clip)| {
+            let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
+            r.contains(p).then_some((id, clip))
+        })
 }
 
 /// What a click on the pointer's spot acts on.

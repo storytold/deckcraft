@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use deckcraft_geom::Xfrm;
 use deckcraft_media::{
-    CameoCap, CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraIn, CameraSession, MAX_CLIP_BYTES, MAX_CLIP_MS,
+    CameoCap, CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraIn, CameraSession, MAX_CLIP_BYTES, MAX_CLIP_MS, Seal,
 };
 
 use crate::{Result, Session};
@@ -63,12 +63,23 @@ pub struct CameoRun {
     camera: Option<Box<dyn CameraIn>>,
     session: Option<CameraSession>,
     recorder: Option<CameoRecorder>,
+    /// A clip that left its slide while it still owed samples: it is finished over the passes that
+    /// follow instead of on the slide change, so a transition is never held up by encoding.
+    closing: Option<Closing>,
     slide: Option<usize>,
     status: CameoStatus,
     reason: Option<String>,
     clips: Vec<(usize, CameoClip)>,
     bytes: usize,
     qp: u8,
+}
+
+/// A clip being closed off the host's polling path: the recorder, the slide it belongs to, and the
+/// show time it was closed at (both fixed, so the passes finish the same clip).
+struct Closing {
+    slide: Option<usize>,
+    rec: CameoRecorder,
+    at: u64,
 }
 
 impl CameoRun {
@@ -98,6 +109,7 @@ impl CameoRun {
             camera: None,
             session: None,
             recorder: None,
+            closing: None,
             slide: None,
             status: CameoStatus::NoCamera,
             reason: None,
@@ -156,6 +168,9 @@ impl CameoRun {
     /// most [`deckcraft_media::MAX_SAMPLES_PER_CALL`] pictures of encoding however many events the
     /// camera queued; the rest is caught up by later passes.
     pub fn poll(&mut self, now_ms: u64) {
+        // A clip that left its slide still owing samples is finished here, a budget per pass, so
+        // the slide change that started it never paid for the whole gap.
+        self.step_closing();
         let Some(session) = &mut self.session else {
             return;
         };
@@ -223,9 +238,11 @@ impl CameoRun {
         was
     }
 
-    /// Close the current slide, stop the camera, and return every clip in slide order.
+    /// Close the current slide, stop the camera, and return every clip in slide order. The show is
+    /// over, so whatever samples a pending close still owes are written here.
     pub fn finish(&mut self, now_ms: u64) -> Vec<(usize, CameoClip)> {
         self.close(now_ms);
+        self.drain_closing();
         self.stop_camera();
         let mut clips = std::mem::take(&mut self.clips);
         clips.sort_by_key(|(slide, _)| *slide);
@@ -276,33 +293,60 @@ impl CameoRun {
         Ok(report)
     }
 
+    /// Close the current slide with one bounded step; a clip still owing samples continues in
+    /// [`CameoRun::poll`] on the passes that follow, so a slide change is never held up by a long
+    /// catch-up. [`CameoRun::finish`] drains the rest because the show is over.
     fn close(&mut self, now_ms: u64) {
         let Some(rec) = self.recorder.take() else { return };
         let slide = self.slide.take();
-        match rec.finish(now_ms) {
-            Ok(clip) => {
-                let total = self.bytes.saturating_add(clip.mp4.len());
-                if total > MAX_TOTAL_BYTES {
-                    self.status = CameoStatus::Capped;
-                    self.reason = Some(format!("the show's camera clips reached {} MB", MAX_TOTAL_BYTES >> 20));
-                    // Nothing more will be kept, so stop capturing frames that would be thrown away.
-                    self.stop_camera();
-                    return;
-                }
-                self.bytes = total;
-                if let Some(slide) = slide {
-                    self.clips.push((slide, clip));
-                }
-            }
-            Err(e) => {
-                // The clip was rejected (too large, or it never got a frame). This ends only this
-                // slide, so the reason is reported and the next slide records again.
-                if self.status == CameoStatus::Recording {
-                    self.status = CameoStatus::Ready;
-                }
-                self.reason = Some(e.to_string());
-            }
+        self.seal(slide, rec, now_ms);
+    }
+
+    fn seal(&mut self, slide: Option<usize>, rec: CameoRecorder, now_ms: u64) {
+        match rec.seal(now_ms, deckcraft_media::MAX_SAMPLES_PER_CALL) {
+            Ok(Seal::Done(clip)) => self.keep(slide, clip),
+            Ok(Seal::Pending(rec)) => self.closing = Some(Closing { slide, rec, at: now_ms }),
+            Err(e) => self.reject(e),
         }
+    }
+
+    /// Finish a pending close one budget at a time.
+    fn step_closing(&mut self) {
+        if let Some(Closing { slide, rec, at }) = self.closing.take() {
+            self.seal(slide, rec, at);
+        }
+    }
+
+    /// Write whatever a pending close still owes; the clip belongs to the show that just ended.
+    fn drain_closing(&mut self) {
+        while self.closing.is_some() {
+            self.step_closing();
+        }
+    }
+
+    /// Keep a finished clip, unless the show's total is full.
+    fn keep(&mut self, slide: Option<usize>, clip: CameoClip) {
+        let total = self.bytes.saturating_add(clip.mp4.len());
+        if total > MAX_TOTAL_BYTES {
+            self.status = CameoStatus::Capped;
+            self.reason = Some(format!("the show's camera clips reached {} MB", MAX_TOTAL_BYTES >> 20));
+            // Nothing more will be kept, so stop capturing frames that would be thrown away.
+            self.stop_camera();
+            return;
+        }
+        self.bytes = total;
+        if let Some(slide) = slide {
+            self.clips.push((slide, clip));
+        }
+    }
+
+    /// The clip was rejected (too large, or it never got a frame). This ends only this slide, so
+    /// the reason is reported and the next slide records again.
+    fn reject(&mut self, e: deckcraft_media::MediaError) {
+        if self.status == CameoStatus::Recording {
+            self.status = CameoStatus::Ready;
+        }
+        self.reason = Some(e.to_string());
     }
 
     fn stop_camera(&mut self) {
@@ -531,6 +575,29 @@ mod tests {
         run.enter_slide(1, (32, 32), 2_000);
         assert_eq!(run.status(), CameoStatus::Capped, "later slides do not record");
         assert!(run.finish(3_000).is_empty());
+    }
+
+    #[test]
+    fn a_long_gap_is_caught_up_over_passes_not_on_the_slide_change() {
+        let (camera, events, _) = fake();
+        let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
+        run.enter_slide(0, (32, 32), 0);
+        send(&events, CameraEvent::Frame(frame(0, 32, 32)));
+        run.poll(100);
+        // A minute-long slide whose frames stopped arriving: 900 samples are owed when it leaves.
+        run.leave_slide(60_000);
+        assert_eq!(run.status(), CameoStatus::Ready);
+        assert!(run.clips().is_empty(), "the slide change does not encode the whole gap");
+        run.poll(60_100);
+        assert!(run.clips().is_empty(), "one pass writes a single budget of the gap");
+        for _ in 0..40 {
+            run.poll(60_100);
+        }
+        let clips = run.finish(60_100);
+        assert_eq!(clips.len(), 1, "the clip lands once the passes have caught up");
+        assert_eq!(clips[0].0, 0);
+        assert_eq!(clips[0].1.duration_ms, 60_000);
+        assert_eq!(clips[0].1.frames, 900);
     }
 
     #[test]

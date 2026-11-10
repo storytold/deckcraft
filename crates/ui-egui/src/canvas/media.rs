@@ -36,7 +36,8 @@ pub(super) fn media_frames(app: &SlideApp, painter: &egui::Painter, xf: Xf) {
     }
     for (id, x, clip) in crate::media::slide_media(&d.doc, d.selection.slide) {
         if clip.video {
-            crate::media::paint_frame(painter, &app.media, id, screen_rect(xf, &x), clip.crop);
+            let rect = screen_rect(xf, &x);
+            crate::media::paint_clip(painter, &app.media, &d.doc, d.selection.slide, id, rect, &clip);
         }
     }
 }
@@ -50,7 +51,12 @@ pub(super) fn media_bar(app: &mut SlideApp, ui: &mut Ui, xf: Xf) {
         return;
     }
     let pointer = ui.input(|i| i.pointer.hover_pos());
-    let media = crate::media::slide_media(&d.doc, d.selection.slide);
+    // A recorded Cameo plays in its picture frame but has no media bar of its own: it is edited
+    // through the Camera Format tab, not the media control bar.
+    let media: Vec<_> = crate::media::slide_media(&d.doc, d.selection.slide)
+        .into_iter()
+        .filter(|(id, ..)| !crate::media::is_recorded_cameo(&d.doc, d.selection.slide, *id))
+        .collect();
     let pick = media.iter().find(|(id, _, _)| d.selection.shapes.len() == 1 && d.selection.shapes[0] == *id).or_else(|| {
         media.iter().find(|(id, x, _)| {
             let r = screen_rect(xf, x);

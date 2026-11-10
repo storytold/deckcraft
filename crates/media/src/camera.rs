@@ -170,6 +170,14 @@ pub struct CameoClip {
     pub frames: u64,
 }
 
+/// What [`CameoRecorder::seal`] produced.
+pub enum Seal {
+    /// The clip still owes samples: seal it again on the returned recorder, on a later pass.
+    Pending(CameoRecorder),
+    /// Every sample is written: the clip.
+    Done(CameoClip),
+}
+
 /// Turns camera frames into one video-only MP4 for a slide.
 ///
 /// Frames arrive whenever the camera delivers them; the recorder samples them at a constant
@@ -190,6 +198,9 @@ pub struct CameoRecorder {
     /// A frame that arrived while the samples before it were still being written: it becomes
     /// `image` once `target` is reached.
     next_image: Option<SrcFrame>,
+    /// Once the clip is closing, the sample count it must reach and its duration: fixed on the
+    /// first [`CameoRecorder::seal`] so a close spread over several passes agrees with itself.
+    sealing: Option<(u64, u32)>,
     /// The image the last written sample shows: the bytes are otherwise only inside the MP4
     /// (tests only).
     #[cfg(test)]
@@ -230,6 +241,7 @@ impl CameoRecorder {
             target: 0,
             image: None,
             next_image: None,
+            sealing: None,
             #[cfg(test)]
             last_written: None,
             capped: None,
@@ -365,15 +377,32 @@ impl CameoRecorder {
     #[cfg(not(test))]
     fn note_written(&mut self, _frame: &[u8]) {}
 
-    /// Close the clip at `now_ms`, filling the last period with the last frame.
-    pub fn finish(mut self, now_ms: u64) -> crate::Result<CameoClip> {
+    /// Close the clip at `now_ms`, writing at most `budget` pictures. While samples remain, the
+    /// recorder comes back [`Seal::Pending`] and the caller seals it again on a later pass, so a
+    /// long gap is caught up over several passes instead of blocking a slide change on encoding.
+    /// The sample count and duration are fixed on the first call, so the passes agree.
+    ///
+    /// [`CameoRecorder::finish`] is the one-call form for a caller with nowhere to spread the work.
+    pub fn seal(mut self, now_ms: u64, budget: u64) -> crate::Result<Seal> {
         if self.image.is_none() {
             return Err(crate::MediaError::Missing("camera frames"));
         }
-        let elapsed = now_ms.saturating_sub(self.start_ms).min(u64::from(MAX_CLIP_MS));
-        let duration_ms = u32::try_from(elapsed).unwrap_or(MAX_CLIP_MS);
-        let total = (u64::from(duration_ms) * u64::from(self.fps) / 1000).max(1).min(self.max_frames());
-        self.fill_to(total, u64::MAX)?;
+        let (total, duration_ms) = match self.sealing {
+            Some(fixed) => fixed,
+            None => {
+                let elapsed = now_ms.saturating_sub(self.start_ms).min(u64::from(MAX_CLIP_MS));
+                let duration_ms = u32::try_from(elapsed).unwrap_or(MAX_CLIP_MS);
+                let total = (u64::from(duration_ms) * u64::from(self.fps) / 1000).max(1).min(self.max_frames());
+                self.sealing = Some((total, duration_ms));
+                (total, duration_ms)
+            }
+        };
+        self.fill_to(total, budget)?;
+        // The byte budget stops the clip early: what is written is the whole clip, as `finish`
+        // kept it before `seal` existed. Anything else may be finished by a later pass.
+        if self.written < total && self.capped != Some(CameoCap::Bytes) {
+            return Ok(Seal::Pending(self));
+        }
         let frames = self.written;
         let width = self.width;
         let height = self.height;
@@ -381,7 +410,19 @@ impl CameoRecorder {
         if mp4.len() > MAX_CLIP_BYTES {
             return Err(crate::MediaError::Unsupported(format!("a {} MB camera clip", mp4.len() / (1 << 20))));
         }
-        Ok(CameoClip { mp4, width, height, duration_ms, frames })
+        Ok(Seal::Done(CameoClip { mp4, width, height, duration_ms, frames }))
+    }
+
+    /// Close the clip at `now_ms` in one call, filling the last period with the last frame. A
+    /// close that owes many samples does all of them here, so a show host spreads the work with
+    /// [`CameoRecorder::seal`] instead.
+    pub fn finish(mut self, now_ms: u64) -> crate::Result<CameoClip> {
+        loop {
+            match self.seal(now_ms, MAX_SAMPLES_PER_CALL)? {
+                Seal::Done(clip) => return Ok(clip),
+                Seal::Pending(rec) => self = rec,
+            }
+        }
     }
 }
 
@@ -480,6 +521,31 @@ mod tests {
         assert_eq!(rec.frames(), 2 * MAX_SAMPLES_PER_CALL);
     }
 
+    /// A close that owes a long gap is written a budget per call, so the caller can spread it
+    /// over its own passes instead of paying for the whole gap on one call.
+    #[test]
+    fn a_close_that_owes_a_long_gap_is_written_a_budget_at_a_time() {
+        let mut rec = CameoRecorder::new((32, 32), 15, 30, 0).expect("recorder");
+        rec.push(&frame(0, 16, 16, 10), 0).expect("first");
+        // Four seconds of slide with one camera frame: 60 samples are owed when it closes.
+        let mut sealed = rec.seal(4_000, MAX_SAMPLES_PER_CALL).expect("seal");
+        let mut calls = 1;
+        let clip = loop {
+            match sealed {
+                Seal::Done(clip) => break clip,
+                Seal::Pending(rec) => {
+                    calls += 1;
+                    assert!(calls <= 2, "60 samples fit in two passes of {MAX_SAMPLES_PER_CALL}");
+                    sealed = rec.seal(4_000, MAX_SAMPLES_PER_CALL).expect("seal");
+                }
+            }
+        };
+        assert_eq!(calls, 2);
+        assert_eq!(clip.duration_ms, 4_000, "the duration is fixed when the close starts");
+        assert_eq!(clip.frames, 60, "every pass writes its budget of the same clip");
+        assert_eq!(&clip.mp4[4..8], b"ftyp");
+    }
+
     #[test]
     fn no_frames_is_no_clip() {
         let rec = CameoRecorder::new((32, 32), 15, 30, 0).expect("recorder");
@@ -512,6 +578,27 @@ mod tests {
         let clip = rec.finish(now).expect("the clip so far is kept, not rejected");
         assert!(clip.frames > 0);
         assert!(clip.mp4.len() <= MAX_CLIP_BYTES);
+    }
+
+    /// A clip the byte budget stopped can never write another sample: sealing it returns the clip
+    /// it has, never a pending recorder a caller would keep polling for nothing.
+    #[test]
+    fn a_byte_capped_close_is_done_not_pending() {
+        let mut rec = CameoRecorder::new((64, 64), 15, 30, 0).expect("recorder").with_max_bytes(8 << 10);
+        let mut now = 0u64;
+        for i in 0..1_000u64 {
+            now = i * 67;
+            rec.push(&frame(i, 64, 64, (i % 251) as u8), now).expect("push");
+            rec.tick(MAX_SAMPLES_PER_CALL).expect("tick");
+            if rec.capped() {
+                break;
+            }
+        }
+        assert!(rec.capped(), "the byte budget ended the clip");
+        match rec.seal(now, MAX_SAMPLES_PER_CALL).expect("seal") {
+            Seal::Done(clip) => assert!(clip.frames > 0, "the samples written so far are the clip"),
+            Seal::Pending(_) => panic!("a byte-capped clip is finished, not waiting for more samples"),
+        }
     }
 
     #[test]

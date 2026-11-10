@@ -580,7 +580,7 @@ fn draw_videos(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painter: &e
         } else {
             slide_box(srect, uv, (sw, sh), (x.x as f32, x.y as f32, x.w as f32, x.h as f32))
         };
-        if crate::media::paint_frame(painter, &app.media, *id, r, clip.crop) {
+        if crate::media::paint_clip(painter, &app.media, doc, sl.idx, *id, r, clip) {
             framed.push(*id);
         }
     }
