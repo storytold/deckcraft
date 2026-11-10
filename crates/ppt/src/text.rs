@@ -80,7 +80,6 @@ pub struct Cf {
     pub italic: Option<bool>,
     pub underline: Option<bool>,
     pub shadow: Option<bool>,
-    pub emboss: Option<bool>,
     pub font: Option<u16>,
     pub ea_font: Option<u16>,
     pub symbol_font: Option<u16>,
@@ -96,7 +95,7 @@ impl Cf {
         macro_rules! over {
             ($($f:ident),*) => { $( if o.$f.is_some() { self.$f = o.$f; } )* };
         }
-        over!(bold, italic, underline, shadow, emboss, font, ea_font, symbol_font, size, color, position);
+        over!(bold, italic, underline, shadow, font, ea_font, symbol_font, size, color, position);
     }
 }
 
@@ -181,7 +180,8 @@ pub fn read_cf(c: &mut Cursor) -> Option<Cf> {
     // fHasStyle is in the mask.
     if m & 0x3EB7 != 0 {
         let s = c.u16()?;
-        for (b, slot) in [(0, &mut cf.bold), (1, &mut cf.italic), (2, &mut cf.underline), (4, &mut cf.shadow), (9, &mut cf.emboss)] {
+        // Emboss (bit 9) has no counterpart in the model; docs/gaps.md lists it.
+        for (b, slot) in [(0, &mut cf.bold), (1, &mut cf.italic), (2, &mut cf.underline), (4, &mut cf.shadow)] {
             if bit(m, b) {
                 *slot = Some(s & (1 << b) != 0);
             }

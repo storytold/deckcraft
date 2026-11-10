@@ -529,3 +529,31 @@ fn a_master_shape_id_is_looked_up_in_the_slides_own_master() {
     let p = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap();
     assert_eq!(p.slides[0].shapes[0].fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0, 0xCC, 0)))));
 }
+
+/// A run's shadow bit (TextCFException fontStyle bit 4) gives the run a shadow in the colour
+/// scheme's shadow colour (grey in the test scheme). It used to be read and then dropped.
+#[test]
+fn a_shadowed_run_keeps_its_shadow() {
+    let mut style = vec![];
+    style.extend_from_slice(&7u32.to_le_bytes());
+    style.extend_from_slice(&0u16.to_le_bytes());
+    style.extend_from_slice(&pf_bytes(0, false));
+    for (n, shadow) in [(3u32, true), (4, false)] {
+        style.extend_from_slice(&n.to_le_bytes());
+        style.extend_from_slice(&0x10u32.to_le_bytes()); // mask: shadow
+        style.extend_from_slice(&(if shadow { 0x10u16 } else { 0 }).to_le_bytes());
+    }
+    let tb = container(
+        rt::SP_CONTAINER,
+        0,
+        &[fsp(202, 2049, 0xA00), anchor(0, 0, 1000, 1000), text_box(4, "Hi you", &[atom(rt::STYLE_TEXT_PROP, 0, &style)])],
+    );
+    let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[tb])]);
+    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, slide, None);
+    let p = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap();
+    let runs = &p.slides[0].shapes[0].text.as_ref().unwrap().paragraphs[0].runs;
+    assert_eq!(runs[0].text, "Hi ");
+    let shadow = runs[0].props.shadow.as_ref().expect("the first run is shadowed");
+    assert_eq!(shadow.color, deckcraft_model::ColorRef::rgb(Rgba::rgb(0x80, 0x80, 0x80)));
+    assert!(runs[1].props.shadow.is_none());
+}

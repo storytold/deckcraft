@@ -710,6 +710,7 @@ impl<'a> Ctx<'a> {
             underline: Some(if cf.underline.unwrap_or(false) { "sng" } else { "none" }.into()),
             baseline: cf.position.filter(|p| *p != 0).map(|p| f64::from(p) / 100.0),
             fill: cf.color.map(|c| Fill::solid(ColorRef::rgb(text_color(c, scheme)))),
+            shadow: cf.shadow.filter(|&on| on).map(|_| text_shadow(scheme)),
             ..Default::default()
         }
     }
@@ -779,6 +780,25 @@ fn text_color(c: TextColor, scheme: &Scheme) -> Rgba {
     match c {
         TextColor::Rgb(r, g, b) => Rgba::rgb(r, g, b),
         TextColor::Scheme(i) => scheme.get(usize::from(i)).copied().unwrap_or(Rgba::BLACK),
+    }
+}
+
+/// A text shadow in the colour scheme's shadow colour. The record holds only the on/off bit, so
+/// the distance and direction are the app's own Text Shadow command's (`format.textShadow`); with
+/// no blur in the record, none is added.
+fn text_shadow(scheme: &Scheme) -> Shadow {
+    Shadow {
+        color: ColorRef::rgb(scheme.get(2).copied().unwrap_or(Rgba::rgb(0x80, 0x80, 0x80))),
+        blur: 0.0,
+        dist: 2.0,
+        dir: 45.0,
+        inner: false,
+        sx: 1.0,
+        sy: 1.0,
+        kx: 0.0,
+        ky: 0.0,
+        align: String::new(),
+        rotate_with_shape: false,
     }
 }
 
