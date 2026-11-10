@@ -66,13 +66,9 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
             .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: t.shadow })
             .show(ui, |ui| {
                 ui.set_width(width);
-                egui::ScrollArea::vertical()
-                    .max_height(message_height)
-                    .min_scrolled_height(0.0)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
-                    });
+                egui::ScrollArea::vertical().max_height(message_height).min_scrolled_height(0.0).auto_shrink([false, true]).show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
+                });
                 // Controls get their own row, outside the scroll area: the label cannot
                 // consume their width or scroll them out of view on a small viewport.
                 ui.horizontal(|ui| {
@@ -138,9 +134,12 @@ mod tests {
             for name in ["Copy", "Close"] {
                 assert!(viewport.contains_rect(h.get_by_role_and_label(egui::Role::Button, name).rect()), "{name} must remain visible");
             }
-            let warning = h.output().shapes.iter().find(|shape| {
-                matches!(&shape.shape, egui::epaint::Shape::Text(t) if t.galley.text().starts_with("MissingFont0"))
-            }).expect("the warning must be painted");
+            let warning = h
+                .output()
+                .shapes
+                .iter()
+                .find(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(t) if t.galley.text().starts_with("MissingFont0")))
+                .expect("the warning must be painted");
             assert!(warning.clip_rect.height() <= 280.0);
             assert!(viewport.contains_rect(warning.clip_rect));
         }
@@ -155,14 +154,17 @@ mod tests {
         let copy = h.get_by_role_and_label(egui::Role::Button, "Copy").rect();
         let accent = Tokens::get(&h.ctx).accent;
         assert!(h.get_by_role_and_label(egui::Role::Button, "Copy").is_focused(), "Tab must focus Copy");
-        assert!(h.output().shapes.iter().any(|shape| {
-            matches!(&shape.shape, egui::epaint::Shape::Rect(r) if r.rect == copy && r.stroke.color == accent && r.stroke.width >= 1.0)
-        }), "Copy must paint its keyboard focus");
+        assert!(
+            h.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::epaint::Shape::Rect(r) if r.rect == copy && r.stroke.color == accent && r.stroke.width >= 1.0)
+            }),
+            "Copy must paint its keyboard focus"
+        );
         h.key_down(egui::Key::Enter);
         h.run_steps(1);
-        assert!(h.output().platform_output.commands.iter().any(|command| {
-            matches!(command, egui::OutputCommand::CopyText(copied) if copied == &text)
-        }));
+        assert!(
+            h.output().platform_output.commands.iter().any(|command| { matches!(command, egui::OutputCommand::CopyText(copied) if copied == &text) })
+        );
         h.key_up(egui::Key::Enter);
         h.get_by_role_and_label(egui::Role::Button, "Close").click();
         h.run_steps(1);
