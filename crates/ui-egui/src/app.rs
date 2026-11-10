@@ -96,6 +96,9 @@ impl SlideApp {
     pub fn new(mut session: Session, mut services: Services) -> Self {
         let audio_out = services.audio_out.take();
         session.set_screen_host(services.screen_in.take());
+        // The window's own controls are the user's; automation transports clear this while they
+        // run a remote command (screen capture starts only here).
+        session.set_ui_caller(true);
         SlideApp {
             last_fill: serde_json::json!("accent1"),
             last_outline: serde_json::json!("tx1"),
@@ -315,7 +318,11 @@ impl SlideApp {
         // the worker. The repaint keeps the UI live while the worker writes the file.
         if self.screen_take_busy() {
             self.session.screen_tick(monotonic_secs());
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            // While a take captures, wake at its own interval instead of a fixed 60 fps: the
+            // encoder has nothing new to give faster than that. Finishing is a short wait for the
+            // worker's file, so it keeps the quick repaint.
+            let ms = if self.session.screen.is_recording() { u64::from(1000 / self.session.screen.fps().max(1)).max(16) } else { 16 };
+            ctx.request_repaint_after(std::time::Duration::from_millis(ms));
         }
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();

@@ -58,11 +58,22 @@ pub enum EngineError {
     Other(String),
     #[error("internal error in `{0}` (the presentation was kept as it was): {1}")]
     Internal(String, String),
+    /// A screen-capture failure, with the short code clients already read (`busy`,
+    /// `noDevice`, …) kept beside the message instead of being flattened into [`Other`].
+    #[error("{message}")]
+    Screen { code: &'static str, message: String },
 }
 
 impl From<deckcraft_model::ModelError> for EngineError {
     fn from(e: deckcraft_model::ModelError) -> Self {
         EngineError::Other(e.to_string())
+    }
+}
+
+impl From<deckcraft_screen::ScreenError> for EngineError {
+    fn from(e: deckcraft_screen::ScreenError) -> Self {
+        let code = e.code();
+        EngineError::Screen { code, message: e.to_string() }
     }
 }
 
@@ -526,6 +537,10 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// Commands come from the DeckCraft window's own controls, not from an automation client
+    /// (MCP, the CLI, or a control-channel request). Commands that capture or expose the user's
+    /// screen check it; the app sets it, the transport clears it while it runs a remote call.
+    ui_caller: bool,
 }
 
 impl Default for Session {
@@ -562,6 +577,7 @@ impl Session {
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            ui_caller: false,
         }
     }
 
@@ -569,6 +585,17 @@ impl Session {
     /// screen recording reports itself unavailable.
     pub fn set_screen_host(&mut self, host: Option<Box<dyn deckcraft_screen::ScreenIn>>) {
         self.screen.set_host(host);
+    }
+
+    /// Whether commands come from the DeckCraft window (`true`) or an automation client. The app
+    /// sets this once; screen capture commands that start a take or expose window titles require
+    /// it, so an MCP or control-channel caller cannot record the user's screen or read titles.
+    pub fn set_ui_caller(&mut self, ui: bool) {
+        self.ui_caller = ui;
+    }
+
+    pub fn ui_caller(&self) -> bool {
+        self.ui_caller
     }
 
     /// Let a running screen recording take the frames the host has captured. The UI calls this

@@ -6,7 +6,7 @@
 //! finished ([`ScreenState::take_ended`]), and only a take with nothing in it is thrown away.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
 
@@ -60,8 +60,6 @@ enum Job {
     /// Mux the last sample again for `n` intervals (the picture did not change). One job carries a
     /// whole catch-up burst, so a delayed tick cannot flood the queue.
     Repeat(u32),
-    /// Write the file and hand the output back.
-    Finish,
 }
 
 /// What the encoder thread reports.
@@ -81,6 +79,9 @@ const JOB_QUEUE: usize = 4;
 enum Encoder {
     #[cfg(not(target_arch = "wasm32"))]
     Worker(Worker),
+    /// Only the web build constructs this (threads are unavailable there); the match arms still
+    /// name it on every target.
+    #[allow(dead_code)]
     Inline(Inline),
 }
 
@@ -102,7 +103,8 @@ struct Worker {
     gone: bool,
 }
 
-/// The recorder on the caller's thread (the web build).
+/// The recorder on the caller's thread (the web build); never constructed on native targets.
+#[allow(dead_code)]
 struct Inline {
     recorder: Option<ScreenRecorder>,
     frames: u64,
@@ -111,8 +113,10 @@ struct Inline {
 }
 
 impl Encoder {
-    /// Start the encoder for a fresh recorder.
-    fn new(recorder: ScreenRecorder) -> Self {
+    /// Start the encoder for a fresh recorder. `Err(recorder)` hands the recorder back when no
+    /// thread can be made: the caller then fails the start cleanly (stopping the device and
+    /// removing the file) instead of keeping a recorder it could never encode with.
+    fn new(recorder: ScreenRecorder) -> Result<Self, ScreenRecorder> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<Job>(JOB_QUEUE);
@@ -121,38 +125,43 @@ impl Encoder {
             let worker_finish = finish.clone();
             let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let worker_cancel = cancel.clone();
-            let spawned = std::thread::Builder::new()
-                .name("deckcraft-encode".into())
-                .spawn(move || encode_loop(recorder, &job_rx, &event_tx, &worker_finish, &worker_cancel));
-            match spawned {
-                Ok(handle) => {
-                    return Encoder::Worker(Worker {
-                        jobs: Some(job_tx),
-                        events: event_rx,
-                        handle: Some(handle),
-                        frames: 0,
-                        failure: None,
-                        finished: None,
-                        kept: None,
-                        finish,
-                        cancel,
-                        gone: false,
-                    });
-                }
-                // No thread to be had: fall back to encoding here rather than losing the take.
+            // The recorder is handed over only after the thread exists: moving it into the
+            // closure first would lose it when the spawn fails, leaving an encoder that can never
+            // encode. On failure it comes back through the channel and is returned to the caller.
+            let (handoff_tx, handoff_rx) = std::sync::mpsc::sync_channel::<ScreenRecorder>(1);
+            let spawned = std::thread::Builder::new().name("deckcraft-encode".into()).spawn(move || {
+                let Ok(recorder) = handoff_rx.recv() else { return };
+                encode_loop(recorder, &job_rx, &event_tx, &worker_finish, &worker_cancel);
+            });
+            let handle = match spawned {
+                Ok(handle) => handle,
                 Err(e) => {
-                    log::warn!("screen recording: no encoder thread ({e}); recording inline");
-                    let _ = job_rx;
+                    log::warn!("screen recording: no encoder thread ({e})");
+                    return Err(recorder);
                 }
+            };
+            if let Err(e) = handoff_tx.send(recorder) {
+                // The thread ended before it took the recorder (a panic in the thread's setup
+                // would): join it and refuse the take.
+                let _ = handle.join();
+                return Err(e.0);
             }
-            // The recorder moved into the closure only when the thread started; on failure the
-            // closure was never called, so it is gone. That path cannot happen with the handle
-            // above unless the spawn failed, which drops it — recoverable only by a new recorder.
-            Encoder::Inline(Inline { recorder: None, frames: 0, failure: Some("couldn't start the encoder".into()), finished: None })
+            Ok(Encoder::Worker(Worker {
+                jobs: Some(job_tx),
+                events: event_rx,
+                handle: Some(handle),
+                frames: 0,
+                failure: None,
+                finished: None,
+                kept: None,
+                finish,
+                cancel,
+                gone: false,
+            }))
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Encoder::Inline(Inline { recorder: Some(recorder), frames: 0, failure: None, finished: None })
+            Ok(Encoder::Inline(Inline { recorder: Some(recorder), frames: 0, failure: None, finished: None }))
         }
     }
 
@@ -322,44 +331,6 @@ impl Encoder {
         }
     }
 
-    /// Write the file and hand back what it holds, waiting for the worker. Only the terminal paths
-    /// that cannot defer (the web build's inline encoder) use this; the UI calls
-    /// [`request_finish`](Self::request_finish) and polls instead.
-    #[allow(dead_code)]
-    fn finish(&mut self) -> Result<RecorderOutput, RecorderError> {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Encoder::Worker(w) => {
-                if let Some(jobs) = w.jobs.take() {
-                    let _ = jobs.send(Job::Finish);
-                }
-                // The worker reports the finished file (or its failure) and returns. A closed
-                // channel means it is gone: nothing more will arrive, so stop waiting.
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-                while w.finished.is_none() && std::time::Instant::now() < deadline {
-                    match w.events.recv_timeout(std::time::Duration::from_millis(50)) {
-                        Ok(Event::Finished(out)) => w.finished = Some(out),
-                        Ok(Event::Failed(e)) => w.failure = Some(e),
-                        Ok(Event::Encoded) => {}
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-                if let Some(handle) = w.handle.take() {
-                    let _ = handle.join();
-                }
-                match w.finished.take() {
-                    Some(out) => out,
-                    None => Err(RecorderError::Muxer(w.failure.clone().unwrap_or_else(|| "the recording didn't finish".into()))),
-                }
-            }
-            Encoder::Inline(i) => match i.recorder.take() {
-                Some(recorder) => recorder.finish(),
-                None => Err(RecorderError::Empty),
-            },
-        }
-    }
-
     /// Throw the take away: the worker stops without writing the file.
     fn discard(&mut self) {
         match self {
@@ -378,7 +349,8 @@ impl Encoder {
     }
 }
 
-/// The encoder thread: encode or repeat each scheduled picture, then write the file on `Finish`.
+/// The encoder thread: encode or repeat each scheduled picture, then write the file when the queue
+/// drains after a finish request.
 /// A set `cancel` stops it at the next job boundary without writing the file, so a discard's join
 /// is short even with a full queue.
 #[cfg(not(target_arch = "wasm32"))]
@@ -425,11 +397,6 @@ fn encode_loop(
                     }
                 }
             }
-            Job::Finish => {
-                let out = recorder.take().map(ScreenRecorder::finish).unwrap_or(Err(RecorderError::Empty));
-                let _ = events.send(Event::Finished(out));
-                return;
-            }
         }
         let _ = events.send(Event::Encoded);
     }
@@ -468,8 +435,13 @@ impl Drop for ScreenState {
     fn drop(&mut self) {
         // A session dropped while a take records (an automation quit, a closed window) would leave
         // the temporary MP4 — captured screen content, without a `moov` box — behind: throw the
-        // take away, which stops the host, drops the encoder and removes the file.
+        // take away, which stops the host, drops the encoder and removes the file. A take that
+        // ended but was never inserted (its insert failed, or the session quit first) is the same
+        // captured content and goes too.
         let _ = self.cancel();
+        if let Some(ended) = self.ended.take() {
+            let _ = std::fs::remove_file(ended.path);
+        }
     }
 }
 
@@ -482,6 +454,11 @@ impl ScreenState {
             }
             active.encoder.discard();
             let _ = std::fs::remove_file(active.path);
+        }
+        // An ended take belongs to the host that recorded it; replacing the host must not leave
+        // its file behind (the session will not insert it any more).
+        if let Some(ended) = self.ended.take() {
+            let _ = std::fs::remove_file(ended.path);
         }
         self.host = host;
     }
@@ -507,6 +484,11 @@ impl ScreenState {
     /// Frames encoded so far.
     pub fn frames(&self) -> u64 {
         self.active.as_ref().map_or(0, |a| a.frames)
+    }
+
+    /// The take's capture rate, for the UI's repaint interval (0 when nothing is recording).
+    pub fn fps(&self) -> u32 {
+        self.active.as_ref().map_or(0, |a| a.fps)
     }
 
     /// Recorded length in milliseconds (paused time is not counted).
@@ -543,18 +525,27 @@ impl ScreenState {
             CaptureStatus::Unsupported => return Err(ScreenError::Unavailable),
             CaptureStatus::PermissionDenied => return Err(ScreenError::PermissionDenied),
         }
-        if host.targets().is_ok_and(|t| t.is_empty()) {
-            return Err(ScreenError::NoDevice);
+        // The host's target list is not read here: enumerating displays and windows can block on
+        // the system picker and the capture worker enumerates anyway, so an empty list is reported
+        // by the worker (`NoDevice`) on the first frame instead of freezing the UI at start.
+        //
+        // A take that ended but was never inserted is superseded by this one: its captured screen
+        // content is not left in the temporary folder.
+        if let Some(ended) = self.ended.take() {
+            let _ = std::fs::remove_file(ended.path);
         }
-        let path = temp_path();
-        // `create_new` refuses a path that already exists (a pre-planted link in the shared temp
-        // folder would otherwise be truncated and written through), and the take is created
-        // owner-only on Unix so other local users cannot read captured screen content.
-        let mut file_options = std::fs::OpenOptions::new();
-        file_options.read(true).write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut file_options, 0o600);
-        let file = file_options.open(&path).map_err(|e| ScreenError::Failed(format!("couldn't start a screen recording: {e}")))?;
+        // The name carries 128 bits from the OS's per-process random seed and the file is created
+        // `create_new`, so a path planted in the shared temporary folder cannot be guessed and
+        // truncated (Windows has no safe std ACL API, and the workspace forbids `unsafe`; the
+        // temporary folder is the user's own, and owner-only mode covers Unix).
+        let named = tempfile::Builder::new()
+            .prefix("deckcraft-screen-")
+            .suffix(".mp4")
+            .rand_bytes(16)
+            .tempfile()
+            .map_err(|e| ScreenError::Failed(format!("couldn't start a screen recording: {e}")))?;
+        let (file, temp) = named.into_parts();
+        let path = temp.keep().map_err(|e| ScreenError::Failed(format!("couldn't start a screen recording: {}", e.error)))?;
         let recorder = match ScreenRecorder::new(Box::new(file), recorder) {
             Ok(r) => r,
             Err(e) => {
@@ -566,10 +557,21 @@ impl ScreenState {
             let _ = std::fs::remove_file(&path);
             return Err(e);
         }
+        let encoder = match Encoder::new(recorder) {
+            Ok(encoder) => encoder,
+            Err(_) => {
+                // No encoder thread and no inline recorder for this build: a take that could never
+                // encode would fail on its first frame, so refuse it here, stop the device and
+                // remove the file.
+                host.stop();
+                let _ = std::fs::remove_file(&path);
+                return Err(ScreenError::Failed("couldn't start a screen recording: no encoder thread could be started".into()));
+            }
+        };
         self.active = Some(Active {
-            encoder: Encoder::new(recorder),
+            encoder,
             path,
-            fps: options.fps.clamp(1, 240),
+            fps: options.fps,
             paused: false,
             due: true,
             next_at: 0.0,
@@ -759,13 +761,8 @@ impl ScreenState {
         }
     }
 
-    /// The take a failed capture finished, for the caller to insert like `show.screenRecord
-    /// stop` does. Its file is the caller's to delete once the bytes are in the presentation.
-    pub fn take_ended(&mut self) -> Option<StoppedRecording> {
-        self.ended.take()
-    }
-
-    /// The take a stop or a capture failure finished, with why it ended.
+    /// The take a stop or a capture failure finished, with why it ended. Its file is the caller's
+    /// to delete once the bytes are in the presentation.
     pub fn take_ended_with_reason(&mut self) -> Option<(StoppedRecording, String)> {
         let rec = self.ended.take()?;
         Some((rec, self.ended_reason.take().unwrap_or_default()))
@@ -898,14 +895,6 @@ fn schedule_pictures(active: &mut Active, pictures: u32) -> (u32, Option<String>
     (scheduled, active.encoder.failure().map(str::to_string))
 }
 
-/// A fresh file in the temporary folder for one recording.
-fn temp_path() -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    std::env::temp_dir().join(format!("deckcraft-screen-{}-{stamp}-{n}.mp4", std::process::id()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -916,6 +905,8 @@ mod tests {
         frames: Arc<Mutex<std::collections::VecDeque<deckcraft_screen::ScreenFrame>>>,
         /// Set when the capture source disappears (a closed window, an unplugged display).
         fail: Arc<std::sync::atomic::AtomicBool>,
+        /// How many times the session released the device.
+        stops: Arc<std::sync::atomic::AtomicUsize>,
         status: CaptureStatus,
         size: (u32, u32),
     }
@@ -924,7 +915,8 @@ mod tests {
         fn ready(size: (u32, u32)) -> (Self, Arc<Mutex<std::collections::VecDeque<deckcraft_screen::ScreenFrame>>>) {
             let frames = Arc::new(Mutex::new(std::collections::VecDeque::new()));
             let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            (FakeScreen { frames: frames.clone(), fail, status: CaptureStatus::Ready, size }, frames)
+            let stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            (FakeScreen { frames: frames.clone(), fail, stops, status: CaptureStatus::Ready, size }, frames)
         }
     }
 
@@ -950,19 +942,29 @@ mod tests {
             }
             Ok(self.frames.lock().map_err(|_| ScreenError::Failed("the fake host was poisoned".into()))?.pop_front())
         }
-        fn stop(&mut self) {}
+        fn stop(&mut self) {
+            self.stops.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Run ticks until the encoder hands the finished take over (bounded), as the UI does.
     fn pump(s: &mut ScreenState) -> StoppedRecording {
-        for _ in 0..500 {
+        // A wall-clock deadline, not a sleep count: the encoder thread may be slow on a loaded
+        // machine, and the failure says what was waited for.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             let _ = s.tick(0.0);
-            if let Some(rec) = s.take_ended() {
+            if let Some(rec) = ended(s) {
                 return rec;
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        panic!("the take never arrived");
+        panic!("the encoder did not hand the take over within 10 s (frames so far: {})", s.frames());
+    }
+
+    /// The take the state handed over, without its reason (most tests here only need the file).
+    fn ended(s: &mut ScreenState) -> Option<StoppedRecording> {
+        s.take_ended_with_reason().map(|(rec, _)| rec)
     }
 
     fn state_with(host: FakeScreen) -> ScreenState {
@@ -1073,10 +1075,11 @@ mod tests {
             queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [4, 8, 12, 255]));
         }
         assert_eq!(s.tick(0.0), None);
-        let started = std::time::Instant::now();
         s.stop().expect("stop");
-        assert!(started.elapsed() < std::time::Duration::from_millis(50), "Stop waited on the encoder: {:?}", started.elapsed());
-        assert!(s.take_ended().is_none(), "the file is not ready at once");
+        // Stop returns while the encoder still writes: that is the non-blocking contract, and it
+        // is checked structurally rather than with a wall-clock bound that a loaded machine trips.
+        assert!(s.is_finishing(), "Stop must not wait for the encoder");
+        assert!(ended(&mut s).is_none(), "the file is not ready at once");
         let stopped = pump(&mut s);
         assert!(stopped.frames >= 1, "the queued pictures are written by the worker");
         assert!(stopped.path.is_file());
@@ -1102,6 +1105,30 @@ mod tests {
         assert!(s.cancel());
         assert!(!s.is_recording());
         assert!(!s.cancel());
+    }
+
+    /// Stop on a screen that never produced a frame still releases the capture device: the host
+    /// is stopped at once, the take ends with nothing in it, and no thread is left capturing.
+    #[test]
+    fn an_idle_stop_releases_the_capture_device() {
+        let (host, _queue) = FakeScreen::ready((160, 120));
+        let stops = host.stops.clone();
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        // No frame was ever delivered, as on a static screen with the capturer still building.
+        assert_eq!(s.tick(0.0), None);
+        s.stop().expect("stop");
+        assert_eq!(stops.load(Ordering::Relaxed), 1, "the device is released even with no frame");
+        // The encoder thread needs a moment to write (nothing) and report: wait on a deadline.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut why = None;
+        while why.is_none() && std::time::Instant::now() < deadline {
+            why = s.tick(0.0);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let why = why.expect("the empty take ends");
+        assert!(why.contains("nothing in it"), "{why}");
+        assert!(!s.is_recording() && !s.is_finishing());
     }
 
     #[test]
@@ -1175,7 +1202,7 @@ mod tests {
         let kept = pump(&mut s);
         assert_eq!((kept.frames, kept.width, kept.height), (1, 160, 120));
         assert!(kept.path.is_file());
-        assert_eq!(s.take_ended(), None, "the take is handed over once");
+        assert_eq!(ended(&mut s), None, "the take is handed over once");
         let _ = std::fs::remove_file(&kept.path);
     }
 
@@ -1188,7 +1215,7 @@ mod tests {
         fail.store(true, Ordering::Relaxed);
         assert!(s.tick(0.0).is_some(), "the failure is reported");
         assert!(!s.is_recording());
-        assert!(s.take_ended().is_none(), "nothing was recorded, so no file is kept");
+        assert!(ended(&mut s).is_none(), "nothing was recorded, so no file is kept");
     }
 
     #[test]
@@ -1238,7 +1265,7 @@ mod tests {
         let why = s.tick(0.0).expect("the missing encoder is reported");
         assert!(why.contains("couldn't be written"), "{why}");
         assert!(!s.is_recording() && !s.is_finishing(), "the take is over");
-        assert!(s.take_ended().is_none(), "there is no file to insert");
+        assert!(ended(&mut s).is_none(), "there is no file to insert");
         assert!(!path.exists(), "the unfinished file is removed");
     }
 

@@ -135,6 +135,21 @@ fn f(p: &Value, k: &str) -> Option<f32> {
 
 /// Dispatch one decoded control request and return an outcome for its caller to reply with.
 pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
+    // A control-channel request is an automation caller, however local: commands it runs must not
+    // start screen capture or read window titles. The window's own input is not affected.
+    let remote = matches!(req.method.as_str(), "engine.execute" | "ui.menu.invoke" | "command");
+    let was = app.session.ui_caller();
+    if remote {
+        app.session.set_ui_caller(false);
+    }
+    let out = dispatch(app, ctx, req);
+    if remote {
+        app.session.set_ui_caller(was);
+    }
+    out
+}
+
+fn dispatch(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let p = &req.params;
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     match req.method.as_str() {

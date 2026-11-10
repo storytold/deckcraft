@@ -19,7 +19,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Screen Recording",
         ["Record", "Record"],
         None,
-        "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, targetKind?: display|window, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …} (`stop` answers {state: stopping}; the take is inserted on a later tick, once the encoder has written it)",
+        "{action?: start|pause|resume|stop|cancel|targets|permission = start, target?: id, targetKind?: display|window, region?: {x, y, width, height} px (whole numbers, at least 64×64 inside the target), fps?: 1-60, cursor?: bool, quality?: 10-51} → every answer is {action, state, …}: start {fps, region, cursor} needs a slide to insert the take on and is UI-only, pause|resume|stop|cancel {frames?, durationMs?} need no slide, targets {targets: [{id, kind, title (null to non-UI callers), width (null when unknown), height}], status, implicit} and permission {granted, status} ask the system (permission is UI-only)",
         always,
         run
     )]
@@ -28,23 +28,42 @@ pub fn specs() -> Vec<CommandSpec> {
 const CMD: &str = "show.screenRecord";
 
 fn err(e: deckcraft_screen::ScreenError) -> crate::EngineError {
-    crate::EngineError::Other(e.to_string())
+    // The code (`busy`, `noDevice`, …) survives beside the message instead of being flattened
+    // into a string: `ScreenError::code` is the one place it is defined.
+    e.into()
+}
+
+/// Refuse an action an automation client may not take: capturing the screen starts only from the
+/// DeckCraft window's own controls (the Record tab's picker or the Record window), so MCP, the CLI
+/// and the control channel cannot record the user's screen.
+fn ui_only(s: &Session, what: &str) -> crate::Result<()> {
+    if s.ui_caller() {
+        return Ok(());
+    }
+    Err(crate::EngineError::Disabled(CMD.into(), format!("screen recording {what} is only available from the DeckCraft window")))
 }
 
 fn region(p: &Value) -> Result<Option<CaptureRegion>, crate::EngineError> {
     let Some(v) = p.get("region").filter(|v| !v.is_null()) else { return Ok(None) };
-    let a = v.as_array().filter(|a| a.len() == 4).ok_or_else(|| bad(CMD, "`region` must be [x, y, width, height] in captured pixels"))?;
-    let n = a.iter().map(|v| v.as_f64().filter(|v| v.is_finite())).collect::<Option<Vec<f64>>>();
-    let n = n.ok_or_else(|| bad(CMD, "`region` must be four numbers"))?;
+    let o = v.as_object().ok_or_else(|| bad(CMD, "`region` must be {x, y, width, height} in captured pixels"))?;
+    let n = |k: &str| o.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+    let (Some(x), Some(y), Some(w), Some(h)) = (n("x"), n("y"), n("width"), n("height")) else {
+        return Err(bad(CMD, "`region` needs numbers for x, y, width and height"));
+    };
     let whole = |v: f64| v.fract() == 0.0;
     let int = |v: f64, lo: f64, hi: f64| whole(v) && (lo..=hi).contains(&v);
-    if !int(n[0], f64::from(i32::MIN), f64::from(i32::MAX)) || !int(n[1], f64::from(i32::MIN), f64::from(i32::MAX)) {
-        return Err(bad(CMD, "`region` has an origin outside its pixel range"));
+    if !int(x, f64::from(i32::MIN), f64::from(i32::MAX)) || !int(y, f64::from(i32::MIN), f64::from(i32::MAX)) {
+        return Err(bad(CMD, "`region` has a whole-number origin outside its pixel range"));
     }
-    if !int(n[2], 0.0, f64::from(u32::MAX)) || !int(n[3], 0.0, f64::from(u32::MAX)) {
-        return Err(bad(CMD, "`region` has a size outside its pixel range"));
+    if !int(w, 0.0, f64::from(u32::MAX)) || !int(h, 0.0, f64::from(u32::MAX)) {
+        return Err(bad(CMD, "`region` has a whole-number size outside its pixel range"));
     }
-    CaptureRegion::new(n[0] as i32, n[1] as i32, n[2] as u32, n[3] as u32).map(Some).map_err(|e| bad(CMD, e.to_string()))
+    CaptureRegion::new(x as i32, y as i32, w as u32, h as u32).map(Some).map_err(|e| bad(CMD, e.to_string()))
+}
+
+fn region_json(r: CaptureRegion) -> Value {
+    let (x, y, width, height) = r.to_object();
+    json!({"x": x, "y": y, "width": width, "height": height})
 }
 
 fn fps(p: &Value) -> Result<u32, crate::EngineError> {
@@ -98,8 +117,9 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
     let action = str_param(p, "action").unwrap_or("start").trim().to_ascii_lowercase();
     match action.as_str() {
         "start" => {
-            // Every other action only drives the recorder: a document closed (or all its slides
-            // deleted) must still be able to stop the capture and keep the take.
+            // `start` is the one action that inserts a take, so it needs somewhere to put it; the
+            // other actions must keep working after the document (or every slide) is gone.
+            ui_only(s, "can only be started")?;
             has_slide(s).map_err(|e| bad(CMD, e))?;
             let fps = fps(p)?;
             let region = region(p)?;
@@ -110,9 +130,10 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             cfg.quality = quality(p)?;
             s.screen.start(options, cfg).map_err(err)?;
             Ok(json!({
+                "action": "start",
                 "state": "recording",
                 "fps": fps,
-                "region": region.map(CaptureRegion::to_array),
+                "region": region.map(region_json),
                 "cursor": show_cursor,
             }))
         }
@@ -121,52 +142,77 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
                 return Err(bad(CMD, "the recording is being written"));
             }
             s.screen.pause().map_err(err)?;
-            Ok(state_json(&s.screen))
+            Ok(with_action("pause", state_json(&s.screen)))
         }
         "resume" => {
             if s.screen.is_finishing() {
                 return Err(bad(CMD, "the recording is being written"));
             }
             s.screen.resume().map_err(err)?;
-            Ok(state_json(&s.screen))
+            Ok(with_action("resume", state_json(&s.screen)))
         }
         "cancel" => {
             let was = s.screen.cancel();
-            Ok(json!({"state": if was { "cancelled" } else { "idle" }}))
+            Ok(json!({"action": "cancel", "state": if was { "cancelled" } else { "idle" }}))
         }
         "stop" => {
             // The encoder writes the file on its thread; the take is inserted on the tick that
             // receives it, so Stop answers at once instead of freezing the UI on encoding.
             s.screen.stop().map_err(err)?;
-            Ok(json!({"state": "stopping"}))
+            Ok(json!({"action": "stop", "state": "stopping"}))
         }
         "targets" => {
             // A missing permission or an unsupported host is the picker's state, not a failed
             // request: report it with an empty list so the "Grant permission…" button can appear.
+            // The error's own code says which state it is; there is no second mapping here.
             let targets = match s.screen.targets() {
                 Ok(t) => t,
-                Err(
-                    deckcraft_screen::ScreenError::PermissionDenied
-                    | deckcraft_screen::ScreenError::Unavailable
-                    | deckcraft_screen::ScreenError::NoDevice,
-                ) => Vec::new(),
+                Err(e) if matches!(e.code(), "permissionDenied" | "unavailable" | "noDevice") => Vec::new(),
                 Err(e) => return Err(err(e)),
             };
+            // Titles are the user's own window names: only the DeckCraft window's picker sees
+            // them. An automation caller gets the ids and kinds it needs to address a target it
+            // already knows, with `title` null and a size the host cannot report also null.
+            let ui = s.ui_caller();
             let list: Vec<Value> = targets
                 .iter()
-                .map(|t| json!({"id": t.id, "kind": t.kind.as_str(), "title": t.title, "width": t.width, "height": t.height}))
+                .map(|t| {
+                    json!({
+                        "id": t.id,
+                        "kind": t.kind.as_str(),
+                        "title": if ui { Value::String(t.title.clone()) } else { Value::Null },
+                        "width": (t.width > 0).then_some(t.width),
+                        "height": (t.height > 0).then_some(t.height),
+                    })
+                })
                 .collect();
             // Some hosts pick the source themselves (Linux, where `scap` returns no targets and
             // chooses when the recorder is built): the picker may start the take with no target.
             let implicit = list.is_empty() && s.screen.status() == deckcraft_screen::CaptureStatus::Ready;
-            Ok(json!({"targets": list, "status": status_str(s.screen.status()), "implicit": implicit}))
+            Ok(json!({
+                "action": "targets",
+                "state": status_str(s.screen.status()),
+                "targets": list,
+                "status": status_str(s.screen.status()),
+                "implicit": implicit,
+            }))
         }
         "permission" => {
+            ui_only(s, "permission can only be requested")?;
             let granted = s.screen.request_permission();
-            Ok(json!({"granted": granted, "status": status_str(s.screen.status())}))
+            Ok(json!({"action": "permission", "state": status_str(s.screen.status()), "granted": granted, "status": status_str(s.screen.status())}))
         }
         other => Err(bad(CMD, format!("action “{other}” isn't start, pause, resume, stop, cancel, targets or permission"))),
     }
+}
+
+/// Put the action name on an answer that already carries `state`, so every response has the same
+/// two identifying keys and the rest is documented per action.
+fn with_action(action: &str, mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("action".into(), Value::String(action.into()));
+    }
+    v
 }
 
 /// Insert a finished take on the current slide and delete its temporary file. Both the `stop`
@@ -208,12 +254,25 @@ fn status_str(status: deckcraft_screen::CaptureStatus) -> &'static str {
 mod tests {
     use super::*;
 
+    /// A session whose commands come from the DeckCraft window: screen capture starts only there.
+    fn ui_session() -> Session {
+        let mut s = Session::with_new();
+        s.set_ui_caller(true);
+        s
+    }
+
     #[test]
-    fn a_picker_region_must_be_a_four_number_array_of_at_least_64_by_64() {
-        assert_eq!(region(&json!({"region": [10, 20, 640, 480]})).expect("valid"), Some(CaptureRegion { x: 10, y: 20, width: 640, height: 480 }));
-        assert!(region(&json!({"region": [10, 20, 63, 480]})).is_err());
-        assert!(region(&json!({"region": [10, 20, 640]})).is_err());
-        assert!(region(&json!({"region": [-1, 0, 640, 480]})).is_err());
+    fn a_picker_region_is_a_named_object_of_whole_numbers_at_least_64_by_64() {
+        assert_eq!(
+            region(&json!({"region": {"x": 10, "y": 20, "width": 640, "height": 480}})).expect("valid"),
+            Some(CaptureRegion { x: 10, y: 20, width: 640, height: 480 })
+        );
+        assert!(region(&json!({"region": {"x": 10, "y": 20, "width": 63, "height": 480}})).is_err());
+        assert!(region(&json!({"region": {"x": 10, "y": 20, "width": 640}})).is_err());
+        assert!(region(&json!({"region": {"x": -1, "y": 0, "width": 640, "height": 480}})).is_err());
+        assert!(region(&json!({"region": {"x": 0.5, "y": 0, "width": 640, "height": 480}})).is_err(), "a fractional origin is refused");
+        assert!(region(&json!({"region": {"x": 0, "y": 0, "width": 640.5, "height": 480}})).is_err(), "a fractional size is refused");
+        assert!(region(&json!({"region": [10, 20, 640, 480]})).is_err(), "the positional form is gone");
         assert_eq!(region(&json!({})).expect("absent"), None);
     }
 
@@ -237,7 +296,7 @@ mod tests {
             }
             fn stop(&mut self) {}
         }
-        let mut s = Session::with_new();
+        let mut s = ui_session();
         s.screen.set_host(Some(Box::new(SelfPicking)));
         let v = s.execute("show.screenRecord", &json!({"action": "targets"})).unwrap();
         assert_eq!(v["targets"].as_array().map(Vec::len), Some(0));
@@ -247,6 +306,33 @@ mod tests {
         let started = s.execute("show.screenRecord", &json!({"action": "start"})).unwrap();
         assert!(started.get("state").is_some(), "{started}");
         let _ = s.screen.cancel();
+    }
+
+    /// Capture starts only from the DeckCraft window: an automation caller (MCP, the CLI, a
+    /// control-channel request) can list ids but not titles, and cannot start or ask for
+    /// permission. The window sees both.
+    #[test]
+    fn only_the_window_can_start_a_take_or_see_target_titles() {
+        let fake = || FakeScreen { frames: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())) };
+        let mut remote = Session::with_new();
+        remote.set_screen_host(Some(Box::new(fake())));
+        let v = remote.execute(CMD, &json!({"action": "targets"})).expect("targets lists ids");
+        assert_eq!(v["targets"][0]["id"], 1);
+        assert_eq!(v["targets"][0]["title"], Value::Null, "a window title is the user's, not an automation caller's: {v}");
+        assert_eq!((v["targets"][0]["width"].as_u64(), v["targets"][0]["height"].as_u64()), (Some(160), Some(120)));
+        for action in ["start", "permission"] {
+            let e = remote.execute(CMD, &json!({"action": action})).expect_err(action);
+            assert!(matches!(e, crate::EngineError::Disabled(..)), "{action}: {e}");
+            assert!(e.to_string().contains("DeckCraft window"), "{action}: {e}");
+        }
+        // The window's own picker sees the titles it shows in the combo box.
+        let mut app = ui_session();
+        app.set_screen_host(Some(Box::new(fake())));
+        let v = app.execute(CMD, &json!({"action": "targets"})).expect("targets");
+        assert_eq!(v["targets"][0]["title"], "Fake display", "{v}");
+        let started = app.execute(CMD, &json!({"action": "start"})).expect("the window starts");
+        assert_eq!(started["action"], "start");
+        let _ = app.screen.cancel();
     }
 
     #[test]
@@ -284,13 +370,14 @@ mod tests {
         // Closing the document (or deleting every slide) must not strand a running capture: only
         // `start` needs a slide to insert the take on.
         let frames = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
-        let mut s = Session::with_new();
+        let mut s = ui_session();
         s.set_screen_host(Some(Box::new(FakeScreen { frames: frames.clone() })));
         s.execute(CMD, &json!({"fps": 30})).expect("start");
         frames.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [1, 2, 3, 255]));
         s.screen_tick(0.0);
         // No document at all: the recorder still stops, though a start needs a slide to insert on.
         let mut empty = Session::new();
+        empty.set_ui_caller(true);
         empty.set_screen_host(Some(Box::new(FakeScreen { frames: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())) })));
         assert!(empty.execute(CMD, &json!({"action": "start"})).is_err(), "start still needs a slide");
         empty.execute(CMD, &json!({"action": "cancel"})).expect("cancel needs no slide");
@@ -303,7 +390,7 @@ mod tests {
     #[test]
     fn pause_and_resume_are_refused_while_the_take_is_written() {
         let frames = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
-        let mut s = Session::with_new();
+        let mut s = ui_session();
         s.set_screen_host(Some(Box::new(FakeScreen { frames: frames.clone() })));
         s.execute(CMD, &json!({"fps": 30})).expect("start");
         frames.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [5, 6, 7, 255]));
@@ -321,7 +408,7 @@ mod tests {
 
     #[test]
     fn without_a_host_screen_recording_reports_unavailable() {
-        let mut s = Session::with_new();
+        let mut s = ui_session();
         let e = s.execute(CMD, &json!({"action": "start"})).unwrap_err().to_string();
         assert!(e.contains("isn't available"), "{e}");
         // The picker asks for targets first: an unavailable host is its status, with no screens,
@@ -361,7 +448,11 @@ mod tests {
     /// Run ticks until the encoder hands the take over and the session inserts it (bounded), as
     /// the UI does: Stop itself only asks for the file.
     fn pump_until_inserted(s: &mut Session, slide: usize) -> bool {
-        for _ in 0..500 {
+        // Wait for the encoder's file on a wall-clock deadline (a loaded CI machine can take a
+        // while), never a fixed number of sleeps: the tick inserts the take as soon as the
+        // encoder reports it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             s.screen_tick(0.0);
             let done = s.active().is_some_and(|d| {
                 d.doc.slides.get(slide).is_some_and(|sl| sl.shapes.iter().any(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Media(_))))
@@ -377,7 +468,7 @@ mod tests {
     #[test]
     fn stop_inserts_a_click_to_play_video_with_a_poster_and_undo_removes_it() {
         let frames = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
-        let mut s = Session::with_new();
+        let mut s = ui_session();
         s.set_screen_host(Some(Box::new(FakeScreen { frames: frames.clone() })));
         s.execute(CMD, &json!({"fps": 30})).expect("start");
         frames.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [40, 90, 200, 255]));
