@@ -54,12 +54,12 @@ OUT-t0.250.png and so on. Prints each image's path, size, transition and time.
 the chosen background mode, writes OUT.png and prints the size and time in milliseconds. Normal needs
 no model.
 
-  --image IN       the camera frame: any PNG or JPEG the decoder accepts, up to 16 MB
+  --image IN       the camera frame: a PNG or JPEG up to 16 MB and 1280x1280 pixels
   --mode           normal, removed, blur, or custom (replacement picture or colour). `--mode` is
                    case-insensitive and trimmed, and the aliases none = normal, remove = removed,
                    replace = custom are accepted
-  --background     the replacement picture for custom mode (PNG or JPEG, up to 16 MB; any size,
-                   resized to the frame)
+  --background     the replacement picture for custom mode (PNG or JPEG, up to 16 MB and
+                   1280x1280 pixels; resized to the frame)
   --color R,G,B    the replacement colour for custom mode (three 0..255 channels)
   --model DIR      the model root holding birefnet-lite-512/onnx/model.onnx
   --feather N      soft-edge radius in pixels, 0..64 (2 by default; larger values clamp)

@@ -311,7 +311,7 @@ mod tests {
     fn the_gate_names_the_missing_model() {
         let missing = ModelState::Missing { root: "models".into(), url: String::new(), bytes: 1, sha256: String::new(), license: "MIT".into() };
         let reason = mode_gate(true, Some(&missing), CameraBackgroundMode::Blur).expect_err("needs the model");
-        assert!(reason.contains("needs the model"), "{reason}");
+        assert!(reason.contains("need the model"), "{reason}");
         let reason = mode_gate(true, None, CameraBackgroundMode::Blur).expect_err("needs the desktop app");
         assert!(reason.contains("desktop app"), "{reason}");
         assert!(mode_gate(true, None, CameraBackgroundMode::Normal).is_ok(), "Normal never needs a model");

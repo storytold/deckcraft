@@ -100,8 +100,12 @@ impl Service {
         let load_failed = self.worker.as_ref().is_some_and(|w| matches!(w.error(), Some(MatteError::Unavailable(_))));
         if let ModelState::Ready { path, .. } = &state
             && load_failed
-            && self.failed_load_path.as_deref() != Some(path.as_str())
         {
+            if self.failed_load_path.as_deref() == Some(path.as_str()) {
+                // The worker's failure is the current answer for this path: keep it, or the panel
+                // would alternate between Ready and Failed every probe interval.
+                return;
+            }
             self.worker = None;
             self.failed_load_path = None;
         }

@@ -92,8 +92,8 @@ Measured on this Windows x64 machine, release build, CPU only, 2026-11-07:
 | tract-onnx 0.23 / `birefnet-lite-512` | 512×512 | 7.8 s | rejected: 3.7× slower than RTen |
 | tract-onnx 0.23 / `BiRefNet_lite` (onnx-community) | 1024×1024 | 33.7 s | rejected: unusable live, and 224 MB |
 
-Two seconds per frame is far below a camera's frame rate, so inference never runs on the UI thread:
-`MatteWorker` owns one thread, keeps at most one pending frame and offers a new one only when nothing
+Two seconds per frame is far below a camera's frame rate, so inference never runs on the UI thread
+of a live frame: `MatteWorker` owns one thread, keeps at most one pending frame and offers a new one only when nothing
 is waiting and the interval has elapsed (a queued frame is not replaced), and the compositor reuses
 the last matte until a new one arrives. The model load (verify 191 MB, parse the graph) runs on
 that thread too: the first `process` after a model appears answers `None` until the first matte
@@ -146,10 +146,14 @@ Over the control channel and MCP, every command is the same:
 image) and `background` (the replacement picture), both base64 — because `cameo.background` uses
 `image` for a media id and `imageData` for inline bytes. The preview decodes any format the `image`
 crate accepts, not only PNG: JPEG works too. `cameo.background` and `cameo.backgroundApplyToAll`
-return `{mode, ids, changed}` in every case; `all` together with `id`/`ids` is refused rather than
-silently preferred, and slide indices are 0-based.
+return `{mode, ids, changed}` in every case; `cameo.background` refuses `all` together with `id`/`ids`
+rather than silently preferring one, while `cameo.backgroundApplyToAll` always targets every Cameo
+(when it is given `mode`, `all` plus `id`/`ids` is accepted and has no effect on the targets), and
+slide indices are 0-based.
 
-The preview is synchronous (about 2 s of CPU for a segmentation mode) and bounded: a frame or
+The preview is synchronous (about 2 s of CPU for a segmentation mode: a desktop control-channel
+request runs it through `SlideApp::logic`, so that request can stall the app for as long as the load
+and inference take) and bounded: a frame or
 replacement over 1280 px on a side, over 64 MB of base64, or a zero side is refused from the header
 before the decoder allocates it. The matte of an unchanged frame is cached per session, so a preview
 loop with the same camera frame segments once. The desktop UI does not use the preview command for
