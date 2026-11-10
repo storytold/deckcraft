@@ -1294,7 +1294,7 @@ impl FontDb {
         Some(f)
     }
 
-    fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+    pub(crate) fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         if style.contains('{') {
             {
                 let faces = self.read_faces();

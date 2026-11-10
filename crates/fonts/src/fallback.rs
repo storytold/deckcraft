@@ -170,7 +170,13 @@ impl FontDb {
                     continue;
                 }
                 if self.is_loaded(fam) || (self.system_fallback_enabled() && self.has_family(fam)) {
-                    let f = self.face(fam, style);
+                    // With system fallback off, only a face that is already loaded: `face` could load more catalog files.
+                    let f = if self.system_fallback_enabled() {
+                        self.face(fam, style)
+                    } else {
+                        let Some(f) = self.find(fam, style) else { continue };
+                        f
+                    };
                     if f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
                         return f;
                     }
