@@ -15,8 +15,8 @@ mod shape;
 
 pub use fallback::{bundled_families, covers_cluster, is_emoji_cluster, ligature_carets};
 pub use fontdb::{
-    FALLBACK_FAMILY, FaceRef, FontDb, FontFace, LAST_RESORT_FAMILY, MISSING_FONT_FAMILY, base_style, bundled, is_monospace_family, substitutes,
-    system_font_dirs,
+    FALLBACK_FAMILY, FaceRef, FontDb, FontFace, LAST_RESORT_FAMILY, MISSING_FONT_FAMILY, base_style, bundled, is_monospace_family,
+    split_family_style, style_from_flags, style_is_bold, style_is_italic, style_italic, style_weight, substitutes, system_font_dirs,
 };
 pub use harfrust::Feature;
 use harfrust::Tag;

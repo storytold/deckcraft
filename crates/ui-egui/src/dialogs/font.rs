@@ -2,6 +2,8 @@ use super::{Dialog, SlideApp, Ui, buttons, check, choice, color_label, finite_pt
 
 fn seed_font_fields(d: &mut Dialog) {
     seed_once(d, "family", json_text(d.params.get("family"), ""));
+    seed_once(d, "style", json_text(d.params.get("style"), ""));
+    seed_once(d, "styleFamily", json_text(d.params.get("family"), ""));
     seed_once(d, "size", json_text(d.params.get("size"), "18"));
     seed_once(d, "bold", json_text(d.params.get("bold"), "0"));
     seed_once(d, "italic", json_text(d.params.get("italic"), "0"));
@@ -40,11 +42,55 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             });
         let _ = combo.response.labelled_by(field.id);
     });
+    let available_styles = deckcraft_fonts::FontDb::global().styles(&family);
+    let style_family = d.get("styleFamily", "");
+    let mut style = d.get("style", "");
+    if style_family != family || style.is_empty() {
+        let b = d.get("bold", "0") == "1";
+        let i = d.get("italic", "0") == "1";
+        style = deckcraft_fonts::style_from_flags(b, i).to_string();
+        d.fields.insert("style".into(), style.clone());
+        d.fields.insert("styleFamily".into(), family.clone());
+    }
+    ui.horizontal(|ui| {
+        let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Style"));
+        let combo = craft_ui::ComboBox::from_id_salt("font_dialog_style")
+            .selected_text(if style.is_empty() { "Regular" } else { style.as_str() })
+            .width(300.0)
+            .show_ui(ui, |ui| {
+                let list = if available_styles.is_empty() {
+                    vec!["Regular".to_string(), "Italic".to_string(), "Bold".to_string(), "Bold Italic".to_string()]
+                } else {
+                    available_styles.clone()
+                };
+                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                    for s in &list {
+                        if ui.selectable_label(&style == s, s).clicked() {
+                            d.fields.insert("style".into(), s.clone());
+                            d.fields.insert("styleFamily".into(), family.clone());
+                            let is_b = s.eq_ignore_ascii_case("Bold") || s.eq_ignore_ascii_case("Bold Italic");
+                            let is_i = deckcraft_fonts::style_is_italic(s);
+                            d.fields.insert("bold".into(), if is_b { "1".into() } else { "0".into() });
+                            d.fields.insert("italic".into(), if is_i { "1".into() } else { "0".into() });
+                        }
+                    }
+                });
+            });
+        let _ = combo.response.labelled_by(field.id);
+    });
     ui.horizontal(|ui| {
         let _ = labeled_text(ui, d, "Size", "size", 64.0);
         ui.add_space(16.0);
+        let prev_b = d.get("bold", "0") == "1";
+        let prev_i = d.get("italic", "0") == "1";
         check(ui, d, "Bold", "bold", false);
         check(ui, d, "Italic", "italic", false);
+        let new_b = d.get("bold", "0") == "1";
+        let new_i = d.get("italic", "0") == "1";
+        if new_b != prev_b || new_i != prev_i {
+            let s = deckcraft_fonts::style_from_flags(new_b, new_i);
+            d.fields.insert("style".into(), s.into());
+        }
     });
     ui.horizontal(|ui| {
         ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Underline"));
@@ -138,6 +184,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         };
         let mut params = json!({
             "family": family,
+            "style": d.get("style", "Regular"),
             "size": size,
             "bold": d.get("bold", "0") == "1",
             "italic": d.get("italic", "0") == "1",

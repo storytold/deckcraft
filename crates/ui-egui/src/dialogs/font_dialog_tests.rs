@@ -63,3 +63,13 @@ fn command_t_opens_the_font_dialog_and_cancel_keeps_the_text() {
     assert!(h.state().dialog.is_none());
     assert_eq!(bold_of(&h), None);
 }
+
+#[test]
+fn font_dialog_shows_style_selection() {
+    let mut h = harness();
+    h.get_by_label("Font…").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("font"));
+    assert!(h.state().dialog.as_ref().unwrap().fields.contains_key("style"));
+    assert_eq!(h.state().dialog.as_ref().unwrap().fields["style"], "Regular");
+}
