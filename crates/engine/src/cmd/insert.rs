@@ -27,7 +27,7 @@ use chart::{chart, chart_data, chart_options, chart_type_cmd, set_whole};
 use links::{action_button, hyperlink, shape_action};
 pub use picture::content_type;
 pub(crate) use picture::media_bytes;
-use picture::{audio, picture, video};
+use picture::{audio, model3d, picture, video};
 use text_fields::{date_time, slide_number, symbol, word_art};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -92,6 +92,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("insert.audio", "Audio from File…", ["Insert", "Media", "Audio"], None, "{path? | data: base64, name?, rect?}", has_slide, audio),
         cmd!("insert.video", "Video from File…", ["Insert", "Media", "Video"], None, "{path? | data: base64, name?, rect?}", has_slide, video),
+        cmd!(
+            "insert.model3d",
+            "3D Model…",
+            ["Insert", "Media", "3D Models"],
+            None,
+            "{path? | data: base64, name?, rect?: [x,y,w,h]} (a binary glTF `.glb`; it goes to the media channel as a `p:contentPart` and is drawn as a placeholder or its poster)",
+            has_slide,
+            model3d
+        ),
         cmd!("insert.wordArt", "WordArt", ["Insert", "Text"], None, "{text?, style?: 0..}", has_slide, word_art),
         cmd!("insert.slideNumber", "Slide Number", ["Insert", "Text"], None, "{}", has_slide, slide_number),
         cmd!(

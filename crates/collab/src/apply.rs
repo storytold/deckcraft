@@ -433,8 +433,8 @@ impl Adapter {
         Some((was, now))
     }
 
-    /// Undo of `shape.insert`, `insert.picture` or `insert.video`/`insert.audio`: the one top-most
-    /// shape the step added, with its z-order and animations.
+    /// Undo of `shape.insert`, `insert.picture`, `insert.video`/`insert.audio` or
+    /// `insert.model3d`: the one top-most shape the step added, with its z-order and animations.
     fn capture_shape_insert(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
         let slide_key = op.target.slide.clone()?;
         let slide_id = self.keys.slide_id(&slide_key)?;
@@ -942,6 +942,7 @@ impl Adapter {
                 let expected = match kind {
                     MediaKind::Video => crate::MediaType::Video,
                     MediaKind::Audio => crate::MediaType::Audio,
+                    MediaKind::Model => crate::MediaType::Model,
                 };
                 if let Some(stored) = self.media.kind(sha256)
                     && stored != expected
@@ -959,6 +960,7 @@ impl Adapter {
                 let cmd = match kind {
                     MediaKind::Video => "insert.video",
                     MediaKind::Audio => "insert.audio",
+                    MediaKind::Model => "insert.model3d",
                 };
                 self.call(session, cmd, args, head)
             }
@@ -3625,6 +3627,92 @@ mod tests {
         bytes.extend(b"ftypisom\0\0\x02\x00isomiso2");
         bytes.extend([0u8; 32]);
         bytes
+    }
+
+    /// A minimal binary glTF header: the magic, version 2 and a declared length.
+    fn glb() -> Vec<u8> {
+        let mut bytes = b"glTF".to_vec();
+        bytes.extend(2u32.to_le_bytes());
+        bytes.extend(20u32.to_le_bytes());
+        bytes.extend([0u8; 8]);
+        bytes
+    }
+
+    #[test]
+    fn a_model_operation_runs_from_the_media_channel_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let bytes = glb();
+        let sha = aa.media_mut().put("block.glb", bytes.clone()).expect("a model by its glTF signature");
+        bb.media_mut().insert(&sha, bytes).expect("the same object, fetched before the operation");
+        let slide = aa.keys().slide_key(doc_of(&a).slides[0].id).expect("slide").clone();
+
+        // The kind in the operation and the stored object must agree: a picture digest is not a
+        // model, and the refusal comes before any write.
+        let picture = aa.media_mut().put("red.png", png()).expect("picture");
+        let wrong = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide.clone()), ..Target::default() },
+            Payload::MediaInsert { kind: MediaKind::Model, sha256: picture, name: "red.png".into(), rect: None },
+        );
+        let err = aa.apply(&mut a, 0, "a", &wrong).expect_err("a picture object is not a 3-D model");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(err.message.contains("picture"), "{}", err.message);
+
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), ..Target::default() },
+            Payload::MediaInsert { kind: MediaKind::Model, sha256: sha.clone(), name: "block.glb".into(), rect: Some([120.0, 90.0, 320.0, 240.0]) },
+        );
+        let da = aa.apply(&mut a, 0, "a", &envelope).expect("apply a");
+        let db = bb.apply(&mut b, 0, "b", &envelope).expect("apply b");
+        assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same model");
+        let after = doc_of(&a);
+        let model = after.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Model3d { .. })).expect("a 3-D model shape");
+        assert_eq!(model.xfrm.expect("xfrm").x, 120.0);
+        assert_eq!(model.descr, "block.glb");
+        assert!(after.media.iter().any(|m| m.content_type == "model/gltf-binary"), "the part keeps the type the package writes");
+        assert_eq!(aa.media().kind(&sha), Some(crate::MediaType::Model));
+    }
+
+    #[test]
+    fn undo_of_a_model_insert_removes_it_from_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let bytes = glb();
+        let sha = aa.media_mut().put("block.glb", bytes.clone()).expect("model");
+        bb.media_mut().insert(&sha, bytes).expect("the same object");
+        let before = doc_of(&a);
+        let slide = aa.keys().slide_key(before.slides[0].id).expect("slide").clone();
+        let insert = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide.clone()), ..Target::default() },
+            Payload::MediaInsert { kind: MediaKind::Model, sha256: sha, name: "block.glb".into(), rect: None },
+        );
+        aa.apply(&mut a, 0, "a", &insert).expect("a inserts");
+        bb.apply_confirmed(&mut b, 0, "a", &insert).expect("b inserts");
+        let (_, inserted) = key_of(&aa, &doc_of(&a), 2);
+        assert_eq!(aa.history().get("a").map(|h| h.undo_len()), Some(1), "a model insert is one undoable step");
+
+        let undo = aa.undo(&a, 1, "a", "undo-model").expect("undo the insert");
+        assert_eq!(undo.payload, Payload::ShapeDelete {});
+        assert_eq!(undo.kind, OpKind::Structural);
+        assert_eq!(undo.target.shapes, vec![inserted], "the delete names the inserted model");
+        aa.apply(&mut a, 1, "a", &undo).expect("undo on a");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the undo");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas converge on the undo");
+        assert!(!doc_of(&a).slides[0].shapes.iter().any(|s| matches!(s.kind, ShapeKind::Model3d { .. })), "the model is gone");
+        assert_eq!(doc_of(&a).slides[0].shapes, before.slides[0].shapes, "the slide is back to what it was");
     }
 
     #[test]

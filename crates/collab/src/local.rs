@@ -192,11 +192,11 @@ impl CollabDoc {
     /// document changes when the server's `applied` comes back.
     pub fn submit(&mut self, session: &Session, cmd: &str, params: &Value, op_id: &str) -> Result<usize, LocalError> {
         let st = session.active().ok_or(LocalError::NoDocument)?;
-        // Pictures, audio and video travel in two pieces: the bytes to the media channel, the
-        // digest on the operation. The author always has the bytes, so the confirmed command can
-        // run here too.
+        // Pictures, audio, video and 3-D models travel in two pieces: the bytes to the media
+        // channel, the digest on the operation. The author always has the bytes, so the confirmed
+        // command can run here too.
         let mut wire;
-        let params = if matches!(cmd, "insert.picture" | "insert.audio" | "insert.video" | "font.create") {
+        let params = if matches!(cmd, "insert.picture" | "insert.audio" | "insert.video" | "insert.model3d" | "font.create") {
             let (name, bytes) = media_bytes(params, cmd)?;
             let sha = self.adapter.media_mut().put(&name, bytes).map_err(|e| LocalError::BadParams(e.message))?;
             if let Some(stored) = self.adapter.media().get(&sha) {
@@ -233,9 +233,14 @@ impl CollabDoc {
         if let Some((sha256, kind)) = match &command.payload {
             Payload::PictureInsert { sha256, .. } => Some((sha256, crate::MediaType::Picture)),
             Payload::FontCreate { sha256, .. } => Some((sha256, crate::MediaType::Font)),
-            Payload::MediaInsert { sha256, kind, .. } => {
-                Some((sha256, if matches!(kind, MediaKind::Video) { crate::MediaType::Video } else { crate::MediaType::Audio }))
-            }
+            Payload::MediaInsert { sha256, kind, .. } => Some((
+                sha256,
+                match kind {
+                    MediaKind::Video => crate::MediaType::Video,
+                    MediaKind::Audio => crate::MediaType::Audio,
+                    MediaKind::Model => crate::MediaType::Model,
+                },
+            )),
             _ => None,
         } && !self.adapter.media().contains(sha256)
             && let Some(fetch) = self.media_fetcher.clone()
@@ -551,7 +556,7 @@ pub fn normalize_with_painter(
             Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::ShapeInsert { preset: preset.to_string(), rect: r, text })])
         }
         "insert.chart" => Ok(vec![chart_insert(p, slide_key, op_id, doc)?]),
-        "insert.picture" | "insert.audio" | "insert.video" => {
+        "insert.picture" | "insert.audio" | "insert.video" | "insert.model3d" => {
             let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a media digest")))?;
             if !crate::media::valid_sha(sha) {
                 return Err(LocalError::BadParams(format!("{cmd}: the media digest is not a sha256")));
@@ -578,6 +583,7 @@ pub fn normalize_with_painter(
             let payload = match cmd {
                 "insert.picture" => Payload::PictureInsert { sha256: sha.to_string(), name, rect },
                 "insert.video" => Payload::MediaInsert { kind: MediaKind::Video, sha256: sha.to_string(), name, rect },
+                "insert.model3d" => Payload::MediaInsert { kind: MediaKind::Model, sha256: sha.to_string(), name, rect },
                 _ => Payload::MediaInsert { kind: MediaKind::Audio, sha256: sha.to_string(), name, rect },
             };
             Ok(vec![make(target, payload)])
@@ -1251,8 +1257,8 @@ fn fill_cells(st: &DocState, id: ShapeId, table: &Table, p: &Value) -> Result<Ve
     Ok(cells)
 }
 
-/// Bytes for `insert.picture|insert.audio|insert.video`: base64 `data`, or a local `path` on
-/// desktop. The web build has no file system, so the host passes `data`.
+/// Bytes for `insert.picture|insert.audio|insert.video|insert.model3d`: base64 `data`, or a local
+/// `path` on desktop. The web build has no file system, so the host passes `data`.
 /// One document-font operation from the user's command. The font file itself has already been
 /// stored on the media channel (`submit` replaces `data`/`path` with the digest), so the
 /// operation carries only the digest. A typeface is the document's key for the entry; a face is
@@ -2886,6 +2892,32 @@ mod tests {
     }
 
     #[test]
+    fn a_model_command_uploads_the_glb_and_sends_only_a_reference() {
+        let (mut s, _doc, _slide, _shapes) = deck();
+        let mut client = CollabDoc::new("d");
+        client.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        client.on_msg(&mut s, welcome(0));
+        let bytes = glb();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        client.submit(&s, "insert.model3d", &json!({"name": "block.glb", "data": data}), "op-m").expect("submit");
+        let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
+        match &op.payload {
+            Payload::MediaInsert { kind, sha256, name, rect } => {
+                assert_eq!(*kind, MediaKind::Model);
+                assert_eq!(name, "block.glb");
+                assert!(rect.is_none());
+                assert_eq!(sha256, &crate::media::sha256_hex(&bytes));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(op.payload.command(), "insert.model3d");
+        assert_eq!(op.kind, OpKind::Structural);
+        assert!(!serde_json::to_string(&op.payload).expect("json").contains("data"), "no bytes on the wire");
+        assert_eq!(client.take_uploads().len(), 1, "the model goes to the media channel first");
+        assert!(client.has_media(&crate::media::sha256_hex(&bytes)), "the author keeps the bytes it uploaded");
+    }
+
+    #[test]
     fn a_fill_command_normalises_to_a_final_value() {
         let (mut s, doc, slide, shapes) = deck();
         let mut client = CollabDoc::new("d");
@@ -2905,6 +2937,15 @@ mod tests {
         let mut bytes = vec![0, 0, 0, 0x18];
         bytes.extend(b"ftypisom\0\0\x02\x00isomiso2");
         bytes.extend([0u8; 32]);
+        bytes
+    }
+
+    /// A minimal binary glTF header: magic, version, declared length.
+    fn glb() -> Vec<u8> {
+        let mut bytes = b"glTF".to_vec();
+        bytes.extend(2u32.to_le_bytes());
+        bytes.extend(20u32.to_le_bytes());
+        bytes.extend([0u8; 8]);
         bytes
     }
 

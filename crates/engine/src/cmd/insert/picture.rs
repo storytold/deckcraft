@@ -64,6 +64,8 @@ pub fn content_type(name: &str, bytes: &[u8]) -> &'static str {
         if l.ends_with(".wmv") || l.ends_with(".asf") { "video/x-ms-wmv" } else { "audio/x-ms-wma" }
     } else if bytes.starts_with(b"caff") {
         "audio/x-caf"
+    } else if is_glb(bytes) {
+        "model/gltf-binary"
     } else if l.ends_with(".svg") || bytes.windows(4).take(512).any(|w| w == b"<svg") {
         "image/svg+xml"
     } else if l.ends_with(".aac") {
@@ -243,4 +245,26 @@ pub(super) fn audio(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn video(s: &mut Session, p: &Value) -> Result<Value> {
     media(s, p, true)
+}
+
+/// A binary glTF header: magic, version, declared length.
+fn is_glb(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && bytes.starts_with(b"glTF") && u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) == 2
+}
+
+/// `insert.model3d`: one 3-D model on the media channel as a `p:contentPart`, drawn as its poster
+/// or a placeholder. The part is copied through to the package unchanged, so the command checks
+/// the one signature Office writes and nothing inside the model.
+pub(super) fn model3d(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "insert.model3d";
+    let (name, bytes) = media_bytes(p, cmd)?;
+    let ct = content_type(&name, &bytes);
+    if !is_glb(&bytes) {
+        return Err(bad(cmd, format!("{name} is not a binary glTF 3-D model ({ct})")));
+    }
+    let rect = rect_param(p, "rect").unwrap_or_else(|| default_rect(s, 320.0, 240.0));
+    let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad(cmd, NO_ID_SPACE)))?;
+    let shape = Shape { xfrm: Some(rect), kind: ShapeKind::Model3d { media, poster: None }, descr: name, ..Default::default() };
+    let id = add_shape(s, cmd, shape, true)?;
+    Ok(json!({"id": id, "contentType": ct}))
 }

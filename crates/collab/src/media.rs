@@ -1,5 +1,5 @@
-//! The media channel: content-addressed picture, font, audio and video bytes beside the operation
-//! stream.
+//! The media channel: content-addressed picture, font, audio, video and 3-D model bytes beside
+//! the operation stream.
 //!
 //! An operation never carries media. The client uploads the bytes once, names them by `sha256`
 //! and sends an `insert.*` operation that refers to them; the server stores one object per digest
@@ -7,10 +7,11 @@
 //! socket limit is 256 KiB), makes a repeated picture free, and lets a commit and a snapshot reuse
 //! the same bytes.
 //!
-//! The cache is deliberately small and bounded: only pictures, fonts, audio and video are
-//! accepted, each object is capped by its kind, and a session keeps a separate object/byte budget
-//! for pictures, fonts and audio/video, so a participant cannot exhaust the server's memory with
-//! uploads. The digest is always computed here and never trusted from a caller.
+//! The cache is deliberately small and bounded: only pictures, fonts, audio, video and 3-D models
+//! are accepted, each object is capped by its kind, and a session keeps a separate object/byte
+//! budget for pictures, fonts, audio/video and models, so a participant cannot exhaust the
+//! server's memory with uploads. The digest is always computed here and never trusted from a
+//! caller.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,6 +36,12 @@ pub const MAX_FONT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_FONT_OBJECTS: usize = 32;
 /// Most font bytes one session keeps in total.
 pub const MAX_FONT_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+/// Largest single 3-D model part (a binary glTF, `.glb`).
+pub const MAX_MODEL_BYTES: usize = 32 * 1024 * 1024;
+/// Most 3-D model objects one session keeps.
+pub const MAX_MODEL_OBJECTS: usize = 16;
+/// Most 3-D model bytes one session keeps in total.
+pub const MAX_MODEL_TOTAL_BYTES: usize = 128 * 1024 * 1024;
 
 /// What the media channel stores. The allowlist is the set the `.pptx` writer and the media probe
 /// handle; anything else belongs to a later channel with its own limits.
@@ -45,6 +52,8 @@ pub enum MediaType {
     Audio,
     /// One face of a font the document embeds (`p:embeddedFontLst`).
     Font,
+    /// One 3-D model part (`p:contentPart` with a `model3d` relationship, a binary glTF).
+    Model,
 }
 
 impl MediaType {
@@ -55,6 +64,7 @@ impl MediaType {
             MediaType::Video => video_type(bytes).unwrap_or("application/octet-stream"),
             MediaType::Audio => audio_type(bytes).unwrap_or("application/octet-stream"),
             MediaType::Font => font_type(bytes).unwrap_or(FONT_CONTENT_TYPE),
+            MediaType::Model => model_type(bytes).unwrap_or(MODEL_CONTENT_TYPE),
         }
     }
 
@@ -64,6 +74,7 @@ impl MediaType {
             MediaType::Picture => MAX_MEDIA_BYTES,
             MediaType::Video | MediaType::Audio => MAX_AV_BYTES,
             MediaType::Font => MAX_FONT_BYTES,
+            MediaType::Model => MAX_MODEL_BYTES,
         }
     }
 
@@ -74,6 +85,7 @@ impl MediaType {
             MediaType::Video => "video",
             MediaType::Audio => "audio",
             MediaType::Font => "font",
+            MediaType::Model => "3-D model",
         }
     }
 }
@@ -119,6 +131,23 @@ pub fn font_type(bytes: &[u8]) -> Option<&'static str> {
     }
     if bytes.len() >= 82 && u16::from_le_bytes([bytes[34], bytes[35]]) == 0x504C {
         return Some("application/vnd.ms-fontobject");
+    }
+    None
+}
+
+/// The content type a 3-D model is stored under; the `.pptx` writer names the part the same way.
+pub const MODEL_CONTENT_TYPE: &str = "model/gltf-binary";
+
+/// The 3-D model `bytes` hold, or `None` when they are not a binary glTF this channel stores.
+///
+/// The allowlist is one signature: the `glTF` magic, version 2, and at least the 12-byte header.
+/// Office's 3-D models are binary glTF parts (`.glb`, `RT_MODEL3D`); a JSON `.gltf` and its
+/// separate buffers are not a part the package can carry, so they are refused. The declared
+/// length and the chunk table are left to the reader: the `.pptx` writer copies the part through
+/// unchanged, so a model this build cannot tessellate is still a model to the package.
+pub fn model_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 12 && bytes.starts_with(b"glTF") && u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) == 2 {
+        return Some(MODEL_CONTENT_TYPE);
     }
     None
 }
@@ -228,6 +257,9 @@ pub fn media_type(name: &str, bytes: &[u8]) -> Option<MediaType> {
     if font_type(bytes).is_some() {
         return Some(MediaType::Font);
     }
+    if model_type(bytes).is_some() {
+        return Some(MediaType::Model);
+    }
     let lower = name.to_ascii_lowercase();
     let avi = bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"AVI ");
     let webm = bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]);
@@ -270,9 +302,11 @@ pub struct MediaCache {
     picture_bytes: usize,
     av_bytes: usize,
     font_bytes: usize,
+    model_bytes: usize,
     pictures: usize,
     av_objects: usize,
     fonts: usize,
+    models: usize,
 }
 
 impl MediaCache {
@@ -286,7 +320,7 @@ impl MediaCache {
             return Err(MediaError::new("the media object is empty"));
         }
         let kind = media_type(name, &bytes)
-            .ok_or_else(|| MediaError::new(format!("{name} is not a picture, font, video or audio file this channel stores")))?;
+            .ok_or_else(|| MediaError::new(format!("{name} is not a picture, font, video, audio or 3-D model file this channel stores")))?;
         self.check_size(kind, &bytes)?;
         let sha = sha256_hex(&bytes);
         self.insert_checked(kind, &sha, bytes)?;
@@ -303,7 +337,7 @@ impl MediaCache {
             return Err(MediaError::new("the media object is empty"));
         }
         let kind = media_type("", &bytes)
-            .ok_or_else(|| MediaError::new("the media bytes are not a picture, font, video or audio file this channel stores"))?;
+            .ok_or_else(|| MediaError::new("the media bytes are not a picture, font, video, audio or 3-D model file this channel stores"))?;
         self.check_size(kind, &bytes)?;
         if sha256_hex(&bytes) != sha {
             return Err(MediaError::new("the media bytes do not match their digest"));
@@ -355,6 +389,16 @@ impl MediaCache {
                 self.fonts += 1;
                 self.font_bytes = self.font_bytes.saturating_add(len);
             }
+            MediaType::Model => {
+                if self.models >= MAX_MODEL_OBJECTS {
+                    return Err(MediaError::new("this session holds too many 3-D models"));
+                }
+                if self.model_bytes.saturating_add(len) > MAX_MODEL_TOTAL_BYTES {
+                    return Err(MediaError::new("this session holds too many 3-D model bytes"));
+                }
+                self.models += 1;
+                self.model_bytes = self.model_bytes.saturating_add(len);
+            }
         }
         self.objects.insert(sha.to_string(), (Arc::new(bytes), kind));
         Ok(())
@@ -384,7 +428,7 @@ impl MediaCache {
 
     /// Total bytes held.
     pub fn bytes(&self) -> usize {
-        self.picture_bytes.saturating_add(self.av_bytes).saturating_add(self.font_bytes)
+        self.picture_bytes.saturating_add(self.av_bytes).saturating_add(self.font_bytes).saturating_add(self.model_bytes)
     }
 
     /// Every stored object, in digest order, for persistence and tests.
@@ -465,6 +509,52 @@ mod tests {
         assert!(media.put("a.txt", b"not a picture or a font".to_vec()).is_err());
         assert_eq!(MediaType::Picture.max_bytes(), MAX_MEDIA_BYTES);
         assert_eq!(MediaType::Font.max_bytes(), MAX_FONT_BYTES);
+    }
+
+    /// One binary glTF header: the magic, version 2 and a declared length.
+    fn glb() -> Vec<u8> {
+        let mut bytes = b"glTF".to_vec();
+        bytes.extend(2u32.to_le_bytes());
+        bytes.extend(20u32.to_le_bytes());
+        bytes.extend([0u8; 8]);
+        bytes
+    }
+
+    #[test]
+    fn a_3d_model_is_one_glb_signature_with_its_own_budget() {
+        let glb = glb();
+        assert_eq!(media_type("block.glb", &glb), Some(MediaType::Model));
+        assert_eq!(media_type("", &glb), Some(MediaType::Model), "a replay has no name: the signature alone decides");
+        assert_eq!(media_type("block.glb", b"not a model"), None, "the name alone decides nothing");
+        let mut v1 = glb.clone();
+        v1[4] = 1;
+        assert_eq!(media_type("block.glb", &v1), None, "only glTF 2 is a part Office writes");
+        assert_eq!(media_type("block.glb", b"glTF"), None, "a header shorter than 12 bytes is not a model");
+
+        let mut media = MediaCache::new();
+        let sha = media.put("block.glb", glb.clone()).expect("model");
+        assert_eq!(media.kind(&sha), Some(MediaType::Model));
+        assert_eq!(MediaType::Model.content_type(&glb), "model/gltf-binary");
+        assert_eq!(MediaType::Model.noun(), "3-D model");
+        assert_eq!(MediaType::Model.max_bytes(), MAX_MODEL_BYTES);
+        assert!(media.bytes() >= glb.len(), "a model counts against the byte total");
+
+        // Bigger than the model cap, still a model by signature.
+        let mut huge = glb.clone();
+        huge.resize(MAX_MODEL_BYTES + 1, 0);
+        assert!(media.put("huge.glb", huge).is_err(), "one model is bounded");
+
+        for i in 0..MAX_MODEL_OBJECTS - 1 {
+            let mut bytes = glb.clone();
+            bytes.extend([i as u8, (i >> 8) as u8]);
+            media.put("block.glb", bytes).expect("under the model object cap");
+        }
+        let mut one_more = glb.clone();
+        one_more.extend([0xFF, 0xFE]);
+        assert!(media.put("block.glb", one_more).is_err(), "the model budget is full");
+        // Pictures keep their own budget: 16 models leave the picture channel untouched.
+        media.put("a.png", PNG.to_vec()).expect("a picture is not a model object");
+        assert_eq!(media.kind(&sha256_hex(PNG)), Some(MediaType::Picture));
     }
 
     #[test]

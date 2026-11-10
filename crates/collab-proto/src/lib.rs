@@ -205,9 +205,10 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<[f64; 4]>,
     },
-    /// Inserts audio or video that was uploaded to the session's media channel. Like a picture,
-    /// the bytes travel on the channel and the operation names them by `sha256`; `rect` is the
-    /// final box (absent: the frame size the engine derives from the probed media).
+    /// Inserts audio, video or a 3-D model that was uploaded to the session's media channel. Like
+    /// a picture, the bytes travel on the channel and the operation names them by `sha256`; `rect`
+    /// is the final box (absent: the frame size the engine derives from the probed media, or the
+    /// default box of a model).
     MediaInsert {
         kind: MediaKind,
         sha256: String,
@@ -482,12 +483,14 @@ pub enum Payload {
     },
 }
 
-/// Audio or video addressed by a digest on the media channel.
+/// Audio, video or a 3-D model addressed by a digest on the media channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaKind {
     Video,
     Audio,
+    /// One binary glTF (`.glb`) part, inserted as a `Model3d` shape.
+    Model,
 }
 
 /// One face slot of an embedded font: the four slots `p:embeddedFont` stores, in the order the
@@ -866,6 +869,7 @@ impl Payload {
             Payload::MediaInsert { kind, .. } => match kind {
                 MediaKind::Video => "insert.video",
                 MediaKind::Audio => "insert.audio",
+                MediaKind::Model => "insert.model3d",
             },
             Payload::ShapeFill { .. } => "shape.fill",
             Payload::ShapeLine { .. } => "shape.line",
@@ -1813,6 +1817,15 @@ mod tests {
         assert!(!text.contains("data"), "{text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), media);
         assert_eq!(media.command(), "insert.video");
+
+        // A 3-D model goes through the same `media_insert` payload and names its own command, so
+        // the adapter runs `insert.model3d` and never re-reads the digest as a clip.
+        let model = Payload::MediaInsert { kind: MediaKind::Model, sha256: "9f2c".into(), name: "block.glb".into(), rect: None };
+        let text = serde_json::to_string(&model).expect("encode");
+        assert!(text.contains("\"kind\":\"model\""), "{text}");
+        assert!(!text.contains("rect"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), model);
+        assert_eq!(model.command(), "insert.model3d");
 
         let fill = Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } };
         assert_eq!(fill.command(), "shape.fill");

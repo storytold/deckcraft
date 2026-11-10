@@ -41,6 +41,12 @@ fn http(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str
 
 /// An HTTP request with binary bodies on either side (media upload and fetch).
 fn http_bytes(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str>, body: &[u8]) -> (u16, Vec<u8>) {
+    let (status, _, body) = http_parts(addr, method, path, token, body);
+    (status, body)
+}
+
+/// The same request, with the response head kept so a test can read the declared content type.
+fn http_parts(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str>, body: &[u8]) -> (u16, String, Vec<u8>) {
     let mut stream = TcpStream::connect(addr).expect("connect");
     let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
     let head = format!(
@@ -52,8 +58,9 @@ fn http_bytes(addr: std::net::SocketAddr, method: &str, path: &str, token: Optio
     let mut response = Vec::new();
     stream.read_to_end(&mut response).expect("read");
     let split = response.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(response.len());
-    let status = String::from_utf8_lossy(&response[..split]).split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-    (status, response[split..].to_vec())
+    let head = String::from_utf8_lossy(&response[..split]).to_string();
+    let status = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (status, head, response[split..].to_vec())
 }
 
 fn token(actor: &str, role: &str, file: &str) -> String {
@@ -120,6 +127,15 @@ fn sha256(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     let digest = sha2::Sha256::digest(bytes);
     digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A minimal binary glTF: the magic, version 2 and a declared length, then an empty chunk.
+fn glb() -> Vec<u8> {
+    let mut bytes = b"glTF".to_vec();
+    bytes.extend(2u32.to_le_bytes());
+    bytes.extend(20u32.to_le_bytes());
+    bytes.extend([0u8; 8]);
+    bytes
 }
 
 /// The slide key a client derives for the first slide of `native_deck()` (ADR 0002).
@@ -344,6 +360,41 @@ fn a_font_face_uses_the_media_channel_and_lands_in_the_committed_file() {
     assert_eq!(deck.embedded_fonts.len(), 1, "the file carries the embedded font");
     assert_eq!(deck.embedded_fonts[0].typeface, "Deck Test Face");
     assert!(deck.embedded_fonts[0].regular.is_some());
+    handle.shutdown();
+}
+
+#[test]
+fn a_3d_model_goes_through_the_channel_and_fetches_by_its_signature() {
+    let handle = start();
+    let addr = handle.addr;
+    let body = serde_json::json!({"fileId": "file-3d", "app": "deckcraft"}).to_string();
+    let (status, _) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201);
+    let editor = token("alice", "editor", "file-3d");
+
+    // A binary glTF is a media object like a picture: uploaded once under its digest.
+    let model = glb();
+    let sha = sha256(&model);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-3d/media/{sha}"), Some(&editor), &model);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+
+    // The path is normalised and the content type comes from the signature, not the name: the
+    // same object answers to its digest, with an extension a client may add, and with a query.
+    for path in [format!("/media/{sha}"), format!("/media/{sha}.glb"), format!("/media/{sha}?v=2")] {
+        let (status, head, fetched) = http_parts(addr, "GET", &path, Some(&editor), b"");
+        assert_eq!(status, 200, "{path}: {head}");
+        assert_eq!(fetched, model, "{path}: the bytes come back unchanged");
+        assert!(head.to_ascii_lowercase().contains("content-type: model/gltf-binary"), "{path}: {head}");
+    }
+    // A name is not an object: another segment or a non-digest path is not found.
+    let (status, _) = http_bytes(addr, "GET", &format!("/media/{sha}/x"), Some(&editor), b"");
+    assert_eq!(status, 404);
+
+    // The allowlist is the signature, not the extension: a `.glb` name with other bytes is refused.
+    let fake = b"not a model at all".to_vec();
+    let fake_sha = sha256(&fake);
+    let (status, _) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-3d/media/{fake_sha}"), Some(&editor), &fake);
+    assert_eq!(status, 400, "the body is not a binary glTF");
     handle.shutdown();
 }
 

@@ -706,10 +706,10 @@ fn rejected(op_id: &str, code: RejectCode, message: &str) -> Rejected {
     Rejected { op_id: op_id.into(), code, message: message.into(), retryable: false, hint: None }
 }
 
-/// `PUT /v1/sessions/{id}/media/{sha256}`: upload one media object (a picture, a font face or
-/// an audio/video clip). The session token decides the
-/// role and the file; the body is the object, and the path must name its digest. Content-addressed,
-/// so a repeated upload of the same bytes changes nothing.
+/// `PUT /v1/sessions/{id}/media/{sha256}`: upload one media object (a picture, a font face, an
+/// audio/video clip or a 3-D model). The session token decides the role and the file; the body is
+/// the object, and the path must name its digest. Content-addressed, so a repeated upload of the
+/// same bytes changes nothing.
 fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
     if !valid_sha(sha) {
         return Ok(Response::json(400, json!({"error": "the media name is not a sha256 digest"})));
@@ -734,7 +734,7 @@ fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> st
         return Ok(Response::json(400, json!({"error": "the media object is empty"})));
     }
     let Some(kind) = deckcraft_collab::media_type("", &request.body) else {
-        return Ok(Response::json(400, json!({"error": "the body is not a picture, font, video or audio file this channel stores"})));
+        return Ok(Response::json(400, json!({"error": "the body is not a picture, font, video, audio or 3-D model file this channel stores"})));
     };
     let max = kind.max_bytes();
     if request.body.len() > max {
@@ -768,11 +768,13 @@ fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> st
 }
 
 /// `GET /media/{sha256}`: one media object by digest. Content-addressed, so any authenticated
-/// session may fetch it if it knows the name.
-fn get_media(sha: &str, request: &Request, shared: &Arc<Shared>) -> Response {
-    if !valid_sha(sha) {
+/// session may fetch it if it knows the name. The path is normalised first (a query string, a
+/// trailing slash and a file extension such as `.glb` are not part of the name) and the content
+/// type comes from the stored bytes' signature, never from what the caller asked for.
+fn get_media(path: &str, request: &Request, shared: &Arc<Shared>) -> Response {
+    let Some(sha) = media_sha(path) else {
         return Response::json(404, json!({"error": "not found"}));
-    }
+    };
     if !media_reader_allowed(request, shared) {
         return Response::json(401, json!({"error": "a session or service token is required"}));
     }
@@ -791,6 +793,19 @@ fn get_media(sha: &str, request: &Request, shared: &Arc<Shared>) -> Response {
     Response::json(404, json!({"error": "no such media object"}))
 }
 
+/// The digest a `GET /media/...` path names. A query string, a fragment, a trailing slash and a
+/// file extension (`/media/{sha}.glb`) are not part of the name; anything else — another path
+/// segment, a name that is not a lowercase sha256 — is not an object this server has.
+fn media_sha(path: &str) -> Option<&str> {
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let path = path.strip_suffix('/').unwrap_or(path);
+    if path.is_empty() || path.contains('/') {
+        return None;
+    }
+    let name = path.split_once('.').map_or(path, |(name, _)| name);
+    valid_sha(name).then_some(name)
+}
+
 fn media_reader_allowed(request: &Request, shared: &Shared) -> bool {
     let Some(token) = request.bearer() else { return false };
     if shared.config.service_token.as_deref() == Some(token) {
@@ -799,6 +814,9 @@ fn media_reader_allowed(request: &Request, shared: &Shared) -> bool {
     verify_token(token, &shared.config.jwt, &shared.config.audience).is_ok_and(|claims| claims.app.as_deref().is_none_or(|app| app == "deckcraft"))
 }
 
+/// One stored object as an HTTP response: the content type is decided by the signature (the name
+/// is a digest and says nothing about the kind), so a replay from disk and a live object answer
+/// the same way, including for a model that was uploaded once and fetched much later.
 fn media_response(bytes: Vec<u8>) -> Response {
     let content_type = media_type("", &bytes).map(|kind| kind.content_type(&bytes)).unwrap_or("application/octet-stream");
     Response::binary(200, content_type, bytes)

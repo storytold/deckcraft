@@ -693,7 +693,7 @@ fn collect_warnings(shape: &Shape, slide: usize, out: &mut Vec<String>, depth: u
             out.push(format!("slide {slide}: `{name}` ({label}) is kept as its original XML and cannot be edited"));
         }
         ShapeKind::Model3d { .. } => {
-            out.push(format!("slide {slide}: `{name}` is a 3-D model: kept in the file, not drawn"));
+            out.push(format!("slide {slide}: `{name}` is a 3-D model: drawn as its poster or a placeholder, not as a rendered model"));
         }
         ShapeKind::Media(clip) if media_options_differ(clip) => {
             out.push(format!("slide {slide}: `{name}` has playback options (trim, fade, volume, loop, bookmarks) that the writer may not keep"));
