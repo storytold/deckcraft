@@ -51,6 +51,7 @@ Binary: `deckcraft-collab-server`.
 | `COLLAB_CABINET_URL` | the cabinet's commit endpoint; `{sessionId}`/`{fileId}` are substituted | — |
 | `COLLAB_CABINET_TOKEN` | service token the callback is authenticated with (required with the URL) | — |
 | `COLLAB_CABINET_TIMEOUT_MS` | deadline for one callback | `10000` |
+| `DECKCRAFT_CORS_ORIGINS` | origins a browser page may call this server from, comma separated (`https://cabinet.example`); empty or absent = no CORS headers | — |
 
 TLS is terminated by the ingress. The server speaks plain HTTP/WS on a private network and must
 not be exposed directly.
@@ -75,6 +76,20 @@ GET    /metrics                     → Prometheus text format
 
 `initialBytes` is the file the cabinet stores: `.pptx` or native `.deckcraft`. The server sniffs
 the bytes; an unreadable file is a `400` and never becomes a room.
+
+CORS (browser mode): with `DECKCRAFT_CORS_ORIGINS` set, every HTTP answer carries
+`Vary: Origin`, and an answer to an origin on the list also carries
+`Access-Control-Allow-Origin: <that origin>` — the origin itself, never `*`, so the browser may
+send the `Authorization` header the media channel needs. A foreign origin gets no
+`Access-Control-*` header (the body may still be served; the browser refuses to hand it to the
+page). `OPTIONS` with an `Origin` is answered as a preflight — `204` with
+`Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS`,
+`Access-Control-Allow-Headers: Authorization, Content-Type` and a `600`s max-age for an admitted
+origin, and no `Access-Control-*` header otherwise. `PUT` is on the list because a browser
+uploads media with it. With the variable empty the server behaves exactly as before: no
+`Access-Control-*` and no `Vary` header, and `OPTIONS` keeps falling through to the router.
+The list is compared case-insensitively and without a trailing slash; `*` is not a wildcard, and
+`Origin: null` must be listed literally.
 
 ### WebSocket
 
@@ -201,8 +216,8 @@ The page that hosts the web build opens the session; the app never dials on its 
   bytes a frame names before delivering it and holds the frame in arrival order (giving up after
   10 s, so a picture that cannot be fetched is reported by the adapter rather than silently
   skipped). Uploads and fetches are `fetch` calls with the session's bearer token, so the sync
-  server must be reachable from the page (same origin, or CORS enabled: the server sends no CORS
-  headers yet).
+  server must be reachable from the page (same origin, or its origin listed in
+  `DECKCRAFT_CORS_ORIGINS`, which makes the server answer with `Access-Control-Allow-Origin`).
 - Without a `session` message the app is the ordinary single-user editor: no socket, no media
   request, and `?collab=1` alone only shows the UI in its offline state.
 - Reconnect backoff is the desktop link's (250 ms doubling to 10 s); unconfirmed operations are
@@ -242,7 +257,8 @@ operation carries only the digest.
   `SSL_CERT_FILE`/`SSL_CERT_DIR` variables are honoured). A custom CA must be in the system store.
 - The browser link derives the same endpoints (`http://` for `ws://`, `https://` for `wss://`) and
   uses `fetch` with the token in the `Authorization` header. The page must be allowed to reach the
-  server: same origin, or CORS enabled on it (not implemented yet).
+  server: same origin, or its origin in `DECKCRAFT_CORS_ORIGINS` (the server then answers with
+  `Access-Control-Allow-Origin` and the preflight, see "HTTP").
 
 ## Commit
 
@@ -333,7 +349,8 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    `mc:Fallback` poster when the file has one, else a stand-in cube; `GET /media` normalises the
    path (extension, query, trailing slash) and answers with the content type the signature
    implies. The browser link fetches and uploads them with `fetch` plus the session token; the
-   sync server has no CORS headers, so a page on another origin cannot use the channel yet.
+   sync server answers CORS for the origins in `DECKCRAFT_CORS_ORIGINS` (see "HTTP"), so a page on
+   another origin can use the channel once its origin is listed.
 3. **P1 — Notes, cell formatting, N-cell ranges and carets are in**. Shape text, table-cell text,
    slide notes, a table cell's formatting, a run range inside either body and a caret in a shape's
    body are addressed and rebased now: a notes edit
@@ -368,8 +385,8 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
-   What remains is deployment detail: the page must reach the sync server (same origin, or CORS
-   headers the server does not send yet), and the cabinet must implement its end of
+   What remains is deployment detail: the page must reach the sync server (same origin, or its
+   origin in `DECKCRAFT_CORS_ORIGINS`), and the cabinet must implement its end of
    `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2).
 5. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
    rollback are the next latency slice.

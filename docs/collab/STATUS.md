@@ -26,7 +26,10 @@ slice: outline, layout, style and colour edits as one whole `Diagram` value, wit
 on top, and — after `d9312c03` — the chart slice: chart type, data and options edits and an
 insertion as one whole `Chart` value, with its docs commit on top, and — after `6745633d` — the
 3-D model slice: `insert.model3d` on the media channel as one binary glTF signature with its own
-budget, drawn as its poster or a stand-in cube, with this docs commit on top.
+budget, drawn as its poster or a stand-in cube, and then the CORS slice `f996865d`: the sync
+server answers a browser page whose origin is in `DECKCRAFT_CORS_ORIGINS` with
+`Access-Control-Allow-Origin`/`Vary` and a preflight, and sends no `Access-Control-*` header to
+anyone else, with this docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -461,6 +464,14 @@ human decision.
   clip), `GET /media/{sha256}` (session or service token). Content-addressed under
   `<store>/media/<sha256>`; 512 pictures / 64 MiB, 32 fonts / 64 MiB and 32 clips / 192 MiB per
   session, so a font cannot evict a picture; upload and byte counters in metrics.
+- CORS: `DECKCRAFT_CORS_ORIGINS` is the allowlist (comma separated, compared case-insensitively
+  and without a trailing slash). While it is set, every HTTP answer carries `Vary: Origin` and an
+  admitted origin also gets `Access-Control-Allow-Origin` — the origin itself, never `*`, so the
+  browser may send `Authorization`; a foreign origin gets no `Access-Control-*` header. `OPTIONS`
+  with an `Origin` is a preflight: `204` with `GET, POST, PUT, OPTIONS` and
+  `Authorization, Content-Type` for an admitted origin (`PUT` because the browser uploads media
+  with it), `405` for a method outside the list. An empty or absent variable keeps the pre-CORS
+  behaviour: no `Access-Control-*`, no `Vary`, and `OPTIONS` falls through to the router.
 - Persistence: native base + append-only journal, snapshot every N ops, replay on restart
   through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
 - `COLLAB_SNAPSHOT_EVERY` now also drives a memory-only room (it used to reach the store only),
@@ -544,7 +555,7 @@ document as the editors.
 | `cargo test -p deckcraft-collab` | 166 unit + 8 integration |
 | `cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1` (on `agents`) | 4 passed in about 2.5 s: the 120-slide/media room and commit; three sessions (two editors on different slides and a viewer) across a conflicting edit, an undo-conflict, a forbidden viewer op and a reconnect with journal catch-up, all converging on version 4; the three-client soak (26 move/bounds/text/fill edits, compaction every 5 steps, a viewer rebuilt from a 5 KiB base at version 25 plus one tail step, a reconnect from a two-step tail, all three at version 28 and the commit reimporting); LibreOffice 26.2 renders 121 pages and round-trips the commit (run on the workstation, see below); on the build host the LibreOffice test skips itself (no `soffice`) |
 | `cargo test -p deckcraft-collab --lib apply::` | 52 (a remote edit on a slide the replica is not looking at applies; two replicas converge on different table cells) |
-| `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 4 gates |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 12 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay, CORS preflight, CORS GET, foreign origin, empty allowlist) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 4 gates |
 | `cargo test -p deckcraft-collab-proto` | 26 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
 | `cargo test -p deckcraft-engine` | 575 passed, 1 ignored |
@@ -828,9 +839,16 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
-| Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint and CORS remain external | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
+| Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
 | PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork; locally rebased onto `origin/main` (`0623b430`) with a clean `merge-tree` (the fork needs a force-push, the chair's manual step) | [`pr10.md`](pr10.md); merge needs a human decision |
+
+Re-run on 2026-11-10 after the CORS slice (`f996865d`, on `agents`): `cargo fmt --all -- --check`
+clean, `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test -p
+deckcraft-collab-server` 10 unit + 0 in `main.rs` + 4 commit + 4 gates (LibreOffice present, no
+skip) + 12 socket (four of them new: preflight, an allowed GET, a foreign origin, an empty
+allowlist) + 0 doctests = 30 passed, 0 failed, 0 ignored, EXIT=0.
+
 
 Re-run on 2026-11-09 after the browser link (`66d4658c`, on `agents`): `fmt --check` clean,
 `collab` 129 + 8, `collab-proto` 22, `collab-server` 10 unit + 4 commit + 4 gates + 6 socket,
@@ -904,9 +922,12 @@ was not touched, and PR #1975 is unchanged.
    diverge). Next: `insert.smartArt` and the `smartArt.nodes` query.
 2. **Media refinement.** Pictures, video, audio, font faces and 3-D models are all in the media
    allowlist, each with its own budget; `GET /media` normalises the path and answers with the
-   content type the signature implies. What remains is the channel's deployment side: the browser
-   link still needs CORS on the sync server (the desktop `wss://` path has a TLS client with
-   system roots; a private CA must be in the store or `SSL_CERT_FILE`).
+   content type the signature implies. The channel's deployment gap for a browser page is closed:
+   with `DECKCRAFT_CORS_ORIGINS` set the server answers an admitted origin with
+   `Access-Control-Allow-Origin`/`Vary` and a preflight for the media and session endpoints, and
+   sends no `Access-Control-*` header to a foreign origin. What remains is the transport below
+   the browser: the desktop `wss://` path has a TLS client with system roots (a private CA must be
+   in the store or `SSL_CERT_FILE`), and the ingress still terminates TLS.
 3. **Rich runs are in; cell formatting, N-cell ranges and carets are done.** Shape text,
    table-cell text and slide notes are addressed and rebased. A notes edit addresses
    `(slide key, notes body)`, is refused for an unaddressable slide before any write, keeps the
@@ -949,9 +970,10 @@ was not touched, and PR #1975 is unchanged.
 6. **Browser transport is in (`collab-web`); deployment is not.** `apps/deckcraft-web` opens a
    session from `deckcraft:session`, dials it with the page's `WebSocket`, posts
    `session-state`/`presence`, asks for a commit on Save and records `committed`. What remains is
-   outside the code: the cabinet's commit endpoint (`INTEGRATION.md` §5.2), a page that can reach
-   the sync server (same origin, or CORS headers the server does not send), and a token-renewal
-   message (a fresh token today means a new `session` message).
+   outside the code: the cabinet's commit endpoint (`INTEGRATION.md` §5.2) and a token-renewal
+   message (a fresh token today means a new `session` message). A page on another origin can use
+   the channel once its origin is listed in `DECKCRAFT_CORS_ORIGINS` (the sync server answers the
+   media and session requests with `Access-Control-Allow-Origin` and the preflight).
 7. **Optimistic preview.** Edits appear on `applied`, not on the keystroke/pointer release.
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
@@ -1018,8 +1040,9 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `fetch` with the session token. The cabinet must still implement its side:
    `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2, answers
    `{version, etag}`, keeps the previous version); the server already posts the bytes, refuses on
-   `409` and stores the accepted version. For a page on another origin the sync server needs CORS
-   headers on `/media/{sha256}` and the two session endpoints.
+   `409` and stores the accepted version. For a page on another origin, list that origin in
+   `DECKCRAFT_CORS_ORIGINS`: the server answers `/media/{sha256}` and the session endpoints with
+   `Access-Control-Allow-Origin`/`Vary` and a preflight (`f996865d`).
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Document fonts, the whole table
    surface, SmartArt (the outline, layout, style and colours as one whole `Diagram` value),
@@ -1041,6 +1064,31 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — CORS on the sync server for the browser media channel
+
+- The last deployment gap of the media channel is closed: `DECKCRAFT_CORS_ORIGINS` (comma
+  separated) is the origin allowlist. While it is set every HTTP answer carries `Vary: Origin`;
+  an admitted origin also gets `Access-Control-Allow-Origin: <origin>` — the origin itself, never
+  `*`, so the browser may attach the `Authorization` header the media `fetch`/upload needs — and a
+  foreign origin gets no `Access-Control-*` header. An empty or absent variable keeps the earlier
+  behaviour exactly: no `Access-Control-*`, no `Vary`, and `OPTIONS` falls through to the router.
+- `OPTIONS` with an `Origin` is answered as a preflight: `204` with
+  `Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS` and
+  `Access-Control-Allow-Headers: Authorization, Content-Type`, plus
+  `Access-Control-Max-Age: 600` (`PUT` is listed because the browser uploads media with it); a
+  method outside the list is `405`, a foreign origin gets `Vary` only. A preflight carries no
+  token, so the answer names methods and headers and never a room, a media object or a version.
+- Tests in `tests/socket.rs`: preflight for an admitted origin, a `GET /media/{sha}` from an
+  admitted origin (header and `Vary`, bytes unchanged), a foreign origin (no `Access-Control-*`
+  on either the GET or the preflight), and the empty allowlist (no header at all, the old
+  `OPTIONS` routing). On `agents`: `cargo fmt --all -- --check` clean,
+  `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test -p
+  deckcraft-collab-server` 30 passed (10 unit + 4 commit + 4 gates + 12 socket), 0 failed,
+  0 ignored, EXIT=0.
+- `production.md` documents the variable, the preflight and the three deployment mentions; the
+  server-side CORS gap is gone from the known gaps below. Not pushed; PR #1998 and #1975 are
+  untouched.
 
 ### 2026-11-10 — 3-D models on the media channel, drawn instead of hidden
 
