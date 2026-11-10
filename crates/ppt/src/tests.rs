@@ -693,3 +693,53 @@ fn encryption_is_found_in_the_edit_and_the_persist_directory() {
     crypt.extend_from_slice(&atom(rt::USER_EDIT, 0, &edit));
     assert!(matches!(open(&crypt, &pics), Err(crate::PptError::Encrypted)));
 }
+
+/// A colour scheme record whose fill colour (index 4) is `fill`, the rest as the test master's.
+fn scheme_with_fill(fill: [u8; 3]) -> Vec<u8> {
+    let mut colors: Vec<u8> = [0xFFFFFFu32, 0x000000, 0x808080, 0x000099, 0, 0x0000FF, 0x00FF00, 0xFF0000]
+        .iter()
+        .flat_map(|c| [(c >> 16) as u8, (c >> 8) as u8, *c as u8, 0])
+        .collect();
+    colors[16..19].copy_from_slice(&fill);
+    atom(rt::COLOR_SCHEME, 1, &colors)
+}
+
+/// A shape filled with the scheme's fill colour.
+fn scheme_filled(spid: u32) -> Vec<u8> {
+    container(
+        rt::SP_CONTAINER,
+        0,
+        &[fsp(1, spid, 0xA00), fopt(&[(prop::FILL_COLOR, 0x0800_0004), (prop::FILL_BOOLS, 0x0010_0010)]), anchor(0, 0, 100, 100)],
+    )
+}
+
+/// A title master becomes a layout of its main master, with its own background and shapes, and
+/// without the master's shapes when it doesn't follow them. A slide of the title master uses that
+/// layout. A slide that follows nothing keeps its own background and scheme and hides the
+/// master's shapes.
+#[test]
+fn title_masters_and_slides_that_dont_follow_the_master() {
+    let title_master =
+        container(rt::SLIDE, 0, &[slide_atom(0, MASTER_ID, 0x0), drawing(Some(solid_background(0x0000_FF00)), &[scheme_filled(3000)])]);
+    let on_title = container(rt::SLIDE, 0, &[slide_atom(0, TITLE_MASTER_ID, 0x7), drawing(None, &[])]);
+    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, on_title, Some(title_master));
+    let p = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap();
+    let (_, layout) = p.layout(p.slides[0].layout).unwrap();
+    assert_eq!(layout.name, "Title Master");
+    assert_eq!(layout.background, Some(Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0, 0xFF, 0))) }));
+    assert!(!layout.show_master_shapes);
+    assert!(layout.shapes.iter().any(|sh| sh.ph.is_none()), "the title master's own shape");
+    assert_eq!(p.slides[0].background, None, "the slide follows its master's background");
+
+    let alone = container(
+        rt::SLIDE,
+        0,
+        &[slide_atom(1, MASTER_ID, 0x0), scheme_with_fill([0x11, 0x22, 0xCC]), drawing(Some(solid_background(0x0000_00FF)), &[scheme_filled(2049)])],
+    );
+    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, alone, None);
+    let p = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap();
+    let s = &p.slides[0];
+    assert_eq!(s.background, Some(Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0xFF, 0, 0))) }));
+    assert!(!s.show_master_shapes);
+    assert_eq!(s.shapes[0].fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0x11, 0x22, 0xCC)))), "the slide's own scheme");
+}
