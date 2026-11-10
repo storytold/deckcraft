@@ -277,6 +277,10 @@ pub struct Cameo {
     pub raw: Option<String>,
     /// A recorded clip plays when the slide appears (`p:video` in the timing tree).
     pub autoplay: bool,
+    /// How much of the recording plays, in milliseconds: the length `show.cameo` accepted, clamped
+    /// to the clip and to ten minutes. `None` plays the whole clip (`p:cTn/@dur` in the file).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u32>,
 }
 
 impl Cameo {

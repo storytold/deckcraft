@@ -371,7 +371,7 @@ pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> 
                 sh.kind = ShapeKind::Picture { fill: PictureFill { media: poster_media, crop, ..Default::default() } };
                 // Keep the imported feed (background in `raw`, device) with the new recording.
                 let kept = sh.cameo.take().unwrap_or_default();
-                sh.cameo = Some(Cameo { raw: kept.raw, device: kept.device, ..Cameo::recorded(media) });
+                sh.cameo = Some(Cameo { raw: kept.raw, device: kept.device, duration_ms: Some(duration_ms), ..Cameo::recorded(media) });
                 if let Some(r) = rect {
                     sh.xfrm = Some(r);
                 }
@@ -383,7 +383,7 @@ pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> 
                 let name = first_free_name("Camera", &taken, count);
                 let box_ = rect.unwrap_or_else(|| default_rect(size));
                 let mut shape = cameo(next_id, name, box_, poster_media);
-                shape.cameo = Some(Cameo::recorded(media));
+                shape.cameo = Some(Cameo { duration_ms: Some(duration_ms), ..Cameo::recorded(media) });
                 shape.descr = "Recorded camera clip".into();
                 slide.shapes.push(shape);
                 next_id

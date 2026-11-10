@@ -238,6 +238,30 @@ fn a_recorded_cameo_writes_video_links_and_a_media_timing_node() {
     assert!(q.media(poster).is_some_and(|m| m.data.starts_with(&[0x89, b'P', b'N', b'G'])), "the poster is a PNG image");
 }
 
+/// `show.cameo` can accept less of a clip than it holds (a long take, or a caller asking for a
+/// shorter playback time): the accepted length is the playback limit, and it round-trips through
+/// the `p:video` node's `p:cTn/@dur` instead of being reported but never applied.
+#[test]
+fn a_recorded_cameos_playback_limit_round_trips() {
+    let mut p = recorded_deck();
+    {
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        let shape = slide.shapes.iter_mut().find(|s| s.cameo.is_some()).expect("cameo");
+        shape.cameo.as_mut().expect("cameo").duration_ms = Some(250);
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains("<p:cTn id=\"") && xml.contains("dur=\"250\""), "the limit is in the media node: {xml}");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut later = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) {
+            later = sh.cameo.clone();
+        }
+    });
+    assert_eq!(later.and_then(|c| c.duration_ms), Some(250), "the limit comes back with the clip");
+}
+
 #[test]
 fn a_recorded_cameo_keeps_the_camera_background_it_was_imported_with() {
     let raw = concat!(

@@ -404,7 +404,16 @@ pub fn cameo_clip(shape: &Shape) -> Option<MediaClip> {
     let ShapeKind::Picture { fill } = &shape.kind else { return None };
     let cameo = shape.cameo.as_ref()?;
     let media = cameo.recorded?;
-    Some(MediaClip { media, video: true, crop: fill.crop, autoplay: cameo.autoplay, volume: 0.0, ..Default::default() })
+    Some(MediaClip {
+        media,
+        video: true,
+        crop: fill.crop,
+        autoplay: cameo.autoplay,
+        // The length `show.cameo` accepted, so the show stops where the command said it would.
+        duration_ms: cameo.duration_ms.unwrap_or(0),
+        volume: 0.0,
+        ..Default::default()
+    })
 }
 
 /// The outline a recorded Cameo's playing frame is clipped to, in 0–1 of the shape's box: its
@@ -931,7 +940,9 @@ mod tests {
 
     #[test]
     fn a_recorded_cameo_plays_its_clip_inside_its_picture_frame() {
-        let (doc, id, media) = cameo_deck(true, true);
+        let (mut doc, id, media) = cameo_deck(true, true);
+        // The length `show.cameo` accepted is the playback limit, not just a JSON answer.
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shape_mut(id).expect("shape").cameo.as_mut().expect("cameo").duration_ms = Some(2_500);
         let listed = slide_media(&doc, 0);
         let (_, x, clip) = listed.iter().find(|(i, _, _)| *i == id).expect("a recorded Cameo is a playing clip");
         assert_eq!((x.x, x.y, x.w, x.h), (10.0, 20.0, 120.0, 100.0), "the picture's frame");
@@ -940,6 +951,7 @@ mod tests {
         assert!(clip.autoplay, "a recorded Cameo starts with its slide");
         assert_eq!(clip.crop, [0.1, 0.0, 0.1, 0.0], "the picture's crop still applies");
         assert_eq!(clip.volume, 0.0, "the recorder writes no audio track");
+        assert_eq!(clip.duration_ms, 2_500, "the accepted length limits playback");
         assert_eq!(find_clip(&doc, id, None).map(|c| c.media), Some(media), "a media cue finds it too");
         assert!(
             crate::media::cameo_outline(doc.slides[0].shape(id).expect("shape"), 120.0, 100.0).is_some(),

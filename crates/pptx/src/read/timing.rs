@@ -241,6 +241,8 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
             if let Some(cameo) = shape.cameo.as_mut().filter(|c| c.recorded.is_some()) {
                 let own = cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("delay") == Some("0") && c.attr("evt") != Some("onClick"));
                 cameo.autoplay = own && !click;
+                // How much of the clip plays (`p:cTn/@dur`); absent: the whole recording.
+                cameo.duration_ms = cm.path(&["cTn"]).and_then(|t| t.u32("dur")).filter(|ms| *ms > 0);
             }
             continue;
         };
