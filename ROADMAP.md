@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-09 · **Change:** trivial (ordered discrete wheel navigation and immediate media cues, #1724; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -149,6 +149,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-09 | Slide-show discrete wheel notches retain event order and apply each action before changing slides again; pixel-only wheels still require upstream source metadata to distinguish trackpads safely (#1724 review) |
 | 2026-11-02 | File › About replaces the unused Account page, with version, project links, contributor/model credits and appearance preferences |
 | 2026-11-02 | Tiled picture fills in groups: a tile (`a:blipFill` with `a:tile`) keeps its size, offset and anchor in slide points whatever the group's child-coordinate scale, uniform or stretched unevenly, nested or flipped (also a group's own tile fill passed to its members, and a picture shape's own tile, with its shadow and reflection), and tiles with `rotWithShape="0"` keep their size in points at any zoom, as PowerPoint draws them (measured on its own PNG export of a synthetic probe deck: every grouped case within ~3/255 of the ungrouped control's own difference from PowerPoint, which is ~13/255 from resampling). Before, a group whose child space was ~1800 times smaller than its box showed one flat texel of the texture (a Venn diagram with paper-textured circles and a hatched intersection) |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
@@ -322,6 +323,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-09 | trivial | Discrete wheel event ordering and media cues corrected; Point input retains trackpad handling; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-11-02 | trivial | Progress log: tiled picture fills keep their size in scaled groups. Scores and milestone names unchanged |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |

@@ -267,10 +267,9 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
     pointing
 }
 
-/// Count whole discrete steps from mouse wheel (Line/Page) events, accumulating fractions in `carry`.
-/// Returns `(steps, has_wheel_event)`.
-pub(super) fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32) -> (i32, bool) {
-    let mut steps = 0i32;
+/// Visit whole discrete wheel steps in event order, retaining fractions in `carry`.
+/// Returns whether a discrete wheel event was handled; `visit` can stop the batch.
+fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32, mut visit: impl FnMut(i32) -> bool) -> bool {
     let mut has_wheel = false;
     for event in events {
         if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
@@ -290,11 +289,14 @@ pub(super) fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32) -> (i32
             let whole = (carry.abs() + 1e-4).floor();
             if whole >= 1.0 {
                 *carry -= whole.copysign(*carry);
-                steps += if delta.y < 0.0 { whole as i32 } else { -(whole as i32) };
+                let steps = if delta.y < 0.0 { whole as i32 } else { -(whole as i32) };
+                if !visit(steps) {
+                    break;
+                }
             }
         }
     }
-    (steps, has_wheel)
+    has_wheel
 }
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
@@ -312,26 +314,31 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     }
     // Discrete mouse-wheel notches turn the page one step per notch without gesture cooldown (#1724).
     if !show.pen {
-        let (steps, has_wheel) = ctx.input(|i| mouse_wheel_steps(&i.events, &mut show.wheel_carry));
-        if steps > 0 {
-            show.last_swipe = now;
-            for _ in 0..steps {
-                if show.ended {
-                    out.keep = false;
-                    break;
-                } else {
-                    out.actions.push(show.state.next(doc));
+        let mut carry = show.wheel_carry;
+        let has_wheel = ctx.input(|i| {
+            mouse_wheel_steps(&i.events, &mut carry, |steps| {
+                show.last_swipe = now;
+                for _ in 0..steps.unsigned_abs() {
+                    let action = if steps > 0 {
+                        if show.ended {
+                            out.keep = false;
+                            return false;
+                        }
+                        show.state.next(doc)
+                    } else {
+                        show.ended = false;
+                        show.state.prev(doc)
+                    };
+                    // Apply before the next notch can change the slide used by media cues.
+                    if !show.apply(action, doc, now) {
+                        out.keep = false;
+                        return false;
+                    }
                 }
-            }
-            return;
-        } else if steps < 0 {
-            show.last_swipe = now;
-            show.ended = false;
-            for _ in 0..(-steps) {
-                out.actions.push(show.state.prev(doc));
-            }
-            return;
-        }
+                true
+            })
+        });
+        show.wheel_carry = carry;
         if has_wheel {
             return;
         }
@@ -895,5 +902,68 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         }
         let last = show.state.slide;
         let _ = app.run("slide.go", json!({"index": last}));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod wheel_tests {
+    use super::*;
+
+    fn wheel(show: &mut Show, doc: &std::sync::Arc<Presentation>, deltas: &[f32]) -> bool {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: deltas.iter().map(|&y| egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: vec2(0.0, y),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: egui::Modifiers::NONE,
+            }).collect(),
+            ..Default::default()
+        };
+        let mut out = Out { keep: true, actions: vec![] };
+        ctx.run_ui(input, |ui| {
+            let full = ui.max_rect();
+            let f = Fr {
+                ctx: ui.ctx(), doc, doc_uid: 0, now: 1.0, full, srect: full,
+                clicked: false, secondary: false, pointer: None,
+            };
+            handle_wheel_and_swipe(show, &f, &mut out);
+        }).textures_delta.clear();
+        out.keep
+    }
+
+    #[test]
+    fn opposite_wheel_steps_preserve_boundary_order() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let doc = session.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, false);
+        assert!(wheel(&mut show, &doc, &[1.0, -1.0]));
+        assert_eq!(show.state.slide, 1, "Back at the first slide then Next advances");
+        assert!(wheel(&mut show, &doc, &[-1.0, 1.0]));
+        assert!(!show.ended, "Next at the last slide then Back leaves the end screen");
+        assert_eq!(show.state.slide, 1);
+        assert!(!wheel(&mut show, &doc, &[-3.0]), "stop after exiting the end screen");
+    }
+
+    #[test]
+    fn wheel_applies_media_step_before_entering_the_next_slide() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let mut doc = session.active().unwrap().doc.clone();
+        let id = doc.slides[0].shapes[0].id;
+        std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut doc).slides[0]).animations = vec![deckcraft_model::Animation {
+            shape: id, class: deckcraft_model::AnimClass::Media, effect: "play".into(),
+            delay_ms: 2000, duration_ms: 5000, ..Default::default()
+        }];
+        let mut show = Show::new(&doc, 0, false, false);
+        let action = show.state.next(&doc);
+        assert!(matches!(action, ShowAction::PlayStep(0)));
+        assert!(show.apply(action, &doc, 0.0));
+        assert!(wheel(&mut show, &doc, &[-2.0]));
+        assert_eq!(show.state.slide, 1);
+        assert_eq!(show.media_cues, [(id, "play".to_string())], "the interrupted step cues the original slide's media");
     }
 }
