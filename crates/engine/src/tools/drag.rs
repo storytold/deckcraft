@@ -13,7 +13,7 @@ struct MoveDrag {
 }
 
 /// Samples one ink or freeform gesture keeps; later pointer moves extend it no further.
-pub(crate) const MAX_GESTURE_POINTS: usize = 20_000;
+pub(crate) const MAX_GESTURE_POINTS: usize = 100_000;
 
 impl Session {
     /// Update the active drag interaction using the pointer position and modifiers.

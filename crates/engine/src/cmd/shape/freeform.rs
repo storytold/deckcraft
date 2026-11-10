@@ -93,7 +93,7 @@ pub(super) fn freeform(s: &mut Session, p: &Value) -> Result<Value> {
             a.iter()
                 .filter_map(|v| Some(deckcraft_geom::Point::new(v.get(0)?.as_f64()?, v.get(1)?.as_f64()?)))
                 .filter(|q| q.x.is_finite() && q.y.is_finite())
-                .take(20_000)
+                .take(crate::tools::MAX_GESTURE_POINTS)
                 .collect()
         })
         .unwrap_or_default();
