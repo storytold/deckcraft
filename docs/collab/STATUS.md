@@ -1,7 +1,7 @@
 # Collaboration status and handoff
 
 Updated: 2026-11-10. Branch: `collab/pr11`, **rebased onto `origin/main` at `0623b430`** (heads
-`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `f67b0858` plus this docs
+`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `6e9d10e7` plus this docs
 commit; pre-rebase hashes are kept in the slice notes below and mapped in
 [Rebase onto origin/main](#rebase-onto-originmain-2026-11-09)), from
 `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo
@@ -27,6 +27,25 @@ insertion as one whole `Chart` value, with its docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
+
+## PR publication (2026-11-10)
+
+Draft **[PR #1998](https://github.com/storytold/deckcraft/pull/1998)** is open from
+`copoka/deckcraft:collab/pr11` (head `6e9d10e7`, 83 commits ahead of `origin/main` at `0623b430`)
+into `storytold/deckcraft:main`; its body is [`pr10.md`](pr10.md). GitHub reports the PR
+`MERGEABLE`/`CLEAN` at creation.
+
+[PR #1975](https://github.com/storytold/deckcraft/pull/1975) still points at the pre-rebase
+`collab/pr10` head `be706a11`; it does not contain the last 28 commits and is superseded by
+#1998. It stays open — **closing #1975 is a human decision**. Pushing new commits to
+`collab/pr11`, marking #1998 ready and merging are also manual steps; this file only records the
+state.
+
+Verification of the slice at `6e9d10e7` ran on the `agents` host, no push: `cargo fmt --all --
+--check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `collab-proto` 34;
+`collab` 230 + 8; `collab-server` 10 unit + 4 commit + 4 gates (LibreOffice skipped on the build
+host) + 7 socket; `ui-egui collab::` 20; `engine` 587 + 1 ignored; `xtask layers` 32 crates. The
+docs commit that records this publication is local and not pushed: the PR head stays `6e9d10e7`.
 
 This file is the handoff between sessions: what is done, how it was verified, what is not done,
 and what to do next. Update it at the end of every collaboration session.
@@ -974,10 +993,10 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr11` (or branch
    `collab/pr12` from it).
-2. **PR #1975 is open from the fork.** Both branches are rebased onto `origin/main` (`0623b430`)
-   and merge cleanly; publishing them is a `git push --force-with-lease fork collab/pr10
-   collab/pr11` from a checkout that may push (history was rewritten), and remains the chair's
-   manual step. Do not touch CI and do not mention agents. Merging needs a human decision.
+2. **Draft PR #1998 is open from `copoka/deckcraft:collab/pr11`** (head `6e9d10e7`,
+   `MERGEABLE`/`CLEAN`); #1975 still points at the pre-rebase `collab/pr10` head and is
+   superseded. Pushing this file's commit, marking #1998 ready and closing #1975 are human steps.
+   Do not touch CI and do not mention agents. Merging needs a human decision.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The cabinet must still implement its side:
