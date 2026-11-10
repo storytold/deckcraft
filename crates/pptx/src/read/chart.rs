@@ -54,6 +54,10 @@ pub(crate) fn point_count(c: &Chart) -> usize {
 }
 
 /// Bytes of the strings a kept relationship owns.
+fn part_bytes(p: &deckcraft_model::chart::ChartPart) -> usize {
+    p.bytes.len() + p.name.len() + p.content_type.len()
+}
+
 fn rel_bytes(r: &deckcraft_model::chart::ChartRel) -> usize {
     r.id.len() + r.rel_type.len() + r.target.len() + r.part.len()
 }
@@ -485,7 +489,7 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
     let key = crate::opc::norm(chart_part);
     if let Some(cached) = imp.kept_charts.get(&key) {
         // Every frame that shows this chart gets its own copy, so each copy is charged like the first.
-        let bytes: usize = cached.parts.iter().map(|p| p.bytes.len()).sum::<usize>() + cached.rels.iter().map(rel_bytes).sum::<usize>();
+        let bytes: usize = cached.parts.iter().map(part_bytes).sum::<usize>() + cached.rels.iter().map(rel_bytes).sum::<usize>();
         if imp.kept_sidecar_bytes.saturating_add(bytes) > MAX_KEPT_TOTAL_BYTES {
             log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
             return ChartKept::default();
@@ -494,6 +498,7 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
         return cached.clone();
     }
 
+    let charged_before = imp.kept_sidecar_bytes;
     let mut kept = ChartKept::default();
     // The chart document itself is rewritten; don't store a second copy of it.
     let mut seen = std::collections::HashMap::from([(key.clone(), true)]);
@@ -510,10 +515,14 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: r.target, external: false });
         }
     }
-    // The first capture's relationship strings are retained too (the parts were charged as copied).
-    let rel_total: usize = kept.rels.iter().map(rel_bytes).sum();
+    // The first capture's relationship strings and the parts' names and content types are retained
+    // too (the part bytes were charged as copied).
+    let rel_total: usize =
+        kept.rels.iter().map(rel_bytes).sum::<usize>() + kept.parts.iter().map(|p| p.name.len() + p.content_type.len()).sum::<usize>();
     if imp.kept_sidecar_bytes.saturating_add(rel_total) > MAX_KEPT_TOTAL_BYTES {
         log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
+        // The dropped parts must not stay charged against later charts.
+        imp.kept_sidecar_bytes = charged_before;
         return ChartKept::default();
     }
     imp.kept_sidecar_bytes += rel_total;
