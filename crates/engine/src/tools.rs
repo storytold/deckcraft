@@ -136,6 +136,28 @@ pub enum Hit {
         id: ShapeId,
         row: usize,
     },
+    /// Crop mode: crop handle 0..8 (NW, N, NE, E, SE, S, SW, W) on the picture's box.
+    Crop {
+        id: ShapeId,
+        handle: u8,
+    },
+    /// Crop mode: handle 0..8 of the whole image, which scales it under the box.
+    CropImage {
+        id: ShapeId,
+        handle: u8,
+    },
+    /// Crop mode: the picture itself, which moves under the box.
+    CropPan {
+        id: ShapeId,
+    },
+}
+
+/// What a crop-mode drag changes.
+#[derive(Clone, Copy, Debug)]
+enum CropPart {
+    Frame(u8),
+    Image(u8),
+    Pan,
 }
 
 #[derive(Clone, Debug)]
@@ -225,6 +247,16 @@ enum Drag {
     Ink {
         points: Vec<(f64, f64, f32)>,
     },
+    /// Crop mode: `orig` is the box, `inset` its stretch `fillRect` and `img` the whole image in
+    /// its local points at the press.
+    Crop {
+        id: ShapeId,
+        part: CropPart,
+        orig: Xfrm,
+        inset: [f64; 4],
+        img: Rect,
+        start: Point,
+    },
     /// Freeform drawing (`freeform` polygon, `curve`, `scribble`): placed points; `pressed` while
     /// the button is down (dragging adds scribbled points).
     Freeform {
@@ -294,6 +326,8 @@ pub struct ToolState {
     pub guide_hover: Option<usize>,
     /// Pressure from the pointer event being handled, if the device reported one.
     pressure: Option<f32>,
+    /// The picture in crop mode (Picture Format ▸ Crop): its crop handles replace the box's.
+    pub crop: Option<ShapeId>,
 }
 
 impl ToolState {
@@ -309,6 +343,22 @@ impl ToolState {
                 && st.selection.text.is_none()
                 && st.shape(*id).is_some_and(|sh| matches!(sh.geom, deckcraft_model::Geom::Custom { .. }))
         })
+    }
+
+    /// The picture in crop mode, while it is still the one selected shape.
+    pub fn cropping(&self, st: &crate::DocState) -> Option<ShapeId> {
+        self.crop.filter(|id| {
+            st.selection.shapes.as_slice() == [*id]
+                && st.selection.text.is_none()
+                && st.shape(*id).is_some_and(|s| cmd::crop::croppable(s) && !s.locked)
+        })
+    }
+
+    /// Forget a crop drag without finishing it: its presentation is no longer the active one.
+    pub(crate) fn drop_crop_drag(&mut self) {
+        if matches!(self.drag, Some(Drag::Crop { .. })) {
+            self.drag = None;
+        }
     }
 
     /// A freeform path is being drawn (Enter/Escape/double-click finish it).

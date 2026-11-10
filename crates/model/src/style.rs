@@ -183,6 +183,37 @@ pub struct PictureFill {
     pub artistic: Option<Artistic>,
 }
 
+/// The smallest part of a picture a crop shows across and down, as a fraction of the image.
+pub const MIN_CROP_SHOWN: f64 = 0.01;
+
+/// Furthest a crop pads a picture with empty space, per side (the renderer draws no further).
+pub const MAX_CROP_PAD: f64 = 10.0;
+
+/// Whether crop `c` (left, top, right, bottom) still shows at least [`MIN_CROP_SHOWN`] of the
+/// image each way, within the padding the renderer draws.
+pub fn crop_shows_enough(c: [f64; 4]) -> bool {
+    let shown = |a: f64, b: f64| (1.0 - b).min(1.0) - a.max(0.0);
+    c.iter().all(|v| v.is_finite() && *v >= -MAX_CROP_PAD - 1e-9)
+        && shown(c[0], c[2]) >= MIN_CROP_SHOWN - 1e-9
+        && shown(c[1], c[3]) >= MIN_CROP_SHOWN - 1e-9
+}
+
+/// Crop `c` made one that [`crop_shows_enough`]: values that are not numbers become 0, each is
+/// kept to -[`MAX_CROP_PAD`]..0.99, and opposite sides that would meet are cut back in proportion.
+pub fn sane_crop(c: [f64; 4]) -> [f64; 4] {
+    let lim = 1.0 - MIN_CROP_SHOWN;
+    let [mut l, mut t, mut r, mut b] = c.map(|v| if v.is_finite() { v.clamp(-MAX_CROP_PAD, lim) } else { 0.0 });
+    for (a, z) in [(&mut l, &mut r), (&mut t, &mut b)] {
+        // Only two positive values can sum past the limit, each being at most the limit.
+        let sum = *a + *z;
+        if sum > lim {
+            *a *= lim / sum;
+            *z *= lim / sum;
+        }
+    }
+    [l, t, r, b]
+}
+
 /// An applied artistic effect: its `a14` name (e.g. `artisticBlur`) and the original picture.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -566,5 +597,37 @@ impl ShapeStyle {
             effect_ref: (0, ColorRef::scheme(slot)),
             font_ref: ("minor".into(), Some(ColorRef::scheme(SchemeSlot::Tx1))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sane_crops_always_show_some_of_the_picture() {
+        for c in [
+            [0.0, 0.0, 0.0, 0.0],
+            [0.25, 0.1, 0.25, 0.3],
+            [0.6, 0.0, 0.6, 0.0],
+            [1.0, 1.0, 0.0, 0.0],
+            [0.5, 0.0, 0.5, 0.0],
+            [-50.0, 2.0, 7.0, -0.5],
+            [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.2],
+            [-3.0, 0.0, 1.5, 0.0],
+        ] {
+            let s = sane_crop(c);
+            assert!(crop_shows_enough(s), "{c:?} -> {s:?}");
+            if crop_shows_enough(c) {
+                assert_eq!(s, c, "an acceptable crop stays as it is");
+            }
+        }
+        // Panned right off the box, or shrunk to nothing: nothing of the image would show.
+        assert!(!crop_shows_enough([-2.0, 0.0, 1.5, 0.0]));
+        assert!(!crop_shows_enough([0.5, 0.0, 0.5, 0.0]));
+        assert!(!crop_shows_enough([0.0, -11.0, 0.0, 0.0]));
+        assert!(crop_shows_enough([-9.0, 0.0, 0.99, 0.0]));
+        let s = sane_crop([0.6, 0.0, 0.6, 0.0]);
+        assert!((s[0] - 0.495).abs() < 1e-12 && (s[2] - 0.495).abs() < 1e-12 && s[1] == 0.0 && s[3] == 0.0, "{s:?}");
     }
 }

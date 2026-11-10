@@ -69,7 +69,7 @@ mod stroke;
 mod text_draw;
 
 use geometry::shade;
-pub use geometry::{camera_turn, crop_dest, parse_path, shape_geometry};
+pub use geometry::{camera_turn, crop_dest, parse_path, shape_geometry, stretch_dest};
 pub(crate) use geometry::{color, scale_of};
 use opts::SlideFields;
 pub use opts::{ParaState, RenderOpts, ShapeState};

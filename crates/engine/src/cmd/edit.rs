@@ -47,6 +47,8 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 fn restore(s: &mut Session, redo: bool) -> Result<Value> {
+    // A crop gesture in progress becomes its own step first, so Undo takes exactly that back.
+    s.end_crop_drag();
     let vertex_kind = s.tool.vertex_kind.clone();
     let st = s.doc_mut()?;
     let (from, to) = if redo { (&mut st.history.redo, &mut st.history.undo) } else { (&mut st.history.undo, &mut st.history.redo) };
@@ -58,6 +60,7 @@ fn restore(s: &mut Session, redo: bool) -> Result<Value> {
     // A later shape can get an undone copy's id: Duplicate starts over with the usual offset.
     st.last_duplicate = None;
     st.revision += 1;
+    s.settle_crop();
     // The point type Edit Points remembered with the restored document: handle drags follow it.
     s.tool.vertex_kind = e.vertex_kind;
     Ok(json!({"label": e.label}))
