@@ -211,14 +211,23 @@ fn starts_on_click(e: &El) -> bool {
     !conds.is_empty() && conds.iter().all(|c| c.attr("delay").is_some_and(|d| d.trim() == "indefinite") || c.attr("evt") == Some("onClick"))
 }
 
+/// A time node that waits a measured delay (`p:cond delay="500"`), so what runs inside it is not
+/// part of the slide's entry.
+fn starts_later(e: &El) -> bool {
+    e.child("stCondLst").is_some_and(|s| {
+        s.elements().filter(|c| c.is("cond")).any(|c| c.attr("delay").is_some_and(|d| d.trim().parse::<f64>().is_ok_and(|ms| ms > 0.0)))
+    })
+}
+
 /// Shapes a slide-entry media call starts (`p:cmd type="call" cmd="playFrom(0.0)"`), which is how
 /// PowerPoint writes a video set to start automatically: its `p:video` node says
-/// `delay="indefinite"` and the call is what plays it. A call inside a click step is skipped.
+/// `delay="indefinite"` and the call is what plays it. A call inside a click step, or inside a
+/// time node that waits a measured delay, is not the slide's entry.
 fn entry_media_calls(e: &El, ctx: &IdCtx, out: &mut std::collections::HashSet<ShapeId>, click: bool, depth: usize) {
     if depth > crate::xml::MAX_DEPTH || out.len() >= 10_000 {
         return;
     }
-    let click = click || starts_on_click(e);
+    let click = click || starts_on_click(e) || starts_later(e);
     if e.is("cmd") && !click && e.attr("cmd").is_some_and(|c| c.trim().starts_with("playFrom")) {
         if let Some(id) = e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) {
             out.insert(id);
@@ -471,6 +480,11 @@ mod tests {
         // plays it (`p:cmd type="call" cmd="playFrom(0.0)"`), so it starts by itself.
         const POWERPOINT_ENTRY: &str = r#"<p:timing xmlns:p="urn:x"><p:tnLst><p:par><p:cTn id="1" dur="indefinite"><p:childTnLst><p:video><p:cMediaNode vol="100000"><p:cTn id="2"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cMediaNode></p:video><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="3" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#;
         assert!(autoplay_of(POWERPOINT_ENTRY), "a slide-entry media call starts the video");
+        // A call that waits a measured delay is not the slide entry either.
+        let delayed_call = POWERPOINT_ENTRY
+            .replace("<p:cmd", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="500"/></p:stCondLst><p:childTnLst><p:cmd"#)
+            .replace("</p:cmd>", "</p:cmd></p:childTnLst></p:cTn></p:par>");
+        assert!(!autoplay_of(&delayed_call), "a playFrom call under a 500 ms delay waits its turn");
         // The same call inside a click step does not.
         let click_call = POWERPOINT_ENTRY
             .replace("<p:cmd", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:cmd"#)

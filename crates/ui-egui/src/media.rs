@@ -523,15 +523,17 @@ pub fn paint_clip(painter: &egui::Painter, host: &MediaHost, doc: &Presentation,
     let outline = cameo_outline(shape, xfrm.w.max(1.0), xfrm.h.max(1.0));
     let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
     let turned: Vec<(f32, f32)> =
-        outline.unwrap_or_else(|| corners.to_vec()).into_iter().map(|p| turn(p, xfrm.rot, xfrm.flip_h, xfrm.flip_v)).collect();
+        outline.unwrap_or_else(|| corners.to_vec()).into_iter().map(|p| turn(p, rect, xfrm.rot, xfrm.flip_h, xfrm.flip_v)).collect();
     paint_clipped(painter, tex, rect, uv, &turned);
     true
 }
 
 /// A point in 0–1 of a picture's box after the picture's own turn: mirror the flips, then rotate
-/// about the box's centre (`Xfrm::rot`, degrees clockwise on screen).
-fn turn(p: (f32, f32), rot: f64, flip_h: bool, flip_v: bool) -> (f32, f32) {
-    let (mut x, mut y) = (p.0 - 0.5, p.1 - 0.5);
+/// in the box's own pixels about its centre (`Xfrm::rot`, degrees clockwise on screen), so a
+/// non-square box turns as a whole instead of shearing.
+fn turn(p: (f32, f32), rect: Rect, rot: f64, flip_h: bool, flip_v: bool) -> (f32, f32) {
+    let (w, h) = (rect.width().max(1e-3), rect.height().max(1e-3));
+    let (mut x, mut y) = ((p.0 - 0.5) * w, (p.1 - 0.5) * h);
     if flip_h {
         x = -x;
     }
@@ -542,7 +544,7 @@ fn turn(p: (f32, f32), rot: f64, flip_h: bool, flip_v: bool) -> (f32, f32) {
         let (sin, cos) = (rot as f32).to_radians().sin_cos();
         (x, y) = (x * cos - y * sin, x * sin + y * cos);
     }
-    (0.5 + x, 0.5 + y)
+    (0.5 + x / w, 0.5 + y / h)
 }
 
 /// Paint `tex` over `rect` showing `uv`, clipped to `outline` (points in 0–1 of `rect`): a triangle
@@ -1006,21 +1008,24 @@ mod tests {
         assert!(find_clip(&doc, id, Some(0)).is_none());
     }
 
-    /// The video plays in the picture's own orientation: its turn rotates the outline's points and
-    /// its flips mirror them, while the texture's UVs stay put (the content turns with the shape).
+    /// The video plays in the picture's own orientation: the turn rotates the outline in the box's
+    /// pixels (so a non-square box is not sheared) and the flips mirror it, while the texture's UVs
+    /// stay put.
     #[test]
     fn a_turned_cameo_paints_its_video_in_the_pictures_orientation() {
-        let (x, y) = (0.0f32, 0.0f32); // the box's top-left corner, in 0–1 of the box
-        let round = |p: (f32, f32)| ((p.0 * 100.0).round(), (p.1 * 100.0).round());
-        assert_eq!(round(turn((x, y), 0.0, false, false)), (0.0, 0.0), "no turn: the corner stays");
-        assert_eq!(round(turn((x, y), 90.0, false, false)), (100.0, 0.0), "a quarter turn puts it top-right");
-        assert_eq!(round(turn((x, y), 0.0, true, false)), (100.0, 0.0), "a horizontal flip mirrors it");
-        assert_eq!(round(turn((x, y), 0.0, false, true)), (0.0, 100.0), "a vertical flip mirrors it down");
-        assert_eq!(round(turn((x, y), 90.0, true, true)), (0.0, 100.0), "both flips then the turn");
-        // A rectangular Cameo's four corners come out turned, not axis-aligned.
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 100.0)); // 2:1, so axes differ
+        let round = |p: (f32, f32)| ((p.0 * 1000.0).round() / 1000.0, (p.1 * 1000.0).round() / 1000.0);
+        let corner = (0.0f32, 0.0f32); // the box's top-left
+        assert_eq!(round(turn(corner, rect, 0.0, false, false)), (0.0, 0.0), "no turn: the corner stays");
+        // 90°: (-100, -50) px -> (50, -100) px -> 0.75, -0.5 of a 200x100 box.
+        assert_eq!(round(turn(corner, rect, 90.0, false, false)), (0.75, -0.5), "a quarter turn in pixels");
+        assert_eq!(round(turn(corner, rect, 0.0, true, false)), (1.0, 0.0), "a horizontal flip mirrors it");
+        assert_eq!(round(turn(corner, rect, 0.0, false, true)), (0.0, 1.0), "a vertical flip mirrors it down");
+        // 45°: the diamond's extremes stay on the box's centre lines, not on an ellipse.
         let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
-        let turned: Vec<_> = corners.iter().map(|p| round(turn(*p, 45.0, false, false))).collect();
-        assert!(turned.iter().any(|(x, y)| *x < 0.0 || *x > 100.0 || *y < 0.0 || *y > 100.0), "a 45° turn puts the corners outside the box: {turned:?}");
+        let turned: Vec<_> = corners.iter().map(|p| turn(*p, rect, 45.0, false, false)).collect();
+        assert!(turned.iter().all(|(_, y)| (y - 0.5).abs() > 0.2), "a 45° turn lifts the corners off the middle row: {turned:?}");
+        assert!(turned.iter().any(|(x, _)| *x < 0.0 || *x > 1.0), "and pushes them out sideways: {turned:?}");
     }
 
     #[test]
