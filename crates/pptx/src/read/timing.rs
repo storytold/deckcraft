@@ -211,14 +211,20 @@ fn starts_on_click(e: &El) -> bool {
     !conds.is_empty() && conds.iter().all(|c| c.attr("delay").is_some_and(|d| d.trim() == "indefinite") || c.attr("evt") == Some("onClick"))
 }
 
-/// A time node that waits a measured delay (`p:cond delay="500"`), so what runs inside it is not
-/// part of the slide's entry.
-fn starts_later(e: &El) -> bool {
-    // Conditions are alternatives: a node that also starts `onBegin` on slide entry is not late
-    // (a click condition is `starts_on_click`'s).
+/// A time node that only waits: every alternative in its start list is a click or a measured
+/// delay. One immediate alternative (`delay="0"`, `onBegin`) makes it part of the slide's entry,
+/// however many waiting alternatives sit beside it.
+fn starts_late(e: &El) -> bool {
     e.child("stCondLst").is_some_and(|s| {
         let conds: Vec<&El> = s.elements().filter(|c| c.is("cond")).collect();
-        !conds.is_empty() && conds.iter().all(|c| c.attr("delay").is_some_and(|d| d.trim().parse::<f64>().is_ok_and(|ms| ms > 0.0)))
+        !conds.is_empty()
+            && conds.iter().all(|c| {
+                c.attr("evt") == Some("onClick")
+                    || c.attr("delay").is_some_and(|d| {
+                        let d = d.trim();
+                        d == "indefinite" || d.parse::<f64>().is_ok_and(|ms| ms > 0.0)
+                    })
+            })
     })
 }
 
@@ -230,7 +236,7 @@ fn entry_media_calls(e: &El, ctx: &IdCtx, out: &mut std::collections::HashSet<Sh
     if depth > crate::xml::MAX_DEPTH || out.len() >= 10_000 {
         return;
     }
-    let click = click || starts_on_click(e) || starts_later(e);
+    let click = click || starts_late(e);
     if e.is("cmd")
         && !click
         && e.attr("cmd").is_some_and(|c| c.trim().starts_with("playFrom"))
@@ -485,6 +491,14 @@ mod tests {
         // plays it (`p:cmd type="call" cmd="playFrom(0.0)"`), so it starts by itself.
         const POWERPOINT_ENTRY: &str = r#"<p:timing xmlns:p="urn:x"><p:tnLst><p:par><p:cTn id="1" dur="indefinite"><p:childTnLst><p:video><p:cMediaNode vol="100000"><p:cTn id="2"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cMediaNode></p:video><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="3" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#;
         assert!(autoplay_of(POWERPOINT_ENTRY), "a slide-entry media call starts the video");
+        // Two waiting alternatives (a click and a delay) are still a wait, never the entry.
+        let two_waits = POWERPOINT_ENTRY
+            .replace(
+                "<p:cmd",
+                r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond evt="onClick" delay="0"/><p:cond delay="500"/></p:stCondLst><p:childTnLst><p:cmd"#,
+            )
+            .replace("</p:cmd>", "</p:cmd></p:childTnLst></p:cTn></p:par>");
+        assert!(!autoplay_of(&two_waits), "onClick and a delay together wait; they are not the entry");
         // A delayed condition beside an immediate one (onBegin) is an alternative, not a wait.
         let mixed_call = POWERPOINT_ENTRY
             .replace("<p:cmd", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="500"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:cmd"#)
