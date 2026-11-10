@@ -58,7 +58,13 @@ struct Scope<'s, 'a> {
     /// The slide list's outline text, for placeholders that point at it.
     outline: &'s [crate::record::Records<'a>],
     master: bool,
+    /// Where `hspMaster` shape ids are looked up: the slide's master, then a title master's main
+    /// master.
+    masters: Chain,
 }
+
+/// Master slide ids, nearest first.
+type Chain = [Option<u32>; 2];
 
 struct Ctx<'a> {
     p: Presentation,
@@ -66,8 +72,10 @@ struct Ctx<'a> {
     blips: crate::blip::Store<'a>,
     media: HashMap<usize, Option<MediaId>>,
     defaults: Props<'a>,
-    /// Master shapes by shape id, for slide shapes that inherit from one (`hspMaster`).
-    master_props: HashMap<u32, Props<'a>>,
+    /// Master shapes by master slide id and shape id, for slide shapes that inherit from one
+    /// (`hspMaster`). Keyed by master too, so a shape id repeated in another master can't replace
+    /// this master's shape.
+    master_props: HashMap<(u32, u32), Props<'a>>,
 }
 
 pub fn convert<'a>(d: &Doc<'a>, pictures: &'a [u8]) -> Presentation {
@@ -135,6 +143,8 @@ struct MasterInfo {
     styles: Arc<StyleSheet>,
     /// A layout made for a title master; slides of that title master use it.
     layout: Option<LayoutId>,
+    /// This master's slide id, then its main master's for a title master.
+    ids: Chain,
 }
 
 impl<'a> Ctx<'a> {
@@ -149,8 +159,9 @@ impl<'a> Ctx<'a> {
         let (mut master, next) = defaults::build_master(size, theme, self.p.next_id.max(1));
         self.p.next_id = next;
         let drawing = draw::drawing(&m.rec);
-        self.remember_master_props(&drawing.shapes, 0);
-        let scope = Scope { scheme, styles: &styles, outline: &m.outline, master: true };
+        self.remember_master_props(m.slide_id, &drawing.shapes, 0);
+        let ids = [Some(m.slide_id), None];
+        let scope = Scope { scheme, styles: &styles, outline: &m.outline, master: true, masters: ids };
         master.background = drawing.background.as_ref().and_then(|b| self.background(b, &scope));
         for raw in &drawing.shapes {
             if let Some(ph) = raw.placeholder.filter(|p| p.kind != 0) {
@@ -171,7 +182,7 @@ impl<'a> Ctx<'a> {
         master.other_style = self.list_style(&styles, ty::OTHER, &scheme);
         let index = self.p.masters.len();
         self.p.masters.push(Arc::new(master));
-        Some(MasterInfo { index, scheme, styles, layout: None })
+        Some(MasterInfo { index, scheme, styles, layout: None, ids })
     }
 
     /// A title master: a layout of its main master holding its background and shapes.
@@ -181,8 +192,9 @@ impl<'a> Ctx<'a> {
         let scheme = if atom.follow_master_scheme { parent.scheme } else { scheme_of(&m.rec).unwrap_or(parent.scheme) };
         let Some(id) = self.alloc() else { return };
         let drawing = draw::drawing(&m.rec);
-        self.remember_master_props(&drawing.shapes, 0);
-        let scope = Scope { scheme, styles: &parent.styles, outline: &m.outline, master: true };
+        self.remember_master_props(m.slide_id, &drawing.shapes, 0);
+        let ids = [Some(m.slide_id), parent.ids[0]];
+        let scope = Scope { scheme, styles: &parent.styles, outline: &m.outline, master: true, masters: ids };
         let background = if atom.follow_master_background { None } else { drawing.background.as_ref().and_then(|b| self.background(b, &scope)) };
         let shapes: Vec<Shape> =
             drawing.shapes.iter().filter(|r| r.placeholder.is_none_or(|p| p.kind == 0)).filter_map(|r| self.shape(r, &scope, 0, TOP)).collect();
@@ -210,16 +222,16 @@ impl<'a> Ctx<'a> {
             show_master_shapes: atom.follow_master_objects,
             ..Default::default()
         });
-        masters.insert(m.slide_id, MasterInfo { layout: Some(LayoutId(id)), scheme, ..parent });
+        masters.insert(m.slide_id, MasterInfo { layout: Some(LayoutId(id)), scheme, ids, ..parent });
     }
 
-    fn remember_master_props(&mut self, shapes: &[RawShape<'a>], depth: usize) {
+    fn remember_master_props(&mut self, master: u32, shapes: &[RawShape<'a>], depth: usize) {
         if depth > MAX_DEPTH {
             return;
         }
         for s in shapes {
-            self.master_props.insert(s.spid, s.props.clone());
-            self.remember_master_props(&s.children, depth + 1);
+            self.master_props.insert((master, s.spid), s.props.clone());
+            self.remember_master_props(master, &s.children, depth + 1);
         }
     }
 
@@ -266,9 +278,9 @@ impl<'a> Ctx<'a> {
         // master's index, so including them would tie, and HashMap order would pick the winner.
         let first_main = || masters.values().filter(|m| m.layout.is_none()).min_by_key(|m| m.index);
         let info = masters.get(&atom.master_id).or_else(first_main).cloned();
-        let (index, master_scheme, styles, title_layout) = match &info {
-            Some(m) => (m.index, m.scheme, m.styles.clone(), m.layout),
-            None => (0, DEFAULT_SCHEME, Arc::new(StyleSheet::new(d.document.child(rt::ENVIRONMENT), None)), None),
+        let (index, master_scheme, styles, title_layout, ids) = match &info {
+            Some(m) => (m.index, m.scheme, m.styles.clone(), m.layout, m.ids),
+            None => (0, DEFAULT_SCHEME, Arc::new(StyleSheet::new(d.document.child(rt::ENVIRONMENT), None)), None, [None; 2]),
         };
         let scheme = if atom.follow_master_scheme { master_scheme } else { scheme_of(&s.rec).unwrap_or(master_scheme) };
         let layout = title_layout.or_else(|| {
@@ -278,7 +290,7 @@ impl<'a> Ctx<'a> {
         })?;
         let id = SlideId(self.alloc()?);
         let drawing = draw::drawing(&s.rec);
-        let scope = Scope { scheme, styles: &styles, outline: &s.outline, master: false };
+        let scope = Scope { scheme, styles: &styles, outline: &s.outline, master: false, masters: ids };
         let background = if atom.follow_master_background { None } else { drawing.background.as_ref().and_then(|b| self.background(b, &scope)) };
         let shapes = drawing.shapes.iter().filter_map(|r| self.shape(r, &scope, 0, TOP)).collect();
         let hidden = s.rec.child(rt::SLIDE_SHOW_SLIDE_INFO).and_then(|i| i.u16(10)).is_some_and(|f| f & 0x4 != 0);
@@ -289,7 +301,8 @@ impl<'a> Ctx<'a> {
     /// The text of a notes page's notes placeholder.
     fn notes(&mut self, n: &Listed<'a>, styles: &StyleSheet, scheme: Scheme) -> TextBody {
         let drawing = draw::drawing(&n.rec);
-        let scope = Scope { scheme, styles, outline: &n.outline, master: false };
+        // Notes masters aren't imported, so there are no master shapes to inherit from.
+        let scope = Scope { scheme, styles, outline: &n.outline, master: false, masters: [None; 2] };
         for raw in &drawing.shapes {
             let Some(block) = self.text_block(raw, &scope) else { continue };
             // The notes body placeholder; a slide number or header placeholder on the page isn't notes.
@@ -307,16 +320,18 @@ impl<'a> Ctx<'a> {
     }
 
     fn background(&mut self, raw: &RawShape<'a>, scope: &Scope) -> Option<Background> {
-        let props = self.props_of(raw, false);
+        let props = self.props_of(raw, scope, false);
         let fill = self.fill(&props, scope, true)?;
         Some(Background::Fill { fill })
     }
 
     /// The shape's properties with what it inherits: its master shape's, then (for placeholders
     /// and text boxes) no fill and no line, then the drawing defaults.
-    fn props_of(&self, raw: &RawShape<'a>, unfilled: bool) -> Props<'a> {
+    fn props_of(&self, raw: &RawShape<'a>, scope: &Scope, unfilled: bool) -> Props<'a> {
         let mut props = raw.props.clone();
-        if let Some(m) = props.get(prop::HSP_MASTER).and_then(|id| self.master_props.get(&id)) {
+        let inherited =
+            props.get(prop::HSP_MASTER).and_then(|spid| scope.masters.iter().flatten().find_map(|&master| self.master_props.get(&(master, spid))));
+        if let Some(m) = inherited {
             props.inherit(m);
         }
         if unfilled {
@@ -332,7 +347,7 @@ impl<'a> Ctx<'a> {
         }
         let ph = raw.placeholder.filter(|p| p.kind != 0);
         let text_box = raw.shape_type == 202;
-        let props = self.props_of(raw, ph.is_some() || text_box);
+        let props = self.props_of(raw, scope, ph.is_some() || text_box);
         let rot = props.fixed(prop::ROTATION).unwrap_or(0.0);
         let anchor = raw.anchor?;
         let mut s = Shape {

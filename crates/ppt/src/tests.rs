@@ -511,3 +511,21 @@ fn the_app_opens_a_ppt_and_save_asks_for_a_new_name() {
     let err = deckcraft_engine::cmd::file::open_presentation("Locked.ppt", &file_with(0xF3D1_C4DF)).unwrap_err().to_string();
     assert!(err.contains("Locked.ppt is password-protected"), "{err}");
 }
+
+/// A slide shape that inherits from a master shape (`hspMaster`) takes it from its own master.
+/// Master shapes used to be remembered by shape id alone, so a title master reusing the main
+/// master's shape id (here 1026, red instead of the scheme's green) replaced it for every slide.
+#[test]
+fn a_master_shape_id_is_looked_up_in_the_slides_own_master() {
+    let red = container(
+        rt::SP_CONTAINER,
+        0,
+        &[fsp(1, 1026, 0xA00), fopt(&[(prop::FILL_COLOR, 0x0000_00FF), (prop::FILL_BOOLS, 0x0010_0010)]), anchor(0, 0, 100, 100)],
+    );
+    let title_master = container(rt::SLIDE, 0, &[slide_atom(0, MASTER_ID, 0x7), drawing(None, &[red])]);
+    let inheriting = container(rt::SP_CONTAINER, 0, &[fsp(1, 2049, 0xA00), fopt(&[(prop::HSP_MASTER, 1026)]), anchor(0, 0, 100, 100)]);
+    let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[inheriting])]);
+    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, slide, Some(title_master));
+    let p = crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap();
+    assert_eq!(p.slides[0].shapes[0].fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0, 0xCC, 0)))));
+}
