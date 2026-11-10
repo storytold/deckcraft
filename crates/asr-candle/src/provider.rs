@@ -352,9 +352,11 @@ fn rms(samples: &[f32]) -> f32 {
 /// cannot interleave. A worker whose stream was stopped and replaced must not overwrite the
 /// replacement's status.
 fn publish(status: &Arc<Mutex<ProviderStatus>>, current: &AtomicU64, generation: u64, new: ProviderStatus) {
-    if let Ok(mut s) = status.lock()
-        && current.load(Ordering::SeqCst) == generation
-    {
+    // A poisoned lock means some other thread panicked holding the status. The status is still the
+    // best one we have, and skipping the write would leave the queried status disagreeing with the
+    // error event the worker just sent, so recover it as every other status path in this file does.
+    let mut s = status.lock().unwrap_or_else(PoisonError::into_inner);
+    if current.load(Ordering::SeqCst) == generation {
         *s = new;
     }
 }
@@ -442,6 +444,22 @@ mod tests {
         assert_eq!(status.lock().unwrap_or_else(PoisonError::into_inner).state, ProviderState::Idle, "the retired stream is ignored");
         publish(&status, &generation, 2, ProviderStatus::stopped());
         assert_eq!(status.lock().unwrap_or_else(PoisonError::into_inner).state, ProviderState::Stopped, "the current stream publishes");
+    }
+
+    #[test]
+    fn a_poisoned_status_lock_still_publishes_the_failure() {
+        let status = Arc::new(Mutex::new(ProviderStatus::idle()));
+        let generation = Arc::new(AtomicU64::new(1));
+        let poison = status.clone();
+        std::thread::spawn(move || {
+            let _guard = poison.lock().expect("lock the status");
+            panic!("poison the status lock");
+        })
+        .join()
+        .expect_err("the thread panicked holding the status lock");
+        publish(&status, &generation, 1, ProviderStatus::failed("late failure"));
+        let state = status.lock().unwrap_or_else(PoisonError::into_inner).state;
+        assert_eq!(state, ProviderState::Failed, "a poisoned lock must not swallow the failure the event stream reported");
     }
 
     #[test]
