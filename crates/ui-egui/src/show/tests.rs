@@ -1413,6 +1413,8 @@ fn auto_preview_keeps_the_slide_selection_and_never_auto_advances() {
     s.execute("slide.selectSlides", &json!({"indices": [0, 1]})).unwrap();
     // A 50 ms "After" timing on both: a real show would advance almost at once.
     s.execute("transition.timing", &json!({"after": 50})).unwrap();
+    let id = s.active().unwrap().doc.slides[0].shapes[0].id;
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "onClick", "duration": 500})).unwrap();
     let mut app = SlideApp::new(s, crate::Services::default());
     app.ui.tab = "Transitions".into();
     let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
@@ -1479,4 +1481,24 @@ fn selecting_transition_does_not_auto_preview_when_disabled() {
     assert!(h.state().show.is_none());
     let doc = h.state().session.active().unwrap().current_slide().unwrap();
     assert_eq!(doc.transition.as_ref().unwrap().kind, "push");
+}
+
+#[test]
+fn transition_preview_closes_with_pending_or_playing_animation_steps() {
+    for start in ["onClick", "withPrevious"] {
+        let mut s = deckcraft_engine::Session::with_new();
+        let id = s.active().unwrap().doc.slides[0].shapes[0].id;
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": start, "duration": 10000})).unwrap();
+        s.execute("transition.set", &json!({"kind": "push", "duration": 1000})).unwrap();
+        let doc = s.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, true, false);
+        show.start_transition_preview(&doc, 10.0);
+        assert!(show.advance_hidden(&doc, 10.5), "the transition is still playing");
+        assert!(!show.advance_hidden(&doc, 11.1), "pending or long-running animations must not hold the preview");
+        assert_eq!(show.state.slide, 0);
+
+        let mut normal = Show::new(&doc, 0, true, false);
+        assert!(normal.advance_hidden(&doc, 1.1), "normal shows retain their click sequence");
+        assert_eq!(normal.state.slide, 0);
+    }
 }
