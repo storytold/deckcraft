@@ -2,7 +2,8 @@
 
 Updated: 2026-11-10. Branch: `collab/pr11`, **rebased onto `origin/main` at `0623b430`** (heads
 `collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `6e9d10e7` plus the publication
-docs commit, the 3-D model slice, the CORS slice, the SmartArt insertion slice and this docs
+docs commit, the 3-D model slice, the CORS slice, the SmartArt insertion slice, the SmartArt
+conversions slice and this docs
 commit; pre-rebase hashes are kept in the slice
 notes below and mapped in
 [Rebase onto origin/main](#rebase-onto-originmain-2026-11-09)), from
@@ -32,7 +33,12 @@ server answers a browser page whose origin is in `DECKCRAFT_CORS_ORIGINS` with
 `Access-Control-Allow-Origin`/`Vary` and a preflight, and sends no `Access-Control-*` header to
 anyone else, and then the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as one whole
 `Diagram` value with the whole inserted shape as the undo image, and `smartArt.nodes` answered
-as a read-only query by the server, with this docs commit on top.
+as a read-only query by the server, and then the SmartArt conversion slice `db413e5d`:
+`smartArt.fromText`, `smartArt.toText` and `smartArt.toShapes` as **one structural step each** —
+the sender runs the engine's `from_text_plan`/`to_text_plan`/`to_shapes_plan`, the operation
+carries the whole resulting diagram or text body and the final box (or just names the graphic to
+detach), the engine checks the value before the first write, and the undo image is the whole
+source shape — with this docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -75,7 +81,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
-| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask) |
+| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`) |
 
 ### Rebase onto origin/main (2026-11-09)
 
@@ -836,15 +842,33 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio, video and 3-D models over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits, the rest of the table surface (style, cell fill, merge/split, column/row sizing), slide notes text, document fonts (the embedded-font registry: one face by digest, descriptors, removal), SmartArt (outline, layout, style and colours as one whole diagram value, and an insertion of a whole diagram) and charts (edits and insertion as one whole chart value) | collab tests, socket test, commit reimport |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits, the rest of the table surface (style, cell fill, merge/split, column/row sizing), slide notes text, document fonts (the embedded-font registry: one face by digest, descriptors, removal), SmartArt (outline, layout, style and colours as one whole diagram value, an insertion of a whole diagram, and the three conversions `fromText`/`toText`/`toShapes` as one structural step each) and charts (edits and insertion as one whole chart value) | collab tests, socket test, commit reimport |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, the whole table for style/fill/merge/split/sizing, document fonts (the whole entry), a SmartArt step (the whole group) and a SmartArt insertion (the whole inserted shape) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore` (an insertion too)/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
+| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, the whole table for style/fill/merge/split/sizing, document fonts (the whole entry), a SmartArt step (the whole group), a SmartArt insertion (the whole inserted shape) and a SmartArt conversion (the whole source shape, whatever its id) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore` (an insertion or a conversion too)/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
 | PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork; locally rebased onto `origin/main` (`0623b430`) with a clean `merge-tree` (the fork needs a force-push, the chair's manual step) | [`pr10.md`](pr10.md); merge needs a human decision |
+
+Re-run on 2026-11-10 after the SmartArt conversion slice (`db413e5d`, on `agents`, rust 1.99.1):
+`cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings`
+clean, `cargo test -p deckcraft-collab-proto -p deckcraft-collab -p deckcraft-collab-server`:
+`collab-proto` 36 passed, `collab` 247 + 8 passed, `collab-server` 10 unit + 0 in `main.rs` + 4
+commit + 4 gates + 14 socket, all
+passed, 0 failed, 0 ignored, EXIT=0. The engine's filtered `smartart` tests also pass (13
+passed). The new tests cover two replicas converging on `fromText`, `toText` and `toShapes`
+(full client normaliser, the whole diagram/body/box, the resulting text box or plain group) and
+each undo/redo in the adapter, the in-memory hub and the engine: the undo removes the converted
+shape and puts the **whole source shape** back (a text box, or a SmartArt group with its diagram
+and generated children and their ids), the redo reapplies the exact result; a viewer's
+client-side `submit` is refused `ReadOnly`, a hand-built operation is refused `Forbidden` by the
+server with the version and document unchanged, and the socket test proves the same over a real
+connection; hostile values (an unknown layout, 5000 nodes, a zero-size box, a body that is not a
+`TextBody`, `toText`/`toShapes` on a plain shape) are refused `invalid` before the first write
+with the document unchanged and no history step. `git status` is clean after the docs commit;
+nothing was pushed, CI was not touched, and PR #1975 is unchanged.
 
 Re-run on 2026-11-10 after the SmartArt insertion slice (`cfd40da2`, on `agents`, rust 1.99.1):
 `cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings`
@@ -934,17 +958,17 @@ was not touched, and PR #1975 is unchanged.
    document fonts (`font.create`/`font.set`/`font.remove`, the whole entry as the undo image) are
    collaborative now, and so are charts (`chart.type`/`chart.data`/`chart.options` and
    `insert.chart` as one whole `Chart` value, the whole chart shape as the undo image), and so is
-   inserting a 3-D model (`insert.model3d`, a binary glTF on the media channel) and inserting a
+   inserting a 3-D model (`insert.model3d`, a binary glTF on the media channel), inserting a
    SmartArt graphic (`insert.smartArt` as one whole `Diagram` value, the whole inserted shape as
-   the undo image); `smartArt.nodes` is a read-only query the server answers against the
-   authoritative document. Still refused: the SmartArt **conversions** (`smartArt.fromText`,
-   `toText`, `toShapes` — they replace an existing shape, so they need their own structural
-   slice), the picture in a node (`smartArt.picture`, a media-channel slice), editing a model's
-   camera/scene, and relative effects. The design
+   the undo image) and the three SmartArt conversions (`smartArt.fromText`/`toText`/`toShapes`,
+   each one structural step with the whole source shape as its undo image); `smartArt.nodes` is a
+   read-only query the server answers against the authoritative document. Still refused: the
+   picture in a node (`smartArt.picture`, a media-channel slice), editing a model's camera/scene,
+   and relative effects. The design
    rule stands: only
    commands whose result is a deterministic function of the authoritative state, expressed as
    final values, go on the wire; a raw `execute` is not safe (toggles and relative edits
-   diverge). Next: the SmartArt conversions and the picture in a node, then model camera/scene.
+   diverge). Next: the picture in a node, then model camera/scene.
 2. **Media refinement.** Pictures, video, audio, font faces and 3-D models are all in the media
    allowlist, each with its own budget; `GET /media` normalises the path and answers with the
    content type the signature implies. The channel's deployment gap for a browser page is closed:
@@ -1070,28 +1094,59 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `Access-Control-Allow-Origin`/`Vary` and a preflight (`f996865d`).
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Document fonts, the whole table
-   surface, SmartArt (the outline, layout, style and colours as one whole `Diagram` value, and
-   `insert.smartArt` as one whole diagram with the whole shape as its undo image), charts (type,
+   surface, SmartArt (the outline, layout, style and colours as one whole `Diagram` value,
+   `insert.smartArt` as one whole diagram with the whole shape as its undo image, and the three
+   conversions as one structural step each), charts (type,
    data, options and insertion as one whole `Chart` value) and the insertion of a 3-D model
    (`insert.model3d`, a binary glTF on the media channel, drawn as its poster or a stand-in cube)
-   are done; `smartArt.nodes` is answered by the server as a read-only query. Next are the
-   SmartArt conversions (`fromText`/`toText`/`toShapes`) and the picture in a node
-   (`smartArt.picture`, a media-channel slice).
+   are done; `smartArt.nodes` is answered by the server as a read-only query. Next is the picture
+   in a node (`smartArt.picture`, a media-channel slice).
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
    body image)/transition/animation (a shape's step list for add/remove, a slide's whole sequence
    for set/timing/move/options/clear/painter) steps, a group's fill/line, slide
    insert/delete/duplicate, shape insert/delete (a SmartArt insertion too), group/ungroup, table
    row/column edits (whole-table image), the whole table for style/options/fill/merge/split/sizing,
-   a document font entry, a SmartArt outline/layout/style/colour step (the whole group) and a
+   a document font entry, a SmartArt outline/layout/style/colour step (the whole group), a
+   SmartArt insertion (the whole shape), a SmartArt conversion (the whole source shape) and a
    chart type/data/options step (the whole chart shape). What is left in this line is only the
-   undo of commands that are not on the wire yet (the SmartArt conversions and the picture in a
-   node).
+   undo of commands that are not on the wire yet (the picture in a node).
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — SmartArt conversions: from text, to text, to shapes
+
+- The three conversions are collaborative as **one structural step each**:
+  `smartArt.fromText`, `smartArt.toText` and `smartArt.toShapes`. The sender runs the same plan
+  the single-user command runs — `smartArt::from_text_plan` (paragraphs with their indent levels
+  and the grown box), `smartArt::to_text_plan` (the outline as a whole `TextBody` with its levels,
+  bullets and the graphic's own title/bullet sizes) and `smartArt::to_shapes_plan` (only the
+  graphic's id) — so the operation carries the whole result rather than arguments a replica would
+  apply to its own copy. The confirmed engine commands are `smartArt.replaceWithDiagram`,
+  `smartArt.replaceWithText` and `smartArt.detach`.
+- Before the first write the engine checks the value: the layout, node count, node text, style,
+  colours and JSON size of a diagram; the JSON size, paragraph count and run count of a text body;
+  the box (four finite numbers, a positive and sane size); and that the target is a top-level text
+  shape (`fromText`) or (inside) a SmartArt graphic (`toText`/`toShapes`). A refusal writes
+  nothing and moves no version.
+- The result replaces the source shape in its place in the z-order as one structural step. The
+  undo image is the **whole source shape** — a text box, or the graphic with its diagram and
+  generated children and their ids — and the redo image is the whole converted shape. A new
+  `ShapeReplacement` history image holds both sides; when `toShapes` keeps the id, the restore
+  removes the slot before inserting the image back, so a same-id replacement is not a clash.
+- Tests: two replicas converge on each conversion through the normaliser and the adapter, and on
+  the in-memory hub; each undo restores the source shape whole and each redo reapplies the exact
+  result; a viewer's `submit` is refused `ReadOnly` and a hand-built operation is refused
+  `Forbidden` by the server (the version and document stay); a hostile diagram/body/box and a
+  plain shape addressed as a graphic are refused `invalid` with no document change and no history
+  step; the socket test sends a conversion and gets a viewer's refusal over a real connection.
+- Commit `db413e5d` on `collab/pr11`, with this docs commit on top; `rfc.md` (§3.2.1, §6, §13,
+  §14.1, §15), `production.md` and this file updated. Nothing pushed, CI untouched, PR #1975
+  unchanged. What remains in this line: `smartArt.picture` (a media-channel slice), then model
+  camera/scene.
 
 ### 2026-11-10 — SmartArt insertion as one whole value and the authoritative nodes query
 

@@ -159,6 +159,9 @@ The first release deliberately normalises a small, idempotent command set:
 | `table.columnWidth`, `table.rowHeight` | command | one final column width (`keepTotal` takes the difference from the next column) or row height in points (`table.columnWidth`/`table.rowHeight`) |
 | `smartArt.setNodes`, `smartArt.addNode`, `smartArt.removeNode`, `smartArt.promote`, `smartArt.demote`, `smartArt.layout`, `smartArt.style`, `smartArt.colors` | command | the graphic's **whole** diagram value — layout, outline (text, levels, assistants, titles, pictures), style and colours — in one `smartArt.setDiagram`; the client runs the engine's `smartArt::plan`, the same function the single-user command uses, so it sends the value that command would leave (a layout change drops the file's saved layout, a style/colour change its own XML); an unknown layout/style/colour, an unaddressable node and a too-large value are refused before sending (and by the engine before the first write); the undo image is the whole group (`shape_field{field: smartArt}`), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing |
 | `insert.smartArt` | structural | the **whole diagram** the insertion would create — layout, the node tree, style and colours — plus the final box, in a `smart_art_insert`; the client builds it with the engine's `smartart::insert_plan` (the same function the single-user command runs), the engine checks layout/style/colours, node count, text and JSON size before the first write, and every replica regenerates the same drawing instead of running its own sample; a hostile tree adds nothing and moves no version; the undo is the ordinary shape-delete step, and the redo restores the whole shape (diagram and generated children) |
+| `smartArt.fromText` | structural | the **whole diagram** the conversion would create — layout, nodes with their text and outline levels — plus the final box, in a `smart_art_from_text`; the client builds it with the engine's `smartart::from_text_plan` (the same plan the single-user command runs, including the grown box), the engine checks the value and box before the first write, and the source text shape is replaced in place; the undo image is the whole source shape, and the redo puts the converted graphic back |
+| `smartArt.toText` | structural | the **whole text body** the outline becomes — paragraphs with their levels, bullets, runs and title/bullet sizes — plus the final box, in a `smart_art_to_text`; the client builds it with the engine's `smartart::to_text_plan`, the engine checks the JSON size, paragraph/run counts and box before the first write, and the graphic is replaced by a text box; the undo image is the whole graphic (diagram and generated children with their ids) |
+| `smartArt.toShapes` | structural | no value: the drawing stays and only the outline is dropped, in a `smart_art_to_shapes` addressed by the graphic; the engine refuses a shape that is not a SmartArt graphic before the first write; the undo image is the whole prior graphic and the redo puts the detached group back |
 | `chart.type`, `chart.data`, `chart.options` | command | the chart's **whole** value — type, categories (with outer levels), series, element options and any kept part — in one `chart.setWhole`; the client runs the engine's `chart::plan`, the same plan the single-user command uses, so it sends the value that command would leave; the adapter requires a chart shape and bounds the value (category/series/point counts, text, JSON size) before the first write; the undo image is the whole chart shape (`shape_field{field: chart}`), because a kept chart part cannot be replayed from arguments |
 | `insert.chart` | structural | the **whole chart** the insertion would create (its sample and typed data) plus the final box, in a `chart_insert`; every replica creates that chart instead of running its own sample; the undo is the ordinary shape-delete step |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
@@ -188,8 +191,7 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: the SmartArt conversions (`smartArt.fromText`,
-`smartArt.toText`, `smartArt.toShapes`) and the picture in a node (`smartArt.picture`, a
+values, go on the wire. What is still refused: the picture in a node (`smartArt.picture`, a
 media-channel slice), and relative effects; a 3-D model can be inserted (`insert.model3d`, drawn
 as its poster or a stand-in cube), but its camera and scene are not editable in v1.
 
@@ -393,9 +395,11 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    Column Width and Row Height fields, which carry the selected column/row as final values and run
    the same `table.columnWidth`/`table.rowHeight` commands a border drag does. A SmartArt graphic
    can be inserted now (`insert.smartArt` as one whole diagram value, the whole shape as the undo
-   image) and `smartArt.nodes` is answered by the server as a read-only query; charts are in too
+   image), the three conversions are in (`smartArt.fromText`/`toText`/`toShapes`, each one
+   structural step with the whole source shape as its undo image) and `smartArt.nodes` is
+   answered by the server as a read-only query; charts are in too
    (type/data/options and an insertion as one whole chart value, the whole chart shape as the undo
-   image). What is left in this line: the SmartArt conversions and the picture in a node.
+   image). What is left in this line: the picture in a node.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
