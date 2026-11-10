@@ -480,7 +480,7 @@ impl SlideApp {
         let dirty: Vec<usize> = self.session.documents().iter().enumerate().filter(|(_, d)| d.is_dirty()).map(|(i, _)| i).collect();
         for i in dirty {
             self.session.set_active(i);
-            self.save();
+            let _ = self.save();
             if self.session.documents().get(i).is_some_and(|d| d.is_dirty()) {
                 return false;
             }
@@ -488,40 +488,64 @@ impl SlideApp {
         true
     }
 
-    pub fn save(&mut self) {
+    /// Save. Returns why it did not even start (a page that cannot commit, an offline or view-only
+    /// room, a failed local write); `Ok(())` means the save or commit request was accepted, not
+    /// that the file already exists — a commit is answered later by `commit-result`.
+    pub fn save(&mut self) -> Result<(), String> {
         // A live session behind the host bridge: the cabinet owns the file, so Save asks it to
         // commit (`deckcraft:commit`) instead of downloading a possibly stale local copy. Save As
         // and Export stay local.
         if let Some(session) = self.host_session_id.clone() {
             let result = self.host_commit.as_ref().map(|commit| commit(&session, None));
-            self.set_status(match result {
-                Some(Ok(())) => "Committing…".to_string(),
-                Some(Err(error)) => format!("Commit failed: {error}"),
-                None => "The page cannot commit this session".to_string(),
-            });
-            return;
+            match result {
+                Some(Ok(())) => {
+                    self.set_status("Committing…");
+                    return Ok(());
+                }
+                Some(Err(error)) => {
+                    let message = format!("Commit failed: {error}");
+                    self.set_status(message.clone());
+                    return Err(message);
+                }
+                None => {
+                    let message = "The page cannot commit this session".to_string();
+                    self.set_status(message.clone());
+                    return Err(message);
+                }
+            }
         }
         // A live collaboration session on the desktop: the cabinet owns the file, so Save asks
         // the server to commit the room as a new version (ADR 0009) instead of writing the local
         // copy, which the cabinet would never see. Save As and Export stay local below.
         if self.collab.owns_save() {
-            match self.collab.commit(&self.session) {
-                Ok(()) => self.set_status("Committing…"),
-                Err(e) => self.set_status(e),
-            }
-            return;
+            return match self.collab.commit(&self.session) {
+                Ok(()) => {
+                    self.set_status("Committing…");
+                    Ok(())
+                }
+                Err(e) => {
+                    self.set_status(e.clone());
+                    Err(e)
+                }
+            };
         }
         if self.services.host_save.is_some() {
-            let _ = self.save_to_host(None);
-            return;
+            return self.save_to_host(None).map(|_| ());
         }
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
-                Ok(_) => self.set_status("Saved"),
-                Err(e) => self.set_status(e.to_string()),
+                Ok(_) => {
+                    self.set_status("Saved");
+                    Ok(())
+                }
+                Err(e) => {
+                    self.set_status(e.to_string());
+                    Err(e.to_string())
+                }
             }
         } else {
             self.save_as_dialog("deckcraft");
+            Ok(())
         }
     }
 

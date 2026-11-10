@@ -176,11 +176,14 @@ fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, String> {
         if size == 0 {
             break;
         }
-        if body.len() < size + 2 {
+        // The size comes from the cabinet's text: `size + 2` must be checked, or a huge size
+        // panics in debug and wraps in release (and then `&body[..size]` panics too).
+        let end = size.checked_add(2).ok_or("a chunk size is too large")?;
+        if body.len() < end {
             return Err("a chunk is shorter than its size".into());
         }
         out.extend_from_slice(&body[..size]);
-        body = &body[size + 2..];
+        body = &body[end..];
     }
     Ok(out)
 }
@@ -406,5 +409,11 @@ mod tests {
         assert_eq!(result.etag, format!("sha256:{}", "c".repeat(64)), "no etag: the digest is the tag");
         let request = receiver.recv().expect("request");
         assert!(request.len() > bytes.len(), "the whole file travelled");
+    }
+
+    #[test]
+    fn a_chunk_size_that_cannot_hold_its_separator_is_refused() {
+        let hostile = format!("{:x}\r\n", usize::MAX);
+        assert_eq!(decode_chunked(hostile.as_bytes()), Err("a chunk size is too large".into()));
     }
 }

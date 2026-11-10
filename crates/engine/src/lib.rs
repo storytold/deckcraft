@@ -708,13 +708,17 @@ impl Session {
     fn execute_unguarded(&mut self, id: &str, params: &Value, record: bool) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
         // A viewer may not change the document. `apply_remote` passes `record: false`, so other
-        // participants' operations still land.
-        if self.read_only && record && spec.changes_document() {
+        // participants' operations still land. The gate is for the outermost command: a command
+        // that makes a document change as part of its own work (a typed list lead that becomes
+        // `format.bullets`) runs nested, and refusing or queueing that nested call would fail the
+        // remote edit or turn it into a local operation the room never ordered.
+        if self.read_only && record && self.depth == 0 && spec.changes_document() {
             return Err(EngineError::Disabled(id.into(), cmd::READ_ONLY.into()));
         }
         // In a shared session the document changes only through the server's `applied`. Queue the
-        // user's intent; the collaboration layer normalises and sends it.
-        if self.collab_queue && record && spec.changes_document() {
+        // user's intent; the collaboration layer normalises and sends it. A nested call is part of
+        // the outermost command the user already submitted.
+        if self.collab_queue && record && self.depth == 0 && spec.changes_document() {
             self.pending_commands.push((id.to_string(), params.clone()));
             return Ok(json!({"queued": true}));
         }

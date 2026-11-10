@@ -218,7 +218,7 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
                 let label = ui.add_sized(vec2(92.0, 18.0), egui::Label::new("Column Width"));
                 let mut w = width;
                 let r = ui.add(egui::DragValue::new(&mut w).speed(0.5).range(4.0..=4000.0).max_decimals(1).suffix(" pt")).labelled_by(label.id);
-                if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
+                if (r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged())) && (w - width).abs() > 1e-9 {
                     run(app, "table.columnWidth", json!({"id": id, "col": col, "width": w}));
                 }
             });
@@ -226,7 +226,7 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
                 let label = ui.add_sized(vec2(92.0, 18.0), egui::Label::new("Row Height"));
                 let mut h = height;
                 let r = ui.add(egui::DragValue::new(&mut h).speed(0.5).range(4.0..=4000.0).max_decimals(1).suffix(" pt")).labelled_by(label.id);
-                if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
+                if (r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged())) && (h - height).abs() > 1e-9 {
                     run(app, "table.rowHeight", json!({"id": id, "row": row, "height": h}));
                 }
             });

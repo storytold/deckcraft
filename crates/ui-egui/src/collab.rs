@@ -1665,13 +1665,13 @@ mod tests {
         let (mut app, from_ui, to_ui) = live(Role::Editor);
         assert!(app.session.active().expect("doc").is_dirty(), "there are unsaved edits");
 
-        app.save();
+        let _ = app.save();
         app.collab.pump(&mut app.session, 1_060);
         assert_eq!(commits(&from_ui), vec![None], "one commit, expecting the version the room was opened from");
         assert_eq!(app.collab.commit_state(), &CommitState::Committing);
 
         // A second Save while the first is on the wire is the same request, not a second version.
-        app.save();
+        let _ = app.save();
         app.collab.pump(&mut app.session, 1_100);
         assert!(commits(&from_ui).is_empty(), "no second commit in flight");
         assert!(app.session.active().expect("doc").is_dirty(), "dirty until the cabinet answers");
@@ -1683,7 +1683,7 @@ mod tests {
         assert_eq!(app.collab.take_commit_notice().as_deref(), Some("Committed v7"));
 
         // The next Save expects the version the cabinet accepted.
-        app.save();
+        let _ = app.save();
         app.collab.pump(&mut app.session, 1_160);
         assert_eq!(commits(&from_ui), vec![Some("etag-1".into())]);
     }
@@ -1692,7 +1692,7 @@ mod tests {
     fn a_refused_commit_keeps_the_edits_dirty_and_offers_a_copy() {
         let (mut app, from_ui, to_ui) = live(Role::Editor);
         let before = app.session.doc().expect("doc").doc.slides[0].shapes.len();
-        app.save();
+        let _ = app.save();
         app.collab.pump(&mut app.session, 1_060);
         assert_eq!(commits(&from_ui), vec![None]);
 
@@ -1715,7 +1715,7 @@ mod tests {
 
         // The request is not stuck: Save asks again, and there is still no accepted version to
         // expect, so the server compares against the version it restored for the room.
-        app.save();
+        let _ = app.save();
         app.collab.pump(&mut app.session, 1_140);
         assert_eq!(commits(&from_ui), vec![None]);
     }
@@ -1723,7 +1723,7 @@ mod tests {
     #[test]
     fn a_viewer_save_never_reaches_the_cabinet() {
         let (mut app, from_ui, _to_ui) = live(Role::Viewer);
-        app.save();
+        let _ = app.save();
         app.collab.pump(&mut app.session, 1_060);
         assert!(commits(&from_ui).is_empty(), "a viewer may not commit");
         assert!(app.session.active().expect("doc").is_dirty(), "the edits are left as they were");

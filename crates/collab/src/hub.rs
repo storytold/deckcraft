@@ -27,9 +27,12 @@ pub struct Claims {
     pub role: Role,
 }
 
-/// One participant of the room.
+/// One connection to the room. A person may have several (a second tab, a laptop, a reconnect
+/// before the server noticed the old socket close), so the map is keyed by a per-connection id
+/// and the actor is the token's subject, kept here for authorship, history and presence.
 #[derive(Clone, Debug)]
 pub struct Peer {
+    pub actor_id: String,
     pub role: Role,
     pub client: ClientInfo,
 }
@@ -37,6 +40,8 @@ pub struct Peer {
 /// One document room with its participants and outboxes.
 pub struct Hub {
     session: DocSession,
+    /// Keyed by the connection id the transport chose, never by the actor: two connections of one
+    /// person must not consume each other's answers or remove each other on close.
     peers: BTreeMap<String, Peer>,
     out: HashMap<String, VecDeque<ServerMsg>>,
     last_applied: Option<deckcraft_collab_proto::Applied>,
@@ -44,11 +49,22 @@ pub struct Hub {
     last_base_transfer: Option<u64>,
     /// Bytes of the last base chunk handed out, for the server's counters.
     last_base_chunk: Option<u64>,
+    /// Set by `DELETE /v1/sessions/{id}`: the room is gone from the map, and the connections that
+    /// still hold this hub must stop reading and writing the store before it is re-created.
+    closed: bool,
 }
 
 impl Hub {
     pub fn new(session: DocSession) -> Self {
-        Hub { session, peers: BTreeMap::new(), out: HashMap::new(), last_applied: None, last_base_transfer: None, last_base_chunk: None }
+        Hub {
+            session,
+            peers: BTreeMap::new(),
+            out: HashMap::new(),
+            last_applied: None,
+            last_base_transfer: None,
+            last_base_chunk: None,
+            closed: false,
+        }
     }
 
     pub fn session(&self) -> &DocSession {
@@ -78,14 +94,20 @@ impl Hub {
         self.session.media(sha)
     }
 
-    /// Participants in a stable order, with the role the server enforces.
+    /// Participants in a stable order, with the role the server enforces. One entry per person:
+    /// two connections of the same actor are one participant (the participant limit counts
+    /// people, not sockets).
     pub fn participants(&self) -> Vec<(String, Role)> {
-        self.peers.iter().map(|(actor, peer)| (actor.clone(), peer.role)).collect()
+        let mut seen = std::collections::BTreeSet::new();
+        self.peers.values().filter(|peer| seen.insert(peer.actor_id.clone())).map(|peer| (peer.actor_id.clone(), peer.role)).collect()
     }
 
-    /// Admit an authenticated client and return its `welcome`. The caller sends it back over the
-    /// socket; the hub also queues it, so a transport that pumps the outbox needs no special case.
-    pub fn join(&mut self, hello: &Hello, claims: Claims) -> Result<Welcome, ServerError> {
+    /// Admit an authenticated client on connection `peer` and return its `welcome`. The caller
+    /// sends it back over the socket. `closed` rooms refuse new connections.
+    pub fn join(&mut self, peer: &str, hello: &Hello, claims: Claims) -> Result<Welcome, ServerError> {
+        if self.closed {
+            return Err(ServerError { code: "closed".into(), message: "the session was closed".into(), retryable: false });
+        }
         if hello.v != PROTO_VERSION {
             return Err(ServerError {
                 code: "unsupported".into(),
@@ -163,22 +185,27 @@ impl Hub {
                 ],
             },
         };
-        self.peers.insert(claims.actor_id.clone(), Peer { role: claims.role, client: hello.client.clone() });
-        self.out.entry(claims.actor_id).or_default();
+        self.peers.insert(peer.to_string(), Peer { actor_id: claims.actor_id.clone(), role: claims.role, client: hello.client.clone() });
+        self.out.entry(peer.to_string()).or_default();
         Ok(welcome)
     }
 
-    /// Handle one message from a connected peer. The answer, if any, is queued in the outbox.
-    pub fn receive(&mut self, actor: &str, msg: ClientMsg) -> Result<(), ServerError> {
-        let Some(peer) = self.peers.get(actor).cloned() else {
+    /// Handle one message from a connected peer (identified by its connection id). The answer, if
+    /// any, is queued in that connection's outbox.
+    pub fn receive(&mut self, peer: &str, msg: ClientMsg) -> Result<(), ServerError> {
+        if self.closed {
+            return Err(ServerError { code: "closed".into(), message: "the session was closed".into(), retryable: false });
+        }
+        let Some(connected) = self.peers.get(peer).cloned() else {
             return Err(ServerError { code: "auth".into(), message: "join first".into(), retryable: false });
         };
+        let actor = connected.actor_id.as_str();
         match msg {
             ClientMsg::Hello(_) => Err(ServerError { code: "invalid".into(), message: "already joined".into(), retryable: false }),
             ClientMsg::Op(op) => {
-                if !peer.role.may_write() {
+                if !connected.role.may_write() {
                     self.send(
-                        actor,
+                        peer,
                         ServerMsg::Rejected(Rejected {
                             op_id: op.op_id,
                             code: RejectCode::Forbidden,
@@ -194,7 +221,7 @@ impl Hub {
                         self.last_applied = Some(applied.clone());
                         self.broadcast(ServerMsg::Applied(applied))
                     }
-                    Err(rejected) => self.send(actor, ServerMsg::Rejected(rejected)),
+                    Err(rejected) => self.send(peer, ServerMsg::Rejected(rejected)),
                 }
                 Ok(())
             }
@@ -202,7 +229,8 @@ impl Hub {
                 // The author is the token's subject, never a field the client fills in.
                 presence.actor_id = actor.to_string();
                 let msg = ServerMsg::Presence(presence);
-                let others: Vec<String> = self.peers.keys().filter(|other| other.as_str() != actor).cloned().collect();
+                let others: Vec<String> =
+                    self.peers.iter().filter(|(id, other)| id.as_str() != peer && other.actor_id != actor).map(|(id, _)| id.clone()).collect();
                 for other in others {
                     self.send(&other, msg.clone());
                 }
@@ -213,7 +241,7 @@ impl Hub {
                 if let Some(base) = &snapshot.base {
                     self.last_base_transfer = Some(base.bytes_base64.as_ref().map_or(0, |bytes| bytes.len() as u64));
                 }
-                self.send(actor, ServerMsg::Snapshot(snapshot));
+                self.send(peer, ServerMsg::Snapshot(snapshot));
                 Ok(())
             }
             ClientMsg::BaseChunk { version, index } => {
@@ -222,14 +250,14 @@ impl Hub {
                 match self.session.base_chunk(version, index) {
                     Ok((count, data)) => {
                         self.last_base_chunk = Some(data.len() as u64);
-                        self.send(actor, ServerMsg::BaseChunk { version, index, count, data });
+                        self.send(peer, ServerMsg::BaseChunk { version, index, count, data });
                     }
                     Err(error) => {
                         // `stale` is retryable: the client drops the chain and asks for a new
                         // snapshot. The refusal is answered like any other, so the client's own
                         // retry rule decides.
                         self.send(
-                            actor,
+                            peer,
                             ServerMsg::Rejected(Rejected {
                                 op_id: format!("base@{version}/{index}"),
                                 code: if error.retryable { RejectCode::Stale } else { RejectCode::Invalid },
@@ -242,8 +270,8 @@ impl Hub {
                 }
                 Ok(())
             }
-            ClientMsg::Undo => self.history(actor, true),
-            ClientMsg::Redo => self.history(actor, false),
+            ClientMsg::Undo => self.history(peer, true),
+            ClientMsg::Redo => self.history(peer, false),
             ClientMsg::Query { id, cmd, target, params } => {
                 // A query is read-only: a viewer may ask it, it moves no version and it enters
                 // neither the journal nor anyone's history. The answer goes to the asker alone.
@@ -252,17 +280,17 @@ impl Hub {
                     Ok(result) => ServerMsg::QueryResult { id, version, result: Some(result), error: None },
                     Err(error) => ServerMsg::QueryResult { id, version, result: None, error: Some(error) },
                 };
-                self.send(actor, answer);
+                self.send(peer, answer);
                 Ok(())
             }
             ClientMsg::Ping => {
-                self.send(actor, ServerMsg::Pong);
+                self.send(peer, ServerMsg::Pong);
                 Ok(())
             }
             ClientMsg::Commit { expected_file_version } => {
-                if !peer.role.may_write() {
+                if !connected.role.may_write() {
                     self.send(
-                        actor,
+                        peer,
                         ServerMsg::Rejected(Rejected {
                             op_id: "commit".into(),
                             code: RejectCode::Forbidden,
@@ -273,7 +301,7 @@ impl Hub {
                     );
                     return Ok(());
                 }
-                self.commit(actor, expected_file_version.as_deref());
+                self.commit(peer, expected_file_version.as_deref());
                 Ok(())
             }
         }
@@ -281,10 +309,13 @@ impl Hub {
 
     /// Build and apply this actor's undo or redo. The server owns the before/after image; the
     /// resulting inverse is an ordinary operation, broadcast like any other (ADR 0010).
-    fn history(&mut self, actor: &str, undo: bool) -> Result<(), ServerError> {
-        if self.peers.get(actor).is_none_or(|peer| !peer.role.may_write()) {
+    fn history(&mut self, peer: &str, undo: bool) -> Result<(), ServerError> {
+        let Some(connected) = self.peers.get(peer).cloned() else {
+            return Err(ServerError { code: "auth".into(), message: "join first".into(), retryable: false });
+        };
+        if !connected.role.may_write() {
             self.send(
-                actor,
+                peer,
                 ServerMsg::Rejected(Rejected {
                     op_id: "undo".into(),
                     code: RejectCode::Forbidden,
@@ -295,6 +326,7 @@ impl Hub {
             );
             return Ok(());
         }
+        let actor = connected.actor_id.as_str();
         let id = format!("{actor}-{}-{}", if undo { "undo" } else { "redo" }, self.session.version());
         let built = if undo { self.session.undo(actor, &id) } else { self.session.redo(actor, &id) };
         let op = match built {
@@ -307,7 +339,7 @@ impl Hub {
                     retryable: rej.retryable,
                     hint: rej.hint_version.map(|version| deckcraft_collab_proto::Hint { version }),
                 };
-                self.send(actor, ServerMsg::Rejected(rejected));
+                self.send(peer, ServerMsg::Rejected(rejected));
                 return Ok(());
             }
         };
@@ -316,7 +348,7 @@ impl Hub {
                 self.last_applied = Some(applied.clone());
                 self.broadcast(ServerMsg::Applied(applied))
             }
-            Err(rejected) => self.send(actor, ServerMsg::Rejected(rejected)),
+            Err(rejected) => self.send(peer, ServerMsg::Rejected(rejected)),
         }
         Ok(())
     }
@@ -338,7 +370,7 @@ impl Hub {
 
     /// Build the file and queue a `commit-result`. Errors become a `rejected` for the requester;
     /// a conflict is the cabinet's `409` (ADR 0009).
-    pub fn commit(&mut self, actor: &str, expected: Option<&str>) {
+    pub fn commit(&mut self, peer: &str, expected: Option<&str>) {
         match self.session.commit_checked(expected) {
             Ok(done) => {
                 let sha = hex(&Sha256::digest(&done.bytes));
@@ -350,10 +382,10 @@ impl Hub {
                     blob: None,
                     warnings: done.warnings,
                 };
-                self.send(actor, ServerMsg::CommitResult(result));
+                self.send(peer, ServerMsg::CommitResult(result));
             }
             Err(CommitError::Conflict { expected, current }) => self.send(
-                actor,
+                peer,
                 ServerMsg::Rejected(Rejected {
                     op_id: "commit".into(),
                     code: RejectCode::Conflict,
@@ -365,7 +397,7 @@ impl Hub {
                     hint: None,
                 }),
             ),
-            Err(CommitError::Build(message)) => self.send(actor, ServerMsg::Error(ServerError { code: "commit".into(), message, retryable: true })),
+            Err(CommitError::Build(message)) => self.send(peer, ServerMsg::Error(ServerError { code: "commit".into(), message, retryable: true })),
         }
     }
 
@@ -374,34 +406,46 @@ impl Hub {
         self.session.accept_file_version(etag);
     }
 
-    /// Whether this participant may build a commit. A viewer may not (ADR-0008).
-    pub fn may_commit(&self, actor: &str) -> bool {
-        self.peers.get(actor).is_some_and(|peer| peer.role.may_write())
+    /// Whether this connection may build a commit. A viewer may not (ADR-0008).
+    pub fn may_commit(&self, peer: &str) -> bool {
+        self.peers.get(peer).is_some_and(|connected| connected.role.may_write())
     }
 
-    /// Queue one message for a peer. A transport that publishes a commit to the cabinet outside
-    /// the room lock answers with this after the cabinet took the file (ADR-0009).
-    pub fn answer(&mut self, actor: &str, msg: ServerMsg) {
-        self.send(actor, msg);
+    /// Queue one message for a connection. A transport that publishes a commit to the cabinet
+    /// outside the room lock answers with this after the cabinet took the file (ADR-0009).
+    pub fn answer(&mut self, peer: &str, msg: ServerMsg) {
+        self.send(peer, msg);
     }
 
-    /// Remove a peer (socket closed). Its queued answers go too.
-    pub fn remove_peer(&mut self, actor: &str) {
-        self.peers.remove(actor);
-        self.out.remove(actor);
+    /// Remove one connection (its socket closed). Only that connection's queued answers go; the
+    /// same actor's other sockets keep their slot and their outbox.
+    pub fn remove_peer(&mut self, peer: &str) {
+        self.peers.remove(peer);
+        self.out.remove(peer);
     }
 
-    /// The next message for one peer, if any.
-    pub fn poll(&mut self, actor: &str) -> Option<ServerMsg> {
-        self.out.get_mut(actor)?.pop_front()
+    /// Close the room for good: the caller has removed it from the server's map, and the sockets
+    /// that still hold this hub must stop before they write to the store again.
+    pub fn close(&mut self) {
+        self.closed = true;
+        self.out.clear();
     }
 
-    pub fn queued(&self, actor: &str) -> usize {
-        self.out.get(actor).map_or(0, VecDeque::len)
+    pub fn is_closed(&self) -> bool {
+        self.closed
     }
 
-    fn send(&mut self, actor: &str, msg: ServerMsg) {
-        self.out.entry(actor.to_string()).or_default().push_back(msg);
+    /// The next message for one connection, if any.
+    pub fn poll(&mut self, peer: &str) -> Option<ServerMsg> {
+        self.out.get_mut(peer)?.pop_front()
+    }
+
+    pub fn queued(&self, peer: &str) -> usize {
+        self.out.get(peer).map_or(0, VecDeque::len)
+    }
+
+    fn send(&mut self, peer: &str, msg: ServerMsg) {
+        self.out.entry(peer.to_string()).or_default().push_back(msg);
     }
 
     fn broadcast(&mut self, msg: ServerMsg) {
@@ -462,7 +506,12 @@ mod tests {
     }
 
     fn join(hub: &mut Hub, actor: &str, role: Role) -> Welcome {
-        hub.join(&hello(), Claims { actor_id: actor.into(), role }).expect("join")
+        // Tests use the actor as the connection id; the two-connection tests pick their own.
+        hub.join(actor, &hello(), Claims { actor_id: actor.into(), role }).expect("join")
+    }
+
+    fn join_on(hub: &mut Hub, peer: &str, actor: &str, role: Role) -> Welcome {
+        hub.join(peer, &hello(), Claims { actor_id: actor.into(), role }).expect("join")
     }
 
     fn keys_of(hub: &Hub) -> (SlideKey, ShapeKey) {
@@ -507,6 +556,42 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(hub.version(), 1);
+    }
+
+    #[test]
+    fn two_connections_of_one_actor_keep_their_own_outbox_and_slot() {
+        let mut hub = hub();
+        let _ = join_on(&mut hub, "alice#1", "alice", Role::Editor);
+        let _ = join_on(&mut hub, "alice#2", "alice", Role::Editor);
+        let _ = join(&mut hub, "bob", Role::Editor);
+        assert_eq!(hub.participants(), vec![("alice".to_string(), Role::Editor), ("bob".to_string(), Role::Editor)], "one person, one participant");
+        let (slide, shape) = keys_of(&hub);
+        hub.receive("alice#1", ClientMsg::Op(move_op("op-1", 0, &slide, &shape, 250.0))).expect("receive");
+        // Every connection of every participant gets its own copy: neither socket can consume the
+        // other's answer, and the second tab sees the step too.
+        for peer in ["alice#1", "alice#2", "bob"] {
+            match hub.poll(peer).expect("an answer for each connection") {
+                ServerMsg::Applied(a) => assert_eq!(a.version, 1),
+                other => panic!("{other:?}"),
+            }
+        }
+        // Closing one tab leaves the other connected and able to write.
+        hub.remove_peer("alice#1");
+        assert!(hub.poll("alice#2").is_none(), "the closed tab's outbox is gone, not the live one's");
+        hub.receive("alice#2", ClientMsg::Op(move_op("op-2", 1, &slide, &shape, 300.0))).expect("the second tab is still joined");
+        assert!(matches!(hub.poll("alice#2").expect("its answer"), ServerMsg::Applied(a) if a.version == 2));
+    }
+
+    #[test]
+    fn a_closed_room_refuses_messages_so_its_sockets_stop_before_the_store_is_reused() {
+        let mut hub = hub();
+        let _ = join(&mut hub, "alice", Role::Editor);
+        hub.close();
+        assert!(hub.is_closed());
+        let error = hub.receive("alice", ClientMsg::Ping).expect_err("a closed room takes nothing");
+        assert_eq!(error.code, "closed");
+        assert!(hub.poll("alice").is_none(), "the queued answers are dropped with the room");
+        assert!(hub.join("bob", &hello(), Claims { actor_id: "bob".into(), role: Role::Editor }).is_err());
     }
 
     #[test]

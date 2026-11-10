@@ -23,13 +23,12 @@ impl SlideApp {
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else if id == "file.save" && params.get("path").is_none() && self.host_session_id.is_some() {
-            // A live session behind the host bridge: Save is a commit, as from the ribbon.
-            self.save();
-            Ok(json!({"committed": true}))
+            // A live session behind the host bridge: Save is a commit, as from the ribbon. A
+            // refused commit is a refusal here too, not a stored file.
+            self.save().map(|()| json!({"committed": true}))
         } else if id == "file.save" && params.get("path").is_none() && self.collab.owns_save() {
             // A live native session: Save commits the room, not the local copy (ADR 0009).
-            self.save();
-            Ok(json!({"committed": true}))
+            self.save().map(|()| json!({"committed": true}))
         } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
             // A page that keeps the files (`?host=parent`): Save by id (the command palette) goes
             // to the page like Ctrl+S. The engine would write to the presentation's path, which a

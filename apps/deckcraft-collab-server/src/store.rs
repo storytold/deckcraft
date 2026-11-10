@@ -82,9 +82,19 @@ impl Store {
                     continue;
                 }
                 let Some(ref command) = applied.command else { continue };
-                // A picture operation can only run with its bytes; they are content-addressed and
-                // stored beside the journal, so load them before replaying the operation.
-                if let deckcraft_collab_proto::Payload::PictureInsert { sha256, .. } = &command.payload {
+                // A media-bearing operation can only run with its bytes; they are content-addressed
+                // and stored beside the journal, so load them before replaying the operation. Every
+                // payload that names an object needs this, not just a picture: an audio, video,
+                // 3-D model, font face or SmartArt node picture left out fails the replay and the
+                // room would not reopen.
+                let sha = match &command.payload {
+                    deckcraft_collab_proto::Payload::PictureInsert { sha256, .. }
+                    | deckcraft_collab_proto::Payload::MediaInsert { sha256, .. }
+                    | deckcraft_collab_proto::Payload::FontCreate { sha256, .. } => Some(sha256),
+                    deckcraft_collab_proto::Payload::SmartArtPicture { media: Some(media), .. } => Some(&media.sha256),
+                    _ => None,
+                };
+                if let Some(sha256) = sha {
                     let bytes = self.media(sha256).ok_or_else(|| format!("replay {}: media {sha256} is missing", applied.version))?;
                     session.insert_media(sha256, bytes).map_err(|e| format!("replay {}: {e}", applied.version))?;
                 }
@@ -263,6 +273,44 @@ mod tests {
         assert!(restored.media(&sha).is_some(), "the media object came back");
         let doc = restored.document().expect("doc");
         assert!(doc.slides[0].shapes.iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })), "the picture was replayed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_audio_object_survives_a_restart_through_the_media_store() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-av-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-av", deck(), SessionConfig::default()).expect("session");
+        let audio = b"ID3\x03\x00\x00\x00\x00\x00\x00".to_vec();
+        let sha = session.put_media("clip.mp3", audio.clone()).expect("media");
+        store.save_media(&sha, &audio).expect("store media");
+        store.snapshot("file-av", &mut session).expect("base at version 0");
+        let doc = session.document().expect("doc").clone();
+        let slide = session.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let op = OpEnvelope {
+            op_id: "audio-1".into(),
+            doc: "file-av".into(),
+            base_version: 0,
+            kind: deckcraft_collab_proto::OpKind::Structural,
+            target: deckcraft_collab_proto::Target { slide: Some(slide), ..Default::default() },
+            payload: deckcraft_collab_proto::Payload::MediaInsert {
+                kind: deckcraft_collab_proto::MediaKind::Audio,
+                sha256: sha.clone(),
+                name: "clip.mp3".into(),
+                rect: Some([40.0, 40.0, 60.0, 60.0]),
+            },
+            history: None,
+            preview: None,
+        };
+        let applied = session.apply("alice", &op).expect("apply");
+        store.record("file-av", &mut session, &applied).expect("record");
+
+        let restored = store.load("file-av").expect("load").expect("stored");
+        assert_eq!(restored.version(), 1);
+        assert!(restored.media(&sha).is_some(), "the audio object came back before the replay");
+        let doc = restored.document().expect("doc");
+        assert!(doc.slides[0].shapes.iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Media(_))), "the audio clip was replayed");
         let _ = fs::remove_dir_all(&dir);
     }
 

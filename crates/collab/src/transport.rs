@@ -41,6 +41,9 @@ pub struct WsTransport {
     incoming: Receiver<ServerMsg>,
     open: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    /// The worker is inside `tungstenite::connect` (TCP and TLS handshake, no timeout of ours).
+    /// `Drop` skips the join then, so a firewall that drops packets cannot freeze the UI.
+    connecting: Arc<AtomicBool>,
     join: Option<thread::JoinHandle<()>>,
     /// The HTTP side of the same server, for media: plain for `ws://`, TLS for `wss://`.
     media: Option<Endpoint>,
@@ -54,6 +57,7 @@ impl WsTransport {
         let (in_tx, in_rx) = channel::<ServerMsg>();
         let open = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
+        let connecting = Arc::new(AtomicBool::new(false));
         let url = url.into();
         let jwt = match &hello {
             ClientMsg::Hello(hello) => hello.jwt.clone(),
@@ -63,8 +67,9 @@ impl WsTransport {
         let thread_url = url;
         let thread_open = open.clone();
         let thread_stop = stop.clone();
-        let join = thread::spawn(move || run(&thread_url, hello, out_rx, in_tx, thread_open, thread_stop));
-        WsTransport { out: out_tx, incoming: in_rx, open, stop, join: Some(join), media }
+        let thread_connecting = connecting.clone();
+        let join = thread::spawn(move || run(&thread_url, hello, out_rx, in_tx, thread_open, thread_stop, thread_connecting));
+        WsTransport { out: out_tx, incoming: in_rx, open, stop, connecting, join: Some(join), media }
     }
 
     /// A fetcher for media someone else inserted, for [`crate::CollabDoc::set_media_fetcher`].
@@ -109,8 +114,11 @@ impl Drop for WsTransport {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(join) = self.join.take() {
-            // The reader loop wakes on its 50 ms timeout; don't block the UI if it is mid-connect.
-            let _ = join.join();
+            // The reader loop wakes on its 50 ms timeout. A connect attempt has no timeout of our
+            // own, so detach instead of freezing the UI: the thread sees `stop` when it returns.
+            if !self.connecting.load(Ordering::Relaxed) {
+                let _ = join.join();
+            }
         }
     }
 }
@@ -280,10 +288,21 @@ fn split_host_port(authority: &str) -> Option<(String, Option<u16>)> {
     }
 }
 
-fn run(url: &str, hello: ClientMsg, out: Receiver<ClientMsg>, incoming: Sender<ServerMsg>, open: Arc<AtomicBool>, stop: Arc<AtomicBool>) {
+fn run(
+    url: &str,
+    hello: ClientMsg,
+    out: Receiver<ClientMsg>,
+    incoming: Sender<ServerMsg>,
+    open: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    connecting: Arc<AtomicBool>,
+) {
     let mut backoff = Duration::from_millis(200);
     while !stop.load(Ordering::Relaxed) {
-        match tungstenite::connect(url) {
+        connecting.store(true, Ordering::Relaxed);
+        let attempt = tungstenite::connect(url);
+        connecting.store(false, Ordering::Relaxed);
+        match attempt {
             Ok((mut ws, _)) => {
                 if set_timeout(&mut ws, Duration::from_millis(50)).is_err() {
                     let _ = incoming.send(offline("cannot set a socket timeout"));

@@ -158,7 +158,7 @@ mod tests {
         let hello = wire.sent();
         let ClientMsg::Hello(hello) = hello.into_iter().next().expect("the handshake") else { panic!("the first frame is the handshake") };
         assert_eq!(hello.doc, "deck-1");
-        let welcome = hub.join(&hello, Claims { actor_id: "alice@example.com".into(), role: Role::Editor }).expect("admitted");
+        let welcome = hub.join("alice@example.com", &hello, Claims { actor_id: "alice@example.com".into(), role: Role::Editor }).expect("admitted");
         wire.deliver(&encode_server(&ServerMsg::Welcome(welcome)).expect("encode"));
         app.collab.pump(&mut app.session, 1_000);
         assert_eq!(app.collab.version(), 0);

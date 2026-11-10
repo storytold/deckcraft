@@ -95,6 +95,11 @@ pub struct ClientSession {
     max_in_flight: usize,
     max_queued: usize,
     resync_wanted: bool,
+    /// A `Resync` is on the wire and its snapshot has not arrived. Nothing else may be sent while
+    /// it is outstanding: an operation sent after it carries the old `base_version`, and the
+    /// snapshot that answers the resync would cover it as "already included" although the server
+    /// never applied it.
+    resync_in_flight: bool,
     last_error: Option<String>,
     /// A base the server is sending as a chain of chunks (RFC §4.5.1): the prefix assembled so
     /// far and the index the client is missing.
@@ -194,6 +199,7 @@ impl ClientSession {
             max_in_flight: 8,
             max_queued: 256,
             resync_wanted: false,
+            resync_in_flight: false,
             last_error: None,
             base_download: None,
             base_request: None,
@@ -310,6 +316,7 @@ impl ClientSession {
         }
         if self.resync_wanted {
             self.resync_wanted = false;
+            self.resync_in_flight = true;
             return Some(ClientMsg::Resync { last_version: self.replica_version });
         }
         // A chained base is fetched one chunk at a time, before any new work: the replica cannot
@@ -320,6 +327,10 @@ impl ClientSession {
         {
             self.base_request = Some(download.next);
             return Some(ClientMsg::BaseChunk { version: download.version, index: download.next });
+        }
+        if self.resync_in_flight {
+            // Held until the snapshot arrives: see the field's comment.
+            return None;
         }
         if self.pending_snapshot.is_some() {
             // Nothing may be submitted while the base is assembling, and a resend of an operation
@@ -351,6 +362,7 @@ impl ClientSession {
         match msg {
             ServerMsg::Welcome(welcome) => {
                 self.state = Link::Live;
+                self.resync_in_flight = false;
                 self.actor_id = Some(welcome.actor_id);
                 self.role = Some(welcome.role);
                 self.lease = welcome.lease;
@@ -424,6 +436,9 @@ impl ClientSession {
                 }
             }
             ServerMsg::Snapshot(snapshot) => {
+                // The resync is answered: operations may be sent again, against the head the
+                // snapshot installs (the queued ones take their `base_version` at send time).
+                self.resync_in_flight = false;
                 self.version = self.version.max(snapshot.version);
                 // Operations the base or the tail already includes need no answer. A base at a
                 // later version replaces the replica; the tail above it is replayed by the host.
@@ -511,6 +526,7 @@ impl ClientSession {
             self.queued.push_front(op);
         }
         self.resync_wanted = false;
+        self.resync_in_flight = false;
         self.base_request = None;
         // A commit that was sent has no answer to resend: the user is told it did not finish and
         // presses Save again. One that never left stays queued for the next connection.
@@ -691,6 +707,31 @@ mod tests {
         assert_eq!(c.queued(), 1, "the operation is not lost");
         assert_eq!(c.version(), 0, "the client does not guess the new version");
         assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+    }
+
+    #[test]
+    fn an_operation_submitted_after_a_resync_waits_for_the_snapshot_and_is_not_dropped_as_covered() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.submit(op("o0", 0)).expect("queue");
+        c.next_outgoing().expect("o0 goes out");
+        // A gap (a step we never saw) asks for the tail instead of guessing.
+        assert_eq!(c.on_msg(applied("o2", 2)), Effect::Rollback);
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+        // A new edit while the resync is outstanding: it must not go out yet, or the snapshot
+        // that answers the resync would remove it as "covered" although the server never saw it.
+        c.submit(op("o1", 0)).expect("queue");
+        assert!(c.next_outgoing().is_none(), "nothing is sent while the resync is outstanding");
+        let snapshot = ServerMsg::Snapshot(SnapshotMsg {
+            version: 2,
+            snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@2".into() },
+            tail: vec![],
+            base: None,
+        });
+        c.on_msg(snapshot);
+        let sent = c.next_outgoing().expect("the held edit goes after the snapshot");
+        assert!(matches!(sent, ClientMsg::Op(ref op) if op.op_id == "o1" && op.base_version == 2), "{sent:?}");
+        assert_eq!(c.queued(), 0);
     }
 
     #[test]

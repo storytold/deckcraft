@@ -361,6 +361,19 @@ impl Response {
     }
 }
 
+/// Connection ids are per socket, never the actor: a person may have a second tab or reconnect
+/// before the server noticed the old socket close, and the two must not share one outbox.
+static NEXT_PEER: AtomicU64 = AtomicU64::new(1);
+
+/// The largest request body any HTTP endpoint accepts: the media channel's biggest single object
+/// (audio/video and 3-D models are 32 MiB; a picture is 8, a font face 16). A media `PUT` carries
+/// the raw object, so the reader must be at least as large as the widest kind.
+const MAX_REQUEST_BODY: usize = if deckcraft_collab::MAX_AV_BYTES > deckcraft_collab::MAX_MODEL_BYTES {
+    deckcraft_collab::MAX_AV_BYTES
+} else {
+    deckcraft_collab::MAX_MODEL_BYTES
+};
+
 fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let mut buf = Vec::new();
@@ -391,7 +404,10 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
         }
     }
     let length = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.parse::<usize>().ok()).unwrap_or(0);
-    if length > 16 * 1024 * 1024 {
+    // The body of a `PUT /v1/sessions/{id}/media/{sha256}` is the media object itself, and the
+    // media channel accepts up to the largest kind's budget. A smaller cap here would refuse an
+    // upload that the endpoint itself is ready to take (an audio or video clip, a 3-D model).
+    if length > MAX_REQUEST_BODY {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "body too large"));
     }
     let mut body = buf[header_end..].to_vec();
@@ -650,7 +666,15 @@ fn close_session(id: &str, shared: &Arc<Shared>, request: &Request) -> std::io::
     }
     let mut hubs = shared.hubs.lock().map_err(|_| std::io::Error::other("hub lock"))?;
     match hubs.remove(id) {
-        Some(_) => Ok(Response::json(200, json!({"closed": true}))),
+        Some(hub) => {
+            // The sockets still hold this `Arc`: mark the room closed first so their next message
+            // is refused and their pump exits, before a re-created session can load the same
+            // store directory and append to one journal from two in-memory rooms.
+            if let Ok(mut hub) = hub.lock() {
+                hub.close();
+            }
+            Ok(Response::json(200, json!({"closed": true})))
+        }
         None => Ok(Response::json(404, json!({"error": "no such session"}))),
     }
 }
@@ -793,30 +817,30 @@ fn commit_result(done: &CommittedFile) -> CommitResult {
 
 /// A commit requested by a peer. The answer is queued only after the cabinet took the file, so a
 /// `commit-result` never promises a version that does not exist.
-fn commit_from_client(hub: &Arc<Mutex<Hub>>, actor: &str, expected: Option<&str>, shared: &Arc<Shared>) -> std::io::Result<()> {
+fn commit_from_client(hub: &Arc<Mutex<Hub>>, peer: &str, expected: Option<&str>, shared: &Arc<Shared>) -> std::io::Result<()> {
     shared.metrics.commits.fetch_add(1, Ordering::Relaxed);
     let (file_id, allowed) = {
         let hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
-        (hub.file_id().to_string(), hub.may_commit(actor))
+        (hub.file_id().to_string(), hub.may_commit(peer))
     };
     if !allowed {
-        return answer(hub, actor, ServerMsg::Rejected(rejected("commit", RejectCode::Forbidden, "a viewer cannot commit")));
+        return answer(hub, peer, ServerMsg::Rejected(rejected("commit", RejectCode::Forbidden, "a viewer cannot commit")));
     }
     match build_and_publish(shared, &file_id, expected) {
-        Ok(done) => answer(hub, actor, ServerMsg::CommitResult(commit_result(&done))),
-        Err(CommitFailure::Conflict(message)) => answer(hub, actor, ServerMsg::Rejected(rejected("commit", RejectCode::Conflict, &message))),
-        Err(CommitFailure::Build(message)) => answer(hub, actor, ServerMsg::Error(ServerError { code: "commit".into(), message, retryable: true })),
+        Ok(done) => answer(hub, peer, ServerMsg::CommitResult(commit_result(&done))),
+        Err(CommitFailure::Conflict(message)) => answer(hub, peer, ServerMsg::Rejected(rejected("commit", RejectCode::Conflict, &message))),
+        Err(CommitFailure::Build(message)) => answer(hub, peer, ServerMsg::Error(ServerError { code: "commit".into(), message, retryable: true })),
         Err(CommitFailure::Publish(message)) => {
-            answer(hub, actor, ServerMsg::Error(ServerError { code: "commit-publish".into(), message, retryable: true }))
+            answer(hub, peer, ServerMsg::Error(ServerError { code: "commit-publish".into(), message, retryable: true }))
         }
         Err(CommitFailure::NotFound) => {
-            answer(hub, actor, ServerMsg::Error(ServerError { code: "not-found".into(), message: "no such session".into(), retryable: false }))
+            answer(hub, peer, ServerMsg::Error(ServerError { code: "not-found".into(), message: "no such session".into(), retryable: false }))
         }
     }
 }
 
-fn answer(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ServerMsg) -> std::io::Result<()> {
-    hub.lock().map_err(|_| std::io::Error::other("hub lock"))?.answer(actor, msg);
+fn answer(hub: &Arc<Mutex<Hub>>, peer: &str, msg: ServerMsg) -> std::io::Result<()> {
+    hub.lock().map_err(|_| std::io::Error::other("hub lock"))?.answer(peer, msg);
     Ok(())
 }
 
@@ -999,13 +1023,14 @@ fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) 
         return send_error(ws, "not-found", "no such session", false);
     };
     let actor = claims.sub.clone();
+    let peer = format!("{actor}#{}", NEXT_PEER.fetch_add(1, Ordering::Relaxed));
     {
         let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
         if shared.config.max_participants > 0 && hub.participants().len() >= shared.config.max_participants {
             drop(hub);
             return send_error(ws, "full", "the room is full", false);
         }
-        match hub.join(&hello, Claims { actor_id: actor.clone(), role }) {
+        match hub.join(&peer, &hello, Claims { actor_id: actor.clone(), role }) {
             Ok(welcome) => send_msg(ws, &ServerMsg::Welcome(welcome), shared)?,
             Err(e) => return send_error(ws, &e.code, &e.message, e.retryable),
         }
@@ -1033,11 +1058,11 @@ fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) 
                         } else {
                             ops.push_back(now);
                             if let Ok(msg) = decode_client(text.as_str()) {
-                                handle_client_message(&hub, &actor, msg, shared)?;
+                                handle_client_message(&hub, &peer, msg, shared)?;
                             }
                         }
                     }
-                    Ok(msg) => handle_client_message(&hub, &actor, msg, shared)?,
+                    Ok(msg) => handle_client_message(&hub, &peer, msg, shared)?,
                     Err(e) => {
                         let error = ServerError { code: "invalid".into(), message: format!("bad frame: {e}"), retryable: false };
                         send_msg(ws, &ServerMsg::Error(error), shared)?;
@@ -1053,22 +1078,22 @@ fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) 
             Err(WsError::ConnectionClosed | WsError::AlreadyClosed) => break,
             Err(e) => return Err(std::io::Error::other(e)),
         }
-        drain(&hub, &actor, ws, shared)?;
+        drain(&hub, &peer, ws, shared)?;
     }
     if let Ok(mut hub) = hub.lock() {
-        hub.remove_peer(&actor);
+        hub.remove_peer(&peer);
     }
     Ok(())
 }
 
-fn handle_client_message(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ClientMsg, shared: &Arc<Shared>) -> std::io::Result<()> {
+fn handle_client_message(hub: &Arc<Mutex<Hub>>, peer: &str, msg: ClientMsg, shared: &Arc<Shared>) -> std::io::Result<()> {
     if let ClientMsg::Commit { expected_file_version } = &msg {
-        return commit_from_client(hub, actor, expected_file_version.as_deref(), shared);
+        return commit_from_client(hub, peer, expected_file_version.as_deref(), shared);
     }
     let is_resync = matches!(msg, ClientMsg::Resync { .. });
     let is_op = matches!(msg, ClientMsg::Op(_));
     let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
-    if let Err(e) = hub.receive(actor, msg) {
+    if let Err(e) = hub.receive(peer, msg) {
         drop(hub);
         return Err(std::io::Error::other(format!("{}: {}", e.code, e.message)));
     }
@@ -1096,12 +1121,17 @@ fn handle_client_message(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ClientMsg, sha
     Ok(())
 }
 
-fn drain(hub: &Arc<Mutex<Hub>>, actor: &str, ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) -> std::io::Result<()> {
+fn drain(hub: &Arc<Mutex<Hub>>, peer: &str, ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) -> std::io::Result<()> {
     loop {
-        let msg = {
+        let (closed, msg) = {
             let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
-            hub.poll(actor)
+            (hub.is_closed(), hub.poll(peer))
         };
+        if closed {
+            // `DELETE /v1/sessions/{id}` dropped the room from the server's map; this socket must
+            // end before the same store directory backs a new room.
+            return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "the session was closed"));
+        }
         let Some(msg) = msg else { return Ok(()) };
         send_msg(ws, &msg, shared)?;
     }
@@ -1146,5 +1176,25 @@ mod tests {
         assert_eq!(role_of(&out.role), Some(Role::Editor));
         assert!(verify_token(&token, &config, "other").is_err());
         assert_eq!(role_of("superuser"), None);
+    }
+
+    #[test]
+    fn the_http_reader_accepts_a_body_as_large_as_the_widest_media_kind() {
+        use std::io::Write as _;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        // 20 MiB: above the old 16 MiB reader cap, inside a video/audio/model's 32 MiB budget.
+        let body = vec![0u8; 20 * 1024 * 1024];
+        let length = body.len();
+        let writer = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("connect");
+            write!(stream, "PUT /v1/sessions/x/media/00 HTTP/1.1\r\nContent-Length: {length}\r\n\r\n").expect("head");
+            stream.write_all(&body).expect("body");
+        });
+        let (mut stream, _) = listener.accept().expect("accept");
+        let request = read_request(&mut stream).expect("a 20 MiB upload is within the media channel");
+        assert_eq!(request.body.len(), length);
+        assert_eq!(request.method, "PUT");
+        writer.join().expect("writer");
     }
 }

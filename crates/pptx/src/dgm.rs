@@ -356,11 +356,21 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
         w.empty("dgm:prSet", A::new().a("presAssocID", node(*k)).a("presName", "Image").a("presStyleLbl", "fgImgPlace1"));
         w.open0("dgm:spPr");
         w.open0("a:blipFill");
-        w.empty("a:blip", A::new().a("r:embed", rid.as_str()));
+        let place = d.nodes.get(*k).and_then(|n| n.picture_place.as_ref());
+        let pct = |v: f64| ((v * 100_000.0).round() as i64).to_string();
+        // A node picture's opacity is the blip's `alphaModFix`; without it the node picture is
+        // fully opaque, exactly as the reader's absent `alpha` means.
+        match place.and_then(|p| p.alpha) {
+            Some(alpha) => {
+                w.open("a:blip", A::new().a("r:embed", rid.as_str()));
+                w.empty("a:alphaModFix", A::new().a("amt", pct(alpha.clamp(0.0, 1.0))));
+                w.close("a:blip");
+            }
+            None => w.empty("a:blip", A::new().a("r:embed", rid.as_str())),
+        }
         // The picture's place in its placeholder is the blip's source crop, as PowerPoint stores
         // it on the presentation point (thousandths of a percent).
-        if let Some(place) = d.nodes.get(*k).and_then(|n| n.picture_place.as_ref()).filter(|p| p.crop.iter().any(|v| *v != 0.0)) {
-            let pct = |v: f64| ((v * 100_000.0).round() as i64).to_string();
+        if let Some(place) = place.filter(|p| p.crop.iter().any(|v| *v != 0.0)) {
             w.empty(
                 "a:srcRect",
                 A::new().a("l", pct(place.crop[0])).a("t", pct(place.crop[1])).a("r", pct(place.crop[2])).a("b", pct(place.crop[3])),
@@ -418,26 +428,36 @@ pub fn outline(data: &El) -> Vec<DiagramNode> {
 }
 
 /// The relationship ids (of the data part) of node pictures, by node index in [`outline`]: the
-/// blip fill of a presentation point associated with the node, with its source crop when one is
-/// there.
-pub fn node_pictures(data: &El) -> Vec<(usize, String, Option<[f64; 4]>)> {
+/// blip fill of a presentation point associated with the node, with its source crop and its
+/// opacity when they are there.
+pub fn node_pictures(data: &El) -> Vec<(usize, String, Option<[f64; 4]>, Option<f64>)> {
     let ids: HashMap<String, usize> = outline_ids(data).into_iter().enumerate().map(|(k, (id, _))| (id, k)).collect();
     let Some(pts) = data.child("ptLst") else { return vec![] };
-    let mut out: Vec<(usize, String, Option<[f64; 4]>)> = vec![];
+    let mut out: Vec<(usize, String, Option<[f64; 4]>, Option<f64>)> = vec![];
     for pt in pts.children_named("pt").take(MAX_NODES * 8) {
         if pt.attr("type") != Some("pres") {
             continue;
         }
         let Some(k) = pt.child("prSet").and_then(|p| p.attr("presAssocID")).and_then(|a| ids.get(a)) else { continue };
-        let Some(blip) = pt.child("spPr").and_then(|s| s.child("blipFill")) else { continue };
-        let Some(rid) = blip.child("blip").and_then(|b| b.attr("r:embed")) else { continue };
-        let crop = blip.child("srcRect").map(|r| {
-            let f = |k: &str| r.attr(k).and_then(|v| v.parse::<f64>().ok()).map(|v| v / 100_000.0).unwrap_or(0.0);
+        let Some(fill) = pt.child("spPr").and_then(|s| s.child("blipFill")) else { continue };
+        let Some(blip) = fill.child("blip") else { continue };
+        let Some(rid) = blip.attr("r:embed") else { continue };
+        let crop = fill.child("srcRect").map(|r| {
+            // A crop is a fraction of the source; `NaN`/`inf` from a hostile file stay out of the
+            // model (`serde_json` writes `NaN` as `null`, which cannot be read back).
+            let f = |k: &str| r.attr(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite()).map(|v| v / 100_000.0).unwrap_or(0.0);
             [f("l"), f("t"), f("r"), f("b")]
         });
-        let crop = crop.filter(|c: &[f64; 4]| c.iter().any(|v| *v != 0.0));
-        if !out.iter().any(|(j, _, _)| j == k) {
-            out.push((*k, rid.to_string(), crop));
+        // A source rectangle whose sides overlap leaves nothing to show: drop it whole.
+        let crop = crop.filter(|c: &[f64; 4]| c.iter().any(|v| *v != 0.0) && c[0] + c[2] < 1.0 && c[1] + c[3] < 1.0);
+        let alpha = blip
+            .child("alphaModFix")
+            .and_then(|a| a.attr("amt"))
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+            .map(|v| (v / 100_000.0).clamp(0.0, 1.0));
+        if !out.iter().any(|(j, _, _, _)| j == k) {
+            out.push((*k, rid.to_string(), crop, alpha));
         }
     }
     out
@@ -827,13 +847,20 @@ mod tests {
     #[test]
     fn node_pictures_come_from_presentation_points() {
         let mut d = Diagram { kind: "pictureList".into(), nodes: nodes(&[("A", 0), ("a", 1), ("B", 0)]), ..Default::default() };
-        d.nodes[2].picture_place = Some(deckcraft_model::PicturePlace { crop: [0.1, 0.0, 0.2, 0.0], alpha: None });
+        d.nodes[2].picture_place = Some(deckcraft_model::PicturePlace { crop: [0.1, 0.0, 0.2, 0.0], alpha: Some(0.4) });
         let xml = data_xml(&d, 3, "rId1", &[(2, "rId7".into()), (9, "rId8".into())]);
         let doc = crate::xml::parse(&xml).unwrap();
         let pics = node_pictures(&doc.root);
         assert_eq!(pics.len(), 1);
         assert_eq!((pics[0].0, pics[0].1.as_str()), (2, "rId7"));
         assert_eq!(pics[0].2, Some([0.1, 0.0, 0.2, 0.0]));
+        assert_eq!(pics[0].3, Some(0.4), "the node picture's opacity survives the writer and the reader");
+        // A hostile crop member (`NaN`) never reaches the model; the finite members stay.
+        let hostile = String::from_utf8(xml).unwrap().replace("l=\"10000\"", "l=\"NaN\"");
+        let doc = crate::xml::parse(hostile.as_bytes()).unwrap();
+        let crop = node_pictures(&doc.root)[0].2.expect("a crop");
+        assert!(crop.iter().all(|v| v.is_finite()), "{crop:?}");
+        assert_eq!((crop[0], crop[2]), (0.0, 0.2));
     }
 
     #[test]

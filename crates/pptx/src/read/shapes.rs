@@ -324,7 +324,10 @@ fn model_camera(e: &El) -> Option<deckcraft_model::ModelCamera> {
         let el = cam.child(name)?;
         let mut v = [0.0; 3];
         for (i, k) in keys.iter().enumerate() {
-            v[i] = el.attr(k)?.parse::<f64>().ok()?;
+            // The parser accepts `NaN` and `inf`; a camera with one is not a view this build can
+            // reproduce (and `serde_json` would write `NaN` as `null`). Slide EMU never comes near
+            // the bound, so anything beyond it is malformed too.
+            v[i] = el.attr(k)?.parse::<f64>().ok().filter(|x| x.is_finite() && x.abs() <= 1.0e9)?;
         }
         Some(v)
     };
@@ -675,12 +678,13 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {
         let rels = imp.pkg.rels(&dm.target);
-        for (k, rid, crop) in crate::dgm::node_pictures(&data.root) {
+        for (k, rid, crop, alpha) in crate::dgm::node_pictures(&data.root) {
             let Some(target) = rels.get(&rid).filter(|r| !r.external).map(|r| r.target.clone()) else { continue };
             let media = imp.media_for(&target);
             if let Some(n) = d.nodes.get_mut(k) {
                 n.picture = media;
-                n.picture_place = crop.map(|crop| deckcraft_model::PicturePlace { crop, alpha: None });
+                n.picture_place =
+                    (crop.is_some() || alpha.is_some()).then(|| deckcraft_model::PicturePlace { crop: crop.unwrap_or([0.0; 4]), alpha });
             }
         }
     }
@@ -913,4 +917,40 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
         c.fill = dml::fill_of(imp, part, pr);
     }
     c
+}
+
+#[cfg(test)]
+mod camera_tests {
+    use super::model_camera;
+
+    fn camera(xml: &str) -> Option<deckcraft_model::ModelCamera> {
+        let doc = crate::xml::parse(xml.as_bytes()).expect("xml");
+        model_camera(&doc.root)
+    }
+
+    const GOOD: &str = r#"<contentPart>
+        <camera>
+            <pos x="0" y="0" z="914400"/>
+            <lookAt x="0" y="0" z="0"/>
+            <up dx="0" dy="1" dz="0"/>
+            <perspective fov="2700000"/>
+        </camera>
+    </contentPart>"#;
+
+    #[test]
+    fn a_camera_with_a_finite_view_is_read() {
+        let cam = camera(GOOD).expect("a camera");
+        assert_eq!(cam.position, [0.0, 0.0, 914_400.0]);
+        assert!((cam.fov - 45.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_camera_with_a_non_finite_or_unbounded_member_is_dropped() {
+        for bad in ["NaN", "inf", "-inf", "1e400", "1e12"] {
+            for key in ["x=\"0\" y=\"0\" z=\"914400\"", "dx=\"0\" dy=\"1\" dz=\"0\""] {
+                let hostile = GOOD.replace(key, &key.replacen("0\"", &format!("{bad}\""), 1));
+                assert_eq!(camera(&hostile), None, "{bad} in {key}");
+            }
+        }
+    }
 }

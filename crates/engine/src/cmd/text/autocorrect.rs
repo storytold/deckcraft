@@ -385,3 +385,46 @@ pub(super) fn autocorrect_options(s: &mut Session, p: &Value) -> Result<Value> {
         "ordinals": pr.ac_ordinals, "lists": pr.ac_lists, "entries": list,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn typing_session() -> Session {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10.0, 10.0, 300.0, 80.0], "text": ""})).expect("a text box");
+        s.execute("text.edit", &json!({})).expect("a caret");
+        s
+    }
+
+    /// Type `*` then a space, one character at a time, as the user does.
+    fn type_list_lead(s: &mut Session, remote: bool) {
+        for ch in ["*", " "] {
+            let r = if remote { s.apply_remote("text.insert", &json!({"text": ch})) } else { s.execute("text.insert", &json!({"text": ch})) };
+            r.expect("typed");
+        }
+    }
+
+    fn paragraph_has_a_bullet(s: &Session) -> bool {
+        let st = s.doc().expect("doc");
+        let t = st.selection.text.clone().expect("a text caret");
+        body_of(st, &t).and_then(|b| b.paragraphs.first()).and_then(|p| p.props.bullet.as_ref()).is_some()
+    }
+
+    #[test]
+    fn a_remote_list_lead_formats_the_paragraph_in_place_on_a_viewer() {
+        let mut s = typing_session();
+        s.set_read_only(true);
+        type_list_lead(&mut s, true);
+        assert!(paragraph_has_a_bullet(&s), "the nested format.bullets ran as part of the remote edit");
+    }
+
+    #[test]
+    fn a_remote_list_lead_does_not_queue_the_nested_format_as_a_local_edit() {
+        let mut s = typing_session();
+        s.set_collab_queue(true);
+        type_list_lead(&mut s, true);
+        assert!(paragraph_has_a_bullet(&s));
+        assert!(s.take_pending_commands().is_empty(), "the nested formatting is not a local operation of its own");
+    }
+}
