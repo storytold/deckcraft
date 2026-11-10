@@ -158,15 +158,18 @@ impl<'a> CompoundFile<'a> {
 
     /// Concatenate a regular sector chain; `limit` stops once that many bytes are read.
     fn read_chain(&self, start: u32, limit: Option<usize>) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
+        // Reserve up to the stream's size; `limit` is checked against the file length by callers,
+        // and `min` keeps a bad size from reserving more than the file.
+        let mut out = Vec::with_capacity(limit.unwrap_or(0).min(self.data.len()));
         let mut s = start;
-        let mut steps = 0usize;
-        // A chain cannot visit more sectors than the file holds.
-        let max_steps = self.data.len() / self.sector_size + 1;
+        // A chain cannot visit more sectors than the file holds, and must not visit one twice: a
+        // loop cut off by `limit` would otherwise return repeated sectors as the stream.
+        let mut visited = vec![false; self.data.len() / self.sector_size + 1];
         while s != ENDOFCHAIN {
-            steps += 1;
-            if steps > max_steps {
-                return Err(invalid("sector chain loops"));
+            match visited.get_mut(s as usize) {
+                Some(v) if !*v => *v = true,
+                Some(_) => return Err(invalid("sector chain loops")),
+                None => return Err(invalid(format!("sector {s} is outside the file"))),
             }
             out.extend_from_slice(self.sector(s)?);
             if limit.is_some_and(|l| out.len() >= l) {
@@ -451,12 +454,12 @@ mod tests {
     #[test]
     fn a_looping_chain_stops() {
         let mut f = build(&[("PowerPoint Document", &[1u8; 1500])]);
-        // The FAT is the last sector; point sector 1's entry back at sector 0. The read ends at the
-        // stream's size (with the wrong bytes) instead of following the loop.
+        // The FAT is the last sector; point sector 1's entry back at sector 0. The stream's size
+        // would be reached by going round the loop, but repeated sectors are not the stream.
         let fat_at = f.len() - 512;
         f[fat_at + 4..fat_at + 8].copy_from_slice(&0u32.to_le_bytes());
         let cf = CompoundFile::open(&f).unwrap();
-        assert_eq!(cf.read_root_stream("PowerPoint Document").unwrap().len(), 1500);
+        assert!(cf.read_root_stream("PowerPoint Document").is_err());
         // The directory's chain looping back on itself is an error.
         let mut g = build(&[("PowerPoint Document", &[1u8; 10])]);
         let fat_at = g.len() - 512;
