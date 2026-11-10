@@ -127,6 +127,9 @@ pub struct Show {
     /// The slide the last narration samples were filed under. Pause/resume on one visit appends;
     /// coming back to a slide in the same take replaces what it had.
     narration_slide: Option<usize>,
+    /// A resumed take was cut at the ten-minute limit, so the save status must not claim the
+    /// narration was kept in full.
+    narration_cut: bool,
     /// Pen width in slide points, matching the 3px stroke on screen.
     ink_width: f64,
     last_move: f64,
@@ -305,6 +308,7 @@ impl Show {
             mic_tried: false,
             mic_ok: false,
             narration_slide: None,
+            narration_cut: false,
             ink_width: 2.25,
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,
@@ -469,6 +473,7 @@ impl Show {
         // A new take owns its own narration: it replaces what an earlier take left on this slide,
         // while pause and resume inside a take still append (see `take_narration`).
         self.narration_slide = None;
+        self.narration_cut = false;
         self.step_start = now;
         self.slide_start = now;
         self.step_end = now;
@@ -819,11 +824,23 @@ impl Show {
             let _ = app.run("ink.stroke", json!({"index": i, "points": points, "width": self.ink_width, "color": [c.r, c.g, c.b]}));
         }
         let mut narrations = 0usize;
-        for (i, rate, samples) in &self.narration {
-            if let Some(wav) = narration_wav(*rate, samples) {
-                let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav)}));
-                narrations += 1;
-            }
+        // Resampling and WAV building are the heaviest part of saving a take (a ten-minute
+        // 96 kHz track is 57.6M samples): one worker per slide does it off the UI thread, and
+        // the finished files are inserted here in slide order.
+        let wavs: Vec<(usize, Vec<u8>)> = std::thread::scope(|scope| {
+            let workers: Vec<_> = self
+                .narration
+                .iter()
+                .map(|(i, rate, samples)| {
+                    let (i, rate, samples) = (*i, *rate, samples.as_slice());
+                    scope.spawn(move || narration_wav(rate, samples).map(|wav| (i, wav)))
+                })
+                .collect();
+            workers.into_iter().filter_map(|w| w.join().ok().flatten()).collect()
+        });
+        for (i, wav) in wavs {
+            let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav)}));
+            narrations += 1;
         }
         let lc = doc.show.laser_color;
         for (i, pts) in &self.laser_saved {
@@ -831,7 +848,7 @@ impl Show {
             let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
         }
         let _ = app.run("show.setup", json!({"useTimings": true}));
-        app.set_status(saved_status(narrations > 0, !self.recorded.is_empty(), !self.laser_saved.is_empty()));
+        app.set_status(saved_status(narrations > 0, !self.recorded.is_empty(), !self.laser_saved.is_empty(), self.narration_cut));
     }
 
     /// The UI clock of the last frame, for a command that runs between frames.
@@ -921,6 +938,13 @@ fn play_on_enter(clip: &deckcraft_model::MediaClip, without_narration: bool) -> 
 }
 
 /// Skip near-silence and clips shorter than 0.2 s so an idle microphone adds no shape.
+/// The samples one slide's narration keeps at `rate`: the ten minutes `wav_mono` writes
+/// ([`deckcraft_media::audio::wav_mono`]), so a resumed take is cut here, in the take's own rate,
+/// rather than silently by the writer.
+fn narration_cap(rate: u32) -> usize {
+    (rate as usize).saturating_mul(60 * 10)
+}
+
 fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
     if !(8_000..=192_000).contains(&rate) {
         return None;
@@ -949,13 +973,13 @@ fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
             let rms = (sum / n as f64).sqrt();
             if rms.is_finite() && rms >= 0.008 {
                 audible = true;
+                // One audible second is enough: stop scanning the other nine minutes. The
+                // window also covers the minimum length, so `total` is not needed past this.
+                break;
             }
         }
     }
-    if total < min_n.max(1) {
-        return None;
-    }
-    if !audible {
+    if !audible || total < min_n.max(1) {
         return None;
     }
     // Narration is written at NARRATION_RATE whatever the device gave us: the WAV cap is ten
@@ -964,7 +988,8 @@ fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
     let (rate, samples) = if rate == NARRATION_RATE {
         (rate, samples)
     } else {
-        resampled = deckcraft_media::audio::resample(&deckcraft_media::Pcm { rate, channels: 1, samples: samples.to_vec() }, NARRATION_RATE);
+        // Borrowing resample: the take is not cloned just to be converted.
+        resampled = deckcraft_media::audio::resample_samples(rate, 1, samples, NARRATION_RATE);
         (resampled.rate, resampled.samples.as_slice())
     };
     deckcraft_media::wav_mono(rate, samples).ok()
@@ -973,8 +998,8 @@ fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
 /// The rate narration is written at: ten minutes fit [`deckcraft_media::MAX_WAV_SAMPLES`].
 const NARRATION_RATE: u32 = 48_000;
 
-fn saved_status(narr: bool, ink: bool, laser: bool) -> &'static str {
-    match (narr, ink, laser) {
+fn saved_status(narr: bool, ink: bool, laser: bool, narration_cut: bool) -> String {
+    let base = match (narr, ink, laser) {
         (false, false, false) => "Recording saved: slide timings.",
         (true, false, false) => "Recording saved: slide timings and narration.",
         (false, true, false) => "Recording saved: slide timings and ink.",
@@ -983,7 +1008,12 @@ fn saved_status(narr: bool, ink: bool, laser: bool) -> &'static str {
         (true, false, true) => "Recording saved: slide timings, narration and laser.",
         (false, true, true) => "Recording saved: slide timings, ink and laser.",
         (true, true, true) => "Recording saved: slide timings, narration, ink and laser.",
+    };
+    if narration_cut {
+        // A resumed take stopped at the ten-minute limit: say so instead of reporting it saved.
+        return format!("{base} The narration was cut at ten minutes.");
     }
+    base.to_string()
 }
 
 /// The laser dot: the button (or L while recording) leaves it on, and holding Ctrl shows it
@@ -1033,12 +1063,19 @@ fn take_narration(app: &mut SlideApp, show: &mut Show) {
         // appended. A restarted device can report another rate; the take is one buffer at the
         // first rate, so the new samples are resampled to it instead of playing at the wrong speed.
         let stored = show.narration[i].1;
-        if stored == rate || stored == 0 || rate == 0 {
-            show.narration[i].2.extend_from_slice(&samples);
+        let appended = if stored == rate || stored == 0 || rate == 0 {
+            samples
         } else {
             let mono = deckcraft_media::audio::Pcm { rate, channels: 1, samples };
-            show.narration[i].2.extend_from_slice(&deckcraft_media::audio::resample(&mono, stored).samples);
+            deckcraft_media::audio::resample(&mono, stored).samples
+        };
+        // Stop where `wav_mono` stops (`narration_cap`, the writer's ten minutes) instead of
+        // appending samples the file would silently drop.
+        let room = narration_cap(stored.max(1)).saturating_sub(show.narration[i].2.len());
+        if appended.len() > room {
+            show.narration_cut = true;
         }
+        show.narration[i].2.extend_from_slice(&appended[..appended.len().min(room)]);
     } else {
         // A new visit to the slide replaces what it had: the timing and the laser keep the last
         // visit too, so the audio must not be longer than the slide's recorded advance.

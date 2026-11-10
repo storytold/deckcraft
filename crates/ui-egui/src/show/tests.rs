@@ -569,6 +569,41 @@ fn a_resumed_narration_is_resampled_to_the_takes_rate() {
     assert_eq!(show.narration[0].2.len(), 16_000, "the 16 kHz second is halved to the take's 8 kHz, so a second stays a second");
 }
 
+/// A resumed take cannot silently exceed what the WAV writer keeps: the append stops at the
+/// ten-minute cap for the take's rate, and the save status says the narration was cut instead of
+/// reporting it saved in full.
+#[test]
+fn a_resumed_narration_is_cut_where_the_wav_writer_stops() {
+    struct TwoTakes(Vec<(u32, Vec<f32>)>);
+    impl deckcraft_media::MicIn for TwoTakes {
+        fn start(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn take(&mut self) -> (u32, Vec<f32>) {
+            if self.0.is_empty() { (0, Vec::new()) } else { self.0.remove(0) }
+        }
+        fn stop(&mut self) {}
+    }
+    let rate = 8_000u32;
+    let cap = narration_cap(rate);
+    let session = deckcraft_engine::Session::with_new();
+    let doc = session.active().unwrap().doc.clone();
+    let services =
+        crate::Services { mic: Some(Box::new(TwoTakes(vec![(rate, vec![0.25; cap - 10]), (rate, vec![0.5; 100])]))), ..Default::default() };
+    let mut app = SlideApp::new(session, services);
+    let mut show = Show::new(&doc, 0, false, true);
+    show.record = true;
+    show.mic_ok = true;
+    take_narration(&mut app, &mut show);
+    assert_eq!(show.narration[0].2.len(), cap - 10, "the first take is under the cap");
+    assert!(!show.narration_cut);
+    assert_eq!(saved_status(true, false, false, false), "Recording saved: slide timings and narration.");
+    take_narration(&mut app, &mut show);
+    assert_eq!(show.narration[0].2.len(), cap, "the resumed take stops at the cap, not past it");
+    assert!(show.narration_cut, "the cut is recorded");
+    assert_eq!(saved_status(true, false, false, true), "Recording saved: slide timings and narration. The narration was cut at ten minutes.");
+}
+
 /// Audio filed for a slide is appended only within one visit: a slide change starts over, or a
 /// pause-and-roam would join two visits' narration while the timing keeps the last one.
 #[test]
@@ -1498,6 +1533,6 @@ fn laser_follows_the_slide_clock_then_goes_out() {
     assert_eq!(laser_pos(&pts, 400), Some((9.0, 8.0)));
     assert_eq!(laser_pos(&pts, 700), Some((9.0, 8.0)));
     assert_eq!(laser_pos(&pts, 701), None);
-    assert_eq!(saved_status(true, false, true), "Recording saved: slide timings, narration and laser.");
-    assert_eq!(saved_status(false, false, false), "Recording saved: slide timings.");
+    assert_eq!(saved_status(true, false, true, false), "Recording saved: slide timings, narration and laser.");
+    assert_eq!(saved_status(false, false, false, false), "Recording saved: slide timings.");
 }
