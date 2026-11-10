@@ -106,6 +106,17 @@ fn save_prefs(app: &SlideApp) {
     }
 }
 
+#[cfg(target_os = "macos")]
+mod panel_menu;
+
+/// Run a blocking system file panel; on macOS with the Edit menu its text boxes need.
+fn with_panel_menu<T>(pick: impl FnOnce() -> T) -> T {
+    #[cfg(target_os = "macos")]
+    return panel_menu::while_open(pick);
+    #[cfg(not(target_os = "macos"))]
+    pick()
+}
+
 /// The desktop services. `native_wayland`: the window is a Wayland client (not Xwayland).
 fn services(native_wayland: bool) -> Services {
     // On native Wayland, egui-winit owns the clipboard through winit's data device, which carries
@@ -130,9 +141,11 @@ fn services(native_wayland: bool) -> Services {
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
                     .add_filter("Outline", &["txt", "md"]),
             };
-            d.pick_file().map(|p| p.to_string_lossy().to_string())
+            with_panel_menu(|| d.pick_file()).map(|p| p.to_string_lossy().to_string())
         })),
-        pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_save: Some(Box::new(|name: &str| {
+            with_panel_menu(|| rfd::FileDialog::new().set_file_name(name).save_file()).map(|p| p.to_string_lossy().to_string())
+        })),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
         clipboard_image: pasteboard.then(|| Box::new(pasteboard::image_png) as Box<dyn FnMut() -> Option<Vec<u8>>>),
