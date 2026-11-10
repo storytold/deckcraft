@@ -362,16 +362,13 @@ pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> 
                 };
                 crate::media_refs::visit_presentation(doc, f);
             }
-            let mut own: HashMap<deckcraft_model::MediaId, usize> = HashMap::new();
-            if let Some(id) = existing
-                && let Some(sh) = doc.slides[target].shape(id)
-            {
-                let f: &mut crate::media_refs::visit::F = &mut |id: &deckcraft_model::MediaId| {
-                    *own.entry(*id).or_default() += 1;
-                };
-                crate::media_refs::visit::shape(sh, f);
+            // Only the references the replacement actually removes count as its own: the shape keeps
+            // its line, effects and text, so a picture they also use stays.
+            let mut removed: HashMap<deckcraft_model::MediaId, usize> = HashMap::new();
+            for m in &superseded {
+                *removed.entry(*m).or_default() += 1;
             }
-            superseded.into_iter().filter(|m| counts.get(m) == own.get(m)).collect()
+            superseded.into_iter().filter(|m| counts.get(m) == removed.get(m)).collect()
         };
         // Drop them before the new parts are added: identical bytes would otherwise be deduplicated
         // onto a part that is about to go, leaving the new Cameo pointing at nothing.
@@ -770,6 +767,33 @@ mod tests {
         }
         s.execute("show.cameo", &json!({"slide": 0, "name": "three.mp4", "data": clip_data()})).expect("third");
         assert!(s.doc().expect("doc").doc.media(deckcraft_model::MediaId(shared as u32)).is_some(), "a clip another slide plays is kept");
+    }
+
+    /// A Cameo's line is retained by the replacement, so a picture the line points at is not the
+    /// take's to free even when only that Cameo uses it.
+    #[test]
+    fn a_replaced_take_keeps_a_picture_its_line_still_uses() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("show.cameo", &json!({"slide": 0, "name": "one.mp4", "data": clip_data()})).expect("first");
+        let shape = cameo_shapes(&s).into_iter().next().expect("cameo shape");
+        let poster = match shape.kind {
+            ShapeKind::Picture { fill } => fill.media,
+            _ => panic!("the Cameo stays a picture"),
+        };
+        {
+            let state = s.doc_mut().expect("doc");
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            let cameo = slide.shape_mut(shape.id).expect("cameo shape");
+            // The same picture as the border: the replacement keeps the line, so the part must stay.
+            cameo.line = Some(deckcraft_model::style::Line {
+                fill: Some(deckcraft_model::style::Fill::Picture(deckcraft_model::style::PictureFill { media: poster, ..Default::default() })),
+                ..Default::default()
+            });
+        }
+        s.execute("show.cameo", &json!({"slide": 0, "name": "two.mp4", "data": clip_data()})).expect("second");
+        assert!(s.doc().expect("doc").doc.media(poster).is_some(), "the retained border still points at it");
     }
 
     /// A short real MP4, base64 as `show.cameo` takes it.

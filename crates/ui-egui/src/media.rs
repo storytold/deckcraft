@@ -522,9 +522,11 @@ pub fn paint_clip(painter: &egui::Painter, host: &MediaHost, doc: &Presentation,
     // the picture's turn and flips apply to the video, so playback matches the poster.
     let outline = cameo_outline(shape, xfrm.w.max(1.0), xfrm.h.max(1.0));
     let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
-    let turned: Vec<(f32, f32)> =
-        outline.unwrap_or_else(|| corners.to_vec()).into_iter().map(|p| turn(p, rect, xfrm.rot, xfrm.flip_h, xfrm.flip_v)).collect();
-    paint_clipped(painter, tex, rect, uv, &turned);
+    let points = outline.unwrap_or_else(|| corners.to_vec());
+    // Positions take the picture's turn; the texture stays mapped from the outline's own points,
+    // so the content turns with the shape instead of the UVs turning under it.
+    let turned: Vec<(f32, f32)> = points.iter().map(|p| turn(*p, rect, xfrm.rot, xfrm.flip_h, xfrm.flip_v)).collect();
+    paint_clipped(painter, tex, rect, uv, &turned, &points);
     true
 }
 
@@ -549,16 +551,18 @@ fn turn(p: (f32, f32), rect: Rect, rot: f64, flip_h: bool, flip_v: bool) -> (f32
 
 /// Paint `tex` over `rect` showing `uv`, clipped to `outline` (points in 0–1 of `rect`): a triangle
 /// fan from the outline's centroid, so a convex Camera Shape is covered exactly.
-fn paint_clipped(painter: &egui::Painter, tex: &TextureHandle, rect: Rect, uv: Rect, outline: &[(f32, f32)]) {
+fn paint_clipped(painter: &egui::Painter, tex: &TextureHandle, rect: Rect, uv: Rect, outline: &[(f32, f32)], texels: &[(f32, f32)]) {
     let pos = |p: (f32, f32)| rect.min + vec2(p.0 * rect.width(), p.1 * rect.height());
     let texel = |p: (f32, f32)| pos2(uv.min.x + p.0 * uv.width(), uv.min.y + p.1 * uv.height());
-    let at = |p: (f32, f32)| egui::epaint::Vertex { pos: pos(p), uv: texel(p), color: Color32::WHITE };
+    let at = |p: (f32, f32), t: (f32, f32)| egui::epaint::Vertex { pos: pos(p), uv: texel(t), color: Color32::WHITE };
     let n = outline.len() as u32;
     let mid = outline.iter().fold((0.0f32, 0.0f32), |a, p| (a.0 + p.0, a.1 + p.1));
     let mid = (mid.0 / n as f32, mid.1 / n as f32);
+    let mid_texel = texels.iter().fold((0.0f32, 0.0f32), |a, p| (a.0 + p.0, a.1 + p.1));
+    let mid_texel = (mid_texel.0 / n as f32, mid_texel.1 / n as f32);
     let mut mesh = egui::Mesh::with_texture(tex.id());
-    mesh.vertices.push(at(mid));
-    mesh.vertices.extend(outline.iter().map(|p| at(*p)));
+    mesh.vertices.push(at(mid, mid_texel));
+    mesh.vertices.extend(outline.iter().zip(texels).map(|(p, t)| at(*p, *t)));
     for i in 0..n {
         mesh.indices.extend([0, 1 + i, 1 + (i + 1) % n]);
     }

@@ -56,7 +56,6 @@ impl Imp<'_> {
         self.next = self.next.saturating_add(1);
         self.next
     }
-    /// Media item for an internal part, read once.
     /// A visible camera placeholder for a recorded Cameo whose poster cannot be read, registered
     /// once per import.
     pub fn cameo_poster(&mut self) -> MediaId {
@@ -71,6 +70,7 @@ impl Imp<'_> {
         id
     }
 
+    /// Media item for an internal part, read once.
     pub fn media_for(&mut self, part: &str) -> Option<MediaId> {
         let key = opc::norm(part);
         if let Some(m) = self.media_by_part.get(&key) {
