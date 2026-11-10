@@ -14,6 +14,7 @@ pub(super) fn align(s: &mut Session, p: &Value) -> Result<Value> {
         "justify" | "just" => Align::Justify,
         "justifyLow" | "justLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
+        "thaiDist" => Align::ThaiDistributed,
         _ => Align::Left,
     };
     align_to(s, a)
@@ -55,6 +56,7 @@ pub(super) fn bullets(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if size.is_some() {
                 para.props.bullet_size = size;
+                para.props.bullet_size_points = None;
                 para.props.bullet_size_follow_text = None;
             }
             if para.props.indent.is_none_or(|i| i >= 0.0) && para.props.margin_left.is_none_or(|m| m == 0.0) {
@@ -85,6 +87,7 @@ pub(super) fn numbering(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if size.is_some() {
                 para.props.bullet_size = size;
+                para.props.bullet_size_points = None;
                 para.props.bullet_size_follow_text = None;
             }
             para.props.margin_left = Some(27.0 + 36.0 * para.level as f64);
@@ -117,13 +120,7 @@ pub(super) fn line_spacing(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
-    let a = str_param(p, "align").map(|a| match a {
-        "center" => Align::Center,
-        "right" => Align::Right,
-        "justify" => Align::Justify,
-        "distributed" => Align::Distributed,
-        _ => Align::Left,
-    });
+    let a = str_param(p, "align").map(|a| parse_align("format.paragraph", a)).transpose()?;
     let ml = f64_param(p, "indentLeft");
     let ind = f64_param(p, "indentFirst");
     let sb = f64_param(p, "spaceBefore");
@@ -179,12 +176,13 @@ pub(super) fn clamp_pt(v: f64) -> f64 {
 fn parse_align(cmd: &str, s: &str) -> Result<Align> {
     Ok(match s {
         "left" | "l" => Align::Left,
-        "center" | "ctr" => Align::Center,
+        "center" | "centre" | "ctr" => Align::Center,
         "right" | "r" => Align::Right,
         "justify" | "just" => Align::Justify,
-        "justLow" => Align::JustLow,
+        "justLow" | "justifyLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
-        _ => return Err(bad(cmd, "`align` must be left, center, right, justify, justLow or distributed")),
+        "thaiDist" => Align::ThaiDistributed,
+        _ => return Err(bad(cmd, "`align` must be left, center, right, justify, justLow, distributed or thaiDist")),
     })
 }
 
@@ -196,6 +194,7 @@ fn align_name(a: Align) -> &'static str {
         Align::Justify => "justify",
         Align::JustLow => "justLow",
         Align::Distributed => "distributed",
+        Align::ThaiDistributed => "thaiDist",
     }
 }
 

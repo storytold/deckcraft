@@ -100,7 +100,7 @@ pub fn fill(w: &mut W, x: &mut Exp, o: &mut Out, f: &Fill) {
 pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
     // An image that lives outside the package is a linked picture: `a:blip` names it through
     // `r:link`; `r:embed` may only reference a part inside the package.
-    let linked = x.p.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+    let linked = x.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     let adj = &pf.adjust;
@@ -357,10 +357,18 @@ pub fn effects(w: &mut W, fx: &Effects) {
                 .a("endA", pct(r.end_alpha.clamp(0.0, 1.0)))
                 .a("endPos", pct(r.end_pos.clamp(0.0, 1.0)))
                 .a("dist", emu(r.dist).max(0))
-                .a("dir", 5_400_000)
-                .a("sy", -100_000)
-                .a("algn", "bl")
-                .a("rotWithShape", "0"),
+                // Kept from a file as read: held to the schema's ranges so a stray value can't
+                // make PowerPoint repair the file (ST_PositiveFixedAngle, ST_FixedAngle,
+                // ST_PositiveFixedPercentage).
+                .o("stPos", r.st_pos.map(|v| v.clamp(0, 100_000)))
+                .o("dir", r.dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("fadeDir", r.fade_dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("sx", r.sx)
+                .o("sy", r.sy)
+                .o("kx", r.kx.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("ky", r.ky.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("algn", r.align.as_deref())
+                .b("rotWithShape", r.rotate_with_shape),
         );
     }
     if let Some(r) = fx.soft_edge {
@@ -441,7 +449,7 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         return;
     };
     w.open(tag, attrs);
-    let name = x.p.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
+    let name = x.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
     w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
     w.close(tag);
 }
@@ -451,6 +459,21 @@ fn sound_label(name: &str) -> String {
     let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let label: String = file.chars().filter(|c| c.is_ascii() && !c.is_control() && *c != '"' && *c != '<' && *c != '>').take(80).collect();
     if label.is_empty() { "sound.wav".into() } else { label }
+}
+
+/// Validate an unmodelled 3-D fragment (`a:scene3d`, `a:sp3d`, `a:flatTx`) before writing raw XML.
+pub fn valid_raw3d<'a>(raw: &'a str, allowed: &[&str]) -> Option<&'a str> {
+    if raw.is_empty() || raw.len() > 64 * 1024 {
+        return None;
+    }
+    let wrap = format!("<r xmlns:a=\"{}\">{raw}</r>", crate::opc::NS_A);
+    let doc = crate::xml::parse(wrap.as_bytes()).ok()?;
+    let els: Vec<_> = doc.root.elements().collect();
+    (!els.is_empty()
+        && els.len() <= allowed.len()
+        && doc.root.children.len() == els.len()
+        && els.iter().all(|e| e.prefix() == "a" && allowed.contains(&e.local()) && !crate::read::has_rel_refs(e)))
+    .then_some(raw)
 }
 
 pub fn body_pr(w: &mut W, b: &BodyProps) {
@@ -468,9 +491,13 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("anchor", b.anchor.map(|a| a.xml()))
         .b("anchorCtr", b.anchor_ctr)
         .b("upright", b.upright)
-        .b("spcFirstLastPara", b.space_first_last);
+        .b("spcFirstLastPara", b.space_first_last)
+        .b("compatLnSpc", b.compat_ln_spc)
+        .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
+        .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
-    if warp.is_none() && b.autofit.is_none() {
+    let raw3d = b.raw3d.as_deref().and_then(|s| valid_raw3d(s, &["scene3d", "sp3d", "flatTx"]));
+    if warp.is_none() && b.autofit.is_none() && raw3d.is_none() {
         w.empty("a:bodyPr", a);
         return;
     }
@@ -503,6 +530,9 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
             w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
+    }
+    if let Some(raw) = raw3d {
+        w.raw(raw);
     }
     w.close("a:bodyPr");
 }
@@ -543,6 +573,7 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         || p.bullet_color.is_some()
         || p.bullet_color_follow_text.is_some()
         || p.bullet_size.is_some()
+        || p.bullet_size_points.is_some()
         || p.bullet_size_follow_text.is_some()
         || p.tabs.is_some()
         || def.is_some();
@@ -567,8 +598,10 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         color(w, c);
         w.close("a:buClr");
     }
-    if p.bullet_size.is_none() && p.bullet_size_follow_text == Some(true) {
+    if p.bullet_size.is_none() && p.bullet_size_points.is_none() && p.bullet_size_follow_text == Some(true) {
         w.empty0("a:buSzTx");
+    } else if let Some(s) = p.bullet_size_points.filter(|s| s.is_finite() && (1.0..=4000.0).contains(s)) {
+        w.val("a:buSzPts", ((s * 100.0).round() as u32).to_string());
     } else if let Some(s) = p.bullet_size {
         w.val("a:buSzPct", pct(s.clamp(0.25, 4.0)));
     }
@@ -587,7 +620,7 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         Some(Bullet::Picture { media }) => match x.media_rel(o, *media, "image") {
             Some(rid) => {
                 w.open0("a:buBlip");
-                let a = if x.p.media(*media).is_some_and(|m| m.data.is_empty() && m.link.is_some()) {
+                let a = if x.media(*media).is_some_and(|m| m.data.is_empty() && m.link.is_some()) {
                     A::new().a("r:link", &rid)
                 } else {
                     A::new().a("r:embed", &rid)
@@ -626,6 +659,7 @@ fn typeface(w: &mut W, tag: &str, f: &Option<String>) {
 pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     let a = A::new()
         .o("lang", r.lang.as_deref().filter(|l| !l.is_empty()))
+        .o("altLang", r.alt_lang.as_deref().filter(|l| !l.is_empty()))
         .o("sz", r.size.map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
         .b("b", r.bold)
         .b("i", r.italic)
@@ -649,7 +683,8 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
         )
         .o("spc", r.spacing.map(|s| (s.clamp(-4000.0, 4000.0) * 100.0).round() as i64))
         .o("baseline", r.baseline.map(|b| pct(b.clamp(-10.0, 10.0))))
-        .b("noProof", r.no_proof);
+        .b("noProof", r.no_proof)
+        .b("normalizeH", r.normalize_height);
     let has_fx = r.no_shadow || r.shadow.is_some() || r.inner_shadow.is_some() || r.glow.is_some() || r.reflection.is_some() || r.soft_edge.is_some();
     let has_kids = r.outline.is_some()
         || r.fill.is_some()
@@ -746,17 +781,27 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
 }
 
 fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
+    // The run's properties are the same for every piece and line break: serialize them once.
+    let mut rpr_xml: Option<String> = None;
+    let mut put_rpr = |w: &mut W| match &rpr_xml {
+        Some(xml) => w.s.push_str(xml),
+        None => {
+            let start = w.s.len();
+            rpr(w, x, o, "a:rPr", props);
+            rpr_xml = Some(w.s[start..].to_string());
+        }
+    };
     for (i, piece) in text.split(['\n', '\u{b}']).enumerate() {
         if i > 0 {
             w.open0("a:br");
-            rpr(w, x, o, "a:rPr", props);
+            put_rpr(w);
             w.close("a:br");
         }
         if piece.is_empty() && i > 0 {
             continue;
         }
         w.open0("a:r");
-        rpr(w, x, o, "a:rPr", props);
+        put_rpr(w);
         w.elt("a:t", piece);
         w.close("a:r");
     }

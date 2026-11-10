@@ -395,6 +395,12 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
+        if let Some(sc) = pr.child("scene3d") {
+            let raw = part.keep_inner(sc);
+            if !raw.is_empty() && raw.len() <= 64 * 1024 {
+                s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
+            }
+        }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
@@ -475,7 +481,8 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         .into_iter()
         .map(|id| {
             let rel = part.rels.get(&id).filter(|r| !r.external)?;
-            if !imp.pkg.rels(&rel.target).items.is_empty() {
+            let pkg = imp.pkg;
+            if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
                 return None;
             }
             let (kind, target) = (rel.ty.clone(), rel.target.clone());
@@ -757,6 +764,7 @@ fn table(imp: &mut Imp, part: &Part, tbl: &El) -> Table {
         t.last_col = pr.bool("lastCol").unwrap_or(false);
         t.band_row = pr.bool("bandRow").unwrap_or(false);
         t.band_col = pr.bool("bandCol").unwrap_or(false);
+        t.rtl = pr.bool("rtl");
         if let Some(id) = pr.child("tableStyleId").map(|e| e.text()) {
             // A style the file defines is drawn from its definition (by its GUID).
             // DeckCraft's own styles (written with GUIDs derived from their ids) map back to them.
@@ -805,6 +813,8 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
             ]);
         }
         c.anchor = pr.attr("anchor").and_then(Anchor::from_xml);
+        c.anchor_ctr = pr.bool("anchorCtr");
+        c.horz_overflow = pr.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml);
         c.vertical = pr.attr("vert").and_then(TextDir::from_xml);
         for (i, n) in ["lnL", "lnR", "lnT", "lnB"].iter().enumerate() {
             if let Some(ln) = pr.child(n)

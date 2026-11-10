@@ -351,21 +351,15 @@ mod tests {
 
     #[test]
     fn inherited_shadow_off_survives_native_and_pptx_roundtrips() {
-        use std::sync::Arc;
         use deckcraft_model::text::LevelStyle;
+        use std::sync::Arc;
 
         for local_style in [false, true] {
-            for (command, params) in [
-                ("format.textShadow", json!({})),
-                ("format.fontDialog", json!({"shadow": false})),
-            ] {
+            for (command, params) in [("format.textShadow", json!({})), ("format.fontDialog", json!({"shadow": false}))] {
                 let mut s = shape();
                 let id = s.doc().unwrap().selection.shapes[0];
                 let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
-                let level = LevelStyle {
-                    run: RunProps { shadow: Some(default_text_shadow()), ..Default::default() },
-                    ..Default::default()
-                };
+                let level = LevelStyle { run: RunProps { shadow: Some(default_text_shadow()), ..Default::default() }, ..Default::default() };
                 if local_style {
                     let sh = Arc::make_mut(&mut doc.slides[0]).shape_mut(id).unwrap();
                     sh.text.as_mut().unwrap().list_style.set(0, level);
@@ -383,8 +377,7 @@ mod tests {
                 let native = deckcraft_format::load(&deckcraft_format::save(doc).unwrap()).unwrap();
                 let pptx = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
                 for reopened in [native, pptx] {
-                    let id = reopened.slides[0].shapes.iter()
-                        .find(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Hello")).unwrap().id;
+                    let id = reopened.slides[0].shapes.iter().find(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Hello")).unwrap().id;
                     let mut loaded = shape();
                     let st = loaded.doc_mut().unwrap();
                     st.doc = Arc::new(reopened);

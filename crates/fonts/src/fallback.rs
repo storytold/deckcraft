@@ -227,6 +227,9 @@ impl FontDb {
     }
 }
 
+/// Most caret records read for one ligature glyph.
+const MAX_LIGATURE_CARETS: usize = 64;
+
 /// Caret positions inside a ligature glyph from GDEF `LigCaretList`, in font units from the
 /// glyph's origin (sorted ascending). Empty when the font has none for `gid`.
 pub fn ligature_carets(face: &FontFace, gid: u32) -> Vec<i32> {
@@ -236,9 +239,12 @@ pub fn ligature_carets(face: &FontFace, gid: u32) -> Vec<i32> {
     let Ok(cov) = list.coverage() else { return Vec::new() };
     let Some(idx) = cov.get(skrifa::GlyphId::new(gid)) else { return Vec::new() };
     let Ok(lig) = list.lig_glyphs().get(idx as usize) else { return Vec::new() };
+    // The limit applies to the records read, not to the carets kept: a font can list thousands of
+    // records it then has to be read through for every ligature laid out.
     let mut out: Vec<i32> = lig
         .caret_values()
         .iter()
+        .take(MAX_LIGATURE_CARETS)
         .filter_map(|cv| cv.ok())
         .filter_map(|cv| match cv {
             skrifa::raw::tables::gdef::CaretValue::Format1(f) => Some(f.coordinate() as i32),
@@ -246,7 +252,6 @@ pub fn ligature_carets(face: &FontFace, gid: u32) -> Vec<i32> {
             // Format 2 is a contour point index; outlines aren't consulted here.
             skrifa::raw::tables::gdef::CaretValue::Format2(_) => None,
         })
-        .take(64)
         .collect();
     out.sort_unstable();
     out
