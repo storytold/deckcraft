@@ -229,11 +229,14 @@ mod tests {
     }
 
     /// #862: a PowerPoint Show handed over by the system (command line, double-click) starts its
-    /// slide show at once, full screen and from the first slide; so does a 97-2003 `.pps`.
+    /// slide show at once, full screen and from the first slide; so does a 97-2003 `.pps`. The
+    /// `.pps` is a real 97-2003 file (built by `crates/ppt`'s tests), not a `.pptx` under that name.
     #[test]
     fn a_ppsx_from_the_system_starts_the_show() {
-        for name in ["Talk.PPSX", "Old talk.pps"] {
-            let path = saved_as(name, 3);
+        let legacy = std::env::temp_dir().join(format!("deckcraft-opening-{}", std::process::id())).join("Old talk.pps");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, include_bytes!("../../ppt/tests/fixtures/old-talk.pps")).unwrap();
+        for path in [saved_as("Talk.PPSX", 3), legacy.to_string_lossy().to_string()] {
             let mut app = SlideApp::new(Session::new(), crate::Services::default());
             assert!(app.open_from_system(std::slice::from_ref(&path)).is_empty());
             assert_eq!(app.session.documents().len(), 1);

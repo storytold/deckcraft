@@ -557,3 +557,23 @@ fn a_shadowed_run_keeps_its_shadow() {
     assert_eq!(shadow.color, deckcraft_model::ColorRef::rgb(Rgba::rgb(0x80, 0x80, 0x80)));
     assert!(runs[1].props.shadow.is_none());
 }
+
+/// `tests/fixtures/old-talk.pps`: a one-slide `.pps` built here from records, for tests in other
+/// crates that need real 97–2003 bytes (`ui-egui`'s show-on-open test). Run this test with
+/// `DECKCRAFT_WRITE_PPT_FIXTURE=1` to rebuild the file after changing the builders.
+#[test]
+fn the_pps_fixture_is_a_built_presentation() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/old-talk.pps");
+    if std::env::var_os("DECKCRAFT_WRITE_PPT_FIXTURE").is_some() {
+        let title =
+            container(rt::SP_CONTAINER, 0, &[fsp(1, 2049, 0xA00), anchor(400, 500, 5260, 1200), placeholder(0x0D), text_box(0, "Old talk", &[])]);
+        let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[title])]);
+        let (cu, doc, pics) = streams_of(0xE391_C05F, 1, slide, None);
+        std::fs::write(path, crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap();
+    }
+    let p = crate::import(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert!(!p.slides[0].hidden);
+    let title = p.slides[0].shapes[0].text.as_ref().unwrap();
+    assert_eq!(title.paragraphs[0].runs[0].text, "Old talk");
+}
