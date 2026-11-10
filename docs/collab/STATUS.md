@@ -5,7 +5,8 @@ commit and its docs commit): **optimistic preview** (RFC §3) — with `DECKCRAF
 one local operation is shown before the room answers, settled by `applied`, rolled back exactly on
 a refusal and abandoned for a `resync` when another participant's step lands in between; the wire
 carries an optional `preview` local id that the server never stores, so a client without it behaves
-exactly as before. `collab/pr14` is branched from `collab/pr13` at `baa845ec` (the
+exactly as before. On top of `1b057cbf` is a local review pass: the CodeRabbit findings of #2012
+(11 Major + 7 Minor) triaged and fixed, with the table in §PR publication. `collab/pr14` is branched from `collab/pr13` at `baa845ec` (the
 chunked-base slice and its docs commit): Save in a live desktop session now commits the room —
 one commit in flight, the document stays dirty until `commit-result`, a refusal keeps the edits
 and offers a copy — with its docs commit on top. `collab/pr13`, branched from `collab/pr12` at
@@ -80,23 +81,53 @@ description is [`pr10.md`](pr10.md).
 
 ## PR publication (2026-11-10)
 
-Draft **[PR #1998](https://github.com/storytold/deckcraft/pull/1998)** is open from
-`copoka/deckcraft:collab/pr11` (head `6e9d10e7`, 83 commits ahead of `origin/main` at `0623b430`)
-into `storytold/deckcraft:main`; its body is [`pr10.md`](pr10.md). GitHub reports the PR
-`MERGEABLE`/`CLEAN` at creation. This session's two commits live on the local `collab/pr12`
-(branched from `collab/pr11` at `fe7bcbca`) and are not pushed, so the PR head is unchanged.
+**[PR #2012](https://github.com/storytold/deckcraft/pull/2012)** is open from
+`copoka/deckcraft:collab/pr15` (head `1b057cbf`) into `storytold/deckcraft:main` and is **ready**
+(not a draft); its body is [`pr10.md`](pr10.md). GitHub reports `MERGEABLE` at `1b057cbf`; the PR
+carries 100 commits, 104 ahead of `origin/main`. The review pass below is two local commits —
+`5b6fcfcd` (code) and this docs commit — and is **not pushed**, so the PR head is unchanged;
+pushing it and merging are human steps.
 
-[PR #1975](https://github.com/storytold/deckcraft/pull/1975) still points at the pre-rebase
-`collab/pr10` head `be706a11`; it does not contain the last 28 commits and is superseded by
-#1998. It stays open — **closing #1975 is a human decision**. Pushing new commits to
-`collab/pr11` (or a new `collab/pr12` branch), marking #1998 ready and merging are also manual
-steps; this file only records the state.
+[PR #1998](https://github.com/storytold/deckcraft/pull/1998) still points at
+`copoka/deckcraft:collab/pr11` (head `6e9d10e7`) and is superseded by #2012.
+[PR #1975](https://github.com/storytold/deckcraft/pull/1975) points at the pre-rebase
+`collab/pr10` head. Both stay open — **closing them is a human decision**.
 
-Verification of the slice at `6e9d10e7` ran on the `agents` host, no push: `cargo fmt --all --
---check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `collab-proto` 34;
-`collab` 230 + 8; `collab-server` 10 unit + 4 commit + 4 gates (LibreOffice skipped on the build
-host) + 7 socket; `ui-egui collab::` 20; `engine` 587 + 1 ignored; `xtask layers` 32 crates. The
-docs commit that records this publication is local and not pushed: the PR head stays `6e9d10e7`.
+### CodeRabbit triage on #2012 (`1b057cbf`, 11 Major + 7 Minor)
+
+Every finding was checked against the code first. All 18 are addressed in this pass: 13 code
+fixes with a regression test where one is meaningful, 4 documentation corrections and one
+deliberately documented behaviour (the journal order). "Fixed" means the code changed in this
+local commit; nothing is pushed.
+
+| # | Finding (path:line) | Severity | Disposition |
+|---|---|---|---|
+| 1 | `apps/deckcraft-collab-server/src/lib.rs:394` — a 16 MiB reader cap refuses media the channel accepts (audio/video and 3-D models are 32 MiB) | Major | **Fixed**: `MAX_REQUEST_BODY` is the widest media kind (32 MiB), and a 20 MiB `PUT` regression test reads through the real socket path |
+| 2 | `apps/deckcraft-collab-server/src/lib.rs:647` — `DELETE /v1/sessions/{id}` leaves an orphan room writing to the store | Major | **Fixed**: `Hub::close()` is set before the room leaves the map; `receive` refuses, the pump exits on the closed flag. Unit test |
+| 3 | `apps/deckcraft-collab-server/src/store.rs:85` — a replay preloads bytes only for `PictureInsert` | Major | **Fixed**: `MediaInsert`, `FontCreate` and `SmartArtPicture` preload too. An audio object across a restart is a new store test |
+| 4 | `crates/collab/src/client.rs:426` — ops sent after a `Resync` are dropped as "covered" | Major | **Fixed**: `resync_in_flight` holds the queue until the snapshot; new test submits after the resync and checks the op is sent with the snapshot's base |
+| 5 | `crates/collab/src/hub.rs:166` — two connections of one actor share a peer slot and outbox | Major | **Fixed**: `peers`/`out` are keyed by a per-connection id; the server uses `actor#n`, the actor stays on `Peer` for authorship, history and presence; `participants()` counts people. Two-connection and close tests |
+| 6 | `crates/engine/src/lib.rs:712` — the read-only/collab-queue gates also hit nested `execute` | Major | **Fixed**: the gates apply at `depth == 0`; a typed `* ` list lead runs `format.bullets` in place on a viewer and is not queued as a local edit. Two engine tests |
+| 7 | `crates/pptx/src/read/shapes.rs:323` — camera `pos`/`lookAt`/`up` accept `NaN`/`inf` | Major | **Fixed**: finite and bounded (±1e9) members only; a camera with one is dropped whole. Test |
+| 8 | `crates/pptx/src/dgm.rs:434` — crop `srcRect` accepts `NaN`/`inf` and overlapping sides | Major | **Fixed**: finite members only, a crop whose sides overlap is dropped. Test extended |
+| 9 | `docs/collab/production.md:286` — the media replay guarantee was too narrow | Major | **Fixed in code** (#3) and the doc now names every media-bearing payload |
+| 10 | `docs/collab/production.md:341` — the journal is written after the operation is applied | Major | **Documented**: the applied result is the server's decision and is broadcast before the append. A failed append is logged, the room keeps serving, and the doc now states the durability loss and the recovery step |
+| 11 | `docs/collab/production.md:357` — the 64 MiB base ceiling is unstated | Major | **Fixed in docs**: `BaseChunks::MAX_LEN` caps an assembled base too, so a larger one is named even inside the chunk depth |
+| 12 | `apps/deckcraft-collab-server/src/cabinet.rs:179` — `size + 2` on a cabinet-supplied chunk size | Minor | **Fixed**: `checked_add`; test |
+| 13 | `crates/collab/src/transport.rs:108` — `Drop` blocks while the worker is inside `tungstenite::connect` | Minor | **Fixed**: a `connecting` flag makes `Drop` detach instead of joining a connect with no timeout. No deterministic test (timing-only) |
+| 14 | `crates/pptx/src/dgm.rs:360` — the SmartArt node picture's `alpha` is lost on save | Minor | **Fixed**: written as `a:alphaModFix amt` and read back; round-trip test |
+| 15 | `crates/ui-egui/src/app/commands.rs:25` — `file.save` answers `{"committed": true}` even when the commit was refused | Minor | **Fixed**: `save()` returns `Result`; the command maps it. Call sites updated |
+| 16 | `crates/ui-egui/src/ribbon/table.rs:221` — a focus loss runs the cell-size command with no change | Minor | **Fixed**: the value is compared with the field before the command runs |
+| 17 | `docs/collab/production.md:104` — token validation overstated (`sessionId`, `app`/`fileId`) | Minor | **Fixed in docs**: signature/`exp`/`sub`/`aud` checked, `app`/`fileId` only when present, session id not checked |
+| 18 | `docs/collab/study.md:281` — option A/B labels differ from `options.md` | Minor | **Fixed in docs**: an explicit mapping note (study B = options A) |
+
+Verification of this pass on the `agents` host, no push: `cargo fmt --all` clean; `cargo clippy
+--workspace --all-targets -- -D warnings` clean; `collab` 283 + 8; `collab-server` 13 unit + 5
+commit + 5 gates + 18 socket; `engine` 594 + 1 ignored (+ 6 + 8 integration); `pptx` 69 + 5 + 145;
+`ui-egui collab::` 24 and `host_save` 12; `deckcraft-web` 6; `xtask layers` 32 crates. The whole
+`ui-egui` library run has one environment failure — `ime_tests::korean_composes_in_the_notes_pane`
+needs a CJK face and the build host has no `craft-fonts` — unrelated to this diff and present
+before it.
 
 This file is the handoff between sessions: what is done, how it was verified, what is not done,
 and what to do next. Update it at the end of every collaboration session.
@@ -529,8 +560,10 @@ human decision.
   callback, `POST /v1/sessions/{id}/commit` returns the bytes inline (development mode); a client
   `commit` is answered only after the cabinet took the file.
 - Media: `PUT /v1/sessions/{id}/media/{sha256}` (session token, writer only, signature allowlist
-  for pictures, font faces and audio/video, 8 MiB per picture, 16 MiB per font face, 32 MiB per
-  clip), `GET /media/{sha256}` (session or service token). Content-addressed under
+  for pictures, fonts, audio/video and 3-D models, 8 MiB per picture, 16 MiB per font face, 32 MiB
+  per clip or model), `GET /media/{sha256}` (session or service token). The HTTP reader accepts a
+  body up to the widest kind (`MAX_REQUEST_BODY`, 32 MiB), so an upload the endpoint accepts is
+  not refused a layer earlier. Content-addressed under
   `<store>/media/<sha256>`; 512 pictures / 64 MiB, 32 fonts / 64 MiB and 32 clips / 192 MiB per
   session, so a font cannot evict a picture; upload and byte counters in metrics.
 - CORS: `DECKCRAFT_CORS_ORIGINS` is the allowlist (comma separated, compared case-insensitively
@@ -542,12 +575,19 @@ human decision.
   with it), `405` for a method outside the list. An empty or absent variable keeps the pre-CORS
   behaviour: no `Access-Control-*`, no `Vary`, and `OPTIONS` falls through to the router.
 - Persistence: native base + append-only journal, snapshot every N ops, replay on restart
-  through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
+  through the same `apply` path (loading every media-bearing operation's object first). The append
+  follows the in-memory apply; a failed append is logged and the room keeps serving, so a restart
+  can lose that acknowledged tail (see `production.md`). Without `COLLAB_STORE_DIR` the server is
+  memory-only.
 - `COLLAB_SNAPSHOT_EVERY` now also drives a memory-only room (it used to reach the store only),
   so compaction and a base transfer can be forced in a test or a deployment. `resync` takes a
   snapshot on demand when the stored base does not cover the client; `base_transfers_total`,
   `base_chunks_total` and `base_bytes_total` (inline bytes only) count what went out, and
   `COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS` bound a chained base.
+- A hub is keyed per connection (`actor#n`) with the actor kept on the peer: two tabs of one
+  person get their own outbox, and closing one leaves the other joined. `DELETE` marks the hub
+  closed before it leaves the map, so its sockets stop instead of appending to a room that may be
+  re-created on the same store directory.
 - Logs/metrics contain ids, versions and counts; no slide content, text, media or tokens.
 
 ## 8. Gates (TASK.md §8)
@@ -968,7 +1008,22 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork; locally rebased onto `origin/main` (`0623b430`) with a clean `merge-tree` (the fork needs a force-push, the chair's manual step) | [`pr10.md`](pr10.md); merge needs a human decision |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `1b057cbf`), rebased onto `origin/main`; the review pass is local and unpushed | [`pr10.md`](pr10.md); merge and the push are human decisions |
+
+Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`1b057cbf` + a local commit, on
+`agents`, rust 1.99.1): `cargo fmt --all` clean; `cargo clippy --workspace --all-targets -- -D
+warnings` clean (EXIT=0); `cargo test -p deckcraft-collab` 283 + 8 passed / 0 failed / 0 ignored
+(EXIT=0); `cargo test -p deckcraft-collab-server` 13 unit + 5 commit + 5 gates (17.1 s,
+LibreOffice skipped on the build host) + 18 socket passed (EXIT=0); `cargo test -p
+deckcraft-engine` 594 + 1 ignored, plus 6 + 8 integration (EXIT=0); `cargo test -p deckcraft-pptx`
+69 + 5 + 145 passed (EXIT=0); `cargo test -p deckcraft-ui-egui --lib collab::` 24 and `host_save`
+12 passed (EXIT=0); `cargo test -p deckcraft-web` 6 passed (EXIT=0); `cargo xtask layers` 32
+crates, no violations (EXIT=0). The whole `ui-egui` library run has one failure before and after
+this diff — `ime_tests::korean_composes_in_the_notes_pane` needs a CJK face and the build host has
+no `craft-fonts`. The new tests cover the 20 MiB HTTP body, the closed room, the audio replay, an
+operation held across a resync, two connections of one actor, a nested list lead on a viewer and
+with the collab queue, a non-finite camera and crop, the cabinet chunk size and the SmartArt
+picture's opacity round trip.
 
 Re-run on 2026-11-10 after the SmartArt node-picture slice (`44489f34`, on `agents`, rust 1.99.1):
 `cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings`
@@ -1223,18 +1278,21 @@ cd apps/deckcraft-web && trunk build           # dist/web
 cargo test -p deckcraft-web
 ```
 
-The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: "deckcraft"`,
-`sessionId` and `exp`. For a production cabinet use an ES256/RS256/Ed25519 PEM in
-`COLLAB_JWT_PEM` and a short-lived token from the cabinet.
+The cabinet's token carries `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: "deckcraft"`,
+`sessionId` and `exp`. The server requires the signature, `exp`, `sub` and `aud`; it checks `app`
+and `fileId` when the token names them, and does not check `sessionId`. Local runs may use HS256;
+for a production cabinet use an ES256/RS256/Ed25519 PEM in `COLLAB_JWT_PEM` and a short-lived
+token from the cabinet.
 
 ## Next session: start here
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **Draft PR #1998 is open from `copoka/deckcraft:collab/pr11`** (head `6e9d10e7`,
-   `MERGEABLE`/`CLEAN`); #1975 still points at the pre-rebase `collab/pr10` head and is
-   superseded. Pushing this file's commit, marking #1998 ready and closing #1975 are human steps.
-   Do not touch CI and do not mention agents. Merging needs a human decision.
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `1b057cbf`,
+   `MERGEABLE`); the CodeRabbit triage in §PR publication is a local commit on top and is not
+   pushed, so the head stays `1b057cbf` until a human pushes. #1998 and #1975 are superseded but
+   still open. Pushing, closing them and merging are human steps. Do not touch CI and do not
+   mention agents.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
@@ -1274,6 +1332,35 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — the CodeRabbit review of #2012, triaged and fixed
+
+- **What was reviewed.** The CodeRabbit review on PR #2012 at head `1b057cbf`: 11 Major and
+  7 Minor. Each finding was opened against the code first; the table in §PR publication records
+  all 18 with the disposition.
+- **Code fixes.** The HTTP reader now accepts a body as large as the widest media kind (32 MiB)
+  instead of 16 MiB; a closed room is marked before it leaves the server's map, so its sockets
+  stop and cannot keep appending to a store a new room may load; a replay preloads bytes for every
+  media-bearing payload, not only a picture; an operation submitted after a `Resync` waits for
+  the snapshot instead of being dropped as covered; `Hub` keys its peers and outboxes by a
+  per-connection id with the actor kept for authorship/history/presence, so two tabs of one person
+  no longer share one queue; the read-only and collab-queue gates apply only at `depth == 0` so a
+  remote list lead formats in place; the model camera's `pos`/`lookAt`/`up` and a SmartArt picture
+  crop reject non-finite values; a chunk size from the cabinet uses checked arithmetic;
+  `WsTransport::Drop` detaches instead of blocking on a connect without a timeout; a SafeArt node
+  picture's opacity round-trips as `a:alphaModFix`; `file.save` reports a refused commit as a
+  refusal; a focus loss with no changed value no longer runs a cell-size command.
+- **Docs.** `production.md` states the token validation exactly (signature/`exp`/`sub`/`aud`;
+  `app`/`fileId` only when present; no session-id check), the journal-after-apply durability
+  limit, the 64 MiB assembled-base ceiling and the wider replay preload. `study.md` maps its
+  A/B labels to `options.md`.
+- **Gates on `agents`, no push.** fmt clean; clippy `-D warnings` clean; `collab` 283 + 8;
+  `collab-server` 13 unit + 5 commit + 5 gates + 18 socket; `engine` 594 + 1 ignored; `pptx`
+  69 + 5 + 145; `ui-egui collab::` 24 and `host_save` 12; `deckcraft-web` 6; `xtask layers` 32
+  crates. The full `ui-egui` library run still has the Korean IME test failing for a missing CJK
+  face on the build host (no `craft-fonts`), before and after this diff.
+- Commits `5b6fcfcd` (code and tests) + this docs commit on `collab/pr15`; PR head stays
+  `1b057cbf`. Nothing pushed, CI untouched.
 
 ### 2026-11-10 — optimistic preview: a local edit shown before the room confirms it
 

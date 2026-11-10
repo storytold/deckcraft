@@ -101,8 +101,11 @@ GET /v1/sessions/{id}/ws
 
 1. The first **text frame** is `hello` with the JWT, app, document id and the last version the
    client has. The token never appears in the URL (ADR 0008).
-2. The server checks the signature, `exp`, `aud`, app, `fileId` and session id; the actor and
-   role come from the token, never from a message field.
+2. The server checks the signature, `exp` (and `sub`/`aud`, which the token must carry), and
+   `aud`; `app` and `fileId` are checked only when the token names them (a cabinet token that
+   does not is accepted for this audience). The token's session id is **not** checked. The actor
+   and role come from the token, never from a message field; the `hello`'s app must be
+   `deckcraft` and its document must match the room.
 3. `welcome` names the actor, role, version and the server's limits.
 4. Operations, presence, resync, ping and commit follow; the server broadcasts the authoritative
    `applied` (with the confirmed command) to every participant.
@@ -284,7 +287,8 @@ operation carries only the digest.
   `ppt/fonts/fontN.fntdata` (`p:embeddedFontLst`). A model is a `p:contentPart` with a `model3d`
   relationship and is copied through the package unchanged.
 - With `COLLAB_STORE_DIR` the objects live under `<store>/media/<sha256>` and a journal replay
-  loads them before the operation runs.
+  loads the object of every media-bearing operation (a picture, audio, video, 3-D model, embedded
+  font face or SmartArt node picture) before that operation runs.
 - The desktop link derives the HTTP endpoint from its WebSocket URL: `ws://` opens a plain socket,
   `wss://` a `rustls` connection with the platform root store (`rustls-native-certs`; the
   `SSL_CERT_FILE`/`SSL_CERT_DIR` variables are honoured). A custom CA must be in the system store.
@@ -338,10 +342,17 @@ remain the external contract with the cabinet for a browser page.
 ## Restart and persistence
 
 With `COLLAB_STORE_DIR` set, a room is a native base (`base.deckcraft`, written atomically) plus
-an append-only `journal.jsonl`. Every accepted operation is appended and flushed before the next
-one is applied; a base is taken every `COLLAB_SNAPSHOT_EVERY` operations (default 200) and the
-journal is trimmed to the tail after it. On start the latest base is loaded and the tail replayed
-through the same `apply` path, so versions, dedup and undo history come back.
+an append-only `journal.jsonl`. An accepted operation is applied in memory and broadcast first,
+then appended and flushed; a base is taken every `COLLAB_SNAPSHOT_EVERY` operations (default 200)
+and the journal is trimmed to the tail after it. On start the latest base is loaded and the tail
+replayed through the same `apply` path, so versions, dedup and undo history come back.
+
+The append is not part of the acknowledgement: **if it fails, the error is logged and the room
+keeps serving**. The accepted edit exists in memory and on every replica but not in the journal,
+so a restart loses it. Treat an `journal …` error in the log as a durability incident: stop the
+room, keep the store directory, and reopen it from the cabinet after checking the journal. The
+next base still captures the in-memory document, so a snapshot after the failure is safe; only a
+restart before one loses the acknowledged tail.
 
 The room directory is the SHA-256 of the cabinet's file id, and `meta.json` names the file; a
 file id never becomes a path component. Without `COLLAB_STORE_DIR` the server is memory-only and
@@ -356,7 +367,10 @@ its `sha256`, length, chunk size and depth, the client asks for one chunk at a t
 (`base_chunks_total` counts the chunks; `base_bytes_total` stays at 0 for a chain). The chunk size
 and the chain's depth are `COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS`: a base beyond them is
 named but not sent, and that client has to reopen the file from the cabinet — a fallback for a
-client build without `base-chunk`, not the expected path. Measured on the build host: a 120-slide
+client build without `base-chunk`, not the expected path. The protocol also caps the assembled
+base at **64 MiB** (`BaseChunks::MAX_LEN`, the same ceiling as an inline base), so a larger base is
+named without bytes even when it would fit the configured chunk depth; it is not a knob an
+operator can raise. Measured on the build host: a 120-slide
 deck with 120 distinct 160×160 pictures has a native base of **11.8 MiB**, which a viewer rebuilt
 in 48 chunks of 256 KiB in 168 ms; the same deck with 320×320 pictures reaches 46.9 MiB, still
 inside a 1024-chunk chain at the default 1 MiB chunk.
@@ -365,12 +379,12 @@ inside a 1024-chunk chain at the default 1 MiB chunk.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 269 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit, a base sent as a chunk chain — order, one request at a time, resume at the missing index, a second snapshot for the same chain, a stale chain, the protocol ceilings, a short chunk and a wrong digest, steps collected by a catch-up), commit |
-| `cargo test -p deckcraft-collab-server` | 10 unit + 17 real-socket + 4 commit + 5 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, a three-client soak across compaction with a base transfer, and the big-deck soak: 322 edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base sent in 48 chunks plus its tail, a fifth participant that drops mid-chain and resumes at the missing chunk, and a commit at the head whose file reimports with every replica's values |
-| `cargo test -p deckcraft-ui-egui collab::` | 20 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets, the painter's sequence over the link disarming a one-shot pick |
+| `cargo test -p deckcraft-collab` | 283 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit, a base sent as a chunk chain — order, one request at a time, resume at the missing index, a second snapshot for the same chain, a stale chain, the protocol ceilings, a short chunk and a wrong digest, steps collected by a catch-up), a per-connection peer key (two connections of one actor keep their own outbox and slot; a closed room refuses messages), an operation held until the snapshot that answers its resync, commit |
+| `cargo test -p deckcraft-collab-server` | 13 unit + 18 real-socket + 5 commit + 5 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); a 20 MiB body read by the HTTP reader, an audio object replayed after a restart, a closed room refusing its sockets; 120 slides with media, LibreOffice on the commit, three sessions across a conflict, a three-client soak across compaction with a base transfer, and the big-deck soak: 322 edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base sent in 48 chunks plus its tail, a fifth participant that drops mid-chain and resumes at the missing chunk, and a commit at the head whose file reimports with every replica's values |
+| `cargo test -p deckcraft-ui-egui collab::` | 24 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets, the painter's sequence over the link disarming a one-shot pick |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
-| `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
-| `cargo test -p deckcraft-engine` | 580 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore`, `slide.restore`, `slide.transition.set`, `slide.animation.set` and `slide.animations.set` did not change single-user behaviour; `transition.set`/`set_plan`, `animation.add`/`add_plan`, `animation.set`/`timing`/`move` with their plans and `animation.options`/`painterApply` with `options_plan`/`painter_plan` (a paragraph the target lacks becomes the whole shape) leave the same values; `arrange.align`/`distribute` keep their numbers after the plan refactor |
+| `cargo test -p deckcraft-web` | 6 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
+| `cargo test -p deckcraft-engine` | 594 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore`, `slide.restore`, `slide.transition.set`, `slide.animation.set` and `slide.animations.set` did not change single-user behaviour; `transition.set`/`set_plan`, `animation.add`/`add_plan`, `animation.set`/`timing`/`move` with their plans and `animation.options`/`painterApply` with `options_plan`/`painter_plan` (a paragraph the target lacks becomes the whole shape) leave the same values; `arrange.align`/`distribute` keep their numbers after the plan refactor |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean; `xtask layers` 32 crates (`collab-web` L6), `cargo xtask wasm` 26 crates |
 | `cargo check -p deckcraft-web --target wasm32-unknown-unknown` | ok |
 | `trunk build` in `apps/deckcraft-web` (trunk 0.22.1) | ok in 4m7s (dev profile, cold): `dist/web` with `index.html`, the JS glue and a 49 MB `_bg.wasm` |
