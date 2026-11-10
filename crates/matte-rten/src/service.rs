@@ -161,10 +161,10 @@ impl Service {
         // file — so keep the failure sentence for the panel.
         let failure =
             self.download_state.take().and_then(|shared| shared.lock().ok().map(|s| s.clone())).filter(|s| matches!(s, ModelState::Failed { .. }));
-        // A download replaced whatever the worker failed to load at this path: drop the cached
-        // failure before probing, so `refresh` can report Ready instead of returning early with the
-        // old Failed state.
-        if self.worker.as_ref().is_some_and(|w| matches!(w.error(), Some(MatteError::Unavailable(_)))) {
+        // A *successful* download replaced whatever the worker failed to load at this path: drop the
+        // cached failure before probing, so `refresh` can report Ready. A failed download left the
+        // file alone, so its worker failure (and the retry path the panel offers for it) stays.
+        if failure.is_none() && self.worker.as_ref().is_some_and(|w| matches!(w.error(), Some(MatteError::Unavailable(_)))) {
             self.worker = None;
             self.failed_load_path = None;
         }
