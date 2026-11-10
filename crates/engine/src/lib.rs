@@ -454,17 +454,30 @@ pub struct MediaStatus {
 }
 
 /// Clipboard contents copied within the app.
+/// The theme a copy drew with. The colours and the map stay apart, as in
+/// `deckcraft_model::resolve::Ctx::color`: the map renames only `tx1`, `bg1`, `tx2` and `bg2`, and
+/// a direct `dk1` keeps the theme's colour.
+#[derive(Clone, Debug)]
+pub struct SourceTheme {
+    /// The theme's own colours, no colour map applied.
+    pub colors: deckcraft_color::ColorScheme,
+    pub color_map: Vec<(String, String)>,
+    pub fonts: deckcraft_model::theme::FontScheme,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
+    /// The copied placeholders as they were, by id. `shapes` holds a slide's placeholders as
+    /// regular shapes; a paste in Slide Master view takes these, which stay placeholders.
+    pub placeholders: Vec<Shape>,
     pub slides: Vec<Slide>,
     /// Media the copied shapes/slides reference.
     pub media: Vec<deckcraft_model::MediaItem>,
     pub text: Option<deckcraft_model::TextBody>,
     pub plain: String,
-    /// The copied shapes' theme colours (colour map applied) and fonts, for Paste Special ›
-    /// Keep Source Formatting.
-    pub source_theme: Option<(deckcraft_color::ColorScheme, deckcraft_model::theme::FontScheme)>,
+    /// The theme the shapes were copied under, for Paste Special › Keep Source Formatting.
+    pub source_theme: Option<SourceTheme>,
     /// How many times the shapes were pasted (each paste offsets further).
     pub pastes: u32,
 }
