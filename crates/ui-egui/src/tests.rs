@@ -905,11 +905,13 @@ fn ribbon_copy_and_cut_preserve_slide_selection_scope() {
     let id = harness.state().session.active().unwrap().doc.slides[0].id;
     {
         let app = harness.state_mut();
-        app.session.select(|_, sel| {
-            sel.slides = vec![id];
-            sel.shapes.clear();
-            sel.text = None;
-        }).unwrap();
+        app.session
+            .select(|_, sel| {
+                sel.slides = vec![id];
+                sel.shapes.clear();
+                sel.text = None;
+            })
+            .unwrap();
         // The engine deliberately does not infer slide scope from selection alone.
         app.session.execute("edit.copy", &json!({})).unwrap();
         assert!(app.session.clipboard.slides.is_empty());
@@ -969,11 +971,13 @@ fn delete_slides_requires_thumbnail_focus_and_plain_delete() {
         harness.run_steps(2);
         let app = harness.state_mut();
         let id = app.session.doc().unwrap().doc.slides[0].id;
-        app.session.select(|_, sel| {
-            sel.slides = vec![id];
-            sel.shapes.clear();
-            sel.text = None;
-        }).unwrap();
+        app.session
+            .select(|_, sel| {
+                sel.slides = vec![id];
+                sel.shapes.clear();
+                sel.text = None;
+            })
+            .unwrap();
         app.slides_focused = focused;
         harness.key_press_modifiers(modifiers, key);
         harness.run_steps(2);

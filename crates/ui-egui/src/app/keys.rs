@@ -203,8 +203,7 @@ impl SlideApp {
                                 && !d.selection.slides.is_empty()
                                 && d.selection.text.is_none()
                                 && d.selection.shapes.is_empty()
-                        })
-                    {
+                        }) {
                         self.session.execute("edit.delete", &json!({"scope": "slides"}))
                     } else {
                         self.session.key(name, mods)
