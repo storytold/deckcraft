@@ -153,12 +153,11 @@ slide indices are 0-based.
 
 The preview is synchronous (about 2 s of CPU for a segmentation mode: a desktop control-channel
 request runs it through `SlideApp::logic`, so that request can stall the app for as long as the load
-and inference take) and bounded: a frame or
-replacement over 1280 px on a side, over 64 MB of base64, or a zero side is refused from the header
-before the decoder allocates it. The matte of an unchanged frame is cached per session, so a preview
-loop with the same camera frame segments once. The desktop UI does not use the preview command for
-live frames: it calls `MatteService::process`, which composites on the caller with the worker's last
-matte (see below).
+and inference take) and bounded: a frame or replacement over 1280 px on a side, over 64 MB of
+base64, or a zero side is refused from the header before the decoder allocates it. The matte of an
+unchanged frame is cached per session, so a preview loop with the same camera frame segments once.
+`MatteService::process` (see below) is the seam a future live preview (#1837) will call; this PR
+does not feed live frames into it, so the desktop app has no live composited preview.
 
 ## Limits
 

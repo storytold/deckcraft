@@ -161,13 +161,14 @@ impl Service {
         // file — so keep the failure sentence for the panel.
         let failure =
             self.download_state.take().and_then(|shared| shared.lock().ok().map(|s| s.clone())).filter(|s| matches!(s, ModelState::Failed { .. }));
-        self.refresh();
-        // A download replaced whatever the worker failed to load at this path: give a new worker a
-        // chance on the next frame instead of keeping the old failure for ever.
-        if self.state.is_ready() && self.worker.as_ref().is_some_and(|w| matches!(w.error(), Some(MatteError::Unavailable(_)))) {
+        // A download replaced whatever the worker failed to load at this path: drop the cached
+        // failure before probing, so `refresh` can report Ready instead of returning early with the
+        // old Failed state.
+        if self.worker.as_ref().is_some_and(|w| matches!(w.error(), Some(MatteError::Unavailable(_)))) {
             self.worker = None;
             self.failed_load_path = None;
         }
+        self.refresh();
         if !self.state.is_ready()
             && let Some(failed) = failure
         {
