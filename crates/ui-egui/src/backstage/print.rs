@@ -357,7 +357,7 @@ pub(super) fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                         }
                     }
                     ui.add_space(12.0);
-                    let png = bs.file_type == "png";
+                    let png = matches!(bs.file_type, "png" | "pngAll");
                     if png {
                         ui.checkbox(&mut bs.png_transparent, "Transparent background")
                             .on_hover_text("Leave the slide background out: only what is on the slide is drawn");

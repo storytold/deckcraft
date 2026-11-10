@@ -2,7 +2,7 @@ use super::files::task;
 use super::{Backstage, Icon, Outcome, Page, RichText, Sense, SlideApp, Tokens, Ui, Value, dim, heading, json, theme, vec2};
 
 /// Save As and Change File Type: (id for [`SlideApp::export_as`], label, detail).
-pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
+pub const SAVE_TYPES: [(&str, &str, &str); 9] = [
     ("pptx", "PowerPoint Presentation (*.pptx)", "Opens in PowerPoint and other presentation apps"),
     ("deckcraft", "DeckCraft Presentation (*.deckcraft)", "DeckCraft's own format: everything is kept"),
     ("pdf", "PDF (*.pdf)", "A fixed copy that keeps its layout on any device"),
@@ -10,6 +10,8 @@ pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
     ("rtf", "Outline/RTF (*.rtf)", "The slide titles and bullet text for word processors"),
     ("png", "PNG Picture (*.png)", "The current slide as a picture"),
     ("jpeg", "JPEG Picture (*.jpg)", "The current slide as a compressed picture"),
+    ("pngAll", "PNG Pictures, all slides (*.png)", "Every slide as its own picture"),
+    ("jpegAll", "JPEG Pictures, all slides (*.jpg)", "Every slide as its own compressed picture"),
 ];
 
 /// Info page properties: (`file.properties` key, label, hint).
