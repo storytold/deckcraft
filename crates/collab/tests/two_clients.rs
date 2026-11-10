@@ -130,6 +130,7 @@ fn a_picture_is_stored_once_and_reaches_both_clients() {
         target: Target { slide: Some(slide), ..Target::default() },
         payload: Payload::PictureInsert { sha256: sha.clone(), name: "red.png".into(), rect: Some([60.0, 60.0, 80.0, 80.0]) },
         history: None,
+        preview: None,
     };
     a.client.submit(op).expect("submit picture");
     pump(&mut server, &mut a, &mut [&mut b]);
@@ -159,6 +160,7 @@ fn move_op(slide: &SlideKey, shape: &ShapeKey, x: f64) -> OpEnvelope {
         target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
         payload: Payload::ShapeMove { x, y: 100.0 },
         history: None,
+        preview: None,
     }
 }
 
@@ -205,6 +207,7 @@ fn a_structural_operation_over_a_stale_base_recovers_through_resync() {
         target: Target { slide: Some(slide), shape: Some(second), ..Target::default() },
         payload: Payload::ShapeDelete {},
         history: None,
+        preview: None,
     };
     a.client.submit(delete).expect("submit delete");
     pump(&mut server, &mut a, &mut [&mut b]);
@@ -265,6 +268,7 @@ fn media_and_format_slices_go_through_the_server() {
             target: Target { slide: Some(slide.clone()), shape: Some(shape), ..Target::default() },
             payload,
             history: None,
+            preview: None,
         };
         a.client.submit(op).expect("submit");
         pump(&mut server, &mut a, &mut [&mut b]);
@@ -308,6 +312,7 @@ fn an_align_step_reaches_both_clients_as_one_confirmed_command_and_one_undo() {
             ],
         },
         history: None,
+        preview: None,
     };
     a.client.submit(align).expect("submit align");
     pump(&mut server, &mut a, &mut [&mut b]);

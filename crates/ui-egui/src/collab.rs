@@ -122,6 +122,9 @@ pub struct CollabUi {
     /// while the document is still that revision: edits typed while the file was being built are
     /// not in the committed bytes.
     commit_mark: Option<(u64, u64)>,
+    /// Show local edits before the room confirms them (RFC §3). Off by default; forwarded to a
+    /// client attached later.
+    preview: bool,
 }
 
 impl Default for CollabUi {
@@ -151,6 +154,7 @@ impl Default for CollabUi {
             commit_state: CommitState::Idle,
             commit_notice: None,
             commit_mark: None,
+            preview: false,
         }
     }
 }
@@ -176,11 +180,37 @@ impl CollabUi {
 
     /// Attach a connected client and its transport (a desktop socket, the browser link, or a
     /// test pipe). Without one the flag is on but edits are refused: they would diverge.
-    pub fn attach(&mut self, doc: CollabDoc, transport: Box<dyn Transport>) {
+    pub fn attach(&mut self, mut doc: CollabDoc, transport: Box<dyn Transport>) {
         self.enabled = true;
         self.link = Link::Connecting;
+        doc.set_preview(self.preview);
         self.doc = Some(doc);
         self.transport = Some(transport);
+    }
+
+    /// Whether a local edit is visible before the room confirms it (RFC §3).
+    pub fn preview(&self) -> bool {
+        self.preview
+    }
+
+    /// Turn optimistic preview on or off for this session. The flag is a host setting
+    /// (`DECKCRAFT_COLLAB_PREVIEW` on the desktop); it is off unless a host turns it on, and a
+    /// client attached later inherits it.
+    pub fn set_preview(&mut self, on: bool) {
+        self.preview = on;
+        if let Some(doc) = &mut self.doc {
+            doc.set_preview(on);
+        }
+    }
+
+    /// Whether the last local edit is shown and not yet confirmed.
+    pub fn is_previewing(&self) -> bool {
+        self.doc.as_ref().is_some_and(CollabDoc::is_previewing)
+    }
+
+    /// How many local commands wait behind that edit (their payloads must not include it).
+    pub fn deferred(&self) -> usize {
+        self.doc.as_ref().map_or(0, CollabDoc::deferred)
     }
 
     /// Start the desktop WebSocket link for `file_id`. The host supplies the token from the
@@ -202,8 +232,10 @@ impl CollabUi {
         self.doc.is_some()
     }
 
-    /// Normalise and queue one local command. The document changes only when the server answers.
-    pub fn submit(&mut self, session: &deckcraft_engine::Session, cmd: &str, params: &serde_json::Value) -> Result<usize, String> {
+    /// Normalise and queue one local command. Without preview the document changes only when the
+    /// server answers; with it the document shows the edit at once and the answer settles it
+    /// (RFC §3).
+    pub fn submit(&mut self, session: &mut deckcraft_engine::Session, cmd: &str, params: &serde_json::Value) -> Result<usize, String> {
         let doc = self.doc.as_mut().ok_or_else(|| "collaboration is not connected".to_string())?;
         self.op_seq = self.op_seq.saturating_add(1);
         let actor = self.actor_id.clone().unwrap_or_else(|| "local".into());
@@ -716,11 +748,26 @@ pub fn enabled_from_env() -> bool {
     std::env::var("DECKCRAFT_COLLAB").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "false" | "no" | "off"))
 }
 
+/// Optimistic preview on the desktop: `DECKCRAFT_COLLAB_PREVIEW=1`. Off unless the host sets it;
+/// the protocol does not change for a client that leaves it off (RFC §3).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn preview_from_env() -> bool {
+    std::env::var("DECKCRAFT_COLLAB_PREVIEW").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "false" | "no" | "off"))
+}
+
+/// The browser has no process environment: a page host asks for preview the way it asks for the
+/// session (`CollabUi::set_preview`), so an unattended build leaves it off.
+#[cfg(target_arch = "wasm32")]
+pub fn preview_from_env() -> bool {
+    false
+}
+
 impl SlideApp {
     /// Turn collaboration on for this application (host feature flag). The viewer gate follows
     /// the role as soon as `welcome` arrives.
     pub fn enable_collab(&mut self) {
         self.collab.enable();
+        self.collab.set_preview(preview_from_env());
         self.sync_collab_gate();
         if let Some(st) = self.session.active() {
             self.collab.sync_keys(st.uid, st.revision, &st.doc);
@@ -1252,6 +1299,73 @@ mod tests {
         app.collab.pump(&mut app.session, 1_100);
         assert_eq!(app.session.doc().expect("doc").doc.slides[0].shapes.len(), before + 1, "the server's command created the shape");
         let _ = Payload::ShapeInsert { preset: "rect".into(), rect: [0.0; 4], text: None };
+    }
+
+    #[test]
+    fn with_preview_on_a_move_is_drawn_before_the_room_answers_and_settled_in_place() {
+        use deckcraft_collab::{CollabDoc, PipeTransport};
+        use deckcraft_collab_proto::{Applied, ClientMsg, ConfirmedCommand, OpKind, ServerMsg};
+
+        let (session, _) = deck();
+        let mut app = SlideApp::new(session, crate::Services::default());
+        let mut doc = CollabDoc::new("d");
+        let (transport, from_ui, to_ui) = PipeTransport::pair();
+        let _ = doc.connect(&app.session, "jwt", deckcraft_collab_proto::ClientInfo { name: "t".into(), ver: "1".into() });
+        // The host flag (`DECKCRAFT_COLLAB_PREVIEW` on the desktop) is set before the client is
+        // attached; `attach` forwards it.
+        app.collab.set_preview(true);
+        app.collab.attach(doc, Box::new(transport));
+        app.sync_collab_gate();
+        to_ui
+            .send(ServerMsg::Welcome(deckcraft_collab_proto::Welcome {
+                v: deckcraft_collab_proto::PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 0,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: deckcraft_collab_proto::SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: deckcraft_collab_proto::Capabilities {
+                    kinds: vec![OpKind::Command, OpKind::Structural],
+                    limits: deckcraft_collab_proto::Limits::default(),
+                    commands: vec![],
+                },
+            }))
+            .expect("welcome");
+        app.collab.pump(&mut app.session, 1_000);
+        assert!(app.collab.preview(), "the flag follows the host setting");
+
+        let x = |s: &Session| s.doc().expect("doc").doc.slides[0].shapes[0].xfrm.expect("box").x;
+        let start = x(&app.session);
+        let shape = app.session.doc().expect("doc").doc.slides[0].shapes[0].id;
+        app.run("shape.move", json!({"ids": [shape.0], "x": 300.0, "y": 110.0})).expect("queued");
+        assert_eq!(x(&app.session), start, "the engine queue holds it until the pump");
+
+        app.collab.pump(&mut app.session, 1_060);
+        assert_eq!(x(&app.session), 300.0, "the canvas draws the edit before the room answers");
+        assert!(app.collab.is_previewing());
+        let mut op = None;
+        while let Ok(msg) = from_ui.try_recv() {
+            if let ClientMsg::Op(envelope) = msg {
+                op = Some(envelope);
+            }
+        }
+        let op = op.expect("the operation reached the link");
+        assert_eq!(op.preview.as_deref(), Some(op.op_id.as_str()), "the wire marks the preview with its local id");
+        let payload = op.payload.clone();
+        to_ui
+            .send(ServerMsg::Applied(Applied {
+                op_id: op.op_id.clone(),
+                version: 1,
+                actor_id: "alice".into(),
+                command: Some(ConfirmedCommand { cmd: payload.command().into(), target: op.target.clone(), payload }),
+                delta: Default::default(),
+            }))
+            .expect("applied");
+        app.collab.pump(&mut app.session, 1_100);
+        assert!(!app.collab.is_previewing(), "the answer settles the preview");
+        assert_eq!(x(&app.session), 300.0, "and the move is not applied a second time");
+        assert_eq!(app.collab.version(), 1);
     }
 
     #[test]

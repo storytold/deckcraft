@@ -266,6 +266,7 @@ impl Adapter {
             target: Target { slide, shape, shapes, ..Target::default() },
             payload,
             history: Some(HistoryAction::Undo { op_id: step.op_id.clone() }),
+            preview: None,
         })
     }
 
@@ -286,6 +287,7 @@ impl Adapter {
             target: Target { slide, shape, shapes, ..Target::default() },
             payload,
             history: Some(HistoryAction::Redo { op_id: step.op_id.clone() }),
+            preview: None,
         })
     }
 
@@ -2387,7 +2389,7 @@ mod tests {
     }
 
     fn op(kind: OpKind, base: u64, target: Target, payload: Payload) -> OpEnvelope {
-        OpEnvelope { op_id: "op-1".into(), doc: "d".into(), base_version: base, kind, target, payload, history: None }
+        OpEnvelope { op_id: "op-1".into(), doc: "d".into(), base_version: base, kind, target, payload, history: None, preview: None }
     }
 
     /// The same deck with a 2×2 table as the third shape, and its top-left cell seeded.
@@ -4665,6 +4667,7 @@ mod tests {
             target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
             payload,
             history: None,
+            preview: None,
         }
     }
 

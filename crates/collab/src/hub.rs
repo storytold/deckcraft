@@ -481,6 +481,7 @@ mod tests {
             target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
             payload: Payload::ShapeMove { x, y: 100.0 },
             history: None,
+            preview: None,
         }
     }
 
@@ -685,6 +686,7 @@ mod tests {
             target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
             payload: Payload::TextSet { text: "AB".into(), cell: None },
             history: None,
+            preview: None,
         };
         hub.receive("alice", ClientMsg::Op(set)).expect("set");
         let _ = hub.poll("alice");
@@ -698,6 +700,7 @@ mod tests {
                 target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
                 payload: Payload::TextInsert { at: 1, text: ch.into(), cell: None },
                 history: None,
+                preview: None,
             };
             hub.receive(if id == "a" { "alice" } else { "bob" }, ClientMsg::Op(op)).expect("insert");
             let _ = hub.poll("alice");
@@ -723,7 +726,7 @@ mod tests {
         let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
         a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
         b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
-        a.submit(&sa, "shape.insert", &json!({"preset": "rect", "rect": [50, 50, 40, 30], "text": "hi"}), "ins-1").expect("submit");
+        a.submit(&mut sa, "shape.insert", &json!({"preset": "rect", "rect": [50, 50, 40, 30], "text": "hi"}), "ins-1").expect("submit");
         while let Some(msg) = a.next_outgoing() {
             if let ClientMsg::Op(op) = msg {
                 hub.receive("alice", ClientMsg::Op(op)).expect("receive");
@@ -753,7 +756,7 @@ mod tests {
         b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
 
         let shape = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
-        a.submit(&sa, "shape.move", &json!({"ids": [shape], "x": 250.0, "y": 100.0}), "a-1").expect("submit");
+        a.submit(&mut sa, "shape.move", &json!({"ids": [shape], "x": 250.0, "y": 100.0}), "a-1").expect("submit");
         while let Some(msg) = a.next_outgoing() {
             if let ClientMsg::Op(op) = msg {
                 hub.receive("alice", ClientMsg::Op(op)).expect("receive");
@@ -769,7 +772,7 @@ mod tests {
 
         // A structural operation is not applied locally until the server answers.
         let before = sa.doc().expect("doc").doc.slides.len();
-        a.submit(&sa, "slide.new", &json!({"layout": "blank", "at": 1}), "a-2").expect("submit slide");
+        a.submit(&mut sa, "slide.new", &json!({"layout": "blank", "at": 1}), "a-2").expect("submit slide");
         assert_eq!(sa.doc().expect("doc").doc.slides.len(), before, "nothing applied before applied");
         while let Some(msg) = a.next_outgoing() {
             if let ClientMsg::Op(op) = msg {
@@ -828,7 +831,7 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            a.submit(&sa, cmd, &params, &format!("a-{n}")).expect("submit");
+            a.submit(&mut sa, cmd, &params, &format!("a-{n}")).expect("submit");
             send_all(&mut hub, &mut a, "alice");
             deliver(&mut hub, &mut a, &mut sa, "alice");
             deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -931,7 +934,7 @@ mod tests {
 
         // A foreign animation edit after the step makes the undo a conflict instead of an overwrite.
         step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.timing", &json!({"index": 0, "delay": 250}), "a-5");
-        b.submit(&sb, "animation.set", &json!({"effect": "pulse", "class": "emphasis", "ids": [second]}), "b-6").expect("bob submits");
+        b.submit(&mut sb, "animation.set", &json!({"effect": "pulse", "class": "emphasis", "ids": [second]}), "b-6").expect("bob submits");
         send_all(&mut hub, &mut b, "bob");
         deliver(&mut hub, &mut b, &mut sb, "bob");
         deliver(&mut hub, &mut a, &mut sa, "alice");
@@ -1061,7 +1064,7 @@ mod tests {
 
         // Alice embeds a face: the bytes go to the media channel, the operation names the digest.
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        a.submit(&sa, "font.create", &json!({"typeface": "Deck Test Face", "data": data}), "f-1").expect("submit font");
+        a.submit(&mut sa, "font.create", &json!({"typeface": "Deck Test Face", "data": data}), "f-1").expect("submit font");
         for (digest, upload) in a.take_uploads() {
             assert_eq!(hub.put_media("DeckFace.ttf", upload.as_ref().clone()).expect("upload"), digest);
         }
@@ -1076,7 +1079,7 @@ mod tests {
         assert_eq!((a.version(), b.version()), (1, 1));
 
         // A descriptor step is the same whole value on both replicas.
-        a.submit(&sa, "font.set", &json!({"typeface": "Deck Test Face", "panose": "020B0604020202020204", "charset": 204}), "f-2")
+        a.submit(&mut sa, "font.set", &json!({"typeface": "Deck Test Face", "panose": "020B0604020202020204", "charset": 204}), "f-2")
             .expect("submit the descriptors");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
@@ -1166,7 +1169,7 @@ mod tests {
         ];
         for (n, (cmd, params)) in steps.iter().enumerate() {
             let id = format!("a-{n}");
-            a.submit(&sa, cmd, params, &id).expect("submit");
+            a.submit(&mut sa, cmd, params, &id).expect("submit");
             send_all(&mut hub, &mut a, "alice");
             deliver(&mut hub, &mut a, &mut sa, "alice");
             deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -1217,7 +1220,7 @@ mod tests {
 
         // One style-option change is one whole-table final value, so both replicas end with the
         // same six flags even though only two were named.
-        a.submit(&sa, "table.options", &json!({"id": table, "bandedColumns": true, "totalRow": true}), "a-1").expect("submit");
+        a.submit(&mut sa, "table.options", &json!({"id": table, "bandedColumns": true, "totalRow": true}), "a-1").expect("submit");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -1275,7 +1278,7 @@ mod tests {
         let _ = v.connect(&sv, "jv", ClientInfo { name: "v".into(), ver: "1".into() });
         v.on_msg(&mut sv, ServerMsg::Welcome(welcome_v));
         let group = sv.doc().expect("doc").doc.slides[0].shapes[0].id;
-        assert_eq!(v.submit(&sv, "smartArt.toShapes", &json!({"id": group.0}), "v-1"), Err(crate::LocalError::ReadOnly));
+        assert_eq!(v.submit(&mut sv, "smartArt.toShapes", &json!({"id": group.0}), "v-1"), Err(crate::LocalError::ReadOnly));
 
         // Even a hand-built structural conversion never reaches the engine, and the version and
         // the document stay put.
@@ -1289,6 +1292,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::SmartArtToShapes {},
             history: None,
+            preview: None,
         };
         hub.receive("victor", ClientMsg::Op(step)).expect("receive");
         match hub.poll("victor").expect("answer") {
@@ -1327,7 +1331,7 @@ mod tests {
         let group = sa.doc().expect("doc").doc.slides[0].shapes[0].id;
         let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
         let params = json!({"id": group.0, "index": 0, "sha256": sha, "name": "red.png", "place": {"crop": [0.1, 0.0, 0.2, 0.0]}});
-        a.submit(&sa, "smartArt.picture", &params, "a-1").expect("submit the picture");
+        a.submit(&mut sa, "smartArt.picture", &params, "a-1").expect("submit the picture");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -1348,6 +1352,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::SmartArtPicture { node: 0, media: None },
             history: None,
+            preview: None,
         };
         // The picture's broadcast is still in the viewer's outbox; drain it first.
         while hub.poll("victor").is_some() {}
@@ -1391,7 +1396,7 @@ mod tests {
         b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
         let group = sa.doc().expect("doc").doc.slides[0].shapes[0].id;
         let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
-        a.submit(&sa, "smartArt.toText", &json!({"id": group.0}), "a-1").expect("submit toText");
+        a.submit(&mut sa, "smartArt.toText", &json!({"id": group.0}), "a-1").expect("submit toText");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -1427,7 +1432,7 @@ mod tests {
         b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
         let group = sa.doc().expect("doc").doc.slides[0].shapes[0].id;
         let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
-        a.submit(&sa, "smartArt.toShapes", &json!({"id": group.0}), "a-1").expect("submit toShapes");
+        a.submit(&mut sa, "smartArt.toShapes", &json!({"id": group.0}), "a-1").expect("submit toShapes");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -1459,7 +1464,7 @@ mod tests {
         a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
         b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
         let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
-        a.submit(&sa, "smartArt.fromText", &json!({"kind": "process"}), "a-1").expect("submit fromText");
+        a.submit(&mut sa, "smartArt.fromText", &json!({"kind": "process"}), "a-1").expect("submit fromText");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -1500,11 +1505,11 @@ mod tests {
         let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
 
         // One command becomes one whole diagram value; both replicas end with the same graphic.
-        a.submit(&sa, "smartArt.layout", &json!({"id": group, "kind": "hierarchy"}), "a-1").expect("submit");
+        a.submit(&mut sa, "smartArt.layout", &json!({"id": group, "kind": "hierarchy"}), "a-1").expect("submit");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
-        a.submit(&sa, "smartArt.style", &json!({"id": group, "style": "intense"}), "a-2").expect("submit the style");
+        a.submit(&mut sa, "smartArt.style", &json!({"id": group, "style": "intense"}), "a-2").expect("submit the style");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
@@ -1557,11 +1562,11 @@ mod tests {
         let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
 
         // One command becomes one whole chart value; both replicas end with the same chart.
-        a.submit(&sa, "chart.type", &json!({"id": chart, "type": "pie"}), "a-1").expect("submit the type");
+        a.submit(&mut sa, "chart.type", &json!({"id": chart, "type": "pie"}), "a-1").expect("submit the type");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
         deliver(&mut hub, &mut b, &mut sb, "bob");
-        a.submit(&sa, "chart.data", &json!({"id": chart, "categories": ["A", "B"], "series": [{"name": "S", "values": [1, 2]}]}), "a-2")
+        a.submit(&mut sa, "chart.data", &json!({"id": chart, "categories": ["A", "B"], "series": [{"name": "S", "values": [1, 2]}]}), "a-2")
             .expect("submit the data");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
@@ -1600,7 +1605,7 @@ mod tests {
         let count = sa.doc().expect("doc").doc.slides[0].shapes.len();
 
         // One command becomes one whole diagram value; both replicas create the same graphic.
-        a.submit(&sa, "insert.smartArt", &json!({"kind": "hierarchy", "items": ["CEO", "\tCTO", "\t\tDev"], "rect": [40, 50, 400, 300]}), "a-1")
+        a.submit(&mut sa, "insert.smartArt", &json!({"kind": "hierarchy", "items": ["CEO", "\tCTO", "\t\tDev"], "rect": [40, 50, 400, 300]}), "a-1")
             .expect("submit the insertion");
         send_all(&mut hub, &mut a, "alice");
         deliver(&mut hub, &mut a, &mut sa, "alice");
@@ -1640,7 +1645,7 @@ mod tests {
         let mut v = CollabDoc::new("d");
         let _ = v.connect(&sv, "jv", ClientInfo { name: "v".into(), ver: "1".into() });
         v.on_msg(&mut sv, ServerMsg::Welcome(welcome_v));
-        assert_eq!(v.submit(&sv, "insert.smartArt", &json!({"kind": "list", "items": ["A"]}), "v-1"), Err(crate::LocalError::ReadOnly));
+        assert_eq!(v.submit(&mut sv, "insert.smartArt", &json!({"kind": "list", "items": ["A"]}), "v-1"), Err(crate::LocalError::ReadOnly));
 
         // Even a hand-built operation never reaches the engine, and the version does not move.
         let (slide, _shape) = keys_of(&hub);
@@ -1653,6 +1658,7 @@ mod tests {
             target: Target { slide: Some(slide), ..Target::default() },
             payload: Payload::SmartArtInsert { diagram: json!({"kind": "list", "nodes": [{"text": "A", "level": 0}]}), rect: None },
             history: None,
+            preview: None,
         };
         hub.receive("victor", ClientMsg::Op(step)).expect("receive");
         match hub.poll("victor").expect("answer") {

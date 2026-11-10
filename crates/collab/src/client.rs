@@ -599,6 +599,15 @@ impl ClientSession {
     pub fn rebuilding(&self) -> bool {
         self.pending_snapshot.is_some()
     }
+
+    /// Put the state machine back to the version the replica actually holds and ask for the tail
+    /// from there. Used when a local preview is abandoned: the steps the room accepted above this
+    /// version are replayed from the tail instead of being skipped as "already seen".
+    pub fn rewind_replica(&mut self, version: u64) {
+        self.version = version;
+        self.replica_version = version;
+        self.resync_wanted = true;
+    }
 }
 
 #[cfg(test)]
@@ -615,6 +624,7 @@ mod tests {
             target: Target::default(),
             payload: Payload::ShapeMove { x: 0.0, y: 0.0 },
             history: None,
+            preview: None,
         }
     }
 

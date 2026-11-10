@@ -2,8 +2,11 @@
 //! apply the authoritative commands the server broadcasts.
 //!
 //! The client never guesses the result of an operation: a local edit changes the document only
-//! when `applied` comes back. That keeps every replica on the server's order and makes a refused
-//! operation a no-op instead of a rollback (RFC §10; optimistic previews are a later slice).
+//! when `applied` comes back, unless the host has turned optimistic preview on (RFC §3). A preview
+//! is one operation applied at submit, marked with a local id, settled by its `applied` and rolled
+//! back by a refusal; while it is outstanding every later local command waits, so no payload is
+//! normalised against an edit only this replica has, and a step from another participant ends the
+//! preview with a resync rather than mixing the two orders (RFC §10).
 //!
 //! Keys are derived, not transferred: both the server's adapter and this one walk the same
 //! document in the same order with the same `fileId` prefix, so they issue the same session keys
@@ -105,6 +108,39 @@ pub struct CollabDoc {
     queries: std::collections::VecDeque<ClientMsg>,
     /// Answers to this replica's queries, in arrival order.
     query_answers: std::collections::VecDeque<QueryAnswer>,
+    /// Whether a local edit is shown before the room confirms it (RFC §3). Off by default, so a
+    /// replica that has not opted in behaves exactly as before.
+    preview_enabled: bool,
+    /// The one operation this replica shows locally and the room has not confirmed yet. While it
+    /// is here, later local commands wait in `deferred`: no payload is ever normalised against an
+    /// edit only this replica has (RFC §3, "optimistic preview").
+    preview: Option<Preview>,
+    /// Local commands that arrived while a preview was outstanding, in order. They are normalised
+    /// against confirmed state only, after the preview settles or rolls back.
+    deferred: std::collections::VecDeque<Deferred>,
+}
+
+/// The most local commands held back behind one preview. A user typing faster than the room
+/// answers is bounded here rather than growing the queue without limit.
+const MAX_DEFERRED: usize = 64;
+
+/// One operation shown locally before its `applied`: the version it was previewed on, the model
+/// as it was, and the exact operation, so the authoritative answer can be compared with it.
+#[derive(Clone, Debug)]
+struct Preview {
+    op_id: String,
+    before: Arc<Presentation>,
+    payload: Payload,
+    target: Target,
+}
+
+/// A local command held back by an outstanding preview, with its wire parameters already prepared
+/// (media digest in place of bytes) and its operation id, which is the caller's per command.
+#[derive(Clone, Debug)]
+struct Deferred {
+    cmd: String,
+    params: Value,
+    op_id: String,
 }
 
 /// One answer to a collaborative query: the authoritative head it ran against and either the
@@ -115,6 +151,46 @@ pub struct QueryAnswer {
     pub version: u64,
     pub result: Option<Value>,
     pub error: Option<String>,
+}
+
+/// Whether one operation may be shown locally before the room confirms it.
+///
+/// Only an operation whose result is a final value the server will not rewrite qualifies: a text
+/// insert or delete carries character offsets the room rebases, a table cell address moves under a
+/// row/column edit, and a structural step decides ids and places on the server. `SmartArtSet`
+/// regenerates child shapes with fresh ids and `FontCreate` installs a face in the session's font
+/// database, so neither is a pure document value either.
+fn previewable(op: &OpEnvelope) -> bool {
+    if op.kind != OpKind::Command || op.history.is_some() {
+        return false;
+    }
+    match &op.payload {
+        Payload::ShapeMove { .. }
+        | Payload::ShapeSetBounds { .. }
+        | Payload::ShapesSetBounds { .. }
+        | Payload::ShapeFill { .. }
+        | Payload::ShapeLine { .. }
+        | Payload::SlideTransition { .. }
+        | Payload::ShapeAnimations { .. }
+        | Payload::SlideAnimations { .. }
+        | Payload::Model3dCamera { .. }
+        | Payload::Model3dScene { .. }
+        | Payload::ChartSet { .. }
+        | Payload::TableStyle { .. }
+        | Payload::TableOptions { .. }
+        | Payload::TableColumnWidth { .. }
+        | Payload::TableRowHeight { .. }
+        | Payload::NotesSet { .. }
+        | Payload::FontSet { .. }
+        | Payload::FontRemove { .. } => true,
+        // A whole body (no cell, range or caret) is a final value: formatting changes runs, not
+        // the character addresses the room rebases.
+        Payload::FormatSet { addresses, .. } => {
+            addresses.iter().all(|address| address.cell.is_none() && address.range.is_none() && address.caret.is_none())
+        }
+        Payload::TextSet { cell, .. } => cell.is_none(),
+        _ => false,
+    }
 }
 
 impl CollabDoc {
@@ -132,6 +208,9 @@ impl CollabDoc {
             uploads: std::collections::VecDeque::new(),
             queries: std::collections::VecDeque::new(),
             query_answers: std::collections::VecDeque::new(),
+            preview_enabled: false,
+            preview: None,
+            deferred: std::collections::VecDeque::new(),
         }
     }
 
@@ -175,12 +254,15 @@ impl CollabDoc {
 
     pub fn next_outgoing(&mut self) -> Option<ClientMsg> {
         // Control messages wait for the handshake, then go before operations. A query may come
-        // from a viewer, so it is taken before the write-gated undo/redo queue.
+        // from a viewer, so it is taken before the write-gated undo/redo queue. An undo/redo while
+        // a preview is outstanding waits too: the room has not confirmed the edit the user's
+        // history would move past.
         if self.client.link() == crate::Link::Live {
             if let Some(msg) = self.queries.pop_front() {
                 return Some(msg);
             }
-            if matches!(self.client.role(), Some(role) if role.may_write())
+            if self.preview.is_none()
+                && matches!(self.client.role(), Some(role) if role.may_write())
                 && let Some(msg) = self.control.pop_front()
             {
                 return Some(msg);
@@ -259,42 +341,169 @@ impl CollabDoc {
         self.last_apply_error.as_deref()
     }
 
-    /// Normalise a local UI command and queue its operations. Nothing is applied locally: the
-    /// document changes when the server's `applied` comes back.
-    pub fn submit(&mut self, session: &Session, cmd: &str, params: &Value, op_id: &str) -> Result<usize, LocalError> {
-        let st = session.active().ok_or(LocalError::NoDocument)?;
-        // Pictures, audio, video and 3-D models travel in two pieces: the bytes to the media
-        // channel, the digest on the operation. The author always has the bytes, so the confirmed
-        // command can run here too.
-        let mut wire;
+    /// Show local edits before the room confirms them (RFC §3). Off by default; a replica with
+    /// preview off behaves exactly as before, and the protocol needs no field from such a client.
+    pub fn set_preview(&mut self, on: bool) {
+        self.preview_enabled = on;
+    }
+
+    pub fn preview_enabled(&self) -> bool {
+        self.preview_enabled
+    }
+
+    /// Whether one local edit is currently shown and not yet confirmed.
+    pub fn is_previewing(&self) -> bool {
+        self.preview.is_some()
+    }
+
+    /// How many local commands are waiting behind that preview.
+    pub fn deferred(&self) -> usize {
+        self.deferred.len()
+    }
+
+    /// Normalise a local UI command and queue its operations.
+    ///
+    /// With preview off nothing is applied locally: the document changes when the server's
+    /// `applied` comes back. With preview on and the room quiet, one operation whose payload the
+    /// server will not rewrite is applied at once, marked with its local id, and settled or rolled
+    /// back by the answer; every later command waits until then, so it is normalised against
+    /// confirmed state and never reads an edit only this replica has.
+    pub fn submit(&mut self, session: &mut Session, cmd: &str, params: &Value, op_id: &str) -> Result<usize, LocalError> {
+        if self.client.role().is_some_and(|role| !role.may_write()) {
+            return Err(LocalError::ReadOnly);
+        }
+        if session.active().is_none() {
+            return Err(LocalError::NoDocument);
+        }
+        let params = self.prepare_media(cmd, params)?;
+        if self.preview_enabled && (self.preview.is_some() || !self.deferred.is_empty()) {
+            if self.deferred.len() >= MAX_DEFERRED {
+                return Err(LocalError::Busy);
+            }
+            self.deferred.push_back(Deferred { cmd: cmd.to_string(), params: params.into_owned(), op_id: op_id.to_string() });
+            return Ok(0);
+        }
+        self.submit_prepared(session, cmd, &params, op_id)
+    }
+
+    /// Pictures, audio, video, 3-D models and fonts travel in two pieces: the bytes to the media
+    /// channel, the digest on the operation. The author always has the bytes, so the confirmed
+    /// command can run here too.
+    fn prepare_media<'a>(&mut self, cmd: &str, params: &'a Value) -> Result<std::borrow::Cow<'a, Value>, LocalError> {
         let carries_media = matches!(cmd, "insert.picture" | "insert.audio" | "insert.video" | "insert.model3d" | "font.create")
             || (cmd == "smartArt.picture" && (params.get("data").is_some() || params.get("path").is_some()));
-        let params = if carries_media {
-            let (name, bytes) = media_bytes(params, cmd)?;
-            let sha = self.adapter.media_mut().put(&name, bytes).map_err(|e| LocalError::BadParams(e.message))?;
-            if let Some(stored) = self.adapter.media().get(&sha) {
-                self.uploads.push_back((sha.clone(), stored));
-            }
-            wire = params.clone();
-            if let Some(object) = wire.as_object_mut() {
-                object.remove("data");
-                object.remove("path");
-            }
-            wire["sha256"] = Value::String(sha);
-            wire["name"] = Value::String(name);
-            if cmd == "font.create" && params.get("name").is_none() {
-                let typeface = params.get("typeface").and_then(Value::as_str).unwrap_or("font");
-                wire["name"] = Value::String(format!("{typeface}.ttf"));
-            }
-            &wire
-        } else {
-            params
+        if !carries_media {
+            return Ok(std::borrow::Cow::Borrowed(params));
+        }
+        let (name, bytes) = media_bytes(params, cmd)?;
+        let sha = self.adapter.media_mut().put(&name, bytes).map_err(|e| LocalError::BadParams(e.message))?;
+        if let Some(stored) = self.adapter.media().get(&sha) {
+            self.uploads.push_back((sha.clone(), stored));
+        }
+        let mut wire = params.clone();
+        if let Some(object) = wire.as_object_mut() {
+            object.remove("data");
+            object.remove("path");
+        }
+        wire["sha256"] = Value::String(sha);
+        wire["name"] = Value::String(name);
+        if cmd == "font.create" && params.get("name").is_none() {
+            let typeface = params.get("typeface").and_then(Value::as_str).unwrap_or("font");
+            wire["name"] = Value::String(format!("{typeface}.ttf"));
+        }
+        Ok(std::borrow::Cow::Owned(wire))
+    }
+
+    /// Normalise prepared parameters, queue the operations, and — when the room is quiet and the
+    /// replica agrees with it on the version — show one of them locally.
+    fn submit_prepared(&mut self, session: &mut Session, cmd: &str, params: &Value, op_id: &str) -> Result<usize, LocalError> {
+        let mut ops = {
+            let st = session.active().ok_or(LocalError::NoDocument)?;
+            normalize_with_painter(self.adapter.keys(), st, session.anim_painter.as_ref(), cmd, params, op_id, &self.file_id)?
         };
-        let ops = normalize_with_painter(self.adapter.keys(), st, session.anim_painter.as_ref(), cmd, params, op_id, &self.file_id)?;
+        let preview_now = self.preview_enabled
+            && self.preview.is_none()
+            && self.deferred.is_empty()
+            && self.client.link() == crate::Link::Live
+            && self.client.role().is_some_and(|role| role.may_write())
+            && self.client.in_flight() == 0
+            && self.client.queued() == 0
+            && self.version == self.client.version()
+            && ops.len() == 1
+            && previewable(&ops[0]);
+        if preview_now {
+            // The wire carries the sender's local id; the room never stores or echoes it, and an
+            // operation without one is ordered and deduped the same way (RFC §3).
+            ops[0].preview = Some(ops[0].op_id.clone());
+        }
         for op in &ops {
             self.client.submit(op.clone())?;
         }
+        if preview_now {
+            self.start_preview(session, &ops[0]);
+        }
         Ok(ops.len())
+    }
+
+    /// Apply one queued operation to the local model before the room answers. The model as it was
+    /// is kept as an `Arc` snapshot: the engine's edits are copy-on-write, so this is one pointer
+    /// copy and restoring it is exact.
+    fn start_preview(&mut self, session: &mut Session, op: &OpEnvelope) {
+        let Some(before) = session.active().map(|st| st.doc.clone()) else { return };
+        match self.adapter.apply_confirmed(session, self.version, "", op) {
+            Ok(_) => {
+                self.preview = Some(Preview { op_id: op.op_id.clone(), before, payload: op.payload.clone(), target: op.target.clone() });
+                self.last_apply_error = None;
+            }
+            Err(e) => {
+                // This replica cannot run it (it may be behind in a way the version does not show),
+                // but the room may still accept it: it stays queued and lands on `applied`.
+                self.last_apply_error = Some(format!("preview: {}", e.message));
+            }
+        }
+    }
+
+    /// Put the replica back to the model the preview replaced. The revision moves so every cache
+    /// in the UI sees a new document, as `edit` does.
+    fn restore_before(&self, session: &mut Session, before: Arc<Presentation>) {
+        if let Some(st) = session.active_mut() {
+            st.doc = before;
+            st.revision = st.revision.saturating_add(1);
+        }
+    }
+
+    /// End the outstanding preview, restoring the model when asked, and release the commands that
+    /// waited behind it.
+    fn end_preview(&mut self, session: &mut Session, restore: bool) {
+        if let Some(preview) = self.preview.take()
+            && restore
+        {
+            self.restore_before(session, preview.before);
+        }
+    }
+
+    /// Drop what waited behind a preview the room made meaningless (a resync). The commands never
+    /// left this replica; normalising them against a rebuilt document could put them somewhere the
+    /// user did not mean, so they are reported rather than guessed at.
+    fn drop_deferred(&mut self) -> usize {
+        let dropped = self.deferred.len();
+        self.deferred.clear();
+        if dropped > 0 {
+            self.last_apply_error =
+                Some(format!("the document was resynchronised; {dropped} queued edit{} were not sent", if dropped == 1 { "" } else { "s" }));
+        }
+        dropped
+    }
+
+    /// Normalise and send the commands that waited behind a preview, one at a time: a new preview
+    /// pauses the rest, so every payload is normalised against confirmed state.
+    fn drain_deferred(&mut self, session: &mut Session) {
+        while self.preview.is_none() && self.version == self.client.version() && !self.deferred.is_empty() {
+            let Some(next) = self.deferred.pop_front() else { break };
+            if let Err(e) = self.submit_prepared(session, &next.cmd, &next.params, &next.op_id) {
+                self.last_apply_error = Some(e.to_string());
+            }
+        }
     }
 
     /// Apply one authoritative command and move the local version. `false` when the command was
@@ -331,6 +540,7 @@ impl CollabDoc {
             target: command.target.clone(),
             payload: command.payload.clone(),
             history: None,
+            preview: None,
         };
         match self.adapter.apply_confirmed(session, self.version, actor, &op) {
             Ok(_) => {
@@ -353,7 +563,38 @@ impl CollabDoc {
     /// snapshot that arrives with `chunks` changes nothing here yet.
     pub fn on_msg(&mut self, session: &mut Session, msg: ServerMsg) -> Effect {
         let echo = msg.clone();
+        // A step that is not the one this replica is showing, landing while a preview is
+        // outstanding, means the two replicas hold the same operations in different orders. Put
+        // the preview back, forget the commands that waited behind it and ask for the tail from
+        // the version the replica really has: the alternative is patching the difference by
+        // guessing (RFC §3).
+        if let ServerMsg::Applied(applied) = &echo
+            && self.preview.as_ref().is_some_and(|preview| preview.op_id != applied.op_id)
+        {
+            self.end_preview(session, true);
+            self.drop_deferred();
+            let _ = self.client.on_msg(msg);
+            self.client.rewind_replica(self.version);
+            // The replica is now behind the tail it just asked for: the host must treat this like
+            // any other rollback, not like a settled step.
+            return Effect::Rollback;
+        }
         let effect = self.client.on_msg(msg);
+        // A message that replaces or invalidates the replica ends a preview first; a snapshot
+        // carrying a base then installs it, and the tail is replayed onto the fresh document.
+        let invalidates = match &echo {
+            ServerMsg::Welcome(_) | ServerMsg::Error(_) | ServerMsg::Snapshot(_) => true,
+            ServerMsg::Rejected(rejected) => self.preview.as_ref().is_some_and(|preview| preview.op_id == rejected.op_id),
+            _ => false,
+        };
+        if invalidates {
+            self.end_preview(session, true);
+        }
+        if effect == Effect::Rollback && self.preview.is_some() {
+            // The state machine has given up on the ordered stream (a gap, a fatal error): the
+            // preview cannot be settled any more, so put it back before the resync lands.
+            self.end_preview(session, true);
+        }
         if let Some(ready) = self.client.take_ready_base() {
             self.install_base(session, ready);
         }
@@ -402,6 +643,7 @@ impl CollabDoc {
             }
             _ => {}
         }
+        self.drain_deferred(session);
         effect
     }
 
@@ -463,7 +705,23 @@ impl CollabDoc {
         Ok(())
     }
 
+    /// Apply one confirmed step. When it is the operation this replica shows, the local model is
+    /// already its result: only the version moves (RFC §3). If the room ran a different form — a
+    /// rebase this client did not expect — the preview is put back and the authoritative command
+    /// runs, so the replica ends where a client without preview would have been.
     fn apply_broadcast(&mut self, session: &mut Session, applied: &Applied) {
+        if self.preview.as_ref().is_some_and(|preview| preview.op_id == applied.op_id)
+            && let Some(preview) = self.preview.take()
+        {
+            let settled = applied.version == self.version + 1
+                && applied.command.as_ref().is_some_and(|command| command.payload == preview.payload && command.target == preview.target);
+            if settled {
+                self.version = applied.version;
+                self.last_apply_error = None;
+                return;
+            }
+            self.restore_before(session, preview.before);
+        }
         if let Some(command) = &applied.command {
             let _ = self.apply_command(session, applied.version, &applied.actor_id, command);
         } else if applied.version == self.version + 1 {
@@ -503,6 +761,7 @@ pub fn normalize_with_painter(
             target: Target::default(),
             payload,
             history: None,
+            preview: None,
         }]);
     }
     if st.selection.target != EngineTarget::Slides {
@@ -518,6 +777,7 @@ pub fn normalize_with_painter(
         target,
         payload,
         history: None,
+        preview: None,
     };
     // A whole-value object — the rest of the table surface, a SmartArt graphic and a chart — is one
     // final value per command, every address resolved from this replica's selection, so the
@@ -1178,6 +1438,7 @@ fn chart_insert(p: &Value, slide_key: Option<SlideKey>, op_id: &str, doc: &str) 
         target: Target { slide: slide_key, ..Target::default() },
         payload: Payload::ChartInsert { chart, rect },
         history: None,
+        preview: None,
     })
 }
 
@@ -1214,6 +1475,7 @@ fn smartart_insert(p: &Value, slide_key: Option<SlideKey>, op_id: &str, doc: &st
         target: Target { slide: slide_key, ..Target::default() },
         payload: Payload::SmartArtInsert { diagram, rect },
         history: None,
+        preview: None,
     })
 }
 
@@ -1277,6 +1539,7 @@ fn smartart_picture(
         target: Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, group.id)?), ..Target::default() },
         payload: Payload::SmartArtPicture { node, media },
         history: None,
+        preview: None,
     })
 }
 
@@ -1305,6 +1568,7 @@ fn smartart_conversion(
             target: Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
             payload,
             history: None,
+            preview: None,
         })
     };
     match cmd {
@@ -2133,6 +2397,7 @@ pub fn kind_of(payload: &Payload) -> OpKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deckcraft_collab_proto::Role;
     use deckcraft_engine::{Session, TextSel};
     use serde_json::json;
 
@@ -3157,7 +3422,8 @@ mod tests {
         client.on_msg(&mut s, welcome(0));
         let bytes = font_file();
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        let sent = client.submit(&s, "font.create", &json!({"typeface": "Deck Test Face", "face": "bold", "data": data}), "op-f").expect("submit");
+        let sent =
+            client.submit(&mut s, "font.create", &json!({"typeface": "Deck Test Face", "face": "bold", "data": data}), "op-f").expect("submit");
         assert_eq!(sent, 1);
         let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
         match &op.payload {
@@ -3319,7 +3585,7 @@ mod tests {
         client.on_msg(&mut s, welcome(0));
         let bytes = png();
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        let sent = client.submit(&s, "insert.picture", &json!({"name": "red.png", "data": data}), "op-1").expect("submit");
+        let sent = client.submit(&mut s, "insert.picture", &json!({"name": "red.png", "data": data}), "op-1").expect("submit");
         assert_eq!(sent, 1);
         let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
         match &op.payload {
@@ -3345,7 +3611,7 @@ mod tests {
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
         let sent = client
             .submit(
-                &s,
+                &mut s,
                 "smartArt.picture",
                 &json!({"id": group.0, "index": 0, "name": "red.png", "data": data, "place": {"crop": [0.1, 0.0, 0.2, 0.0]}}),
                 "op-1",
@@ -3372,7 +3638,7 @@ mod tests {
         }
         viewer.on_msg(&mut s, w);
         let sha = crate::media::sha256_hex(&png());
-        assert_eq!(viewer.submit(&s, "smartArt.picture", &json!({"id": group.0, "index": 0, "sha256": sha}), "v-1"), Err(LocalError::ReadOnly));
+        assert_eq!(viewer.submit(&mut s, "smartArt.picture", &json!({"id": group.0, "index": 0, "sha256": sha}), "v-1"), Err(LocalError::ReadOnly));
     }
 
     #[test]
@@ -3422,7 +3688,7 @@ mod tests {
             welcome.role = deckcraft_collab_proto::Role::Viewer;
         }
         viewer.on_msg(&mut s, msg);
-        assert_eq!(viewer.submit(&s, "model3d.camera", &view, "v-1"), Err(LocalError::ReadOnly));
+        assert_eq!(viewer.submit(&mut s, "model3d.camera", &view, "v-1"), Err(LocalError::ReadOnly));
     }
 
     #[test]
@@ -3491,7 +3757,7 @@ mod tests {
             welcome.role = deckcraft_collab_proto::Role::Viewer;
         }
         viewer.on_msg(&mut s, msg);
-        assert_eq!(viewer.submit(&s, "model3d.scene", &value, "v-1"), Err(LocalError::ReadOnly));
+        assert_eq!(viewer.submit(&mut s, "model3d.scene", &value, "v-1"), Err(LocalError::ReadOnly));
     }
 
     #[test]
@@ -3502,7 +3768,7 @@ mod tests {
         client.on_msg(&mut s, welcome(0));
         let bytes = mp4();
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        client.submit(&s, "insert.video", &json!({"name": "clip.mp4", "data": data}), "op-v").expect("submit");
+        client.submit(&mut s, "insert.video", &json!({"name": "clip.mp4", "data": data}), "op-v").expect("submit");
         let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
         match &op.payload {
             Payload::MediaInsert { kind, sha256, name, .. } => {
@@ -3525,7 +3791,7 @@ mod tests {
         client.on_msg(&mut s, welcome(0));
         let bytes = glb();
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        client.submit(&s, "insert.model3d", &json!({"name": "block.glb", "data": data}), "op-m").expect("submit");
+        client.submit(&mut s, "insert.model3d", &json!({"name": "block.glb", "data": data}), "op-m").expect("submit");
         let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
         match &op.payload {
             Payload::MediaInsert { kind, sha256, name, rect } => {
@@ -3552,7 +3818,7 @@ mod tests {
         let km = keys(s.doc().expect("doc").doc.as_ref());
         let key = km.shape_key(slide, shapes[0]).expect("key").clone();
         let _ = doc;
-        client.submit(&s, "shape.fill", &json!({"color": "accent1", "ids": [shapes[0].0]}), "op-f").expect("submit");
+        client.submit(&mut s, "shape.fill", &json!({"color": "accent1", "ids": [shapes[0].0]}), "op-f").expect("submit");
         let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
         assert_eq!(op.payload, Payload::ShapeFill { fill: FillSpec::Solid { color: "accent1".into() } });
         assert_eq!(op.target.shape.as_ref(), Some(&key));
@@ -3668,6 +3934,7 @@ mod tests {
             target: Target { slide: Some(slide_key.clone()), shape: Some(shape_key.clone()), ..Target::default() },
             payload: Payload::ShapeMove { x, y: 100.0 },
             history: None,
+            preview: None,
         };
         for (i, x) in [200.0, 250.0, 300.0].iter().enumerate() {
             server.apply("alice", &move_to(&format!("a-{i}"), *x, i as u64)).expect("apply");
@@ -3730,6 +3997,7 @@ mod tests {
             target: Target { slide: Some(slide_key.clone()), shape: Some(shape_key.clone()), ..Target::default() },
             payload: Payload::ShapeMove { x, y: 100.0 },
             history: None,
+            preview: None,
         };
         for (i, x) in [200.0, 250.0, 300.0].iter().enumerate() {
             server.apply("alice", &move_to(&format!("a-{i}"), *x, i as u64)).expect("apply");
@@ -3759,7 +4027,7 @@ mod tests {
         local.on_msg(&mut s, ServerMsg::Snapshot(snapshot));
         assert!(local.rebuilding(), "the replica is rebuilt from the chain, not from the frame");
         assert_eq!(local.version(), 0, "nothing is installed before the base is whole");
-        assert!(matches!(local.submit(&s, "shape.move", &json!({"x": 10.0, "y": 10.0}), "local-1"), Err(LocalError::Rebuilding)));
+        assert!(matches!(local.submit(&mut s, "shape.move", &json!({"x": 10.0, "y": 10.0}), "local-1"), Err(LocalError::Rebuilding)));
 
         // One chunk arrives, then the socket drops: the chain resumes at the missing index.
         let mut chunks = 0;
@@ -3804,5 +4072,219 @@ mod tests {
         assert_eq!(*s.doc().expect("doc").doc, *server.document().expect("doc"), "the replica matches the room");
         let moved = find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shapes[0]).expect("shape");
         assert_eq!(moved.xfrm.expect("xfrm").x, 300.0, "the tail step applied on top of the assembled base");
+    }
+
+    /// The x of a shape's explicit box on the first slide.
+    fn x_of(s: &Session, shape: ShapeId) -> f64 {
+        find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shape).expect("shape").xfrm.expect("box").x
+    }
+
+    /// A client that shows local edits before the room confirms them, connected and welcomed as
+    /// an editor at version 0.
+    fn previewing(s: &mut Session) -> CollabDoc {
+        let mut local = CollabDoc::new("d");
+        local.connect(s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        local.set_preview(true);
+        local.on_msg(s, welcome(0));
+        local
+    }
+
+    /// The room's answer for exactly the operation that went out.
+    fn applied_for(op: &OpEnvelope, version: u64) -> ServerMsg {
+        ServerMsg::Applied(Applied {
+            op_id: op.op_id.clone(),
+            version,
+            actor_id: "alice".into(),
+            command: Some(ConfirmedCommand { cmd: op.payload.command().into(), target: op.target.clone(), payload: op.payload.clone() }),
+            delta: deckcraft_collab_proto::Delta::default(),
+        })
+    }
+
+    #[test]
+    fn a_previewed_move_is_visible_before_the_room_answers_and_settles_on_applied() {
+        let (mut s, _doc, _slide, shapes) = deck();
+        let mut local = previewing(&mut s);
+        let start = x_of(&s, shapes[0]);
+        let undo_steps = s.doc().expect("doc").history.undo.len();
+        let revision = s.doc().expect("doc").revision;
+
+        assert_eq!(local.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 300.0, "y": 120.0}), "op-1"), Ok(1));
+        assert!(local.is_previewing(), "the edit is on screen at once");
+        assert_eq!(x_of(&s, shapes[0]), 300.0, "the local model moved before the answer");
+        assert_eq!(local.version(), 0, "a preview moves no version");
+        assert_eq!(s.doc().expect("doc").history.undo.len(), undo_steps, "a preview is not an undo step");
+        assert!(s.doc().expect("doc").revision > revision, "the preview is a new revision, as an edit is");
+
+        let Some(ClientMsg::Op(op)) = local.next_outgoing() else { panic!("the operation goes out") };
+        assert_eq!(op.preview.as_deref(), Some("op-1"), "the wire carries the sender's local id");
+        assert_eq!(local.on_msg(&mut s, applied_for(&op, 1)), Effect::Settled);
+        assert!(!local.is_previewing(), "the answer takes the preview's place");
+        assert_eq!(local.version(), 1);
+        assert_eq!(x_of(&s, shapes[0]), 300.0, "the confirmed command is not applied a second time");
+        assert_ne!(x_of(&s, shapes[0]), start);
+    }
+
+    #[test]
+    fn a_refused_preview_rolls_back_exactly_that_edit_and_keeps_accepted_ones() {
+        let (mut s, _doc, _slide, shapes) = deck();
+        let mut local = previewing(&mut s);
+
+        // One accepted step first, so the rollback has something it must not touch.
+        local.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 250.0, "y": 120.0}), "op-1").expect("submit");
+        let Some(ClientMsg::Op(first)) = local.next_outgoing() else { panic!("the first operation") };
+        local.on_msg(&mut s, applied_for(&first, 1));
+        assert_eq!(x_of(&s, shapes[0]), 250.0);
+
+        // A second one the room refuses before it applied it.
+        local.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 400.0, "y": 120.0}), "op-2").expect("submit");
+        assert_eq!(x_of(&s, shapes[0]), 400.0, "the second edit is shown at once");
+        let Some(ClientMsg::Op(second)) = local.next_outgoing() else { panic!("the second operation") };
+        let rejected = ServerMsg::Rejected(deckcraft_collab_proto::Rejected {
+            op_id: second.op_id.clone(),
+            code: deckcraft_collab_proto::RejectCode::Invalid,
+            message: "no such shape".into(),
+            retryable: false,
+            hint: Some(deckcraft_collab_proto::Hint { version: 1 }),
+        });
+        assert_eq!(local.on_msg(&mut s, rejected), Effect::Rollback);
+        assert!(!local.is_previewing(), "the refused preview is gone");
+        assert_eq!(x_of(&s, shapes[0]), 250.0, "exactly the refused edit is undone; the accepted one stays");
+        assert_eq!(local.version(), 1, "a refusal moves no version");
+        assert_eq!(local.client().queued(), 0, "a non-retryable refusal is not resent");
+    }
+
+    #[test]
+    fn a_foreign_step_between_preview_and_applied_asks_for_the_tail_instead_of_mixing_orders() {
+        use deckcraft_collab_proto::{SnapshotMode, SnapshotMsg, SnapshotRef};
+
+        let (mut s, _doc, slide, shapes) = deck();
+        let mut local = previewing(&mut s);
+        let start = x_of(&s, shapes[0]);
+
+        local.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 300.0, "y": 120.0}), "op-1").expect("submit");
+        assert_eq!(x_of(&s, shapes[0]), 300.0);
+        let Some(ClientMsg::Op(op)) = local.next_outgoing() else { panic!("the operation") };
+
+        // Someone else's step lands at version 1 while this replica's edit is unconfirmed. The
+        // replica must not stack its preview on top of a step the room ordered before it.
+        let other_key = local.keys().shape_key(slide, shapes[1]).expect("key").clone();
+        let slide_key = local.keys().slide_key(slide).expect("slide").clone();
+        let remote_payload = Payload::ShapeMove { x: 500.0, y: 120.0 };
+        let remote_target = Target { slide: Some(slide_key.clone()), shape: Some(other_key.clone()), ..Target::default() };
+        let remote = ServerMsg::Applied(Applied {
+            op_id: "remote-1".into(),
+            version: 1,
+            actor_id: "bob".into(),
+            command: Some(ConfirmedCommand { cmd: remote_payload.command().into(), target: remote_target.clone(), payload: remote_payload.clone() }),
+            delta: deckcraft_collab_proto::Delta::default(),
+        });
+        assert_eq!(local.on_msg(&mut s, remote), Effect::Rollback);
+        assert!(!local.is_previewing(), "the preview is abandoned, not merged");
+        assert_eq!(x_of(&s, shapes[0]), start, "the local edit is back out of the model");
+        assert_eq!(x_of(&s, shapes[1]), 400.0, "the foreign step is not applied on a document that already had the preview");
+        assert_eq!(local.version(), 0, "but the applied step's version is rewound to the replica");
+        assert!(
+            matches!(local.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })),
+            "the replica asks for the tail from the version it really holds"
+        );
+
+        // The tail carries the foreign step and this replica's operation in the room's order.
+        let tail = vec![
+            Applied {
+                op_id: "remote-1".into(),
+                version: 1,
+                actor_id: "bob".into(),
+                command: Some(ConfirmedCommand { cmd: remote_payload.command().into(), target: remote_target, payload: remote_payload }),
+                delta: deckcraft_collab_proto::Delta::default(),
+            },
+            Applied {
+                op_id: op.op_id.clone(),
+                version: 2,
+                actor_id: "alice".into(),
+                command: Some(ConfirmedCommand { cmd: op.payload.command().into(), target: op.target.clone(), payload: op.payload.clone() }),
+                delta: deckcraft_collab_proto::Delta::default(),
+            },
+        ];
+        local.on_msg(
+            &mut s,
+            ServerMsg::Snapshot(SnapshotMsg {
+                version: 2,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                tail,
+                base: None,
+            }),
+        );
+        assert_eq!(x_of(&s, shapes[1]), 500.0, "the foreign step landed in the room's order");
+        assert_eq!(x_of(&s, shapes[0]), 300.0, "and this replica's own step after it");
+        assert_eq!(local.version(), 2);
+        assert!(!local.is_previewing());
+    }
+
+    #[test]
+    fn a_viewer_or_an_offline_replica_shows_nothing_before_it_is_confirmed() {
+        let (mut s, _doc, _slide, shapes) = deck();
+        let start = x_of(&s, shapes[0]);
+
+        // A viewer is refused before anything is queued and nothing moves.
+        let mut viewer = CollabDoc::new("d");
+        viewer.connect(&s, "jwt-v", ClientInfo { name: "viewer".into(), ver: "1".into() });
+        viewer.set_preview(true);
+        let mut w = welcome(0);
+        if let ServerMsg::Welcome(ref mut welcome) = w {
+            welcome.role = Role::Viewer;
+        }
+        viewer.on_msg(&mut s, w);
+        assert_eq!(viewer.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 300.0, "y": 120.0}), "v-1"), Err(LocalError::ReadOnly));
+        assert!(!viewer.is_previewing());
+        assert_eq!(x_of(&s, shapes[0]), start);
+
+        // An editor whose link is not live queues the operation and shows nothing.
+        let mut offline = CollabDoc::new("d");
+        offline.set_preview(true);
+        offline.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        assert_eq!(offline.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 300.0, "y": 120.0}), "o-1"), Ok(1));
+        assert!(!offline.is_previewing());
+        assert_eq!(x_of(&s, shapes[0]), start, "nothing is shown before the handshake");
+        assert!(offline.next_outgoing().is_none(), "nothing goes out before the handshake either");
+    }
+
+    #[test]
+    fn a_command_after_a_preview_waits_for_confirmed_state() {
+        let (mut s, _doc, _slide, shapes) = deck();
+        let mut local = previewing(&mut s);
+
+        local.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 300.0, "y": 120.0}), "op-1").expect("submit");
+        assert!(local.is_previewing());
+        // A second command during the preview is held: normalising it now would read an edit only
+        // this replica has.
+        assert_eq!(local.submit(&mut s, "shape.fill", &json!({"color": "#00ff00", "ids": [shapes[1].0]}), "op-2"), Ok(0));
+        assert_eq!(local.deferred(), 1);
+        let Some(ClientMsg::Op(first)) = local.next_outgoing() else { panic!("only the first operation goes out") };
+        assert_eq!(first.op_id, "op-1");
+        assert!(local.next_outgoing().is_none(), "the second command waits for confirmed state");
+
+        local.on_msg(&mut s, applied_for(&first, 1));
+        assert_eq!(local.deferred(), 0, "the held command is normalised once the answer arrives");
+        assert!(local.is_previewing(), "and is itself shown at once");
+        let filled = find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shapes[1]).expect("shape");
+        assert!(filled.fill.is_some(), "the second edit is visible before its answer");
+        let Some(ClientMsg::Op(second)) = local.next_outgoing() else { panic!("the second operation") };
+        assert_eq!(second.op_id, "op-2");
+        local.on_msg(&mut s, applied_for(&second, 2));
+        assert_eq!(local.version(), 2);
+        assert!(!local.is_previewing());
+    }
+
+    #[test]
+    fn preview_is_off_by_default_and_the_wire_carries_no_local_id() {
+        let (mut s, _doc, _slide, shapes) = deck();
+        let mut local = CollabDoc::new("d");
+        local.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        local.on_msg(&mut s, welcome(0));
+        assert!(!local.preview_enabled());
+        assert_eq!(local.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 300.0, "y": 120.0}), "op-1"), Ok(1));
+        assert!(!local.is_previewing(), "nothing is shown before the answer");
+        let Some(ClientMsg::Op(op)) = local.next_outgoing() else { panic!("the operation") };
+        assert_eq!(op.preview, None);
     }
 }

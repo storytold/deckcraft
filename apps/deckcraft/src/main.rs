@@ -326,6 +326,7 @@ fn main() -> eframe::Result {
             // Real-time collaboration is opt-in: a session URL and the cabinet's short-lived
             // token, or the flag alone for an offline indicator (edits are refused when the flag
             // is on without a link).
+            app.collab.set_preview(deckcraft_ui_egui::collab::preview_from_env());
             match (std::env::var("DECKCRAFT_COLLAB_URL"), std::env::var("DECKCRAFT_COLLAB_TOKEN")) {
                 (Ok(url), Ok(jwt)) => {
                     let id = std::env::var("DECKCRAFT_COLLAB_SESSION").unwrap_or_else(|_| "deck".into());

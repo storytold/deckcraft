@@ -252,6 +252,7 @@ mod tests {
                 rect: Some([40.0, 40.0, 60.0, 60.0]),
             },
             history: None,
+            preview: None,
         };
         let applied = session.apply("alice", &op).expect("apply");
         store.record("file-p", &mut session, &applied).expect("record");
@@ -283,6 +284,7 @@ mod tests {
             target: deckcraft_collab_proto::Target { slide: Some(slide), ..Default::default() },
             payload: deckcraft_collab_proto::Payload::SlideDelete {},
             history: None,
+            preview: None,
         };
         let applied = session.apply("alice", &delete).expect("delete");
         store.record("file-u", &mut session, &applied).expect("record delete");
@@ -322,6 +324,7 @@ mod tests {
             target: deckcraft_collab_proto::Target { slide: Some(slide), shapes: vec![key.clone()], ..Default::default() },
             payload: deckcraft_collab_proto::Payload::ShapeDelete {},
             history: None,
+            preview: None,
         };
         let applied = session.apply("alice", &delete).expect("delete");
         store.record("file-s", &mut session, &applied).expect("record delete");
@@ -388,6 +391,7 @@ mod tests {
             target: deckcraft_collab_proto::Target { slide: Some(slide), shape: Some(shape), ..Default::default() },
             payload: deckcraft_collab_proto::Payload::ShapeMove { x: 300.0, y: 120.0 },
             history: None,
+            preview: None,
         };
         let applied = session.apply("alice", &op).expect("apply");
         store.record("file-9", &mut session, &applied).expect("record");

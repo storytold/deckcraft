@@ -284,6 +284,7 @@ fn insert_slide(ws: &mut Client, id: &str, op_id: &str) {
         target: Default::default(),
         payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
         history: None,
+        preview: None,
     });
     ws.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
     match read(ws) {

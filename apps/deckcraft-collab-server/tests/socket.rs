@@ -177,6 +177,55 @@ fn first_slide_key(file_id: &str) -> deckcraft_collab_proto::SlideKey {
 }
 
 #[test]
+fn a_local_preview_id_travels_with_an_operation_and_the_room_never_stores_it() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = base64::engine::general_purpose::STANDARD.encode(native_deck());
+    let body = serde_json::json!({"fileId": "file-preview", "app": "deckcraft", "initialBytes": bytes}).to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let op = |preview: &str| {
+        ClientMsg::Op(OpEnvelope {
+            op_id: "op-1".into(),
+            doc: id.clone(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Default::default(),
+            payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+            history: None,
+            preview: Some(preview.into()),
+        })
+    };
+    a.send(tungstenite::Message::Text(encode_client(&op("local-1")).expect("encode").into())).expect("send op");
+    match read(&mut a) {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, 1, "the room accepts an operation that names a local preview"),
+        other => panic!("expected applied, got {other:?}"),
+    }
+
+    // The same operation id under another local id is the same operation: dedup never looks at
+    // the preview, so the resend moves no version.
+    a.send(tungstenite::Message::Text(encode_client(&op("local-2")).expect("encode").into())).expect("resend");
+    match read(&mut a) {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, 1, "a resent preview is deduped by opId"),
+        other => panic!("expected the stored answer, got {other:?}"),
+    }
+
+    // The room's own record is the journal tail: it carries the command and no local id.
+    a.send(tungstenite::Message::Text(encode_client(&ClientMsg::Resync { last_version: 0 }).expect("encode").into())).expect("resync");
+    match read(&mut a) {
+        ServerMsg::Snapshot(snapshot) => {
+            let text = serde_json::to_string(&snapshot).expect("json");
+            assert!(!text.contains("local-1") && !text.contains("local-2"), "a preview id is never stored: {text}");
+            assert_eq!(snapshot.version, 1);
+        }
+        other => panic!("expected a snapshot, got {other:?}"),
+    }
+}
+
+#[test]
 fn a_session_accepts_two_editors_and_refuses_a_viewer() {
     let handle = start();
     let addr = handle.addr;
@@ -202,6 +251,7 @@ fn a_session_accepts_two_editors_and_refuses_a_viewer() {
         target: Default::default(),
         payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
     let applied_a = read(&mut a);
@@ -224,6 +274,7 @@ fn a_session_accepts_two_editors_and_refuses_a_viewer() {
         target: Default::default(),
         payload: Payload::ShapeMove { x: 1.0, y: 2.0 },
         history: None,
+        preview: None,
     });
     viewer.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
     match read(&mut viewer) {
@@ -286,6 +337,7 @@ fn a_picture_is_uploaded_once_and_reaches_a_second_editor() {
         target: Target { slide: Some(first_slide_key("file-m")), ..Target::default() },
         payload: Payload::PictureInsert { sha256: sha.clone(), name: "red.png".into(), rect: Some([80.0, 80.0, 120.0, 120.0]) },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
     let applied_a = read(&mut a);
@@ -371,6 +423,7 @@ fn a_font_face_uses_the_media_channel_and_lands_in_the_committed_file() {
             name: "DeckFace.ttf".into(),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
     match read(&mut a) {
@@ -476,6 +529,7 @@ fn a_restart_replays_the_journal_into_the_same_version() {
         target: Default::default(),
         payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
         history: None,
+        preview: None,
     });
     editor.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send");
     match read(&mut editor) {
@@ -644,6 +698,7 @@ fn a_smartart_insertion_and_its_nodes_query_travel_over_the_socket() {
             rect: Some([40.0, 50.0, 400.0, 300.0]),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
     let applied = match read(&mut a) {
@@ -689,6 +744,7 @@ fn a_smartart_insertion_and_its_nodes_query_travel_over_the_socket() {
         target: Target { slide: Some(slide.clone()), ..Target::default() },
         payload: Payload::SmartArtInsert { diagram: serde_json::json!({"kind": "nope", "nodes": []}), rect: None },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
     match read(&mut a) {
@@ -753,6 +809,7 @@ fn a_smartart_node_picture_travels_over_the_socket_and_a_viewer_is_refused() {
             rect: Some([40.0, 50.0, 400.0, 300.0]),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
     let applied = match read(&mut a) {
@@ -787,6 +844,7 @@ fn a_smartart_node_picture_travels_over_the_socket_and_a_viewer_is_refused() {
             }),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&put).expect("encode").into())).expect("send");
     match read(&mut a) {
@@ -825,6 +883,7 @@ fn a_smartart_node_picture_travels_over_the_socket_and_a_viewer_is_refused() {
         target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
         payload: Payload::SmartArtPicture { node: 0, media: None },
         history: None,
+        preview: None,
     });
     viewer.send(tungstenite::Message::Text(encode_client(&viewer_put).expect("encode").into())).expect("send");
     match read(&mut viewer) {
@@ -848,6 +907,7 @@ fn a_smartart_node_picture_travels_over_the_socket_and_a_viewer_is_refused() {
             }),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
     match read(&mut a) {
@@ -905,6 +965,7 @@ fn a_smartart_conversion_travels_over_the_socket_and_a_viewer_is_refused() {
             rect: Some([40.0, 50.0, 400.0, 300.0]),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
     let applied = match read(&mut a) {
@@ -932,6 +993,7 @@ fn a_smartart_conversion_travels_over_the_socket_and_a_viewer_is_refused() {
         target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
         payload: Payload::SmartArtToShapes {},
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&convert).expect("encode").into())).expect("send");
     match read(&mut a) {
@@ -952,6 +1014,7 @@ fn a_smartart_conversion_travels_over_the_socket_and_a_viewer_is_refused() {
         target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
         payload: Payload::SmartArtToShapes {},
         history: None,
+        preview: None,
     });
     viewer.send(tungstenite::Message::Text(encode_client(&viewer_convert).expect("encode").into())).expect("send");
     match read(&mut viewer) {
@@ -968,6 +1031,7 @@ fn a_smartart_conversion_travels_over_the_socket_and_a_viewer_is_refused() {
         target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
         payload: Payload::SmartArtToText { body: serde_json::json!({"paragraphs": "nope"}), rect: [0.0, 0.0, 100.0, 100.0] },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
     match read(&mut a) {
@@ -1060,6 +1124,7 @@ fn a_model_camera_travels_over_the_socket_and_a_viewer_is_refused() {
             rect: Some([120.0, 90.0, 320.0, 240.0]),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
     let applied = match read(&mut a) {
@@ -1091,6 +1156,7 @@ fn a_model_camera_travels_over_the_socket_and_a_viewer_is_refused() {
         target: target.clone(),
         payload: Payload::Model3dCamera { camera: Some(camera) },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&step).expect("encode").into())).expect("send");
     for ws in [&mut a, &mut b, &mut viewer] {
@@ -1126,6 +1192,7 @@ fn a_model_camera_travels_over_the_socket_and_a_viewer_is_refused() {
         target: target.clone(),
         payload: Payload::Model3dCamera { camera: None },
         history: None,
+        preview: None,
     });
     viewer.send(tungstenite::Message::Text(encode_client(&viewer_step).expect("encode").into())).expect("send");
     match read(&mut viewer) {
@@ -1164,6 +1231,7 @@ fn a_model_camera_travels_over_the_socket_and_a_viewer_is_refused() {
             camera: Some(ModelCamera { position: [0.0, 0.0, 0.0], target: [0.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], fov: 45.0 }),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&degenerate).expect("encode").into())).expect("send");
     match read(&mut a) {
@@ -1223,6 +1291,7 @@ fn a_model_scene_travels_over_the_socket_and_a_viewer_is_refused() {
             rect: Some([120.0, 90.0, 320.0, 240.0]),
         },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
     let applied = match read(&mut a) {
@@ -1257,6 +1326,7 @@ fn a_model_scene_travels_over_the_socket_and_a_viewer_is_refused() {
         target: target.clone(),
         payload: Payload::Model3dScene { scene: Some(scene) },
         history: None,
+        preview: None,
     });
     a.send(tungstenite::Message::Text(encode_client(&step).expect("encode").into())).expect("send");
     for ws in [&mut a, &mut b, &mut viewer] {
@@ -1295,6 +1365,7 @@ fn a_model_scene_travels_over_the_socket_and_a_viewer_is_refused() {
         target: target.clone(),
         payload: Payload::Model3dScene { scene: None },
         history: None,
+        preview: None,
     });
     viewer.send(tungstenite::Message::Text(encode_client(&viewer_step).expect("encode").into())).expect("send");
     match read(&mut viewer) {
@@ -1337,6 +1408,7 @@ fn a_model_scene_travels_over_the_socket_and_a_viewer_is_refused() {
             target: target.clone(),
             payload: Payload::Model3dScene { scene: Some(ModelScene { light, environment: ModelEnvironment { ambient: 0.2, background: None } }) },
             history: None,
+            preview: None,
         });
         a.send(tungstenite::Message::Text(encode_client(&degenerate).expect("encode").into())).expect("send");
         match read(&mut a) {

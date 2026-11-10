@@ -148,6 +148,7 @@ fn move_op(index: usize, slide: &SlideKey, shape: &ShapeKey, x: f64) -> OpEnvelo
         target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
         payload: Payload::ShapeMove { x, y: 60.0 },
         history: None,
+        preview: None,
     }
 }
 
@@ -278,6 +279,7 @@ impl Replica {
                 target: command.target.clone(),
                 payload: command.payload.clone(),
                 history: None,
+                preview: None,
             };
             if let Err(rejection) = self.adapter.apply_confirmed(&mut self.session, self.version, &applied.actor_id, &op) {
                 self.error = Some(rejection.message.clone());
@@ -522,6 +524,7 @@ fn move_to(op_id: &str, doc: &str, target: Target, x: f64) -> OpEnvelope {
         target,
         payload: Payload::ShapeMove { x, y: 100.0 },
         history: None,
+        preview: None,
     }
 }
 
@@ -667,6 +670,7 @@ fn bounds_to(op_id: &str, doc: &str, target: Target, x: f64, y: f64, w: f64, h: 
         target,
         payload: Payload::ShapeSetBounds { x, y, w, h },
         history: None,
+        preview: None,
     }
 }
 
@@ -679,6 +683,7 @@ fn text_to(op_id: &str, doc: &str, target: Target, text: &str) -> OpEnvelope {
         target,
         payload: Payload::TextSet { text: text.into(), cell: None },
         history: None,
+        preview: None,
     }
 }
 
@@ -691,6 +696,7 @@ fn fill_to(op_id: &str, doc: &str, target: Target, color: &str) -> OpEnvelope {
         target,
         payload: Payload::ShapeFill { fill: FillSpec::Solid { color: color.into() } },
         history: None,
+        preview: None,
     }
 }
 
@@ -1135,6 +1141,7 @@ fn insert_slide(ws: &mut Client, id: &str) {
         target: Default::default(),
         payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
         history: None,
+        preview: None,
     });
     ws.send(tungstenite::Message::Text(deckcraft_collab_proto::encode_client(&op).expect("encode").into())).expect("send op");
     match read_socket(ws) {

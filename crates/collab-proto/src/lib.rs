@@ -1081,6 +1081,11 @@ pub struct OpEnvelope {
     /// answers `undo_conflict` otherwise (ADR 0010 §3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<HistoryAction>,
+    /// Optional local id of the sender's optimistic copy (RFC §3). It says nothing the room
+    /// needs: the server never requires it, never stores it and never echoes it, so a client
+    /// that sends no preview and a client that sends one are ordered and deduped the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 /// Which way one actor's history moves. Undo is a new operation in every case: it is sent with
@@ -1622,6 +1627,7 @@ mod tests {
             target: Target { slide: Some("s1".into()), shape: Some("7".into()), ..Target::default() },
             payload: Payload::ShapeMove { x: 120.0, y: 64.0 },
             history: None,
+            preview: None,
         }
     }
 
@@ -1641,6 +1647,21 @@ mod tests {
     }
 
     #[test]
+    fn a_local_preview_id_is_optional_and_round_trips() {
+        let mut envelope = op();
+        envelope.preview = Some("local-7".into());
+        let text = encode_client(&ClientMsg::Op(envelope.clone())).expect("encode");
+        assert!(text.contains("\"preview\":\"local-7\""), "{text}");
+        assert_eq!(decode_client(&text).expect("decode"), ClientMsg::Op(envelope));
+
+        // A client that previews nothing sends no id, and an old frame without one still decodes:
+        // the field is the sender's local note, not something the room requires (RFC §3).
+        let plain = encode_client(&ClientMsg::Op(op())).expect("encode");
+        assert!(!plain.contains("preview"), "{plain}");
+        assert_eq!(decode_client(&plain).expect("decode"), ClientMsg::Op(op()));
+    }
+
+    #[test]
     fn a_final_bounds_step_round_trips_as_a_command() {
         let payload = Payload::ShapesSetBounds {
             items: vec![
@@ -1657,6 +1678,7 @@ mod tests {
             target: Target { slide: Some("s1".into()), shapes: vec!["7".into(), "8".into()], ..Target::default() },
             payload,
             history: None,
+            preview: None,
         });
         let text = encode_client(&msg).expect("encode");
         assert!(text.contains("\"cmd\":\"shapes_set_bounds\""), "{text}");

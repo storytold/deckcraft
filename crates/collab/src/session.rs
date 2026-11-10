@@ -235,6 +235,18 @@ impl DocSession {
         if let Some(done) = self.applied.get(&op.op_id) {
             return Ok(done.clone());
         }
+        // `preview` is the sender's local id for its optimistic copy (RFC §3). It is not part of
+        // the room's identity, is never stored and is never echoed, so no code below this line —
+        // journal, dedup, undo images, commit — can see it.
+        let without_preview;
+        let op = if op.preview.is_some() {
+            let mut copy = op.clone();
+            copy.preview = None;
+            without_preview = copy;
+            &without_preview
+        } else {
+            op
+        };
         if op.doc != self.file_id {
             return Err(refuse(op, Rejection::invalid("the operation is for another document", Some(self.version))));
         }
@@ -317,6 +329,7 @@ impl DocSession {
             target: command.target.clone(),
             payload: command.payload.clone(),
             history: None,
+            preview: None,
         };
         let delta = self.adapter.apply_confirmed(&mut self.engine, self.version, actor, &op).map_err(|e| e.message)?;
         self.version = self.version.saturating_add(1);
@@ -880,6 +893,7 @@ mod tests {
             target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
             payload,
             history: None,
+            preview: None,
         }
     }
 
@@ -903,7 +917,33 @@ mod tests {
             target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
             payload: Payload::ShapeMove { x, y: 100.0 },
             history: None,
+            preview: None,
         }
+    }
+
+    #[test]
+    fn a_preview_id_is_the_senders_local_note_not_part_of_the_room() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let mut op = move_op(&slide, &shape, 300.0, 0, "op-1");
+        op.preview = Some("local-9".into());
+        let applied = s.apply("alice", &op).expect("applied");
+        assert_eq!(applied.version, 1);
+        assert!(applied.command.is_some(), "the room answers with the command it ran, not a preview");
+
+        // The same operation id with another local id is the same operation: dedup does not look
+        // at the preview, so a resent preview moves no version and runs nothing twice.
+        let mut again = op.clone();
+        again.preview = Some("local-10".into());
+        assert_eq!(s.apply("alice", &again).expect("dedup").version, 1);
+        assert_eq!(s.version(), 1);
+
+        // The journal is the room's own record: the applied step and the snapshot that carries it
+        // contain the command and no preview id.
+        let snapshot = s.resync(0);
+        assert_eq!(snapshot.tail.len(), 1);
+        let text = serde_json::to_string(&snapshot.tail).expect("json");
+        assert!(!text.contains("local-9") && !text.contains("local-10"), "a preview id is never stored: {text}");
     }
 
     #[test]
@@ -947,6 +987,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
             history: None,
+            preview: None,
         };
         s.apply("b", &row).expect("insert row");
         s.apply("a", &queued).expect("the queued cell insert applies after the shift");
@@ -969,6 +1010,7 @@ mod tests {
             target,
             payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: false },
             history: None,
+            preview: None,
         };
         s.apply("b", &row).expect("delete row");
         let err = s.apply("a", &queued).expect_err("the cell is gone");
@@ -990,6 +1032,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
             history: None,
+            preview: None,
         };
         s.apply("b", &row).expect("insert row");
         s.apply("a", &queued).expect("the set follows its cell");
@@ -1051,6 +1094,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
             history: None,
+            preview: None,
         };
         s.apply("b", &row).expect("insert row");
         s.apply("a", &queued).expect("the format follows its cell");
@@ -1080,6 +1124,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: false },
             history: None,
+            preview: None,
         };
         s.apply("b", &row).expect("delete row");
         let err = s.apply("a", &queued).expect_err("the addressed cell is gone");
@@ -1107,6 +1152,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
             history: None,
+            preview: None,
         };
         s.apply("b", &row).expect("insert row");
         s.apply("a", &queued).expect("the fill follows its cell");
@@ -1137,6 +1183,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::TableMerge { from: (0, 0), to: (1, 1) },
             history: None,
+            preview: None,
         };
         s.apply("b", &merge).expect("merge the table");
         for (name, op) in [("text", &text), ("fill", &fill)] {
@@ -1220,6 +1267,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
             history: None,
+            preview: None,
         };
         s.apply("c", &row).expect("insert row");
         s.apply("a", &queued).expect("both addresses follow their cells");
@@ -1317,6 +1365,7 @@ mod tests {
             target: Target { slide: Some(slide.clone()), ..Target::default() },
             payload,
             history: None,
+            preview: None,
         }
     }
 
@@ -1369,6 +1418,7 @@ mod tests {
             target: Target { slide: Some(notes_key(&s, 1)), ..Target::default() },
             payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
             history: None,
+            preview: None,
         };
         s.apply("b", &new_slide).expect("insert a slide");
         s.apply("a", &typed).expect("the queued notes insert applies to the same slide");
@@ -1414,6 +1464,7 @@ mod tests {
             target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload: Payload::ShapeDelete {},
             history: None,
+            preview: None,
         };
         let err = s.apply("a", &stale).expect_err("stale");
         assert_eq!(err.code, RejectCode::Stale);
