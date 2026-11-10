@@ -271,8 +271,15 @@ fn delete_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
 /// A release belongs to the held key even when a different UI surface owns input.
 #[test]
 fn routed_away_releases_allow_fresh_delete_presses() {
+    #[derive(Debug)]
+    enum Route {
+        Field,
+        Modal,
+        Palette,
+        File,
+    }
     for key in [egui::Key::Delete, egui::Key::Backspace] {
-        for route in ["field", "modal", "palette", "file"] {
+        for route in [Route::Field, Route::Modal, Route::Palette, Route::File] {
             let mut h = harness();
             click_row(&mut h, 1, egui::PointerButton::Primary);
             h.event(delete_event(key, true, false));
@@ -281,7 +288,7 @@ fn routed_away_releases_allow_fresh_delete_presses() {
             h.run_steps(1);
             assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 0);
             match route {
-                "field" => {
+                Route::Field => {
                     h.state_mut().ui.pane = None;
                     h.run_steps(2);
                     let id = egui::Id::unique("notes_edit");
@@ -289,10 +296,9 @@ fn routed_away_releases_allow_fresh_delete_presses() {
                     h.run_steps(2);
                     assert!(h.ctx.memory(|m| m.has_focus(id)));
                 }
-                "modal" => h.state_mut().dialog = Some(crate::dialogs::Dialog::new("about")),
-                "palette" => h.state_mut().palette = Some((String::new(), 0)),
-                "file" => h.state_mut().open_backstage(crate::backstage::Page::Home),
-                _ => unreachable!(),
+                Route::Modal => h.state_mut().dialog = Some(crate::dialogs::Dialog::new("about")),
+                Route::Palette => h.state_mut().palette = Some((String::new(), 0)),
+                Route::File => h.state_mut().open_backstage(crate::backstage::Page::Home),
             }
             h.event(delete_event(key, false, false));
             h.run_steps(1);
@@ -305,7 +311,7 @@ fn routed_away_releases_allow_fresh_delete_presses() {
             }
             h.key_press(key);
             h.run_steps(2);
-            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1, "{route}: {key:?}");
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1, "{route:?}: {key:?}");
         }
     }
 }
