@@ -169,6 +169,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `insert.picture` | structural | the operation carries a sha256 reference, not bytes; see "Media channel" |
 | `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
 | `insert.model3d` | structural | same reference (`kind: model`); the bytes are one binary glTF by signature with a budget of their own, and the shape draws its poster or a stand-in cube |
+| `model3d.camera` | command | the model's **whole final view** — `position`, `target`, `up` in slide EMU and `fov` in degrees, or `null` for the reader's default view — in one `model3d_camera`; there is no relative form, the client validates it with the engine's own `camera_param` before sending, the wire type refuses unknown fields and the engine re-checks every number before the first write; the camera is written into the slide part as `am3d:camera`, and the undo image is the whole model shape |
 | `shape.fill` | command | a final fill: solid colour, `none` or `background`; gradients, pictures, patterns and relative transparency are refused |
 | `shape.line` | command | final outline values (`color`, `width`, `dash`, `cap`, `join`, `compound`, heads) or `none` |
 | `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's whole text body or on N table cells of one table (`FormatSet { addresses: [{ cell: [row, col] }] }`); a table without a cell address, an empty address list, a repeated cell and a cell the table does not have are refused before any write instead of being widened; toggles need an explicit `on`, `args` cannot carry an address |
@@ -192,9 +193,10 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: relative effects; a 3-D model can be inserted
-(`insert.model3d`, drawn as its poster or a stand-in cube), but its camera and scene are not
-editable in v1.
+values, go on the wire. What is still refused: relative effects and a 3-D model's **scene**
+(lighting). A model's camera is collaborative now (`model3d.camera`, the whole final view, the
+whole model shape as the undo image); the model itself is still drawn as its poster or a
+stand-in cube.
 
 A few commands are **queries**, not operations: they answer a read-only question and change no
 document. `smartArt.nodes` is one of them, and the server answers only queries on an explicit
@@ -336,8 +338,8 @@ cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 234 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
-| `cargo test -p deckcraft-collab-server` | 10 unit + 7 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
+| `cargo test -p deckcraft-collab` | 255 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 16 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
 | `cargo test -p deckcraft-ui-egui collab::` | 20 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets, the painter's sequence over the link disarming a one-shot pick |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
@@ -360,8 +362,9 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    builds verified bytes in the process, not a new cabinet version.
 2. **P1 — Media refinement**: pictures, video, audio, font faces and 3-D models are on the
    channel. A model is one binary glTF by signature (`.glb`, `glTF` v2) with its own budget —
-   `insert.model3d` on the operation stream, `MediaType::Model` in the cache — and draws its
-   `mc:Fallback` poster when the file has one, else a stand-in cube; `GET /media` normalises the
+   `insert.model3d` on the operation stream, `MediaType::Model` in the cache — its view is
+   `model3d.camera` (a final `position`/`target`/`up`/`fov`, written as `am3d:camera`), and it
+   draws its `mc:Fallback` poster when the file has one, else a stand-in cube; `GET /media` normalises the
    path (extension, query, trailing slash) and answers with the content type the signature
    implies. The browser link fetches and uploads them with `fetch` plus the session token; the
    sync server answers CORS for the origins in `DECKCRAFT_CORS_ORIGINS` (see "HTTP"), so a page on
