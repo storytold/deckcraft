@@ -15,7 +15,7 @@ use std::sync::Arc;
 use base64::Engine as _;
 use deckcraft_collab_proto::{
     Applied, BaseSnapshot, CellFillSpec, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatAddress, FormatCmd, LineSpec, MediaKind,
-    OpEnvelope, OpKind, Payload, ServerMsg, ShapeBounds, ShapeKey, SlideKey, TableAxis, Target, TextRange,
+    OpEnvelope, OpKind, Payload, PicturePlace, ServerMsg, ShapeBounds, ShapeKey, SlideKey, SmartArtPictureMedia, TableAxis, Target, TextRange,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::anim::Animation;
@@ -231,7 +231,9 @@ impl CollabDoc {
         // channel, the digest on the operation. The author always has the bytes, so the confirmed
         // command can run here too.
         let mut wire;
-        let params = if matches!(cmd, "insert.picture" | "insert.audio" | "insert.video" | "insert.model3d" | "font.create") {
+        let carries_media = matches!(cmd, "insert.picture" | "insert.audio" | "insert.video" | "insert.model3d" | "font.create")
+            || (cmd == "smartArt.picture" && (params.get("data").is_some() || params.get("path").is_some()));
+        let params = if carries_media {
             let (name, bytes) = media_bytes(params, cmd)?;
             let sha = self.adapter.media_mut().put(&name, bytes).map_err(|e| LocalError::BadParams(e.message))?;
             if let Some(stored) = self.adapter.media().get(&sha) {
@@ -267,6 +269,7 @@ impl CollabDoc {
         }
         if let Some((sha256, kind)) = match &command.payload {
             Payload::PictureInsert { sha256, .. } => Some((sha256, crate::MediaType::Picture)),
+            Payload::SmartArtPicture { media: Some(media), .. } => Some((&media.sha256, crate::MediaType::Picture)),
             Payload::FontCreate { sha256, .. } => Some((sha256, crate::MediaType::Font)),
             Payload::MediaInsert { sha256, kind, .. } => Some((
                 sha256,
@@ -444,6 +447,12 @@ pub fn normalize_with_painter(
     // own copy (RFC §15).
     if let Some(result) = smartart_conversion(keys, cmd, p, slide_key.clone(), st, op_id, doc) {
         return result.map(|op| vec![op]);
+    }
+    // One node's picture is its own final value: the media channel's digest, the top-level node
+    // and the picture's place. It is not a structural step: the group keeps its place and id, and
+    // the undo image is the whole group.
+    if cmd == "smartArt.picture" {
+        return Ok(vec![smartart_picture(keys, p, slide_key, st, op_id, doc)?]);
     }
     match cmd {
         "shape.move" => {
@@ -1079,6 +1088,69 @@ fn smartart_insert(p: &Value, slide_key: Option<SlideKey>, op_id: &str, doc: &st
         kind: OpKind::Structural,
         target: Target { slide: slide_key, ..Target::default() },
         payload: Payload::SmartArtInsert { diagram, rect },
+        history: None,
+    })
+}
+
+/// One `smartArt.picture` step: the addressed top-level SmartArt group, one top-level node of its
+/// outline, and the picture's final value — the media channel's digest and the place in the
+/// node's placeholder (`None` = reset). The bytes are already on the media channel (`submit` put
+/// them there), so the operation stays small and every replica installs the same object. The
+/// sender resolves the node from its own selection, so a replica's selection decides nothing
+/// (RFC §3.2.1, §15).
+fn smartart_picture(
+    keys: &crate::KeyMap,
+    p: &Value,
+    slide_key: Option<SlideKey>,
+    st: &DocState,
+    op_id: &str,
+    doc: &str,
+) -> Result<OpEnvelope, LocalError> {
+    const CMD: &str = "smartArt.picture";
+    let slide = st.doc.slides.get(st.selection.slide).ok_or(LocalError::NoDocument)?;
+    let ids = shape_ids(p, st)?;
+    let group = ids
+        .iter()
+        .find_map(|id| deckcraft_engine::cmd::smartart::group_of(&slide.shapes, *id))
+        .ok_or_else(|| LocalError::BadParams(format!("{CMD} needs a SmartArt graphic")))?;
+    // The confirmed command only works on a top-level graphic: a nested one has no place on the
+    // slide for a picture step to address.
+    if !slide.shapes.iter().any(|s| s.id == group.id) {
+        return Err(LocalError::Unsupported(format!("{CMD} on a nested SmartArt graphic")));
+    }
+    let index = p
+        .get("index")
+        .and_then(Value::as_u64)
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| LocalError::BadParams(format!("{CMD} needs `index`")))?;
+    let diagram = deckcraft_engine::cmd::smartart::synced(group).ok_or_else(|| LocalError::BadParams(format!("{CMD} needs a SmartArt graphic")))?;
+    let node = deckcraft_engine::cmd::smartart::top_node(&diagram, index).ok_or_else(|| LocalError::BadParams("no such node".into()))?;
+    for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
+        if !matches!(key.as_str(), "id" | "ids" | "index" | "sha256" | "name" | "place" | "reset") {
+            return Err(LocalError::Unsupported(format!("{CMD} {key}")));
+        }
+    }
+    let media = if p.get("reset").and_then(Value::as_bool).unwrap_or(false) {
+        None
+    } else {
+        let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams(format!("{CMD} needs a media digest")))?;
+        if !crate::media::valid_sha(sha) {
+            return Err(LocalError::BadParams(format!("{CMD}: the media digest is not a sha256")));
+        }
+        let name = p.get("name").and_then(Value::as_str).unwrap_or("picture").to_string();
+        // The same place check the engine runs, so a hostile place is refused before anything is
+        // queued and the value on the wire is the value that command would accept.
+        let place = deckcraft_engine::cmd::smartart::place_param(p, CMD).map_err(|e| LocalError::BadParams(e.to_string()))?.unwrap_or_default();
+        Some(SmartArtPictureMedia { sha256: sha.to_string(), name, place: PicturePlace { crop: place.crop, alpha: place.alpha } })
+    };
+    let node = u32::try_from(node).map_err(|_| LocalError::BadParams("the outline is too large".into()))?;
+    Ok(OpEnvelope {
+        op_id: op_id.to_string(),
+        doc: doc.to_string(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target: Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, group.id)?), ..Target::default() },
+        payload: Payload::SmartArtPicture { node, media },
         history: None,
     })
 }
@@ -2719,6 +2791,58 @@ mod tests {
         assert!(matches!(normalize(&km, st, "smartArt.toShapes", &json!({"id": text_id.0}), "op", &doc), Err(LocalError::BadParams(_))));
     }
 
+    #[test]
+    fn a_node_picture_normalises_to_the_media_reference_and_its_place() {
+        let (mut s, doc, slide, group) = smartart_deck();
+        let rect = s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 80]})).expect("rect")["id"].as_u64().unwrap();
+        let child = match &s.doc().expect("doc").doc.slides[0].shapes[0].kind {
+            ShapeKind::Group { children, .. } => children[1].id,
+            other => panic!("not a group: {other:?}"),
+        };
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let sha = "a".repeat(64);
+        let ops = normalize(
+            &km,
+            st,
+            "smartArt.picture",
+            &json!({"id": child.0, "index": 1, "sha256": sha, "name": "p.png", "place": {"crop": [0.1, 0.0, 0.2, 0.0], "alpha": 0.8}}),
+            "op",
+            &doc,
+        )
+        .expect("picture");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command, "one final value, not a structural step");
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(group), "a child addresses its graphic");
+        let Payload::SmartArtPicture { node, media } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(*node, 0, "a sub-point's picture is its top-level node's");
+        let media = media.as_ref().expect("the media reference travels");
+        assert_eq!(media.sha256, sha);
+        assert_eq!(media.name, "p.png");
+        assert_eq!(media.place.crop, [0.1, 0.0, 0.2, 0.0]);
+        assert_eq!(media.place.alpha, Some(0.8));
+
+        // Reset names no media at all.
+        let ops = normalize(&km, st, "smartArt.picture", &json!({"id": group.0, "index": 0, "reset": true}), "op", &doc).expect("reset");
+        assert_eq!(ops[0].payload, Payload::SmartArtPicture { node: 0, media: None });
+
+        // A plain shape, a node the outline does not have, an unknown parameter and a place that
+        // leaves no area are refused here, before anything is queued.
+        assert!(matches!(
+            normalize(&km, st, "smartArt.picture", &json!({"id": rect, "index": 0, "sha256": sha}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
+        for bad in [
+            json!({"id": group.0, "index": 9, "sha256": sha}),
+            json!({"id": group.0, "index": 0, "sha256": sha, "face": "regular"}),
+            json!({"id": group.0, "index": 0, "sha256": sha, "place": {"crop": [0.9, 0.0, 0.9, 0.0]}}),
+            json!({"id": group.0, "index": 0, "sha256": "abc"}),
+        ] {
+            assert!(normalize(&km, st, "smartArt.picture", &bad, "op", &doc).is_err(), "{bad}");
+        }
+    }
+
     /// One slide with a chart (a column chart with explicit categories and one series).
     fn chart_deck() -> (Session, String, SlideId, ShapeId) {
         let mut s = Session::with_new();
@@ -3084,6 +3208,46 @@ mod tests {
         }
         assert!(client.has_media(&crate::media::sha256_hex(&bytes)));
         assert_eq!(op.kind, OpKind::Structural);
+    }
+
+    #[test]
+    fn a_node_picture_command_uploads_its_bytes_and_sends_only_a_reference() {
+        let (mut s, _doc, _slide, group) = smartart_deck();
+        let mut client = CollabDoc::new("d");
+        client.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        client.on_msg(&mut s, welcome(0));
+        let bytes = png();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let sent = client
+            .submit(
+                &s,
+                "smartArt.picture",
+                &json!({"id": group.0, "index": 0, "name": "red.png", "data": data, "place": {"crop": [0.1, 0.0, 0.2, 0.0]}}),
+                "op-1",
+            )
+            .expect("submit");
+        assert_eq!(sent, 1);
+        let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
+        let Payload::SmartArtPicture { node, media } = &op.payload else { panic!("{:?}", op.payload) };
+        assert_eq!(*node, 0);
+        let media = media.as_ref().expect("the reference travels");
+        assert_eq!(media.name, "red.png");
+        assert_eq!(media.sha256, crate::media::sha256_hex(&bytes));
+        assert_eq!(media.place.crop, [0.1, 0.0, 0.2, 0.0]);
+        assert!(!serde_json::to_string(&op.payload).expect("json").contains("data"), "no bytes on the wire");
+        assert!(client.has_media(&crate::media::sha256_hex(&bytes)));
+        assert_eq!(op.kind, OpKind::Command);
+
+        // A viewer's submit is refused on the client, before anything is queued.
+        let mut viewer = CollabDoc::new("d");
+        viewer.connect(&s, "jwt-v", ClientInfo { name: "viewer".into(), ver: "1".into() });
+        let mut w = welcome(0);
+        if let ServerMsg::Welcome(ref mut welcome) = w {
+            welcome.role = deckcraft_collab_proto::Role::Viewer;
+        }
+        viewer.on_msg(&mut s, w);
+        let sha = crate::media::sha256_hex(&png());
+        assert_eq!(viewer.submit(&s, "smartArt.picture", &json!({"id": group.0, "index": 0, "sha256": sha}), "v-1"), Err(LocalError::ReadOnly));
     }
 
     #[test]

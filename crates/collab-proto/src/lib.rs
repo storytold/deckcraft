@@ -412,6 +412,19 @@ pub enum Payload {
     /// dropped, so the step is deterministic from the authoritative state and carries no value.
     /// Structural: one undoable step, with the whole prior graphic as its image.
     SmartArtToShapes {},
+    /// Changes one node's picture in a SmartArt graphic (`smartArt.picture`): the confirmed
+    /// command of the single-user picture placeholder. The addressed shape is the graphic's
+    /// top-level group and `node` is one top-level node of its outline. The bytes travel on the
+    /// media channel, so the operation carries only the digest, the file name and the picture's
+    /// **final** place (the source crop and opacity); `media: null` clears the node's picture
+    /// (`reset`). The picture is installed with the same `add_media` call `insert.picture` runs,
+    /// so every replica allocates the same media id in the same order and regenerates the same
+    /// drawing — a node's picture never depends on a replica's stale copy.
+    SmartArtPicture {
+        node: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media: Option<SmartArtPictureMedia>,
+    },
     /// Replaces a chart's **whole** value (`chart.setWhole`) and is the confirmed command of
     /// `chart.type`, `chart.data` and `chart.options`. The sender applies the command to the chart
     /// it sees and sends the whole resulting `Chart` model value as JSON — type, categories,
@@ -603,6 +616,33 @@ pub struct CellBody {
     pub cell: (u32, u32),
     /// The model `TextBody` as JSON.
     pub body: serde_json::Value,
+}
+
+/// One picture on a SmartArt node: the media-channel digest, the file name the writer uses and
+/// the picture's final place in the node's placeholder.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartArtPictureMedia {
+    pub sha256: String,
+    pub name: String,
+    #[serde(default)]
+    pub place: PicturePlace,
+}
+
+/// A node picture's place in its placeholder: the source crop as fractions of the image (left,
+/// top, right, bottom; negative pads) and the opacity. Both are final values.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PicturePlace {
+    pub crop: [f64; 4],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f64>,
+}
+
+impl Default for PicturePlace {
+    fn default() -> Self {
+        PicturePlace { crop: [0.0; 4], alpha: None }
+    }
 }
 
 /// One shape in a [`Payload::ShapesSetBounds`] step: the final box in slide points. The shape is
@@ -924,6 +964,7 @@ impl Payload {
             Payload::SmartArtFromText { .. } => "smartArt.replaceWithDiagram",
             Payload::SmartArtToText { .. } => "smartArt.replaceWithText",
             Payload::SmartArtToShapes {} => "smartArt.detach",
+            Payload::SmartArtPicture { .. } => "smartArt.setPicture",
             Payload::ChartInsert { .. } => "insert.chart",
             Payload::ChartSet { .. } => "chart.setWhole",
             Payload::ShapeField { .. } => "shape.setField",
@@ -1769,6 +1810,32 @@ mod tests {
         }
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), options);
         assert_eq!(options.command(), "table.options");
+    }
+
+    #[test]
+    fn a_node_picture_carries_the_media_reference_and_its_place() {
+        // The bytes travel on the media channel; the operation names the digest and the final
+        // place in the node's placeholder. A reset carries no media at all.
+        let picture = Payload::SmartArtPicture {
+            node: 2,
+            media: Some(SmartArtPictureMedia {
+                sha256: "9f2c".into(),
+                name: "photo.png".into(),
+                place: PicturePlace { crop: [0.1, 0.0, 0.2, 0.0], alpha: Some(0.8) },
+            }),
+        };
+        let text = serde_json::to_string(&picture).expect("encode");
+        assert!(text.contains("\"cmd\":\"smart_art_picture\""), "{text}");
+        assert!(text.contains("\"sha256\":\"9f2c\""), "{text}");
+        assert!(text.contains("\"crop\":[0.1,0.0,0.2,0.0]"), "{text}");
+        assert!(text.contains("\"alpha\":0.8"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), picture);
+        assert_eq!(picture.command(), "smartArt.setPicture");
+
+        let reset = Payload::SmartArtPicture { node: 0, media: None };
+        let text = serde_json::to_string(&reset).expect("encode");
+        assert!(!text.contains("media"), "a reset names no media: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), reset);
     }
 
     #[test]

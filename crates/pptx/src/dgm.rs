@@ -357,6 +357,15 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
         w.open0("dgm:spPr");
         w.open0("a:blipFill");
         w.empty("a:blip", A::new().a("r:embed", rid.as_str()));
+        // The picture's place in its placeholder is the blip's source crop, as PowerPoint stores
+        // it on the presentation point (thousandths of a percent).
+        if let Some(place) = d.nodes.get(*k).and_then(|n| n.picture_place.as_ref()).filter(|p| p.crop.iter().any(|v| *v != 0.0)) {
+            let pct = |v: f64| ((v * 100_000.0).round() as i64).to_string();
+            w.empty(
+                "a:srcRect",
+                A::new().a("l", pct(place.crop[0])).a("t", pct(place.crop[1])).a("r", pct(place.crop[2])).a("b", pct(place.crop[3])),
+            );
+        }
         w.open0("a:stretch");
         w.empty0("a:fillRect");
         w.close("a:stretch");
@@ -409,21 +418,26 @@ pub fn outline(data: &El) -> Vec<DiagramNode> {
 }
 
 /// The relationship ids (of the data part) of node pictures, by node index in [`outline`]: the
-/// blip fill of a presentation point associated with the node.
-pub fn node_pictures(data: &El) -> Vec<(usize, String)> {
+/// blip fill of a presentation point associated with the node, with its source crop when one is
+/// there.
+pub fn node_pictures(data: &El) -> Vec<(usize, String, Option<[f64; 4]>)> {
     let ids: HashMap<String, usize> = outline_ids(data).into_iter().enumerate().map(|(k, (id, _))| (id, k)).collect();
     let Some(pts) = data.child("ptLst") else { return vec![] };
-    let mut out: Vec<(usize, String)> = vec![];
+    let mut out: Vec<(usize, String, Option<[f64; 4]>)> = vec![];
     for pt in pts.children_named("pt").take(MAX_NODES * 8) {
         if pt.attr("type") != Some("pres") {
             continue;
         }
         let Some(k) = pt.child("prSet").and_then(|p| p.attr("presAssocID")).and_then(|a| ids.get(a)) else { continue };
-        let Some(rid) = pt.child("spPr").and_then(|s| s.child("blipFill")).and_then(|b| b.child("blip")).and_then(|b| b.attr("r:embed")) else {
-            continue;
-        };
-        if !out.iter().any(|(j, _)| j == k) {
-            out.push((*k, rid.to_string()));
+        let Some(blip) = pt.child("spPr").and_then(|s| s.child("blipFill")) else { continue };
+        let Some(rid) = blip.child("blip").and_then(|b| b.attr("r:embed")) else { continue };
+        let crop = blip.child("srcRect").map(|r| {
+            let f = |k: &str| r.attr(k).and_then(|v| v.parse::<f64>().ok()).map(|v| v / 100_000.0).unwrap_or(0.0);
+            [f("l"), f("t"), f("r"), f("b")]
+        });
+        let crop = crop.filter(|c: &[f64; 4]| c.iter().any(|v| *v != 0.0));
+        if !out.iter().any(|(j, _, _)| j == k) {
+            out.push((*k, rid.to_string(), crop));
         }
     }
     out
@@ -489,6 +503,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
                 text: texts.get(id).cloned().unwrap_or_default(),
                 level: level.min(8),
                 picture: None,
+                picture_place: None,
                 assistant: assistants.contains(id),
                 title: titles.get(id).cloned().unwrap_or_default(),
             },
@@ -768,7 +783,9 @@ mod tests {
     use super::*;
 
     fn nodes(v: &[(&str, u8)]) -> Vec<DiagramNode> {
-        v.iter().map(|(t, l)| DiagramNode { text: (*t).into(), level: *l, picture: None, assistant: false, title: String::new() }).collect()
+        v.iter()
+            .map(|(t, l)| DiagramNode { text: (*t).into(), level: *l, picture: None, picture_place: None, assistant: false, title: String::new() })
+            .collect()
     }
 
     #[test]
@@ -809,10 +826,14 @@ mod tests {
 
     #[test]
     fn node_pictures_come_from_presentation_points() {
-        let d = Diagram { kind: "pictureList".into(), nodes: nodes(&[("A", 0), ("a", 1), ("B", 0)]), ..Default::default() };
+        let mut d = Diagram { kind: "pictureList".into(), nodes: nodes(&[("A", 0), ("a", 1), ("B", 0)]), ..Default::default() };
+        d.nodes[2].picture_place = Some(deckcraft_model::PicturePlace { crop: [0.1, 0.0, 0.2, 0.0], alpha: None });
         let xml = data_xml(&d, 3, "rId1", &[(2, "rId7".into()), (9, "rId8".into())]);
         let doc = crate::xml::parse(&xml).unwrap();
-        assert_eq!(node_pictures(&doc.root), vec![(2, "rId7".to_string())]);
+        let pics = node_pictures(&doc.root);
+        assert_eq!(pics.len(), 1);
+        assert_eq!((pics[0].0, pics[0].1.as_str()), (2, "rId7"));
+        assert_eq!(pics[0].2, Some([0.1, 0.0, 0.2, 0.0]));
     }
 
     #[test]

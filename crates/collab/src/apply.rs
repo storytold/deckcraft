@@ -353,9 +353,9 @@ impl Adapter {
             | Payload::TableColumnWidth { .. }
             | Payload::TableRowHeight { .. }
             | Payload::TableOptions { .. } => (None, Image::Table(deckcraft_model::Table::default())),
-            // A SmartArt edit replaces the whole graphic: the outline, layout, style and colours
-            // are one value, and the generated shapes are replaced with it.
-            Payload::SmartArtSet { .. } => (None, Image::SmartArt(Value::Null)),
+            // A SmartArt edit replaces the whole graphic: the outline, layout, style, colours and
+            // one node's picture are one value, and the generated shapes are replaced with it.
+            Payload::SmartArtSet { .. } | Payload::SmartArtPicture { .. } => (None, Image::SmartArt(Value::Null)),
             // A chart edit replaces the chart's value, and the exact image of the step is the whole
             // shape: the user-facing chart commands carry only part of the model and a kept chart
             // part cannot be replayed from them.
@@ -1352,6 +1352,50 @@ impl Adapter {
                 self.select_shapes(session, before, slide, &[shape], head)?;
                 self.call(session, "smartArt.setDiagram", json!({"id": shape.0, "diagram": diagram}), head)
             }
+            Payload::SmartArtPicture { node, media } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                // Address the graphic and the node before the first write: a plain shape, a nested
+                // graphic or a node the outline does not have must regenerate nothing.
+                let group =
+                    smartart_group(before, slide, shape).ok_or_else(|| Rejection::invalid("the shape is not a SmartArt graphic", Some(head)))?;
+                let gid = group.id;
+                if !before.slide(slide).is_some_and(|s| s.shapes.iter().any(|x| x.id == gid)) {
+                    return Err(Rejection::invalid("the graphic is not at the top of the slide", Some(head)));
+                }
+                let diagram = group.diagram.as_ref().ok_or_else(|| Rejection::invalid("the shape is not a SmartArt graphic", Some(head)))?;
+                let index = *node as usize;
+                deckcraft_engine::cmd::smartart::top_node(diagram, index)
+                    .ok_or_else(|| Rejection::invalid(format!("the outline has no node {node}"), Some(head)))?;
+                self.select_shapes(session, before, slide, &[gid], head)?;
+                match media {
+                    None => self.call(session, "smartArt.setPicture", json!({"id": gid.0, "index": node, "reset": true}), head),
+                    Some(media) => {
+                        let bytes = self.media.get(&media.sha256).ok_or_else(|| {
+                            Rejection::missing_media(format!("picture `{}` has not been uploaded to this session", media.sha256), Some(head))
+                        })?;
+                        if let Some(kind) = self.media.kind(&media.sha256)
+                            && kind != crate::MediaType::Picture
+                        {
+                            return Err(Rejection::invalid(format!("`{}` is a {} object, not a picture", media.sha256, kind.noun()), Some(head)));
+                        }
+                        if bytes.len() > MAX_NODE_PICTURE_BYTES {
+                            return Err(Rejection::invalid("the picture is too large", Some(head)));
+                        }
+                        self.call(
+                            session,
+                            "smartArt.setPicture",
+                            json!({
+                                "id": gid.0,
+                                "index": node,
+                                "name": media.name,
+                                "data": base64::engine::general_purpose::STANDARD.encode(bytes.as_slice()),
+                                "place": {"crop": media.place.crop, "alpha": media.place.alpha},
+                            }),
+                            head,
+                        )
+                    }
+                }
+            }
             Payload::ChartSet { chart } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 // Address the chart before the first write: a command that names a shape which is
@@ -2065,6 +2109,8 @@ const MAX_CONVERSION_TEXT_JSON: usize = deckcraft_engine::cmd::smartart::MAX_CON
 /// Longest chart value a `chart.setWhole` or a `chart_insert` may carry, as JSON bytes (a kept
 /// chart part travels inside the value; the engine applies the same bound).
 const MAX_CHART_JSON: usize = deckcraft_engine::cmd::insert::MAX_CHART_JSON;
+/// Most bytes one SmartArt node picture may carry; the engine applies the same budget.
+const MAX_NODE_PICTURE_BYTES: usize = deckcraft_engine::cmd::smartart::MAX_NODE_PICTURE_BYTES;
 
 /// The read-only queries the server answers on the wire. A query gets no version and no journal
 /// entry, so this is deliberately an allowlist: an arbitrary engine query (one that renders,
@@ -2209,6 +2255,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::TableRowHeight { .. }
         | Payload::TableOptions { .. }
         | Payload::SmartArtSet { .. }
+        | Payload::SmartArtPicture { .. }
         | Payload::ChartSet { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
@@ -2275,7 +2322,8 @@ mod tests {
     use super::*;
     use crate::history::ActorHistory;
     use deckcraft_collab_proto::{
-        CellFillSpec, FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeField, ShapeRestoreItem, TextCursor, TransitionSpec,
+        CellFillSpec, FillSpec, FormatCmd, LineSpec, PicturePlace, ShapeBounds, ShapeField, ShapeRestoreItem, SmartArtPictureMedia, TextCursor,
+        TransitionSpec,
     };
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
@@ -3293,6 +3341,102 @@ mod tests {
         bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
         assert_eq!(doc_of(&a), doc_of(&b));
         assert_eq!(doc_of(&a).slides[0].shapes[2], after);
+    }
+
+    #[test]
+    fn two_replicas_converge_on_a_node_picture_and_undo_restores_the_whole_node() {
+        let (mut a, mut b) = (smartart_deck(), smartart_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, group) = key_of(&aa, &doc_of(&a), 2);
+        let before = doc_of(&a).slides[0].shapes[2].clone();
+        let bytes = png();
+        let sha = aa.media_mut().put("red.png", bytes.clone()).expect("media");
+        bb.media_mut().insert(&sha, bytes).expect("the same object");
+
+        // One final value: the digest, the top-level node and the picture's place.
+        let picture = Payload::SmartArtPicture {
+            node: 0,
+            media: Some(SmartArtPictureMedia {
+                sha256: sha.clone(),
+                name: "red.png".into(),
+                place: PicturePlace { crop: [0.1, 0.0, 0.2, 0.0], alpha: Some(0.8) },
+            }),
+        };
+        let envelope = op(OpKind::Command, 0, Target { slide: Some(slide), shape: Some(group), ..Target::default() }, picture);
+        aa.apply(&mut a, 0, "a", &envelope).expect("a puts the picture in");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed step");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        let after = doc_of(&a).slides[0].shapes[2].clone();
+        let d = after.diagram.as_ref().expect("diagram");
+        assert_eq!(d.kind, "blockList", "the layout did not change");
+        assert!(d.nodes[0].picture.is_some(), "the first node got the picture");
+        assert!(d.nodes[1].picture.is_none());
+        assert_eq!(d.nodes[0].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+
+        // The undo image is the whole group, so one undo puts the node back with its children and
+        // no picture, and the redo returns the exact result on both replicas.
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::SmartArt, .. }), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a applies the undo");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], before, "the whole node came back, children included");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 2, "a", &redo).expect("a applies the redo");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], after);
+    }
+
+    #[test]
+    fn a_node_picture_refuses_a_plain_shape_an_unknown_node_and_a_hostile_place() {
+        let mut s = smartart_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, group) = key_of(&ad, &doc, 2);
+        let (_, rect) = key_of(&ad, &doc, 0);
+        let before = doc_of(&s).slides[0].shapes[2].clone();
+        let bytes = png();
+        let sha = ad.media_mut().put("red.png", bytes).expect("media");
+        let op_with = |target: Target, node: u32, sha: &str, place: PicturePlace| {
+            op(
+                OpKind::Command,
+                0,
+                target,
+                Payload::SmartArtPicture { node, media: Some(SmartArtPictureMedia { sha256: sha.to_string(), name: "red.png".into(), place }) },
+            )
+        };
+        let target = |shape: &ShapeKey| Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() };
+
+        // A plain shape is not a graphic; a node the outline does not have; a place that leaves no
+        // area; and a media object the channel says is not a picture.
+        for bad in [
+            op_with(target(&rect), 0, &sha, PicturePlace::default()),
+            op_with(target(&group), 9, &sha, PicturePlace::default()),
+            op_with(target(&group), 0, &sha, PicturePlace { crop: [0.9, 0.0, 0.9, 0.0], alpha: None }),
+            op_with(target(&group), 0, &sha, PicturePlace { crop: [0.0; 4], alpha: Some(2.0) }),
+        ] {
+            let err = ad.apply(&mut s, 0, "a", &bad).expect_err("refused before the first write");
+            assert_eq!(err.code, RejectCode::Invalid, "{err:?}");
+            assert!(!err.retryable);
+        }
+        let model = ad.media_mut().put("m.glb", b"glTF\x02\0\0\0\x0c\0\0\0".to_vec()).expect("model");
+        let err = ad.apply(&mut s, 0, "a", &op_with(target(&group), 0, &model, PicturePlace::default())).expect_err("not a picture");
+        assert_eq!(err.code, RejectCode::Invalid);
+
+        // Media the session does not have is a retryable refusal, not a silent shape change.
+        let missing = "0".repeat(64);
+        let err = ad.apply(&mut s, 0, "a", &op_with(target(&group), 0, &missing, PicturePlace::default())).expect_err("missing media");
+        assert_eq!(err.code, RejectCode::Unsupported);
+        assert!(err.retryable);
+
+        // Nothing was written and no history step was recorded.
+        assert_eq!(doc_of(&s).slides[0].shapes[2], before);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "a refusal records no step");
     }
 
     #[test]

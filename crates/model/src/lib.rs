@@ -403,12 +403,26 @@ pub struct DiagramNode {
     /// The picture shown in the node's picture placeholder (picture layouts).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub picture: Option<MediaId>,
+    /// Where that picture sits in its placeholder: the source crop (fractions of the image;
+    /// negative pads) and the opacity. Absent = the whole image, stretched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture_place: Option<PicturePlace>,
     /// An assistant (organisation charts): drawn beside its parent, off the row of its siblings.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub assistant: bool,
     /// The job title under the name (Name and Title Organization Chart).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub title: String,
+}
+
+/// Where a node's picture sits in its placeholder: the source crop as fractions of the image
+/// (left, top, right, bottom; negative pads) and the opacity. Both are final values.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PicturePlace {
+    pub crop: [f64; 4],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f64>,
 }
 
 impl Default for Shape {

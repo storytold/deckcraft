@@ -24,8 +24,8 @@ mod nodes;
 mod paint;
 
 pub use edit::{
-    FromTextPlan, MAX_CONVERSION_TEXT_JSON, MAX_DIAGRAM_JSON, ToTextPlan, from_text_plan, insert_plan, insert_value, plan, selected, synced,
-    to_shapes_plan, to_text_plan, verified_diagram,
+    FromTextPlan, MAX_CONVERSION_TEXT_JSON, MAX_DIAGRAM_JSON, MAX_NODE_PICTURE_BYTES, ToTextPlan, from_text_plan, insert_plan, insert_value,
+    place_param, plan, selected, set_picture_value, synced, to_shapes_plan, to_text_plan, top_node, verified_diagram,
 };
 use edit::{
     add_node, change_colors, change_layout, change_style, demote, detach, from_text, nodes, promote, remove_node, replace_with_diagram,
@@ -303,9 +303,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Picture in SmartArt",
             ["SmartArt Design", "Create Graphic"],
             None,
-            "{id?, index, data?: base64 | path?: string | reset?: bool} (the node's picture placeholder in picture layouts)",
+            "{id?, index, data?: base64 | path?: string | place?: {crop?: [l,t,r,b], alpha?} | reset?: bool} (the node's picture placeholder in picture layouts)",
             has_selection,
             set_picture
+        ),
+        cmd!(
+            "smartArt.setPicture",
+            "Restore SmartArt Picture",
+            ["SmartArt Design", "Create Graphic"],
+            None,
+            "{id?, index, data: base64, name?, place?, reset?: bool} (the confirmed command of smartArt.picture: the picture from the media channel and its final place)",
+            has_selection,
+            set_picture_value
         ),
         cmd!(
             "smartArt.style",
@@ -339,7 +348,14 @@ mod tests {
         levels
             .iter()
             .enumerate()
-            .map(|(i, l)| DiagramNode { text: format!("n{i}"), level: *l, picture: None, assistant: false, title: String::new() })
+            .map(|(i, l)| DiagramNode {
+                text: format!("n{i}"),
+                level: *l,
+                picture: None,
+                picture_place: None,
+                assistant: false,
+                title: String::new(),
+            })
             .collect()
     }
 

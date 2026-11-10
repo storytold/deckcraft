@@ -10,7 +10,8 @@ use std::net::TcpStream;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    ClientInfo, ClientMsg, Hello, OpEnvelope, OpKind, PROTO_VERSION, Payload, ServerMsg, Target, decode_server, encode_client,
+    ClientInfo, ClientMsg, Hello, OpEnvelope, OpKind, PROTO_VERSION, Payload, PicturePlace, ServerMsg, SmartArtPictureMedia, Target, decode_server,
+    encode_client,
 };
 use deckcraft_collab_server::{Config, Handle, TokenClaims, serve_ephemeral};
 use tungstenite::stream::MaybeTlsStream;
@@ -705,6 +706,165 @@ fn a_smartart_insertion_and_its_nodes_query_travel_over_the_socket() {
         ServerMsg::QueryResult { version, result: Some(result), error: None, .. } => {
             assert_eq!(version, 1, "the refusal moved no version");
             assert_eq!(result["kind"], "hierarchy", "the document did not change");
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+    handle.shutdown();
+}
+
+#[test]
+fn a_smartart_node_picture_travels_over_the_socket_and_a_viewer_is_refused() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = native_deck();
+    let body = serde_json::json!({
+        "fileId": "file-sa-picture",
+        "app": "deckcraft",
+        "initialBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let doc = deckcraft_format::load(&bytes).expect("load");
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{id}-"));
+    let mut keys = deckcraft_collab::KeyMap::new();
+    keys.sync(&doc, &mut issuer);
+    let slide = keys.slide_key(doc.slides[0].id).expect("slide key").clone();
+
+    // The picture's bytes go to the media channel first; the operation names only the digest.
+    let picture = png();
+    let sha = sha256(&picture);
+    let editor = token("alice", "editor", &id);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/{id}/media/{sha}"), Some(&editor), &picture);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut viewer = join(addr, &id, "victor", "viewer");
+    let insert = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::SmartArtInsert {
+            diagram: serde_json::json!({"kind": "pictureList", "nodes": [{"text": "A", "level": 0}, {"text": "B", "level": 0}]}),
+            rect: Some([40.0, 50.0, 400.0, 300.0]),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
+    let applied = match read(&mut a) {
+        ServerMsg::Applied(applied) => applied,
+        other => panic!("expected applied, got {other:?}"),
+    };
+    assert_eq!(applied.version, 1);
+    let group = applied
+        .delta
+        .changes
+        .iter()
+        .find_map(|change| matches!(change.kind, deckcraft_collab_proto::ChangeKind::Inserted).then(|| change.shape.clone()).flatten())
+        .expect("the insertion names a shape");
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 1),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+
+    // One node's picture: the digest, the node and its place, as one final value.
+    let put = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Command,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtPicture {
+            node: 0,
+            media: Some(SmartArtPictureMedia {
+                sha256: sha.clone(),
+                name: "red.png".into(),
+                place: PicturePlace { crop: [0.1, 0.0, 0.2, 0.0], alpha: None },
+            }),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&put).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, 2),
+        other => panic!("expected applied, got {other:?}"),
+    }
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 2),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+
+    // The authoritative outline now carries the picture, and the layout did not change.
+    let query = ClientMsg::Query {
+        id: "q-1".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&query).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { version, result: Some(result), error: None, .. } => {
+            assert_eq!(version, 2);
+            assert_eq!(result["kind"], "pictureList", "the layout did not change");
+            assert!(result["nodes"][0]["picture"].is_number(), "{result}");
+            assert!(result["nodes"][1]["picture"].is_null(), "{result}");
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+
+    // A viewer's picture step is refused by the server before the engine: no version moves.
+    let viewer_put = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-3".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Command,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtPicture { node: 0, media: None },
+        history: None,
+    });
+    viewer.send(tungstenite::Message::Text(encode_client(&viewer_put).expect("encode").into())).expect("send");
+    match read(&mut viewer) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Forbidden),
+        other => panic!("expected forbidden, got {other:?}"),
+    }
+
+    // A place that leaves no visible area is refused as invalid, and the version stays put.
+    let bad = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-4".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Command,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtPicture {
+            node: 0,
+            media: Some(SmartArtPictureMedia {
+                sha256: sha,
+                name: "red.png".into(),
+                place: PicturePlace { crop: [0.9, 0.0, 0.9, 0.0], alpha: None },
+            }),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
+        other => panic!("expected invalid, got {other:?}"),
+    }
+    let after = ClientMsg::Query {
+        id: "q-2".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide), shape: Some(group), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&after).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { version, result: Some(result), error: None, .. } => {
+            assert_eq!(version, 2, "the refusals moved no version");
+            assert!(result["nodes"][0]["picture"].is_number(), "the document did not change");
         }
         other => panic!("expected the query answer, got {other:?}"),
     }

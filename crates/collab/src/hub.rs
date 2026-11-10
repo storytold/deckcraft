@@ -132,6 +132,7 @@ impl Hub {
                     "smartArt.style".into(),
                     "smartArt.colors".into(),
                     "smartArt.nodes".into(),
+                    "smartArt.picture".into(),
                     "insert.smartArt".into(),
                     "smartArt.fromText".into(),
                     "smartArt.toText".into(),
@@ -1209,6 +1210,84 @@ mod tests {
         }
         assert_eq!(hub.version(), 0);
         assert_eq!(hub.session().document().expect("doc"), &before, "the document did not move");
+    }
+
+    /// 8×8 red PNG, the media channel's picture bytes.
+    fn png() -> Vec<u8> {
+        vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73,
+            68, 65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174,
+            66, 96, 130,
+        ]
+    }
+
+    #[test]
+    fn a_node_picture_reaches_both_replicas_through_the_hub_and_a_viewer_is_refused() {
+        let mut hub = smartart_hub();
+        let bytes = png();
+        let sha = hub.put_media("red.png", bytes.clone()).expect("upload");
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let _ = join(&mut hub, "victor", Role::Viewer);
+        let (mut sa, mut sb) = (smartart_session(), smartart_session());
+        let (mut a, mut b) = (CollabDoc::new("d"), CollabDoc::new("d"));
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        a.put_media("red.png", bytes.clone()).expect("a has the bytes");
+        b.put_media("red.png", bytes).expect("b has the bytes");
+        let group = sa.doc().expect("doc").doc.slides[0].shapes[0].id;
+        let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        let params = json!({"id": group.0, "index": 0, "sha256": sha, "name": "red.png", "place": {"crop": [0.1, 0.0, 0.2, 0.0]}});
+        a.submit(&sa, "smartArt.picture", &params, "a-1").expect("submit the picture");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (1, 1));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same node picture");
+        let after = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        let d = after.diagram.as_ref().expect("diagram");
+        assert!(d.nodes[0].picture.is_some());
+        assert_eq!(d.nodes[0].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+
+        // A viewer's hand-built step never reaches the engine: version and document stay.
+        let (slide, shape) = keys_of(&hub);
+        let viewer_step = OpEnvelope {
+            op_id: "v-1".into(),
+            doc: "d".into(),
+            base_version: 1,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::SmartArtPicture { node: 0, media: None },
+            history: None,
+        };
+        // The picture's broadcast is still in the viewer's outbox; drain it first.
+        while hub.poll("victor").is_some() {}
+        hub.receive("victor", ClientMsg::Op(viewer_step)).expect("receive");
+        match hub.poll("victor").expect("answer") {
+            ServerMsg::Rejected(r) => assert_eq!(r.code, RejectCode::Forbidden),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(hub.version(), 1);
+        assert_eq!(hub.session().document().expect("doc").slides[0].shapes[0], after);
+
+        // The undo image is the whole group: the node comes back without its picture, and the
+        // redo returns the exact result.
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (2, 2));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], before);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+        a.redo().expect("request a redo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (3, 3));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], after);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
     }
 
     #[test]

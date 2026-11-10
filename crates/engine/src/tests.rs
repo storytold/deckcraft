@@ -4445,6 +4445,76 @@ fn smartart_pictures_3d_styles_and_colour_variants() {
 }
 
 #[test]
+fn a_smartart_node_picture_is_one_final_value_with_a_checked_place() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let gid = ShapeId(s.execute("insert.smartArt", &json!({"kind": "pictureList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap() as u32);
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let diagram = |s: &Session| -> deckcraft_model::Diagram { s.doc().unwrap().doc.slides[1].shapes.iter().find_map(|x| x.diagram.clone()).unwrap() };
+    let group =
+        |s: &Session| -> deckcraft_model::Shape { s.doc().unwrap().doc.slides[1].shapes.iter().find(|x| x.diagram.is_some()).unwrap().clone() };
+    let place = json!({"crop": [0.1, 0.0, 0.2, 0.0], "alpha": 0.8});
+
+    // The confirmed command sets the node's picture and its place; the layout stays.
+    s.execute("smartArt.setPicture", &json!({"id": gid.0, "index": 0, "name": "p.png", "data": png, "place": place})).unwrap();
+    let d = diagram(&s);
+    assert_eq!(d.kind, "pictureList", "the layout did not change");
+    assert!(d.nodes[0].picture.is_some(), "the first node got the picture");
+    assert!(d.nodes[1].picture.is_none());
+    let got = d.nodes[0].picture_place.clone().expect("the place is kept");
+    assert_eq!(got.crop, [0.1, 0.0, 0.2, 0.0]);
+    assert_eq!(got.alpha, Some(0.8));
+    let child = group(&s).children().iter().find(|c| c.name == "SmartArt picture").expect("the placeholder").clone();
+    match child.fill {
+        Some(deckcraft_model::Fill::Picture(fill)) => {
+            assert_eq!(fill.crop, [0.1, 0.0, 0.2, 0.0], "the placeholder draws the place");
+            assert_eq!(fill.alpha, Some(0.8));
+        }
+        other => panic!("not a picture fill: {other:?}"),
+    }
+
+    // The place round-trips through the data model's source rectangle.
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(s.doc().unwrap().doc.as_ref()).unwrap()).unwrap();
+    let bd = back.slides[1].shapes.iter().find_map(|x| x.diagram.clone()).unwrap();
+    assert_eq!(bd.nodes[0].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+
+    // One undo puts the node (no picture, no place) back; the redo returns the exact result.
+    s.execute("edit.undo", &json!({})).unwrap();
+    let d = diagram(&s);
+    assert!(d.nodes[0].picture.is_none() && d.nodes[0].picture_place.is_none());
+    s.execute("edit.redo", &json!({})).unwrap();
+    let d = diagram(&s);
+    assert!(d.nodes[0].picture.is_some());
+    assert_eq!(d.nodes[0].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+
+    // Hostile input is refused before the first write and leaves the graphic as it was.
+    let before = serde_json::to_value(group(&s)).unwrap();
+    let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 80]})).unwrap()["id"].as_u64().unwrap();
+    for bad in [
+        json!({"id": rect, "index": 0, "name": "p.png", "data": png}),
+        json!({"id": gid.0, "index": 9, "name": "p.png", "data": png}),
+        json!({"id": gid.0, "index": 0, "name": "a.txt", "data": "AAAA"}),
+        json!({"id": gid.0, "index": 0, "name": "p.png", "data": png, "place": {"crop": [0.9, 0.0, 0.9, 0.0]}}),
+        json!({"id": gid.0, "index": 0, "name": "p.png", "data": png, "place": {"alpha": 2.0}}),
+    ] {
+        assert!(s.execute("smartArt.setPicture", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(serde_json::to_value(group(&s)).unwrap(), before, "a refusal wrote nothing");
+
+    // A nested graphic is not a top-level target.
+    let rect = ShapeId(rect as u32);
+    s.execute("arrange.group", &json!({"ids": [gid.0, rect.0]})).unwrap();
+    assert!(s.execute("smartArt.setPicture", &json!({"id": gid.0, "index": 0, "name": "p.png", "data": png})).is_err());
+
+    // The single-user command keeps the same place when it is given one.
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("smartArt.picture", &json!({"id": gid.0, "index": 1, "name": "p.png", "data": png, "place": place})).unwrap();
+    let d = diagram(&s);
+    assert_eq!(d.nodes[1].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+    assert!(d.nodes[1].picture.is_some());
+}
+
+#[test]
 fn smartart_converts_to_and_from_text_and_shapes() {
     let mut s = session();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();

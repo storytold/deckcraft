@@ -4,6 +4,7 @@ use super::{
     AutoFit, COLORS, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session, Shape,
     ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
 };
+use deckcraft_model::PicturePlace;
 
 /// The SmartArt group that `id` is, or is inside.
 pub(super) fn diagram_group(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
@@ -86,7 +87,9 @@ pub fn insert_plan(p: &Value) -> Result<Diagram> {
         None => nodes_from_lines(p.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)),
     };
     if nodes.is_empty() {
-        nodes = (0..3).map(|_| DiagramNode { text: "Text".into(), level: 0, picture: None, assistant: false, title: String::new() }).collect();
+        nodes = (0..3)
+            .map(|_| DiagramNode { text: "Text".into(), level: 0, picture: None, picture_place: None, assistant: false, title: String::new() })
+            .collect();
     }
     normalize(&mut nodes);
     Ok(Diagram { kind: kind.into(), nodes, ..Default::default() })
@@ -247,6 +250,58 @@ pub const MAX_CONVERSION_TEXT_JSON: usize = 192 * 1024;
 const MAX_CONVERSION_PARAGRAPHS: usize = 10_000;
 const MAX_CONVERSION_RUNS: usize = 50_000;
 
+/// Most bytes one node picture may carry: the media channel's picture budget (8 MiB), checked by
+/// the engine too so a node picture is refused before the first write whatever path built it.
+pub const MAX_NODE_PICTURE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The top-level node a picture step names: the node itself when it is top level, else the
+/// nearest top-level node above it (a sub-point's picture is its top-level node's, as the
+/// placeholder shows). `None` when the index is past the outline.
+pub fn top_node(d: &Diagram, index: usize) -> Option<usize> {
+    if index >= d.nodes.len() {
+        return None;
+    }
+    (0..=index).rev().find(|k| d.nodes[*k].level == 0)
+}
+
+/// Whether a place leaves a positive visible area and a usable opacity. A crop side is a fraction
+/// of the image (negative pads), so the visible part must be more than nothing.
+fn place_ok(place: &PicturePlace) -> bool {
+    place.crop.iter().all(|v| v.is_finite())
+        && place.crop[0] + place.crop[2] < 1.0
+        && place.crop[1] + place.crop[3] < 1.0
+        && place.alpha.is_none_or(|a| a.is_finite() && (0.0..=1.0).contains(&a))
+}
+
+/// A node picture's place from `place` (`crop: [l, t, r, b]`, `alpha?`), refused when it leaves
+/// no visible area or names a field the place does not have. Absent or `null` = the whole image.
+pub fn place_param(p: &Value, cmd: &str) -> Result<Option<PicturePlace>> {
+    let Some(value) = p.get("place") else { return Ok(None) };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let obj = value.as_object().ok_or_else(|| bad(cmd, "`place` must be an object"))?;
+    for key in obj.keys() {
+        if !matches!(key.as_str(), "crop" | "alpha") {
+            return Err(bad(cmd, format!("`place` has no field `{key}`")));
+        }
+    }
+    let mut place = PicturePlace::default();
+    if let Some(crop) = obj.get("crop") {
+        let a = crop.as_array().filter(|a| a.len() == 4).ok_or_else(|| bad(cmd, "`place.crop` must be [left, top, right, bottom]"))?;
+        for (i, v) in a.iter().enumerate() {
+            place.crop[i] = v.as_f64().ok_or_else(|| bad(cmd, "`place.crop` values must be numbers"))?;
+        }
+    }
+    if let Some(alpha) = obj.get("alpha").filter(|v| !v.is_null()) {
+        place.alpha = Some(alpha.as_f64().ok_or_else(|| bad(cmd, "`place.alpha` must be a number"))?);
+    }
+    if !place_ok(&place) {
+        return Err(bad(cmd, "the picture's place leaves no visible area"));
+    }
+    Ok(Some(place))
+}
+
 /// The final box a conversion carries. The sender computes it against the shape it sees and every
 /// replica uses it unchanged, so the replaced shape keeps the same place and size. The value is
 /// hostile input like every other field: four finite numbers, a positive size, and a sane bound.
@@ -374,6 +429,9 @@ pub fn verified_diagram(value: &Value, cmd: &str) -> Result<Diagram> {
     }
     if d.nodes.iter().map(|n| n.text.len() + n.title.len()).sum::<usize>() > MAX_NODE_TEXT {
         return Err(bad(cmd, "the outline is too large"));
+    }
+    if d.nodes.iter().filter_map(|n| n.picture_place.as_ref()).any(|p| !place_ok(p)) {
+        return Err(bad(cmd, "a node picture's place leaves no visible area"));
     }
     if !d.style.is_empty() && !STYLES.iter().any(|(id, _)| id == &d.style) {
         return Err(bad(cmd, "unknown style"));
@@ -628,6 +686,7 @@ fn text_sizes(children: &[Shape]) -> (f64, f64) {
 pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.picture";
     let i = index(p, CMD)?;
+    let place = place_param(p, CMD)?;
     let media = if bool_or(p, "reset", false) {
         None
     } else {
@@ -638,9 +697,55 @@ pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
     };
     edit_diagram(s, p, CMD, |d| {
         // A sub-point's picture is its top-level node's: that's the node the placeholder shows.
-        let top = (0..=i.min(d.nodes.len().saturating_sub(1))).rev().find(|k| d.nodes.get(*k).is_some_and(|n| n.level == 0)).unwrap_or(i);
-        let n = d.nodes.get_mut(top).ok_or_else(|| bad(CMD, "no such node"))?;
+        let top = top_node(d, i).ok_or_else(|| bad(CMD, "no such node"))?;
+        let n = &mut d.nodes[top];
         n.picture = media;
+        n.picture_place = if media.is_some() { place.clone() } else { None };
+        Ok(Value::Null)
+    })
+}
+
+/// Changes one node's picture as a final value (`smartArt.setPicture`), the confirmed command of
+/// `smartArt.picture`: the picture bytes come from the media channel (the operation carried only
+/// their digest) and the place is a final value. The graphic must be a top-level SmartArt group,
+/// the node must exist, the layout must not change, and the picture must be one this document
+/// accepts — all checked before the first write, so a hostile operation regenerates nothing.
+pub fn set_picture_value(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.setPicture";
+    let i = index(p, CMD)?;
+    let place = place_param(p, CMD)?;
+    let reset = bool_or(p, "reset", false);
+    // Plan against the authoritative document before the first write.
+    let gid = target_group(s, p, CMD)?;
+    let top = {
+        let st = s.doc()?;
+        let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(CMD, "no slide"))?;
+        if !shapes.iter().any(|x| x.id == gid) {
+            return Err(bad(CMD, "the graphic is not at the top of the slide"));
+        }
+        let d = synced(&shape_of(s, gid)?).ok_or_else(|| bad(CMD, "not a SmartArt graphic"))?;
+        top_node(&d, i).ok_or_else(|| bad(CMD, "no such node"))?
+    };
+    let media = if reset {
+        None
+    } else {
+        let (name, bytes) = crate::cmd::insert::media_bytes(p, CMD)?;
+        if bytes.len() > MAX_NODE_PICTURE_BYTES {
+            return Err(bad(CMD, "the picture is too large"));
+        }
+        let ct = crate::cmd::insert::content_type(&name, &bytes);
+        if !ct.starts_with("image/") {
+            return Err(bad(CMD, format!("{name} is not a picture")));
+        }
+        if ct != "image/svg+xml" && deckcraft_render::decode_image(&bytes).is_none() {
+            return Err(bad(CMD, format!("{name}: the picture can't be read")));
+        }
+        Some(s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad(CMD, NO_ID_SPACE)))?)
+    };
+    edit_diagram(s, p, CMD, |d| {
+        let node = d.nodes.get_mut(top).ok_or_else(|| bad(CMD, "no such node"))?;
+        node.picture = media;
+        node.picture_place = if media.is_some() { place.clone() } else { None };
         Ok(Value::Null)
     })
 }
