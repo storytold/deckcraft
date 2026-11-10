@@ -1,6 +1,11 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-10. Branch: `collab/pr14`, branched from `collab/pr13` at `baa845ec` (the
+Updated: 2026-11-10. Branch: `collab/pr15`, branched from `collab/pr14` at `6e42a7ab` (the desktop
+commit and its docs commit): **optimistic preview** (RFC §3) — with `DECKCRAFT_COLLAB_PREVIEW=1`
+one local operation is shown before the room answers, settled by `applied`, rolled back exactly on
+a refusal and abandoned for a `resync` when another participant's step lands in between; the wire
+carries an optional `preview` local id that the server never stores, so a client without it behaves
+exactly as before. `collab/pr14` is branched from `collab/pr13` at `baa845ec` (the
 chunked-base slice and its docs commit): Save in a live desktop session now commits the room —
 one commit in flight, the document stays dirty until `commit-result`, a refusal keeps the edits
 and offers a copy — with its docs commit on top. `collab/pr13`, branched from `collab/pr12` at
@@ -115,6 +120,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr12` | `7b51e65d` (+ docs) | `model3d.scene` as one final scene — one light (type, direction, intensity and a spot's angle) and the environment (ambient and an optional sRGB background) — checked on the client and in the engine before the first write, written as `am3d:scene` into the slide part, with the whole model shape as the undo image |
 | `collab/pr13` | `5c150c93` + this slice | a native base above `max_base_inline` travels as a chain of chunks (`base.chunks`, `base-chunk`): the client assembles it, checks the digest and the limits, resumes at the missing chunk after a dropped socket, and the snapshot is applied only when the base is whole; the big-deck soak (322 edits, 120 slides with media, an 11.8 MiB base in 48 chunks) is the §8 gate |
 | `collab/pr14` | `baa845ec` + this slice | Save in a live desktop session sends `ClientMsg::Commit` instead of writing the local file: one commit in flight (a repeated Save is the same request), `expected` is the cabinet version the session opened from or the one the last commit was accepted with, the document stays dirty until `commit-result` (dirty is cleared only if no edit landed meanwhile), a `409` keeps the edits and the banner offers Save a copy, viewers and commenters are refused locally without a request |
+| `collab/pr15` | `6e42a7ab` + this slice | optimistic preview: an optional `preview` local id on the operation (never stored, required or echoed by the room) and a client that shows one `command`-class operation at submit behind `DECKCRAFT_COLLAB_PREVIEW`; `applied` settles it without a second run, a refusal restores exactly that one edit, a foreign step in between abandons it and asks for the tail, and a preview never enters the undo history |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs), `44489f34` (+ docs), `c406a329` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`); the SmartArt node-picture slice `44489f34`: `smartArt.picture` as one final value (the top-level graphic, one top-level node, the media channel's digest and the picture's final place), the engine checks the target, the node, the picture allowlist and budget, the place's finite positive area and that the layout does not change before the first write, and the whole group is the undo image; and the 3-D model camera slice `c406a329`: `model3d.camera` as one final view (`position`/`target`/`up` in EMU, `fov` in degrees, or `null`), relative edits refused on the client, on the wire and in the engine before the first write, the view written as `am3d:camera`, and the whole model shape as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
@@ -282,6 +288,22 @@ human decision.
 
 - `CollabDoc` normalises commands to absolute/explicit operations and applies the confirmed
   commands; keys are derived, not transferred.
+- Optimistic preview (`DECKCRAFT_COLLAB_PREVIEW=1`, off by default; RFC §3). One `command`-class
+  operation whose payload the room will not rewrite (move/bounds/align, fill/line, a whole-body
+  `format.*`, transition, animations, a whole chart, table style/options/sizing, a whole notes
+  body, camera/scene, font set/remove) is applied at submit — an `Arc` copy-on-write before-image,
+  through `apply_confirmed`, so no undo step is recorded — marked `preview: <opId>` on the wire and
+  drawn in the same frame. Text offsets, cell addresses/ranges/carets, structural steps,
+  `SmartArtSet` and `FontCreate` are never previewed: the room owns the offsets, addresses, keys
+  and generated ids. While a preview is outstanding every later local command and undo/redo wait
+  (bounded at `MAX_DEFERRED = 64`) and are normalised against confirmed state, so no payload ever
+  contains an edit the room lacks. `applied` with the same payload and target settles it (the
+  command is not run a second time); a different form restores the before-image and applies the
+  authoritative command; a refusal restores exactly that one edit and leaves accepted steps alone;
+  a step from another participant in between abandons the preview, reports the queued edits and
+  asks for the tail from the version the replica holds (`ClientSession::rewind_replica`). The room
+  strips `preview` in `DocSession::apply` before dedup, journal, undo and commit, and answers with
+  no trace of it (proto and socket tests pin that).
 - Unanswered operations go back to the front of the queue on a disconnect and are resent with
   the same `opId`; the server dedups them.
 - Desktop `WsTransport`: one background thread, two channels, 50 ms read timeout, rustls for
@@ -908,6 +930,28 @@ file under a live room: the server posts the commit anyway, the cabinet refuses 
 created, the original stays, and the conflict counters move (`cabinet_conflicts_total`). A commit
 whose `expectedVersion` does not match the room is refused before any callback is made.
 
+Re-run on 2026-11-10 after the optimistic-preview slice (`collab/pr15`, on `agents`, rust 1.99.1):
+`cargo fmt --all -- --check` clean (EXIT=0); `cargo clippy --workspace --all-targets -- -D
+warnings` clean (EXIT=0); `cargo test -p deckcraft-collab-proto` 42 passed / 0 failed / 0 ignored
+(EXIT=0); `cargo test -p deckcraft-collab` 280 + 8 passed / 0 failed / 0 ignored (EXIT=0);
+`cargo test -p deckcraft-ui-egui collab::` 24 passed / 0 failed / 0 ignored (502 filtered out,
+EXIT=0); `cargo test -p deckcraft-collab-server` 10 unit + 5 commit + 5 gates (15.78 s,
+LibreOffice skipped on the build host) + 18 socket passed / 0 failed / 0 ignored (EXIT=0);
+`cargo test -p deckcraft-collab-web -p deckcraft-web` 15 + 6 passed (EXIT=0); `cargo check -p
+deckcraft-web --target wasm32-unknown-unknown` ok (EXIT=0); `cargo xtask layers` 32 crates, no
+violations (EXIT=0). The new tests cover a previewed move visible in the local model before the
+answer, settled by `applied` without running the command twice and outside the engine undo stack;
+a refusal that restores exactly the refused edit and leaves an accepted one; a foreign step
+between preview and answer that gives a `resync` from the replica's version, after which the tail
+lands in the room's order on both replicas; a viewer and an offline replica that show nothing; a
+command submitted during a preview that waits and is normalised only against confirmed state; the
+flag-off path (no preview, no `preview` on the wire); the wire round trip of the optional field and
+a frame without it; a room that applies an operation carrying `preview`, dedups a resend with
+another local id and never stores or echoes the id (session, proto and socket tests); and the UI's
+`DECKCRAFT_COLLAB_PREVIEW` path over a pipe (drawn before the answer, settled on it). `git status`
+is clean after the docs commit; nothing was pushed, CI was not touched, and PR #1975/#1998 are
+unchanged.
+
 ## TASK.md acceptance matrix
 
 | Criterion | State | Where / why |
@@ -921,7 +965,7 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, the whole table for style/fill/merge/split/sizing, document fonts (the whole entry), a SmartArt step (the whole group, including a node's picture), a SmartArt insertion (the whole inserted shape) and a SmartArt conversion (the whole source shape, whatever its id) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore` (an insertion or a conversion too)/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server and desktop: `POST /v1/sessions/{id}/commit` and `ClientMsg::Commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json`; Save in a live desktop session commits instead of writing the local copy, stays dirty until the answer and offers a copy on a refusal | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`, `crates/collab/src/client.rs`, `crates/ui-egui/src/app/files.rs`; the cabinet endpoint remains external |
-| Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
+| Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
 | PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork; locally rebased onto `origin/main` (`0623b430`) with a clean `merge-tree` (the fork needs a force-push, the chair's manual step) | [`pr10.md`](pr10.md); merge needs a human decision |
@@ -1128,17 +1172,13 @@ was not touched, and PR #1975 is unchanged.
    message (a fresh token today means a new `session` message). A page on another origin can use
    the channel once its origin is listed in `DECKCRAFT_CORS_ORIGINS` (the sync server answers the
    media and session requests with `Access-Control-Allow-Origin` and the preflight).
-7. **Optimistic preview.** Edits appear on `applied`, not on the keystroke/pointer release.
-   Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
-   rejected preview can be rolled back only if no other command has been applied since, otherwise
-   the client must resync.
-8. **Soaks are in; CI still skips LibreOffice.** Four soaks now run in `tests/gates.rs` (see §8):
+7. **Soaks are in; CI still skips LibreOffice.** Four soaks now run in `tests/gates.rs` (see §8):
    the 26-edit three-client soak, and the big-deck soak — 322 edits by three editors over a
    120-slide deck with media, a viewer rebuilt from the 11.8 MiB base sent in 48 chunks, a fifth
    participant whose socket drops mid-chain and resumes at the missing chunk, and a commit at the
    head that reimports with every replica's values. What remains is running the LibreOffice gate in
    CI, where LibreOffice is not installed (there it skips itself, printing a line).
-9. **Base transfer above the inline limit is done.** A client below a compacted journal is
+8. **Base transfer above the inline limit is done.** A client below a compacted journal is
    rebuilt from the native base and key map carried by `snapshot`; above `max_base_inline` (8 MiB,
    `COLLAB_MAX_BASE_INLINE`) the base arrives as a chain of chunks (`base.chunks`, `base-chunk`,
    RFC §4.5.1) that the client assembles, verifies against the announced digest and installs, so a
@@ -1148,7 +1188,7 @@ was not touched, and PR #1975 is unchanged.
    a client build that does not know `base-chunk`. What is left on this line is only the choice
    between a chain and an HTTP-served base (the media endpoint pattern) for very large decks, which
    the chain already covers.
-10. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
+9. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
     (§ Rebase onto origin/main), so the fork branches no longer fast-forward and the publish is a
     `--force-with-lease`. The push is manual (the chair does it). Nothing was pushed to
     `storytold/deckcraft`.
@@ -1189,8 +1229,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 ## Next session: start here
 
-1. Run the verification table above; if the tree is clean, continue on `collab/pr14` (or branch
-   `collab/pr15` from it).
+1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
+   `collab/pr16` from it).
 2. **Draft PR #1998 is open from `copoka/deckcraft:collab/pr11`** (head `6e9d10e7`,
    `MERGEABLE`/`CLEAN`); #1975 still points at the pre-rebase `collab/pr10` head and is
    superseded. Pushing this file's commit, marking #1998 ready and closing #1975 are human steps.
@@ -1214,7 +1254,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    data, options and insertion as one whole `Chart` value) and the insertion of a 3-D model
    (`insert.model3d`, a binary glTF on the media channel, drawn as its poster or a stand-in cube)
    are done; `smartArt.nodes` is answered by the server as a read-only query, and a model's
-   camera and scene are both in. Nothing is left on this line; the next slice comes from items
+   camera and scene are both in. Optimistic preview is in too (`collab/pr15`,
+   `DECKCRAFT_COLLAB_PREVIEW`). Nothing is left on this line; the next slice comes from items
    2–3 (media transport and the cabinet callback).
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
@@ -1233,6 +1274,54 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — optimistic preview: a local edit shown before the room confirms it
+
+- The last item of §What is NOT done that was neither out of this repository nor a CI gap was the
+  latency one: every edit appeared on `applied`. The RFC already described an optional `preview`
+  local id (§3, §4.2) and `ClientSession` already distinguished `Effect::Settled` from
+  `Effect::Rollback`, but no client used either.
+- **Wire.** `OpEnvelope::preview: Option<String>` (`serde(default, skip_serializing_if)`) is the
+  sender's local id for its optimistic copy. A frame without it decodes and behaves exactly as
+  before; the room strips it in `DocSession::apply` before dedup, journal, undo images and commit,
+  so nothing stores or echoes it (proto, session and real-socket tests pin all three).
+- **Client.** `CollabDoc::set_preview` / `CollabUi::set_preview` (desktop flag
+  `DECKCRAFT_COLLAB_PREVIEW`, off by default). Only a `command`-class operation whose payload the
+  room will not rewrite is previewed: text offsets, table cell addresses/ranges/carets,
+  structural steps, `SmartArtSet` (generated child ids) and `FontCreate` (session font database)
+  are excluded. One preview at a time: it is applied at submit through `apply_confirmed` with an
+  `Arc` copy-on-write before-image (one pointer copy; the engine's `edit` is already copy-on-write)
+  and no undo step. Every later local command and undo/redo waits in a bounded queue
+  (`MAX_DEFERRED = 64`) and is normalised only against confirmed state, so a payload can never
+  include an edit the room does not have — the reason a chained preview would double-count text
+  offsets under the server's rebase.
+- **Resolution.** `applied` with the same payload and target settles the preview and does not run
+  the command a second time; a different form (a rebase the client did not expect) restores the
+  before-image and applies the authoritative command; a refusal restores exactly that edit and
+  leaves accepted steps alone; a step from another participant between preview and answer abandons
+  the preview, reports the commands that waited and asks for the tail from the version the replica
+  holds (`ClientSession::rewind_replica`), so the two orders are never mixed. A preview moves no
+  version and no engine undo step.
+- **UI.** The preview is applied inside `CollabUi::pump` before the frame is drawn, so the canvas
+  shows the change without waiting for the server; the flag follows the host (`attach` forwards
+  it, `SlideApp::enable_collab` reads the environment), and a viewer or an offline session shows
+  nothing.
+- **Tests.** `collab` 280 + 8 (six new: visible before `applied` and settled without a second run,
+  outside the undo stack; a refusal that restores exactly one edit and keeps an accepted one; a
+  foreign step that gives a `resync` and then the tail in the room's order; a viewer and an
+  offline replica that preview nothing; a command during a preview that waits for confirmed state;
+  the flag-off path); `collab-proto` 42 (the optional field's round trip and a frame without it);
+  `collab-server` 10 unit + 5 commit + 5 gates + 18 socket (new socket test: the room applies an
+  operation carrying `preview`, dedups a resend under another local id and its `resync` tail
+  contains no `local-*` string); `ui-egui collab::` 24 (the flag reaches the client, the move is
+  drawn before the answer and settled on it); `collab-web` 15, `deckcraft-web` 6, wasm32 check ok.
+- **Gates on `agents`.** `cargo fmt --all -- --check` EXIT=0; `cargo clippy --workspace
+  --all-targets -- -D warnings` EXIT=0; `collab-proto` 42/0/0 EXIT=0; `collab` 280 + 8/0/0 EXIT=0;
+  `ui-egui collab::` 24/0/0 EXIT=0; `collab-server` 10 + 5 + 5 + 18/0/0 EXIT=0; `xtask layers` 32
+  crates EXIT=0. The §8 gates still run 5/5 in 15.78 s with LibreOffice skipped on the build host.
+- Commit `a65d1948` plus this docs commit on `collab/pr15`, branched from `collab/pr14` at
+  `6e42a7ab`; `rfc.md`, `production.md` and this file updated. Nothing pushed, CI untouched,
+  PR #1975 and #1998 unchanged.
 
 ### 2026-11-10 — Save in a live desktop session commits the room
 

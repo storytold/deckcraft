@@ -126,6 +126,7 @@ slide content, text or tokens are logged or exported.
 | `DECKCRAFT_COLLAB_URL` | desktop | `ws://` or `wss://` session endpoint |
 | `DECKCRAFT_COLLAB_TOKEN` | desktop | short-lived cabinet JWT |
 | `DECKCRAFT_COLLAB_SESSION` | desktop | document id the token was issued for |
+| `DECKCRAFT_COLLAB_PREVIEW=1` | desktop | show a local edit before the room confirms it (one operation at a time; off by default) |
 | `?collab=1` | web | enables the collaboration UI; the host supplies the link |
 | `deckcraft:session` | web (host → app) | opens the session: `sessionId`, `wsUrl`, `token`, `role` |
 
@@ -142,6 +143,19 @@ return `{"queued":true}` and land in `take_pending_commands()` instead of changi
 `CollabUi::pump` normalises and sends those commands once per frame. `apply_remote` still applies
 the server's authoritative command directly. With the flag on but no link, the engine is
 read-only: an edit is refused instead of diverging.
+
+**Optimistic preview** (`DECKCRAFT_COLLAB_PREVIEW=1`, RFC §3) shows one edit before the room
+confirms it. The client applies a `command`-class operation whose payload the server will not
+rewrite (move/bounds/align, fill/line/format of a whole body, transition, animations, chart, table
+style/options/sizing, notes body, camera/scene, font set/remove) at submit, marks it with its local
+id in `preview`, and draws the result in the same frame. While it is outstanding, later local
+commands wait in a bounded queue (`MAX_DEFERRED = 64`) and are normalised only against confirmed
+state, so no payload ever contains an edit the room does not have; undo/redo wait too. `applied`
+with the same payload and address settles it without running the command a second time; a refusal
+(`invalid`, `stale`) puts exactly that one edit back; an operation from another participant between
+preview and answer abandons the preview and asks for the tail from the version the replica holds
+(its queued edits are reported, not guessed at). A preview never enters the undo history
+(`apply_remote` writes no step). Off by default: with the variable unset nothing changes.
 
 ## What v1 syncs
 
@@ -426,8 +440,11 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    What remains is deployment detail: the page must reach the sync server (same origin, or its
    origin in `DECKCRAFT_CORS_ORIGINS`), and the cabinet must implement its end of
    `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2).
-5. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
-   rollback are the next latency slice.
+5. **Done — Optimistic preview**: `DECKCRAFT_COLLAB_PREVIEW=1` shows one `command`-class operation
+   before the room answers, settles it on `applied`, rolls back exactly that edit on a refusal and
+   resyncs when another participant's step lands in between (RFC §3, "Client" above). Commands
+   during a preview wait one round trip; a text insert/delete or a structural step is never
+   previewed, because the room owns the offsets, cell addresses and ids they land on.
 6. **Done — Base transfer above the inline limit**: a client that missed a compacted journal tail
    is rebuilt from the native base and the key map the `snapshot` carries (up to 8 MiB,
    `COLLAB_MAX_BASE_INLINE`). Above that the base is announced as a chunk chain
