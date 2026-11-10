@@ -1,4 +1,4 @@
-use super::{Icon, SlideApp, Ui, big_button, big_button_ex, group, json, run};
+use super::{Icon, SlideApp, Ui, big_button, big_button_ex, group, json, run, toggle};
 
 // ---------- Draw ----------
 
@@ -29,6 +29,10 @@ pub(super) fn draw(app: &mut SlideApp, ui: &mut Ui) {
                 app.session.set_tool(ToolKind::Ink { mode: mode.into(), color, width });
             }
         }
+    });
+    group(ui, |ui| {
+        let on = app.session.view.ruler.visible;
+        toggle(app, ui, Icon::Ruler, "Ruler", "draw.ruler", on);
     });
     group(ui, |ui| {
         let has_ink = app.session.doc().is_ok_and(|d| d.shapes().iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Ink { .. })));

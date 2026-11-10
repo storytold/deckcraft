@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-07 · **Last updated:** 2026-11-07 · **Change:** minor (Draw ▸ Stencils ▸ Ruler: the stencil ruler with its degree dial, wheel and keyboard manipulation, typed angle, ink straightening and object snapping; previous: trivial, File › About replaces Account) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -104,6 +104,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Group fill and outline | formats the members | Shape Fill and Shape Outline reach nested members in one undo step; a transparency-only fill edit retains each member's colour (#1079) |
 | WordArt transform | Transform gallery | Shape Format ▸ Text Effects ▸ Transform (`format.textWarp`): No Transform, Follow Path and the other 36 presets. Adjust handles: see WordArt adjust handles |
 | Rulers with indent markers and tab stops | yes | yes: indent markers and tab stops drag on the ruler (a click adds a tab, the corner selector picks its kind); Tabs dialog from Home › Paragraph and the Paragraph dialog |
+| Draw ruler (stencil): show, move, turn, type an angle; ink straightens along its edge; objects align to it | not checked (the stencil ruler was not observed in the Mac build) | yes: Draw ▸ Stencils ▸ Ruler toggles it; drag the body to move it, the wheel over it turns it 1° around the pointer, Shift+F6 then the arrow keys move it (Alt+Left/Right turn it 15°, Alt+Ctrl 1°), and the degree dial takes a typed angle. A pen stroke near an edge is committed as one straight line along it, and a dragged object aligns to a nearby edge with its own outline (its bounding box for pictures, icons and text boxes); the object nearest the edge places the whole selection. It is view state and is not saved in the presentation |
 | Drag and drop of files and between thumbnails | yes | yes; several selected slides move together as one run, in one undo step, in the thumbnail pane and the Slide Sorter |
 | Slide Sorter sections: a bar per section, add, rename in place, collapse, drag the whole section (its slides move with it) | yes | yes |
 | Image paste from the clipboard | yes | macOS pastes a picture when the paste carries no text (TIFF), and rich text copies and pastes as HTML (bold, italic, underline). Windows image paste stays open (#1414) |
@@ -173,6 +174,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Draw ▸ Stencils ▸ Ruler: movable, turnable stencil ruler with a degree dial and typed angle; ink near an edge straightens along it and dragged objects align to it. View state, never saved |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |

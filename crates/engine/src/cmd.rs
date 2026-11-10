@@ -6,6 +6,7 @@ pub mod artistic;
 pub mod background;
 pub mod compress;
 pub mod design;
+pub mod draw;
 pub mod edit;
 pub mod file;
 pub mod find;
@@ -190,6 +191,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(artistic::specs());
         v.extend(zoom::specs());
         v.extend(compress::specs());
+        v.extend(draw::specs());
         v
     })
 }

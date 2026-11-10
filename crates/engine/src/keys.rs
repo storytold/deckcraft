@@ -66,6 +66,9 @@ impl Session {
             self.tool.edit_segment = None;
             return Ok(json!({"handled": true, "command": "shape.editPoints"}));
         }
+        if let Some(v) = self.ruler_key(k, mods)? {
+            return Ok(v);
+        }
         if editing && let Some((id, params)) = self.text_key(k, mods) {
             let r = self.execute(id, &params)?;
             return Ok(json!({"handled": true, "command": id, "result": r}));
@@ -183,6 +186,54 @@ impl Session {
             return Ok(json!({"handled": true, "command": id, "result": r}));
         }
         Ok(json!({"handled": false}))
+    }
+
+    /// Draw ▸ Stencils ▸ Ruler: Shift+F6 turns manipulation mode on and off; in it the arrow keys
+    /// move the ruler instead of nudging shapes, Alt+Left/Right turn it 15° and Alt+Ctrl/Cmd 1°.
+    /// `None` when the key is not the ruler's.
+    fn ruler_key(&mut self, k: &str, mods: Mods) -> Result<Option<Value>> {
+        if !self.view.ruler.visible {
+            return Ok(None);
+        }
+        if k == "f6" && mods.shift {
+            self.view.ruler.manipulate = !self.view.ruler.manipulate;
+            return Ok(Some(json!({"handled": true, "ruler": self.view.ruler.manipulate})));
+        }
+        if !self.view.ruler.manipulate {
+            return Ok(None);
+        }
+        let by = match (mods.alt, k) {
+            (true, "left") => Some(-crate::ruler::rotation_step(true, mods.cmd)),
+            (true, "right") => Some(crate::ruler::rotation_step(true, mods.cmd)),
+            _ => None,
+        };
+        if let Some(by) = by {
+            let angle = crate::ruler::normalize_angle(self.view.ruler.angle + by);
+            self.execute("draw.ruler", &json!({"angle": angle}))?;
+            return Ok(Some(json!({"handled": true, "command": "draw.ruler"})));
+        }
+        let d = match (mods.alt, k) {
+            (false, "left") => Some((-6.0, 0.0)),
+            (false, "right") => Some((6.0, 0.0)),
+            (false, "up") => Some((0.0, -6.0)),
+            (false, "down") => Some((0.0, 6.0)),
+            _ => None,
+        };
+        if let Some((dx, dy)) = d {
+            let (x, y) = (self.view.ruler.x + dx, self.view.ruler.y + dy);
+            self.execute("draw.ruler", &json!({"x": x, "y": y}))?;
+            return Ok(Some(json!({"handled": true, "command": "draw.ruler"})));
+        }
+        if matches!(k, "escape" | "esc") {
+            self.view.ruler.manipulate = false;
+            return Ok(Some(json!({"handled": true})));
+        }
+        // Manipulation mode owns every arrow key, so a modified one it does not use (Alt+Up and
+        // Alt+Down) never nudges a selected shape or turns the page instead.
+        if matches!(k, "left" | "right" | "up" | "down") {
+            return Ok(Some(json!({"handled": true})));
+        }
+        Ok(None)
     }
 
     /// The text-editing command for a navigation or deletion key while editing text, by

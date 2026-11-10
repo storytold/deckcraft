@@ -23,6 +23,7 @@ mod media;
 mod overlays;
 mod rulers;
 mod scroll;
+mod stencil;
 
 use context_menu::context_menu;
 use guides::{draw_grid, draw_guides, grid_line_step};
@@ -223,7 +224,17 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     }
-    if (resp.hovered() || on_bar) && !zooming {
+    // The Draw ruler takes the wheel over its body: it turns 1° a notch rather than scrolling.
+    // Only when the canvas itself is hovered, no menu or popup is open over it, and the wheel is
+    // not a zoom gesture: Ctrl/Cmd+wheel and a pinch zoom the canvas and must not also turn the
+    // ruler, and an open popup owns the wheel even where it only covers the body with its frame.
+    let popup_open = egui::Popup::is_any_open(ui.ctx());
+    let over_stencil = resp.hovered()
+        && !zooming
+        && !popup_open
+        && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl)
+        && stencil::wheel(app, ui, Xf { origin: content_rect.translate(-offset).min, scale }, resp.hovered(), hover, avail);
+    if (resp.hovered() || on_bar) && !zooming && !over_stencil {
         if overflow != egui::Vec2::ZERO {
             offset -= wheel;
         } else {
@@ -334,7 +345,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ruler(&painter, avail, slide_rect, scale, app.session.prefs.units, &t);
         ruler_markers(app, ui, &painter, avail, xf, &t);
     }
-    pointer(app, ui, &resp, xf);
+    // Draw ▸ Stencils ▸ Ruler: painted over the slide; a press on its body never reaches the slide.
+    let stencil_owns = stencil::overlay(app, ui, &painter, xf, avail, &t);
+    if !stencil_owns {
+        pointer(app, ui, &resp, xf);
+    }
     if !app.anim_preview_active() {
         overlays(app, ui, &painter, xf, &t);
         ime_output(app, ui, xf);

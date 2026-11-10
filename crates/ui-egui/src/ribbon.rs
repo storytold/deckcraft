@@ -461,4 +461,7 @@ mod drawtable_tests;
 mod inktoshape_tests;
 
 #[cfg(test)]
+mod draw_ruler_tests;
+
+#[cfg(test)]
 mod picture_styles_tests;

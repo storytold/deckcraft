@@ -559,9 +559,10 @@ impl Session {
             }
             Some(Drag::Ink { points }) => {
                 self.tool.ink_preview.clear();
-                if points.len() > 1 {
+                let line = self.ink_stroke(&points);
+                if line.len() > 1 {
                     self.begin("Ink");
-                    out = self.add_ink(points)?;
+                    out = self.add_ink(line)?;
                 }
             }
             Some(Drag::Resize { origs, .. }) => {

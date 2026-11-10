@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-07 | Draw ▸ Stencils ▸ Ruler: a translucent ruler with a tick scale on both edges and a degree dial, as view state (never saved). Drag to move; the wheel over it turns it 1° around the pointer; Shift+F6 enters manipulation mode (arrows move, Alt+Left/Right 15°, Alt+Ctrl 1°); the dial takes a typed angle. A pen stroke near an edge is committed as one straight line along it (colour and width kept), and a dragged object aligns its own outline to a nearby edge (its bounding box for pictures, icons and text boxes), the object nearest the edge placing the whole selection; `draw.ruler` / `draw.rulerState` expose it to the control channel and MCP |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
@@ -340,6 +341,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Progress log: Draw ▸ Stencils ▸ Ruler (view state, dial, key manipulation, ink straightening, object snapping). Scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |

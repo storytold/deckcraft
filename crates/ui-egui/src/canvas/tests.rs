@@ -567,3 +567,64 @@ fn animation_painter_sets_the_cursor() {
     let after = h.output().platform_output.cursor_icon;
     assert_eq!(after, egui::CursorIcon::Copy, "the animation painter arms the Copy cursor");
 }
+
+/// #1964: Ctrl/Cmd + wheel over the ruler body is a zoom gesture: it must not also turn the ruler.
+#[test]
+fn a_zoom_gesture_over_the_ruler_does_not_turn_it() {
+    let mut h = harness();
+    h.state_mut().session.execute("draw.ruler", &serde_json::json!({"on": true, "x": 300.0, "y": 200.0, "angle": 0.0})).unwrap();
+    h.run_steps(2);
+    let before = h.state().session.view.ruler;
+    let r = h.state().slide_rect.unwrap();
+    let k = h.state().canvas_scale;
+    let on_body = r.min + vec2((before.x as f32 - 100.0) * k, before.y as f32 * k);
+    h.event(Event::PointerMoved(on_body));
+    h.run_steps(1);
+    let zoom = h.state().canvas_scale;
+    ctrl_wheel(&mut h, 1.0);
+    assert!(h.state().canvas_scale > zoom * 1.01, "the wheel zoomed the canvas");
+    assert_eq!(h.state().session.view.ruler.angle, before.angle, "the ruler did not turn as well");
+}
+
+/// #1964: a popup over the ruler body takes the hover, so the wheel belongs to the popup and the
+/// ruler keeps its angle.
+#[test]
+fn an_open_menu_over_the_ruler_keeps_the_wheel_away_from_it() {
+    let mut h = harness();
+    h.state_mut().session.execute("draw.ruler", &serde_json::json!({"on": true, "x": 300.0, "y": 200.0, "angle": 0.0})).unwrap();
+    h.run_steps(2);
+    let before = h.state().session.view.ruler;
+    let r = h.state().slide_rect.unwrap();
+    let k = h.state().canvas_scale;
+    let on_body = r.min + vec2((before.x as f32 - 100.0) * k, before.y as f32 * k);
+    h.hover_at(on_body);
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: on_body, button: egui::PointerButton::Secondary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    assert!(h.query_all_by_label("Cut").count() >= 2, "the context menu opened over the ruler body");
+    let wheel = Event::MouseWheel {
+        unit: MouseWheelUnit::Line,
+        delta: vec2(0.0, -1.0),
+        phase: TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: Modifiers::NONE,
+    };
+    h.event(wheel);
+    h.run_steps(3);
+    assert_eq!(h.state().session.view.ruler.angle, before.angle, "the ruler kept its angle under the menu");
+    // Closing the menu gives the wheel back to the ruler.
+    h.event(Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    h.event(Event::MouseWheel {
+        unit: MouseWheelUnit::Line,
+        delta: vec2(0.0, -1.0),
+        phase: TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(3);
+    assert!((h.state().session.view.ruler.angle - before.angle).abs() > 1e-6, "the wheel turns it again");
+}
