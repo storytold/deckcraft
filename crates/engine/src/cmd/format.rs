@@ -420,9 +420,6 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// Run `f` on the shapes `ids`/`id` name instead of the selection, as `shape.fill` does; without
-/// either, on the selection. An id the page being edited doesn't have is refused, naming it,
-/// rather than formatting nothing. The selection is put back after, also when the edit is refused (unless the edit went to another slide).
 /// Whether `p` names shapes with `ids` or `id`. An empty `ids` names nothing and means the
 /// selection, as `targets` reads it.
 fn names_targets(p: &Value) -> bool {
@@ -430,6 +427,9 @@ fn names_targets(p: &Value) -> bool {
     named("ids") || named("id")
 }
 
+/// Run `f` on the shapes `ids`/`id` name instead of the selection, as `shape.fill` does; without
+/// either, on the selection. An id the page being edited doesn't have is refused, naming it,
+/// rather than formatting nothing. The selection is put back after, also when the edit is refused (unless the edit went to another slide).
 fn on_named(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
     // `targets` reads only an array, so any other `ids` would silently format the selection.
     if p.get("ids").is_some_and(|v| !v.is_null() && !v.is_array()) {
