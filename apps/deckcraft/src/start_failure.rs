@@ -12,11 +12,14 @@
 
 /// What the dialog and the log say. Any error `run_native` returns lands here. One from the app's
 /// own start-up (`AppCreation`; DeckCraft's creator does not return one today) says only that it
-/// couldn't start. Any other comes from the window or graphics, possibly after the window was up, so
-/// graphics is named as the likely cause, not the certain one.
+/// couldn't start. One from winit, the windowing layer (on Linux, for example, no display session),
+/// says the window couldn't start or stopped, without driver advice, which can't help there. Any
+/// other comes from graphics, possibly after the window was up, so graphics is named as the likely
+/// cause, not the certain one.
 pub(crate) fn message(error: &eframe::Error) -> String {
     match error {
         eframe::Error::AppCreation(_) => format!("DeckCraft could not start: {error}"),
+        eframe::Error::Winit(_) | eframe::Error::WinitEventLoop(_) => format!("DeckCraft's window could not start or stopped with an error: {error}"),
         _ => format!(
             "DeckCraft's window could not start or stopped with an error: {error}\n\nIf this keeps happening, updating the graphics driver often fixes it."
         ),
@@ -40,6 +43,16 @@ mod tests {
         assert!(text.starts_with("DeckCraft's window could not start or stopped"), "{text}");
         assert!(text.contains("no valid format for the surface"), "{text}");
         assert!(text.contains("graphics driver"), "{text}");
+    }
+
+    /// winit is a direct dependency only on Linux and the BSDs, so only there can a test name its
+    /// error; the match arm itself compiles everywhere.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn a_windowing_error_does_not_blame_the_graphics_driver() {
+        let text = message(&eframe::Error::WinitEventLoop(winit::error::EventLoopError::RecreationAttempt));
+        assert!(text.starts_with("DeckCraft's window could not start or stopped"), "{text}");
+        assert!(!text.contains("graphics"), "{text}");
     }
 
     #[test]
