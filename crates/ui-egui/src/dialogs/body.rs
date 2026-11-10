@@ -707,6 +707,9 @@ fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Export…: the format (PDF, PNG or JPEG of the current slide or of every slide, PowerPoint,
+/// outline, animated GIF, RTF) and its options; Export hands them to [`SlideApp::export_as`].
+/// Returns true when the dialog should close.
 fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label("Export the presentation as:");
     let fmt = d.get("fmt", "pdf");
