@@ -1335,6 +1335,18 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
     if sh.cameo.as_ref().and_then(|c| c.recorded) == Some(id) {
         return true;
     }
+    if let ShapeKind::Table(tb) = &sh.kind {
+        // A table cell keeps its text in the row's cells, not in the shape's own body: a
+        // run-level click/hover sound (`a:snd`) there shares the media item the same way.
+        let cell_uses = tb.rows.iter().flat_map(|r| r.cells.iter()).flat_map(|c| c.text.paragraphs.iter()).any(|p| {
+            p.runs
+                .iter()
+                .any(|r| r.props.link.as_ref().is_some_and(|h| h.sound == Some(id)) || r.props.hover.as_ref().is_some_and(|h| h.sound == Some(id)))
+        });
+        if cell_uses {
+            return true;
+        }
+    }
     match &sh.kind {
         ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
         // An artistic effect's original is still needed to change or remove the effect
@@ -2091,6 +2103,51 @@ mod tests {
         .unwrap();
         s.execute("show.clearNarration", &json!({"index": 0})).unwrap();
         assert!(s.doc().unwrap().doc.media(clip.media).is_some(), "the run's sound keeps the shared bytes");
+    }
+    /// #1836 review: a table cell run's click sound shares narration bytes, so clearing the
+    /// narration must keep the media item the cell hyperlink still points at.
+    #[test]
+    fn clear_narration_keeps_a_shared_table_cell_sound() {
+        use deckcraft_model::Table;
+        use deckcraft_model::text::{Action, Hyperlink, Paragraph, Run, RunProps, TextBody};
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let clip = narrations(&s, 0)[0].clone();
+        s.edit(|doc, _| {
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| crate::cmd::bad("test", "no id"))?);
+            let Some(sl) = doc.slides.first_mut() else { return Err(crate::cmd::bad("test", "no slide")) };
+            let sl = Arc::make_mut(sl);
+            // A table cell keeps its text in the row's cells, not in the shape body: the
+            // surviving run's click sound shares the narration clip's media item.
+            let mut table = Table::new(1, 1, 200.0, 40.0);
+            let mut body = TextBody::default();
+            body.paragraphs.push(Paragraph {
+                runs: vec![Run::with(
+                    "play",
+                    RunProps {
+                        link: Some(Hyperlink {
+                            action: Action::NextSlide,
+                            tooltip: String::new(),
+                            highlight_click: false,
+                            sound: Some(clip.media),
+                            stop_sound: false,
+                            zoom_return: None,
+                        }),
+                        ..Default::default()
+                    },
+                )],
+                ..Default::default()
+            });
+            table.rows[0].cells[0].text = body;
+            sl.shapes.push(Shape { id, name: "Table".into(), kind: ShapeKind::Table(table), ..Default::default() });
+            Ok(())
+        })
+        .unwrap();
+        s.execute("show.clearNarration", &json!({"index": 0})).unwrap();
+        assert!(narrations(&s, 0).is_empty(), "the narration clip is gone");
+        assert!(s.doc().unwrap().doc.media(clip.media).is_some(), "the cell's sound keeps the shared bytes");
     }
 
     /// A shape by id, whichever slide of the deck holds it.

@@ -193,7 +193,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Pictures | 7 | 60% | ~45% | 12–20 | SVG, EMF+ records, clipboard paste on Windows (#1414), remove background, artistic-effect and correction depth | [file-format-parity.md](file-format-parity.md) |
 | Media | 4 | 71% | ~60% | 8–14 | WMA/WMV decode, screen recording, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
-| Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, motion-path depth, and rewind lost on save (#77); the pane timeline and the preview from the selected effect are in | [animation-parity.md](animation-parity.md) |
+| Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects and motion-path depth; the pane timeline and the preview from the selected effect are in | [animation-parity.md](animation-parity.md) |
 | Slide show and presenter view | 8 | 71% | ~60% | 10–16 | Second-display placement, laser from presenter view, screen capture while recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
