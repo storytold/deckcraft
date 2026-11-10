@@ -133,8 +133,9 @@ pub(super) fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Present
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
     crate::media::slide_media(doc, show.state.slide)
         .into_iter()
-        // A click on a recorded Cameo keeps advancing the show, as on any picture.
-        .filter(|(id, ..)| !crate::media::is_recorded_cameo(doc, show.state.slide, *id))
+        // A click on an autoplaying recorded Cameo keeps advancing the show, as on any picture; one
+        // that waits for a click plays its recording.
+        .filter(|(id, _, clip)| crate::media::click_plays(crate::media::is_recorded_cameo(doc, show.state.slide, *id), clip))
         .rev()
         .find_map(|(id, x, clip)| {
             let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));

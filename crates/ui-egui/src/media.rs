@@ -383,6 +383,13 @@ fn walk_clip(shapes: &[deckcraft_model::Shape], id: ShapeId) -> Option<MediaClip
     })
 }
 
+/// Whether a click on a clip starts it. A media shape always can be clicked; a recorded Cameo
+/// keeps the picture's click (advance, a link, a trigger) unless it is waiting for a click — its
+/// `autoplay` is off — in which case the click plays its recording.
+pub fn click_plays(cameo: bool, clip: &MediaClip) -> bool {
+    !cameo || !clip.autoplay
+}
+
 /// Whether `id` on slide `index` is a recorded Cameo rather than a media shape. Its clip plays,
 /// but it keeps the picture's interactions: a click on it still advances the show, and it has no
 /// media bar of its own (PowerPoint plays it as the picture it is).
@@ -938,6 +945,26 @@ mod tests {
             crate::media::cameo_outline(doc.slides[0].shape(id).expect("shape"), 120.0, 100.0).is_some(),
             "a round Camera Shape clips its playing frame"
         );
+    }
+
+    /// A recorded Cameo that waits for a click is clicked to play; one that autoplays keeps the
+    /// picture's click, so the show still advances over it.
+    #[test]
+    fn a_recorded_cameo_waiting_for_a_click_plays_on_one() {
+        let media = MediaClip { media: deckcraft_model::MediaId(7), ..Default::default() };
+        assert!(click_plays(false, &media), "a media shape is always clicked");
+        let playing = MediaClip { video: true, autoplay: true, ..media.clone() };
+        assert!(!click_plays(true, &playing), "an autoplaying Cameo keeps the picture's click");
+        let waiting = MediaClip { autoplay: false, ..playing.clone() };
+        assert!(click_plays(true, &waiting), "a Cameo waiting for a click starts on one");
+        // The clip `slide_media` builds for a Cameo with `autoplay` off is the waiting one.
+        let (mut doc, id, _) = cameo_deck(true, true);
+        let slide = Arc::make_mut(&mut doc.slides[0]);
+        let shape = slide.shape_mut(id).expect("shape");
+        shape.cameo.as_mut().expect("cameo").autoplay = false;
+        let listed = slide_media(&doc, 0);
+        let clip = &listed.iter().find(|(i, ..)| *i == id).expect("the Cameo's clip").2;
+        assert!(click_plays(is_recorded_cameo(&doc, 0, id), clip), "the picker's Cameo starts on a click");
     }
 
     #[test]

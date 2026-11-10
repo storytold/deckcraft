@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             label: "Record Cameo",
             menu: &["Slide Show", "Record"],
             shortcut: None,
-            params: "{slide?: index, data: base64 MP4, name?: string, durationMs?: number, rect?: [x,y,w,h] pt} → {slide, id, media, poster, durationMs, width, height}. \
+            params: "{slide?: index, data: base64 MP4, name?: string, durationMs?: number, rect?: [x,y,w,h] pt, staged?: bool (engine recorder: the clip handed over with Session::stage_cameo)} → {slide, id, media, poster, durationMs, width, height}. \
                      `data` is a base64 MP4 (or QuickTime) with a video track, at most 64 MB; `path` is not accepted. \
                      `durationMs` may shorten the playback timing but is clamped to the clip's probed length and to 10 minutes. \
                      The poster is the first frame, or a PNG camera placeholder when no frame decodes. \
@@ -410,6 +410,13 @@ pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> 
 /// A filesystem `path` is not accepted here — a 64 MB recording would travel as an ~85 MB string,
 /// and an arbitrary path is not something a show command should read.
 fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
+    // The engine's own camera recorder hands its clip over directly (`staged`): the same command
+    // path a UI caller takes — one undo step, composition settled, the guards run — without a
+    // base64 copy of the clip in the parameters.
+    if bool_or(p, "staged", false) {
+        let clip = s.take_staged_cameo().ok_or_else(|| bad("show.cameo", "no clip was staged for this run"))?;
+        return commit_recorded(s, clip);
+    }
     if p.get("path").is_some() {
         return Err(bad("show.cameo", "show.cameo takes base64 `data`, not `path`"));
     }

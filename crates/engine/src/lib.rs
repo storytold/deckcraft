@@ -516,6 +516,9 @@ pub struct Session {
     /// Presentations a host read off the UI thread, waiting for `file.adopt` (by token).
     loaded: Vec<(u64, cmd::file::LoadedFile)>,
     next_loaded: u64,
+    /// A recorded Cameo clip handed to the next `show.cameo` run, so the engine's own recorder
+    /// uses the command path (undo, guards) without base64 in the parameters.
+    staged_cameo: Option<cmd::camera::Recorded>,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
 }
@@ -551,6 +554,7 @@ impl Session {
             panics_caught: 0,
             loaded: vec![],
             next_loaded: 0,
+            staged_cameo: None,
             composition_settles: 0,
         }
     }
@@ -566,6 +570,17 @@ impl Session {
         self.loaded.push((self.next_loaded, f));
         self.next_loaded
     }
+    /// Hand a recorded Cameo clip to the next `show.cameo` run (`staged: true`): the command path
+    /// with its undo step and guards, and no base64 copy of the clip.
+    pub fn stage_cameo(&mut self, clip: cmd::camera::Recorded) {
+        self.staged_cameo = Some(clip);
+    }
+
+    /// Take the clip staged for this `show.cameo` run.
+    pub(crate) fn take_staged_cameo(&mut self) -> Option<cmd::camera::Recorded> {
+        self.staged_cameo.take()
+    }
+
     /// The staged presentation for `token`, removed from the session.
     pub(crate) fn take_loaded(&mut self, token: u64) -> Option<cmd::file::LoadedFile> {
         let i = self.loaded.iter().position(|(t, _)| *t == token)?;

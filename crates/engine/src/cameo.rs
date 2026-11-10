@@ -270,7 +270,10 @@ impl CameoRun {
                 duration_ms: Some(duration_ms),
                 rect: None,
             };
-            match crate::cmd::camera::commit_recorded(s, recorded) {
+            // Through the command, not straight to `commit_recorded`: the commit gets its own
+            // undo step and the command's guards, while the bytes are handed over directly.
+            s.stage_cameo(recorded);
+            match s.execute("show.cameo", &serde_json::json!({"staged": true})) {
                 Ok(_) => report.committed.push(slide),
                 Err(e) => {
                     report.failed.push((slide, e.to_string()));
@@ -678,6 +681,25 @@ mod tests {
             track.push_rgba(&frame(i, 32, 32).rgba).expect("push");
         }
         CameoClip { mp4: track.finish().expect("finish"), width: 32, height: 32, duration_ms: 333, frames: 5 }
+    }
+
+    /// The recorder commits through the command (`stage_cameo`), so its Cameo is one undo step of
+    /// its own: undoing it leaves an earlier edit in place.
+    #[test]
+    fn a_recorder_commit_is_its_own_undo_step() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 40.0, 40.0]})).expect("rect");
+        let before = s.doc().expect("doc").doc.slides[1].shapes.len();
+        let mut run = CameoRun::without_camera();
+        run.clips = vec![(1, small_clip())];
+        let report = run.commit(&mut s, 0).expect("commit through the command");
+        assert_eq!(report.committed, vec![1]);
+        assert_eq!(s.doc().expect("doc").doc.slides[1].shapes.len(), before + 1, "the Cameo is on the slide");
+        s.execute("edit.undo", &json!({})).expect("undo");
+        let doc = s.doc().expect("doc");
+        assert_eq!(doc.doc.slides[1].shapes.len(), before, "undo removed only the Cameo, the rect stays");
+        assert!(doc.doc.slides[1].shapes.iter().all(|sh| !sh.is_cameo()));
     }
 
     #[test]
