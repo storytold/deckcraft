@@ -26,8 +26,8 @@ use serde_json::{Value, json};
 
 use crate::delta::delta;
 use crate::history::{
-    Change, FontImage, GroupImage, Histories, Image, NotesImage, Restore, ShapeImage, SlideAnimationsImage, SlideImage, Snapshot, Step,
-    TransitionImage,
+    Change, FontImage, GroupImage, Histories, Image, NotesImage, Restore, ShapeImage, ShapeReplacementImage, SlideAnimationsImage, SlideImage,
+    Snapshot, Step, TransitionImage,
 };
 use crate::keys::{KeyIssuer, KeyMap};
 use crate::media::MediaCache;
@@ -379,6 +379,11 @@ impl Adapter {
             }
             Payload::ChartInsert { .. } => return self.capture_shape_insert(before, after, op),
             Payload::SmartArtInsert { .. } => return self.capture_shape_insert(before, after, op),
+            // The three conversions replace one shape with another: the whole shape that went out
+            // is the undo image, and the whole shape that took its place is the redo image.
+            Payload::SmartArtFromText { .. } | Payload::SmartArtToText { .. } | Payload::SmartArtToShapes {} => {
+                return self.capture_shape_replacement(before, after, op);
+            }
             Payload::ShapeDelete {} => return self.capture_shape_delete(before, after, op),
             Payload::Group {} => return self.capture_group(before, after, op),
             Payload::Ungroup {} => return self.capture_ungroup(before, after, op),
@@ -445,6 +450,39 @@ impl Adapter {
         let key = self.keys.shape_key(slide_id, added)?.clone();
         let now = self.shape_image(after, &slide_key, slide_id, added)?;
         Some((vec![Change::ShapeBody(absent_shape(slide_key, key))], vec![Change::ShapeBody(now)]))
+    }
+
+    /// Undo of a conversion (`smartArt.fromText`, `smartArt.toText`, `smartArt.toShapes`): the
+    /// whole shape that was replaced and the whole shape that took its place. The source may be a
+    /// child of the graphic the user selected (`toText`/`toShapes` resolve the group), so the
+    /// top-level shape the step touched is the SmartArt group when the target is inside one, else
+    /// the target itself. `toShapes` keeps the same id; the images then name one slot whose old and
+    /// new values the restore swaps.
+    fn capture_shape_replacement(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
+        let slide_key = op.target.slide.clone()?;
+        let slide_id = self.keys.slide_id(&slide_key)?;
+        let old = before.slide(slide_id)?;
+        let new = after.slide(slide_id)?;
+        let target = op.target.shape.as_ref()?;
+        let target_id = self.keys.shape_id(slide_id, target)?;
+        // The top-level object the command replaced: the graphic when the target is inside one.
+        let old_id = smartart_group(before, slide_id, target_id).map(|g| g.id).unwrap_or(target_id);
+        find_shape(&old.shapes, old_id)?;
+        // `toShapes` leaves the same shape in place; the other two add one shape and remove one.
+        let new_id = if find_shape(&new.shapes, old_id).is_some() { old_id } else { top_most_added(&old.shapes, &new.shapes)? };
+        let old_key = self.keys.shape_key(slide_id, old_id)?.clone();
+        let new_key = self.keys.shape_key(slide_id, new_id)?.clone();
+        let was = ShapeReplacementImage {
+            slide: slide_key.clone(),
+            old: self.shape_image(before, &slide_key, slide_id, old_id)?,
+            new: absent_shape(slide_key.clone(), new_key.clone()),
+        };
+        let now = ShapeReplacementImage {
+            slide: slide_key,
+            old: absent_shape(was.slide.clone(), old_key),
+            new: self.shape_image(after, &was.slide, slide_id, new_id)?,
+        };
+        Some((vec![Change::ShapeReplacement(was)], vec![Change::ShapeReplacement(now)]))
     }
 
     /// Undo of `edit.delete`: every top-most shape the step removed, with its whole subtree, its
@@ -667,6 +705,20 @@ impl Adapter {
         match at {
             Change::Shape(snapshot) => self.capture_snapshot(doc, snapshot).map(Change::Shape),
             Change::ShapeBody(snapshot) => self.capture_shape_body(doc, snapshot).map(Change::ShapeBody),
+            Change::ShapeReplacement(snapshot) => {
+                let slide_id = self.keys.slide_id(&snapshot.slide)?;
+                let side = |image: &ShapeImage| -> Option<ShapeImage> {
+                    match self.keys.shape_id(slide_id, &image.key).and_then(|id| find_shape(&doc.slide(slide_id)?.shapes, id).map(|_| id)) {
+                        Some(id) => self.shape_image(doc, &snapshot.slide, slide_id, id),
+                        None => Some(absent_shape(snapshot.slide.clone(), image.key.clone())),
+                    }
+                };
+                Some(Change::ShapeReplacement(ShapeReplacementImage {
+                    slide: snapshot.slide.clone(),
+                    old: side(&snapshot.old)?,
+                    new: side(&snapshot.new)?,
+                }))
+            }
             Change::GroupSubtree(snapshot) => self.capture_group_image(doc, snapshot).map(Change::GroupSubtree),
             Change::Slide(snapshot) => {
                 let id = self.keys.slide_id(&snapshot.key)?;
@@ -928,6 +980,41 @@ impl Adapter {
                     args["rect"] = json!(rect);
                 }
                 self.call(session, "insert.smartArt", args, head)
+            }
+            Payload::SmartArtFromText { diagram, rect } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                // The source must be a top-level shape: `fromText` replaces the text box itself,
+                // and a child cannot be swapped for a slide-level graphic.
+                let top_level = before.slide(slide).is_some_and(|s| s.shapes.iter().any(|x| x.id == shape));
+                if !top_level {
+                    return Err(Rejection::invalid("the source shape is not at the top of the slide", Some(head)));
+                }
+                let bytes = serde_json::to_vec(diagram).map_err(|e| Rejection::invalid(format!("invalid diagram: {e}"), Some(head)))?;
+                if bytes.len() > MAX_SMARTART_JSON {
+                    return Err(Rejection::invalid("the diagram is too large", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, "smartArt.replaceWithDiagram", json!({"id": shape.0, "diagram": diagram, "rect": rect}), head)
+            }
+            Payload::SmartArtToText { body, rect } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                // Address the graphic before the first write: a plain shape must not be replaced,
+                // whatever value the operation carries.
+                let group =
+                    smartart_group(before, slide, shape).ok_or_else(|| Rejection::invalid("the shape is not a SmartArt graphic", Some(head)))?;
+                let bytes = serde_json::to_vec(body).map_err(|e| Rejection::invalid(format!("invalid text body: {e}"), Some(head)))?;
+                if bytes.len() > MAX_CONVERSION_TEXT_JSON {
+                    return Err(Rejection::invalid("the text body is too large", Some(head)));
+                }
+                self.select_shapes(session, before, slide, &[group.id], head)?;
+                self.call(session, "smartArt.replaceWithText", json!({"id": group.id.0, "body": body, "rect": rect}), head)
+            }
+            Payload::SmartArtToShapes {} => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let group =
+                    smartart_group(before, slide, shape).ok_or_else(|| Rejection::invalid("the shape is not a SmartArt graphic", Some(head)))?;
+                self.select_shapes(session, before, slide, &[group.id], head)?;
+                self.call(session, "smartArt.detach", json!({"id": group.id.0}), head)
             }
             Payload::PictureInsert { sha256, name, rect } => {
                 let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
@@ -1973,6 +2060,8 @@ fn smartart_group(doc: &Presentation, slide: SlideId, shape: ShapeId) -> Option<
 /// Longest diagram value a `smartArt.setDiagram` or an insertion may carry, as JSON bytes. The
 /// engine applies the same bound.
 const MAX_SMARTART_JSON: usize = deckcraft_engine::cmd::smartart::MAX_DIAGRAM_JSON;
+/// Longest text body a `smartArt.toText` conversion may carry; the engine applies the same bound.
+const MAX_CONVERSION_TEXT_JSON: usize = deckcraft_engine::cmd::smartart::MAX_CONVERSION_TEXT_JSON;
 /// Longest chart value a `chart.setWhole` or a `chart_insert` may carry, as JSON bytes (a kept
 /// chart part travels inside the value; the engine applies the same bound).
 const MAX_CHART_JSON: usize = deckcraft_engine::cmd::insert::MAX_CHART_JSON;
@@ -2126,6 +2215,9 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::MediaInsert { .. }
         | Payload::ChartInsert { .. }
         | Payload::SmartArtInsert { .. }
+        | Payload::SmartArtFromText { .. }
+        | Payload::SmartArtToText { .. }
+        | Payload::SmartArtToShapes {}
         | Payload::ShapeDelete {}
         | Payload::ShapeRestore { .. }
         | Payload::Reorder { .. }
@@ -3406,6 +3498,172 @@ mod tests {
         ] {
             let step = op(OpKind::Structural, 0, target.clone(), Payload::SmartArtInsert { diagram, rect: None });
             let err = ad.apply(&mut s, 0, "a", &step).expect_err("a hostile tree is refused");
+            assert_eq!(err.code, RejectCode::Invalid, "{err:?}");
+            assert!(!err.retryable);
+        }
+        assert_eq!(doc_of(&s), before, "a refusal changes nothing");
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "a refusal records no step");
+    }
+
+    /// The `[x, y, w, h]` a conversion carries, from the plan's final box.
+    fn conversion_rect(x: deckcraft_engine::cmd::smartart::ToTextPlan) -> [f64; 4] {
+        let r = x.rect;
+        [r.x, r.y, r.w, r.h]
+    }
+
+    #[test]
+    fn two_clients_converge_on_smartart_fromtext_and_its_undo_restores_the_text_shape() {
+        let (mut a, mut b) = (deck(), deck());
+        for s in [&mut a, &mut b] {
+            s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 120, 60], "text": "Alpha\nBeta"})).expect("the text box");
+        }
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let (slide, shape) = key_of(&aa, &doc, 2);
+        let sel = a.doc().expect("doc").selection.clone();
+        let plan = deckcraft_engine::cmd::smartart::from_text_plan(&doc, &sel, &json!({"kind": "process"})).expect("the plan");
+        let before = doc.slides[0].shapes[2].clone();
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            Payload::SmartArtFromText {
+                diagram: serde_json::to_value(&plan.diagram).expect("diagram"),
+                rect: [plan.rect.x, plan.rect.y, plan.rect.w, plan.rect.h],
+            },
+        );
+        aa.apply(&mut a, 0, "a", &envelope).expect("a converts");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed conversion");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same graphic");
+        let after = doc_of(&a).slides[0].shapes[2].clone();
+        let d = after.diagram.as_ref().expect("a graphic");
+        assert_eq!(d.kind, "process");
+        assert_eq!(d.nodes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta"]);
+        match &after.kind {
+            ShapeKind::Group { children, .. } => assert!(!children.is_empty(), "the drawing was generated"),
+            other => panic!("not a group: {other:?}"),
+        }
+
+        // The undo image is the whole text shape: one structural restore puts it back exactly.
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeRestore { .. }), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a undoes");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], before, "the text shape came back whole");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 2, "a", &redo).expect("a redoes");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], after, "the graphic came back whole");
+    }
+
+    #[test]
+    fn two_clients_converge_on_smartart_totext_and_its_undo_restores_the_graphic() {
+        let (mut a, mut b) = (smartart_deck(), smartart_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let group = doc.slides[0].shapes[2].id;
+        let (slide, shape) = key_of(&aa, &doc, 2);
+        let sel = a.doc().expect("doc").selection.clone();
+        let plan = deckcraft_engine::cmd::smartart::to_text_plan(&doc, &sel, &json!({"id": group.0})).expect("the plan");
+        let before = doc.slides[0].shapes[2].clone();
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            Payload::SmartArtToText { body: serde_json::to_value(&plan.body).expect("body"), rect: conversion_rect(plan) },
+        );
+        aa.apply(&mut a, 0, "a", &envelope).expect("a converts");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed conversion");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same text box");
+        let after = doc_of(&a).slides[0].shapes[2].clone();
+        let body = after.text.as_ref().expect("a text box");
+        assert_eq!(body.paragraphs.iter().map(|p| p.level).collect::<Vec<_>>(), [0, 1, 0]);
+        let texts: Vec<String> = body.paragraphs.iter().map(|p| p.text()).collect();
+        assert_eq!(texts, ["Plan", "Scope", "Build"]);
+        assert!(after.text_box, "the result is a text box");
+
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeRestore { .. }), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a undoes");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], before, "the whole graphic came back, children and ids included");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 2, "a", &redo).expect("a redoes");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], after);
+    }
+
+    #[test]
+    fn two_clients_converge_on_smartart_toshapes_and_its_undo_restores_the_graphic() {
+        let (mut a, mut b) = (smartart_deck(), smartart_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let group = doc.slides[0].shapes[2].id;
+        let (slide, shape) = key_of(&aa, &doc, 2);
+        let sel = a.doc().expect("doc").selection.clone();
+        let id = deckcraft_engine::cmd::smartart::to_shapes_plan(&doc, &sel, &json!({"id": group.0})).expect("the plan");
+        assert_eq!(id, group);
+        let before = doc.slides[0].shapes[2].clone();
+        let envelope =
+            op(OpKind::Structural, 0, Target { slide: Some(slide), shape: Some(shape), ..Target::default() }, Payload::SmartArtToShapes {});
+        aa.apply(&mut a, 0, "a", &envelope).expect("a converts");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed conversion");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same group");
+        let after = doc_of(&a).slides[0].shapes[2].clone();
+        assert!(after.diagram.is_none(), "the outline is dropped");
+        assert_eq!(after.name, "Group");
+        match (&after.kind, &before.kind) {
+            (ShapeKind::Group { children: now, .. }, ShapeKind::Group { children: was, .. }) => {
+                assert_eq!(now.iter().map(|c| c.id).collect::<Vec<_>>(), was.iter().map(|c| c.id).collect::<Vec<_>>(), "the drawing is kept")
+            }
+            _ => panic!("both are groups"),
+        }
+
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeRestore { .. }), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a undoes");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], before, "the graphic came back whole");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo");
+        aa.apply(&mut a, 2, "a", &redo).expect("a redoes");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], after);
+    }
+
+    #[test]
+    fn hostile_smartart_conversions_change_nothing_and_record_no_step() {
+        let mut s = smartart_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let before = doc_of(&s);
+        let (slide, group) = key_of(&ad, &before, 2);
+        let (_, plain) = key_of(&ad, &before, 0);
+        let target = |shape: &ShapeKey| Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() };
+        let too_many = json!({"kind": "list", "nodes": (0..5000).map(|_| json!({"text": "x", "level": 0})).collect::<Vec<_>>()});
+        for (payload, shape) in [
+            (Payload::SmartArtFromText { diagram: too_many, rect: [0.0, 0.0, 100.0, 100.0] }, group.clone()),
+            (Payload::SmartArtFromText { diagram: json!({"kind": "nope", "nodes": []}), rect: [0.0, 0.0, 100.0, 100.0] }, group.clone()),
+            (Payload::SmartArtFromText { diagram: json!({"kind": "list", "nodes": []}), rect: [0.0, 0.0, 0.0, 100.0] }, group.clone()),
+            (Payload::SmartArtToText { body: json!({"paragraphs": "nope"}), rect: [0.0, 0.0, 100.0, 100.0] }, group.clone()),
+            (Payload::SmartArtToShapes {}, plain),
+        ] {
+            let step = op(OpKind::Structural, 0, target(&shape), payload);
+            let err = ad.apply(&mut s, 0, "a", &step).expect_err("a hostile conversion is refused");
             assert_eq!(err.code, RejectCode::Invalid, "{err:?}");
             assert!(!err.retryable);
         }

@@ -241,6 +241,120 @@ const MAX_NODES: usize = 4096;
 const MAX_NODE_TEXT: usize = 64 * 1024;
 /// Longest diagram value a confirmed or inserted SmartArt command may carry, as JSON bytes.
 pub const MAX_DIAGRAM_JSON: usize = 128 * 1024;
+/// Longest text body a collaborative `smartArt.toText` may carry, and the most paragraphs and
+/// runs it may hold — the same bounds `shape.setField` puts on a restored body.
+pub const MAX_CONVERSION_TEXT_JSON: usize = 192 * 1024;
+const MAX_CONVERSION_PARAGRAPHS: usize = 10_000;
+const MAX_CONVERSION_RUNS: usize = 50_000;
+
+/// The final box a conversion carries. The sender computes it against the shape it sees and every
+/// replica uses it unchanged, so the replaced shape keeps the same place and size. The value is
+/// hostile input like every other field: four finite numbers, a positive size, and a sane bound.
+fn conversion_rect(p: &Value, cmd: &str) -> Result<Xfrm> {
+    let a = p.get("rect").and_then(Value::as_array).filter(|a| a.len() == 4).ok_or_else(|| bad(cmd, "missing `rect` ([x, y, w, h])"))?;
+    let f = |i: usize| a[i].as_f64().filter(|v| v.is_finite()).ok_or_else(|| bad(cmd, "the rect is not four finite numbers"));
+    let (x, y, w, h) = (f(0)?, f(1)?, f(2)?.abs(), f(3)?.abs());
+    if w <= 0.0 || h <= 0.0 || w > 1_000_000.0 || h > 1_000_000.0 {
+        return Err(bad(cmd, "the rect has an invalid size"));
+    }
+    Ok(Xfrm::new(x, y, w, h))
+}
+
+/// Replace a text shape with a SmartArt graphic whose whole value is already decided
+/// (`smartArt.fromText`). The confirmed command of the conversion: the operation carries the
+/// diagram the author's command planned and the final box, so every replica builds the same
+/// graphic in the source shape's place in the z-order. Everything is checked before the first
+/// write: the value's layout, nodes and text, the box, and that the source is a top-level shape.
+pub(super) fn replace_with_diagram(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.replaceWithDiagram";
+    let value = p.get("diagram").ok_or_else(|| bad(CMD, "missing `diagram`"))?;
+    let d = verified_diagram(value, CMD)?;
+    let area = conversion_rect(p, CMD)?;
+    let id = *planned_ids(p, &s.doc()?.selection, CMD)?.first().ok_or_else(|| bad(CMD, "select a text box"))?;
+    let gid = s.edit(|doc, sel| {
+        let at = {
+            let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+            shapes.iter().position(|x| x.id == id).ok_or_else(|| bad(CMD, "the shape isn't at the top of the slide"))?
+        };
+        let kind = d.kind.clone();
+        let children = regenerate(CMD, doc, &d, area)?;
+        let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
+        let g = Shape {
+            id: gid,
+            name: format!("SmartArt ({kind})"),
+            xfrm: Some(area),
+            kind: ShapeKind::Group { children, child: area },
+            diagram: Some(d.clone()),
+            ..Default::default()
+        };
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+        *shapes.get_mut(at).ok_or_else(|| bad(CMD, "no such shape"))? = g;
+        sel.shapes = vec![gid];
+        sel.text = None;
+        Ok(gid)
+    })?;
+    Ok(json!({"id": gid.0}))
+}
+
+/// Replace a SmartArt graphic with a text box whose whole body is already decided
+/// (`smartArt.toText`). The body and box are the author's; the value is size-bounded and
+/// deserialised before the first write, and the target must still be (inside) a SmartArt graphic.
+pub(super) fn replace_with_text(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.replaceWithText";
+    let value = p.get("body").ok_or_else(|| bad(CMD, "missing `body`"))?;
+    let bytes = serde_json::to_vec(value).map_err(|e| bad(CMD, format!("invalid text body: {e}")))?;
+    if bytes.len() > MAX_CONVERSION_TEXT_JSON {
+        return Err(bad(CMD, "the text body is too large"));
+    }
+    let body: TextBody = serde_json::from_value(value.clone()).map_err(|e| bad(CMD, format!("invalid text body: {e}")))?;
+    if body.paragraphs.len() > MAX_CONVERSION_PARAGRAPHS || body.paragraphs.iter().map(|q| q.runs.len()).sum::<usize>() > MAX_CONVERSION_RUNS {
+        return Err(bad(CMD, "the text body has too many paragraphs or runs"));
+    }
+    let area = conversion_rect(p, CMD)?;
+    let gid = *planned_ids(p, &s.doc()?.selection, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let new = s.edit(|doc, sel| {
+        let at = {
+            let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+            let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "the shape is not a SmartArt graphic"))?;
+            shapes.iter().position(|x| x.id == g.id).ok_or_else(|| bad(CMD, "the graphic isn't at the top of the slide"))?
+        };
+        let id = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
+        let tb = Shape {
+            id,
+            name: "Text".into(),
+            xfrm: Some(area),
+            text_box: true,
+            text: Some(body.clone()),
+            geom: Geom::preset("rect"),
+            ..Default::default()
+        };
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+        *shapes.get_mut(at).ok_or_else(|| bad(CMD, "no such shape"))? = tb;
+        sel.shapes = vec![id];
+        sel.text = None;
+        Ok(id)
+    })?;
+    Ok(json!({"id": new.0}))
+}
+
+/// Detach a SmartArt graphic as an ordinary group (`smartArt.toShapes`). The drawing is kept as
+/// it is; only the outline is dropped, so the step is deterministic from the authoritative state
+/// and carries no value. The target is checked before the first write.
+pub(super) fn detach(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.detach";
+    let gid = *planned_ids(p, &s.doc()?.selection, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    s.edit(|doc, sel| {
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+        let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "the shape is not a SmartArt graphic"))?;
+        let gid = g.id;
+        let g = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(CMD, "no such shape"))?;
+        g.diagram = None;
+        g.name = "Group".into();
+        sel.shapes = vec![gid];
+        Ok(())
+    })?;
+    Ok(Value::Null)
+}
 
 /// Check a whole diagram value before it is written: it must deserialise into the model type, its
 /// layout, style and colours must be known, and it must stay inside the node, text and JSON bounds.
@@ -288,39 +402,82 @@ pub(super) fn set_diagram(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// The shapes a conversion plan addresses: `ids`/`id` first, then the selection, exactly as the
+/// single-user command's `targets` resolves them. The collaboration normaliser calls the plan
+/// with its own `DocState`, so the value it sends is the one the command would leave.
+fn planned_ids(p: &Value, sel: &crate::Selection, cmd: &str) -> Result<Vec<ShapeId>> {
+    if let Some(a) = p.get("ids").and_then(Value::as_array) {
+        let mut ids = Vec::with_capacity(a.len());
+        for item in a {
+            let id = item.as_u64().and_then(|v| u32::try_from(v).ok()).ok_or_else(|| bad(cmd, format!("`ids` has an invalid shape id: {item}")))?;
+            ids.push(ShapeId(id));
+        }
+        if !ids.is_empty() {
+            return Ok(ids);
+        }
+    }
+    if let Some(item) = p.get("id") {
+        let id = item.as_u64().and_then(|v| u32::try_from(v).ok()).ok_or_else(|| bad(cmd, format!("`id` is not a shape id: {item}")))?;
+        return Ok(vec![ShapeId(id)]);
+    }
+    Ok(sel.shapes.clone())
+}
+
+/// Everything a `smartArt.fromText` step needs, decided against the sender's document: which
+/// shape is replaced, the whole diagram its paragraphs become, and the final box. The engine
+/// command and the collaboration normaliser both call it, so a replica regenerates from the
+/// same value and a refusal happens before anything is written (RFC §15).
+#[derive(Clone, Debug)]
+pub struct FromTextPlan {
+    pub id: ShapeId,
+    pub diagram: Diagram,
+    pub rect: Xfrm,
+}
+
+pub fn from_text_plan(doc: &Presentation, sel: &crate::Selection, p: &Value) -> Result<FromTextPlan> {
+    const CMD: &str = "smartArt.fromText";
+    let kind = str_param(p, "kind").filter(|k| is_kind(k)).unwrap_or("list").to_string();
+    let id = *planned_ids(p, sel, CMD)?.first().ok_or_else(|| bad(CMD, "select a text box"))?;
+    let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+    let sh = shapes.iter().find(|x| x.id == id).ok_or_else(|| bad(CMD, "select a text box on the slide"))?;
+    let body =
+        sh.text.as_ref().filter(|b| b.paragraphs.iter().any(|p| !p.text().trim().is_empty())).ok_or_else(|| bad(CMD, "the shape has no text"))?;
+    let mut nodes: Vec<DiagramNode> = body
+        .paragraphs
+        .iter()
+        .filter(|p| !p.text().trim().is_empty())
+        .map(|p| DiagramNode { text: p.text().trim().to_string(), level: p.level.min(MAX_LEVEL), ..Default::default() })
+        .collect();
+    normalize(&mut nodes);
+    // A small text box grows to a size a diagram can use, keeping its top left on the slide.
+    let mut a = xfrm_of(doc, sel, sh);
+    let size = doc.slide_size;
+    a.w = a.w.max(size.width * 0.5).min(size.width);
+    a.h = a.h.max(size.height * 0.35).min(size.height);
+    a.x = a.x.min(size.width - a.w).max(0.0);
+    a.y = a.y.min(size.height - a.h).max(0.0);
+    a.rot = 0.0;
+    let diagram = Diagram { kind, nodes, ..Default::default() };
+    // The value is what the whole step would carry, so its node/text/JSON bounds are checked here
+    // as well: an outline too large to regenerate is refused before any replica writes.
+    let value = serde_json::to_value(&diagram).map_err(|e| bad(CMD, format!("invalid diagram: {e}")))?;
+    verified_diagram(&value, CMD)?;
+    Ok(FromTextPlan { id, diagram, rect: a })
+}
+
 /// Convert to SmartArt: the selected text shape's paragraphs become the nodes of a new graphic in
 /// the shape's place.
 pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.fromText";
-    let kind = str_param(p, "kind").filter(|k| is_kind(k)).unwrap_or("list").to_string();
-    let id = *targets(s, p)?.first().ok_or_else(|| bad(CMD, "select a text box"))?;
-    let (area, nodes) = {
+    let plan = {
         let st = s.doc()?;
-        let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(CMD, "no slide"))?;
-        let sh = shapes.iter().find(|x| x.id == id).ok_or_else(|| bad(CMD, "select a text box on the slide"))?;
-        let body =
-            sh.text.as_ref().filter(|b| b.paragraphs.iter().any(|p| !p.text().trim().is_empty())).ok_or_else(|| bad(CMD, "the shape has no text"))?;
-        let mut nodes: Vec<DiagramNode> = body
-            .paragraphs
-            .iter()
-            .filter(|p| !p.text().trim().is_empty())
-            .map(|p| DiagramNode { text: p.text().trim().to_string(), level: p.level.min(MAX_LEVEL), ..Default::default() })
-            .collect();
-        normalize(&mut nodes);
-        // A small text box grows to a size a diagram can use, keeping its top left on the slide.
-        let mut a = xfrm_of(&st.doc, &st.selection, sh);
-        let size = st.doc.slide_size;
-        a.w = a.w.max(size.width * 0.5).min(size.width);
-        a.h = a.h.max(size.height * 0.35).min(size.height);
-        a.x = a.x.min(size.width - a.w).max(0.0);
-        a.y = a.y.min(size.height - a.h).max(0.0);
-        a.rot = 0.0;
-        (a, nodes)
+        from_text_plan(&st.doc, &st.selection, p)?
     };
-    let d = Diagram { kind: kind.clone(), nodes, ..Default::default() };
     let gid = s.edit(|doc, sel| {
+        let (id, d, area) = (plan.id, plan.diagram.clone(), plan.rect);
         let children = regenerate(CMD, doc, &d, area)?;
         let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
+        let kind = d.kind.clone();
         let g = Shape {
             id: gid,
             name: format!("SmartArt ({kind})"),
@@ -340,41 +497,67 @@ pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": gid.0}))
 }
 
+/// Everything a `smartArt.toText` step needs, decided against the sender's document: the graphic,
+/// the whole text body its outline becomes, and the final box. The text sizes are the ones the
+/// graphic shows at, so the body carries the same runs and ends the single-user command builds.
+#[derive(Clone, Debug)]
+pub struct ToTextPlan {
+    pub id: ShapeId,
+    pub body: TextBody,
+    pub rect: Xfrm,
+}
+
+pub fn to_text_plan(doc: &Presentation, sel: &crate::Selection, p: &Value) -> Result<ToTextPlan> {
+    const CMD: &str = "smartArt.toText";
+    let id = *planned_ids(p, sel, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+    let g = diagram_group(shapes, id).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let d = synced(g).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    // The sizes the graphic's text shows at: its titles' and its bullets' (shrunk to fit included).
+    let (title_pt, bullet_pt) = text_sizes(g.children());
+    let mut body = TextBody::default();
+    for n in &d.nodes {
+        let mut para = Paragraph::new(&n.text);
+        para.level = n.level.min(MAX_LEVEL);
+        let size = if n.level == 0 { title_pt } else { bullet_pt };
+        for r in &mut para.runs {
+            r.props.size = Some(size);
+        }
+        para.end_props.size = Some(size);
+        para.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
+        para.props.margin_left = Some(18.0 * (para.level as f64 + 1.0));
+        para.props.indent = Some(-14.0);
+        body.paragraphs.push(para);
+    }
+    if body.paragraphs.is_empty() {
+        body.paragraphs.push(Paragraph::new(""));
+    }
+    body.body.wrap = Some(true);
+    body.body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    // Hostile input check before any write: the whole body travels in the operation, so its JSON
+    // size and paragraph/run counts are bounded here as they are in `shape.setField`.
+    let value = serde_json::to_value(&body).map_err(|e| bad(CMD, format!("invalid text body: {e}")))?;
+    let bytes = serde_json::to_vec(&value).map_err(|e| bad(CMD, format!("invalid text body: {e}")))?;
+    if bytes.len() > MAX_CONVERSION_TEXT_JSON {
+        return Err(bad(CMD, "the converted text is too large"));
+    }
+    if body.paragraphs.len() > MAX_CONVERSION_PARAGRAPHS || body.paragraphs.iter().map(|q| q.runs.len()).sum::<usize>() > MAX_CONVERSION_RUNS {
+        return Err(bad(CMD, "the converted text has too many paragraphs or runs"));
+    }
+    Ok(ToTextPlan { id: g.id, body, rect: g.xfrm.unwrap_or_default() })
+}
+
 /// Convert to Text: a text box with the outline, one bulleted paragraph per node.
 pub(super) fn to_text(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.toText";
-    let gid = target_group(s, p, CMD)?;
-    let (_, d) = selected_for(s, gid).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
-    // The sizes the graphic's text shows at: its titles' and its bullets' (shrunk to fit included).
-    let (title_pt, bullet_pt) = {
+    let plan = {
         let st = s.doc()?;
-        let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(CMD, "no slide"))?;
-        let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
-        text_sizes(g.children())
+        to_text_plan(&st.doc, &st.selection, p)?
     };
     let new = s.edit(|doc, sel| {
+        let (gid, body, area) = (plan.id, plan.body.clone(), plan.rect);
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
         let at = shapes.iter().position(|x| x.id == gid).ok_or_else(|| bad(CMD, "the graphic isn't at the top of the slide"))?;
-        let area = shapes[at].xfrm.unwrap_or_default();
-        let mut body = TextBody::default();
-        for n in &d.nodes {
-            let mut para = Paragraph::new(&n.text);
-            para.level = n.level.min(MAX_LEVEL);
-            let size = if n.level == 0 { title_pt } else { bullet_pt };
-            for r in &mut para.runs {
-                r.props.size = Some(size);
-            }
-            para.end_props.size = Some(size);
-            para.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
-            para.props.margin_left = Some(18.0 * (para.level as f64 + 1.0));
-            para.props.indent = Some(-14.0);
-            body.paragraphs.push(para);
-        }
-        if body.paragraphs.is_empty() {
-            body.paragraphs.push(Paragraph::new(""));
-        }
-        body.body.wrap = Some(true);
-        body.body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let tb =
             Shape { id, name: "Text".into(), xfrm: Some(area), text_box: true, text: Some(body), geom: Geom::preset("rect"), ..Default::default() };
@@ -387,10 +570,22 @@ pub(super) fn to_text(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": new.0}))
 }
 
+/// The graphic a `smartArt.toShapes` step detaches: the id checked before the first write, so the
+/// collaboration normaliser can refuse a shape that is not a SmartArt graphic here.
+pub fn to_shapes_plan(doc: &Presentation, sel: &crate::Selection, p: &Value) -> Result<ShapeId> {
+    const CMD: &str = "smartArt.toShapes";
+    let id = *planned_ids(p, sel, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
+    diagram_group(shapes, id).map(|g| g.id).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))
+}
+
 /// Convert to Shapes: keep the drawing as an ordinary group.
 pub(super) fn to_shapes(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.toShapes";
-    let gid = target_group(s, p, CMD)?;
+    let gid = {
+        let st = s.doc()?;
+        to_shapes_plan(&st.doc, &st.selection, p)?
+    };
     s.edit(|doc, sel| {
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
         let g = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(CMD, "no such shape"))?;
@@ -430,13 +625,6 @@ fn text_sizes(children: &[Shape]) -> (f64, f64) {
 }
 
 /// The graphic `gid` with its outline (typed text synced).
-fn selected_for(s: &Session, gid: ShapeId) -> Option<(ShapeId, Diagram)> {
-    let st = s.doc().ok()?;
-    let shapes = current_shapes(&st.doc, &st.selection)?;
-    let g = diagram_group(shapes, gid)?;
-    Some((g.id, synced(g)?))
-}
-
 pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.picture";
     let i = index(p, CMD)?;

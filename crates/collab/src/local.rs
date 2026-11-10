@@ -438,6 +438,13 @@ pub fn normalize_with_painter(
         let (id, payload) = result?;
         return Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, payload)]);
     }
+    // The three conversions replace one shape with another, so they are their own structural
+    // step: the sender runs the same engine plan the single-user command runs and sends the whole
+    // result (a diagram, a text body or nothing), never arguments a replica would apply to its
+    // own copy (RFC §15).
+    if let Some(result) = smartart_conversion(keys, cmd, p, slide_key.clone(), st, op_id, doc) {
+        return result.map(|op| vec![op]);
+    }
     match cmd {
         "shape.move" => {
             let ids = shape_ids(p, st)?;
@@ -1074,6 +1081,55 @@ fn smartart_insert(p: &Value, slide_key: Option<SlideKey>, op_id: &str, doc: &st
         payload: Payload::SmartArtInsert { diagram, rect },
         history: None,
     })
+}
+
+/// The three SmartArt conversions: `fromText`, `toText` and `toShapes`. Each replaces one shape
+/// with another in a single structural step. The sender runs the same engine plan the single-user
+/// command runs — against the document and selection it sees — and sends the whole result (the
+/// diagram or text body, and the final box) or, for `toShapes`, names the graphic to detach. A
+/// refusal (no text, no graphic, a value past the engine's bounds) happens here, before anything is
+/// queued, and the receiver checks the same bounds before the first write (RFC §15).
+fn smartart_conversion(
+    keys: &crate::KeyMap,
+    cmd: &str,
+    p: &Value,
+    slide_key: Option<SlideKey>,
+    st: &DocState,
+    op_id: &str,
+    doc: &str,
+) -> Option<Result<OpEnvelope, LocalError>> {
+    let slide = st.doc.slides.get(st.selection.slide)?;
+    let make = |id: ShapeId, payload: Payload| -> Result<OpEnvelope, LocalError> {
+        Ok(OpEnvelope {
+            op_id: op_id.to_string(),
+            doc: doc.to_string(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
+            payload,
+            history: None,
+        })
+    };
+    match cmd {
+        "smartArt.fromText" => Some((|| {
+            let plan =
+                deckcraft_engine::cmd::smartart::from_text_plan(&st.doc, &st.selection, p).map_err(|e| LocalError::BadParams(e.to_string()))?;
+            let diagram = serde_json::to_value(&plan.diagram).map_err(|e| LocalError::BadParams(format!("smartArt.fromText: {e}")))?;
+            let r = plan.rect;
+            make(plan.id, Payload::SmartArtFromText { diagram, rect: [r.x, r.y, r.w, r.h] })
+        })()),
+        "smartArt.toText" => Some((|| {
+            let plan = deckcraft_engine::cmd::smartart::to_text_plan(&st.doc, &st.selection, p).map_err(|e| LocalError::BadParams(e.to_string()))?;
+            let body = serde_json::to_value(&plan.body).map_err(|e| LocalError::BadParams(format!("smartArt.toText: {e}")))?;
+            let r = plan.rect;
+            make(plan.id, Payload::SmartArtToText { body, rect: [r.x, r.y, r.w, r.h] })
+        })()),
+        "smartArt.toShapes" => Some((|| {
+            let id = deckcraft_engine::cmd::smartart::to_shapes_plan(&st.doc, &st.selection, p).map_err(|e| LocalError::BadParams(e.to_string()))?;
+            make(id, Payload::SmartArtToShapes {})
+        })()),
+        _ => None,
+    }
 }
 
 /// The commands that leave one object as a whole value: the rest of the table surface, a SmartArt
@@ -2610,8 +2666,57 @@ mod tests {
             normalize(&km, st, "smartArt.setNodes", &json!({"id": group.0, "index": 99, "text": "x"}), "op", &doc),
             Err(LocalError::BadParams(_))
         ));
-        // A command that is not part of this slice is still refused as unsupported.
-        assert!(matches!(normalize(&km, st, "smartArt.toText", &json!({"id": group.0}), "op", &doc), Err(LocalError::Unsupported(_))));
+        // The three conversions are structural now: each normalises to its own final value.
+        assert!(normalize(&km, st, "smartArt.toText", &json!({"id": group.0}), "op", &doc).is_ok());
+    }
+
+    #[test]
+    fn smartart_conversions_normalise_to_their_whole_result_as_structural_steps() {
+        let (mut s, doc, slide, group) = smartart_deck();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // To Text: one whole text body with the outline's levels and the graphic's own font
+        // sizes, and the graphic's final box.
+        let ops = normalize(&km, st, "smartArt.toText", &json!({"id": group.0}), "op", &doc).expect("toText");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Structural);
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(group));
+        let Payload::SmartArtToText { body, rect } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        let paragraphs = body["paragraphs"].as_array().expect("paragraphs");
+        let texts: Vec<&str> =
+            paragraphs.iter().map(|p| p["runs"].as_array().and_then(|r| r.first()).and_then(|r| r["text"].as_str()).unwrap_or_default()).collect();
+        let levels: Vec<u64> = paragraphs.iter().map(|p| p["level"].as_u64().unwrap_or(0)).collect();
+        assert_eq!(texts, ["Plan", "Scope", "Build"]);
+        assert_eq!(levels, [0, 1, 0], "the outline levels travel with the text");
+        assert!(rect[2] > 0.0 && rect[3] > 0.0, "the graphic's box is kept: {rect:?}");
+
+        // To Shapes: the drawing stays, only the outline is dropped, so no value travels.
+        let ops = normalize(&km, st, "smartArt.toShapes", &json!({"id": group.0}), "op", &doc).expect("toShapes");
+        assert_eq!(ops[0].kind, OpKind::Structural);
+        assert_eq!(ops[0].payload, Payload::SmartArtToShapes {});
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(group));
+
+        // From Text: the selected text box's paragraphs become the graphic's nodes, and the new
+        // graphic gets a box a diagram can use.
+        let text = s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 120, 60], "text": "Alpha\nBeta"})).expect("text");
+        let text_id = ShapeId(text["id"].as_u64().expect("id") as u32);
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(&km, st, "smartArt.fromText", &json!({"id": text_id.0, "kind": "process"}), "op", &doc).expect("fromText");
+        assert_eq!(ops[0].kind, OpKind::Structural);
+        assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(text_id));
+        let Payload::SmartArtFromText { diagram, rect } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(diagram["kind"], "process");
+        let texts: Vec<&str> = diagram["nodes"].as_array().expect("nodes").iter().map(|n| n["text"].as_str().unwrap()).collect();
+        assert_eq!(texts, ["Alpha", "Beta"]);
+        assert!(rect[2] >= st.doc.slide_size.width * 0.5, "a small text box grows for the diagram: {rect:?}");
+
+        // The three refusals happen here, before anything is queued: no text to convert, no
+        // graphic to convert, and a command outside the conversion surface.
+        assert!(matches!(normalize(&km, st, "smartArt.fromText", &json!({"id": group.0}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "smartArt.toText", &json!({"id": text_id.0}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "smartArt.toShapes", &json!({"id": text_id.0}), "op", &doc), Err(LocalError::BadParams(_))));
     }
 
     /// One slide with a chart (a column chart with explicit categories and one series).

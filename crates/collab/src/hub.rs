@@ -133,6 +133,9 @@ impl Hub {
                     "smartArt.colors".into(),
                     "smartArt.nodes".into(),
                     "insert.smartArt".into(),
+                    "smartArt.fromText".into(),
+                    "smartArt.toText".into(),
+                    "smartArt.toShapes".into(),
                     "insert.chart".into(),
                     "chart.type".into(),
                     "chart.data".into(),
@@ -1157,6 +1160,161 @@ mod tests {
     fn smartart_hub() -> Hub {
         let doc = smartart_session().doc().expect("doc").doc.as_ref().clone();
         Hub::new(DocSession::from_document("d", doc, Default::default()).expect("session"))
+    }
+
+    /// One slide with a text box of two paragraphs (the selection is on it).
+    fn text_session() -> Session {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 120, 60], "text": "Alpha\nBeta"})).expect("text");
+        s
+    }
+
+    fn text_hub() -> Hub {
+        let doc = text_session().doc().expect("doc").doc.as_ref().clone();
+        Hub::new(DocSession::from_document("d", doc, Default::default()).expect("session"))
+    }
+
+    #[test]
+    fn a_viewer_cannot_convert_a_smartart_and_the_document_does_not_move() {
+        let mut hub = smartart_hub();
+        let _ = join(&mut hub, "alice", Role::Editor);
+        let welcome_v = join(&mut hub, "victor", Role::Viewer);
+        let mut sv = smartart_session();
+        let mut v = CollabDoc::new("d");
+        let _ = v.connect(&sv, "jv", ClientInfo { name: "v".into(), ver: "1".into() });
+        v.on_msg(&mut sv, ServerMsg::Welcome(welcome_v));
+        let group = sv.doc().expect("doc").doc.slides[0].shapes[0].id;
+        assert_eq!(v.submit(&sv, "smartArt.toShapes", &json!({"id": group.0}), "v-1"), Err(crate::LocalError::ReadOnly));
+
+        // Even a hand-built structural conversion never reaches the engine, and the version and
+        // the document stay put.
+        let (slide, shape) = keys_of(&hub);
+        let before = hub.session().document().expect("doc").clone();
+        let step = OpEnvelope {
+            op_id: "v-2".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::SmartArtToShapes {},
+            history: None,
+        };
+        hub.receive("victor", ClientMsg::Op(step)).expect("receive");
+        match hub.poll("victor").expect("answer") {
+            ServerMsg::Rejected(r) => assert_eq!(r.code, RejectCode::Forbidden),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(hub.version(), 0);
+        assert_eq!(hub.session().document().expect("doc"), &before, "the document did not move");
+    }
+
+    #[test]
+    fn smartart_conversions_reach_both_replicas_and_an_undo_restores_their_source() {
+        // To Text: one whole body, the same text box on both replicas, and the graphic back on undo.
+        let mut hub = smartart_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let (mut sa, mut sb) = (smartart_session(), smartart_session());
+        let (mut a, mut b) = (CollabDoc::new("d"), CollabDoc::new("d"));
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let group = sa.doc().expect("doc").doc.slides[0].shapes[0].id;
+        let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        a.submit(&sa, "smartArt.toText", &json!({"id": group.0}), "a-1").expect("submit toText");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (1, 1));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same text");
+        let after = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        assert!(after.text_box && after.diagram.is_none(), "the graphic became a text box");
+        assert_eq!(after.text.as_ref().expect("body").paragraphs.iter().map(|p| p.text()).collect::<Vec<_>>(), ["Plan", "Scope", "Build"]);
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (2, 2));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], before, "the whole graphic came back");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+        a.redo().expect("request a redo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (3, 3));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], after);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+
+        // To Shapes: the drawing stays, the outline is dropped, and the undo puts the diagram back.
+        let mut hub = smartart_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let (mut sa, mut sb) = (smartart_session(), smartart_session());
+        let (mut a, mut b) = (CollabDoc::new("d"), CollabDoc::new("d"));
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let group = sa.doc().expect("doc").doc.slides[0].shapes[0].id;
+        let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        a.submit(&sa, "smartArt.toShapes", &json!({"id": group.0}), "a-1").expect("submit toShapes");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (1, 1));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+        let after = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        assert!(after.diagram.is_none() && after.name == "Group");
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (2, 2));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], before);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+        a.redo().expect("request a redo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], after);
+
+        // From Text: the selection's paragraphs become the graphic, and the undo restores the box.
+        let mut hub = text_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let (mut sa, mut sb) = (text_session(), text_session());
+        let (mut a, mut b) = (CollabDoc::new("d"), CollabDoc::new("d"));
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let before = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        a.submit(&sa, "smartArt.fromText", &json!({"kind": "process"}), "a-1").expect("submit fromText");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (1, 1));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same graphic");
+        let after = sa.doc().expect("doc").doc.slides[0].shapes[0].clone();
+        let d = after.diagram.as_ref().expect("a graphic");
+        assert_eq!(d.kind, "process");
+        assert_eq!(d.nodes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta"]);
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (2, 2));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], before, "the text box came back whole");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+        a.redo().expect("request a redo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], after);
     }
 
     #[test]

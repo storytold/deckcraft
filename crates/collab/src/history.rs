@@ -124,6 +124,19 @@ pub struct ShapeImage {
     pub animations: Vec<serde_json::Value>,
 }
 
+/// The two sides of a step that replaced one shape with another (`smartArt.fromText`,
+/// `smartArt.toText`, `smartArt.toShapes`): the whole shape that went out and the whole shape that
+/// took its place. Each side is a [`ShapeImage`] like a delete or an insert, so a group's
+/// generated children and their ids travel with it and one atomic restore puts the old shape back
+/// (or the new one again on redo). The two keys may be the same: `toShapes` keeps the group's id
+/// and only drops its diagram, and the restore removes the slot before putting the image back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeReplacementImage {
+    pub slide: SlideKey,
+    pub old: ShapeImage,
+    pub new: ShapeImage,
+}
+
 /// A whole group, present or absent, for `arrange.group` and `arrange.ungroup` (RFC §6).
 ///
 /// While the group is present its model value carries the children, so one image puts the whole
@@ -154,6 +167,7 @@ pub struct GroupImage {
 pub enum Change {
     Shape(Snapshot),
     ShapeBody(ShapeImage),
+    ShapeReplacement(ShapeReplacementImage),
     GroupSubtree(GroupImage),
     Slide(SlideImage),
     SlideTransition(TransitionImage),
@@ -191,6 +205,14 @@ pub struct SlideAnimationsImage {
     pub animations: Vec<Animation>,
 }
 
+impl ShapeImage {
+    /// Whether two images name the same slot and hold the same value. Position (`index`) is not
+    /// compared: neighbours that came and went may have moved it.
+    fn same_content(&self, other: &Self) -> bool {
+        self.key == other.key && self.parent == other.parent && self.shape == other.shape && self.animations == other.animations
+    }
+}
+
 impl Change {
     /// Whether `current` still holds the value this image recorded. A slide's or a shape's
     /// position may have moved because neighbours came and went; only its presence, owner and
@@ -204,6 +226,21 @@ impl Change {
                 (Some(x), Some(y)) => a.key == b.key && a.parent == b.parent && x == y && a.animations == b.animations,
                 _ => false,
             },
+            // One slot replaced by another. When the two keys differ each side is compared on its
+            // own; when they are the same (`toShapes` keeps the id) the recorded old and new
+            // values are the two states of one slot, so the current value must equal either.
+            (Change::ShapeReplacement(a), Change::ShapeReplacement(b)) => {
+                if a.old.key == a.new.key || b.old.key == b.new.key {
+                    // `same_state` may be called in either direction: the two images are the two
+                    // states of one slot, so any recorded side matching the current value is the
+                    // same state.
+                    let current = [&a.old, &a.new];
+                    let recorded = [&b.old, &b.new];
+                    recorded.iter().any(|r| current.iter().any(|c| r.same_content(c)))
+                } else {
+                    b.old.same_content(&a.old) && b.new.same_content(&a.new)
+                }
+            }
             (Change::GroupSubtree(a), Change::GroupSubtree(b)) => match (&a.group, &b.group) {
                 (None, None) => {
                     a.key == b.key
@@ -286,6 +323,7 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
             Some(Restore { slide: Some(at.slide.clone()), shape: Some(at.shape.clone()), shapes: Vec::new(), payload: at.image.payload(at.cell)? })
         }
         [Change::ShapeBody(at)] => body_restore(&[at]),
+        [Change::ShapeReplacement(at)] => replacement_restore(at),
         [Change::GroupSubtree(at)] => Some(group_restore(at)),
         [Change::Slide(at)] => {
             let payload = match &at.slide {
@@ -396,6 +434,32 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
             Some(Restore { slide: Some(slide), shape: None, shapes: Vec::new(), payload: Payload::ShapeFields { items } })
         }
     }
+}
+
+/// One operation that puts back one side of a replaced slot: the shape that is present in this
+/// image goes back, and the shape that is absent is taken out first. When both sides name the same
+/// key (the `toShapes` case) the slot is removed before its image is inserted, so the restore is
+/// an insert of the whole shape, not a clash with the value it replaces.
+fn replacement_restore(at: &ShapeReplacementImage) -> Option<Restore> {
+    let (present, absent) = if at.old.shape.is_some() {
+        (&at.old, &at.new)
+    } else if at.new.shape.is_some() {
+        (&at.new, &at.old)
+    } else {
+        return None;
+    };
+    let mut remove = vec![absent.key.clone()];
+    if present.key == absent.key {
+        remove = vec![present.key.clone()];
+    }
+    let item = ShapeRestoreItem {
+        shape: present.key.clone(),
+        parent: present.parent.clone(),
+        index: present.index,
+        value: present.shape.clone()?,
+        animations: present.animations.clone(),
+    };
+    Some(Restore { slide: Some(at.slide.clone()), shape: None, shapes: Vec::new(), payload: Payload::ShapeRestore { items: vec![item], remove } })
 }
 
 /// One operation over a step's whole-shape images: they are all present (put them back) or all

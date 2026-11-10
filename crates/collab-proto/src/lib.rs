@@ -394,6 +394,24 @@ pub enum Payload {
     /// value is size-bounded and its layout, style and colours are checked before the first write,
     /// so a hostile tree is refused with no shape added.
     SmartArtInsert { diagram: serde_json::Value, rect: Option<[f64; 4]> },
+    /// Replaces one text shape with a SmartArt graphic (`smartArt.fromText`, the first of the
+    /// three conversions). The sender runs the engine's `from_text_plan` on the shape it sees and
+    /// sends the whole resulting `Diagram` (layout, nodes with text and levels) and the final box,
+    /// so every replica builds exactly that graphic in the source shape's place in the z-order
+    /// instead of reading its own paragraphs. Structural: the source shape is replaced by another
+    /// one, so the undo image is the source shape whole.
+    SmartArtFromText { diagram: serde_json::Value, rect: [f64; 4] },
+    /// Replaces one SmartArt graphic with a text box (`smartArt.toText`, the second conversion).
+    /// The sender runs the engine's `to_text_plan` and sends the whole resulting `TextBody` with
+    /// its runs, levels, bullets and font sizes and the final box, so every replica builds exactly
+    /// that text box. The body is size-bounded and its paragraph/run counts are checked before the
+    /// first write. Structural: the graphic is replaced by another shape.
+    SmartArtToText { body: serde_json::Value, rect: [f64; 4] },
+    /// Turns one SmartArt graphic into an ordinary group of its drawing (`smartArt.toShapes`, the
+    /// third conversion). The drawing and its shapes stay as they are; only the outline is
+    /// dropped, so the step is deterministic from the authoritative state and carries no value.
+    /// Structural: one undoable step, with the whole prior graphic as its image.
+    SmartArtToShapes {},
     /// Replaces a chart's **whole** value (`chart.setWhole`) and is the confirmed command of
     /// `chart.type`, `chart.data` and `chart.options`. The sender applies the command to the chart
     /// it sees and sends the whole resulting `Chart` model value as JSON — type, categories,
@@ -903,6 +921,9 @@ impl Payload {
             Payload::TableOptions { .. } => "table.options",
             Payload::SmartArtSet { .. } => "smartArt.setDiagram",
             Payload::SmartArtInsert { .. } => "insert.smartArt",
+            Payload::SmartArtFromText { .. } => "smartArt.replaceWithDiagram",
+            Payload::SmartArtToText { .. } => "smartArt.replaceWithText",
+            Payload::SmartArtToShapes {} => "smartArt.detach",
             Payload::ChartInsert { .. } => "insert.chart",
             Payload::ChartSet { .. } => "chart.setWhole",
             Payload::ShapeField { .. } => "shape.setField",

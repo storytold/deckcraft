@@ -23,10 +23,13 @@ mod layout;
 mod nodes;
 mod paint;
 
-pub use edit::{MAX_DIAGRAM_JSON, insert_plan, insert_value, plan, selected, synced, verified_diagram};
+pub use edit::{
+    FromTextPlan, MAX_CONVERSION_TEXT_JSON, MAX_DIAGRAM_JSON, ToTextPlan, from_text_plan, insert_plan, insert_value, plan, selected, synced,
+    to_shapes_plan, to_text_plan, verified_diagram,
+};
 use edit::{
-    add_node, change_colors, change_layout, change_style, demote, from_text, nodes, promote, remove_node, set_diagram, set_nodes, set_picture,
-    to_shapes, to_text,
+    add_node, change_colors, change_layout, change_style, demote, detach, from_text, nodes, promote, remove_node, replace_with_diagram,
+    replace_with_text, set_diagram, set_nodes, set_picture, to_shapes, to_text,
 };
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};
@@ -267,6 +270,33 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id?} (the graphic becomes a plain group of its shapes; the outline is dropped)",
             has_selection,
             to_shapes
+        ),
+        cmd!(
+            "smartArt.replaceWithDiagram",
+            "Replace with SmartArt",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?, diagram: the whole Diagram value, rect: [x,y,w,h]} (the confirmed command of smartArt.fromText: the source shape is replaced by the graphic the author's plan produced)",
+            has_selection,
+            replace_with_diagram
+        ),
+        cmd!(
+            "smartArt.replaceWithText",
+            "Replace SmartArt with Text",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?, body: the whole TextBody value, rect: [x,y,w,h]} (the confirmed command of smartArt.toText: the graphic is replaced by the text box the author's plan produced)",
+            has_selection,
+            replace_with_text
+        ),
+        cmd!(
+            "smartArt.detach",
+            "Detach SmartArt",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?} (the confirmed command of smartArt.toShapes: the graphic's diagram is dropped and its drawing becomes a plain group)",
+            has_selection,
+            detach
         ),
         cmd!(
             "smartArt.picture",
