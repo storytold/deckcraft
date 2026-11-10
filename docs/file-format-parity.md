@@ -34,11 +34,13 @@ PowerPoint opens and saves; Viewer = opens only).
 
 Desktop Save As and Export append the chosen extension when the picked name has no writable
 extension (#1929). A fully typed writable extension stays unchanged. If appending the extension
-finds an existing file, the status bar asks for the full name so the picker can confirm replacement.
+finds an existing file, the status bar asks for the full name. For single-file outputs, the picker
+can then confirm replacement.
 Adjusted destinations use an atomic no-replace commit, including each numbered image output:
 another save creating the file after selection causes an error, not replacement. Filesystems
-without hard-link support refuse these adjusted saves safely; typing the full name keeps the
-normal replacement flow. Engine path writes expose the same opt-in policy as `createNew: true`
+without hard-link support refuse these adjusted saves safely. For numbered image exports, a
+fully typed name can replace numbered files without confirmation; use an empty directory for
+these exports. Engine path writes expose the same opt-in policy as `createNew: true`
 on `file.save`, `file.saveAs`, `file.saveTemplate` and `file.export`.
 
 ## Pictures and media inside decks
