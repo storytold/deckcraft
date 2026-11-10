@@ -6871,6 +6871,27 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
 }
 
 #[test]
+fn many_distinct_fonts_are_listed_once_each_without_a_quadratic_scan() {
+    // 30,000 runs in 15,000 families, each written twice in different case.
+    let mut p = deckcraft_model::Presentation::default();
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    let mut body = deckcraft_model::text::TextBody::from_text("x");
+    let run = body.paragraphs[0].runs[0].clone();
+    body.paragraphs[0].runs = (0..30_000)
+        .map(|i| {
+            let mut r = run.clone();
+            let name = format!("Qqq Font {}", i / 2);
+            r.props.font = Some(if i % 2 == 0 { name } else { name.to_uppercase() });
+            r
+        })
+        .collect();
+    slide.shapes[0].text = Some(body);
+    let used = crate::fonts::used_fonts(&p);
+    assert_eq!(used.iter().filter(|f| f.starts_with("Qqq Font ")).count(), 15_000);
+    assert_eq!(crate::fonts::missing_fonts(&p).iter().filter(|f| f.to_ascii_lowercase().starts_with("qqq font ")).count(), 15_000);
+}
+
+#[test]
 fn slide_master_view_rejects_invalid_indices() {
     let mut s = Session::with_new();
     for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
