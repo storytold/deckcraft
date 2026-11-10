@@ -210,7 +210,10 @@ impl Under {
 /// topmost of them that does something when clicked, and a text hyperlink on it. Only shapes that
 /// are shown can be clicked, and a shape without an action hides the ones beneath it.
 pub(super) fn shapes_under_pointer(ctx: &egui::Context, ui: &Ui, show: &mut Show, doc: &Presentation, now: f64) -> Option<Under> {
-    let p = ctx.input(|i| i.pointer.hover_pos())?;
+    // On the frame a click lands the pointer can already be gone (a touch release): test the
+    // click's own position there, the same one `media_hit` reads, so a waiting Cameo under the
+    // touch is not skipped while hovering still uses the pointer.
+    let p = ctx.input(|i| if i.pointer.primary_clicked() { i.pointer.interact_pos() } else { i.pointer.hover_pos() })?;
     let full = ui.max_rect();
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, doc);

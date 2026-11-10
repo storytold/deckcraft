@@ -567,6 +567,60 @@ fn a_cameo_under_another_shape_does_not_take_the_click() {
     assert_eq!(click(bare).map(|(id, _)| id), Some(ShapeId(1)), "with the cover gone the Cameo is topmost and takes the click");
 }
 
+/// A touch release arrives with the pointer gone: the hit test must still find the waiting Cameo
+/// under the touch, using the click's own position, or the click is lost.
+#[test]
+fn a_touch_release_still_hits_the_cameo_it_touched() {
+    use super::media::{media_hit, shapes_under_pointer};
+
+    struct Probe {
+        show: Show,
+        doc: Presentation,
+        hit: Option<Option<(ShapeId, deckcraft_model::MediaClip)>>,
+    }
+    let mut doc = Presentation::default();
+    let poster = doc.add_media("poster.png", "image/png", vec![0u8; 8]).expect("poster");
+    let clip = doc.add_media("cameo.mp4", "video/mp4", vec![0u8; 16]).expect("clip");
+    let waiting = deckcraft_model::Cameo { live: false, recorded: Some(clip), autoplay: false, ..Default::default() };
+    std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(deckcraft_model::Shape {
+        id: ShapeId(1),
+        xfrm: Some(deckcraft_geom::Xfrm::new(100.0, 100.0, 200.0, 200.0)),
+        kind: deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: poster, ..Default::default() } },
+        geom: deckcraft_model::Geom::Preset { name: "rect".into(), adj: vec![] },
+        cameo: Some(waiting),
+        ..Default::default()
+    });
+    let srect = super::render::fit(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0)), &doc);
+    let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
+    let at = pos2(srect.min.x + 150.0 * k, srect.min.y + 150.0 * k);
+    let show = Show::new(&doc, 0, false, false);
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).build_ui_state(
+        |ui, st: &mut Probe| {
+            let under = shapes_under_pointer(ui.ctx(), ui, &mut st.show, &st.doc, 0.0);
+            st.hit = Some(media_hit(ui.ctx(), ui, &st.show, &st.doc, under.as_ref()));
+        },
+        Probe { show, doc, hit: None },
+    );
+    // Touch down on the Cameo, then lift the finger: the release arrives with the pointer gone.
+    harness.input_mut().events.push(egui::Event::PointerMoved(at));
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    });
+    harness.input_mut().events.push(egui::Event::PointerGone);
+    harness.run_steps(1);
+    assert_eq!(harness.state().hit.clone().flatten().map(|(id, _)| id), Some(ShapeId(1)), "the release still hits the Cameo it touched");
+}
+
 #[test]
 fn going_back_plays_the_left_slides_transition_reversed() {
     // #1531: Back from B to A played A's own entrance transition. PowerPoint plays the one B came

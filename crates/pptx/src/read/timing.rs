@@ -247,7 +247,13 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
                 cameo.volume = if cm.bool("mute") == Some(true) {
                     Some(0.0)
                 } else {
-                    cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()).map(|v| (v / 100_000.0).clamp(0.0, 1.0))
+                    // `vol` is in 1/100_000 and its schema default is 50%: a file that omits it
+                    // plays at half volume, not silently.
+                    let vol = match cm.attr("vol") {
+                        Some(v) => v.trim().parse::<f64>().ok().filter(|v| v.is_finite()).map_or(0.5, |v| (v / 100_000.0).clamp(0.0, 1.0)),
+                        None => 0.5,
+                    };
+                    Some(vol)
                 };
             }
             continue;
