@@ -21,7 +21,10 @@ pub fn default_text_shadow() -> deckcraft_model::style::Shadow {
 pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
     let v = on_param(p, Some(current_run(s).shadow.is_some()));
     let sh = default_text_shadow();
-    format_run(s, &move |r| r.shadow = if v { Some(sh.clone()) } else { None })
+    format_run(s, &move |r| {
+        r.shadow = if v { Some(sh.clone()) } else { None };
+        r.no_shadow = !v;
+    })
 }
 
 pub(super) fn text_outline(s: &mut Session, p: &Value) -> Result<Value> {

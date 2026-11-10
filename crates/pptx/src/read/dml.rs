@@ -557,6 +557,7 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
             "effectLst" => {
                 let fx = effects(e);
                 p.shadow = fx.outer_shadow;
+                p.no_shadow = p.shadow.is_none();
                 p.inner_shadow = fx.inner_shadow;
                 p.glow = fx.glow;
                 p.reflection = fx.reflection;

@@ -309,6 +309,7 @@ impl FontEdits {
         }
         if let Some(v) = self.shadow {
             r.shadow = if v { Some(super::text_effects::default_text_shadow()) } else { None };
+            r.no_shadow = !v;
         }
         if let Some(v) = self.baseline {
             r.baseline = Some(v);

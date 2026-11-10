@@ -340,6 +340,69 @@ mod tests {
             .clone()
     }
 
+    fn assert_shadow_state(s: &mut Session, on: bool) {
+        assert_eq!(s.execute("format.state", &json!({})).unwrap()["shadow"], on);
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({})).unwrap();
+        let UiRequest::Dialog { params, .. } = s.ui_requests.last().unwrap() else { panic!("expected Font dialog") };
+        assert_eq!(params["shadow"], on);
+        assert_eq!(current_run(s).shadow.is_some(), on);
+    }
+
+    #[test]
+    fn inherited_shadow_off_survives_native_and_pptx_roundtrips() {
+        use std::sync::Arc;
+        use deckcraft_model::text::LevelStyle;
+
+        for local_style in [false, true] {
+            for (command, params) in [
+                ("format.textShadow", json!({})),
+                ("format.fontDialog", json!({"shadow": false})),
+            ] {
+                let mut s = shape();
+                let id = s.doc().unwrap().selection.shapes[0];
+                let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+                let level = LevelStyle {
+                    run: RunProps { shadow: Some(default_text_shadow()), ..Default::default() },
+                    ..Default::default()
+                };
+                if local_style {
+                    let sh = Arc::make_mut(&mut doc.slides[0]).shape_mut(id).unwrap();
+                    sh.text.as_mut().unwrap().list_style.set(0, level);
+                } else {
+                    doc.default_text_style.set(0, level);
+                }
+                assert_shadow_state(&mut s, true);
+                let before = s.doc().unwrap().history.undo.len();
+                s.execute(command, &params).unwrap();
+                assert_eq!(s.doc().unwrap().history.undo.len(), before + 1);
+                assert!(props(&s).no_shadow);
+                assert_shadow_state(&mut s, false);
+
+                let doc = &s.doc().unwrap().doc;
+                let native = deckcraft_format::load(&deckcraft_format::save(doc).unwrap()).unwrap();
+                let pptx = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
+                for reopened in [native, pptx] {
+                    let id = reopened.slides[0].shapes.iter()
+                        .find(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Hello")).unwrap().id;
+                    let mut loaded = shape();
+                    let st = loaded.doc_mut().unwrap();
+                    st.doc = Arc::new(reopened);
+                    st.selection.shapes = vec![id];
+                    assert!(props(&loaded).no_shadow);
+                    assert_shadow_state(&mut loaded, false);
+                    loaded.execute("format.textShadow", &json!({})).unwrap();
+                    assert!(!props(&loaded).no_shadow);
+                    assert_shadow_state(&mut loaded, true);
+                }
+
+                s.execute("edit.undo", &json!({})).unwrap();
+                assert!(!props(&s).no_shadow);
+                assert_shadow_state(&mut s, true);
+            }
+        }
+    }
+
     #[test]
     fn font_dialog_applies_character_formatting_in_one_undo() {
         let mut s = shape();
