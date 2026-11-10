@@ -21,7 +21,7 @@ mod keys;
 mod playback;
 
 #[cfg(test)]
-pub(crate) use clipboard::{OBJECTS_MARKER, system_clipboard_text};
+pub(crate) use clipboard::{OBJECTS_MARKER, pastes_system_clipboard, system_clipboard_text};
 #[cfg(test)]
 pub(crate) use files::web_image_files;
 pub use keys::key_name;

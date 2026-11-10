@@ -108,11 +108,9 @@ fn save_prefs(app: &SlideApp) {
 
 /// The desktop services. `native_wayland`: the window is a Wayland client (not Xwayland).
 fn services(native_wayland: bool) -> Services {
-    // On native Wayland, egui-winit owns the clipboard through winit's data device, which carries
-    // text and PNG but no HTML. `pasteboard` (arboard, built for X11 only) would put a copy on the
-    // Xwayland selection instead and skip egui's Wayland claim, so Ctrl+V would read something
-    // else. There, text goes through egui and pictures arrive as `PasteImage` events.
-    let pasteboard = !native_wayland;
+    // Use rich offers on native Wayland only with data-control support. Otherwise egui owns
+    // the native clipboard and remains the plain-text/image fallback.
+    let pasteboard = !native_wayland || pasteboard::supports_wayland();
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
             let d = rfd::FileDialog::new();
@@ -136,6 +134,7 @@ fn services(native_wayland: bool) -> Services {
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
         clipboard_image: pasteboard.then(|| Box::new(pasteboard::image_png) as Box<dyn FnMut() -> Option<Vec<u8>>>),
+        clipboard_text: pasteboard.then(|| Box::new(pasteboard::text) as Box<dyn FnMut() -> Option<String>>),
         clipboard_html: pasteboard.then(|| Box::new(pasteboard::html) as Box<dyn FnMut() -> Option<String>>),
         clipboard_set_html: pasteboard.then(|| Box::new(pasteboard::set_html) as Box<dyn FnMut(&str, &str) -> bool>),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
@@ -377,7 +376,8 @@ mod tests {
     #[test]
     fn the_pasteboard_stays_off_native_wayland() {
         let s = services(true);
-        assert!(s.clipboard_html.is_none() && s.clipboard_set_html.is_none() && s.clipboard_image.is_none());
+        assert_eq!(s.clipboard_html.is_some(), pasteboard::supports_wayland());
+        assert_eq!(s.clipboard_set_html.is_some(), s.clipboard_html.is_some());
         let s = services(false);
         assert!(s.clipboard_html.is_some() && s.clipboard_set_html.is_some() && s.clipboard_image.is_some());
     }

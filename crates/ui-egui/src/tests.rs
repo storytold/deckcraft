@@ -1329,6 +1329,189 @@ fn a_textless_shape_copies_as_the_objects_marker() {
     assert!(cmds.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(t) if t == OBJECTS_MARKER)), "{cmds:?}");
 }
 
+/// Two windows are two processes with a clipboard each. The copy carries the session clipboard
+/// in the HTML it puts on the system clipboard, and the other window pastes the objects from it:
+/// a rectangle (the plain text stays the objects marker of #182) and a picture, with its bytes.
+#[test]
+fn a_copy_in_another_window_pastes_its_objects() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let system: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
+    let record = system.clone();
+    let a = Services {
+        clipboard_set_html: Some(Box::new(move |html, plain| {
+            *record.borrow_mut() = Some((html.to_string(), plain.to_string()));
+            true
+        })),
+        ..Default::default()
+    };
+    let mut a = step_app(a);
+    let png = deckcraft_render::Image { width: 2, height: 2, pixels: [0, 128, 255, 255].repeat(4) }.to_png();
+    let pic = a
+        .state_mut()
+        .session
+        .execute("insert.picture", &json!({"name": "dot.png", "data": deckcraft_engine::cmd::base64_encode(&png), "rect": [20.0, 20.0, 40.0, 40.0]}))
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let rect =
+        a.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 120.0, 80.0]})).unwrap()["id"].as_u64().unwrap();
+    a.state_mut().session.execute("shape.fill", &json!({"ids": [rect], "color": "#C00000"})).unwrap();
+    a.state_mut().session.execute("edit.select", &json!({"ids": [pic, rect]})).unwrap();
+    a.event(egui::Event::Copy);
+    a.run_steps(1);
+    let (html, plain) = system.borrow().clone().expect("the copy went out as HTML");
+    assert_eq!(plain, OBJECTS_MARKER, "the plain text is still the marker, so Ctrl+V reaches us");
+    assert!(deckcraft_engine::clipboard::extract(&html).is_some(), "{html}");
+    assert!(!a.output().platform_output.commands.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(_))));
+
+    let on_system = Rc::new(RefCell::new(Some(html)));
+    let read = on_system.clone();
+    let b = Services { clipboard_html: Some(Box::new(move || read.borrow().clone())), ..Default::default() };
+    let mut b = step_app(b);
+    let before = b.state().session.doc().unwrap().current_slide().unwrap().shapes.len();
+    b.event(egui::Event::Paste(plain));
+    b.run_steps(1);
+    let d = b.state().session.active().unwrap();
+    let shapes = &d.current_slide().unwrap().shapes;
+    assert_eq!(shapes.len(), before + 2, "both objects pasted");
+    let pasted_rect = shapes.iter().find(|x| x.xfrm.is_some_and(|x| x.w == 120.0 && x.h == 80.0)).expect("the rectangle, same size");
+    assert_eq!(pasted_rect.xfrm.map(|x| (x.x, x.y)), Some((80.0, 80.0)), "another window: no paste offset");
+    let fill = serde_json::to_value(&pasted_rect.fill).unwrap();
+    assert_eq!(fill["color"]["base"]["rgb"], json!({"r": 192, "g": 0, "b": 0, "a": 255}), "same fill colour: {fill}");
+    let pasted_pic = shapes.iter().find(|x| matches!(x.kind, deckcraft_model::ShapeKind::Picture { .. })).expect("the picture");
+    let deckcraft_model::ShapeKind::Picture { fill } = &pasted_pic.kind else { panic!("not a picture") };
+    assert_eq!(d.doc.media(fill.media).unwrap().data.as_ref(), &png, "the picture bytes came along");
+    assert!(b.state().session.clipboard.shapes.len() == 2, "the copy is now this window's clipboard");
+
+    // Plain text from a terminal (no DeckCraft payload) still pastes as text.
+    *on_system.borrow_mut() = None;
+    b.event(egui::Event::Paste("hello".into()));
+    b.run_steps(1);
+    let d = b.state().session.active().unwrap();
+    assert!(d.current_slide().unwrap().shapes.iter().any(|x| x.text.as_ref().is_some_and(|t| t.text() == "hello")));
+    // HTML from another app without a payload pastes as before, too.
+    *on_system.borrow_mut() = Some("<p><b>Bold</b></p>".into());
+    b.event(egui::Event::Paste("Bold".into()));
+    b.run_steps(1);
+    let d = b.state().session.active().unwrap();
+    let bold = d.current_slide().unwrap().shapes.iter().find(|x| x.text.as_ref().is_some_and(|t| t.text() == "Bold")).expect("Bold");
+    assert_eq!(bold.text.as_ref().unwrap().paragraphs[0].runs[0].props.bold, Some(true));
+}
+
+/// Ctrl+C with a caret and nothing selected copies nothing: the system clipboard is left alone,
+/// not handed the previous copy again (which another app may have replaced since).
+#[test]
+fn a_caret_copy_publishes_nothing() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let offers = Rc::new(RefCell::new(0));
+    let count = offers.clone();
+    let services = Services {
+        clipboard_set_html: Some(Box::new(move |_html, _plain| {
+            *count.borrow_mut() += 1;
+            true
+        })),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 120.0, 80.0]})).unwrap();
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    assert_eq!(*offers.borrow(), 1, "the rectangle went out");
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+    h.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+    h.run_steps(1);
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    assert_eq!(*offers.borrow(), 1, "a caret copy offers nothing");
+    assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(_))), "and no text either");
+    assert_eq!(h.state().session.clipboard.shapes.len(), 1, "the session clipboard is as it was");
+}
+
+/// Our own copy comes back from the system clipboard with our token: the internal clipboard is
+/// used as before (the paste offset counts up), not a decoded copy of it.
+#[test]
+fn our_own_copy_on_the_system_clipboard_pastes_from_the_internal_clipboard() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let system: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let (record, read) = (system.clone(), system.clone());
+    let services = Services {
+        clipboard_set_html: Some(Box::new(move |html, _plain| {
+            *record.borrow_mut() = Some(html.to_string());
+            true
+        })),
+        clipboard_html: Some(Box::new(move || read.borrow().clone())),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 120.0, 80.0]})).unwrap();
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    assert!(system.borrow().as_deref().is_some_and(|html| deckcraft_engine::clipboard::extract(html).is_some()));
+    let token = h.state().session.clipboard.token;
+    assert_ne!(token, 0);
+    h.event(egui::Event::Paste(OBJECTS_MARKER.to_string()));
+    h.run_steps(1);
+    h.event(egui::Event::Paste(OBJECTS_MARKER.to_string()));
+    h.run_steps(1);
+    let clip = &h.state().session.clipboard;
+    assert_eq!((clip.token, clip.pastes), (token, 2), "the internal clipboard, pasted twice");
+    let d = h.state().session.active().unwrap();
+    let off = h.state().session.prefs.duplicate_offset;
+    let xs: Vec<f64> = d.current_slide().unwrap().shapes.iter().filter_map(|x| x.xfrm.map(|x| x.x)).collect();
+    assert_eq!(xs, vec![80.0, 80.0 + off, 80.0 + 2.0 * off], "same slide: each paste offsets further");
+}
+
+/// Paste from the ribbon, a menu or the control channel reads nothing itself; given nothing to
+/// paste it takes the copy another window left on the system clipboard. Given text, it pastes
+/// that text (`deckcraft-cli app edit.paste {"text": …}`).
+#[test]
+fn ribbon_and_control_channel_paste_take_a_copy_from_another_window() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let system: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
+    let record = system.clone();
+    let a = Services {
+        clipboard_set_html: Some(Box::new(move |html, plain| {
+            *record.borrow_mut() = Some((html.to_string(), plain.to_string()));
+            true
+        })),
+        ..Default::default()
+    };
+    let mut a = step_app(a);
+    a.state_mut().session.execute("shape.insert", &json!({"preset": "ellipse", "rect": [10.0, 10.0, 60.0, 30.0]})).unwrap();
+    // Copy from the ribbon or the control channel offers the payload too (not only Ctrl+C).
+    a.state_mut().run("edit.copy", json!({})).unwrap();
+    a.run_steps(1);
+    let (html, plain) = system.borrow().clone().expect("the copy went out as HTML");
+    assert_eq!(plain, OBJECTS_MARKER);
+    assert!(deckcraft_engine::clipboard::extract(&html).is_some(), "{html}");
+    assert!(!a.output().platform_output.commands.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(_))));
+    let other = html.clone();
+    let b = Services { clipboard_html: Some(Box::new(move || Some(other.clone()))), ..Default::default() };
+    let mut b = step_app(b);
+    assert!(pastes_system_clipboard("edit.paste", &json!({})));
+    assert!(pastes_system_clipboard("app.pasteSpecial", &json!({})));
+    assert!(!pastes_system_clipboard("edit.paste", &json!({"text": "hello"})));
+    assert!(!pastes_system_clipboard("edit.copy", &json!({})));
+    let before = b.state().session.doc().unwrap().current_slide().unwrap().shapes.len();
+    b.state_mut().run("edit.paste", json!({})).unwrap();
+    let d = b.state().session.active().unwrap();
+    let shapes = &d.current_slide().unwrap().shapes;
+    assert_eq!(shapes.len(), before + 1);
+    assert!(shapes.iter().any(|x| x.xfrm.is_some_and(|x| x.w == 60.0 && x.h == 30.0)), "the ellipse");
+    b.state_mut().run("edit.paste", json!({"text": "hello"})).unwrap();
+    let d = b.state().session.active().unwrap();
+    assert!(d.current_slide().unwrap().shapes.iter().any(|x| x.text.as_ref().is_some_and(|t| t.text() == "hello")));
+    // Paste Special sees the other window's shapes (Keep Source Formatting, Picture are offered).
+    b.state_mut().run("app.pasteSpecial", json!({})).unwrap();
+    assert_eq!(b.state().session.clipboard.shapes.len(), 1);
+    b.state_mut().run("edit.pasteSpecial", json!({"as": "keepSource"})).unwrap();
+    assert_eq!(b.state().session.doc().unwrap().current_slide().unwrap().shapes.len(), before + 3);
+}
+
 fn redder(px: [u8; 4]) -> i32 {
     px[0] as i32 - px[1].max(px[2]) as i32
 }

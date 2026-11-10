@@ -18,6 +18,9 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if super::clipboard::pastes_system_clipboard(id, &params) {
+            self.adopt_system_clipboard();
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
@@ -30,11 +33,11 @@ impl SlideApp {
         };
         match &r {
             // Copy and Cut from the ribbon, menus, the slide's context menu or the control channel
-            // put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431).
+            // put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431), and the
+            // session clipboard with it for another window.
             Ok(v) if matches!(id, "edit.copy" | "edit.cut") => {
-                if let Some(t) = v.get("text").and_then(Value::as_str) {
-                    self.pending_copy = Some(t.to_string());
-                }
+                let v = v.clone();
+                self.pending_copy = self.offer_clipboard(&v);
             }
             Ok(_) => {}
             Err(e) => self.set_status(e.clone()),
