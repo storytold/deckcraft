@@ -46,6 +46,89 @@ fn spelling_dialog_changes_and_ignores_words() {
     assert!(h.query_by_label_contains("No issues found").is_some());
 }
 
+/// The Spelling dialog is drawn every frame and the check reads the whole deck, so it keeps its
+/// findings until the deck, the ignored words or the user dictionary change.
+#[test]
+fn spelling_dialog_checks_again_only_when_something_changed() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    let aff = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\n";
+    let dic = "3\nthe\nplan\nour\n";
+    deckcraft_engine::spell::install("en-US", deckcraft_engine::spell::Dictionary::parse(aff.as_bytes(), dic.as_bytes()));
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    app.session.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 500, 120], "text": "Our plna for teh plan"})).unwrap();
+    app.dialog = Some(crate::dialogs::Dialog::new("spelling"));
+    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    let found = |h: &Harness<'_, SlideApp>| h.state().dialog.as_ref().and_then(|d| d.spelling.as_ref()).map(|f| f.list.clone()).unwrap();
+    h.run_steps(3);
+    let first = found(&h);
+    assert!(first.iter().any(|i| i["word"] == "plna"));
+    h.run_steps(5);
+    assert!(std::sync::Arc::ptr_eq(&first, &found(&h)), "an unchanged deck is not checked again");
+    // Go to: the dialog changes the slide and the selection, not the text.
+    let shape = first[0]["shape"].clone();
+    h.state_mut().session.execute("slide.go", &json!({"index": 0})).unwrap();
+    h.state_mut().session.execute("edit.select", &json!({"ids": [shape]})).unwrap();
+    h.run_steps(3);
+    assert!(std::sync::Arc::ptr_eq(&first, &found(&h)), "a change of selection is not checked again");
+    h.state_mut().session.execute("review.spellingChange", &json!({"shape": shape, "para": 0, "start": 4, "word": "plna", "to": "plan"})).unwrap();
+    h.run_steps(3);
+    assert!(!std::sync::Arc::ptr_eq(&first, &found(&h)), "an edit is checked again");
+    let first = found(&h);
+    h.get_all_by_label("Ignore All").next().unwrap().click();
+    h.run_steps(3);
+    assert!(!std::sync::Arc::ptr_eq(&first, &found(&h)), "an ignored word is checked again");
+    // A dictionary installed while the dialog is open: "plan" is no longer in it.
+    let first = found(&h);
+    assert!(!first.iter().any(|i| i["word"] == "plan"));
+    deckcraft_engine::spell::install("en-US", deckcraft_engine::spell::Dictionary::parse(aff.as_bytes(), "3\nthe\nour\nfor\n".as_bytes()));
+    h.run_steps(3);
+    assert!(!std::sync::Arc::ptr_eq(&first, &found(&h)), "an installed dictionary is checked against again");
+    assert!(found(&h).iter().any(|i| i["word"] == "plan"), "the new dictionary's verdict shows");
+}
+
+/// The cache is keyed by the document, not only its revision: another document at the same
+/// revision, with the same ignored words, is checked on its own.
+#[test]
+fn spelling_dialog_checks_another_document_at_the_same_revision() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    let aff = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\n";
+    let dic = "3\nthe\nplan\nour\n";
+    deckcraft_engine::spell::install("en-US", deckcraft_engine::spell::Dictionary::parse(aff.as_bytes(), dic.as_bytes()));
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    app.session.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 500, 120], "text": "Our plna"})).unwrap();
+    app.dialog = Some(crate::dialogs::Dialog::new("spelling"));
+    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    let words = |h: &Harness<'_, SlideApp>| -> Vec<String> {
+        let found = h.state().dialog.as_ref().and_then(|d| d.spelling.as_ref()).map(|f| f.list.clone()).unwrap();
+        found.iter().filter_map(|i| i["word"].as_str().map(str::to_string)).collect()
+    };
+    assert_eq!(words(&h), ["plna"]);
+    let (uid, revision) = {
+        let st = h.state().session.active().unwrap();
+        (st.uid, st.revision)
+    };
+    h.state_mut().session.execute("file.new", &json!({})).unwrap();
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 500, 120], "text": "Our teh"})).unwrap();
+    let st = h.state().session.active().unwrap();
+    assert_ne!(st.uid, uid, "a second document is active");
+    assert_eq!(st.revision, revision, "at the same revision");
+    h.run_steps(3);
+    assert_eq!(words(&h), ["teh"]);
+}
+
 /// Misspelt words on the slide get squiggles from the background check; not the word being
 /// typed; the context menu's correction and Add to Dictionary clear them.
 #[test]
