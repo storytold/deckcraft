@@ -679,10 +679,11 @@ fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Optio
             return None;
         }
     }
-    if ctx.count >= MAX_SHAPES {
+    if ctx.count >= MAX_SHAPES || imp.smartart_shapes >= MAX_SMARTART_SHAPES {
         return None;
     }
     ctx.count += 1;
+    imp.smartart_shapes += 1;
     let text = s.text.take();
     // No fill, outline or effects; the style keeps only the text colour and font.
     let style = s.style.clone().map(|mut st| {
@@ -762,7 +763,8 @@ fn diagram_outline(imp: &mut Imp, part: &Part, rel_ids: &El, data: &El) -> Optio
         style,
         colors,
         imported: true,
-        layout_id: id,
+        // Without the layout part the writer generates one for `kind`; empty keeps data's loTypeId in step with it.
+        layout_id: if layout_xml.is_some() { id } else { String::new() },
         layout_xml,
         style_xml,
         colors_xml,
