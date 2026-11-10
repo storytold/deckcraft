@@ -643,6 +643,26 @@ pub fn normalize_with_painter(
             };
             Ok(vec![make(target, payload)])
         }
+        "model3d.camera" => {
+            // The whole final view, validated by the same function the single-user command runs:
+            // a relative field (dx/dy/zoom/orbit), a degenerate camera or a value out of range is
+            // refused here, before an operation is sent, and the address must be one 3-D model.
+            let ids = shape_ids(p, st)?;
+            let [id] = ids.as_slice() else {
+                return Err(LocalError::Unsupported("a 3-D model camera on several shapes".into()));
+            };
+            let shape = find_shape(&slide.shapes, *id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            if !matches!(shape.kind, ShapeKind::Model3d { .. }) {
+                return Err(LocalError::BadParams("the shape is not a 3-D model".into()));
+            }
+            let camera = deckcraft_engine::cmd::model3d::camera_param(p)
+                .map_err(|e| LocalError::BadParams(e.to_string()))?
+                .map(|c| deckcraft_collab_proto::ModelCamera { position: c.position, target: c.target, up: c.up, fov: c.fov });
+            Ok(vec![make(
+                Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, *id)?), ..Target::default() },
+                Payload::Model3dCamera { camera },
+            )])
+        }
         "shape.fill" => {
             let fill = fill_spec(p)?;
             let ids = shape_ids(p, st)?;
@@ -3248,6 +3268,56 @@ mod tests {
         viewer.on_msg(&mut s, w);
         let sha = crate::media::sha256_hex(&png());
         assert_eq!(viewer.submit(&s, "smartArt.picture", &json!({"id": group.0, "index": 0, "sha256": sha}), "v-1"), Err(LocalError::ReadOnly));
+    }
+
+    #[test]
+    fn a_model_camera_normalises_to_the_whole_final_view_and_a_relative_edit_is_refused() {
+        let (mut s, doc, _slide, shapes) = deck();
+        let data = base64::engine::general_purpose::STANDARD.encode(glb());
+        let id = s.apply_remote("insert.model3d", &json!({"name": "block.glb", "data": data})).expect("model")["id"].as_u64().unwrap();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // The whole final view travels; the address is the model, the command is a value command.
+        let view =
+            json!({"id": id, "camera": {"position": [0.0, 0.0, 11713743.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 36000000.0, 0.0], "fov": 45.0}});
+        let ops = normalize(&km, st, "model3d.camera", &view, "op", &doc).expect("camera");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].payload.command(), "model3d.camera");
+        match &ops[0].payload {
+            Payload::Model3dCamera { camera: Some(c) } => {
+                assert_eq!(c.fov, 45.0);
+                assert_eq!(c.position, [0.0, 0.0, 11_713_743.0]);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // `null` is the reader's default view, not a relative edit.
+        let ops = normalize(&km, st, "model3d.camera", &json!({"id": id, "camera": null}), "op-2", &doc).expect("reset");
+        assert!(matches!(ops[0].payload, Payload::Model3dCamera { camera: None }));
+
+        // A relative field, a degenerate view, a missing camera and a plain shape are all refused
+        // on this replica, before any operation is sent.
+        for bad in [
+            json!({"id": id, "camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0, "dx": 10.0}}),
+            json!({"id": id, "camera": {"orbit": 15.0}}),
+            json!({"id": id, "camera": {"position": [0.0, 0.0, 0.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0}}),
+            json!({"id": id}),
+            json!({"id": shapes[0].0, "camera": null}),
+        ] {
+            assert!(matches!(normalize(&km, st, "model3d.camera", &bad, "op-3", &doc), Err(LocalError::BadParams(_))), "{bad}");
+        }
+
+        // A viewer's camera step is refused on the client, before anything is queued.
+        let mut viewer = CollabDoc::new("d");
+        viewer.connect(&s, "jwt-v", ClientInfo { name: "viewer".into(), ver: "1".into() });
+        let mut msg = welcome(0);
+        if let ServerMsg::Welcome(ref mut welcome) = msg {
+            welcome.role = deckcraft_collab_proto::Role::Viewer;
+        }
+        viewer.on_msg(&mut s, msg);
+        assert_eq!(viewer.submit(&s, "model3d.camera", &view, "v-1"), Err(LocalError::ReadOnly));
     }
 
     #[test]

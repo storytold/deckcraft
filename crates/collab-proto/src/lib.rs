@@ -216,6 +216,12 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<[f64; 4]>,
     },
+    /// Changes one 3-D model's view (`model3d.camera`): the whole final camera — position,
+    /// target, up and field of view — or `None` for the reader's default view. There is no
+    /// relative form: a replica that merged "turn 15°" against its own view would drift away
+    /// from the others, so the operation carries the resulting view and nothing else (the same
+    /// rule as `transition.set`, RFC §3.2.1). The undo image is the whole model shape.
+    Model3dCamera { camera: Option<ModelCamera> },
     /// Replaces one shape's fill with a final value. Absolute only: no "next theme colour", no
     /// transparency relative to an inherited style.
     ShapeFill { fill: FillSpec },
@@ -597,6 +603,12 @@ pub enum ShapeField {
     /// part of the model and a kept chart part cannot be replayed from arguments, so the whole
     /// shape is the exact image of the step. The value names the shape it restores.
     Chart,
+    /// The whole 3-D model shape — its box, its media part, its poster and its camera — for the
+    /// undo of a `model3d.camera` step. The command carries final values, but the image is the
+    /// whole shape: a restore must not depend on the reader's default view, and the whole value
+    /// is what turns a foreign edit of the model into an `undo-conflict`. The value names the
+    /// shape it restores.
+    Model3d,
 }
 
 /// One shape value in a [`Payload::ShapeFields`] merge restore.
@@ -643,6 +655,19 @@ impl Default for PicturePlace {
     fn default() -> Self {
         PicturePlace { crop: [0.0; 4], alpha: None }
     }
+}
+
+/// A 3-D model's view as it travels on the wire: the camera's position, the point it looks at and
+/// its up vector in slide EMU (the `am3d:pos`/`am3d:lookAt`/`am3d:up` units), and the vertical
+/// field of view in degrees. Every member is required and final; the engine re-checks all of them
+/// (finite, in range, not degenerate) before the first write.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelCamera {
+    pub position: [f64; 3],
+    pub target: [f64; 3],
+    pub up: [f64; 3],
+    pub fov: f64,
 }
 
 /// One shape in a [`Payload::ShapesSetBounds`] step: the final box in slide points. The shape is
@@ -938,6 +963,7 @@ impl Payload {
                 MediaKind::Audio => "insert.audio",
                 MediaKind::Model => "insert.model3d",
             },
+            Payload::Model3dCamera { .. } => "model3d.camera",
             Payload::ShapeFill { .. } => "shape.fill",
             Payload::ShapeLine { .. } => "shape.line",
             Payload::SlideTransition { .. } => "slide.transition.set",
@@ -1810,6 +1836,32 @@ mod tests {
         }
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), options);
         assert_eq!(options.command(), "table.options");
+    }
+
+    #[test]
+    fn a_model_camera_travels_as_one_final_view_and_a_relative_field_is_refused() {
+        // The whole view: EMU positions and the field of view in degrees.
+        let payload = Payload::Model3dCamera {
+            camera: Some(ModelCamera { position: [0.0, 0.0, 11_713_743.0], target: [0.0, 0.0, 0.0], up: [0.0, 36_000_000.0, 0.0], fov: 45.0 }),
+        };
+        let text = serde_json::to_string(&payload).expect("encode");
+        assert!(text.contains("\"cmd\":\"model3d_camera\""), "{text}");
+        assert!(text.contains("\"fov\":45.0"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
+        assert_eq!(payload.command(), "model3d.camera");
+
+        // `null` is the reader's default view, not a relative edit.
+        let clear = Payload::Model3dCamera { camera: None };
+        let text = serde_json::to_string(&clear).expect("encode");
+        assert!(text.contains("\"camera\":null"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), clear);
+
+        // A relative field is not a value this build decodes: the operation is refused as a bad
+        // frame instead of being merged against a replica's own view.
+        let hostile = r#"{"cmd":"model3d_camera","camera":{"position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"fov":45,"dx":10}}"#;
+        assert!(serde_json::from_str::<Payload>(hostile).is_err(), "a relative camera decodes");
+        let relative = r#"{"cmd":"model3d_camera","camera":{"orbit":15}}"#;
+        assert!(serde_json::from_str::<Payload>(relative).is_err(), "an orbit decodes");
     }
 
     #[test]

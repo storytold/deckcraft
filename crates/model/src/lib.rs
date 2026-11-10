@@ -308,10 +308,13 @@ pub enum ShapeKind {
     },
     /// A 3-D model (`p:contentPart` with a `model3d` relationship, usually a `.glb`).
     /// `poster` is the fallback picture an `mc:AlternateContent` choice carried for older readers.
+    /// `camera` is the view the file shows the model from; absent = the reader's default view.
     Model3d {
         media: MediaId,
         #[serde(default)]
         poster: Option<MediaId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        camera: Option<ModelCamera>,
     },
     /// Something we read but don't model (SmartArt without fallback, OLE…): its XML is kept and its
     /// fallback picture, if any, is shown.
@@ -423,6 +426,22 @@ pub struct PicturePlace {
     pub crop: [f64; 4],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alpha: Option<f64>,
+}
+
+/// A 3-D model's view: where the camera stands, what it looks at, which way is up and how wide
+/// the perspective is.
+///
+/// `position`, `target` and `up` are slide EMU — the units `am3d:pos`/`am3d:lookAt`/`am3d:up`
+/// use in the package (914 400 EMU to the inch) — and `fov` is the vertical field of view in
+/// degrees. Every field is a **final** value: there is no relative form on the wire, because two
+/// replicas applying "turn 15°" to their own view would drift apart.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCamera {
+    pub position: [f64; 3],
+    pub target: [f64; 3],
+    pub up: [f64; 3],
+    pub fov: f64,
 }
 
 impl Default for Shape {

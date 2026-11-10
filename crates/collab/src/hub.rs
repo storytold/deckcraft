@@ -141,6 +141,7 @@ impl Hub {
                     "chart.type".into(),
                     "chart.data".into(),
                     "chart.options".into(),
+                    "model3d.camera".into(),
                     "shape.insert".into(),
                     "insert.picture".into(),
                     "edit.delete".into(),

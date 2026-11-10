@@ -310,8 +310,30 @@ fn content_part(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<S
     if let Some(x) = e.child("xfrm") {
         s.xfrm = Some(dml::xfrm(x).0);
     }
-    s.kind = ShapeKind::Model3d { media, poster: None };
+    let camera = model_camera(e);
+    s.kind = ShapeKind::Model3d { media, poster: None, camera };
     Some(s)
+}
+
+/// The camera of a 3-D model: `am3d:camera` in the slide part next to the content part. A camera
+/// with a missing or malformed member is dropped whole rather than half-read, so a view this
+/// build cannot reproduce is never written back as a different one.
+fn model_camera(e: &El) -> Option<deckcraft_model::ModelCamera> {
+    let cam = e.child("camera")?;
+    let vec3 = |name: &str, keys: [&str; 3]| -> Option<[f64; 3]> {
+        let el = cam.child(name)?;
+        let mut v = [0.0; 3];
+        for (i, k) in keys.iter().enumerate() {
+            v[i] = el.attr(k)?.parse::<f64>().ok()?;
+        }
+        Some(v)
+    };
+    let position = vec3("pos", ["x", "y", "z"])?;
+    let target = vec3("lookAt", ["x", "y", "z"])?;
+    let up = vec3("up", ["dx", "dy", "dz"])?;
+    // Office writes the perspective's field of view in 1/60000 degree.
+    let fov = cam.child("perspective")?.attr("fov")?.parse::<f64>().ok()? / 60_000.0;
+    (fov.is_finite() && fov > 0.0).then_some(deckcraft_model::ModelCamera { position, target, up, fov })
 }
 
 /// A 3-D model wrapped in `mc:AlternateContent`: the model choice, plus the fallback picture.
@@ -325,8 +347,8 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
             fb.find_all("blip", &mut pics);
             pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
         });
-        if let ShapeKind::Model3d { media, .. } = s.kind {
-            s.kind = ShapeKind::Model3d { media, poster };
+        if let ShapeKind::Model3d { media, camera, .. } = s.kind {
+            s.kind = ShapeKind::Model3d { media, poster, camera };
         }
         return Some(s);
     }

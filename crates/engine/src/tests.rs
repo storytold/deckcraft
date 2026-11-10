@@ -7369,3 +7369,91 @@ fn shape_adjust_and_quick_style_reject_invalid_index() {
     assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
     s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
 }
+
+#[test]
+fn a_model_camera_is_one_final_view_and_a_relative_edit_is_refused() {
+    let mut s = session();
+    let data = cmd::base64_encode(b"glTF\x02\0\0\0\x0c\0\0\0");
+    let r = s.execute("insert.model3d", &json!({"name": "block.glb", "data": data, "rect": [10.0, 10.0, 320.0, 240.0]})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let camera = |s: &mut Session| {
+        let st = s.doc().unwrap();
+        let sh = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(id as u32)).unwrap();
+        match &sh.kind {
+            deckcraft_model::ShapeKind::Model3d { camera, .. } => *camera,
+            other => panic!("not a 3-D model: {other:?}"),
+        }
+    };
+    assert_eq!(camera(&mut s), None, "an inserted model has no view of its own");
+
+    // The whole final view, in EMU and degrees.
+    let view = json!({
+        "camera": {"position": [0.0, 0.0, 11713743.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 36000000.0, 0.0], "fov": 45.0},
+        "ids": [id],
+    });
+    s.execute("model3d.camera", &view).unwrap();
+    let set = camera(&mut s).expect("a camera");
+    assert_eq!(set.position, [0.0, 0.0, 11_713_743.0]);
+    assert_eq!(set.up, [0.0, 36_000_000.0, 0.0]);
+    assert_eq!(set.fov, 45.0);
+
+    // A relative edit, a degenerate view and a field of view outside the range are refused before
+    // the first write: the view on the model does not move.
+    for bad in [
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0, "dx": 10.0}}),
+        json!({"camera": {"orbit": 15.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 0.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 0.0, 1.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 0.0, 0.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 0.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 180.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1e12], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0, "zoom": 2.0}}),
+        json!({}),
+    ] {
+        let mut params = bad.clone();
+        params["ids"] = json!([id]);
+        assert!(s.execute("model3d.camera", &params).is_err(), "refused: {bad}");
+        assert_eq!(camera(&mut s).expect("the view is unchanged").fov, 45.0, "the refusal wrote nothing");
+    }
+
+    // A plain shape is not a model, and an unknown id changes nothing either.
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).unwrap();
+    let rect = r["id"].as_u64().unwrap();
+    assert!(s.execute("model3d.camera", &json!({"camera": null, "ids": [rect]})).is_err());
+    assert!(s.execute("model3d.camera", &json!({"camera": null, "ids": [9999]})).is_err());
+
+    // `null` is the reader's default view again, and the command is in the registry.
+    s.execute("model3d.camera", &json!({"camera": null, "ids": [id]})).unwrap();
+    assert_eq!(camera(&mut s), None);
+    assert!(find_command("model3d.camera").is_some(), "the command is registered");
+}
+
+#[test]
+fn a_whole_model_restore_is_checked_before_it_is_written() {
+    let mut s = session();
+    let data = cmd::base64_encode(b"glTF\x02\0\0\0\x0c\0\0\0");
+    let r = s.execute("insert.model3d", &json!({"name": "block.glb", "data": data})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let model = {
+        let st = s.doc().unwrap();
+        deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(id as u32)).unwrap().clone()
+    };
+    let mut value = serde_json::to_value(&model).unwrap();
+    value["kind"]["camera"] = json!({"position": [0.0, 0.0, 5.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 30.0});
+    s.execute("shape.setField", &json!({"field": "model3d", "value": value, "ids": [id]})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(id as u32)).unwrap();
+    assert!(matches!(&sh.kind, deckcraft_model::ShapeKind::Model3d { camera: Some(c), .. } if c.fov == 30.0));
+
+    // A value that is not a model, and a value naming another shape, are refused before the write.
+    let plain = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).unwrap()["id"].as_u64().unwrap();
+    let rect = {
+        let st = s.doc().unwrap();
+        serde_json::to_value(deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(plain as u32)).unwrap()).unwrap()
+    };
+    assert!(s.execute("shape.setField", &json!({"field": "model3d", "value": rect, "ids": [id]})).is_err());
+    let mut other = serde_json::to_value(&model).unwrap();
+    other["id"] = json!(plain);
+    assert!(s.execute("shape.setField", &json!({"field": "model3d", "value": other, "ids": [id]})).is_err());
+}

@@ -462,8 +462,8 @@ const MAX_TABLE_LINES: usize = 1_000;
 /// argument), so a lossless restore cannot go through them. The value is still hostile input:
 /// it is size-bounded and deserialised into the model type before anything is touched.
 fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
-    let field =
-        str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text, cellText, table, smartArt or chart)"))?;
+    let field = str_param(p, "field")
+        .ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text, cellText, table, smartArt, chart or model3d)"))?;
     let value = p.get("value").cloned().unwrap_or(Value::Null);
     let bytes = serde_json::to_vec(&value).map_err(|e| bad("shape.setField", format!("invalid value: {e}")))?;
     if bytes.len() > MAX_FIELD_JSON {
@@ -576,7 +576,26 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(())
             })
         }
-        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text, cellText, table, smartArt or chart)"))),
+        // A whole 3-D model: its box, its media part, its poster and its camera. The camera
+        // command carries final values only, but the step image is the whole shape — a restore
+        // must not depend on the reader's default view or on the poster the file brought — and
+        // the value names the shape it restores, so a stale or forged image cannot land on
+        // another shape.
+        "model3d" => {
+            let shape =
+                decode_field::<deckcraft_model::Shape>(&value, "model3d")?.ok_or_else(|| bad("shape.setField", "a 3-D model cannot be cleared"))?;
+            if !matches!(shape.kind, ShapeKind::Model3d { .. }) {
+                return Err(bad("shape.setField", "the value is not a 3-D model"));
+            }
+            edit_shapes(s, p, "shape.setField", |sh| {
+                if shape.id != sh.id {
+                    return Err(bad("shape.setField", "the value names another shape"));
+                }
+                *sh = shape.clone();
+                Ok(())
+            })
+        }
+        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text, cellText, table, smartArt, chart or model3d)"))),
     }
 }
 

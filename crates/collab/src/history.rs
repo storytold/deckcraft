@@ -52,6 +52,11 @@ pub enum Image {
     /// regenerated chart's own fields cannot be replayed from them), so the whole shape is the
     /// exact image of the step.
     Chart(serde_json::Value),
+    /// A whole 3-D model shape — its box, its media part, its poster and its camera — for a
+    /// `model3d.camera` step. The camera command carries final values, but the whole shape is
+    /// the exact image: a restore must not depend on the reader's default view, and comparing the
+    /// whole shape is what makes a foreign edit of the model an `undo-conflict`.
+    Model3d(serde_json::Value),
     /// One shape's animation steps, in order, as `animation.add`/`animation.remove` leave them.
     /// A file's animations carry preset ids, timings, colours and motion paths that the
     /// `animation.add` arguments cannot repeat, so the step image is the model list itself.
@@ -300,6 +305,9 @@ impl Image {
             // The exact image of a chart step: the whole shape, because the chart commands carry
             // neither the kept parts nor every field a regenerated chart can hold.
             Image::Chart(value) => Payload::ShapeField { field: ShapeField::Chart, value: value.clone() },
+            // The exact image of a camera step: the whole model shape, so the view and every
+            // other field of the object come back as they were.
+            Image::Model3d(value) => Payload::ShapeField { field: ShapeField::Model3d, value: value.clone() },
             Image::Animation(steps) => Payload::ShapeAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
             Image::SlideAnimations(steps) => {
                 Payload::SlideAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? }
