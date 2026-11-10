@@ -273,7 +273,13 @@ impl CameoRun {
             // Through the command, not straight to `commit_recorded`: the commit gets its own
             // undo step and the command's guards, while the bytes are handed over directly.
             s.stage_cameo(recorded);
-            match s.execute("show.cameo", &serde_json::json!({"staged": true})) {
+            let done = s.execute("show.cameo", &serde_json::json!({"staged": true}));
+            // A refused command leaves the clip staged: drop it so the session does not hold a
+            // second copy of bytes the run keeps for a retry.
+            if done.is_err() {
+                let _ = s.take_staged_cameo();
+            }
+            match done {
                 Ok(_) => report.committed.push(slide),
                 Err(e) => {
                     report.failed.push((slide, e.to_string()));
@@ -666,6 +672,7 @@ mod tests {
         run.clips = vec![(42, small_clip()), (43, small_clip())];
         assert!(run.commit(&mut s, 0).is_err(), "nothing committed is an error");
         assert_eq!(run.clips().len(), 2, "both clips stay for a retry");
+        assert!(s.take_staged_cameo().is_none(), "a refused clip is not left staged in the session");
         let doc = s.doc().expect("doc");
         let mut cameos = 0;
         for slide in &doc.doc.slides {
