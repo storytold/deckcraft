@@ -443,14 +443,55 @@ fn slideshow_navigation_advances_once_with_presenter_view() {
 fn the_prefetched_frame_is_the_frame_shown_on_entry() {
     let mut s = deckcraft_engine::Session::with_new();
     s.execute("slide.new", &json!({"title": "Second"})).unwrap();
-    let doc = s.active().unwrap().doc.clone();
+    let mut doc = (*s.active().unwrap().doc).clone();
+    let media = doc.add_media("a.gif", "image/gif", two_frame_gif()).unwrap();
+    std::sync::Arc::make_mut(&mut doc.slides[1]).shapes.push(deckcraft_model::Shape {
+        id: ShapeId(7400),
+        xfrm: Some(deckcraft_geom::Xfrm::new(100.0, 100.0, 300.0, 200.0)),
+        kind: deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+        ..Default::default()
+    });
+    let doc = std::sync::Arc::new(doc);
     let size = (96, 54);
-    let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
+    let times = crate::media::MediaHost::new(None).gif_snapshot(&doc, 1, 0.0);
+    let expected_key = crate::media::gif_key_at(&doc, 1, &times);
+    let p = start_prefetch(&doc, 1, size, times.clone()).expect("prefetch starts");
     assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
-    let got = p.rx.recv().expect("the frame arrives");
-    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None);
+    assert!(!times.is_empty(), "the prefetch recognizes the animated GIF");
+    let (got_key, got) = p.rx.recv().expect("the frame arrives");
+    assert_eq!(got_key, expected_key);
+    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &times, 0, &[], &[], None);
     assert_eq!(got.size, want.size);
     assert_eq!(got.pixels, want.pixels);
+}
+
+#[test]
+fn a_next_slide_prefetch_survives_current_slide_frame_changes() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({"title": "Second"})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let size = (96, 54);
+    let mut show = Show::new(&doc, 0, false, false);
+    let (_tx, rx) = std::sync::mpsc::channel::<(u64, egui::ColorImage)>();
+    show.prefetch = Some(Prefetch {
+        key: Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] },
+        rx,
+    });
+    let current = Key { slide: 0, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 12, plays: vec![] };
+
+    assert!(super::ui::take_current_prefetch(&mut show, &current).is_none());
+    assert_eq!(show.prefetch.as_ref().map(|p| p.key.slide), Some(1));
+}
+
+#[test]
+fn gif_frame_changes_keep_the_same_prefetch_scene() {
+    let key = Key { slide: 1, step: 2, size: (96, 54), doc: 7, hidden: vec![], gif: 1, plays: vec![] };
+    let mut next_frame = key.clone();
+    next_frame.gif = 2;
+    assert!(super::ui::same_prefetch_scene(&key, &next_frame));
+
+    next_frame.step += 1;
+    assert!(!super::ui::same_prefetch_scene(&key, &next_frame));
 }
 
 /// A glowing full-slide picture in a layout made every animation frame re-render (and re-blur)

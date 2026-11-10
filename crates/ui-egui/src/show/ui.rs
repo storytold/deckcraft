@@ -3,7 +3,9 @@ use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
-use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
+use super::render::{
+    below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_gif_frame_job, start_prefetch,
+};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
@@ -385,54 +387,122 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
 fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
     let Fr { ctx, doc, .. } = *f;
     let Sl { idx, step, animating, size, .. } = *sl;
-    if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == sl.key) {
-        show.tex.as_ref().map(|(_, t)| t.clone())
-    } else {
-        // The frame rendered ahead of time, when it is this one (waiting for it beats starting over).
-        let ready = match show.prefetch.take() {
-            Some(p) if p.key == sl.key && !animating => p.rx.recv().ok(),
-            _ => None,
-        };
-        let ci = match ready {
-            Some(ci) => ci,
-            None => {
-                let tl = show.timeline(doc).clone();
-                // Animating: the backdrop doesn't change, only the shapes over it are drawn.
-                let back = animating.then(|| show.backdrop(doc, sl.back_key));
-                render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, back.as_deref())
-            }
-        };
-        if show.remote_opened && show.presenter {
-            show.remote_preview = crate::presenter::Preview::from_image(&ci);
+    let completed = show.frame_job.as_ref().and_then(|job| job.rx.try_recv().ok().map(|ci| (job.key.clone(), ci)));
+    if let Some((key, ci)) = completed {
+        show.frame_job = None;
+        if !animating && same_prefetch_scene(&key, &sl.key) {
+            return Some(install_frame(show, ctx, ci, key));
         }
-        let tex = match show.tex.take() {
-            Some((_, mut h)) => {
-                crate::textures::replace(ctx, &mut h, ci);
-                h
-            }
-            None => crate::textures::upload(ctx, "show", ci),
-        };
-        show.tex = Some((sl.key.clone(), tex.clone()));
-        Some(tex)
     }
+    if show.frame_job.as_ref().is_some_and(|job| matches!(job.rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected))) {
+        show.frame_job = None;
+    }
+    if !animating && let Some((key, tex)) = show.tex.as_ref() {
+        if *key == sl.key {
+            return Some(tex.clone());
+        }
+        if same_prefetch_scene(key, &sl.key) {
+            if show.frame_job.is_none() {
+                show.frame_job = start_gif_frame_job(
+                    doc,
+                    idx,
+                    step,
+                    sl.t,
+                    size,
+                    sl.hidden.clone(),
+                    sl.times.clone(),
+                    sl.plays.clone(),
+                    sl.stamps.clone(),
+                    sl.key.clone(),
+                );
+                if show.frame_job.is_none() {
+                    let tl = show.timeline(doc).clone();
+                    let ci =
+                        render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, None);
+                    return Some(install_frame(show, ctx, ci, sl.key.clone()));
+                }
+            }
+            return Some(tex.clone());
+        }
+    }
+    // Keep a next-slide prefetch while the current slide changes GIF frames.
+    let ready = take_current_prefetch(show, &sl.key).filter(|_| !animating).and_then(|p| p.rx.recv().ok());
+    let (ci, key) = match ready {
+        Some((gif, ci)) => {
+            let mut key = sl.key.clone();
+            key.gif = gif;
+            (ci, key)
+        }
+        None => {
+            let tl = show.timeline(doc).clone();
+            // Animating: the backdrop doesn't change, only the shapes over it are drawn.
+            let back = animating.then(|| show.backdrop(doc, sl.back_key));
+            (
+                render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, back.as_deref()),
+                sl.key.clone(),
+            )
+        }
+    };
+    let tex = install_frame(show, ctx, ci, key.clone());
+    if !animating && !same_prefetch_scene(&key, &sl.key) {
+        return Some(tex);
+    }
+    if !animating && key.gif != sl.key.gif && show.frame_job.is_none() {
+        show.frame_job =
+            start_gif_frame_job(doc, idx, step, sl.t, size, sl.hidden.clone(), sl.times.clone(), sl.plays.clone(), sl.stamps.clone(), sl.key.clone());
+    }
+    Some(tex)
 }
 
+/// Upload a rendered show frame and store its cache key.
+fn install_frame(show: &mut Show, ctx: &egui::Context, ci: egui::ColorImage, key: Key) -> TextureHandle {
+    if show.remote_opened && show.presenter {
+        show.remote_preview = crate::presenter::Preview::from_image(&ci);
+    }
+    let tex = match show.tex.take() {
+        Some((_, mut h)) => {
+            crate::textures::replace(ctx, &mut h, ci);
+            h
+        }
+        None => crate::textures::upload(ctx, "show", ci),
+    };
+    show.tex = Some((key, tex.clone()));
+    tex
+}
+
+/// Take a prefetch only when it is for the slide currently being drawn; keep a future slide's job.
+pub(super) fn take_current_prefetch(show: &mut Show, current: &Key) -> Option<super::Prefetch> {
+    if show.prefetch.as_ref().is_some_and(|p| p.key.slide != current.slide) {
+        return None;
+    }
+    show.prefetch.take().filter(|p| same_prefetch_scene(&p.key, current))
+}
+
+/// Whether a prefetched or rendered frame belongs to the same slide state, except for the GIF frame.
+pub(super) fn same_prefetch_scene(prefetched: &Key, current: &Key) -> bool {
+    let mut prefetched = prefetched.clone();
+    let mut current = current.clone();
+    prefetched.gif = 0;
+    current.gif = 0;
+    prefetched == current
+}
+
+/// Render the next slide's frame off-thread without starting its GIF playback clocks.
 fn prefetch_next(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl) {
-    let Fr { doc, doc_uid, now, .. } = *f;
+    let Fr { doc, now, .. } = *f;
     let Sl { animating, size, .. } = *sl;
-    // While this slide rests, render the next one's first frame (not one with GIFs, whose
-    // frame depends on when it is entered).
+    // While this slide rests, render a snapshot of the next slide, including its current GIF frames.
     // A slide with animations gets its backdrop ready while it rests, so they start smoothly.
     if !animating && !show.timeline(doc).is_empty() {
         show.prefetch_backdrop(doc, sl.back_key);
     }
     if !animating && show.trans.is_none() && !show.preview_only {
         let next = show.state.peek_next(doc);
-        let wanted = next.filter(|n| app.media.gifs(doc_uid, doc, *n, now, &app.session.gif_paused).is_empty());
-        if let Some(n) = wanted
+        if let Some(n) = next
             && show.prefetch.as_ref().is_none_or(|p| p.key.slide != n || p.key.size != size || p.key.doc != std::sync::Arc::as_ptr(doc) as usize)
         {
-            show.prefetch = start_prefetch(doc, n, size);
+            let times = app.media.gif_snapshot(doc, n, now);
+            show.prefetch = start_prefetch(doc, n, size, times);
         }
     }
 }

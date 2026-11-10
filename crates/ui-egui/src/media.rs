@@ -84,6 +84,43 @@ fn collect_pictures<'a>(shapes: &'a [Shape], group: Option<(Xfrm, Xfrm)>, depth:
     }
 }
 
+/// Read current GIF times for a slide without decoding images or creating clocks for unseen pictures.
+fn gif_snapshot(doc: &Presentation, index: usize, now: f64, clocks: &HashMap<ShapeId, (f64, Option<f64>)>) -> Vec<(ShapeId, f64)> {
+    let Some(slide) = doc.slides.get(index) else { return vec![] };
+    let mut pictures = vec![];
+    collect_pictures(&slide.shapes, None, 0, &mut pictures);
+    let mut times = vec![];
+    for (shape, _) in pictures {
+        let ShapeKind::Picture { fill } = &shape.kind else { continue };
+        if !doc.media(fill.media).is_some_and(|m| m.data.starts_with(b"GIF8")) {
+            continue;
+        }
+        let t = clocks.get(&shape.id).map_or(0.0, |(start, held)| held.unwrap_or(now - start).max(0.0));
+        times.push((shape.id, t));
+    }
+    times
+}
+
+/// Get the GIF frame key on the background render worker.
+pub(crate) fn gif_key_at(doc: &Presentation, index: usize, times: &[(ShapeId, f64)]) -> u64 {
+    let Some(slide) = doc.slides.get(index) else { return 0 };
+    let times: HashMap<ShapeId, f64> = times.iter().copied().collect();
+    let mut pictures = vec![];
+    collect_pictures(&slide.shapes, None, 0, &mut pictures);
+    let frames = pictures.into_iter().filter_map(|(shape, _)| {
+        let ShapeKind::Picture { fill } = &shape.kind else { return None };
+        let media = doc.media(fill.media).filter(|m| m.data.starts_with(b"GIF8"))?;
+        let t = *times.get(&shape.id)?;
+        deckcraft_render::gif_frame(&media.data, &fill.adjust, t).map(|(frame, _)| (shape.id, frame))
+    });
+    gif_key_frames(frames)
+}
+
+/// Hash GIF frame identities with the same key used for the slide texture cache.
+fn gif_key_frames(frames: impl IntoIterator<Item = (ShapeId, usize)>) -> u64 {
+    frames.into_iter().fold(0, |h: u64, (id, frame)| (h ^ (((id.0 as u64) << 32) | frame as u64)).wrapping_mul(1099511628211))
+}
+
 impl Default for MediaHost {
     fn default() -> Self {
         MediaHost::new(None)
@@ -178,6 +215,11 @@ impl MediaHost {
             }
         }
         out
+    }
+
+    /// Snapshot a slide's GIF frames without starting clocks for pictures not yet shown.
+    pub(crate) fn gif_snapshot(&self, doc: &Presentation, index: usize, now: f64) -> Vec<(ShapeId, f64)> {
+        gif_snapshot(doc, index, now, &self.gifs)
     }
 
     /// Replace the audio output (the host injects cpal after start-up).
@@ -432,7 +474,7 @@ pub fn paint_frame(painter: &egui::Painter, host: &MediaHost, id: ShapeId, rect:
 
 /// Changes whenever a GIF shows another frame (part of the slide texture's cache key).
 pub fn gif_key(gifs: &[Gif]) -> u64 {
-    gifs.iter().fold(0, |h: u64, g| (h ^ (((g.id.0 as u64) << 32) | g.frame as u64)).wrapping_mul(1099511628211))
+    gif_key_frames(gifs.iter().map(|g| (g.id, g.frame)))
 }
 
 /// Come back when the next frame of a playing GIF is due.

@@ -1,7 +1,7 @@
 use super::zoom::GRID_CAP;
 use super::{
-    BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
-    TriggerPlay, pos2, state_for, vec2,
+    BackKey, Color32, FrameJob, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle,
+    Timeline, TriggerPlay, pos2, state_for, vec2,
 };
 
 pub(super) fn render_threads() -> u16 {
@@ -125,8 +125,8 @@ fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
     crate::media::slide_media(doc, idx).into_iter().filter(|(_, _, clip)| clip.hide_while_not_playing).map(|m| m.0).collect()
 }
 
-/// Start rendering slide `next`'s first frame on another thread. `None` on the web (no threads).
-pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u32)) -> Option<Prefetch> {
+/// Start rendering slide `next`'s clock snapshot on another thread. `None` on the web (no threads).
+pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u32), times: Vec<(ShapeId, f64)>) -> Option<Prefetch> {
     if cfg!(target_arch = "wasm32") {
         return None;
     }
@@ -138,9 +138,42 @@ pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, si
     let threads = render_threads().saturating_sub(1).max(1);
     let spawned = std::thread::Builder::new().name("show-prefetch".into()).spawn(move || {
         let tl = ShowState::timeline(&doc, next);
-        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], None));
+        let gif = crate::media::gif_key_at(&doc, next, &times);
+        let frame = render_frame(&doc, next, tl, 0, 0.0, size, hidden, &times, threads, &[], &[], None);
+        let _ = tx.send((gif, frame));
     });
     spawned.ok().map(|_| Prefetch { key, rx })
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Start rendering a changed slide-show frame on a worker thread.
+pub(super) fn start_gif_frame_job(
+    doc: &std::sync::Arc<Presentation>,
+    idx: usize,
+    step: usize,
+    t: f64,
+    size: (u32, u32),
+    hidden: Vec<ShapeId>,
+    times: Vec<(ShapeId, f64)>,
+    plays: Vec<TriggerPlay>,
+    stamps: Vec<StepStamp>,
+    key: Key,
+) -> Option<FrameJob> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    let doc = doc.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let threads = render_threads().saturating_sub(1).max(1);
+    std::thread::Builder::new()
+        .name("show-gif-frame".into())
+        .spawn(move || {
+            let tl = ShowState::timeline(&doc, idx);
+            let frame = render_frame(&doc, idx, tl, step, t, size, hidden, &times, threads, &plays, &stamps, None);
+            let _ = tx.send(frame);
+        })
+        .ok()
+        .map(|_| FrameJob { key, rx })
 }
 
 pub(super) fn fit(avail: Rect, doc: &Presentation) -> Rect {

@@ -73,6 +73,8 @@ pub struct Show {
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
+    /// A current GIF frame being rendered away from the UI thread.
+    frame_job: Option<FrameJob>,
     /// The current slide's backdrop, under its animation frames.
     backdrop: Option<Backdrop>,
     blank: Option<Color32>,
@@ -135,6 +137,12 @@ struct Key {
 
 /// A slide frame being rendered on another thread: what it will be (`key`) and where it arrives.
 struct Prefetch {
+    key: Key,
+    rx: std::sync::mpsc::Receiver<(u64, egui::ColorImage)>,
+}
+
+/// A current GIF frame being rendered away from the UI thread.
+struct FrameJob {
     key: Key,
     rx: std::sync::mpsc::Receiver<egui::ColorImage>,
 }
@@ -244,6 +252,7 @@ impl Show {
             remote_sent: f64::NEG_INFINITY,
             remote_opened: false,
             prefetch: None,
+            frame_job: None,
             backdrop: None,
             blank: None,
             grid: false,
