@@ -101,7 +101,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+group(ui, |ui| {
         let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
         // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
         // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
@@ -127,41 +127,43 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-    });
-    let pane_open = app.ui.pane.as_deref() == Some("animation");
-    let res = big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open);
-    super::qat::ribbon_menu(app, &res.0, Icon::AnimationPane, "Animation\nPane", "view.pane", &json!({"pane": "animation", "toggle": true}));
-    if res.0.clicked() {
-        run(app, "view.pane", json!({"pane": "animation", "toggle": true}));
-    }
 
-    let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
-    egui::Popup::menu(&r).show(|ui| {
-        if ui.button("On Click of… (none)").clicked() {
-            run(app, "animation.timing", json!({"trigger": null}));
+        let pane_open = app.ui.pane.as_deref() == Some("animation");
+        let res = big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open);
+        let res_btn = res.0.on_hover_text(super::tip("view.pane", "Animation\nPane"));
+        super::qat::ribbon_menu(app, &res_btn, Icon::AnimationPane, "Animation\nPane", "view.pane", &json!({"pane": "animation", "toggle": true}));
+        if res_btn.clicked() {
+            run(app, "view.pane", json!({"pane": "animation", "toggle": true}));
         }
-        let shapes: Vec<(u32, String)> =
-            app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
-        for (id, name) in shapes {
-            if ui.button(format!("On Click of {name}")).clicked() {
-                run(app, "animation.timing", json!({"trigger": id}));
+
+        let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
+        egui::Popup::menu(&r).show(|ui| {
+            if ui.button("On Click of… (none)").clicked() {
+                run(app, "animation.timing", json!({"trigger": null}));
+            }
+            let shapes: Vec<(u32, String)> =
+                app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
+            for (id, name) in shapes {
+                if ui.button(format!("On Click of {name}")).clicked() {
+                    run(app, "animation.timing", json!({"trigger": id}));
+                }
+            }
+        });
+
+        let on = app.session.anim_painter.is_some();
+        let en = enabled(app, "animation.painter");
+        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
+        let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
+        if r.double_clicked() {
+            run(app, "animation.painter", json!({"sticky": true}));
+        } else if r.clicked() {
+            if on {
+                app.session.anim_painter = None;
+            } else {
+                run(app, "animation.painter", json!({}));
             }
         }
     });
-
-    let on = app.session.anim_painter.is_some();
-    let en = enabled(app, "animation.painter");
-    let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
-    let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
-    if r.double_clicked() {
-        run(app, "animation.painter", json!({"sticky": true}));
-    } else if r.clicked() {
-        if on {
-            app.session.anim_painter = None;
-        } else {
-            run(app, "animation.painter", json!({}));
-        }
-    }
 
     group(ui, |ui| {
         rows(ui, |ui| {
