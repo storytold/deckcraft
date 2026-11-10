@@ -314,9 +314,12 @@ original, and its own base/journal is not touched by a commit.
 - A cabinet that answers `200` without an `etag` is compared by `sha256:<digest of the committed
   bytes>`.
 
-The desktop UI has no "save to the cabinet" command yet; today the cabinet triggers the commit
-through the HTTP endpoint. The host-bridge messages (`deckcraft:session` / `presence` / `commit`)
-remain the external contract with the cabinet.
+Save in a live session is a commit on the desktop: the client sends `ClientMsg::Commit` with the
+cabinet version the session opened from (or the one the last commit was accepted with) and does
+not write the local file; the document stays dirty until `commit-result`, a `409` keeps the edits
+and the banner offers Save a copy, and a viewer cannot commit (refused before the request). Save
+As and Export stay local. The host-bridge messages (`deckcraft:session` / `presence` / `commit`)
+remain the external contract with the cabinet for a browser page.
 
 ## Restart and persistence
 

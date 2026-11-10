@@ -1,6 +1,10 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-10. Branch: `collab/pr13`, branched from `collab/pr12` at `5c150c93` (the 3-D
+Updated: 2026-11-10. Branch: `collab/pr14`, branched from `collab/pr13` at `baa845ec` (the
+chunked-base slice and its docs commit): Save in a live desktop session now commits the room —
+one commit in flight, the document stays dirty until `commit-result`, a refusal keeps the edits
+and offers a copy — with its docs commit on top. `collab/pr13`, branched from `collab/pr12` at
+`5c150c93` (the 3-D
 model scene `7b51e65d` and its docs commit): a native base above the inline limit now travels as a
 chain of chunks, so a client that missed a compacted journal is rebuilt from an 11.8 MiB base over
 the session socket, resuming mid-chain after a drop. `collab/pr12` is two commits from
@@ -110,6 +114,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
 | `collab/pr12` | `7b51e65d` (+ docs) | `model3d.scene` as one final scene — one light (type, direction, intensity and a spot's angle) and the environment (ambient and an optional sRGB background) — checked on the client and in the engine before the first write, written as `am3d:scene` into the slide part, with the whole model shape as the undo image |
 | `collab/pr13` | `5c150c93` + this slice | a native base above `max_base_inline` travels as a chain of chunks (`base.chunks`, `base-chunk`): the client assembles it, checks the digest and the limits, resumes at the missing chunk after a dropped socket, and the snapshot is applied only when the base is whole; the big-deck soak (322 edits, 120 slides with media, an 11.8 MiB base in 48 chunks) is the §8 gate |
+| `collab/pr14` | `baa845ec` + this slice | Save in a live desktop session sends `ClientMsg::Commit` instead of writing the local file: one commit in flight (a repeated Save is the same request), `expected` is the cabinet version the session opened from or the one the last commit was accepted with, the document stays dirty until `commit-result` (dirty is cleared only if no edit landed meanwhile), a `409` keeps the edits and the banner offers Save a copy, viewers and commenters are refused locally without a request |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs), `44489f34` (+ docs), `c406a329` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`); the SmartArt node-picture slice `44489f34`: `smartArt.picture` as one final value (the top-level graphic, one top-level node, the media channel's digest and the picture's final place), the engine checks the target, the node, the picture allowlist and budget, the place's finite positive area and that the layout does not change before the first write, and the whole group is the undo image; and the 3-D model camera slice `c406a329`: `model3d.camera` as one final view (`position`/`target`/`up` in EMU, `fov` in degrees, or `null`), relative edits refused on the client, on the wire and in the engine before the first write, the view written as `am3d:camera`, and the whole model shape as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
@@ -915,7 +920,7 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map — inline up to 8 MiB, above it as a chunk chain that resumes after a dropped socket | client queue + resync; three-session gate; three-client soak; big-deck gate; `DocSession::resync` / `base_chunk` |
 | Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, the whole table for style/fill/merge/split/sizing, document fonts (the whole entry), a SmartArt step (the whole group, including a node's picture), a SmartArt insertion (the whole inserted shape) and a SmartArt conversion (the whole source shape, whatever its id) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore` (an insertion or a conversion too)/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
-| Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
+| Commit creates a new version, original kept | ✅ server and desktop: `POST /v1/sessions/{id}/commit` and `ClientMsg::Commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json`; Save in a live desktop session commits instead of writing the local copy, stays dirty until the answer and offers a copy on a refusal | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`, `crates/collab/src/client.rs`, `crates/ui-egui/src/app/files.rs`; the cabinet endpoint remains external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
@@ -1103,13 +1108,18 @@ was not touched, and PR #1975 is unchanged.
    (move, bounds, text set/insert/delete, fill/line/format, group appearance) are covered too. A slide image is capped at 192 KiB and a shape restore at 192 KiB /
    64 images, so an undo of an unusually large object is refused `invalid` instead of breaking the
    wire limit.
-5. **Cabinet callback / host bridge.** The server side is wired: `POST /v1/sessions/{id}/commit`
-   (service token) builds the `.pptx` and posts it to `COLLAB_CABINET_URL`
-   (`{fileId, name?, bytes, sha256, version, expectedVersion?}` → `{version, etag}`); a cabinet
-   `409` is the caller's `409`, the original version is kept, and the accepted `etag` is stored in
-   `meta.json` so a restart still refuses an external change. What remains is outside this
-   repository: the cabinet's endpoint (`INTEGRATION.md` §5.2), the host-bridge messages
-   (`session`/`presence`/`commit`/`committed`) and a desktop "save to cabinet" command. Without
+5. **Cabinet callback / host bridge.** The server side and the desktop Save are wired:
+   `POST /v1/sessions/{id}/commit` (service token) builds the `.pptx` and posts it to
+   `COLLAB_CABINET_URL` (`{fileId, name?, bytes, sha256, version, expectedVersion?}` →
+   `{version, etag}`); a cabinet `409` is the caller's `409`, the original version is kept, and the
+   accepted `etag` is stored in `meta.json` so a restart still refuses an external change. On the
+   desktop, Save in a live session sends `ClientMsg::Commit` with the cabinet version the session
+   was opened from (or the one the last commit was accepted with, from `meta.json` on the server
+   side): one commit in flight, a repeated Save is the same request, the document stays dirty until
+   `commit-result`, a refusal keeps the edits and offers Save a copy (ADR-0009 §4), and Save
+   As/Export stay local. What remains is outside this repository: the cabinet's endpoint
+   (`INTEGRATION.md` §5.2) and the host-bridge messages
+   (`session`/`presence`/`commit`/`committed`). Without
    `COLLAB_CABINET_URL` a deployment only builds verified bytes in the process.
 6. **Browser transport is in (`collab-web`); deployment is not.** `apps/deckcraft-web` opens a
    session from `deckcraft:session`, dials it with the page's `WebSocket`, posts
@@ -1179,15 +1189,17 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 ## Next session: start here
 
-1. Run the verification table above; if the tree is clean, continue on `collab/pr13` (or branch
-   `collab/pr14` from it).
+1. Run the verification table above; if the tree is clean, continue on `collab/pr14` (or branch
+   `collab/pr15` from it).
 2. **Draft PR #1998 is open from `copoka/deckcraft:collab/pr11`** (head `6e9d10e7`,
    `MERGEABLE`/`CLEAN`); #1975 still points at the pre-rebase `collab/pr10` head and is
    superseded. Pushing this file's commit, marking #1998 ready and closing #1975 are human steps.
    Do not touch CI and do not mention agents. Merging needs a human decision.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
-   `fetch` with the session token. The cabinet must still implement its side:
+   `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
+   native session sends `ClientMsg::Commit`, one commit in flight, and the local file is no longer
+   written. The cabinet must still implement its side:
    `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2, answers
    `{version, etag}`, keeps the previous version); the server already posts the bytes, refuses on
    `409` and stores the accepted version. For a page on another origin, list that origin in
@@ -1221,6 +1233,41 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — Save in a live desktop session commits the room
+
+- The last in-repo gap of §What is NOT done item 5 was a desktop "save to cabinet" command.
+  `ClientMsg::Commit` existed in the wire, the server answered it and the hub handled the `409`,
+  but no client ever sent it: Save wrote the local file, so the cabinet never saw the session.
+- **Wire.** `ClientSession::commit(expected)` (`CommitError::{ReadOnly, Offline}`) queues one
+  commit; a Save while one is queued or in flight is the same request, so it creates no second
+  file version. It waits until the journal is drained and every operation is acknowledged, so the
+  file the server builds includes the last keystroke. `next_outgoing` sends it; `commit-result`
+  records the accepted etag and the next Save expects it. A `commit` rejection clears only the
+  in-flight marker — the expected version is kept, so a retry against a file that moved on is
+  refused again instead of overwriting it (ADR-0009 §4). A dropped socket clears the marker too;
+  the user saves again.
+- **Desktop.** `SlideApp::save` (and `file.save` by id) commits instead of `file.save` when
+  `CollabUi::owns_save()`; Save As and Export stay local. `CommitState` gives "Committing…",
+  "Committed vN" and "Commit refused: …". The document is marked saved only on `commit-result`,
+  and only if no edit landed since the commit was asked for; a refusal leaves it dirty and the
+  banner says "Save a copy (File › Save As) keeps your edits". A viewer is refused before anything
+  is sent; an empty journal still commits (a version is created from unchanged bytes).
+- **Tests.** `collab` 273 + 8 (four new: waits for the journal and travels once, an empty journal
+  still commits, a viewer and an offline session are refused before the wire, a refusal is not
+  retried and keeps its expected version); `ui-egui collab::` 23 (three new: one commit and dirty
+  until the result, then a new expected version; a refusal keeps the edits and offers a copy; a
+  viewer's Save never reaches the cabinet); `collab-server --test commit` 5 (new: the accepted
+  etag written to `meta.json` survives a restart and still refuses an external change, and a
+  commit with no expected version compares against the restored one).
+- **Gates on `agents`.** `cargo fmt --all -- --check` clean; clippy `-p deckcraft-collab -p
+  deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` clean;
+  `collab-proto` 41 passed / 0 failed / 0 ignored, `collab` 273 + 8, `ui-egui collab::` 23,
+  `collab-server --test commit` 5 — EXIT=0 for each. The full `ui-egui` suite is 520 passed, 1
+  failed, 4 ignored: `ime_tests::korean_composes_in_the_notes_pane` fails on the build host
+  because `deckcraft-fonts` is built without `craft-fonts` (no Korean glyph; the build log prints
+  that warning), reproduces in isolation and is unrelated to this diff.
+- Nothing was pushed; CI was not touched; PR #1975 and #1998 are unchanged.
 
 ### 2026-11-10 — a base above the inline limit travels as a chunk chain
 
