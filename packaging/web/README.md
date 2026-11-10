@@ -160,7 +160,7 @@ DeckCraft renders with wgpu. It uses **WebGPU** when the browser has it and fall
 | `?blank` | Start with an empty presentation instead of the sample deck |
 | `?show` | Start the slide show immediately (kiosk/embedded decks) |
 | `?host=parent` | Open and save through the framing page ([above](#opening-and-saving-through-the-page-hostparent)); `&author=` names the user |
-| `?chrome=none` / `?chrome=notitlebar` / `?chrome=nofiletab` | Leave out the title bar and the File tab, only the title bar, or only the File tab; without the File tab no shortcut or command opens the File view over a presentation. Ctrl/Cmd+S still saves |
+| `?chrome=none` / `?chrome=notitlebar` / `?chrome=nofiletab` | Leave out the title bar and the File tab, only the title bar, or only the File tab; without the File tab no shortcut or command opens Backstage, including the start screen when no presentation is open. Ctrl/Cmd+S still saves |
 
 For example: `<iframe src="https://example.com/deckcraft/?webgl" ...>`.
 

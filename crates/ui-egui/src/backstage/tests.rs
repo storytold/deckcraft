@@ -151,6 +151,10 @@ fn without_the_file_tab_nothing_opens_the_backstage() {
     app.ui.hide_filetab = true;
     let mut h = harness(app);
     assert!(h.state().backstage.is_none() && h.query_by_label("Blank Presentation").is_none(), "no start screen");
+    assert!(h.state_mut().run("app.backstage", json!({"page": "home"})).is_err(), "the command rejects an empty window too");
+    assert!(h.state().backstage.is_none(), "the rejected command creates no transient Backstage state");
+    h.state_mut().open_backstage(Page::Open);
+    assert!(h.state().backstage.is_none(), "direct callers cannot create a transient start screen");
     h.key_press_modifiers(Modifiers::ALT, Key::F);
     h.run_steps(3);
     assert!(h.state().backstage.is_none());

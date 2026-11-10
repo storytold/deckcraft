@@ -174,7 +174,7 @@ impl SlideApp {
     pub fn open_backstage(&mut self, page: backstage::Page) {
         // `?chrome=none|nofiletab` (web, #1897): no File tab, so no shortcut opens Backstage either;
         // a host that embeds the editor would otherwise receive saves for files it never sent.
-        if self.ui.hide_filetab && self.session.active().is_some() {
+        if self.ui.hide_filetab {
             return;
         }
         let key = self.docs_key();
