@@ -5,6 +5,7 @@
 //! Live capture and background effects are separate layers; this module owns the model-side object
 //! and its drawing styles only.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use deckcraft_color::Rgba;
@@ -330,8 +331,54 @@ pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> 
             Some(i) => return Err(bad("show.cameo", format!("no slide {}", i + 1))),
             None => sel.slide.min(n - 1),
         };
+        let size = doc.slide_size;
+        // The Cameo this take replaces, and the clip and poster only it points at: those are freed
+        // with the replacement (undo keeps the previous document), so a replaced take does not
+        // count against the cap and the deck does not grow with every retake.
+        let mut existing = None;
+        let mut superseded: Vec<deckcraft_model::MediaId> = Vec::new();
+        deckcraft_model::walk(&doc.slides[target].shapes, &mut |sh, _| {
+            if existing.is_some() || !sh.is_cameo() {
+                return;
+            }
+            existing = Some(sh.id);
+            if let ShapeKind::Picture { fill } = &sh.kind {
+                superseded.push(fill.media);
+            }
+            if let Some(recorded) = sh.cameo.as_ref().and_then(|c| c.recorded) {
+                superseded.push(recorded);
+            }
+        });
+        // An id is only the replaced take's when every reference to it is on that Cameo (`media_refs`
+        // is the walker paste and reuse trust for exactly this question). Anything another shape,
+        // slide, note, background or theme also points at is kept and still counts.
+        let free: Vec<deckcraft_model::MediaId> = if superseded.is_empty() {
+            Vec::new()
+        } else {
+            let mut counts: HashMap<deckcraft_model::MediaId, usize> = HashMap::new();
+            {
+                let f: &mut crate::media_refs::visit::F = &mut |id: &deckcraft_model::MediaId| {
+                    *counts.entry(*id).or_default() += 1;
+                };
+                crate::media_refs::visit_presentation(doc, f);
+            }
+            let mut own: HashMap<deckcraft_model::MediaId, usize> = HashMap::new();
+            if let Some(id) = existing
+                && let Some(sh) = doc.slides[target].shape(id)
+            {
+                let f: &mut crate::media_refs::visit::F = &mut |id: &deckcraft_model::MediaId| {
+                    *own.entry(*id).or_default() += 1;
+                };
+                crate::media_refs::visit::shape(sh, f);
+            }
+            superseded.into_iter().filter(|m| counts.get(m) == own.get(m)).collect()
+        };
+        // Drop them before the new parts are added: identical bytes would otherwise be deduplicated
+        // onto a part that is about to go, leaving the new Cameo pointing at nothing.
+        doc.media.retain(|m| !free.contains(&m.id));
         // The show's copies of every part, not just camera clips, may not pass the cap: a deck
-        // that keeps every recording in memory must not grow without bound.
+        // that keeps every recording in memory must not grow without bound. The parts this take
+        // replaces are already its own, so they do not count.
         let held: usize = doc.media.iter().map(|m| m.data.len()).sum();
         if !media_fits(held, data.len().saturating_add(poster.len())) {
             return Err(bad(
@@ -343,17 +390,9 @@ pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> 
                 ),
             ));
         }
-        let size = doc.slide_size;
         let media = doc.add_media_shared(&name, ct, data).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
         let poster_media = doc.add_media(&format!("{name}-poster.png"), poster_ct, poster).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
-        // Find the Cameo before borrowing the slide mutably, and allocate an id only when a shape
-        // is really going to be added.
-        let mut existing = None;
-        deckcraft_model::walk(&doc.slides[target].shapes, &mut |sh, _| {
-            if existing.is_none() && sh.is_cameo() {
-                existing = Some(sh.id);
-            }
-        });
+        // Allocate an id only when a shape is really going to be added.
         let new_id = match existing {
             Some(_) => None,
             None => Some(ShapeId(doc.alloc_id().ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?)),
@@ -695,6 +734,42 @@ mod tests {
         assert!(cameo.recorded.is_some());
         assert_eq!(cameo.device.as_deref(), Some("FaceTime HD Camera"), "the device is kept");
         assert!(cameo.raw.as_deref().is_some_and(|r| r.contains("backgroundProps")), "the camera background is kept");
+    }
+
+    /// A replaced take frees only the parts nothing else points at: the clip and poster it alone
+    /// used are gone (so repeated takes do not grow the deck or count against the cap), while a
+    /// clip another slide also plays is kept.
+    #[test]
+    fn a_replaced_take_frees_only_its_own_media() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        let first = s.execute("show.cameo", &json!({"slide": 0, "name": "one.mp4", "data": clip_data()})).expect("first");
+        let old = first["media"].as_u64().expect("media");
+        let old_poster = first["poster"].as_u64().expect("poster");
+        let second = s.execute("show.cameo", &json!({"slide": 0, "name": "two.mp4", "data": clip_data()})).expect("second");
+        let new = second["media"].as_u64().expect("media");
+        assert_ne!(old, new, "a replacement is a new part");
+        {
+            let doc = &s.doc().expect("doc").doc;
+            assert!(doc.media(deckcraft_model::MediaId(old as u32)).is_none(), "the replaced clip is freed");
+            assert!(doc.media(deckcraft_model::MediaId(old_poster as u32)).is_none(), "and its poster");
+            assert!(doc.media(deckcraft_model::MediaId(new as u32)).is_some());
+        }
+        // The next replacement shares its clip with a media shape on another slide: that clip stays.
+        let shared = new;
+        {
+            let state = s.doc_mut().expect("doc");
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[1]);
+            slide.shapes.push(deckcraft_model::Shape {
+                id: ShapeId(9001),
+                xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)),
+                kind: ShapeKind::Media(deckcraft_model::MediaClip { media: deckcraft_model::MediaId(shared as u32), ..Default::default() }),
+                ..Default::default()
+            });
+        }
+        s.execute("show.cameo", &json!({"slide": 0, "name": "three.mp4", "data": clip_data()})).expect("third");
+        assert!(s.doc().expect("doc").doc.media(deckcraft_model::MediaId(shared as u32)).is_some(), "a clip another slide plays is kept");
     }
 
     /// A short real MP4, base64 as `show.cameo` takes it.

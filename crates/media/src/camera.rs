@@ -206,6 +206,9 @@ pub struct CameoRecorder {
     #[cfg(test)]
     last_written: Option<Vec<u8>>,
     capped: Option<CameoCap>,
+    /// The largest sample written so far: the byte budget must keep room for one more of these,
+    /// or a single big picture would push the MP4 past the cap and the whole take would be lost.
+    largest_sample: u64,
     /// Largest clip this recorder keeps, in MP4 bytes ([`MAX_CLIP_BYTES`] unless a test lowers it).
     max_bytes: usize,
 }
@@ -245,6 +248,7 @@ impl CameoRecorder {
             #[cfg(test)]
             last_written: None,
             capped: None,
+            largest_sample: 0,
             max_bytes: MAX_CLIP_BYTES,
         })
     }
@@ -345,11 +349,15 @@ impl CameoRecorder {
         let fitted = crate::encode::fitted_rgba(&src.rgba, src.width, src.height, self.width, self.height)?;
         let mut left = budget;
         while self.written < want && left > 0 {
-            if self.track.bytes() >= self.byte_budget() {
+            // Room for one more sample of the size the biggest one took: a picture that alone
+            // passes the cap would make the finished MP4 too large, and `seal` then rejects it.
+            if self.track.bytes().saturating_add(self.largest_sample) >= self.byte_budget() {
                 self.capped = Some(CameoCap::Bytes);
                 break;
             }
+            let before = self.track.bytes();
             self.track.push_rgba(&fitted)?;
+            self.largest_sample = self.largest_sample.max(self.track.bytes().saturating_sub(before));
             self.note_written(&fitted);
             self.written += 1;
             left -= 1;
@@ -519,6 +527,32 @@ mod tests {
         assert_eq!(rec.frames(), MAX_SAMPLES_PER_CALL);
         rec.tick(MAX_SAMPLES_PER_CALL).expect("next pass");
         assert_eq!(rec.frames(), 2 * MAX_SAMPLES_PER_CALL);
+    }
+
+    /// One large sample cannot push the clip past its byte budget: the budget keeps room for the
+    /// biggest sample written, so every class of take finalizes instead of being rejected.
+    #[test]
+    fn a_large_sample_cannot_push_the_clip_past_its_budget() {
+        let mut rec = CameoRecorder::new((64, 64), 15, 30, 0).expect("recorder").with_max_bytes(1 << 20);
+        // A noisy picture: every sample is a full frame, not a skip picture.
+        for i in 0..4_000u64 {
+            let mut rgba = vec![0u8; 64 * 64 * 4];
+            for (n, p) in rgba.chunks_mut(4).enumerate() {
+                let v = ((i * 31 + n as u64 * 7) % 251) as u8;
+                p.copy_from_slice(&[v, 255 - v, v / 2, 255]);
+            }
+            let frame = CameraFrame { seq: i, at: Instant::now(), width: 64, height: 64, rgba: Arc::from(rgba) };
+            rec.push(&frame, i * 67).expect("push");
+            rec.tick(MAX_SAMPLES_PER_CALL).expect("tick");
+            if rec.capped() {
+                break;
+            }
+        }
+        assert!(rec.capped(), "the budget stops the take");
+        assert!(rec.track.bytes() <= rec.byte_budget(), "the samples written stay inside the budget");
+        let clip = rec.finish(300_000).expect("a byte-capped take still finalizes");
+        assert!(clip.mp4.len() <= MAX_CLIP_BYTES);
+        assert!(clip.frames > 0);
     }
 
     /// A close that owes a long gap is written a budget per call, so the caller can spread it

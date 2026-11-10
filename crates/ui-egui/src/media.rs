@@ -517,14 +517,32 @@ pub fn paint_clip(painter: &egui::Painter, host: &MediaHost, doc: &Presentation,
     let Some(shape) = shape else { return paint_frame(painter, host, id, rect, clip.crop) };
     let Some(tex) = host.texture(id) else { return false };
     let uv = crop_uv(clip.crop);
-    match shape.xfrm.and_then(|x| cameo_outline(shape, x.w, x.h)) {
-        Some(outline) => paint_clipped(painter, tex, rect, uv, &outline),
-        // A rectangular frame needs no clip: the clip fills it.
-        None => {
-            painter.image(tex.id(), rect, uv, Color32::WHITE);
-        }
-    }
+    let xfrm = shape.xfrm.unwrap_or_default();
+    // A round Camera Shape clips the frame; a rectangular one is its own four corners. Either way
+    // the picture's turn and flips apply to the video, so playback matches the poster.
+    let outline = cameo_outline(shape, xfrm.w.max(1.0), xfrm.h.max(1.0));
+    let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+    let turned: Vec<(f32, f32)> =
+        outline.unwrap_or_else(|| corners.to_vec()).into_iter().map(|p| turn(p, xfrm.rot, xfrm.flip_h, xfrm.flip_v)).collect();
+    paint_clipped(painter, tex, rect, uv, &turned);
     true
+}
+
+/// A point in 0–1 of a picture's box after the picture's own turn: mirror the flips, then rotate
+/// about the box's centre (`Xfrm::rot`, degrees clockwise on screen).
+fn turn(p: (f32, f32), rot: f64, flip_h: bool, flip_v: bool) -> (f32, f32) {
+    let (mut x, mut y) = (p.0 - 0.5, p.1 - 0.5);
+    if flip_h {
+        x = -x;
+    }
+    if flip_v {
+        y = -y;
+    }
+    if rot.is_finite() && rot.rem_euclid(360.0) != 0.0 {
+        let (sin, cos) = (rot as f32).to_radians().sin_cos();
+        (x, y) = (x * cos - y * sin, x * sin + y * cos);
+    }
+    (0.5 + x, 0.5 + y)
 }
 
 /// Paint `tex` over `rect` showing `uv`, clipped to `outline` (points in 0–1 of `rect`): a triangle
@@ -986,6 +1004,23 @@ mod tests {
         let (doc, id, _) = cameo_deck(true, false);
         assert!(slide_media(&doc, 0).iter().all(|(i, _, _)| *i != id), "nothing is recorded to play");
         assert!(find_clip(&doc, id, Some(0)).is_none());
+    }
+
+    /// The video plays in the picture's own orientation: its turn rotates the outline's points and
+    /// its flips mirror them, while the texture's UVs stay put (the content turns with the shape).
+    #[test]
+    fn a_turned_cameo_paints_its_video_in_the_pictures_orientation() {
+        let (x, y) = (0.0f32, 0.0f32); // the box's top-left corner, in 0–1 of the box
+        let round = |p: (f32, f32)| ((p.0 * 100.0).round(), (p.1 * 100.0).round());
+        assert_eq!(round(turn((x, y), 0.0, false, false)), (0.0, 0.0), "no turn: the corner stays");
+        assert_eq!(round(turn((x, y), 90.0, false, false)), (100.0, 0.0), "a quarter turn puts it top-right");
+        assert_eq!(round(turn((x, y), 0.0, true, false)), (100.0, 0.0), "a horizontal flip mirrors it");
+        assert_eq!(round(turn((x, y), 0.0, false, true)), (0.0, 100.0), "a vertical flip mirrors it down");
+        assert_eq!(round(turn((x, y), 90.0, true, true)), (0.0, 100.0), "both flips then the turn");
+        // A rectangular Cameo's four corners come out turned, not axis-aligned.
+        let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+        let turned: Vec<_> = corners.iter().map(|p| round(turn(*p, 45.0, false, false))).collect();
+        assert!(turned.iter().any(|(x, y)| *x < 0.0 || *x > 100.0 || *y < 0.0 || *y > 100.0), "a 45° turn puts the corners outside the box: {turned:?}");
     }
 
     #[test]

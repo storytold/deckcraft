@@ -288,7 +288,9 @@ Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element
 artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
 background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), record
 audio/screen and record slide show narration, ink and laser (5–9 h; the per-slide camera clip and
-`show.cameo` exist, but `CameoRun` is not wired into the recording UI or state machine yet), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
+`show.cameo` exist, but `CameoRun` is not wired into the recording UI or state machine yet, and the
+desktop camera backend that would feed it is separate work — `docs/hardware-parity.md` has it),
+compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
 agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models and stock content
 (6–10 h; Insert › Icons places a Lucide stroke set).
 
