@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-10 · **Last updated:** 2026-11-10 · **Change:** minor (ribbon card is three bands — tabs, commands, group names — at every width; no two-row breakpoint) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-10 · **Last updated:** 2026-11-10 · **Change:** minor (ribbon card is three bands — tabs, commands, group names — at every width; no two-row breakpoint; group names verified against the reference build) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -151,14 +151,16 @@ Alt+Shift+arrows in text are handled elsewhere (#78, #93).
 ### Ribbon card bands
 
 The ribbon card is drawn in three bands: the tab strip, the command row, and a group-name row
-under the commands. That is what PowerPoint shows at a 1024x768 client window on a 125% DPI
-display, and at every width measured from 480 px to a maximized 1938 px: the group-name row
-never disappears, so it is not a breakpoint mode. Narrow windows scroll the groups horizontally
-and keep their names. The only collapse is the user's ribbon-collapse toggle (double-click a
-tab), which hides the commands and names together. DeckCraft mirrors this: `RIBBON_LABEL_H` is
-part of the card at every width, and every group paints its PowerPoint group name centred below
-its commands in the dim text token at 11 pt (100%). Separators run from the top of the commands
-through the name band, as in PowerPoint.
+under the commands. The group-name band is unconditional: at every window width the card keeps
+all three bands, narrow windows scroll the groups horizontally and keep their names, and only the
+ribbon-collapse toggle (double-click a tab) hides the commands and names together. The reference
+for the layout is the unconditional three-band card; the width behaviour was measured from a 480
+px window to a maximized 1938 px window at a 1024x768 client reference on a 125% display, where
+the name row never disappears and there is no two-row breakpoint (PR #2008). DeckCraft mirrors
+this: `RIBBON_LABEL_H` is part of the card at every width, and every group paints its reference
+group name centred below its commands in the dim text token at 11 pt (100%), sized at least as
+wide as the name so long names never cross the separators. Separators run from the top of the
+commands through the name band.
 
 Colours, spacing, ribbon card and tab geometry follow the observations in
 `plan/powerpoint/01-observed-ui.md`; the ribbon and menu icons are original (~240, drawn in code)
@@ -186,7 +188,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-10 | minor | Ribbon card is three bands at every width: tabs, commands and PowerPoint group names centred under each group. The measured PowerPoint reference keeps the name row from 480 px to maximized; narrow windows scroll groups and keep names, so there is no two-row breakpoint |
+| 2026-11-10 | minor | Ribbon card is three bands at every width: tabs, commands and reference group names centred under each group, each group at least as wide as its name. The name row is unconditional (480 px to maximized); narrow windows scroll groups and keep names, so there is no two-row breakpoint (PR #2008) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |

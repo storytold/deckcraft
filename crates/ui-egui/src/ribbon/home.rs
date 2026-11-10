@@ -396,7 +396,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
 
 /// Render drawing controls for shapes, text, arrange, quick styles, fill, and outline.
 fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, "Images", |ui| {
+    group(ui, "Drawing", |ui| {
         let en = enabled(app, "shape.insert");
         let r = big_button(ui, Icon::Shapes, "Shapes", en).on_hover_text("Shapes");
         egui::Popup::menu(&r).show(|ui| {
@@ -452,7 +452,7 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui) {
     slides_group(app, ui);
     font_group(app, ui, &st);
     paragraph_group(app, ui, &st);
-    group(ui, "Drawing", |ui| {
+    group(ui, "Images", |ui| {
         big(app, ui, Icon::Picture, "Picture", "app.insertPictureDialog", json!({}));
     });
     drawing_group(app, ui);

@@ -316,8 +316,18 @@ pub fn color_split(ui: &mut Ui, icon: Icon, tip: &str, color: Color32, enabled: 
 pub fn group<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     let t = Tokens::get(ui.ctx());
     let label_y = ui.max_rect().min.y + RIBBON_H + RIBBON_LABEL_H * 0.5;
+    // The name is centred under its group, so the group is at least as wide as its name: a long
+    // name over a narrow group would otherwise run across the separators (Accessibility, Design
+    // Ideas, Color/Grayscale).
+    let name_w = if label.is_empty() {
+        0.0
+    } else {
+        let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), theme::font(11.0), t.text_dim).size().x).max(0.0);
+        w + 8.0
+    };
     let r = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+        ui.set_min_width(name_w);
         add(ui)
     });
     if !label.is_empty() {
@@ -903,5 +913,43 @@ mod tests {
             .expect("the group paints its separator");
         let (top, bottom) = (rule[0].y.min(rule[1].y), rule[0].y.max(rule[1].y));
         assert!(top <= RIBBON_H && bottom > RIBBON_H, "the rule runs from the commands through the name band: {top}..{bottom}");
+    }
+
+    /// The name is centred under its group, so the group is at least as wide as the name: a long
+    /// name over a single button ("Accessibility", "Design Ideas", "Color/Grayscale") must not run
+    /// across the separators.
+    #[test]
+    fn a_group_is_at_least_as_wide_as_its_name() {
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 120.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            let r = ui.horizontal_top(|ui| {
+                group(ui, "Accessibility", |ui| {
+                    ui.label("Alt");
+                });
+            });
+            let span = r.response.rect.width();
+            let need = ui.fonts_mut(|f| f.layout_no_wrap("Accessibility".to_string(), theme::font(11.0), Color32::BLACK).size().x);
+            assert!(span >= need, "the Accessibility group ({span}) fits its centred name ({need})");
+        });
+        out.textures_delta.clear();
+    }
+
+    /// Home's shape controls live in Drawing; the Picture button beside them is the Images group.
+    /// Picture Format shows the style gallery, then the border and picture commands: two groups
+    /// may not share one name.
+    #[test]
+    fn home_and_picture_format_group_names_are_distinct() {
+        let home = include_str!("ribbon/home.rs");
+        for name in ["Drawing", "Images"] {
+            assert!(home.contains(&format!("group(ui, \"{name}\"")), "home.rs names its {name} group");
+        }
+        assert!(home.contains("// Render drawing controls for shapes"), "the Drawing group's comment travels with it");
+        let pf = include_str!("ribbon/picture_format.rs");
+        for name in ["Picture Styles", "Picture Border"] {
+            assert!(pf.contains(&format!("group(ui, \"{name}\"")), "picture_format.rs names its {name} group");
+        }
+        assert_eq!(pf.matches("group(ui, \"Picture Styles\"").count(), 1, "one group is named Picture Styles");
     }
 }

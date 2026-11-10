@@ -128,7 +128,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "picture.style", json!({"style": id}));
         }
     });
-    group(ui, "Picture Styles", |ui| {
+    group(ui, "Picture Border", |ui| {
         let sc = scheme(app);
         let (m, a) = color_split(ui, Icon::QuickStyles, "Picture Border", Color32::BLACK, true);
         if m.clicked() {
