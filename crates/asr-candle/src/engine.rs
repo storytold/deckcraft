@@ -253,7 +253,7 @@ fn validate_config(c: &Config) -> Result<(), AsrError> {
         return Err(out_of_range("model width", c.d_model));
     }
     for (what, heads) in [("encoder heads", c.encoder_attention_heads), ("decoder heads", c.decoder_attention_heads)] {
-        if heads == 0 || heads > 64 || c.d_model % heads != 0 {
+        if heads == 0 || heads > 64 || !c.d_model.is_multiple_of(heads) {
             return Err(out_of_range(what, heads));
         }
     }
