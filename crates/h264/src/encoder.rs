@@ -675,33 +675,17 @@ impl Encoder {
 
     fn intra_mb(&mut self, b: &mut Bits, src: &Planes, mx: usize, my: usize, in_p: bool) {
         let qp = self.cfg.qp;
-        let stride = self.recon.w;
-        let (x0, y0) = (mx * 16, my * 16);
-        let (has_top, has_left) = (my > 0, mx > 0);
-        // Fixed arrays: the neighbours are at most 16 samples each, and this runs per macroblock.
-        let mut top = [0i32; 16];
-        let mut left = [0i32; 16];
-        if has_top {
-            for (i, t) in top.iter_mut().enumerate() {
-                *t = i32::from(self.recon.y[(y0 - 1) * stride + x0 + i]);
-            }
-        }
-        if has_left {
-            for (i, l) in left.iter_mut().enumerate() {
-                *l = i32::from(self.recon.y[(y0 + i) * stride + x0 - 1]);
-            }
-        }
-        let dc = match (has_top, has_left) {
-            (true, true) => (top.iter().sum::<i32>() + left.iter().sum::<i32>() + 16) >> 5,
-            (true, false) => (top.iter().sum::<i32>() + 8) >> 4,
-            (false, true) => (left.iter().sum::<i32>() + 8) >> 4,
-            _ => 128,
-        };
-        let pred_of = |mode: u32, x: usize, y: usize| match mode {
-            0 => top[x],
-            1 => left[y],
-            _ => dc,
-        };
+        let (mode, ac, zdc, cq, cbp_luma, cbp_chroma) = self.intra_levels(src, mx, my);
+        self.write_intra_syntax(b, in_p, mode, &ac, &zdc, &cq, cbp_luma, cbp_chroma, mx, my);
+        self.recon_intra(mx, my, qp, mode, &ac, &zdc, &cq);
+    }
+
+    /// Intra 16x16 prediction, transform and quantisation for one macroblock: the mode, the luma
+    /// AC levels per 4x4 block, the Hadamard luma DC, the two chroma planes, and the coded-block
+    /// flags the syntax and the reconstruction share.
+    fn intra_levels(&self, src: &Planes, mx: usize, my: usize) -> (u32, [[i32; 16]; 16], [i32; 16], [ChromaMb; 2], bool, u32) {
+        let qp = self.cfg.qp;
+        let (top, left, dc) = self.intra_neighbours(mx, my);
         let mode = self.intra_mode(src, mx, my, &top, &left, dc);
         // Luma: transform each 4x4, DC through the Hadamard.
         let qbits = 15 + u32::from(qp / 6);
@@ -724,6 +708,52 @@ impl Encoder {
         } else {
             0
         };
+        (mode, ac, zdc, cq, cbp_luma, cbp_chroma)
+    }
+
+    /// The intra prediction neighbours of one macroblock: the 16 samples above and to the left
+    /// (zeros at the picture edge) and the DC predictor the available sides imply.
+    fn intra_neighbours(&self, mx: usize, my: usize) -> ([i32; 16], [i32; 16], i32) {
+        let stride = self.recon.w;
+        let (x0, y0) = (mx * 16, my * 16);
+        let (has_top, has_left) = (my > 0, mx > 0);
+        // Fixed arrays: the neighbours are at most 16 samples each, and this runs per macroblock.
+        let mut top = [0i32; 16];
+        let mut left = [0i32; 16];
+        if has_top {
+            for (i, t) in top.iter_mut().enumerate() {
+                *t = i32::from(self.recon.y[(y0 - 1) * stride + x0 + i]);
+            }
+        }
+        if has_left {
+            for (i, l) in left.iter_mut().enumerate() {
+                *l = i32::from(self.recon.y[(y0 + i) * stride + x0 - 1]);
+            }
+        }
+        let dc = match (has_top, has_left) {
+            (true, true) => (top.iter().sum::<i32>() + left.iter().sum::<i32>() + 16) >> 5,
+            (true, false) => (top.iter().sum::<i32>() + 8) >> 4,
+            (false, true) => (left.iter().sum::<i32>() + 8) >> 4,
+            _ => 128,
+        };
+        (top, left, dc)
+    }
+
+    /// The intra macroblock syntax: header, luma DC, luma AC, then chroma DC and AC with the
+    /// neighbour totals updated for the blocks that follow.
+    fn write_intra_syntax(
+        &mut self,
+        b: &mut Bits,
+        in_p: bool,
+        mode: u32,
+        ac: &[[i32; 16]; 16],
+        zdc: &[i32; 16],
+        cq: &[ChromaMb; 2],
+        cbp_luma: bool,
+        cbp_chroma: u32,
+        mx: usize,
+        my: usize,
+    ) {
         // Syntax.
         let mb_type = 1 + mode + 4 * cbp_chroma + if cbp_luma { 12 } else { 0 };
         b.ue(mb_type + if in_p { 5 } else { 0 });
@@ -754,7 +784,7 @@ impl Encoder {
             self.nc_y[(by0 + by) * lw + bx0 + bx] = total;
         }
         if cbp_chroma > 0 {
-            for c in &cq {
+            for c in cq {
                 residual_block(b, &c.dc, -1);
             }
         }
@@ -777,8 +807,22 @@ impl Encoder {
                 plane[(my * 2 + by) * cw + mx * 2 + bx] = total;
             }
         }
+    }
+
+    /// Rebuild the macroblock the way the decoder does: inverse-scale each block's DC and AC,
+    /// inverse-transform, and add the intra predictor back.
+    fn recon_intra(&mut self, mx: usize, my: usize, qp: u8, mode: u32, ac: &[[i32; 16]; 16], zdc: &[i32; 16], cq: &[ChromaMb; 2]) {
+        let stride = self.recon.w;
+        let (x0, y0) = (mx * 16, my * 16);
+        let m6 = usize::from(qp % 6);
+        let (top, left, dc) = self.intra_neighbours(mx, my);
+        let pred_of = |x: usize, y: usize| match mode {
+            0 => top[x],
+            1 => left[y],
+            _ => dc,
+        };
         // Reconstruction, as the decoder does it.
-        let fdc = hadamard4(&zdc);
+        let fdc = hadamard4(zdc);
         let ls0 = 16 * V[m6][0];
         let q6 = u32::from(qp / 6);
         for blk in 0..16 {
@@ -791,9 +835,10 @@ impl Encoder {
             let r = idct(&d);
             for i in 0..16 {
                 let (x, y) = (bx * 4 + i % 4, by * 4 + i / 4);
-                self.recon.y[(y0 + y) * stride + x0 + x] = (pred_of(mode, x, y) + r[i]).clamp(0, 255) as u8;
+                self.recon.y[(y0 + y) * stride + x0 + x] = (pred_of(x, y) + r[i]).clamp(0, 255) as u8;
             }
         }
+        let qpc = chroma_qp(qp);
         for (ci, c) in cq.iter().enumerate() {
             let cs = self.recon.w / 2;
             let plane = if ci == 0 { &mut self.recon.u } else { &mut self.recon.v };
