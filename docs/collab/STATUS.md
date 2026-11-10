@@ -1,8 +1,9 @@
 # Collaboration status and handoff
 
 Updated: 2026-11-10. Branch: `collab/pr11`, **rebased onto `origin/main` at `0623b430`** (heads
-`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `6e9d10e7` plus this docs
-commit; pre-rebase hashes are kept in the slice notes below and mapped in
+`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `6e9d10e7` plus the publication
+docs commit, the 3-D model slice and this docs commit; pre-rebase hashes are kept in the slice
+notes below and mapped in
 [Rebase onto origin/main](#rebase-onto-originmain-2026-11-09)), from
 `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo
 of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`,
@@ -23,7 +24,9 @@ slice: the six style toggles as one final value and the Table Layout ▸ Cell Si
 column width and row height, with its docs commit on top, and — after `f3945ddf` — the SmartArt
 slice: outline, layout, style and colour edits as one whole `Diagram` value, with its docs commit
 on top, and — after `d9312c03` — the chart slice: chart type, data and options edits and an
-insertion as one whole `Chart` value, with its docs commit on top.
+insertion as one whole `Chart` value, with its docs commit on top, and — after `6745633d` — the
+3-D model slice: `insert.model3d` on the media channel as one binary glTF signature with its own
+budget, drawn as its poster or a stand-in cube, with this docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -264,6 +267,15 @@ human decision.
   `kind`. The media cache keeps separate budgets for pictures and for audio/video, so a clip cannot
   evict pictures. The desktop link derives the HTTP scheme from the WebSocket link: `ws://` is a
   plain socket, `wss://` a `rustls` connection with the platform root store.
+- `insert.model3d`: a 3-D model on the same channel — one binary glTF (`.glb`) by signature
+  (`glTF` magic, version 2), carried as `media_insert { kind: model, sha256, name, rect? }` and run
+  by the new engine command `insert.model3d`, which stores the part as `model/gltf-binary` and adds
+  a `Model3d { media, poster }` shape (`p:contentPart` with a `model3d` relationship). Models have
+  their **own** budget in the cache (32 MiB per object, 16 objects, 128 MiB per session), so a big
+  model never evicts pictures, audio or fonts. The renderer draws the `mc:Fallback` poster when the
+  file has one and a stand-in cube otherwise, so the frame is never an empty box; the commit
+  warning says the model is drawn as a poster or a placeholder, not as a rendered model. Undo of
+  the insertion is the ordinary structural shape step.
 - `shape.fill`: a final fill (solid colour, `none`, `background`), one operation per shape.
 - `shape.line`: final outline values (colour, width, dash, cap, join, compound, heads) or `none`.
 - `transition.set`: one slide's **whole** transition as a final value (`slide_transition`: effect,
@@ -808,7 +820,7 @@ whose `expectedVersion` does not match the room is refused before any callback i
 |---|---|---|
 | Two or more clients edit one presentation | ✅ for the v1 command set; a three-client soak (two editors and a viewer, 26 edits) converges across compaction | hub, socket test, UI pipe test, `tests/gates.rs` |
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
-| Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
+| Insert a picture in a shared session | ✅ pictures, audio, video and 3-D models over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits, the rest of the table surface (style, cell fill, merge/split, column/row sizing), slide notes text, document fonts (the embedded-font registry: one face by digest, descriptors, removal) and SmartArt (outline, layout, style and colours as one whole diagram value) | collab tests, socket test, commit reimport |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
@@ -882,15 +894,19 @@ was not touched, and PR #1975 is unchanged.
    slide notes text (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) and
    document fonts (`font.create`/`font.set`/`font.remove`, the whole entry as the undo image) are
    collaborative now, and so are charts (`chart.type`/`chart.data`/`chart.options` and
-   `insert.chart` as one whole `Chart` value, the whole chart shape as the undo image). Still
-   refused: `insert.smartArt` and its conversions, 3-D models and relative effects. The design
+   `insert.chart` as one whole `Chart` value, the whole chart shape as the undo image), and so is
+   inserting a 3-D model (`insert.model3d`, a binary glTF on the media channel). Still
+   refused: `insert.smartArt` and its conversions, editing a model's camera/scene, and relative
+   effects. The design
    rule stands: only
    commands whose result is a deterministic function of the authoritative state, expressed as
    final values, go on the wire; a raw `execute` is not safe (toggles and relative edits
-   diverge). Next: `insert.smartArt` and the `smartArt.nodes` query, then 3-D models.
-2. **Media refinement.** Font faces are in the media allowlist now; 3-D models are not. The
-   browser link still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
-   a private CA must be in the store or `SSL_CERT_FILE`).
+   diverge). Next: `insert.smartArt` and the `smartArt.nodes` query.
+2. **Media refinement.** Pictures, video, audio, font faces and 3-D models are all in the media
+   allowlist, each with its own budget; `GET /media` normalises the path and answers with the
+   content type the signature implies. What remains is the channel's deployment side: the browser
+   link still needs CORS on the sync server (the desktop `wss://` path has a TLS client with
+   system roots; a private CA must be in the store or `SSL_CERT_FILE`).
 3. **Rich runs are in; cell formatting, N-cell ranges and carets are done.** Shape text,
    table-cell text and slide notes are addressed and rebased. A notes edit addresses
    `(slide key, notes body)`, is refused for an unaddressable slide before any write, keeps the
@@ -1006,9 +1022,11 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Document fonts, the whole table
-   surface, SmartArt (the outline, layout, style and colours as one whole `Diagram` value) and
-   charts (type, data, options and insertion as one whole `Chart` value) are done; next are
-   `insert.smartArt` with its conversions, the `smartArt.nodes` query and 3-D models.
+   surface, SmartArt (the outline, layout, style and colours as one whole `Diagram` value),
+   charts (type, data, options and insertion as one whole `Chart` value) and the insertion of a
+   3-D model (`insert.model3d`, a binary glTF on the media channel, drawn as its poster or a
+   stand-in cube) are done; next are `insert.smartArt` with its conversions and the
+   `smartArt.nodes` query.
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
    body image)/transition/animation (a shape's step list for add/remove, a slide's whole sequence
@@ -1023,6 +1041,50 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — 3-D models on the media channel, drawn instead of hidden
+
+- The last media gap from `production.md` P1 is closed: a 3-D model is a media object like a
+  picture. `MediaType::Model` accepts exactly one signature — a binary glTF (`glTF` magic, version
+  2, at least the 12-byte header) — with a **budget of its own** (`MAX_MODEL_BYTES` 32 MiB per
+  object, 16 objects and 128 MiB per session), counted apart from pictures, fonts and audio/video,
+  so a model cannot evict them. The name is never the allowlist: a `.glb` name with other bytes is
+  refused, and a replay with no name is still recognised by the signature.
+- The operation is the existing `media_insert` with a new `kind: model` (`MediaKind::Model`), so
+  the bytes travel on the channel and only the digest, the name and the final box go on the wire;
+  the adapter runs the new engine command `insert.model3d`, which stores the part as
+  `model/gltf-binary` and adds a `Model3d { media, poster }` shape (`p:contentPart` with a
+  `model3d` relationship). The writer already copies such a part through; nothing about the model
+  itself is edited in v1, so there is no partial-value problem to solve.
+- A model is now **drawn** instead of warned about: the renderer paints the `mc:Fallback` poster
+  when the file carries one, else a stand-in isometric cube on the frame (a new `paint::model_glyph`),
+  so a shared session never shows an empty box for a model. The commit warning changed from
+  "kept in the file, not drawn" to "drawn as its poster or a placeholder, not as a rendered model" —
+  the honest limitation left is the missing glTF tessellator, not a silent drop.
+- `GET /media` normalises the path (query, fragment, trailing slash and an extension such as
+  `{sha}.glb` are not part of the name; another path segment or a non-digest is `404`) and keeps
+  answering with the content type the signature implies, so a model uploaded once is served as
+  `model/gltf-binary` from memory and after a restart.
+- Undo is the ordinary structural step a shape insert has: the image is the inserted shape
+  (`shape_delete` on undo, `shape_restore` on redo), because the insertion adds one shape on top of
+  the z-order and no model attribute is editable yet.
+- Tests: two replicas converge on one `media_insert { kind: model }` (same delta, same shape, same
+  box, the part keeps `model/gltf-binary`) and a picture object named as a model is refused
+  `invalid` before any write; its undo removes the model on both replicas and leaves the slide
+  exactly as it was; the normaliser uploads the `.glb` and sends a reference only; the channel
+  test covers the signature (version 1 and a short header refused), the per-object cap and the
+  separate model budget; a real socket test uploads a model and fetches it by digest, with an
+  extension and with a query, checking the declared content type, and refuses a `.glb` name with
+  other bytes; the renderer test draws the poster when present and the cube when not, with nothing
+  outside the frame.
+- Gates on the `agents` host, no push: `cargo fmt --all -- --check` clean; `cargo clippy
+  --workspace --all-targets -- -D warnings` clean; `cargo test -p deckcraft-collab` 234 + 8,
+  `-p deckcraft-collab-proto` 34, `-p deckcraft-collab-server` 10 unit + 8 socket + 4 commit +
+  4 gates (LibreOffice skipped on the build host) — 0 failed, 0 ignored; `cargo test -p
+  deckcraft-render a_3d_model` and `-p deckcraft-engine` green.
+- Commit `3ccd815f` on `collab/pr11`, with this docs commit on top; `rfc.md` (§3.2.1, §4.1,
+  §14.1), `production.md` (media channel, the P1 item, the test table) and this file updated.
+  Nothing pushed; CI untouched; PR #1998's head is unchanged.
 
 ### 2026-11-10 — charts: type, data, options and insertion as one whole chart value
 

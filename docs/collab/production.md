@@ -148,6 +148,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
 | `insert.picture` | structural | the operation carries a sha256 reference, not bytes; see "Media channel" |
 | `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
+| `insert.model3d` | structural | same reference (`kind: model`); the bytes are one binary glTF by signature with a budget of their own, and the shape draws its poster or a stand-in cube |
 | `shape.fill` | command | a final fill: solid colour, `none` or `background`; gradients, pictures, patterns and relative transparency are refused |
 | `shape.line` | command | final outline values (`color`, `width`, `dash`, `cap`, `join`, `compound`, heads) or `none` |
 | `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's whole text body or on N table cells of one table (`FormatSet { addresses: [{ cell: [row, col] }] }`); a table without a cell address, an empty address list, a repeated cell and a cell the table does not have are refused before any write instead of being widened; toggles need an explicit `on`, `args` cannot carry an address |
@@ -172,7 +173,9 @@ Anything else that changes the document is refused with a "not available in a sh
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
 values, go on the wire. What is still refused: `insert.smartArt` and the SmartArt
-convert/picture commands, 3-D models and relative effects.
+convert/picture commands, and relative effects; a 3-D model can now be inserted
+(`insert.model3d`, drawn as its poster or a stand-in cube), but its camera and scene are not
+editable in v1.
 The full command surface is the next slice; it needs a final-value normalisation for each
 command, not a raw `execute` on the wire.
 
@@ -207,24 +210,31 @@ The page that hosts the web build opens the session; the app never dials on its 
 
 ## Media channel
 
-Pictures, audio and video do not travel in an operation: the socket limit is 256 KiB and the same
-picture can be inserted twice. The bytes go to a content-addressed store and the operation carries
-only the digest.
+Pictures, audio, video and 3-D models do not travel in an operation: the socket limit is 256 KiB
+and the same picture can be inserted twice. The bytes go to a content-addressed store and the
+operation carries only the digest.
 
 - `PUT /v1/sessions/{id}/media/{sha256}` with the session token (a viewer is refused). The body is
   the object, the path must match its digest. The allowlist is by signature: PNG, JPEG, GIF, WebP,
   BMP, TIFF and SVG up to 8 MiB; TrueType/OpenType, collections and Embedded OpenType (`fntdata`)
-  up to 16 MiB; MP4/MOV/WebM/AVI and WAV/FLAC/Ogg/MP3/M4A/AIFF/MIDI up to 32 MiB. Pictures keep
-  512 objects / 64 MiB per session, fonts their own 32 objects / 64 MiB, and audio and video their
-  own 32 objects / 192 MiB, so a font or a large clip cannot evict the pictures.
+  up to 16 MiB; MP4/MOV/WebM/AVI and WAV/FLAC/Ogg/MP3/M4A/AIFF/MIDI up to 32 MiB; a binary glTF
+  (`.glb`: `glTF` magic, version 2) up to 32 MiB. Pictures keep
+  512 objects / 64 MiB per session, fonts their own 32 objects / 64 MiB, audio and video their
+  own 32 objects / 192 MiB, and 3-D models their own 16 objects / 128 MiB, so a font, a large clip
+  or a model cannot evict the pictures.
 - `GET /media/{sha256}` with a session or service token returns the bytes with their content type.
+  The path is normalised first — a query string, a trailing slash and an extension (`{sha}.glb`)
+  are not part of the name — and the content type comes from the bytes' signature, so an object
+  answers the same way from memory and after a restart.
 - One object per digest per session; a repeated upload is a no-op.
 - Wire: `Payload::PictureInsert { sha256, name, rect }`,
-  `Payload::MediaInsert { kind: video|audio, sha256, name, rect }` and
+  `Payload::MediaInsert { kind: video|audio|model, sha256, name, rect }` and
   `Payload::FontCreate { typeface, face, sha256, name }`. `rect` is optional: without it the server
-  and every replica compute the frame from the same bytes and slide size. A font has no frame: the
+  and every replica compute the frame from the same bytes and slide size (a model gets a default
+  box). A font has no frame: the
   entry points at one media object per face, and the `.pptx` writer emits it as
-  `ppt/fonts/fontN.fntdata` (`p:embeddedFontLst`).
+  `ppt/fonts/fontN.fntdata` (`p:embeddedFontLst`). A model is a `p:contentPart` with a `model3d`
+  relationship and is copied through the package unchanged.
 - With `COLLAB_STORE_DIR` the objects live under `<store>/media/<sha256>` and a journal replay
   loads them before the operation runs.
 - The desktop link derives the HTTP endpoint from its WebSocket URL: `ws://` opens a plain socket,
@@ -295,8 +305,8 @@ cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 197 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
-| `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
+| `cargo test -p deckcraft-collab` | 234 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 7 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
 | `cargo test -p deckcraft-ui-egui collab::` | 20 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets, the painter's sequence over the link disarming a one-shot pick |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
@@ -317,9 +327,13 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    (`INTEGRATION.md` §5.2), the host-bridge messages (`session`, `presence`, `commit`/`committed`)
    and a desktop "save to cabinet" command. Without the cabinet endpoint a deployment still
    builds verified bytes in the process, not a new cabinet version.
-2. **P1 — Media refinement**: pictures, video, audio and font faces are on the channel; 3-D models
-   are not. The browser link fetches and uploads them with `fetch` plus the session token; the sync
-   server has no CORS headers, so a page on another origin cannot use the channel yet.
+2. **P1 — Media refinement**: pictures, video, audio, font faces and 3-D models are on the
+   channel. A model is one binary glTF by signature (`.glb`, `glTF` v2) with its own budget —
+   `insert.model3d` on the operation stream, `MediaType::Model` in the cache — and draws its
+   `mc:Fallback` poster when the file has one, else a stand-in cube; `GET /media` normalises the
+   path (extension, query, trailing slash) and answers with the content type the signature
+   implies. The browser link fetches and uploads them with `fetch` plus the session token; the
+   sync server has no CORS headers, so a page on another origin cannot use the channel yet.
 3. **P1 — Notes, cell formatting, N-cell ranges and carets are in**. Shape text, table-cell text,
    slide notes, a table cell's formatting, a run range inside either body and a caret in a shape's
    body are addressed and rebased now: a notes edit
