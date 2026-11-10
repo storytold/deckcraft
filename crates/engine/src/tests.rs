@@ -36,6 +36,7 @@ fn a_read_only_session_refuses_changes_and_keeps_viewing() {
     refused(&mut s, "edit.undo", json!({}));
     refused(&mut s, "edit.redo", json!({}));
     refused(&mut s, "file.save", json!({}));
+    refused(&mut s, "file.revert", json!({}));
     // Typing and the tools' drags only reach the document through `edit`.
     s.execute("edit.select", &json!({"ids": [id]})).unwrap();
     assert!(s.key("Delete", Mods::default()).is_err(), "Delete is an edit");
@@ -61,10 +62,13 @@ fn a_read_only_session_refuses_changes_and_keeps_viewing() {
 #[test]
 fn read_only_command_availability_matches_execution() {
     let mut s = session();
+    let before = s.doc().unwrap().doc.clone();
     s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+    let edited = s.doc().unwrap().doc.clone();
+    assert_ne!(edited, before);
     s.read_only = true;
     let commands = s.commands();
-    for id in ["shape.insert", "slide.new", "slide.delete", "edit.undo", "edit.redo", "file.save", "file.saveAs"] {
+    for id in ["shape.insert", "slide.new", "slide.delete", "edit.undo", "edit.redo", "file.save", "file.saveAs", "file.revert"] {
         let info = commands.iter().find(|c| c.id == id).unwrap();
         assert!(!info.enabled, "{id}");
         assert_eq!(info.disabled_reason.as_deref(), Some(crate::READ_ONLY_REFUSED), "{id}");
@@ -74,6 +78,9 @@ fn read_only_command_availability_matches_execution() {
         let info = commands.iter().find(|c| c.id == id).unwrap();
         assert!(info.enabled, "{id}: {:?}", info.disabled_reason);
     }
+    let e = s.execute("file.revert", &json!({})).unwrap_err().to_string();
+    assert!(e.contains(crate::READ_ONLY_REFUSED), "{e}");
+    assert_eq!(s.doc().unwrap().doc, edited, "Revert must keep edits made before read-only was enabled");
     let mut empty = Session::new();
     empty.read_only = true;
     let inspect = find_command("slide.inspect").unwrap();
@@ -81,6 +88,10 @@ fn read_only_command_availability_matches_execution() {
     assert_eq!(inspect.info(&empty).disabled_reason, (inspect.enabled)(&empty).err(), "normal eligibility is preserved");
     s.read_only = false;
     assert!(find_command("slide.new").unwrap().info(&s).enabled, "writable commands remain available");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before, "refusing Revert must preserve usable undo history");
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, edited);
 }
 
 #[test]

@@ -518,18 +518,18 @@ pub struct Session {
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
     /// A host opened the presentation to be viewed, not changed (#1898): every command that
-    /// would change it is refused ([`READ_ONLY_REFUSED`]), [`Session::edit`] fails, and so
-    /// `is_dirty` stays false and nothing is ever saved. Navigation, selection, Copy, Find and
-    /// the slide show keep working. Nothing in the editor lifts it; it is never written to a file.
+    /// would change it is refused ([`READ_ONLY_REFUSED`]), [`Session::edit`] fails, and no saves
+    /// are allowed. Existing edits and undo history are kept. Navigation, selection, Copy, Find
+    /// and the slide show keep working. Nothing in the editor lifts it; it is never written to a file.
     pub read_only: bool,
 }
 
 /// What a read-only session refuses (#1898): the message of the error every refused command gets.
 pub const READ_ONLY_REFUSED: &str = "the presentation is open read-only";
 
-/// Commands that change the presentation or its file without being undo steps: Undo and Redo
-/// swap the document for an older one, and Save would write the host's file.
-const READ_ONLY_EXTRA: &[&str] = &["edit.undo", "edit.redo", "file.save", "file.saveAs"];
+/// Commands that change the presentation or its file without being undo steps: Undo, Redo and
+/// Revert replace the document (Revert also clears history), and Save would write the host's file.
+const READ_ONLY_EXTRA: &[&str] = &["edit.undo", "edit.redo", "file.save", "file.saveAs", "file.revert"];
 
 impl Default for Session {
     fn default() -> Self {
