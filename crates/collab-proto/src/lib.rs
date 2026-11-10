@@ -385,6 +385,15 @@ pub enum Payload {
     /// no replica's own sample decides a field. `rect` is the final box in slide points; without
     /// it the command places the same default box on every replica. Structural: a shape appears.
     ChartInsert { chart: serde_json::Value, rect: Option<[f64; 4]> },
+    /// Inserts a SmartArt graphic from its **whole** value (`insert.smartArt`): the author's
+    /// normaliser runs the single-user command on the diagram it would create (`smartArt::plan`)
+    /// and sends the resulting value — layout, the whole node tree (text, levels, assistants,
+    /// titles, pictures), style and colours — so every replica regenerates exactly that drawing
+    /// instead of running its own sample. `rect` is the final box in slide points; without it the
+    /// command places the same default box on every replica. Structural: a shape appears. The
+    /// value is size-bounded and its layout, style and colours are checked before the first write,
+    /// so a hostile tree is refused with no shape added.
+    SmartArtInsert { diagram: serde_json::Value, rect: Option<[f64; 4]> },
     /// Replaces a chart's **whole** value (`chart.setWhole`) and is the confirmed command of
     /// `chart.type`, `chart.data` and `chart.options`. The sender applies the command to the chart
     /// it sees and sends the whole resulting `Chart` model value as JSON — type, categories,
@@ -893,6 +902,7 @@ impl Payload {
             Payload::TableRowHeight { .. } => "table.rowHeight",
             Payload::TableOptions { .. } => "table.options",
             Payload::SmartArtSet { .. } => "smartArt.setDiagram",
+            Payload::SmartArtInsert { .. } => "insert.smartArt",
             Payload::ChartInsert { .. } => "insert.chart",
             Payload::ChartSet { .. } => "chart.setWhole",
             Payload::ShapeField { .. } => "shape.setField",
@@ -990,6 +1000,19 @@ pub enum ClientMsg {
     Undo,
     /// Re-apply the step that this actor's latest undo took back.
     Redo,
+    /// Ask the server to run one **read-only** engine query against the authoritative document and
+    /// answer this actor alone. A query is not an operation: it moves no version, enters neither
+    /// the journal nor anyone's undo history, and a viewer may ask it. `target` addresses objects
+    /// by session key, `params` carries the rest of the command's arguments; the answer is a
+    /// [`ServerMsg::QueryResult`] with the same `id`.
+    Query {
+        id: String,
+        cmd: String,
+        #[serde(default)]
+        target: Target,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        params: serde_json::Value,
+    },
     Ping,
 }
 
@@ -1172,6 +1195,20 @@ impl RejectCode {
     pub fn retryable(self) -> bool {
         matches!(self, RejectCode::Stale | RejectCode::Lease)
     }
+
+    /// The stable name the wire's [`ServerError::code`] uses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RejectCode::Stale => "stale",
+            RejectCode::Conflict => "conflict",
+            RejectCode::Forbidden => "forbidden",
+            RejectCode::Invalid => "invalid",
+            RejectCode::Auth => "auth",
+            RejectCode::Lease => "lease",
+            RejectCode::UndoConflict => "undo_conflict",
+            RejectCode::Unsupported => "unsupported",
+        }
+    }
 }
 
 /// Where the client is now, so it can retry against the right version.
@@ -1305,6 +1342,18 @@ pub enum ServerMsg {
     Presence(PresenceMsg),
     Snapshot(SnapshotMsg),
     CommitResult(CommitResult),
+    /// The answer to one [`ClientMsg::Query`]. `version` is the authoritative head the query ran
+    /// against; `result` is the engine's value and `error` explains a refusal (an unknown or
+    /// mutating command, an address that is gone). At most one of the two is set, and either way
+    /// the document and its version are untouched.
+    QueryResult {
+        id: String,
+        version: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<ServerError>,
+    },
     Error(ServerError),
     Pong,
 }
@@ -1726,6 +1775,70 @@ mod tests {
         assert!(text.contains("\"field\":\"smart_art\""), "{text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
         assert_eq!(restore.command(), "shape.setField");
+    }
+
+    #[test]
+    fn a_smartart_insertion_carries_the_whole_diagram_and_its_box() {
+        // The author's normaliser builds the graphic its command would create and sends the whole
+        // value, so no replica runs its own sample; the box is optional and final when present.
+        let insert = Payload::SmartArtInsert {
+            diagram: serde_json::json!({
+                "kind": "hierarchy",
+                "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}],
+                "style": "intense",
+                "colors": "accent3",
+            }),
+            rect: Some([40.0, 50.0, 400.0, 300.0]),
+        };
+        let text = serde_json::to_string(&insert).expect("encode");
+        assert!(text.contains("\"cmd\":\"smart_art_insert\""), "{text}");
+        assert!(text.contains("\"kind\":\"hierarchy\""), "{text}");
+        assert!(text.contains("\"rect\":[40.0,50.0,400.0,300.0]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), insert);
+        assert_eq!(insert.command(), "insert.smartArt");
+
+        // Without a box the operation still carries the author's value; the command's default box
+        // applies on every replica.
+        let plain = Payload::SmartArtInsert { diagram: serde_json::json!({"kind": "list", "nodes": []}), rect: None };
+        let text = serde_json::to_string(&plain).expect("encode");
+        assert!(text.contains("\"rect\":null"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), plain);
+    }
+
+    #[test]
+    fn a_query_round_trips_and_a_mutating_command_is_a_different_message() {
+        let query = ClientMsg::Query {
+            id: "q-1".into(),
+            cmd: "smartArt.nodes".into(),
+            target: Target { slide: Some("s1".into()), shape: Some("7".into()), ..Target::default() },
+            params: serde_json::json!({}),
+        };
+        let text = encode_client(&query).expect("encode");
+        assert!(text.contains("\"type\":\"query\""), "{text}");
+        assert!(text.contains("\"cmd\":\"smartArt.nodes\""), "{text}");
+        assert_eq!(decode_client(&text).expect("decode"), query);
+
+        let answer = ServerMsg::QueryResult {
+            id: "q-1".into(),
+            version: 42,
+            result: Some(serde_json::json!({"id": 7, "kind": "hierarchy", "nodes": [{"text": "CEO", "level": 0}]})),
+            error: None,
+        };
+        let text = encode_server(&answer).expect("encode");
+        assert!(text.contains("\"type\":\"query_result\""), "{text}");
+        assert!(text.contains("\"version\":42"), "{text}");
+        assert!(!text.contains("error"), "{text}");
+        assert_eq!(decode_server(&text).expect("decode"), answer);
+
+        let refused = ServerMsg::QueryResult {
+            id: "q-2".into(),
+            version: 42,
+            result: None,
+            error: Some(ServerError { code: "unsupported".into(), message: "not a query".into(), retryable: false }),
+        };
+        let text = encode_server(&refused).expect("encode");
+        assert!(text.contains("\"code\":\"unsupported\""), "{text}");
+        assert_eq!(decode_server(&text).expect("decode"), refused);
     }
 
     #[test]

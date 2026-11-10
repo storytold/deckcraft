@@ -75,16 +75,31 @@ fn index(p: &Value, cmd: &str) -> Result<usize> {
     p.get("index").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad(cmd, "index is required"))
 }
 
-/// Insert a new SmartArt graphic (`insert.smartArt`).
-pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Result<Value> {
-    let kind = if is_kind(kind) { kind } else { "process" };
+/// The diagram a single-user `insert.smartArt` builds from its parameters: `kind`, `nodes` or
+/// `items` (leading tabs are sub-points), normalised as the command has always done. Public so the
+/// collaboration normaliser can send the exact value the command would create (RFC §3.2.1).
+pub fn insert_plan(p: &Value) -> Result<Diagram> {
+    let asked = str_param(p, "kind").unwrap_or("process");
+    let kind = if is_kind(asked) { asked } else { "process" };
+    let mut nodes: Vec<DiagramNode> = match p.get("nodes") {
+        Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("insert.smartArt", e.to_string()))?,
+        None => nodes_from_lines(p.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)),
+    };
     if nodes.is_empty() {
         nodes = (0..3).map(|_| DiagramNode { text: "Text".into(), level: 0, picture: None, assistant: false, title: String::new() }).collect();
     }
     normalize(&mut nodes);
-    let d = Diagram { kind: kind.into(), nodes, ..Default::default() };
+    Ok(Diagram { kind: kind.into(), nodes, ..Default::default() })
+}
+
+/// Insert a SmartArt graphic whose whole value is already decided (`insert.smartArt`). The
+/// collaboration adapter sends the value its normaliser built with [`insert_plan`], so every
+/// replica regenerates the same drawing instead of running its own sample. `rect` is the final
+/// box; without it the command's default box applies.
+pub fn insert_value(s: &mut Session, d: Diagram, rect: Option<Xfrm>) -> Result<Value> {
     let size = s.doc()?.doc.slide_size;
-    let area = Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6);
+    let area = rect.unwrap_or_else(|| Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6));
+    let kind = d.kind.clone();
     let id = s.edit(|doc, sel| {
         let children = regenerate("insert.smartArt", doc, &d, area)?;
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
@@ -224,8 +239,36 @@ pub(super) fn demote(s: &mut Session, p: &Value) -> Result<Value> {
 /// Most nodes one `smartArt.setDiagram` may carry, and the most text they may hold.
 const MAX_NODES: usize = 4096;
 const MAX_NODE_TEXT: usize = 64 * 1024;
-/// Longest diagram value the confirmed command may carry, as JSON bytes.
-const MAX_DIAGRAM_JSON: usize = 128 * 1024;
+/// Longest diagram value a confirmed or inserted SmartArt command may carry, as JSON bytes.
+pub const MAX_DIAGRAM_JSON: usize = 128 * 1024;
+
+/// Check a whole diagram value before it is written: it must deserialise into the model type, its
+/// layout, style and colours must be known, and it must stay inside the node, text and JSON bounds.
+/// Both `smartArt.setDiagram` and a collaborative `insert.smartArt` run this, so hostile input is
+/// refused before the first write.
+pub fn verified_diagram(value: &Value, cmd: &str) -> Result<Diagram> {
+    let bytes = serde_json::to_vec(value).map_err(|e| bad(cmd, format!("invalid diagram: {e}")))?;
+    if bytes.len() > MAX_DIAGRAM_JSON {
+        return Err(bad(cmd, "the diagram is too large"));
+    }
+    let d: Diagram = serde_json::from_value(value.clone()).map_err(|e| bad(cmd, format!("invalid diagram: {e}")))?;
+    if !is_kind(&d.kind) {
+        return Err(bad(cmd, "unknown layout"));
+    }
+    if d.nodes.len() > MAX_NODES {
+        return Err(bad(cmd, format!("at most {MAX_NODES} nodes")));
+    }
+    if d.nodes.iter().map(|n| n.text.len() + n.title.len()).sum::<usize>() > MAX_NODE_TEXT {
+        return Err(bad(cmd, "the outline is too large"));
+    }
+    if !d.style.is_empty() && !STYLES.iter().any(|(id, _)| id == &d.style) {
+        return Err(bad(cmd, "unknown style"));
+    }
+    if !d.colors.is_empty() && !COLORS.iter().any(|(id, _)| id == &d.colors) {
+        return Err(bad(cmd, "unknown colours"));
+    }
+    Ok(d)
+}
 
 /// Replace a graphic's whole diagram value and regenerate its shapes (`smartArt.setDiagram`).
 ///
@@ -238,26 +281,7 @@ const MAX_DIAGRAM_JSON: usize = 128 * 1024;
 pub(super) fn set_diagram(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.setDiagram";
     let value = p.get("diagram").ok_or_else(|| bad(CMD, "missing `diagram`"))?;
-    let bytes = serde_json::to_vec(value).map_err(|e| bad(CMD, format!("invalid diagram: {e}")))?;
-    if bytes.len() > MAX_DIAGRAM_JSON {
-        return Err(bad(CMD, "the diagram is too large"));
-    }
-    let d: Diagram = serde_json::from_value(value.clone()).map_err(|e| bad(CMD, format!("invalid diagram: {e}")))?;
-    if !is_kind(&d.kind) {
-        return Err(bad(CMD, "unknown layout"));
-    }
-    if d.nodes.len() > MAX_NODES {
-        return Err(bad(CMD, format!("at most {MAX_NODES} nodes")));
-    }
-    if d.nodes.iter().map(|n| n.text.len() + n.title.len()).sum::<usize>() > MAX_NODE_TEXT {
-        return Err(bad(CMD, "the outline is too large"));
-    }
-    if !d.style.is_empty() && !STYLES.iter().any(|(id, _)| id == &d.style) {
-        return Err(bad(CMD, "unknown style"));
-    }
-    if !d.colors.is_empty() && !COLORS.iter().any(|(id, _)| id == &d.colors) {
-        return Err(bad(CMD, "unknown colours"));
-    }
+    let d = verified_diagram(value, CMD)?;
     edit_diagram(s, p, CMD, |cur| {
         *cur = d.clone();
         Ok(Value::Null)

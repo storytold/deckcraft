@@ -14,12 +14,12 @@ use std::collections::{HashMap, VecDeque};
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    Applied, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, SnapshotMode, SnapshotMsg, SnapshotRef,
+    Applied, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, ServerError, SnapshotMode, SnapshotMsg, SnapshotRef, Target,
 };
 use deckcraft_engine::Session;
 use deckcraft_engine::cmd::file::{Damage, LoadedFile};
 use deckcraft_model::{MediaClip, Presentation, Shape, ShapeKind};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::apply::{Adapter, Rejection};
 
@@ -256,6 +256,20 @@ impl DocSession {
         }
         self.maybe_snapshot();
         Ok(out)
+    }
+
+    /// Answer one read-only engine query from the authoritative document.
+    ///
+    /// The address is resolved with this session's keys, the query runs on the server's engine
+    /// session and its selection is restored afterwards. No version moves, nothing enters the
+    /// journal and nobody's undo history changes, so a viewer may ask and a refusal is a plain
+    /// answer rather than a rejected operation.
+    pub fn query(&mut self, cmd: &str, target: &Target, params: &Value) -> Result<Value, ServerError> {
+        self.adapter.query(&mut self.engine, cmd, target, params, self.version).map_err(|failure| ServerError {
+            code: failure.code.as_str().to_string(),
+            message: failure.message,
+            retryable: failure.retryable,
+        })
     }
 
     /// Replay one already-accepted operation from the journal.

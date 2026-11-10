@@ -378,6 +378,7 @@ impl Adapter {
                 return self.capture_shape_insert(before, after, op);
             }
             Payload::ChartInsert { .. } => return self.capture_shape_insert(before, after, op),
+            Payload::SmartArtInsert { .. } => return self.capture_shape_insert(before, after, op),
             Payload::ShapeDelete {} => return self.capture_shape_delete(before, after, op),
             Payload::Group {} => return self.capture_group(before, after, op),
             Payload::Ungroup {} => return self.capture_ungroup(before, after, op),
@@ -911,6 +912,22 @@ impl Adapter {
                     args["rect"] = json!(rect);
                 }
                 self.call(session, "insert.chart", args, head)
+            }
+            Payload::SmartArtInsert { diagram, rect } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                // The whole diagram is the author's, so the operation carries exactly the graphic
+                // its command would leave; the bounds apply before the first write, so a hostile
+                // tree adds nothing and moves no version.
+                let bytes = serde_json::to_vec(diagram).map_err(|e| Rejection::invalid(format!("invalid diagram: {e}"), Some(head)))?;
+                if bytes.len() > MAX_SMARTART_JSON {
+                    return Err(Rejection::invalid("the diagram is too large", Some(head)));
+                }
+                self.select_slide(session, before, slide, head)?;
+                let mut args = json!({"diagram": diagram});
+                if let Some(rect) = rect {
+                    args["rect"] = json!(rect);
+                }
+                self.call(session, "insert.smartArt", args, head)
             }
             Payload::PictureInsert { sha256, name, rect } => {
                 let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
@@ -1762,6 +1779,57 @@ impl Adapter {
         Ok((slide, ids))
     }
 
+    /// Answer one **read-only** engine query against the authoritative document. The address is
+    /// resolved from session keys, the query runs on this session's engine, and the engine's
+    /// selection is put back afterwards, so a query changes neither the document nor what a later
+    /// operation or undo sees. A command that changes the document is refused: it belongs on the
+    /// operation path, where it gets a version and an undo image. The engine does the rest — an
+    /// unknown command, an unaddressable object and a feature that is not a query all fail there.
+    pub fn query(&self, session: &mut Session, cmd: &str, target: &Target, params: &Value, head: u64) -> Result<Value, Rejection> {
+        if !QUERY_COMMANDS.contains(&cmd) {
+            return Err(Rejection::unsupported(format!("`{cmd}` is not a query this server answers"), Some(head)));
+        }
+        let spec = deckcraft_engine::cmd::find_command(cmd)
+            .ok_or_else(|| Rejection::unsupported(format!("`{cmd}` is not a command this engine knows"), Some(head)))?;
+        if spec.changes_document() {
+            return Err(Rejection::invalid(format!("`{cmd}` changes the document; send it as an operation"), Some(head)));
+        }
+        let (before, saved) = {
+            let st = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?;
+            (st.doc.clone(), st.selection.clone())
+        };
+        let mut address = None;
+        if target.slide.is_some() || target.shape.is_some() || !target.shapes.is_empty() {
+            let slide = self.resolve_slide(&before, target.slide.as_ref(), head)?;
+            let ids = if target.shapes.is_empty() {
+                match target.shape.as_ref() {
+                    Some(key) => vec![self.resolve_shape(&before, slide, key, head)?],
+                    None => Vec::new(),
+                }
+            } else {
+                let mut ids = Vec::with_capacity(target.shapes.len());
+                for key in &target.shapes {
+                    ids.push(self.resolve_shape(&before, slide, key, head)?);
+                }
+                ids
+            };
+            self.select_shapes(session, &before, slide, &ids, head)?;
+            address = ids.first().copied();
+        }
+        let mut args = match params {
+            Value::Object(_) => params.clone(),
+            _ => json!({}),
+        };
+        if let Some(id) = address {
+            args["id"] = json!(id.0);
+        }
+        let result = session.execute(cmd, &args);
+        if let Ok(st) = session.doc_mut() {
+            st.selection = saved;
+        }
+        result.map_err(|e| Rejection::invalid(format!("{cmd}: {e}"), Some(head)))
+    }
+
     /// The table a table command addresses, resolved from its slide and shape keys before the
     /// first write: an unknown key, a shape of another slide, a shape that is not a table and a
     /// tombstone are refused here, so no table command can act on something else.
@@ -1902,11 +1970,17 @@ fn smartart_group(doc: &Presentation, slide: SlideId, shape: ShapeId) -> Option<
     None
 }
 
-/// Longest diagram value a `smartArt.setDiagram` may carry, as JSON bytes.
-const MAX_SMARTART_JSON: usize = 128 * 1024;
+/// Longest diagram value a `smartArt.setDiagram` or an insertion may carry, as JSON bytes. The
+/// engine applies the same bound.
+const MAX_SMARTART_JSON: usize = deckcraft_engine::cmd::smartart::MAX_DIAGRAM_JSON;
 /// Longest chart value a `chart.setWhole` or a `chart_insert` may carry, as JSON bytes (a kept
 /// chart part travels inside the value; the engine applies the same bound).
 const MAX_CHART_JSON: usize = deckcraft_engine::cmd::insert::MAX_CHART_JSON;
+
+/// The read-only queries the server answers on the wire. A query gets no version and no journal
+/// entry, so this is deliberately an allowlist: an arbitrary engine query (one that renders,
+/// lists the server's files or reads its dictionaries) must never be reachable this way.
+const QUERY_COMMANDS: [&str; 1] = ["smartArt.nodes"];
 
 /// Which kind an operation must carry. Structure-changing operations are exclusive.
 /// Length of a text body in characters, counting one newline between paragraphs.
@@ -2051,6 +2125,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
         | Payload::ChartInsert { .. }
+        | Payload::SmartArtInsert { .. }
         | Payload::ShapeDelete {}
         | Payload::ShapeRestore { .. }
         | Payload::Reorder { .. }
@@ -3269,6 +3344,73 @@ mod tests {
         bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
         assert_eq!(doc_of(&a), doc_of(&b));
         assert_eq!(doc_of(&a).slides[0].shapes.len(), 2, "the chart is gone");
+    }
+
+    #[test]
+    fn a_smartart_insertion_reaches_both_replicas_as_the_same_graphic() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let diagram = json!({
+            "kind": "hierarchy",
+            "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}, {"text": "Dev", "level": 2}],
+            "style": "intense",
+            "colors": "accent3",
+        });
+        let target = Target { slide: Some(key_of(&aa, &doc_of(&a), 0).0), ..Target::default() };
+        let envelope = op(OpKind::Structural, 0, target, Payload::SmartArtInsert { diagram, rect: Some([40.0, 50.0, 400.0, 300.0]) });
+        aa.apply(&mut a, 0, "a", &envelope).expect("a inserts the graphic");
+        bb.apply_confirmed(&mut b, 0, "a", &envelope).expect("b applies the confirmed insertion");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same drawing");
+        let inserted = &doc_of(&a).slides[0].shapes[2];
+        let d = inserted.diagram.as_ref().expect("a graphic");
+        assert_eq!((d.kind.as_str(), d.style.as_str(), d.colors.as_str()), ("hierarchy", "intense", "accent3"));
+        let texts: Vec<&str> = d.nodes.iter().map(|n| n.text.as_str()).collect();
+        assert_eq!(texts, ["CEO", "CTO", "Dev"]);
+        let xfrm = inserted.xfrm.expect("box");
+        assert_eq!((xfrm.x, xfrm.y, xfrm.w, xfrm.h), (40.0, 50.0, 400.0, 300.0));
+        match &inserted.kind {
+            deckcraft_model::ShapeKind::Group { children, .. } => assert!(!children.is_empty(), "the drawing was generated"),
+            other => panic!("the inserted shape is not a group: {other:?}"),
+        }
+
+        // Its undo removes the whole graphic as one structural step; the redo puts the whole shape
+        // back (diagram, generated children and their ids) on both replicas.
+        let undo = aa.undo(&a, 1, "a", "u-1").expect("undo the insertion");
+        assert!(matches!(undo.payload, Payload::ShapeRestore { .. } | Payload::ShapeDelete {}), "{undo:?}");
+        aa.apply(&mut a, 1, "a", &undo).expect("a applies the undo");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the confirmed undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes.len(), 2, "the graphic is gone");
+        let redo = aa.redo(&a, 2, "a", "r-1").expect("redo the insertion");
+        aa.apply(&mut a, 2, "a", &redo).expect("a applies the redo");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the confirmed redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes[2], *inserted, "the whole shape came back");
+    }
+
+    #[test]
+    fn a_hostile_smartart_insertion_adds_nothing_and_records_no_step() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let before = doc_of(&s);
+        let target = Target { slide: Some(key_of(&ad, &before, 0).0), ..Target::default() };
+        for diagram in [
+            json!({"kind": "nope", "nodes": []}),
+            json!({"kind": "list", "nodes": [], "style": "nope"}),
+            json!({"kind": "list", "nodes": [], "colors": "accent9"}),
+            json!("not a diagram"),
+        ] {
+            let step = op(OpKind::Structural, 0, target.clone(), Payload::SmartArtInsert { diagram, rect: None });
+            let err = ad.apply(&mut s, 0, "a", &step).expect_err("a hostile tree is refused");
+            assert_eq!(err.code, RejectCode::Invalid, "{err:?}");
+            assert!(!err.retryable);
+        }
+        assert_eq!(doc_of(&s), before, "a refusal changes nothing");
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "a refusal records no step");
     }
 
     #[test]

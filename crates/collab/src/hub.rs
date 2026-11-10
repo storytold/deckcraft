@@ -131,6 +131,8 @@ impl Hub {
                     "smartArt.layout".into(),
                     "smartArt.style".into(),
                     "smartArt.colors".into(),
+                    "smartArt.nodes".into(),
+                    "insert.smartArt".into(),
                     "insert.chart".into(),
                     "chart.type".into(),
                     "chart.data".into(),
@@ -208,6 +210,17 @@ impl Hub {
             }
             ClientMsg::Undo => self.history(actor, true),
             ClientMsg::Redo => self.history(actor, false),
+            ClientMsg::Query { id, cmd, target, params } => {
+                // A query is read-only: a viewer may ask it, it moves no version and it enters
+                // neither the journal nor anyone's history. The answer goes to the asker alone.
+                let version = self.session.version();
+                let answer = match self.session.query(&cmd, &target, &params) {
+                    Ok(result) => ServerMsg::QueryResult { id, version, result: Some(result), error: None },
+                    Err(error) => ServerMsg::QueryResult { id, version, result: None, error: Some(error) },
+                };
+                self.send(actor, answer);
+                Ok(())
+            }
             ClientMsg::Ping => {
                 self.send(actor, ServerMsg::Pong);
                 Ok(())
@@ -687,6 +700,7 @@ mod tests {
                 ClientMsg::Redo => hub.receive(actor, ClientMsg::Redo).expect("redo"),
                 ClientMsg::Undo => hub.receive(actor, ClientMsg::Undo).expect("undo"),
                 ClientMsg::Presence(p) => hub.receive(actor, ClientMsg::Presence(p)).expect("presence"),
+                ClientMsg::Query { id, cmd, target, params } => hub.receive(actor, ClientMsg::Query { id, cmd, target, params }).expect("query"),
                 _ => {}
             }
         }
@@ -1244,5 +1258,151 @@ mod tests {
         }
         assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[0], before, "the whole chart came back");
         assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
+
+    #[test]
+    fn a_smartart_insertion_reaches_both_replicas_and_an_undo_restores_the_whole_shape() {
+        let mut hub = hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = deck_session();
+        let mut sb = deck_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let count = sa.doc().expect("doc").doc.slides[0].shapes.len();
+
+        // One command becomes one whole diagram value; both replicas create the same graphic.
+        a.submit(&sa, "insert.smartArt", &json!({"kind": "hierarchy", "items": ["CEO", "\tCTO", "\t\tDev"], "rect": [40, 50, 400, 300]}), "a-1")
+            .expect("submit the insertion");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (1, 1));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc, "both replicas hold the same drawing");
+        let inserted = sa.doc().expect("doc").doc.slides[0].shapes[count].clone();
+        let d = inserted.diagram.as_ref().expect("a graphic");
+        assert_eq!(d.kind, "hierarchy");
+        let texts: Vec<&str> = d.nodes.iter().map(|n| n.text.as_str()).collect();
+        assert_eq!(texts, ["CEO", "CTO", "Dev"]);
+
+        // The undo removes the whole graphic as one step; the redo puts the whole shape back,
+        // generated children and their ids included.
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (2, 2));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes.len(), count, "the graphic is gone");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+        a.redo().expect("request a redo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (3, 3));
+        assert_eq!(sa.doc().expect("doc").doc.slides[0].shapes[count], inserted, "the whole shape came back");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
+
+    #[test]
+    fn a_viewer_cannot_insert_a_smartart_and_the_document_does_not_move() {
+        let mut hub = hub();
+        let _ = join(&mut hub, "alice", Role::Editor);
+        let welcome_v = join(&mut hub, "victor", Role::Viewer);
+        let mut sv = deck_session();
+        let mut v = CollabDoc::new("d");
+        let _ = v.connect(&sv, "jv", ClientInfo { name: "v".into(), ver: "1".into() });
+        v.on_msg(&mut sv, ServerMsg::Welcome(welcome_v));
+        assert_eq!(v.submit(&sv, "insert.smartArt", &json!({"kind": "list", "items": ["A"]}), "v-1"), Err(crate::LocalError::ReadOnly));
+
+        // Even a hand-built operation never reaches the engine, and the version does not move.
+        let (slide, _shape) = keys_of(&hub);
+        let before = hub.session().document().expect("doc").clone();
+        let step = OpEnvelope {
+            op_id: "v-1".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), ..Target::default() },
+            payload: Payload::SmartArtInsert { diagram: json!({"kind": "list", "nodes": [{"text": "A", "level": 0}]}), rect: None },
+            history: None,
+        };
+        hub.receive("victor", ClientMsg::Op(step)).expect("receive");
+        match hub.poll("victor").expect("answer") {
+            ServerMsg::Rejected(r) => assert_eq!(r.code, RejectCode::Forbidden),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(hub.version(), 0);
+        assert_eq!(hub.session().document().expect("doc"), &before, "the document did not move");
+    }
+
+    #[test]
+    fn the_authoritative_server_answers_the_smartart_nodes_query() {
+        let mut hub = smartart_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let _ = join(&mut hub, "victor", Role::Viewer);
+        let (slide, group) = keys_of(&hub);
+        let target = Target { slide: Some(slide), shape: Some(group), ..Target::default() };
+        let version = hub.version();
+        let before = hub.session().document().expect("doc").clone();
+
+        // The answer is the engine's own value at the authoritative head, and it goes to the
+        // asker alone: no version moves and nobody else receives it.
+        hub.receive("alice", ClientMsg::Query { id: "q-1".into(), cmd: "smartArt.nodes".into(), target: target.clone(), params: json!({}) })
+            .expect("query");
+        match hub.poll("alice").expect("answer") {
+            ServerMsg::QueryResult { id, version: seen, result: Some(result), error: None } => {
+                assert_eq!((id.as_str(), seen), ("q-1", version));
+                assert_eq!(result["kind"], "blockList");
+                let nodes: Vec<&str> = result["nodes"].as_array().expect("nodes").iter().map(|n| n["text"].as_str().unwrap()).collect();
+                assert_eq!(nodes, ["Plan", "Scope", "Build"]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(hub.poll("victor").is_none(), "the answer is not broadcast");
+
+        // A viewer may ask the same question; the document and its version stay put.
+        hub.receive("victor", ClientMsg::Query { id: "q-2".into(), cmd: "smartArt.nodes".into(), target: target.clone(), params: json!({}) })
+            .expect("query");
+        assert!(matches!(hub.poll("victor").expect("answer"), ServerMsg::QueryResult { result: Some(_), .. }));
+        assert_eq!(hub.version(), version);
+        assert_eq!(hub.session().document().expect("doc"), &before);
+
+        // A mutating command is refused as a query, and so are an engine query outside the wire
+        // allowlist and an unknown command; all are an error in the answer, with no version move
+        // and no rejected operation.
+        for cmd in ["smartArt.layout", "file.recovery.list", "nope.unknown"] {
+            hub.receive(
+                "alice",
+                ClientMsg::Query { id: format!("q-{cmd}"), cmd: cmd.into(), target: target.clone(), params: json!({"kind": "hierarchy"}) },
+            )
+            .expect("receive");
+            match hub.poll("alice").expect("answer") {
+                ServerMsg::QueryResult { result: None, error: Some(error), version: seen, .. } => {
+                    assert_eq!(seen, version);
+                    assert!(!error.retryable);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(hub.version(), version);
+        assert_eq!(hub.session().document().expect("doc"), &before, "a query changes nothing");
+
+        // The client path carries the same question and collects the answer.
+        let mut sa = smartart_session();
+        let mut a = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        a.query("q-3", "smartArt.nodes", target, json!({}));
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        let answer = a.take_query_answer().expect("the client collected the answer");
+        assert_eq!(answer.id, "q-3");
+        assert_eq!(answer.version, version);
+        assert!(answer.error.is_none());
+        assert_eq!(answer.result.expect("result")["kind"], "blockList");
     }
 }

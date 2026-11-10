@@ -81,6 +81,21 @@ pub struct CollabDoc {
     media_fetcher: Option<Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>>,
     /// Pictures this replica should upload before its `picture.insert` reaches the server.
     uploads: std::collections::VecDeque<(String, Arc<Vec<u8>>)>,
+    /// Read-only queries waiting for a live link. A viewer sends them too, so they do not share
+    /// the undo/redo control queue.
+    queries: std::collections::VecDeque<ClientMsg>,
+    /// Answers to this replica's queries, in arrival order.
+    query_answers: std::collections::VecDeque<QueryAnswer>,
+}
+
+/// One answer to a collaborative query: the authoritative head it ran against and either the
+/// engine's value or the server's refusal message. A query changes no document and no version.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryAnswer {
+    pub id: String,
+    pub version: u64,
+    pub result: Option<Value>,
+    pub error: Option<String>,
 }
 
 impl CollabDoc {
@@ -96,6 +111,8 @@ impl CollabDoc {
             control: std::collections::VecDeque::new(),
             media_fetcher: None,
             uploads: std::collections::VecDeque::new(),
+            queries: std::collections::VecDeque::new(),
+            query_answers: std::collections::VecDeque::new(),
         }
     }
 
@@ -138,14 +155,32 @@ impl CollabDoc {
     }
 
     pub fn next_outgoing(&mut self) -> Option<ClientMsg> {
-        // Control messages wait for the handshake, then go before operations.
-        if self.client.link() == crate::Link::Live
-            && matches!(self.client.role(), Some(role) if role.may_write())
-            && let Some(msg) = self.control.pop_front()
-        {
-            return Some(msg);
+        // Control messages wait for the handshake, then go before operations. A query may come
+        // from a viewer, so it is taken before the write-gated undo/redo queue.
+        if self.client.link() == crate::Link::Live {
+            if let Some(msg) = self.queries.pop_front() {
+                return Some(msg);
+            }
+            if matches!(self.client.role(), Some(role) if role.may_write())
+                && let Some(msg) = self.control.pop_front()
+            {
+                return Some(msg);
+            }
         }
         self.client.next_outgoing()
+    }
+
+    /// Ask the server to run one read-only query against the authoritative document. The answer
+    /// arrives through [`Self::on_msg`] and is taken with [`Self::take_query_answer`]. A viewer may
+    /// query; the call only queues, so an unknown or mutating command is refused by the answer,
+    /// not here.
+    pub fn query(&mut self, id: impl Into<String>, cmd: impl Into<String>, target: Target, params: Value) {
+        self.queries.push_back(ClientMsg::Query { id: id.into(), cmd: cmd.into(), target, params });
+    }
+
+    /// The next answer to a query this replica sent, in arrival order.
+    pub fn take_query_answer(&mut self) -> Option<QueryAnswer> {
+        self.query_answers.pop_front()
     }
 
     /// Ask the server to take back this actor's latest step.
@@ -309,6 +344,9 @@ impl CollabDoc {
                         self.version = snapshot.version;
                     }
                 }
+            }
+            ServerMsg::QueryResult { id, version, result, error } => {
+                self.query_answers.push_back(QueryAnswer { id, version, result, error: error.map(|e| e.message) });
             }
             _ => {}
         }
@@ -556,6 +594,7 @@ pub fn normalize_with_painter(
             Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::ShapeInsert { preset: preset.to_string(), rect: r, text })])
         }
         "insert.chart" => Ok(vec![chart_insert(p, slide_key, op_id, doc)?]),
+        "insert.smartArt" => Ok(vec![smartart_insert(p, slide_key, op_id, doc)?]),
         "insert.picture" | "insert.audio" | "insert.video" | "insert.model3d" => {
             let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a media digest")))?;
             if !crate::media::valid_sha(sha) {
@@ -997,6 +1036,42 @@ fn chart_insert(p: &Value, slide_key: Option<SlideKey>, op_id: &str, doc: &str) 
         kind: OpKind::Structural,
         target: Target { slide: slide_key, ..Target::default() },
         payload: Payload::ChartInsert { chart, rect },
+        history: None,
+    })
+}
+
+/// The whole diagram a collaborative `insert.smartArt` creates: the sender runs the single-user
+/// plan on the graphic its command would build and sends the resulting value, so every replica
+/// creates exactly that drawing instead of running its own sample. The plan is the same function
+/// the single-user command calls, so a layout, an outline and a default all travel decided. A
+/// parameter the plan does not carry is refused rather than silently dropped (RFC §3.2.1).
+fn smartart_insert(p: &Value, slide_key: Option<SlideKey>, op_id: &str, doc: &str) -> Result<OpEnvelope, LocalError> {
+    for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
+        if !matches!(key.as_str(), "kind" | "items" | "nodes" | "rect") {
+            return Err(LocalError::Unsupported(format!("insert.smartArt {key}")));
+        }
+    }
+    let diagram = deckcraft_engine::cmd::smartart::insert_plan(p).map_err(|e| LocalError::BadParams(e.to_string()))?;
+    let rect = match p.get("rect") {
+        None => None,
+        Some(value) => {
+            let array =
+                value.as_array().filter(|a| a.len() == 4).ok_or_else(|| LocalError::BadParams("insert.smartArt rect must be [x,y,w,h]".into()))?;
+            let mut r = [0.0; 4];
+            for (i, v) in array.iter().enumerate() {
+                r[i] = v.as_f64().ok_or_else(|| LocalError::BadParams("insert.smartArt rect values must be numbers".into()))?;
+            }
+            Some(r)
+        }
+    };
+    let diagram = serde_json::to_value(&diagram).map_err(|e| LocalError::BadParams(format!("insert.smartArt: {e}")))?;
+    Ok(OpEnvelope {
+        op_id: op_id.to_string(),
+        doc: doc.to_string(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: slide_key, ..Target::default() },
+        payload: Payload::SmartArtInsert { diagram, rect },
         history: None,
     })
 }
@@ -2612,6 +2687,44 @@ mod tests {
         // A parameter the chart plan does not carry is refused rather than dropped.
         assert!(matches!(normalize(&km, st, "insert.chart", &json!({"type": "line", "3d": true}), "op", &doc), Err(LocalError::Unsupported(_))));
         assert!(normalize(&km, st, "insert.chart", &json!({"rect": [1, 2]}), "op", &doc).is_err());
+    }
+
+    #[test]
+    fn a_smartart_insertion_normalises_to_the_whole_diagram_it_would_create() {
+        let (s, doc, slide, _group) = smartart_deck();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // The layout and the whole node tree travel as one final value; the sender built them
+        // with the same plan the single-user command runs.
+        let params = json!({"kind": "hierarchy", "items": ["CEO", "\tCTO", "\t\tDev"], "rect": [40, 50, 400, 300]});
+        let ops = normalize(&km, st, "insert.smartArt", &params, "op", &doc).expect("insert");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Structural);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        let Payload::SmartArtInsert { diagram, rect } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(diagram["kind"], "hierarchy");
+        let nodes: Vec<(&str, u64)> =
+            diagram["nodes"].as_array().expect("nodes").iter().map(|n| (n["text"].as_str().unwrap(), n["level"].as_u64().unwrap())).collect();
+        assert_eq!(nodes, [("CEO", 0), ("CTO", 1), ("Dev", 2)]);
+        assert_eq!(*rect, Some([40.0, 50.0, 400.0, 300.0]));
+        let planned = deckcraft_engine::cmd::smartart::insert_plan(&params).expect("plan");
+        assert_eq!(serde_json::to_value(&planned).expect("value"), *diagram, "the normaliser sends what the command would build");
+
+        // Without parameters the command's defaults travel too: a `process` graphic with three
+        // `Text` nodes and the command's own box.
+        let ops = normalize(&km, st, "insert.smartArt", &json!({"kind": "nope"}), "op", &doc).expect("defaults");
+        let Payload::SmartArtInsert { diagram, rect } = &ops[0].payload else { panic!("{:?}", ops[0].payload) };
+        assert_eq!(diagram["kind"], "process");
+        assert_eq!(diagram["nodes"].as_array().expect("nodes").len(), 3);
+        assert_eq!(diagram["nodes"][0]["text"], "Text");
+        assert!(rect.is_none());
+
+        // A parameter the plan does not carry, an unreadable node list and a box that is not four
+        // numbers are refused rather than silently dropped.
+        assert!(matches!(normalize(&km, st, "insert.smartArt", &json!({"kind": "list", "3d": true}), "op", &doc), Err(LocalError::Unsupported(_))));
+        assert!(matches!(normalize(&km, st, "insert.smartArt", &json!({"nodes": [{"text": 1}]}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(normalize(&km, st, "insert.smartArt", &json!({"rect": [1, 2]}), "op", &doc).is_err());
     }
 
     #[test]

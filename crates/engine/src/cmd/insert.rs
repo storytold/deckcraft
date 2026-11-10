@@ -164,7 +164,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "SmartArt",
             ["Insert", "Illustrations"],
             None,
-            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}]} → {id}",
+            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}], diagram?: the whole Diagram value (a collaborative insertion: replaces the kind/nodes), rect?: [x,y,w,h]} → {id}",
             has_slide,
             smart_art
         ),
@@ -373,14 +373,15 @@ fn table(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A SmartArt graphic: a group regenerated from its outline (see [`super::smartart`]). Items with
-/// leading tabs are sub-points; `nodes` (`[{text, level}]`) may be given instead.
+/// leading tabs are sub-points; `nodes` (`[{text, level}]`) may be given instead. A `diagram`
+/// carries the whole value of a collaborative insertion, so every replica creates exactly the
+/// graphic the author's command would have left; it is checked before the first write.
 fn smart_art(s: &mut Session, p: &Value) -> Result<Value> {
-    let kind = str_param(p, "kind").unwrap_or("process").to_string();
-    let nodes = match p.get("nodes") {
-        Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("insert.smartArt", e.to_string()))?,
-        None => super::smartart::nodes_from_lines(p.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)),
+    let d = match p.get("diagram") {
+        Some(value) => super::smartart::verified_diagram(value, "insert.smartArt")?,
+        None => super::smartart::insert_plan(p)?,
     };
-    super::smartart::insert(s, &kind, nodes)
+    super::smartart::insert_value(s, d, rect_param(p, "rect"))
 }
 
 #[cfg(test)]

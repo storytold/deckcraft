@@ -23,11 +23,11 @@ mod layout;
 mod nodes;
 mod paint;
 
+pub use edit::{MAX_DIAGRAM_JSON, insert_plan, insert_value, plan, selected, synced, verified_diagram};
 use edit::{
     add_node, change_colors, change_layout, change_style, demote, from_text, nodes, promote, remove_node, set_diagram, set_nodes, set_picture,
     to_shapes, to_text,
 };
-pub use edit::{insert, plan, selected, synced};
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};
 #[cfg(test)]

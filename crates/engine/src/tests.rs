@@ -4233,6 +4233,59 @@ fn a_smartart_edit_is_one_whole_value_and_its_exact_restore_brings_the_group_bac
 }
 
 #[test]
+fn a_smartart_insertion_from_a_whole_value_is_exact_and_refuses_a_hostile_tree() {
+    let mut s = session();
+    let shapes_before = s.doc().unwrap().doc.slides[0].shapes.len();
+    let diagram = json!({
+        "kind": "hierarchy",
+        "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}, {"text": "Dev", "level": 2}],
+        "style": "intense",
+        "colors": "accent3",
+    });
+    let r = s.execute("insert.smartArt", &json!({"diagram": diagram, "rect": [40, 50, 400, 300]})).unwrap();
+    let gid = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let group = s.doc().unwrap().shape(gid).unwrap().clone();
+    let d = group.diagram.as_ref().expect("a graphic");
+    assert_eq!((d.kind.as_str(), d.style.as_str(), d.colors.as_str()), ("hierarchy", "intense", "accent3"));
+    let texts: Vec<&str> = d.nodes.iter().map(|n| n.text.as_str()).collect();
+    assert_eq!(texts, ["CEO", "CTO", "Dev"]);
+    let xfrm = group.xfrm.expect("box");
+    assert_eq!((xfrm.x, xfrm.y, xfrm.w, xfrm.h), (40.0, 50.0, 400.0, 300.0));
+    match &group.kind {
+        deckcraft_model::ShapeKind::Group { children, .. } => assert!(!children.is_empty(), "the drawing was generated"),
+        other => panic!("not a group: {other:?}"),
+    }
+
+    // The same command without a whole value still builds the same outline from its parameters.
+    let r = s.execute("insert.smartArt", &json!({"kind": "hierarchy", "items": ["CEO", "\tCTO", "\t\tDev"]})).unwrap();
+    let from_params = s.doc().unwrap().shape(deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32)).unwrap().clone();
+    let planned = from_params.diagram.as_ref().expect("a graphic");
+    assert_eq!(planned.kind, group.diagram.as_ref().expect("diagram").kind);
+    let texts: Vec<&str> = planned.nodes.iter().map(|n| n.text.as_str()).collect();
+    assert_eq!(texts, ["CEO", "CTO", "Dev"], "the normaliser and the command build one outline");
+
+    // Hostile trees are refused before the first write; no shape is added and no history step is
+    // recorded.
+    let slides = s.doc().unwrap().doc.slides.len();
+    let undo = s.doc().unwrap().history.undo.len();
+    let count = s.doc().unwrap().doc.slides[0].shapes.len();
+    let refuse = |s: &mut Session, diagram: serde_json::Value| {
+        let e = s.execute("insert.smartArt", &json!({"diagram": diagram})).unwrap_err().to_string();
+        assert!(e.contains("insert.smartArt"), "{e}");
+    };
+    refuse(&mut s, json!({"kind": "nope", "nodes": []}));
+    refuse(&mut s, json!({"kind": "list", "nodes": [], "style": "nope"}));
+    refuse(&mut s, json!({"kind": "list", "nodes": [], "colors": "accent9"}));
+    let many: Vec<_> = (0..5000).map(|i| json!({"text": format!("n{i}"), "level": 0})).collect();
+    refuse(&mut s, json!({"kind": "list", "nodes": many}));
+    refuse(&mut s, json!("not a diagram"));
+    assert_eq!(s.doc().unwrap().doc.slides.len(), slides);
+    assert_eq!(s.doc().unwrap().doc.slides[0].shapes.len(), count, "a refusal inserts nothing");
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "a refusal records no step");
+    assert!(shapes_before > 0);
+}
+
+#[test]
 fn a_chart_edit_is_one_whole_value_and_its_exact_restore_brings_the_chart_back() {
     let mut s = session();
     let r = s

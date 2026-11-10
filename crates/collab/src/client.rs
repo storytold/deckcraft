@@ -233,6 +233,7 @@ impl ClientSession {
                 Effect::Rollback
             }
             ServerMsg::Presence(_) => Effect::None,
+            ServerMsg::QueryResult { .. } => Effect::None,
             ServerMsg::Pong => Effect::None,
             ServerMsg::CommitResult(_) => Effect::None,
             ServerMsg::Error(error) => {

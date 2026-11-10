@@ -33,7 +33,7 @@ pub use history::{ActorHistory, Histories, Image, Snapshot, Step};
 pub use hub::{Claims, Hub, Peer};
 pub use keys::{KeyIssuer, KeyMap};
 pub use link::{PipeTransport, Transport};
-pub use local::{CollabDoc, LocalError, normalize};
+pub use local::{CollabDoc, LocalError, QueryAnswer, normalize};
 pub use media::{
     FONT_CONTENT_TYPE, MAX_AV_BYTES, MAX_AV_OBJECTS, MAX_AV_TOTAL_BYTES, MAX_FONT_BYTES, MAX_FONT_OBJECTS, MAX_FONT_TOTAL_BYTES, MAX_MEDIA_BYTES,
     MAX_MEDIA_OBJECTS, MAX_MEDIA_TOTAL_BYTES, MAX_MODEL_BYTES, MAX_MODEL_OBJECTS, MAX_MODEL_TOTAL_BYTES, MODEL_CONTENT_TYPE, MediaCache, MediaError,

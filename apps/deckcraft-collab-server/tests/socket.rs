@@ -609,6 +609,109 @@ fn a_foreign_origin_gets_no_cors_headers() {
 }
 
 #[test]
+fn a_smartart_insertion_and_its_nodes_query_travel_over_the_socket() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = native_deck();
+    let body = serde_json::json!({
+        "fileId": "file-sa",
+        "app": "deckcraft",
+        "initialBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    // The session keys are derived from the same document and prefix the server used.
+    let doc = deckcraft_format::load(&bytes).expect("load");
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{id}-"));
+    let mut keys = deckcraft_collab::KeyMap::new();
+    keys.sync(&doc, &mut issuer);
+    let slide = keys.slide_key(doc.slides[0].id).expect("slide key").clone();
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut viewer = join(addr, &id, "victor", "viewer");
+    let insert = ClientMsg::Op(OpEnvelope {
+        op_id: "sa-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::SmartArtInsert {
+            diagram: serde_json::json!({"kind": "hierarchy", "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}]}),
+            rect: Some([40.0, 50.0, 400.0, 300.0]),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
+    let applied = match read(&mut a) {
+        ServerMsg::Applied(applied) => applied,
+        other => panic!("expected applied, got {other:?}"),
+    };
+    assert_eq!(applied.version, 1);
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 1),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+    let group = applied
+        .delta
+        .changes
+        .iter()
+        .find_map(|change| matches!(change.kind, deckcraft_collab_proto::ChangeKind::Inserted).then(|| change.shape.clone()).flatten())
+        .expect("the insertion names a shape");
+
+    // A viewer asks the authoritative server for the outline of the group it just saw inserted.
+    let query = ClientMsg::Query {
+        id: "q-1".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&query).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { id, version, result: Some(result), error: None } => {
+            assert_eq!((id.as_str(), version), ("q-1", 1));
+            assert_eq!(result["kind"], "hierarchy");
+            let texts: Vec<&str> = result["nodes"].as_array().expect("nodes").iter().map(|n| n["text"].as_str().unwrap()).collect();
+            assert_eq!(texts, ["CEO", "CTO"]);
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+
+    // A hostile tree is refused as an operation: no version moves and the graphic stays as it was.
+    let bad = ClientMsg::Op(OpEnvelope {
+        op_id: "sa-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::SmartArtInsert { diagram: serde_json::json!({"kind": "nope", "nodes": []}), rect: None },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
+        other => panic!("expected invalid, got {other:?}"),
+    }
+    let after = ClientMsg::Query {
+        id: "q-2".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide), shape: Some(group), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&after).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { version, result: Some(result), error: None, .. } => {
+            assert_eq!(version, 1, "the refusal moved no version");
+            assert_eq!(result["kind"], "hierarchy", "the document did not change");
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+    handle.shutdown();
+}
+
+#[test]
 fn without_a_cors_allowlist_no_cors_header_is_sent() {
     let handle = start();
     let addr = handle.addr;
