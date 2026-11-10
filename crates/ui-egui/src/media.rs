@@ -501,7 +501,7 @@ pub fn paint_clip(painter: &egui::Painter, host: &MediaHost, doc: &Presentation,
     let Some(tex) = host.texture(id) else { return false };
     let uv = crop_uv(clip.crop);
     match shape.xfrm.and_then(|x| cameo_outline(shape, x.w, x.h)) {
-        Some(outline) => paint_clipped(painter, &tex, rect, uv, &outline),
+        Some(outline) => paint_clipped(painter, tex, rect, uv, &outline),
         // A rectangular frame needs no clip: the clip fills it.
         None => {
             painter.image(tex.id(), rect, uv, Color32::WHITE);

@@ -12,6 +12,7 @@
 //! surface: the show host must call `enter_slide`/`poll`/`leave_slide` on its clock and `commit`
 //! at the end. Until it does, no Cameo records. See `ROADMAP.md` and `docs/gaps.md`.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use deckcraft_geom::Xfrm;
@@ -63,9 +64,10 @@ pub struct CameoRun {
     camera: Option<Box<dyn CameraIn>>,
     session: Option<CameraSession>,
     recorder: Option<CameoRecorder>,
-    /// A clip that left its slide while it still owed samples: it is finished over the passes that
-    /// follow instead of on the slide change, so a transition is never held up by encoding.
-    closing: Option<Closing>,
+    /// Clips that left their slide while they still owed samples, oldest first: they are finished
+    /// over the passes that follow instead of on the slide change, so a transition is never held
+    /// up by encoding. A queue, not one slot: two slides can change faster than a close completes.
+    closing: VecDeque<Closing>,
     slide: Option<usize>,
     status: CameoStatus,
     reason: Option<String>,
@@ -109,7 +111,7 @@ impl CameoRun {
             camera: None,
             session: None,
             recorder: None,
-            closing: None,
+            closing: VecDeque::new(),
             slide: None,
             status: CameoStatus::NoCamera,
             reason: None,
@@ -305,21 +307,21 @@ impl CameoRun {
     fn seal(&mut self, slide: Option<usize>, rec: CameoRecorder, now_ms: u64) {
         match rec.seal(now_ms, deckcraft_media::MAX_SAMPLES_PER_CALL) {
             Ok(Seal::Done(clip)) => self.keep(slide, clip),
-            Ok(Seal::Pending(rec)) => self.closing = Some(Closing { slide, rec, at: now_ms }),
+            Ok(Seal::Pending(rec)) => self.closing.push_back(Closing { slide, rec, at: now_ms }),
             Err(e) => self.reject(e),
         }
     }
 
-    /// Finish a pending close one budget at a time.
+    /// Finish the oldest pending close, one budget.
     fn step_closing(&mut self) {
-        if let Some(Closing { slide, rec, at }) = self.closing.take() {
+        if let Some(Closing { slide, rec, at }) = self.closing.pop_front() {
             self.seal(slide, rec, at);
         }
     }
 
-    /// Write whatever a pending close still owes; the clip belongs to the show that just ended.
+    /// Write whatever the pending closes still owe; the clips belong to the show that just ended.
     fn drain_closing(&mut self) {
-        while self.closing.is_some() {
+        while !self.closing.is_empty() {
             self.step_closing();
         }
     }
@@ -598,6 +600,25 @@ mod tests {
         assert_eq!(clips[0].0, 0);
         assert_eq!(clips[0].1.duration_ms, 60_000);
         assert_eq!(clips[0].1.frames, 900);
+    }
+
+    /// Two slides can change faster than a close completes: each pending clip is kept in order and
+    /// both land when the show ends.
+    #[test]
+    fn consecutive_long_gaps_each_keep_their_clip() {
+        let (camera, events, _) = fake();
+        let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
+        for slide in 0..2u64 {
+            let start = slide * 60_000;
+            run.enter_slide(slide as usize, (32, 32), start);
+            send(&events, CameraEvent::Frame(frame(slide, 32, 32)));
+            run.poll(start + 100);
+            // The next slide starts while this close still owes hundreds of samples.
+            run.leave_slide(start + 60_000);
+        }
+        let clips = run.finish(120_000);
+        assert_eq!(clips.iter().map(|(s, _)| *s).collect::<Vec<_>>(), vec![0, 1], "both long-gap slides keep their clip");
+        assert_eq!(clips.iter().map(|(_, c)| c.frames).collect::<Vec<_>>(), vec![900, 900]);
     }
 
     #[test]
