@@ -101,7 +101,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-group(ui, |ui| {
+    group(ui, |ui| {
         let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
         // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
         // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
