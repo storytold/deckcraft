@@ -15,7 +15,10 @@
 //!   set, a commit becomes a file version there instead of staying in this process;
 //! - `COLLAB_CABINET_TOKEN` — the service token the callback is authenticated with (required
 //!   with the URL, never logged);
-//! - `COLLAB_CABINET_TIMEOUT_MS` — deadline for one callback (10000).
+//! - `COLLAB_CABINET_TIMEOUT_MS` — deadline for one callback (10000);
+//! - `DECKCRAFT_CORS_ORIGINS` — comma-separated origins a browser page may call this server
+//!   from (`https://cabinet.example`); empty or absent = no CORS headers, as before. The browser
+//!   link fetches media with `Authorization`, so the origin, not a wildcard, is what is echoed.
 //!
 //! TLS is terminated by the ingress: this process speaks plain HTTP/WS on a private network.
 //! Logs name sessions, versions and counts; slide content, text and tokens are never logged.
@@ -73,6 +76,7 @@ fn main() -> ExitCode {
         snapshot_every: number("COLLAB_SNAPSHOT_EVERY", 200) as u64,
         max_base_inline: number("COLLAB_MAX_BASE_INLINE", 8 << 20),
         cabinet,
+        cors_origins: deckcraft_collab_server::parse_cors_origins(&std::env::var("DECKCRAFT_CORS_ORIGINS").unwrap_or_default()),
     };
     match serve(bind, config) {
         Ok(handle) => {

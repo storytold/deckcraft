@@ -63,6 +63,32 @@ fn http_parts(addr: std::net::SocketAddr, method: &str, path: &str, token: Optio
     (status, head, response[split..].to_vec())
 }
 
+/// The same request with extra headers (an `Origin`, and the preflight's request headers).
+fn http_extra(addr: std::net::SocketAddr, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> (u16, String, Vec<u8>) {
+    let mut stream = TcpStream::connect(addr).expect("connect");
+    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: test\r\nContent-Length: {}\r\nConnection: close\r\n", body.len());
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("\r\n");
+    stream.write_all(head.as_bytes()).expect("write head");
+    stream.write_all(body).expect("write body");
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).expect("read");
+    let split = response.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(response.len());
+    let head = String::from_utf8_lossy(&response[..split]).to_string();
+    let status = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (status, head, response[split..].to_vec())
+}
+
+/// One response header's value, case-insensitive in the name, `None` when absent.
+fn header_of<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim().eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}
+
 fn token(actor: &str, role: &str, file: &str) -> String {
     let claims = TokenClaims {
         sub: actor.into(),
@@ -489,5 +515,118 @@ fn an_invalid_token_never_reaches_a_room() {
         Ok(tungstenite::Message::Close(_)) | Err(_) => {}
         Ok(other) => panic!("expected the connection to close, got {other:?}"),
     }
+    handle.shutdown();
+}
+
+const CORS_ORIGIN: &str = "https://cabinet.example";
+
+fn cors_server() -> Handle {
+    let mut config = Config::for_tests(SECRET, "service-token");
+    config.cors_origins = vec![CORS_ORIGIN.to_string()];
+    serve_ephemeral(config).expect("server")
+}
+
+/// A room with one uploaded picture, for the media-channel CORS tests.
+fn room_with_picture(addr: std::net::SocketAddr, file: &str) -> (String, Vec<u8>, String) {
+    let body =
+        serde_json::json!({"fileId": file, "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let editor = token("alice", "editor", file);
+    let picture = png();
+    let sha = sha256(&picture);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/{file}/media/{sha}"), Some(&editor), &picture);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    (sha, picture, editor)
+}
+
+#[test]
+fn a_cors_preflight_names_the_methods_and_headers_of_an_allowed_origin() {
+    let handle = cors_server();
+    let addr = handle.addr;
+    // The browser sends no token on a preflight; the answer names the methods and headers only.
+    let (status, head, _) = http_extra(
+        addr,
+        "OPTIONS",
+        "/media/0000000000000000000000000000000000000000000000000000000000000000",
+        &[("Origin", CORS_ORIGIN), ("Access-Control-Request-Method", "PUT"), ("Access-Control-Request-Headers", "authorization, content-type")],
+        b"",
+    );
+    assert_eq!(status, 204, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), Some(CORS_ORIGIN), "{head}");
+    let methods = header_of(&head, "access-control-allow-methods").unwrap_or_default();
+    for method in ["GET", "POST", "PUT", "OPTIONS"] {
+        assert!(methods.contains(method), "the preflight names {method}: {head}");
+    }
+    let headers = header_of(&head, "access-control-allow-headers").unwrap_or_default();
+    assert!(headers.contains("Authorization"), "{head}");
+    assert!(headers.contains("Content-Type"), "{head}");
+    assert_eq!(header_of(&head, "vary"), Some("Origin"), "{head}");
+
+    // A method the server does not answer is refused without an allow-origin header.
+    let (status, head, _) = http_extra(addr, "OPTIONS", "/media/x", &[("Origin", CORS_ORIGIN), ("Access-Control-Request-Method", "DELETE")], b"");
+    assert_eq!(status, 405, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    handle.shutdown();
+}
+
+#[test]
+fn a_cors_get_from_an_allowed_origin_carries_the_origin_and_vary() {
+    let handle = cors_server();
+    let addr = handle.addr;
+    let (sha, picture, editor) = room_with_picture(addr, "file-cors-get");
+    let (status, head, body) =
+        http_extra(addr, "GET", &format!("/media/{sha}"), &[("Origin", CORS_ORIGIN), ("Authorization", &format!("Bearer {editor}"))], b"");
+    assert_eq!(status, 200, "{head}");
+    assert_eq!(body, picture, "the bytes come back unchanged");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), Some(CORS_ORIGIN), "{head}");
+    assert_eq!(header_of(&head, "vary"), Some("Origin"), "{head}");
+    handle.shutdown();
+}
+
+#[test]
+fn a_foreign_origin_gets_no_cors_headers() {
+    let handle = cors_server();
+    let addr = handle.addr;
+    let (sha, _, editor) = room_with_picture(addr, "file-cors-foreign");
+    let foreign = "https://elsewhere.example";
+
+    let (status, head, _) =
+        http_extra(addr, "GET", &format!("/media/{sha}"), &[("Origin", foreign), ("Authorization", &format!("Bearer {editor}"))], b"");
+    assert_eq!(status, 200, "the bytes are still served; the browser is the one to refuse them: {head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "vary"), Some("Origin"), "the answer still depends on the origin: {head}");
+
+    // The preflight from a foreign origin names no method and no header.
+    let (status, head, _) =
+        http_extra(addr, "OPTIONS", &format!("/media/{sha}"), &[("Origin", foreign), ("Access-Control-Request-Method", "GET")], b"");
+    assert_eq!(status, 204, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-methods"), None, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-headers"), None, "{head}");
+    handle.shutdown();
+}
+
+#[test]
+fn without_a_cors_allowlist_no_cors_header_is_sent() {
+    let handle = start();
+    let addr = handle.addr;
+    // The default configuration is the pre-CORS behaviour: no `Access-Control-*`, no `Vary`.
+    let (status, head, _) = http_extra(addr, "GET", "/healthz", &[("Origin", CORS_ORIGIN)], b"");
+    assert_eq!(status, 200, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "vary"), None, "{head}");
+
+    let (status, head, _) = http_extra(
+        addr,
+        "OPTIONS",
+        "/media/0000000000000000000000000000000000000000000000000000000000000000",
+        &[("Origin", CORS_ORIGIN), ("Access-Control-Request-Method", "GET")],
+        b"",
+    );
+    assert_eq!(status, 404, "an empty allowlist keeps the old routing: {head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-methods"), None, "{head}");
     handle.shutdown();
 }

@@ -90,6 +90,12 @@ pub struct Config {
     pub max_base_inline: usize,
     /// Where a commit becomes a cabinet file version. `None` keeps commits inside the process.
     pub cabinet: Option<cabinet::CabinetConfig>,
+    /// Origins a browser page may call this server from (`DECKCRAFT_CORS_ORIGINS`, comma
+    /// separated). Empty means no CORS at all: no `Access-Control-*` header and no `Vary`, as
+    /// before the media channel got a browser link. An entry is an exact origin
+    /// (`https://cabinet.example`), compared case-insensitively and without a trailing slash;
+    /// `*` is not special, and `Origin: null` must be listed to be admitted.
+    pub cors_origins: Vec<String>,
 }
 
 impl Config {
@@ -105,8 +111,22 @@ impl Config {
             snapshot_every: 200,
             max_base_inline: 8 << 20,
             cabinet: None,
+            cors_origins: Vec::new(),
         }
     }
+}
+
+/// Split `DECKCRAFT_CORS_ORIGINS` into entries: comma separated, trimmed, without a trailing
+/// slash, duplicates dropped, empty entries ignored. An empty value is the no-CORS mode.
+pub fn parse_cors_origins(value: &str) -> Vec<String> {
+    let mut origins: Vec<String> = Vec::new();
+    for entry in value.split(',') {
+        let origin = entry.trim().trim_end_matches('/');
+        if !origin.is_empty() && !origins.iter().any(|known| same_origin(known, origin)) {
+            origins.push(origin.to_string());
+        }
+    }
+    origins
 }
 
 /// The token's claims. The role is a string here; [`Role`] is the checked value.
@@ -293,6 +313,7 @@ struct Response {
     status: u16,
     reason: &'static str,
     content_type: &'static str,
+    headers: Vec<(&'static str, String)>,
     body: Vec<u8>,
 }
 
@@ -301,8 +322,10 @@ impl Response {
         let reason = match status {
             200 => "OK",
             201 => "Created",
+            204 => "No Content",
             400 => "Bad Request",
             401 => "Unauthorized",
+            403 => "Forbidden",
             404 => "Not Found",
             405 => "Method Not Allowed",
             409 => "Conflict",
@@ -310,13 +333,20 @@ impl Response {
             502 => "Bad Gateway",
             _ => "Internal Server Error",
         };
-        Response { status, reason, content_type: "application/json", body: value.to_string().into_bytes() }
+        Response { status, reason, content_type: "application/json", headers: Vec::new(), body: value.to_string().into_bytes() }
     }
     fn text(status: u16, reason: &'static str, body: String) -> Self {
-        Response { status, reason, content_type: "text/plain; version=0.0.4", body: body.into_bytes() }
+        Response { status, reason, content_type: "text/plain; version=0.0.4", headers: Vec::new(), body: body.into_bytes() }
     }
     fn binary(status: u16, content_type: &'static str, body: Vec<u8>) -> Self {
-        Response { status, reason: "OK", content_type, body }
+        Response { status, reason: "OK", content_type, headers: Vec::new(), body }
+    }
+    /// An empty answer with no body type (a CORS preflight).
+    fn empty(status: u16, reason: &'static str) -> Self {
+        Response { status, reason, content_type: "text/plain", headers: Vec::new(), body: Vec::new() }
+    }
+    fn add_header(&mut self, name: &'static str, value: impl Into<String>) {
+        self.headers.push((name, value.into()));
     }
 }
 
@@ -370,19 +400,94 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn write_response(stream: &mut TcpStream, response: Response) -> std::io::Result<()> {
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
         response.status,
         response.reason,
         response.content_type,
         response.body.len()
     );
+    for (name, value) in &response.headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("\r\n");
     stream.write_all(head.as_bytes())?;
     stream.write_all(&response.body)?;
     stream.flush()
 }
 
 fn route(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
+    if shared.config.cors_origins.is_empty() {
+        return route_inner(request, shared);
+    }
+    if request.method == "OPTIONS" && request.header("origin").is_some() {
+        return Ok(preflight(request, shared));
+    }
+    let mut response = route_inner(request, shared)?;
+    apply_cors(&mut response, request, shared);
+    Ok(response)
+}
+
+/// The origins an entry admits, compared case-insensitively and without a trailing slash (the
+/// path part is never part of an `Origin`).
+fn same_origin(a: &str, b: &str) -> bool {
+    let normalise = |value: &str| value.trim().trim_end_matches('/').to_ascii_lowercase();
+    normalise(a) == normalise(b)
+}
+
+/// The request's `Origin` if the allowlist admits it; `None` for a foreign origin, a request
+/// without one, or an empty allowlist.
+fn allowed_origin<'a>(request: &'a Request, shared: &Shared) -> Option<&'a str> {
+    if shared.config.cors_origins.is_empty() {
+        return None;
+    }
+    let origin = request.header("origin")?;
+    shared.config.cors_origins.iter().any(|allowed| same_origin(allowed, origin)).then_some(origin)
+}
+
+/// Headers for one ordinary (non-preflight) response: `Vary: Origin` always while CORS is
+/// configured — the answer depends on the origin even when the origin is refused — and
+/// `Access-Control-Allow-Origin` only for an admitted origin, never a wildcard.
+fn apply_cors(response: &mut Response, request: &Request, shared: &Shared) {
+    if shared.config.cors_origins.is_empty() {
+        return;
+    }
+    response.add_header("Vary", "Origin");
+    if let Some(origin) = allowed_origin(request, shared) {
+        response.add_header("Access-Control-Allow-Origin", origin);
+    }
+}
+
+/// Methods a browser page may use against this server: the media channel's `GET`/`PUT`, session
+/// control's `POST` (and the `OPTIONS` the preflight itself is).
+const CORS_ALLOW_METHODS: &str = "GET, POST, PUT, OPTIONS";
+/// The only request headers the browser link sends: the session token and a body type.
+const CORS_ALLOW_HEADERS: &str = "Authorization, Content-Type";
+
+/// `OPTIONS` preflight. The browser sends no token here (a preflight carries no
+/// `Authorization`), so this answer names the methods and headers and nothing else — it reveals
+/// no room, media object or version. A foreign origin gets `Vary: Origin` and no
+/// `Access-Control-*` header, so the browser refuses the real request. A method outside the
+/// allowlist gets `405` with no `Access-Control-*` header either.
+fn preflight(request: &Request, shared: &Shared) -> Response {
+    let mut response = Response::empty(204, "No Content");
+    response.add_header("Vary", "Origin");
+    let asked = request.header("access-control-request-method").unwrap_or("GET");
+    if !CORS_ALLOW_METHODS.split(", ").any(|allowed| allowed.eq_ignore_ascii_case(asked)) {
+        let mut refusal = Response::empty(405, "Method Not Allowed");
+        refusal.add_header("Vary", "Origin");
+        return refusal;
+    }
+    if let Some(origin) = allowed_origin(request, shared) {
+        response.add_header("Access-Control-Allow-Origin", origin);
+        response.add_header("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
+        response.add_header("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
+        response.add_header("Access-Control-Max-Age", "600");
+    }
+    response
+}
+
+fn route_inner(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/healthz") | ("GET", "/readyz") => Ok(Response::json(200, json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}))),
         ("GET", "/metrics") => {
