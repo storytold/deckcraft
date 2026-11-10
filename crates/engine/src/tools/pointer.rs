@@ -14,6 +14,10 @@ impl Session {
 
     /// What's under `p` on the current slide.
     pub fn hit_test(&self, p: Point, tol: f64) -> Option<Hit> {
+        // In crop mode, the picture's crop handles come first.
+        if let Some(h) = self.hit_crop(p, tol) {
+            return Some(h);
+        }
         let st = self.active()?;
         // In Edit Points, the edited shape's vertices come first.
         if let Some(id) = self.tool.editing_points(st)
@@ -269,6 +273,17 @@ impl Session {
             return Ok(json!({"caret": [pos.0, pos.1]}));
         }
         let hit = self.hit_test(p, tol);
+        // Crop mode: drag a crop handle or the picture; a press anywhere else ends it.
+        if self.doc().ok().and_then(|st| self.tool.cropping(st)).is_some() {
+            if let Some(Hit::Crop { id, handle }) = hit {
+                return self.begin_crop(id, handle, p);
+            }
+            self.end_crop();
+        } else {
+            // The picture was deselected (or deleted) another way: crop mode is over, and doesn't
+            // come back when it is selected again.
+            self.tool.crop = None;
+        }
         // Edit Points: drag a vertex, Ctrl-click one to delete it or the outline to add one;
         // a click anywhere else leaves Edit Points.
         if let Some(eid) = self.doc().ok().and_then(|st| self.tool.editing_points(st)) {
@@ -324,8 +339,8 @@ impl Session {
                 self.begin("Rotate");
                 self.tool.drag = Some(Drag::Rotate { ids, center, start, origs });
             }
-            // Only reached outside Edit Points (handled above).
-            Some(Hit::Vertex { .. } | Hit::Handle { .. }) => {}
+            // Only reached outside Edit Points and crop mode (handled above).
+            Some(Hit::Vertex { .. } | Hit::Handle { .. } | Hit::Crop { .. }) => {}
             Some(Hit::Adjust { id, index }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Adjust Shape");

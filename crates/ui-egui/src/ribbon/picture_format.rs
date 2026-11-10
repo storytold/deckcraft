@@ -171,8 +171,15 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     arrange_group(app, ui);
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Crop, "Crop", true);
-        egui::Popup::menu(&r).show(|ui| {
+        // As in PowerPoint: Crop puts crop handles on the picture (Enter or Escape when done); its
+        // arrow holds Crop to Shape and the preset crops.
+        let cropping = app.session.active().is_some_and(|st| app.session.tool.cropping(st).is_some());
+        let (r, arrow) = crate::widgets::big_button_ex(ui, Icon::Crop, "Crop", enabled(app, "picture.cropMode"), true, cropping);
+        if r.clicked() {
+            run(app, "picture.cropMode", json!({}));
+        }
+        let menu = arrow.unwrap_or(r);
+        egui::Popup::menu(&menu).show(|ui| {
             ui.label("Crop to Shape");
             if let Some(p) = shapes_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));

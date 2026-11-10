@@ -236,6 +236,11 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         let _ = app.run("app.changePictureDialog", json!({}));
         ui.close();
     }
+    // Crop mode, as the ribbon's Crop button (Picture Format › Crop) starts it.
+    if picture && ui.button("Crop").clicked() {
+        let _ = app.run("picture.cropMode", json!({}));
+        ui.close();
+    }
     if ui.button("Link…").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
         ui.close();

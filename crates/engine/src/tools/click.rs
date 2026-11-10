@@ -91,7 +91,8 @@ impl Session {
                 | Hit::Frame { id }
                 | Hit::TableColumn { id, .. }
                 | Hit::TableRow { id, .. }
-                | Hit::Warp { id, .. },
+                | Hit::Warp { id, .. }
+                | Hit::Crop { id, .. },
             ) => Some(*id),
             None => None,
         };
