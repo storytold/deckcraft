@@ -223,10 +223,43 @@ fn a_read_only_host_session_sends_the_page_nothing() {
     app.save();
     app.save_as_dialog("deckcraft");
     assert!(!app.export_as("pdf", serde_json::json!({})), "Export refuses");
+    assert!(!app.export_as("pngAll", serde_json::json!({})), "Export All Images refuses");
     assert!(!app.print_pdf(serde_json::json!({})), "Print refuses");
     assert!(got.borrow().is_empty(), "nothing was posted to the page: {:?}", calls(&got));
     assert!(app.status.as_ref().is_some_and(|s| s.0.contains("read-only")), "{:?}", app.status);
     assert!(!app.session.active().unwrap().is_dirty());
     app.run("slide.next", serde_json::json!({})).unwrap();
     assert_eq!(app.session.active().unwrap().selection.slide, 1, "navigation still works");
+}
+
+#[test]
+fn hosted_read_only_exports_refuse_before_selecting_an_output() {
+    let (mut app, got) = host_app(false);
+    app.session.read_only = true;
+    let picks = Rc::new(RefCell::new(0));
+    let picked = picks.clone();
+    app.services.pick_save = Some(Box::new(move |_| {
+        *picked.borrow_mut() += 1;
+        None
+    }));
+    for format in ["pdf", "pngAll", "outline"] {
+        assert!(!app.export_as(format, serde_json::json!({})));
+        assert!(app.status.as_ref().is_some_and(|s| s.0 == deckcraft_engine::READ_ONLY_REFUSED));
+    }
+    assert!(!app.print_pdf(serde_json::json!({})));
+    assert_eq!(*picks.borrow(), 0, "refuse at entry, before even requesting an output path");
+    assert!(got.borrow().is_empty());
+}
+
+#[test]
+fn read_only_ribbon_disables_mutations_but_keeps_navigation() {
+    let (mut app, _) = host_app(false);
+    assert!(crate::ribbon::enabled(&app, "slide.new"));
+    app.session.read_only = true;
+    for id in ["slide.new", "edit.undo", "file.save", "file.saveAs"] {
+        assert!(!crate::ribbon::enabled(&app, id), "{id}");
+    }
+    for id in ["slide.next", "slide.inspect", "edit.selectAll"] {
+        assert!(crate::ribbon::enabled(&app, id), "{id}");
+    }
 }

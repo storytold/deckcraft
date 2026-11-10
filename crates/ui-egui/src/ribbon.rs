@@ -72,7 +72,7 @@ pub fn known(id: &str) -> bool {
 
 pub fn enabled(app: &SlideApp, id: &str) -> bool {
     match deckcraft_engine::find_command(id) {
-        Some(c) => (c.enabled)(&app.session).is_ok(),
+        Some(c) => !c.blocked_by_read_only(&app.session) && (c.enabled)(&app.session).is_ok(),
         None => crate::UI_COMMANDS.iter().any(|c| c.0 == id),
     }
 }

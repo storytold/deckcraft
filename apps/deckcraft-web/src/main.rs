@@ -19,7 +19,9 @@
 //! presentation to open and stores what DeckCraft saves (`host`), and `&author=` names the user
 //! for comments. `&readonly` opens it to be viewed only (#1898): commands that would change the
 //! presentation are refused, it never becomes dirty and no save is sent; navigation, selection,
-//! Copy, Find and the slide show still work, and the status bar says "Read-only".
+//! Copy, Find and the slide show still work, and the status bar says "Read-only". Blocked engine
+//! commands are disabled in command listings and the ribbon. Hosted Export and Print refuse before
+//! rendering or generating output bytes; unhosted browser downloads remain available as user copies.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 

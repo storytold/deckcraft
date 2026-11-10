@@ -59,6 +59,31 @@ fn a_read_only_session_refuses_changes_and_keeps_viewing() {
 }
 
 #[test]
+fn read_only_command_availability_matches_execution() {
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+    s.read_only = true;
+    let commands = s.commands();
+    for id in ["shape.insert", "slide.new", "slide.delete", "edit.undo", "edit.redo", "file.save", "file.saveAs"] {
+        let info = commands.iter().find(|c| c.id == id).unwrap();
+        assert!(!info.enabled, "{id}");
+        assert_eq!(info.disabled_reason.as_deref(), Some(crate::READ_ONLY_REFUSED), "{id}");
+        assert!(find_command(id).unwrap().check_enabled(&s).is_err(), "{id}");
+    }
+    for id in ["edit.copy", "edit.selectAll", "slide.next", "slide.inspect"] {
+        let info = commands.iter().find(|c| c.id == id).unwrap();
+        assert!(info.enabled, "{id}: {:?}", info.disabled_reason);
+    }
+    let mut empty = Session::new();
+    empty.read_only = true;
+    let inspect = find_command("slide.inspect").unwrap();
+    assert!(!inspect.info(&empty).enabled);
+    assert_eq!(inspect.info(&empty).disabled_reason, (inspect.enabled)(&empty).err(), "normal eligibility is preserved");
+    s.read_only = false;
+    assert!(find_command("slide.new").unwrap().info(&s).enabled, "writable commands remain available");
+}
+
+#[test]
 fn new_presentation_and_slides() {
     let mut s = session();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 1);

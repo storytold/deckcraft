@@ -657,7 +657,7 @@ impl Session {
         // Read-only (#1898): every undo step changes the presentation, so every undoable command is
         // refused, and so are the few non-undoable ones that change it or its file. Copy, Select,
         // Find, Go To Slide, the slide show and the inspectors are none of these and keep working.
-        if self.read_only && (spec.undoable || READ_ONLY_EXTRA.contains(&id)) {
+        if spec.blocked_by_read_only(self) {
             return Err(EngineError::Disabled(id.into(), READ_ONLY_REFUSED.into()));
         }
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
