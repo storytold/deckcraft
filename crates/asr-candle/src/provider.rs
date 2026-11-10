@@ -2,7 +2,7 @@
 //! starts and stops it and polls it, and nothing on the UI thread ever waits for inference.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -55,6 +55,9 @@ pub struct WhisperTranscriber {
     model_dir: PathBuf,
     settings: SubtitleSettings,
     status: Arc<Mutex<ProviderStatus>>,
+    /// Which worker owns `status`. A stopped worker can still be finishing a decode while a new
+    /// one has started; only the current generation may write the shared status.
+    generation: Arc<AtomicU64>,
     events: Option<Receiver<Event>>,
     stop: Option<Arc<AtomicBool>>,
     handle: Option<JoinHandle<()>>,
@@ -66,6 +69,7 @@ impl WhisperTranscriber {
             model_dir: model_dir.into(),
             settings,
             status: Arc::new(Mutex::new(ProviderStatus::idle())),
+            generation: Arc::new(AtomicU64::new(0)),
             events: None,
             stop: None,
             handle: None,
@@ -108,6 +112,10 @@ impl Transcriber for WhisperTranscriber {
         // `starting` goes in before the worker exists: a damaged model fails within microseconds,
         // and that failure must not be overwritten by a late `starting`.
         let caps = capabilities(self.settings.accelerator);
+        // A new generation owns the shared status from here on: the previous worker (join handed
+        // to a reaper) may still be decoding and must not overwrite this stream's state.
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let worker_generation = self.generation.clone();
         let mut starting = ProviderStatus::starting(manifest.id, self.settings.language_hint().map(str::to_string));
         starting.accelerator = Some(caps.chosen);
         starting.capabilities = Some(caps);
@@ -115,7 +123,7 @@ impl Transcriber for WhisperTranscriber {
         let worker_stop = stop.clone();
         let handle = std::thread::Builder::new()
             .name("deckcraft-subtitles".into())
-            .spawn(move || run(dir, settings, worker_stop, status, tx))
+            .spawn(move || run(dir, settings, worker_stop, status, worker_generation, generation, tx))
             .map_err(|e| {
                 let message = format!("cannot start the subtitle worker: {e}");
                 self.set_status(ProviderStatus::failed(message.clone()));
@@ -168,11 +176,20 @@ impl Drop for WhisperTranscriber {
     }
 }
 
-/// The worker: load, capture, and decode the last 30 seconds every half second of new audio.
-fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, status: Arc<Mutex<ProviderStatus>>, tx: Sender<Event>) {
+/// The worker: load, capture, and decode the last 30 seconds no faster than the decode itself
+/// allows (a 2 s floor measured from the previous decode's end).
+fn run(
+    model_dir: PathBuf,
+    settings: SubtitleSettings,
+    stop: Arc<AtomicBool>,
+    status: Arc<Mutex<ProviderStatus>>,
+    current: Arc<AtomicU64>,
+    generation: u64,
+    tx: Sender<Event>,
+) {
     let mut engine = match WhisperEngine::load(&model_dir) {
         Ok(engine) => engine,
-        Err(e) => return fail(&status, &tx, e),
+        Err(e) => return fail(&status, &current, generation, &tx, e),
     };
     // `stop` joins this thread, so the flag is checked between the start-up stages: ending a
     // show or changing the settings then waits for one stage, not for load + warm-up + capture.
@@ -186,7 +203,7 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
     // The warm-up is a real decode: an invalid language tag fails here, before the microphone
     // opens, instead of surfacing on the first line the presenter speaks.
     if let Err(e) = engine.transcribe(&vec![0.0f32; 16_000], settings.language_hint()) {
-        return fail(&status, &tx, e);
+        return fail(&status, &current, generation, &tx, e);
     }
     log::debug!("subtitles: warm-up took {:?}", warm.elapsed());
     if stop.load(Ordering::Relaxed) {
@@ -194,7 +211,7 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
     }
     let capture = match Capture::open(settings.microphone.as_deref()) {
         Ok(capture) => capture,
-        Err(e) => return fail(&status, &tx, e),
+        Err(e) => return fail(&status, &current, generation, &tx, e),
     };
     {
         let caps = capabilities(settings.accelerator);
@@ -214,7 +231,7 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
     let mut last_decode: Option<Instant> = None;
     while !stop.load(Ordering::Relaxed) {
         if let Some(error) = capture.take_error() {
-            return fail(&status, &tx, AsrError::new(format!("the microphone stopped: {error}")));
+            return fail(&status, &current, generation, &tx, AsrError::new(format!("the microphone stopped: {error}")));
         }
         // Take everything queued: a decode takes seconds, and the audio that arrives while it
         // runs must not be dropped from the capture queue.
@@ -262,7 +279,7 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
                 }
             }
             Ok(_) => {}
-            Err(e) => return fail(&status, &tx, e),
+            Err(e) => return fail(&status, &current, generation, &tx, e),
         }
         last_decode = Some(Instant::now());
         // A decode takes seconds, and the audio that arrived meanwhile is still in the capture
@@ -281,9 +298,7 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
             new_samples = 0;
         }
     }
-    if let Ok(mut s) = status.lock() {
-        *s = ProviderStatus::stopped();
-    }
+    publish(&status, &current, generation, ProviderStatus::stopped());
 }
 
 /// Whether a new decode may start: never before [`MIN_DECODE_INTERVAL`] has passed since the
@@ -320,10 +335,19 @@ fn rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
-fn fail(status: &Arc<Mutex<ProviderStatus>>, tx: &Sender<Event>, e: AsrError) {
-    if let Ok(mut s) = status.lock() {
-        *s = ProviderStatus::failed(e.message());
+/// Write `new` as the provider status only while `generation` still owns it. A worker whose
+/// stream was stopped and replaced must not overwrite the replacement's status.
+fn publish(status: &Arc<Mutex<ProviderStatus>>, current: &AtomicU64, generation: u64, new: ProviderStatus) {
+    if current.load(Ordering::SeqCst) != generation {
+        return;
     }
+    if let Ok(mut s) = status.lock() {
+        *s = new;
+    }
+}
+
+fn fail(status: &Arc<Mutex<ProviderStatus>>, current: &AtomicU64, generation: u64, tx: &Sender<Event>, e: AsrError) {
+    publish(status, current, generation, ProviderStatus::failed(e.message()));
     let _ = tx.send(Event::error(e.message()));
 }
 
@@ -403,7 +427,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let (tx, rx) = channel();
         let status = Arc::new(Mutex::new(ProviderStatus::idle()));
-        run(dir, SubtitleSettings::default(), Arc::new(AtomicBool::new(false)), status.clone(), tx);
+        run(dir, SubtitleSettings::default(), Arc::new(AtomicBool::new(false)), status.clone(), Arc::new(AtomicU64::new(1)), 1, tx);
         let first = rx.try_recv().expect("one error event");
         assert!(matches!(first, Event::Error { .. }), "{first:?}");
         assert!(rx.try_recv().is_err(), "the error is reported once");

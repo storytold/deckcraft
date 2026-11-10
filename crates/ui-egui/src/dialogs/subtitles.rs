@@ -224,8 +224,12 @@ fn model_block(app: &mut SlideApp, ui: &mut Ui) {
         {
             app.subtitles.begin_download(hook);
         }
-        if busy && ui.button("Cancel download").clicked() {
-            app.subtitles.cancel_download();
+        let cancelling = app.subtitles.download.as_ref().is_some_and(|job| job.is_cancelling());
+        if busy {
+            let label = if cancelling { "Cancelling…" } else { "Cancel download" };
+            if ui.add_enabled(!cancelling, egui::Button::new(label)).clicked() {
+                app.subtitles.cancel_download();
+            }
         }
         if ui.add_enabled(!busy && can_pick, egui::Button::new("Choose Files…")).clicked()
             && let Some(pick) = app.services.pick_open.as_mut()

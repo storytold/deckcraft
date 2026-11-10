@@ -189,11 +189,13 @@ fn clean(text: String) -> String {
     text.chars().map(|c| if matches!(c, '\n' | '\r' | '\t') { ' ' } else { c }).filter(|c| !c.is_control() && !is_invisible_format(*c)).collect()
 }
 
-/// Bidi controls and zero-width characters that a caption must never contain.
+/// Bidi controls and zero-width characters that a caption must never contain. The zero-width
+/// non-joiner and joiner (U+200C/U+200D) are kept: they are part of Persian, Hindi and emoji
+/// spelling, and removing them changes the words.
 fn is_invisible_format(c: char) -> bool {
     matches!(
         c as u32,
-        0x00AD | 0x061C | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF
+        0x00AD | 0x061C | 0x200B | 0x200E | 0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF
     )
 }
 
@@ -346,6 +348,9 @@ mod tests {
         // Ordinary text, including non-Latin scripts, is untouched.
         let text = Event::final_line("¿Qué tal? Привет 日本語").text().to_string();
         assert_eq!(text, "¿Qué tal? Привет 日本語");
+        // ZWNJ and ZWJ carry meaning: a Persian word and an emoji sequence keep them.
+        let joiners = "می\u{200C}خواهم 👩\u{200D}💻";
+        assert_eq!(Event::final_line(joiners).text(), joiners);
     }
 
     #[test]

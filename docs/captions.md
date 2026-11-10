@@ -36,19 +36,22 @@ Two paths, both supported:
 
 1. **In the app.** Slide Show ▸ Subtitle Settings ▸ **Download**. The dialog shows the source,
    size, licence and hashes; the desktop host fetches the files over HTTPS (`ureq`) from the
-   model hub only (a manifest URL on another host or a plain-HTTP URL is refused before any
-   request), and reports progress. Each file is written to an exclusive, process-tagged `.part`
-   file, checked against the manifest's size and SHA-256, and only then renamed, so an interrupted
-   download never looks installed and a pre-planted file or symlink is not followed. A
-   `manifest.json` provenance sidecar is written beside the files when the set is complete. The
-   download installs under the first root below; a folder chosen with **Choose Files…** is never a
-   download target.
+   model hub: the manifest's initial URL must be HTTPS on an allowlisted hub host and is refused
+   before any request otherwise (the hub's own redirect to its CDN is followed by the client and
+   is not re-checked), and progress is reported. Each file is written to an exclusive,
+   process-tagged `.part` file, checked against the manifest's size and SHA-256, and only then
+   renamed, so an interrupted download never looks installed and a pre-planted file or symlink is
+   not followed. A `manifest.json` provenance sidecar is written beside the files when the set is
+   complete. The download installs under the first root below; a folder chosen with **Choose
+   Files…** is never a download target.
 2. **By hand.** Put `model.safetensors`, `config.json` and `tokenizer.json` in a `whisper-tiny`
    folder under one of the roots below, then press **Check Again**, which re-checks the folder in
-   use. Or point the app at a folder elsewhere with **Choose Files…** (pick any of the three),
-   which checks that folder immediately. A folder chosen this way is used for the current session
-   only — the dialog labels it so — and after a restart discovery searches the roots again, so
-   copy the three files into one of them to keep the model installed.
+   use. A file placed in a different root after the dialog opened is not discovered by **Check
+   Again**: choose that folder with **Choose Files…**, or restart the app so discovery searches
+   the roots again. Or point the app at a folder elsewhere with **Choose Files…** (pick any of the
+   three), which checks that folder immediately. A folder chosen this way is used for the current
+   session only — the dialog labels it so — and after a restart discovery searches the roots
+   again, so copy the three files into one of them to keep the model installed.
 
 The model directory is resolved first hit wins, the same shape as the other Craft apps:
 
@@ -152,7 +155,10 @@ library, so a machine with OpenVINO installed but no backend behaves exactly lik
 - Captions survive slide changes; they are covered by a blank screen and by See All Slides; they
   end with the show. Ending the show, turning subtitles off, or losing the microphone stops the
   provider and releases the model and the device; the reported status becomes `stopped` (a
-  `failed` status stays visible).
+  `failed` status stays visible). Release is not instant when a decode is in flight: the worker
+  notices the stop flag after the decode (seconds, up to ~27 s on a loaded machine) and the
+  capture stream stays open until then, so a few more audio samples may be collected while the
+  status already reads `stopped`. The UI thread is never blocked by that wait.
 - A provider that fails after starting (the microphone is unplugged, the model file is damaged)
   reports once in the status bar and is not restarted by itself. To retry, turn subtitles off and
   on again, change the microphone or the spoken language, or start another show; the caption's

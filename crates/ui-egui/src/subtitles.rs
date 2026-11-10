@@ -39,6 +39,14 @@ enum DownloadEvent {
     Done(Result<(), String>),
 }
 
+impl DownloadJob {
+    /// A cancel has been requested but the worker has not exited yet; the transfer cannot be
+    /// aborted, so the job stays busy until it reports.
+    pub fn is_cancelling(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
 /// One background hash check. The cancellation flag stops the worker between blocks, and the
 /// handle is joined by a reaper thread so closing the dialog never waits for 151 MB of hashing.
 struct VerifyJob {
@@ -225,8 +233,11 @@ impl Subtitles {
             Ok(status) => {
                 self.model = status;
                 // A start that failed for a missing or damaged model is retried once the check
-                // says the model is now usable.
-                self.applied = None;
+                // says the model is now usable. A healthy running stream is not restarted: the
+                // check finishing must not drop the audio and reload the model mid-show.
+                if self.provider.is_none() {
+                    self.applied = None;
+                }
                 if let Some(handle) = job.handle.take() {
                     let _ = handle.join();
                 }
@@ -304,12 +315,11 @@ impl Subtitles {
                 let _ = progress.send(DownloadEvent::Progress(done, total));
             }
         };
-        let finish_cancel = cancel.clone();
         let spawned = std::thread::Builder::new().name("deckcraft-model-download".into()).spawn(move || {
             let result = hook(&manifest, &dir, &mut report);
-            if !finish_cancel.load(Ordering::Relaxed) {
-                let _ = tx.send(DownloadEvent::Done(result));
-            }
+            // The completion signal is sent even after a cancel: the job stays busy until this
+            // worker has exited, so a retry cannot share the same `.part` path with it.
+            let _ = tx.send(DownloadEvent::Done(result));
         });
         match spawned {
             Ok(_) => {
@@ -320,13 +330,13 @@ impl Subtitles {
         }
     }
 
-    /// Stop showing a download's progress. The host's transfer is not interrupted (its hook has
-    /// no cancel seam), but nothing else is written into the dialog or verified as a success.
+    /// Ask the download to stop. The host's transfer is not interrupted (its hook has no cancel
+    /// seam), so the job stays in `download` until the worker exits and reports; the dialog shows
+    /// it as cancelling and Download stays disabled until then.
     pub fn cancel_download(&mut self) {
-        if let Some(job) = self.download.take() {
+        if let Some(job) = &self.download {
             job.cancel.store(true, Ordering::Relaxed);
         }
-        self.download_error = None;
     }
 
     /// Install a provider as the start path would: `start` runs, the applied settings are
@@ -358,7 +368,7 @@ impl Subtitles {
     }
 
     fn poll_download(&mut self) {
-        let mut finished: Option<Result<(), String>> = None;
+        let mut finished: Option<(bool, Result<(), String>)> = None;
         if let Some(job) = &mut self.download {
             loop {
                 match job.rx.try_recv() {
@@ -367,26 +377,36 @@ impl Subtitles {
                         job.total = total.max(job.total);
                     }
                     Ok(DownloadEvent::Done(result)) => {
-                        finished = Some(result);
+                        finished = Some((job.cancel.load(Ordering::Relaxed), result));
                         break;
                     }
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
-                        finished = Some(Err("the download stopped before it finished".into()));
+                        finished = Some((job.cancel.load(Ordering::Relaxed), Err("the download stopped before it finished".into())));
                         break;
                     }
                 }
             }
         }
-        if let Some(result) = finished {
+        if let Some((cancelled, result)) = finished {
+            // The worker has exited: only now is the job no longer busy, so a retry cannot share
+            // its `.part` path with it.
             self.download = None;
+            if cancelled {
+                // A cancelled attempt is not verified, is not an error, and does not restart a
+                // stream.
+                return;
+            }
             match result {
                 Ok(()) => {
                     // The downloader verified each file; hash again to be sure nothing else
                     // touched the directory. That reads 151 MB, so it runs off the UI thread.
                     let dir = if self.install_dir.as_os_str().is_empty() { self.model_dir.clone() } else { self.install_dir.clone() };
-                    // A start that failed for the missing model is retried with the same show.
-                    self.applied = None;
+                    // A start that failed for the missing model is retried with the same show;
+                    // a running stream is not restarted for it.
+                    if self.provider.is_none() {
+                        self.applied = None;
+                    }
                     self.verify_off_thread(dir);
                 }
                 Err(e) => self.download_error = Some(e),
