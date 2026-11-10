@@ -177,7 +177,6 @@ pub struct RawShape<'a> {
     pub spid: u32,
     pub flip_h: bool,
     pub flip_v: bool,
-    pub background: bool,
     pub patriarch: bool,
     pub deleted: bool,
     pub props: Props<'a>,
@@ -201,6 +200,8 @@ pub struct Drawing<'a> {
 pub fn drawing<'a>(container: &Rec<'a>) -> Drawing<'a> {
     let mut out = Drawing { shapes: vec![], background: None };
     let Some(dg) = container.child(rt::DRAWING).and_then(|d| d.child(rt::DG_CONTAINER)) else { return out };
+    // The background is the container's own shape (`OfficeArtDgContainer.shape`, [MS-ODRAW]
+    // 2.2.13), not one found by its fBackground flag.
     if let Some(bg) = dg.child(rt::SP_CONTAINER) {
         out.background = Some(shape(&bg));
     }
@@ -244,7 +245,6 @@ fn shape<'a>(sp: &Rec<'a>) -> RawShape<'a> {
         spid: 0,
         flip_h: false,
         flip_v: false,
-        background: false,
         patriarch: false,
         deleted: false,
         props: Props::default(),
@@ -267,7 +267,6 @@ fn shape<'a>(sp: &Rec<'a>) -> RawShape<'a> {
                 s.deleted = f & 0x8 != 0;
                 s.flip_h = f & 0x40 != 0;
                 s.flip_v = f & 0x80 != 0;
-                s.background = f & 0x400 != 0;
             }
             rt::FOPT => tables.insert(0, r),
             rt::SECONDARY_FOPT | rt::TERTIARY_FOPT => tables.push(r),
