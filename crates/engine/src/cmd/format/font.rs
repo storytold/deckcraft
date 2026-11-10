@@ -45,9 +45,28 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.baseline = Some(if v { -0.25 } else { 0.0 }))
 }
 
+fn resolve_font_and_style(family: &str, style: &str) -> (String, bool, bool) {
+    let s = style.to_ascii_lowercase();
+    let is_ribbi = matches!(s.as_str(), "regular" | "book" | "roman" | "normal" | "bold" | "italic" | "oblique" | "bold italic" | "bold oblique");
+    let named = is_ribbi || family.to_ascii_lowercase().ends_with(&s);
+    let font = if named { family.to_string() } else { format!("{family} {style}") };
+    let bold = s == "bold" || s == "bold italic" || s == "bold oblique";
+    let italic = deckcraft_fonts::style_is_italic(style);
+    (font, bold, italic)
+}
+
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    let style = str_param(p, "style").map(|s| s.to_string());
+    format_run(s, &move |r| match &style {
+        None => r.font = Some(f.clone()),
+        Some(st) => {
+            let (font_name, bold, italic) = resolve_font_and_style(&f, st);
+            r.font = Some(font_name);
+            r.bold = Some(bold);
+            r.italic = Some(italic);
+        }
+    })
 }
 
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
@@ -258,6 +277,7 @@ pub(super) fn spacing(s: &mut Session, p: &Value) -> Result<Value> {
 /// Character formatting applied together, so the Font dialog is one undo step.
 struct FontEdits {
     family: Option<String>,
+    style: Option<String>,
     size: Option<f64>,
     bold: Option<bool>,
     italic: Option<bool>,
@@ -285,7 +305,18 @@ impl FontEdits {
 
     fn write(&self, r: &mut RunProps) {
         if let Some(f) = &self.family {
-            r.font = Some(f.clone());
+            if let Some(st) = &self.style {
+                let (font_name, bold, italic) = resolve_font_and_style(f, st);
+                r.font = Some(font_name);
+                if self.bold.is_none() {
+                    r.bold = Some(bold);
+                }
+                if self.italic.is_none() {
+                    r.italic = Some(italic);
+                }
+            } else {
+                r.font = Some(f.clone());
+            }
         }
         if let Some(v) = self.size {
             r.size = Some(v);
@@ -397,7 +428,29 @@ fn font_edits(p: &Value) -> Result<FontEdits> {
             Some(n.clamp(-100.0, 400.0))
         }
     };
-    Ok(FontEdits { family, size, bold: font_bool(p, "bold")?, italic: font_bool(p, "italic")?, underline, color, strike, baseline, caps, spacing })
+    let style = match font_str(p, "style")? {
+        None => None,
+        Some(s) => {
+            let t = s.trim();
+            if t.is_empty() || t.chars().count() > 100 { None } else { Some(t.to_string()) }
+        }
+    };
+    if style.is_some() && family.is_none() {
+        return Err(bad("format.fontDialog", "`style` requires `family`"));
+    }
+    Ok(FontEdits {
+        family,
+        style,
+        size,
+        bold: font_bool(p, "bold")?,
+        italic: font_bool(p, "italic")?,
+        underline,
+        color,
+        strike,
+        baseline,
+        caps,
+        spacing,
+    })
 }
 
 /// A colour as a `format.fontDialog` / `format.color` parameter, including transforms.
@@ -426,11 +479,19 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
 
 fn font_dialog_params(s: &Session) -> Value {
     let r = current_run(s);
-    let family =
+    let raw_family =
         s.doc().ok().and_then(|st| crate::cmd::text::ctx_for(&st.doc, &st.selection).map(|c| resolve::font_family(&c, &r))).unwrap_or_default();
+    let (family, mut style) = match deckcraft_fonts::split_family_style(&raw_family) {
+        Some((base, st, _, _)) => (base.to_string(), st.to_string()),
+        None => (raw_family, String::new()),
+    };
+    if style.is_empty() {
+        style = deckcraft_fonts::style_from_flags(r.bold.unwrap_or(false), r.italic.unwrap_or(false)).to_string();
+    }
     let baseline = r.baseline.unwrap_or(0.0);
     let mut v = json!({
         "family": family,
+        "style": style,
         "size": r.size.unwrap_or(18.0),
         "bold": r.bold.unwrap_or(false),
         "italic": r.italic.unwrap_or(false),
