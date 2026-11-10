@@ -47,6 +47,8 @@ Binary: `deckcraft-collab-server`.
 | `COLLAB_MAX_OPS_PER_SEC` | operations per second per connection | `50` |
 | `COLLAB_SNAPSHOT_EVERY` | operations between base snapshots (memory-only rooms included) | `200` |
 | `COLLAB_MAX_BASE_INLINE` | largest native base sent inline to a client rebuilt after compaction | `8388608` |
+| `COLLAB_MAX_BASE_CHUNK` | bytes of one chunk of a base above the inline limit (base64 in one frame) | `1048576` |
+| `COLLAB_MAX_BASE_CHUNKS` | deepest chunk chain for one base; a bigger base is only named in the snapshot | `1024` |
 | `COLLAB_STORE_DIR` | room persistence (native base + journal + media); absent keeps rooms in memory | — |
 | `COLLAB_CABINET_URL` | the cabinet's commit endpoint; `{sessionId}`/`{fileId}` are substituted | — |
 | `COLLAB_CABINET_TOKEN` | service token the callback is authenticated with (required with the URL) | — |
@@ -331,15 +333,23 @@ must be treated as a development instance.
 A client that reconnects inside the retained journal receives the tail. Once compaction removed
 it, `resync` sends the native base, the session key map and the steps above the base; the client
 replaces its replica and replays them (`base_transfers_total`, `base_bytes_total`). Above
-`COLLAB_MAX_BASE_INLINE` the base is named but not sent: the client must reopen the file from the
-cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
+`COLLAB_MAX_BASE_INLINE` the base travels as a **chunk chain** instead: the snapshot announces
+its `sha256`, length, chunk size and depth, the client asks for one chunk at a time
+(`base-chunk`, RFC §4.5.1) and installs the base only after the digest matches
+(`base_chunks_total` counts the chunks; `base_bytes_total` stays at 0 for a chain). The chunk size
+and the chain's depth are `COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS`: a base beyond them is
+named but not sent, and that client has to reopen the file from the cabinet — a fallback for a
+client build without `base-chunk`, not the expected path. Measured on the build host: a 120-slide
+deck with 120 distinct 160×160 pictures has a native base of **11.8 MiB**, which a viewer rebuilt
+in 48 chunks of 256 KiB in 168 ms; the same deck with 320×320 pictures reaches 46.9 MiB, still
+inside a 1024-chunk chain at the default 1 MiB chunk.
 
 ## Verification and tests
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 255 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
-| `cargo test -p deckcraft-collab-server` | 10 unit + 16 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
+| `cargo test -p deckcraft-collab` | 269 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit, a base sent as a chunk chain — order, one request at a time, resume at the missing index, a second snapshot for the same chain, a stale chain, the protocol ceilings, a short chunk and a wrong digest, steps collected by a catch-up), commit |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 17 real-socket + 4 commit + 5 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, a three-client soak across compaction with a base transfer, and the big-deck soak: 322 edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base sent in 48 chunks plus its tail, a fifth participant that drops mid-chain and resumes at the missing chunk, and a commit at the head whose file reimports with every replica's values |
 | `cargo test -p deckcraft-ui-egui collab::` | 20 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets, the painter's sequence over the link disarming a one-shot pick |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
@@ -415,17 +425,23 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2).
 5. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
    rollback are the next latency slice.
-6. **P2 — Base transfer above the inline limit**: a client that missed a compacted journal tail is
-   rebuilt from the native base and the key map the `snapshot` carries (up to 8 MiB,
-   `COLLAB_MAX_BASE_INLINE`). Above that the message names the base without bytes and the client
-   has to reopen the file from the cabinet; a chunked or HTTP-served base is the next step.
-7. **P3 — Three-client soak**: the 120-slide/media performance gate, the LibreOffice open/repair
-   gate and the three-client soak (26 move/bounds/text/fill edits across compaction, a viewer
-   rebuilt from the base, a reconnect from the journal, commit at the final version) live in
+6. **Done — Base transfer above the inline limit**: a client that missed a compacted journal tail
+   is rebuilt from the native base and the key map the `snapshot` carries (up to 8 MiB,
+   `COLLAB_MAX_BASE_INLINE`). Above that the base is announced as a chunk chain
+   (`base.chunks`, `base-chunk`, §4.5.1) and the replica is rebuilt from the wire, without
+   reopening the file from the cabinet; a socket that drops mid-chain resumes at the missing
+   chunk. The chain is capped on both sides (`COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS`,
+   the client's 8 MiB/4096/64 MiB ceilings), and a base beyond the chain's depth still falls back
+   to "named without bytes".
+7. **P3 — Soaks**: the 120-slide/media performance gate, the LibreOffice open/repair gate, the
+   three-client soak (26 move/bounds/text/fill edits across compaction, a viewer rebuilt from the
+   base, a reconnect from the journal, commit at the final version) and the big-deck soak (322
+   edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base in 48
+   chunks, a fifth participant resuming a chain mid-way, commit at the head) live in
    `apps/deckcraft-collab-server/tests/gates.rs`
    (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the
-   LibreOffice test skips itself with a printed line where `soffice` is absent. What remains is a
-   longer soak and running the LibreOffice gate in CI.
+   LibreOffice test skips itself with a printed line where `soffice` is absent. The big-deck soak
+   takes ~16 s of the suite; what remains is running the LibreOffice gate in CI.
 8. **Human action — Upstream PR**: the work is in the fork branch `copoka/deckcraft:collab/pr10`
    and open as PR #1975; the local head holds commits the PR head did not have at the last check
    (`63ec1ebe`), and the push is manual because this workspace cannot push. The body is

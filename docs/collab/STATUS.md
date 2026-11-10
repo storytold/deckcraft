@@ -1,6 +1,10 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-10. Branch: `collab/pr12`, two commits from `collab/pr11` at `fe7bcbca` (the 3-D
+Updated: 2026-11-10. Branch: `collab/pr13`, branched from `collab/pr12` at `5c150c93` (the 3-D
+model scene `7b51e65d` and its docs commit): a native base above the inline limit now travels as a
+chain of chunks, so a client that missed a compacted journal is rebuilt from an 11.8 MiB base over
+the session socket, resuming mid-chain after a drop. `collab/pr12` is two commits from
+`collab/pr11` at `fe7bcbca` (the 3-D
 model camera slice `c406a329` and its docs commit). `collab/pr11` is **rebased onto `origin/main`
 at `0623b430`** (heads `collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` =
 `6e9d10e7` plus the publication
@@ -56,7 +60,11 @@ the **whole model shape** as the undo image, and then the 3-D model scene slice 
 (`ambient` 0–1 and an optional sRGB `background`), or `null` for the reader's default — never a
 relative edit, checked by the engine's own `scene_param` on the client and again before the first
 write, written into the slide part as `am3d:scene`, with the **whole model shape** as the undo
-image — with this docs commit on top.
+image — and then the chunked-base slice: a base above `max_base_inline` is announced in the
+snapshot as `base.chunks` (digest, length, chunk size, depth) and fetched one chunk at a time with
+`base-chunk`, assembled and digest-checked by the client, resumable at the missing index, capped on
+both sides, with the "named without bytes" path kept as the fallback — with this docs commit on
+top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -101,6 +109,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
 | `collab/pr12` | `7b51e65d` (+ docs) | `model3d.scene` as one final scene — one light (type, direction, intensity and a spot's angle) and the environment (ambient and an optional sRGB background) — checked on the client and in the engine before the first write, written as `am3d:scene` into the slide part, with the whole model shape as the undo image |
+| `collab/pr13` | `5c150c93` + this slice | a native base above `max_base_inline` travels as a chain of chunks (`base.chunks`, `base-chunk`): the client assembles it, checks the digest and the limits, resumes at the missing chunk after a dropped socket, and the snapshot is applied only when the base is whole; the big-deck soak (322 edits, 120 slides with media, an 11.8 MiB base in 48 chunks) is the §8 gate |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs), `44489f34` (+ docs), `c406a329` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`); the SmartArt node-picture slice `44489f34`: `smartArt.picture` as one final value (the top-level graphic, one top-level node, the media channel's digest and the picture's final place), the engine checks the target, the node, the picture allowlist and budget, the place's finite positive area and that the layout does not change before the first write, and the whole group is the undo image; and the 3-D model camera slice `c406a329`: `model3d.camera` as one final view (`position`/`target`/`up` in EMU, `fov` in degrees, or `null`), relative edits refused on the client, on the wire and in the engine before the first write, the view written as `am3d:camera`, and the whole model shape as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
@@ -220,8 +229,12 @@ human decision.
   (`snapshot`) carries the native `.deckcraft` base, the session key map and the steps above the
   base. Keys are issued in walk order and cannot be re-derived after structural edits, so the map
   (`slides`, `shapes`, `dead`, `next`) travels with the base and the replica continues the
-  server's numbering. Above `max_base_inline` (8 MiB, `COLLAB_MAX_BASE_INLINE`) the message names
-  the base without bytes and the client reopens the file from the cabinet.
+  server's numbering. Above `max_base_inline` (8 MiB, `COLLAB_MAX_BASE_INLINE`) the base travels
+  as a chain of chunks (`base.chunks`: digest, length, chunk size, depth) that the client pulls one
+  at a time with `base-chunk`, so a deck whose native base is tens of megabytes still rebuilds a
+  replica without a frame to hold it and without reopening the file from the cabinet; a chain
+  interrupted mid-way resumes at the chunk the client is missing, a base compacted under it is a
+  retryable `stale`, and a base beyond `max_base_chunks` falls back to being named without bytes.
 - Per-actor undo: server-side before/after images, `undo-conflict` when someone else changed the
   object, undo is an ordinary new operation. The images cover `xfrm`, text, fill, outline, a
   slide's whole transition, one shape's whole animation step list, a slide's whole ordered
@@ -505,13 +518,14 @@ human decision.
   through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
 - `COLLAB_SNAPSHOT_EVERY` now also drives a memory-only room (it used to reach the store only),
   so compaction and a base transfer can be forced in a test or a deployment. `resync` takes a
-  snapshot on demand when the stored base does not cover the client; `base_transfers_total` and
-  `base_bytes_total` count what went out.
+  snapshot on demand when the stored base does not cover the client; `base_transfers_total`,
+  `base_chunks_total` and `base_bytes_total` (inline bytes only) count what went out, and
+  `COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS` bound a chained base.
 - Logs/metrics contain ids, versions and counts; no slide content, text, media or tokens.
 
 ## 8. Gates (TASK.md §8)
 
-All four gates are tests, not scripts: `apps/deckcraft-collab-server/tests/gates.rs`. Run them with
+All five gates are tests, not scripts: `apps/deckcraft-collab-server/tests/gates.rs`. Run them with
 
 ```bash
 cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1
@@ -559,8 +573,23 @@ cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads
   moved by one. Bob drops off, Alice moves the first rectangle to 420 and repaints it (versions
   27–28), and Bob reconnects with version 26: the answer is a tail of two steps, no base, and he
   lands on 28. All three replicas and the room settle on version 28 with an equal `Presentation`,
-  and the commit at 28 reimports with the final boxes (420 / 350). The four gates together run in
-  about 2.5 s with `--test-threads=1` on the build host (LibreOffice skipped there).
+  and the commit at 28 reimports with the final boxes (420 / 350).
+- **Big deck with media: hundreds of steps, a chained base and a fifth participant.** 120 slides,
+  each with its own 160×160 picture (noise, so it does not compress) and a rectangle; the initial
+  `.pptx` is 12 193 KiB and the native base is 11.8 MiB — above the 8 MiB inline limit by
+  construction. The server runs with `snapshot_every = 40` and `max_base_chunk = 256 KiB`. Three
+  editors make **322 edits** (move and bounds on the picture, text and fill on the rectangle, on a
+  slide that comes round again) in 15.1 s on the build host — 46.8 ms per step, dominated by the
+  server's 50 ms socket-read slice, not by the apply — and the journal is compacted seven times.
+  A viewer then joins at version 0: the base at 320 travels as **48 chunks of 256 KiB** plus the
+  two steps above it, and the viewer reaches version 322 in 168 ms. A fifth participant joins the
+  same chain, drops its socket after three chunks and reconnects: it asks for chunk 3, not for
+  chunk 0, finishes the chain and the tail, and converges. Both newcomers receive the two last
+  edits as broadcasts; all five replicas and the room settle on one `Presentation` at version 324,
+  and the commit at 324 (12 195 KiB, 223 ms) reimports with 120 slides, 120 pictures and every
+  slide's picture transform equal to the replicas'. `base_chunks_total` counts the chunks served
+  and `base_bytes_total` stays 0 for the chain. The five gates together run in about 19 s with
+  `--test-threads=1` on the build host (LibreOffice skipped there).
 
 The gates found a real adapter bug: `shape.move`, `shape.setBounds` and `text.set` ran against the
 engine *selection*, so a replica whose active slide was another one refused a remote edit on
@@ -595,6 +624,7 @@ document as the editors.
 | `cargo test -p deckcraft-web` | 3 passed (the headless page-host scenario) |
 | `cargo check -p deckcraft-web --target wasm32-unknown-unknown` | ok |
 | `trunk build` in `apps/deckcraft-web` | ok: `dist/web`, 49 MB `_bg.wasm` in the dev profile |
+| after `collab/pr13` (chunked base): `fmt --check` clean, `clippy --workspace --all-targets -D warnings` clean, `collab-proto` 41, `collab` 269 + 8, `collab-server` 10 unit + 4 commit + 5 gates (19.4 s, LibreOffice skipped on the build host) + 17 socket, `collab-web` 15, `deckcraft-web` 6, `ui-egui collab::` 20 |
 | after `c895183a`: `fmt --check` clean, clippy `--workspace --all-targets -D warnings` clean, `collab` 215 + 8, `collab-proto` 32, `collab-server` 10 unit + 4 commit + 4 gates (2.43 s, LibreOffice skipped on the build host) + 7 socket, `collab-web` 15, `deckcraft-web` 6, `ui-egui collab::` 20, `deckcraft-engine` 584 + 1 ignored, `xtask layers` 32 crates, wasm32 check of `deckcraft-web` ok; `cargo test --workspace --no-fail-fast` green except the two known host-without-`craft-fonts` failures (`ui-egui ime_tests::korean_composes_in_the_notes_pane`, `render tests::east_asian_vertical_text_stands_ideographs_upright`) |
 
 Re-run on 2026-11-08 after `3ec81d70`: `fmt` clean, `collab-proto` 19, `collab` 113 + 7,
@@ -878,11 +908,11 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Criterion | State | Where / why |
 |---|---|---|
 | Two or more clients edit one presentation | ✅ for the v1 command set; a three-client soak (two editors and a viewer, 26 edits) converges across compaction | hub, socket test, UI pipe test, `tests/gates.rs` |
-| A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
+| A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip; and a big-deck soak of 322 edits by three editors whose 11.8 MiB native base reaches a late client in 48 chunks, a fifth participant resuming the chain mid-way, and a commit at the head that reimports with every replica's values | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio, video and 3-D models over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits, the rest of the table surface (style, cell fill, merge/split, column/row sizing), slide notes text, document fonts (the embedded-font registry: one face by digest, descriptors, removal), SmartArt (outline, layout, style and colours as one whole diagram value, an insertion of a whole diagram, the three conversions `fromText`/`toText`/`toShapes` as one structural step each, and a node's picture as one final value with its place) and charts (edits and insertion as one whole chart value) | collab tests, socket test, commit reimport |
-| Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
+| Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map — inline up to 8 MiB, above it as a chunk chain that resumes after a dropped socket | client queue + resync; three-session gate; three-client soak; big-deck gate; `DocSession::resync` / `base_chunk` |
 | Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, the whole table for style/fill/merge/split/sizing, document fonts (the whole entry), a SmartArt step (the whole group, including a node's picture), a SmartArt insertion (the whole inserted shape) and a SmartArt conversion (the whole source shape, whatever its id) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore` (an insertion or a conversion too)/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
@@ -1092,16 +1122,22 @@ was not touched, and PR #1975 is unchanged.
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
    the client must resync.
-8. **Three-client soak, longer runs.** The three-client soak now runs in `tests/gates.rs` (see
-   §8): 26 move/bounds/text/fill edits across compaction, a viewer rebuilt from the base, a
-   reconnect from the journal, and a commit at the final version. What remains is a longer soak
-   (hundreds of steps, more participants, media in the loop) and running the LibreOffice gate in
-   CI, where LibreOffice is not installed (there it skips itself).
-9. **Base transfer above the inline limit.** A client below a compacted journal is rebuilt from
-   the native base and key map carried by `snapshot`; above `max_base_inline` (8 MiB,
-   `COLLAB_MAX_BASE_INLINE`) the message names the base without bytes and the client must reopen
-   the file from the cabinet. A chunked baseline or an HTTP-served base (the media endpoint
-   pattern) is the next step for 100-slide decks with media.
+8. **Soaks are in; CI still skips LibreOffice.** Four soaks now run in `tests/gates.rs` (see §8):
+   the 26-edit three-client soak, and the big-deck soak — 322 edits by three editors over a
+   120-slide deck with media, a viewer rebuilt from the 11.8 MiB base sent in 48 chunks, a fifth
+   participant whose socket drops mid-chain and resumes at the missing chunk, and a commit at the
+   head that reimports with every replica's values. What remains is running the LibreOffice gate in
+   CI, where LibreOffice is not installed (there it skips itself, printing a line).
+9. **Base transfer above the inline limit is done.** A client below a compacted journal is
+   rebuilt from the native base and key map carried by `snapshot`; above `max_base_inline` (8 MiB,
+   `COLLAB_MAX_BASE_INLINE`) the base arrives as a chain of chunks (`base.chunks`, `base-chunk`,
+   RFC §4.5.1) that the client assembles, verifies against the announced digest and installs, so a
+   100-slide deck with media no longer needs a reopen from the cabinet. Limits on both sides
+   (`COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS` on the server; 8 MiB per chunk, 4096 chunks
+   and 64 MiB per base on the client) and the "named without bytes" path stays as the fallback for
+   a client build that does not know `base-chunk`. What is left on this line is only the choice
+   between a chain and an HTTP-served base (the media endpoint pattern) for very large decks, which
+   the chain already covers.
 10. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
     (§ Rebase onto origin/main), so the fork branches no longer fast-forward and the publish is a
     `--force-with-lease`. The push is manual (the chair does it). Nothing was pushed to
@@ -1143,8 +1179,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 ## Next session: start here
 
-1. Run the verification table above; if the tree is clean, continue on `collab/pr12` (or branch
-   `collab/pr13` from it).
+1. Run the verification table above; if the tree is clean, continue on `collab/pr13` (or branch
+   `collab/pr14` from it).
 2. **Draft PR #1998 is open from `copoka/deckcraft:collab/pr11`** (head `6e9d10e7`,
    `MERGEABLE`/`CLEAN`); #1975 still points at the pre-rebase `collab/pr10` head and is
    superseded. Pushing this file's commit, marking #1998 ready and closing #1975 are human steps.
@@ -1180,11 +1216,51 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    chart type/data/options step (the whole chart shape) and a model camera or scene step (the
    whole model shape). Every command on the wire has its undo image; relative effects are not on
    the wire by design.
-6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
+6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); they now cover the long run (322 edits, media, a chained base, a resume mid-chain) as well as the three-client soak, so the remaining gate work is running LibreOffice where it is installed.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-10 — a base above the inline limit travels as a chunk chain
+
+- The gate TASK.md §8 asks for at the end of §8 — a 100+ slide deck with media and *hundreds* of
+  steps — exists: `a_hundred_and_twenty_slide_deck_with_media_soaks_for_hundreds_of_steps_and_a_chained_base`.
+  It builds 120 slides, each with its own 160×160 noise picture (12 193 KiB of `.pptx`, **11.8 MiB**
+  of native base) and a rectangle, makes **322 edits** with three editors (move and bounds on the
+  picture, text and fill on the rectangle, 46.8 ms per step on the build host — the server's 50 ms
+  read slice, not the apply), compacts the journal seven times, and commits at the head.
+- That base is above the 8 MiB inline limit, so the second half of the item — a client below a
+  compacted journal without reopening the file from the cabinet — needed the wire to carry it.
+  `BaseSnapshot.chunks {sha256, len, chunkSize, count}` announces the chain; `base-chunk
+  {version, index}` → `base-chunk {version, index, count, data}` moves one chunk (base64, 256 KiB
+  decoded in the gate); the client assembles, checks `len` and the digest, and only then installs
+  the base and replays the tail above it. The snapshot is not applied while the base is being
+  assembled: `Applied` in that window is not replayed onto the stale replica, and after installing
+  the base the client asks for the tail from the base's version, so nothing is skipped. `submit`
+  answers `rebuilding` in that window — normalising an edit against a document the room no longer
+  has would be worse than a moment's pause.
+- **Resume, not restart.** The client keeps its assembled prefix and the index it is missing; a
+  dropped socket clears only the outstanding request, so the next connection asks for that chunk.
+  A second snapshot naming the same base (the catch-up after a reconnect) continues the chain; a
+  chunk of a base compaction replaced is `rejected{code:"stale", retryable:true}` and the client
+  asks for a fresh snapshot instead of mixing two bases' bytes. In the gate a fifth participant
+  joins the chain, drops after three chunks, reconnects and asks for chunk 3 — and finishes.
+- **Limits on both sides.** Server: `max_base_chunk` (`COLLAB_MAX_BASE_CHUNK`, 1 MiB) and
+  `max_base_chunks` (`COLLAB_MAX_BASE_CHUNKS`, 1024). Client: `BaseChunks::MAX_CHUNK_SIZE` (8 MiB),
+  `MAX_COUNT` (4096), `MAX_LEN` (64 MiB) and the consistency check `count == ceil(len/chunkSize)`,
+  all enforced before a chunk is asked for or a byte allocated. A base that does not fit the chain
+  is still named without bytes, and the client reopens the file from the cabinet — the fallback
+  for a build without `base-chunk`, not the expected path.
+- Measured on `agents`: 322 edits in 15.1 s; the viewer rebuilt 11.8 MiB in **48 chunks** plus two
+  tail steps in 168 ms; the commit at version 324 built 12 195 KiB in 223 ms and reimported with
+  120 slides, 120 pictures and every slide's picture transform equal to the replicas'. The five §8
+  gates run 5/5 in 19.4 s with `--test-threads=1` (LibreOffice skipped on the build host).
+- Tests: `collab` 269 + 8 (chain order, one request at a time, resume at the missing index, same
+  chain continued, stale chain, protocol ceilings, short chunk, wrong digest, steps collected by a
+  catch-up, the CollabDoc host path resuming across a reconnect, the server's chunk API and the
+  hub's viewer-allowed chunk with `stale`/`invalid` refusals), `collab-proto` 41 (wire round trip,
+  `is_well_formed`, `chunk_len`), `collab-server` 10 unit + 4 commit + 5 gates + 17 socket.
 
 ### 2026-11-10 — a 3-D model's scene as one final value
 
