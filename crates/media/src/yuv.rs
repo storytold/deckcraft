@@ -47,7 +47,11 @@ pub struct Planes<'a, T> {
 }
 
 /// Convert to tightly packed RGBA8.
-pub fn to_rgba<T: Copy + Into<u32>>(p: &Planes<T>, m: Matrix, full_range: bool) -> Vec<u8> {
+pub fn to_rgba<T: Copy + Into<u32>>(p: &Planes<T>, m: Matrix, full_range: bool, max_bytes: u64) -> Option<Vec<u8>> {
+    let len = p.width.checked_mul(p.height)?.checked_mul(4)?;
+    if len as u64 > max_bytes {
+        return None;
+    }
     let (kr, kb) = m.k();
     let kg = 1.0 - kr - kb;
     let max = ((1u32 << p.bits) - 1) as f32;
@@ -59,7 +63,9 @@ pub fn to_rgba<T: Copy + Into<u32>>(p: &Planes<T>, m: Matrix, full_range: bool) 
     let cb_b = 2.0 * (1.0 - kb);
     let cb_g = -2.0 * kb * (1.0 - kb) / kg;
     let cr_g = -2.0 * kr * (1.0 - kr) / kg;
-    let mut out = vec![0u8; p.width * p.height * 4];
+    let mut out = Vec::new();
+    out.try_reserve_exact(len).ok()?;
+    out.resize(len, 0);
     let px = |v: f32| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
     for row in 0..p.height {
         let yrow = row * p.y_stride;
@@ -83,7 +89,7 @@ pub fn to_rgba<T: Copy + Into<u32>>(p: &Planes<T>, m: Matrix, full_range: bool) 
             o[k + 3] = 255;
         }
     }
-    out
+    Some(out)
 }
 
 #[cfg(test)]
@@ -92,7 +98,7 @@ mod tests {
 
     fn one(y: u8, u: u8, v: u8, full: bool) -> [u8; 4] {
         let p = Planes { y: &[y], u: &[u], v: &[v], y_stride: 1, c_stride: 1, width: 1, height: 1, sx: 0, sy: 0, bits: 8, mono: false };
-        let o = to_rgba(&p, Matrix::Bt709, full);
+        let o = to_rgba(&p, Matrix::Bt709, full, 4).unwrap_or_default();
         [o[0], o[1], o[2], o[3]]
     }
 
@@ -115,6 +121,6 @@ mod tests {
         let y = [940u16];
         let c = [512u16];
         let p = Planes { y: &y, u: &c, v: &c, y_stride: 1, c_stride: 1, width: 1, height: 1, sx: 0, sy: 0, bits: 10, mono: false };
-        assert_eq!(to_rgba(&p, Matrix::Bt709, false), vec![255, 255, 255, 255]);
+        assert_eq!(to_rgba(&p, Matrix::Bt709, false, 4), Some(vec![255, 255, 255, 255]));
     }
 }

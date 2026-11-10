@@ -471,8 +471,24 @@ fn build_and_check(cabac: bool, threads: usize) {
         cross_check_ffmpeg(&stream, &expected, if cabac { "synth_cabac" } else { "synth_cavlc" });
     }
     let mut dec = Decoder::with_threads(threads);
-    let mut out = dec.decode(&stream, 0).unwrap();
-    out.extend(dec.flush());
+    let mut out = dec.decode_limited(&stream, 0, 3).unwrap();
+    assert!(out.len() <= 3);
+    loop {
+        let batch = dec.drain_ready(3);
+        assert!(batch.len() <= 3);
+        if batch.is_empty() {
+            break;
+        }
+        out.extend(batch);
+    }
+    loop {
+        let batch = dec.flush_limited(3);
+        assert!(batch.len() <= 3);
+        if batch.is_empty() {
+            break;
+        }
+        out.extend(batch);
+    }
     assert!(dec.take_error().is_none());
     assert_eq!(out.len(), expected.len(), "cabac={cabac}");
     for (i, (p, e)) in out.iter().zip(expected.iter()).enumerate() {
@@ -495,6 +511,37 @@ fn cross_check_ffmpeg(stream: &[u8], expected: &[Planes3], name: &str) {
 fn pcm_long_term_mmco_gaps_cavlc() {
     build_and_check(false, 1);
     build_and_check(false, 4);
+}
+
+#[test]
+fn output_batches_can_be_limited_without_losing_pictures() {
+    let mut stream = sps(66, 4, false, PocType::T2);
+    stream.extend(pps(false, false));
+    let key = Pic { idr: true, frame_num: 0, ref_idc: 3, mbs: vec![Some(vec![128; 384]); NMB], ..Default::default() };
+    for _ in 0..20 {
+        stream.extend(slice_nal(&key, false));
+    }
+
+    let mut decoder = Decoder::with_threads(1);
+    let mut pictures = decoder.decode_limited(&stream, 0, 16).unwrap();
+    assert!(pictures.len() <= 16);
+    loop {
+        let batch = decoder.drain_ready(16);
+        assert!(batch.len() <= 16);
+        if batch.is_empty() {
+            break;
+        }
+        pictures.extend(batch);
+    }
+    loop {
+        let batch = decoder.flush_limited(16);
+        assert!(batch.len() <= 16);
+        if batch.is_empty() {
+            break;
+        }
+        pictures.extend(batch);
+    }
+    assert_eq!(pictures.len(), 20);
 }
 
 #[test]

@@ -9,6 +9,7 @@ description = "DeckCraft media: probing, audio decoding (MP3, AAC/M4A, WAV, AIFF
 workspace = true
 
 [dependencies]
+deckcraft-bitstream = { workspace = true }
 deckcraft-isobmff = { workspace = true }
 deckcraft-matroska = { workspace = true }
 deckcraft-ogg = { workspace = true }
