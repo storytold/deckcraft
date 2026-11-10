@@ -280,6 +280,9 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     for tag in ["video", "audio"] {
         timing.find_all(tag, &mut nodes);
     }
+    // One walk of the timing tree decides the automatic start of every media shape, instead of
+    // one walk per shape.
+    let autoplay = autoplay_map(timing);
     for node in nodes.into_iter().take(10_000) {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(spid) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")) else { continue };
@@ -300,7 +303,7 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
         }
-        clip.autoplay = starts_alone(timing, spid, cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")));
+        clip.autoplay = starts_alone(&autoplay, spid, cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")));
     }
 }
 /// Whether the timing starts `spid` on its own, without a click.
@@ -309,45 +312,47 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
 /// click-to-play clip's behaviour inside an interactive sequence. The media node's own start delay
 /// is no guide: PowerPoint leaves it `indefinite` for automatic starts too. A file without any
 /// such behaviour (DeckCraft writes the delay alone) falls back to that numeric delay.
-fn starts_alone(timing: &El, spid: u32, delay: Option<&str>) -> bool {
-    match play_from(timing, spid, false, false, 0) {
-        Some(main) => main,
+fn starts_alone(autoplay: &std::collections::HashMap<u32, bool>, spid: u32, delay: Option<&str>) -> bool {
+    match autoplay.get(&spid) {
+        Some(main) => *main,
         None => delay.is_some_and(|d| d.trim() != "indefinite"),
     }
 }
 
-/// `Some(true)` when a `playFrom` behaviour for `spid` starts without a click, `Some(false)` when
-/// the only ones wait for one, `None` when there is none at all.
+/// Every shape a `playFrom` behaviour starts, mapped to whether it starts without a click. A
+/// shape with several behaviours is automatic if any of them is: an automatic start wins over a
+/// click one, whichever the file lists first.
 ///
 /// `interactive` is set inside an interactive sequence, `clicked` once a click effect precedes the
 /// behaviour in the same click group: PowerPoint's first group holds both the automatic start
 /// (before any click effect) and everything the click sets off, so the order in the group decides.
-fn play_from(e: &El, spid: u32, interactive: bool, clicked: bool, depth: usize) -> Option<bool> {
+fn autoplay_map(timing: &El) -> std::collections::HashMap<u32, bool> {
+    let mut out = std::collections::HashMap::new();
+    walk_autoplay(timing, false, false, 0, &mut out);
+    out
+}
+
+fn walk_autoplay(e: &El, interactive: bool, clicked: bool, depth: usize, out: &mut std::collections::HashMap<u32, bool>) {
     if depth > 64 {
-        return None;
+        return;
     }
     // An interactive sequence and a click effect both wait for a click.
     let interactive = interactive || (e.is("cTn") && matches!(e.attr("nodeType"), Some("interactiveSeq" | "clickEffect")));
     let clicked = clicked || (e.is("cTn") && e.attr("nodeType") == Some("clickEffect"));
     if e.is("cmd")
         && e.attr("cmd").is_some_and(|c| c.trim().to_ascii_lowercase().starts_with("playfrom"))
-        && e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid")) == Some(spid)
+        && let Some(spid) = e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid"))
     {
-        return Some(!(interactive || clicked));
+        let auto = !(interactive || clicked);
+        out.entry(spid).and_modify(|v| *v |= auto).or_insert(auto);
     }
-    let mut found = None;
     let mut clicked_so_far = clicked;
     for c in e.elements() {
         // A new click group starts its own sequence: the click that opened the previous group does
         // not trigger this one.
         let new_group = c.is("cTn") && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim) == Some("indefinite");
         let child_clicked = if new_group { false } else { clicked_so_far };
-        match play_from(c, spid, interactive, child_clicked, depth + 1) {
-            // A start without a click wins over a click one, whichever the file lists first.
-            Some(true) => return Some(true),
-            Some(false) => found = Some(false),
-            None => {}
-        }
+        walk_autoplay(c, interactive, child_clicked, depth + 1, out);
         // Siblings in one click group play in order: once a click effect has run, every later
         // effect in that group waits for it. A group's clicks stay inside the group.
         if new_group {
@@ -356,7 +361,6 @@ fn play_from(e: &El, spid: u32, interactive: bool, clicked: bool, depth: usize) 
             clicked_so_far = true;
         }
     }
-    found
 }
 
 /// Whether this subtree holds a click effect (bounded).

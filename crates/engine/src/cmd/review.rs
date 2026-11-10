@@ -1,5 +1,6 @@
 //! Review tab: comments, spelling, accessibility; Slide Show requests.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use deckcraft_geom::Xfrm;
@@ -659,7 +660,12 @@ fn record_show(s: &mut Session, p: &Value) -> Result<Value> {
     if n == 0 {
         return Err(bad("show.record", "no slides"));
     }
-    let from = opt_usize_param(p, "from", "show.record")?.unwrap_or(0).min(n - 1);
+    let from = opt_usize_param(p, "from", "show.record")?.unwrap_or(0);
+    // An out-of-range start is refused like every other index command; silently playing the last
+    // slide would record a slide the caller did not ask for.
+    if from >= n {
+        return Err(bad("show.record", format!("no slide {from}")));
+    }
     s.ui_requests.push(UiRequest::StartShow { from, record: true });
     Ok(json!({"from": from, "record": true}))
 }
@@ -905,10 +911,17 @@ fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Up to 4096 finite points. A missing pressure is 0.5.
+/// The most points one stroke or laser trace may carry: a longer input is refused rather than
+/// silently truncated (the recorder sends one point per sampled frame, far below this).
+const MAX_INK_POINTS: usize = 4096;
+
 fn ink_points(p: &Value) -> Result<Vec<(f64, f64, f32)>> {
     let raw = p.get("points").and_then(Value::as_array).ok_or_else(|| bad("ink.stroke", "missing `points`"))?;
+    if raw.len() > MAX_INK_POINTS {
+        return Err(bad("ink.stroke", format!("a stroke can have at most {MAX_INK_POINTS} points, not {}", raw.len())));
+    }
     let mut out = Vec::new();
-    for pt in raw.iter().take(4096) {
+    for pt in raw {
         let Some(a) = pt.as_array() else { continue };
         let (Some(x), Some(y)) = (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)) else { continue };
         if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e7 || y.abs() > 1.0e7 {
@@ -1043,7 +1056,8 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
         // the document points at it (`clear_narration`'s rule), or repeated takes keep the dropped
         // audio in memory for the life of the document.
         if let Some((_, old)) = &replaced {
-            let drop: Vec<_> = old.iter().copied().filter(|id| !media_used(doc, *id)).collect();
+            let used = used_media(doc);
+            let drop: Vec<_> = old.iter().copied().filter(|id| !used.contains(id)).collect();
             doc.media.retain(|m| !drop.contains(&m.id));
         }
         Ok(id.0)
@@ -1077,8 +1091,11 @@ fn laser(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn laser_points(p: &Value) -> Result<Vec<LaserSample>> {
     let raw = p.get("points").and_then(Value::as_array).ok_or_else(|| bad("show.laser", "missing `points`"))?;
+    if raw.len() > MAX_INK_POINTS {
+        return Err(bad("show.laser", format!("a laser trace can have at most {MAX_INK_POINTS} points, not {}", raw.len())));
+    }
     let mut out = Vec::new();
-    for pt in raw.iter().take(4096) {
+    for pt in raw {
         let Some(a) = pt.as_array() else { continue };
         let (Some(x), Some(y)) = (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)) else { continue };
         if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e7 || y.abs() > 1.0e7 {
@@ -1205,7 +1222,8 @@ fn clear_narration(s: &mut Session, p: &Value) -> Result<Value> {
         }
         media.sort_by_key(|m| m.0);
         media.dedup();
-        let drop: Vec<_> = media.into_iter().filter(|id| !media_used(doc, *id)).collect();
+        let used = used_media(doc);
+        let drop: Vec<_> = media.into_iter().filter(|id| !used.contains(id)).collect();
         doc.media.retain(|m| !drop.contains(&m.id));
         Ok(n)
     })?;
@@ -1224,87 +1242,110 @@ fn narration_ids(shapes: &[Shape]) -> Vec<(ShapeId, deckcraft_model::MediaId, Op
     out
 }
 
-fn shapes_use_media(shapes: &[Shape], id: deckcraft_model::MediaId) -> bool {
-    let mut used = false;
-    deckcraft_model::walk(shapes, &mut |sh, _| {
-        if shape_uses_media(sh, id) {
-            used = true;
+/// Every media id the document still points at, in one walk: clearing many narrations must not
+/// rescan the whole deck once per dropped clip.
+fn used_media(doc: &deckcraft_model::Presentation) -> HashSet<deckcraft_model::MediaId> {
+    let mut used = HashSet::new();
+    for f in &doc.embedded_fonts {
+        for face in f.faces().into_iter().flatten() {
+            used.insert(face);
         }
-    });
-    used
-}
-
-fn media_used(doc: &deckcraft_model::Presentation, id: deckcraft_model::MediaId) -> bool {
-    if doc.embedded_fonts.iter().any(|f| f.faces().contains(&Some(id))) {
-        return true;
+    }
+    // A function, not a closure: a closure would hold `used` mutably across the shape walks.
+    fn background(bg: Option<&deckcraft_model::Background>, used: &mut HashSet<deckcraft_model::MediaId>) {
+        if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::style::Fill::Picture(p) }) = bg {
+            used.insert(p.media);
+        }
     }
     for sl in &doc.slides {
-        if sl.transition.as_ref().is_some_and(|t| t.sound == Some(id))
-            || sl.animations.iter().any(|a| a.sound == Some(id))
-            || bg_uses(sl.background.as_ref(), id)
-            || shapes_use_media(&sl.shapes, id)
+        if let Some(t) = &sl.transition
+            && let Some(id) = t.sound
         {
-            return true;
+            used.insert(id);
         }
+        for a in &sl.animations {
+            if let Some(id) = a.sound {
+                used.insert(id);
+            }
+        }
+        background(sl.background.as_ref(), &mut used);
+        collect_shape_media(&sl.shapes, &mut used);
     }
     for m in &doc.masters {
-        if bg_uses(m.background.as_ref(), id) || shapes_use_media(&m.shapes, id) {
-            return true;
-        }
+        background(m.background.as_ref(), &mut used);
+        collect_shape_media(&m.shapes, &mut used);
         for l in &m.layouts {
-            if bg_uses(l.background.as_ref(), id) || shapes_use_media(&l.shapes, id) {
-                return true;
-            }
+            background(l.background.as_ref(), &mut used);
+            collect_shape_media(&l.shapes, &mut used);
         }
     }
     for m in [doc.notes_master.as_ref(), doc.handout_master.as_ref()].into_iter().flatten() {
-        if bg_uses(m.background.as_ref(), id) || shapes_use_media(&m.shapes, id) {
-            return true;
+        background(m.background.as_ref(), &mut used);
+        collect_shape_media(&m.shapes, &mut used);
+    }
+    used
+}
+
+/// Add every media id `shapes` refers to: fills, action sounds, text bullets and links, media,
+/// picture, OLE and 3-D references.
+fn collect_shape_media(shapes: &[Shape], used: &mut HashSet<deckcraft_model::MediaId>) {
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        if let Some(deckcraft_model::style::Fill::Picture(p)) = &sh.fill {
+            used.insert(p.media);
         }
-    }
-    false
-}
-
-/// Whether a hyperlink's action plays `id` (a link or a mouse-over can carry a sound).
-fn link_uses_media(link: Option<&deckcraft_model::text::Hyperlink>, id: deckcraft_model::MediaId) -> bool {
-    link.is_some_and(|l| l.sound == Some(id))
-}
-
-/// Whether a text body's picture bullets or linked runs point at `id`.
-fn text_uses_media(t: Option<&deckcraft_model::text::TextBody>, id: deckcraft_model::MediaId) -> bool {
-    let Some(t) = t else { return false };
-    t.paragraphs.iter().any(|p| {
-        matches!(p.props.bullet, Some(deckcraft_model::text::Bullet::Picture { media }) if media == id)
-            || p.runs.iter().any(|r| link_uses_media(r.props.link.as_ref(), id) || link_uses_media(r.props.hover.as_ref(), id))
-    })
-}
-
-fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
-    if matches!(&sh.fill, Some(deckcraft_model::style::Fill::Picture(p)) if p.media == id) {
-        return true;
-    }
-    // The shape's own action buttons, its text, and a table's cell text (which a table keeps in
-    // the cells rather than in the shape's own body).
-    if link_uses_media(sh.click.as_ref(), id) || link_uses_media(sh.hover.as_ref(), id) || text_uses_media(sh.text.as_ref(), id) {
-        return true;
-    }
-    if let ShapeKind::Table(t) = &sh.kind
-        && t.rows.iter().flat_map(|r| r.cells.iter()).any(|c| text_uses_media(Some(&c.text), id))
-    {
-        return true;
-    }
-    match &sh.kind {
-        ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
-        ShapeKind::Picture { fill } => fill.media == id,
-        // An OLE object, SmartArt diagram… keeps the parts its XML points to.
-        ShapeKind::Opaque { preview, parts, .. } => *preview == Some(id) || parts.iter().any(|(_, _, media)| *media == id),
-        ShapeKind::Model3d { media, poster } => *media == id || *poster == Some(id),
-        _ => false,
-    }
-}
-
-fn bg_uses(bg: Option<&deckcraft_model::Background>, id: deckcraft_model::MediaId) -> bool {
-    matches!(bg, Some(deckcraft_model::Background::Fill { fill: deckcraft_model::style::Fill::Picture(p) }) if p.media == id)
+        for link in [sh.click.as_ref(), sh.hover.as_ref()].into_iter().flatten() {
+            if let Some(id) = link.sound {
+                used.insert(id);
+            }
+        }
+        let mut text = |t: Option<&deckcraft_model::text::TextBody>| {
+            let Some(t) = t else { return };
+            for p in &t.paragraphs {
+                if let Some(deckcraft_model::text::Bullet::Picture { media }) = p.props.bullet {
+                    used.insert(media);
+                }
+                for r in &p.runs {
+                    for link in [r.props.link.as_ref(), r.props.hover.as_ref()].into_iter().flatten() {
+                        if let Some(id) = link.sound {
+                            used.insert(id);
+                        }
+                    }
+                }
+            }
+        };
+        text(sh.text.as_ref());
+        if let ShapeKind::Table(t) = &sh.kind {
+            for c in t.rows.iter().flat_map(|r| r.cells.iter()) {
+                text(Some(&c.text));
+            }
+        }
+        match &sh.kind {
+            ShapeKind::Media(c) => {
+                used.insert(c.media);
+                if let Some(p) = c.poster {
+                    used.insert(p);
+                }
+            }
+            ShapeKind::Picture { fill } => {
+                used.insert(fill.media);
+            }
+            ShapeKind::Opaque { preview, parts, .. } => {
+                if let Some(p) = preview {
+                    used.insert(*p);
+                }
+                for (_, _, media) in parts {
+                    used.insert(*media);
+                }
+            }
+            ShapeKind::Model3d { media, poster } => {
+                used.insert(*media);
+                if let Some(p) = poster {
+                    used.insert(*p);
+                }
+            }
+            _ => {}
+        }
+    });
 }
 
 #[cfg(test)]

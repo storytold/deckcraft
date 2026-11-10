@@ -24,9 +24,10 @@ impl CaptureRegion {
         Ok(CaptureRegion { x, y, width, height })
     }
 
-    /// The region as `[x, y, width, height]`, for command results.
-    pub fn to_array(self) -> [i64; 4] {
-        [i64::from(self.x), i64::from(self.y), i64::from(self.width), i64::from(self.height)]
+    /// The region as the command protocol's `{x, y, width, height}` object (the engine builds the
+    /// JSON; this crate has no serde dependency).
+    pub fn to_object(self) -> (i64, i64, u32, u32) {
+        (i64::from(self.x), i64::from(self.y), self.width, self.height)
     }
 }
 
@@ -203,5 +204,46 @@ impl ScreenIn for NoScreen {
 impl fmt::Display for CaptureRegion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}×{} at {},{}", self.width, self.height, self.x, self.y)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_region_refuses_negative_origins_and_sides_under_the_minimum() {
+        assert_eq!(CaptureRegion::new(0, 0, 64, 64), Ok(CaptureRegion { x: 0, y: 0, width: 64, height: 64 }));
+        assert_eq!(
+            CaptureRegion::new(-1, 0, 64, 64),
+            Err(ScreenError::Failed("a recording region must be at least 64×64 pixels wide inside the screen".into()))
+        );
+        assert!(CaptureRegion::new(0, -1, 64, 64).is_err());
+        assert!(CaptureRegion::new(0, 0, 63, 64).is_err());
+        assert!(CaptureRegion::new(0, 0, 64, 63).is_err());
+        assert_eq!(CaptureRegion::new(0, 0, 64, 64).unwrap().to_object(), (0, 0, 64, 64));
+    }
+
+    #[test]
+    fn a_frame_refuses_zero_sides_a_tight_stride_and_a_short_buffer() {
+        // A valid 4×4 picture: 16 bytes a row, 4 rows.
+        assert!(ScreenFrame::new(4, 4, 16, vec![0; 64]).is_some());
+        // A padded stride is valid and kept (the recorder strips it).
+        let padded = ScreenFrame::new(4, 4, 24, vec![0; 96]).expect("padded stride");
+        assert_eq!(padded.stride, 24);
+        assert!(ScreenFrame::new(0, 4, 0, vec![]).is_none(), "no width");
+        assert!(ScreenFrame::new(4, 0, 16, vec![]).is_none(), "no height");
+        assert!(ScreenFrame::new(4, 4, 15, vec![0; 96]).is_none(), "a stride below width*4 cannot hold a row");
+        assert!(ScreenFrame::new(4, 4, 16, vec![0; 63]).is_none(), "a buffer shorter than stride*height");
+        // A width whose stride would overflow is refused rather than wrapping.
+        assert!(ScreenFrame::new(u32::MAX, 2, 4, vec![0; 8]).is_none());
+    }
+
+    #[test]
+    fn a_solid_frame_is_tight_and_padded_frames_keep_their_stride() {
+        let f = ScreenFrame::solid(7, 3, [1, 2, 3, 255]);
+        assert_eq!(f.stride, 7 * 4);
+        assert_eq!(f.data.len(), f.stride * 3);
+        assert_eq!(&f.data[..4], &[1, 2, 3, 255]);
     }
 }

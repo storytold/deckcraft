@@ -478,3 +478,56 @@ fn an_automatic_start_behaviour_does_not_add_an_animation() {
         .expect("the clip");
     assert!(clip.autoplay, "the automatic start survives the round trip");
 }
+
+/// Characterization of the ordinary animation import: a non-media effect after a click effect is
+/// still read (the media autoplay rule must not drop it) and keeps its authored start and delay.
+#[test]
+fn a_non_media_animation_after_a_click_effect_is_still_read() {
+    use deckcraft_model::Animation;
+    use deckcraft_model::anim::AnimStart;
+
+    let mut p = defaults::new_presentation(None);
+    let id = ShapeId(p.alloc_id().expect("id"));
+    Arc::make_mut(&mut p.slides[0]).shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Box".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 100.0, 60.0)),
+        kind: ShapeKind::Shape,
+        ..Default::default()
+    });
+    let effect = |ctn: &str, delay: u32| {
+        format!(
+            r#"<p:par><p:cTn id="9" presetID="1" presetClass="entr"{ctn} fill="hold"><p:stCondLst><p:cond delay="{delay}"/></p:stCondLst><p:childTnLst><p:set><p:cBhvr><p:cTn id="10" dur="500"/><p:tgtEl><p:spTgt spid="{}"/></p:tgtEl></p:cBhvr></p:set></p:childTnLst></p:cTn></p:par>"#,
+            id.0
+        )
+    };
+    // A click effect first, then an effect that plays with/after it.
+    let first = effect(r#" nodeType="clickEffect""#, 0);
+    let second = effect("", 500);
+    let timing = format!(
+        r#"<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>{first}{second}</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#
+    );
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        let mut d = vec![];
+        f.read_to_end(&mut d).expect("read");
+        if f.name() == "ppt/slides/slide1.xml" {
+            let s = String::from_utf8(d).expect("utf8");
+            let s = without_timing(&s);
+            let end = s.rfind("</p:sld>").expect("end");
+            d = format!("{}{timing}{}", &s[..end], &s[end..]).into_bytes();
+        }
+        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
+        out.write_all(&d).expect("write");
+    }
+    let q = deckcraft_pptx::import(&out.finish().expect("finish").into_inner()).expect("import");
+    let anims: Vec<&Animation> = q.slides[0].animations.iter().collect();
+    assert_eq!(anims.len(), 2, "the effect after the click is not dropped: {anims:?}");
+    assert_eq!(anims[0].start, AnimStart::OnClick);
+    assert_eq!(anims[1].start, AnimStart::WithPrevious);
+    assert_eq!(anims[1].delay_ms, 500);
+    assert!(anims.iter().all(|a| a.shape == id), "both effects target the box");
+}
