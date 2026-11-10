@@ -158,6 +158,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `table.merge`, `table.split` | command | final merge corners or the merge anchor (`table.merge`/`table.split`); cells keep their indices, so a queued cell operation is only moved by a row/column edit, and a merge that covered an addressed cell refuses it `stale` |
 | `table.columnWidth`, `table.rowHeight` | command | one final column width (`keepTotal` takes the difference from the next column) or row height in points (`table.columnWidth`/`table.rowHeight`) |
 | `smartArt.setNodes`, `smartArt.addNode`, `smartArt.removeNode`, `smartArt.promote`, `smartArt.demote`, `smartArt.layout`, `smartArt.style`, `smartArt.colors` | command | the graphic's **whole** diagram value — layout, outline (text, levels, assistants, titles, pictures), style and colours — in one `smartArt.setDiagram`; the client runs the engine's `smartArt::plan`, the same function the single-user command uses, so it sends the value that command would leave (a layout change drops the file's saved layout, a style/colour change its own XML); an unknown layout/style/colour, an unaddressable node and a too-large value are refused before sending (and by the engine before the first write); the undo image is the whole group (`shape_field{field: smartArt}`), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing |
+| `insert.smartArt` | structural | the **whole diagram** the insertion would create — layout, the node tree, style and colours — plus the final box, in a `smart_art_insert`; the client builds it with the engine's `smartart::insert_plan` (the same function the single-user command runs), the engine checks layout/style/colours, node count, text and JSON size before the first write, and every replica regenerates the same drawing instead of running its own sample; a hostile tree adds nothing and moves no version; the undo is the ordinary shape-delete step, and the redo restores the whole shape (diagram and generated children) |
 | `chart.type`, `chart.data`, `chart.options` | command | the chart's **whole** value — type, categories (with outer levels), series, element options and any kept part — in one `chart.setWhole`; the client runs the engine's `chart::plan`, the same plan the single-user command uses, so it sends the value that command would leave; the adapter requires a chart shape and bounds the value (category/series/point counts, text, JSON size) before the first write; the undo image is the whole chart shape (`shape_field{field: chart}`), because a kept chart part cannot be replayed from arguments |
 | `insert.chart` | structural | the **whole chart** the insertion would create (its sample and typed data) plus the final box, in a `chart_insert`; every replica creates that chart instead of running its own sample; the undo is the ordinary shape-delete step |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
@@ -187,10 +188,21 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: `insert.smartArt` and the SmartArt
-convert/picture commands, and relative effects; a 3-D model can now be inserted
-(`insert.model3d`, drawn as its poster or a stand-in cube), but its camera and scene are not
-editable in v1.
+values, go on the wire. What is still refused: the SmartArt conversions (`smartArt.fromText`,
+`smartArt.toText`, `smartArt.toShapes`) and the picture in a node (`smartArt.picture`, a
+media-channel slice), and relative effects; a 3-D model can be inserted (`insert.model3d`, drawn
+as its poster or a stand-in cube), but its camera and scene are not editable in v1.
+
+A few commands are **queries**, not operations: they answer a read-only question and change no
+document. `smartArt.nodes` is one of them, and the server answers only queries on an explicit
+allowlist (`smartArt.nodes` today) — an arbitrary engine query could render, read the server's
+files or list its dictionaries, so it is never reachable this way. A client sends
+`query {id, cmd, target, params}`; the server resolves the slide and shape from the session keys,
+runs the engine's query on the authoritative session, restores the engine selection and answers
+`query_result {id, version, result | error}` to the asker alone. No version moves, nothing enters
+the journal, and a viewer may ask. A command that changes the document, a command outside the
+allowlist and an unknown command are refused in the answer — they belong on the operation path,
+where they get a version and an undo image.
 The full command surface is the next slice; it needs a final-value normalisation for each
 command, not a raw `execute` on the wire.
 
@@ -379,9 +391,11 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    final set, a cell fill over an explicit cell list, merge/split and column/row sizing; the undo
    image is the whole table, as for a row/column edit), and Table Layout ▸ Cell Size has the
    Column Width and Row Height fields, which carry the selected column/row as final values and run
-   the same `table.columnWidth`/`table.rowHeight` commands a border drag does. What is left in
-   this line: `insert.smartArt` and its conversions; charts are in (type/data/options and an
-   insertion as one whole chart value, the whole chart shape as the undo image).
+   the same `table.columnWidth`/`table.rowHeight` commands a border drag does. A SmartArt graphic
+   can be inserted now (`insert.smartArt` as one whole diagram value, the whole shape as the undo
+   image) and `smartArt.nodes` is answered by the server as a read-only query; charts are in too
+   (type/data/options and an insertion as one whole chart value, the whole chart shape as the undo
+   image). What is left in this line: the SmartArt conversions and the picture in a node.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
