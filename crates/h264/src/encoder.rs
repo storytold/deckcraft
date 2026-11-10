@@ -683,6 +683,7 @@ impl Encoder {
     /// Intra 16x16 prediction, transform and quantisation for one macroblock: the mode, the luma
     /// AC levels per 4x4 block, the Hadamard luma DC, the two chroma planes, and the coded-block
     /// flags the syntax and the reconstruction share.
+    #[allow(clippy::type_complexity)]
     fn intra_levels(&self, src: &Planes, mx: usize, my: usize) -> (u32, [[i32; 16]; 16], [i32; 16], [ChromaMb; 2], bool, u32) {
         let qp = self.cfg.qp;
         let (top, left, dc) = self.intra_neighbours(mx, my);
@@ -741,6 +742,7 @@ impl Encoder {
 
     /// The intra macroblock syntax: header, luma DC, luma AC, then chroma DC and AC with the
     /// neighbour totals updated for the blocks that follow.
+    #[allow(clippy::too_many_arguments)]
     fn write_intra_syntax(
         &mut self,
         b: &mut Bits,
