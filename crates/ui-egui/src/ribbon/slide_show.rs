@@ -38,7 +38,7 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
             .on_hover_text("Records slide timings, the microphone and pen ink. Laser follows the pointer.");
         // Attached only while it applies: an empty tooltip still draws a box under the description.
         if (if recording { r.on_hover_text(busy) } else { r }).clicked() {
-            let _ = app.run("show.record", json!({}));
+            let _ = app.run("show.record", json!({"from": app.show_start_index()}));
         }
     });
     group(ui, |ui| {

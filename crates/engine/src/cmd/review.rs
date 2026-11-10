@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::edit::walk_mut;
 use super::{
     CommandSpec, NO_ID_SPACE, RECORDED_INK, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param,
-    is_recorded_ink, mark_recorded, ok, recording_tag, str_param, usize_param,
+    is_recorded_ink, mark_recorded, ok, opt_usize_param, recording_tag, str_param, usize_param,
 };
 use crate::{Result, Session, Target, UiRequest};
 
@@ -892,12 +892,21 @@ fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {
     ok()
 }
 
-fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
+fn target_slide(s: &Session, p: &Value, id: &str) -> Result<usize> {
+    // A malformed `index` is refused rather than read as "the current slide": these commands
+    // overwrite recorded data, so a wrong type must not pick a slide. Absent or `null` keeps
+    // the current slide, matching `slide_scope` and `recording_scope`.
     let st = s.doc()?;
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let index = opt_usize_param(p, "index", id)?.unwrap_or(st.selection.slide);
     if index >= st.doc.slides.len() {
-        return Err(bad("ink.stroke", format!("no slide {index}")));
+        return Err(bad(id, format!("no slide {index}")));
     }
+    Ok(index)
+}
+
+fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
+    let index = target_slide(s, p, "ink.stroke")?;
+    let st = s.doc()?;
     let points = ink_points(p)?;
     if points.len() < 2 {
         return Err(bad("ink.stroke", "need at least two points"));
@@ -996,11 +1005,8 @@ fn apply_laser_color(sh: &mut deckcraft_model::ShowSettings, p: &Value) -> Resul
 /// Embed a WAV as the slide's narration. A later recording replaces the slide's existing narration
 /// clip (a media shape with `narration: true`); a shape merely named "Narration" stays.
 fn narration(s: &mut Session, p: &Value) -> Result<Value> {
+    let index = target_slide(s, p, "show.narration")?;
     let st = s.doc()?;
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
-    if index >= st.doc.slides.len() {
-        return Err(bad("show.narration", format!("no slide {index}")));
-    }
     let (name, bytes) = super::insert::media_bytes(p, "show.narration")?;
     if bytes.len() > 48_000_000 {
         return Err(bad("show.narration", "audio is too long"));
@@ -1084,11 +1090,8 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Replace the slide's recorded laser trace.
 fn laser(s: &mut Session, p: &Value) -> Result<Value> {
+    let index = target_slide(s, p, "show.laser")?;
     let st = s.doc()?;
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
-    if index >= st.doc.slides.len() {
-        return Err(bad("show.laser", format!("no slide {index}")));
-    }
     let points = laser_points(p)?;
     if points.is_empty() {
         return Err(bad("show.laser", "need at least one point"));
@@ -1945,6 +1948,21 @@ mod tests {
         assert!(s.doc().unwrap().doc.slides[0].laser.is_none());
         assert!(s.execute("show.laser", &json!({"points": []})).is_err());
         assert!(s.execute("show.laser", &json!({"index": 99, "points": [[0.0, 0.0, 0]]})).is_err());
+    }
+    /// #1836 review: a malformed `index` must not silently act on the current slide.
+    #[test]
+    fn recording_index_rejects_the_wrong_type() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        // `null` and an absent index keep the current slide; anything else must fail.
+        assert!(s.execute("show.laser", &json!({"index": null, "points": [[0.0, 0.0, 0]]})).is_ok());
+        for bad_index in [json!(-1), json!("2"), json!(1.5), json!(true)] {
+            assert!(s.execute("show.laser", &json!({"index": bad_index, "points": [[0.0, 0.0, 0]]})).is_err(), "{bad_index}");
+            assert!(s.execute("show.narration", &json!({"index": bad_index, "name": "n.wav", "data": ""})).is_err(), "{bad_index}");
+            assert!(s.execute("ink.stroke", &json!({"index": bad_index, "points": [[0.0, 0.0], [1.0, 1.0]]})).is_err(), "{bad_index}");
+        }
+        // The failed commands left the current slide's laser alone.
+        assert!(s.doc().unwrap().doc.slides[0].laser.is_some());
     }
 
     #[test]
