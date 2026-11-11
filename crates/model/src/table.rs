@@ -351,12 +351,16 @@ impl Table {
         let rows = self.rows.iter().take(keep).map(|r| Row { height: r.height, cells: r.cells.iter().take(n).cloned().collect() }).collect();
         let mut t = Table { cols: self.cols[..n].to_vec(), rows, background: self.background.clone(), style: self.style.clone(), ..*self };
         t.normalize();
+        if self.over_cap() {
+            t.clip_spans();
+        }
         t
     }
     /// Make every row have exactly `cols.len()` cells (repair after loading). A grid over
     /// [`MAX_CELLS`] loses its last rows (and columns) first, so a file naming many rows and many
     /// columns but few cells cannot make this allocate their product.
     pub fn normalize(&mut self) {
+        let truncated = self.over_cap();
         self.cols.truncate(MAX_CELLS);
         let n = self.cols.len();
         self.rows.truncate((MAX_CELLS / n.max(1)).max(1));
@@ -365,6 +369,20 @@ impl Table {
             for c in &mut r.cells {
                 c.grid_span = c.grid_span.max(1);
                 c.row_span = c.row_span.max(1);
+            }
+        }
+        if truncated {
+            self.clip_spans();
+        }
+    }
+    /// Cut every merge span to the rows and columns that remain, so no merge reaches past a
+    /// table that lost rows or columns to the cell cap.
+    fn clip_spans(&mut self) {
+        let (nr, nc) = (self.rows.len(), self.cols.len());
+        for (ri, r) in self.rows.iter_mut().enumerate() {
+            for (ci, c) in r.cells.iter_mut().enumerate() {
+                c.row_span = c.row_span.min((nr - ri) as u32).max(1);
+                c.grid_span = c.grid_span.min((nc - ci) as u32).max(1);
             }
         }
     }
@@ -648,6 +666,27 @@ mod tests {
         assert!(!t.insert_col(0));
         assert_eq!(t, before);
         assert!(Table::new(75, 75, 100.0, 10.0).insert_row(0));
+    }
+
+    /// A merge that crosses the truncation boundary is clipped to the rows and columns that remain.
+    #[test]
+    fn merges_are_clipped_when_the_cap_drops_rows() {
+        let cols = 1000;
+        let rows = MAX_CELLS / cols + 1;
+        let mut t = Table { cols: vec![1.0; cols], rows: vec![Row { height: 1.0, cells: vec![Cell::new(""); cols] }; rows], ..Default::default() };
+        t.rows[0].cells[0].row_span = rows as u32;
+        t.rows[0].cells[cols - 1].grid_span = 5;
+        let n = t.normalized();
+        assert_eq!(n.rows.len(), rows - 1);
+        assert_eq!(n.rows[0].cells[0].row_span as usize, rows - 1);
+        assert_eq!(n.rows[0].cells[cols - 1].grid_span, 1);
+        t.normalize();
+        assert_eq!(t.rows[0].cells[0].row_span as usize, rows - 1);
+        // Within the cap, spans are left as the file wrote them.
+        let mut small = Table::new(3, 3, 30.0, 10.0);
+        small.rows[2].cells[2].grid_span = 4;
+        small.normalize();
+        assert_eq!(small.rows[2].cells[2].grid_span, 4);
     }
 
     fn merged() -> Table {
