@@ -253,6 +253,13 @@ impl FrameState {
         self.lr = t.lr;
     }
 
+    /// Bytes of CDEF and loop-restoration metadata each parallel tile state copies whole.
+    pub fn tile_metadata_bytes(&self) -> usize {
+        let lr = &self.lr;
+        // 1 (type) + 6 (Wiener) + 1 (SGR set) + 2 (SGR weights) bytes per unit.
+        self.cdef.len() + lr.lr_type.iter().map(|v| v.len() * 10).sum::<usize>()
+    }
+
     /// Private buffers for the tile covering mode info rows [r0, r1) x columns [c0, c1); tiles
     /// on the right / bottom frame edge also cover the allocation margins.
     pub fn tile_state(&self, r0: usize, r1: usize, c0: usize, c1: usize) -> TileState {
