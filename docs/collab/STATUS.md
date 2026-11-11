@@ -15,11 +15,13 @@ restart limits), then `9ad80547` (code, tests and docs: the fourth review's tria
 and record the unrun gate), then `fd5914e8` (the **presence heartbeat**: an unchanged presence is
 repeated every 10 s, inside the room's 30 s TTL, and a moved one stays capped at 20 Hz; the test
 drives the pump over an in-process pipe and fails without the heartbeat).
-**`fd5914e8` is the last code slice; the branch `collab/pr15` — this working tree, the fork
-(`copoka/deckcraft`) and PR #2012 — carries this STATUS commit on top of it, and the tree is
-clean. `git ls-remote fork refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` name
-the exact head; both point at the docs commit above `fd5914e8`.**
-The push delivered `fd5914e8` on top of `1f78cadb`, so nothing is un-pushed: the fifth review's
+**`fd5914e8` is the last code slice; the docs commit above it is `da8ba866`, and that is what the
+fork (`copoka/deckcraft`) and PR #2012 hold: `git ls-remote fork refs/heads/collab/pr15` and
+`gh pr view 2012 --json headRefOid` both name `da8ba866`. Local HEAD is the merge of `origin/main`
+at `c6846f6a` (`c9803277`, §Merge of `origin/main`) with this STATUS commit on top; neither is
+pushed, so local HEAD and the PR head differ until a person pushes the branch.**
+The push delivered `fd5914e8` on top of `1f78cadb`, so every review fix up to that head is
+delivered: the fifth review's
 triage is delivered too — a room
 whose snapshot fails stays live and answers `500` instead of closing, a snapshot that does not
 cover a rewind is refused and not installed, and a move dropped by a role change is cancelled
@@ -117,18 +119,80 @@ The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
 
+## Merge of `origin/main` (2026-11-11)
+
+`origin/main` moved to `c6846f6a` — 28 commits over `0623b430` — after this branch was delivered,
+so PR #2012 went `CONFLICTING` / `mergeStateStatus: DIRTY`. The branch was **merged, not
+rebased**: merge commit **`c9803277`** has `da8ba866` as its first parent and `c6846f6a` as its
+second, so every slice hash named in this file still names its commit and no history was
+rewritten. The tree is clean; local HEAD is that merge commit with this STATUS commit on top, and
+the fork and the PR still hold `da8ba866` until a person pushes.
+
+What main brought: the media codecs and containers move to craft-libs, so the `opus`, `ogg`,
+`isobmff` and `matroska` crates leave the workspace (`git diff --stat HEAD^1 HEAD` on the merge:
+94 files, +1 955/−7 865), together with the photo-album reopen limits, the metafile and PPTX
+budget work and the `ptLst`-order fallback in the SmartArt outline reader.
+
+`git merge-tree --write-tree HEAD origin/main` named two content conflicts before the merge. Both
+are resolved as a union that keeps main's change **and** the collaboration side, not as a choice:
+
+| File | Conflict | Resolution |
+|---|---|---|
+| `Cargo.lock` | one hunk: main puts the new `craft-audio` package (`storytold/craft-libs@75895c03`) where the branch's `cpufeatures 0.3.1` entry sits | both entries are kept. The first build on `agents` then rewrote exactly four lines — the workspace version main bumped to 0.18.0 in the four collaboration crates' own lock entries — and that lock is the committed one. The `copoka/craft-libs` host pin (ADR-0016 §3) is untouched and no `opus`/`ogg`/`isobmff`/`matroska` package is left |
+| `docs/architecture.md` | one hunk over the L0/L1/L2 rows | those rows take main's wording (the `bitstream`/`media` split, the craft-libs decoders) with `collab-proto` added back to L0; the L5 row keeps `collab`. The header and the changelog row are main's |
+
+One file auto-merged into a compile error and is fixed in the same commit, not left for later:
+main's new `ptLst`-order fallback in `crates/pptx/src/dgm.rs` (`outline_ids`) builds a
+`DiagramNode` that predates this branch's `picture_place` field, so the fallback node carries
+`picture_place: None` — a node built there has no node picture, and `read/shapes.rs` fills the
+place from the picture element exactly as before. Nothing else needed a hand edit: the other
+files main touched (`crates/engine/src/tools/*`, `crates/engine/src/cmd/*`, `crates/pptx`, the
+workflows, `xtask/src/layers.rs`) merged cleanly and compile with the collaboration code.
+
+The TASK.md §8 gate was run on the merge commit on `agents` (20 cores, Ubuntu 24.04, rust 1.99.1):
+
+| Command | Result |
+|---|---|
+| `cargo fmt --all -- --check` | clean (EXIT=0) |
+| `cargo clippy --workspace --all-targets -- -D warnings` | clean (EXIT=0) |
+| `cargo test -p deckcraft-collab-proto` | 42 passed |
+| `cargo test -p deckcraft-collab` | 288 + 8 passed |
+| `cargo test -p deckcraft-collab-server` | 19 unit + 5 commit + 18 socket passed |
+| `cargo test -p deckcraft-collab-server --test gates -- --test-threads=1` | 5 passed in 19.1 s (LibreOffice skipped on the build host) |
+| `cargo test -p deckcraft-collab-web` | 15 passed |
+| `cargo test -p deckcraft-engine` | 612 + 1 ignored, plus 6 + 8 integration |
+| `cargo test -p deckcraft-pptx` | 70 + 5 + 146 passed |
+| `cargo test -p deckcraft-ui-egui --lib` | 526 passed, 4 ignored, 1 failed — the known host-font case `ime_tests::korean_composes_in_the_notes_pane` (`No glyph for "ㄴ" (U+3134)`, the build host has no `craft-fonts`); it fails identically on the pre-merge head, so it is an environment gap, not this change |
+| `cargo xtask pdf-deps` | EXIT=0 |
+| `cargo xtask assets` | EXIT=0, all 48 asset files attributed |
+| `cargo xtask layers` | EXIT=0, 28 crates, no violations (32 before the merge: main removed the four codec crates) |
+| `cargo xtask wasm` | EXIT=0, wasm32 check of 22 crates (one wasm-only `dead_code` warning for `SlideApp::opening_generation`, which `origin/main` carries too) |
+| `cargo test --workspace --doc` | EXIT=0, the workspace's 3 doctests pass |
+
+`cargo xtask ci` as a whole cannot be EXIT=0 on that host for one reason only: its `test` step is
+the workspace test run, which includes the same host-font failure above. Every other step of it
+was run on its own and is green, as the table shows.
+
+**`mergeStateStatus` must be re-checked after the push.** GitHub computes `mergeable` and
+`mergeStateStatus` from the pushed head, and locally the only verdict available is that the merge
+applies and builds. Pushing `collab/pr15` to the fork — and approving the workflow runs on the new
+head — is the owner's step (§PR publication); an agent does not push.
+
 ## PR publication (2026-11-11)
 
 **[PR #2012](https://github.com/storytold/deckcraft/pull/2012)** is open from
 `copoka/deckcraft:collab/pr15` (last code slice `fd5914e8`, this STATUS commit on top) into
 `storytold/deckcraft:main` and is **ready** (not a draft); its body is [`pr10.md`](pr10.md). The
 fork head **is** the PR head: `git ls-remote fork refs/heads/collab/pr15` and
-`gh pr view 2012 --json headRefOid` name the same commit — this docs commit above `fd5914e8` —
-and it is this branch's local HEAD. Everything the branch holds is delivered: the second review's
+`gh pr view 2012 --json headRefOid` name the same commit — the docs commit above `fd5914e8`,
+`da8ba866`. Everything the branch delivered is there: the second review's
 commits, the fourth review's triage, the STATUS sync, the fifth review's triage (`891187f5`), its
 docs commit (`38a20a9c`), the delivered-head note (`1f78cadb`) and the presence heartbeat
-(`fd5914e8`). GitHub's merge verdict on the new head is recomputed after the push; the local
-TASK.md §8 gate is green (see below).
+(`fd5914e8`). Local HEAD is one commit further — `c9803277`, the merge of `origin/main`
+(§Merge of `origin/main`) — and that merge is **not** pushed, so GitHub still reads the branch at
+`da8ba866`, reports the PR `CONFLICTING` / `mergeStateStatus: DIRTY` against today's `main`, and
+will only recompute the verdict after the owner's push. The local TASK.md §8 gate is green on the
+merge commit (see below).
 
 The **workflow gate has not run on any of these heads**: the four workflow runs (CI, House rules,
 Nix, SonarCloud) on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
@@ -158,7 +222,7 @@ Merging is a human step. Closing the superseded PRs is a human decision as well.
 
 | PR | Branch | Head | GitHub state |
 |---|---|---|---|
-| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `fd5914e8` + docs | leading PR; local §8 gate green; workflow runs await approval (`mergeStateStatus` recomputed after the push) |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `fd5914e8` + docs (`da8ba866`) in the fork; local HEAD adds the `origin/main` merge `c9803277`, unpushed | leading PR; `CONFLICTING`/`DIRTY` on `da8ba866` until the merge is pushed; local §8 gate green **on the merge**; workflow runs await approval (`mergeStateStatus` recomputed after the push) |
 | [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `6e9d10e7` | `MERGEABLE` / `CLEAN`, superseded |
 | [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `be706a11` | `MERGEABLE` / `UNSTABLE`, superseded |
 
@@ -849,6 +913,7 @@ document as the editors.
 | `trunk build` in `apps/deckcraft-web` | ok: `dist/web`, 49 MB `_bg.wasm` in the dev profile |
 | after `collab/pr13` (chunked base): `fmt --check` clean, `clippy --workspace --all-targets -D warnings` clean, `collab-proto` 41, `collab` 269 + 8, `collab-server` 10 unit + 4 commit + 5 gates (19.4 s, LibreOffice skipped on the build host) + 17 socket, `collab-web` 15, `deckcraft-web` 6, `ui-egui collab::` 20 |
 | after `c895183a`: `fmt --check` clean, clippy `--workspace --all-targets -D warnings` clean, `collab` 215 + 8, `collab-proto` 32, `collab-server` 10 unit + 4 commit + 4 gates (2.43 s, LibreOffice skipped on the build host) + 7 socket, `collab-web` 15, `deckcraft-web` 6, `ui-egui collab::` 20, `deckcraft-engine` 584 + 1 ignored, `xtask layers` 32 crates, wasm32 check of `deckcraft-web` ok; `cargo test --workspace --no-fail-fast` green except the two known host-without-`craft-fonts` failures (`ui-egui ime_tests::korean_composes_in_the_notes_pane`, `render tests::east_asian_vertical_text_stands_ideographs_upright`) |
+| after the merge of `origin/main` (`c9803277`): `fmt --check` clean, clippy `--workspace --all-targets -D warnings` EXIT=0, `collab-proto` 42, `collab` 288 + 8, `collab-server` 19 unit + 5 commit + 18 socket + 5 gates (19.1 s, LibreOffice skipped on the build host), `collab-web` 15, `engine` 612 + 1 ignored (+ 6 + 8 integration), `pptx` 70 + 5 + 146, `ui-egui --lib` 526 passed + 4 ignored with the one known host-font failure (`ime_tests::korean_composes_in_the_notes_pane`), `xtask` `pdf-deps`/`assets` (48 files)/`layers` (28 crates)/`wasm` (22 crates) all EXIT=0, `cargo test --workspace --doc` pass; `cargo xtask ci` as a whole stops only at its `test` step, which is the same workspace run and the same host-font failure |
 
 Re-run on 2026-11-08 after `3ec81d70`: `fmt` clean, `collab-proto` 19, `collab` 113 + 7,
 `collab-server` 5 + 6, `ui-egui collab::` 17, `deckcraft-engine` 565 + 1 ignored; clippy over the
@@ -1476,10 +1541,17 @@ token from the cabinet.
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
 2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (last code slice
-   `fd5914e8` with the STATUS commit on top = fork head = PR head = local branch head); every
-   review pass, the STATUS sync and the presence heartbeat are delivered. The local TASK.md §8 gate is green on that head (fmt, clippy over
-   `deckcraft-collab` and `deckcraft-ui-egui`, `collab` 288 + 8, `ui-egui --lib` 522 + 4 ignored
-   with only the known host-font test skipped). The **workflow** gate still has not run: CI, House
+   `fd5914e8` with the STATUS commit on top = `da8ba866` = fork head = PR head); every
+   review pass, the STATUS sync and the presence heartbeat are delivered. **Local HEAD is the
+   merge of `origin/main` at `c6846f6a`, `c9803277`, with this STATUS commit on top** (§Merge of
+   `origin/main`) — the branch
+   is no longer `CONFLICTING` locally, but the merge is not pushed, so GitHub still sees
+   `da8ba866` and its `mergeable`/`mergeStateStatus` verdict will only be recomputed after the
+   push (`push` and CI approval are the owner's steps). The local TASK.md §8 gate is green on the
+   merge commit: fmt clean, clippy `--workspace --all-targets -D warnings` EXIT=0, `collab` 288 +
+   8, `collab-proto` 42, `collab-server` 19 unit + 5 commit + 18 socket + 5 gates (19.1 s),
+   `engine` 612 + 1, `pptx` 70 + 5 + 146, `ui-egui --lib` 526 + 4 ignored with only the known
+   host-font failure, `xtask` pdf-deps/assets/layers/wasm green. The **workflow** gate still has not run: CI, House
    rules, Nix and SonarCloud on `38a20a9c` are `action_required` (created 2026-11-11T11:31:32Z)
    and wait for a maintainer's approval; the runs for `fd5914e8` wait for the same approval.
    CodeRabbit's second review is closed, the third (`fd1ee71a`) found nothing in code, the fourth
@@ -1528,6 +1600,27 @@ token from the cabinet.
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-11 — `origin/main` merged into `collab/pr15`; PR #2012 no longer conflicts
+
+- **What was wrong.** `origin/main` moved 28 commits past `0623b430` after the branch was
+  delivered, so GitHub reported PR #2012 as `CONFLICTING` / `mergeStateStatus: DIRTY` on head
+  `da8ba866`.
+- **Done.** A normal merge commit, `c9803277`, with `da8ba866` and `c6846f6a` as parents: no
+  rebase, no force, no history rewritten, so every slice hash in this file still holds. Two
+  content conflicts (`Cargo.lock`, `docs/architecture.md`) resolved as a union that keeps main's
+  change and the collaboration side; main's new `ptLst`-order fallback in `crates/pptx/src/dgm.rs`
+  auto-merged into a compile error and is fixed in the same commit (`picture_place: None`). The
+  details and the full gate table are in §Merge of `origin/main`.
+- **Gate.** `fmt --check` clean, clippy `--workspace --all-targets -- -D warnings` EXIT=0,
+  `collab-proto` 42, `collab` 288 + 8, `collab-server` 19 unit + 5 commit + 18 socket + 5 §8 gates
+  (19.1 s), `collab-web` 15, `engine` 612 + 1 ignored (+ 6 + 8), `pptx` 70 + 5 + 146,
+  `ui-egui --lib` 526 + 4 ignored with only the known host-font failure, `xtask`
+  `pdf-deps`/`assets`/`layers` (28 crates)/`wasm` (22 crates) EXIT=0, workspace doctests pass.
+- **Not done.** Nothing was pushed: the fork and the PR still hold `da8ba866`, so
+  `mergeStateStatus` will only be recomputed after the owner's push. CI approval is the owner's
+  step too.
+- Tree clean; docs-only change on top of the merge (this file).
 
 ### 2026-11-11 — the presence heartbeat delivered on top of `1f78cadb`; the §8 gate is green
 
