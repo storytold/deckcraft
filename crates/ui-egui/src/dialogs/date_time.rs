@@ -1,4 +1,4 @@
-use super::{DATE_KINDS, Dialog, SlideApp, Tokens, Ui, buttons, check, json};
+﻿use super::{DATE_KINDS, Dialog, SlideApp, Tokens, Ui, buttons, check, json};
 
 const DATE_LANGS: &[(&str, &str)] = &[
     ("en-US", "English (United States)"),
@@ -26,11 +26,11 @@ pub(super) fn date_rows(lang: &str) -> Vec<(&'static str, String)> {
     rows
 }
 
-/// Render language and format controls; OK applies `insert.dateTime`, and the return value says
+/// Render language and format controls; 확인 applies `insert.dateTime`, and the return value says
 /// whether the dialog should close.
 pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.set_min_width(440.0);
-    ui.label("Available formats:");
+    ui.label("사용 가능한 형식:");
     let lang = d.get("language", "en-US");
     let rows = date_rows(&lang);
     if !rows.iter().any(|(k, _)| *k == d.get("format", "datetime1"))
@@ -48,7 +48,7 @@ pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     });
     let lang_label = DATE_LANGS.iter().find(|(k, _)| *k == lang).map(|(_, l)| *l).unwrap_or("English (United States)");
     ui.horizontal(|ui| {
-        ui.label("Language:");
+        ui.label("언어:");
         let opened = craft_ui::ComboBox::from_id_salt("date-lang").selected_text(lang_label).width(240.0).show_ui(ui, |ui| {
             for (k, l) in DATE_LANGS {
                 if ui.selectable_label(lang == *k, *l).clicked() {
@@ -64,12 +64,12 @@ pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
         });
     });
     ui.label(
-        egui::RichText::new("Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time.")
+        egui::RichText::new("영문 표기 시 월 이름과 AM/PM이 표시되며, 기타 언어는 숫자 날짜와 24시간 형식으로 표시됩니다.")
             .size(11.0)
             .color(Tokens::get(ui.ctx()).text_dim),
     );
-    let update = check(ui, d, "Update automatically", "update", true);
-    let (ok, cancel) = buttons(ui, "OK");
+    let update = check(ui, d, "자동으로 업데이트", "update", true);
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let lang = d.get("language", "en-US");
         let mut format = d.get("format", "datetime1");

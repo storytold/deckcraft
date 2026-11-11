@@ -1,4 +1,4 @@
-//! Measurement units (#1326): with centimetres chosen in Preferences, the Format pane, the ribbon
+﻿//! Measurement units (#1326): with centimetres chosen in Preferences, the Format pane, the ribbon
 //! and the Slide Size dialog show and take centimetres, and the deck keeps its sizes in points.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -112,7 +112,7 @@ fn the_slide_size_dialog_shows_and_takes_centimetres() {
     let mut h = harness(app);
     h.run_steps(3);
     assert!(h.query_by_label("Width (cm):").is_some() && h.query_by_label("Height (cm):").is_some());
-    assert!(h.query_by_label("Width (in):").is_none());
+    assert!(h.query_by_label("너비(in):").is_none());
     // 960 x 540 pt = 33.87 x 19.05 cm.
     let shown = text_values(&h);
     assert!(shown.iter().any(|s| s == "33.87") && shown.iter().any(|s| s == "19.05"), "{shown:?}");
@@ -120,7 +120,7 @@ fn the_slide_size_dialog_shows_and_takes_centimetres() {
     let d = h.state_mut().dialog.as_mut().unwrap();
     d.fields.insert("w".into(), "25.4".into());
     h.run_steps(1);
-    h.get_by_label("OK").click();
+    h.get_by_label("확인").click();
     h.run_steps(3);
     let size = h.state().session.active().unwrap().doc.slide_size;
     assert!((size.width - 720.0).abs() < 1e-6 && (size.height - 540.0).abs() < 1e-6, "{size:?}");
@@ -135,7 +135,7 @@ fn ok_in_the_slide_size_dialog_without_edits_keeps_the_size() {
         app.dialog = Some(crate::dialogs::Dialog::new("slideSize"));
         let mut h = harness(app);
         h.run_steps(3);
-        h.get_by_label("OK").click();
+        h.get_by_label("확인").click();
         h.run_steps(3);
         let size = h.state().session.active().unwrap().doc.slide_size;
         assert_eq!((size.width, size.height), (960.0, 540.0), "{units:?}");
@@ -152,7 +152,7 @@ fn slide_size_dialog(units: Unit, w: f64, h: f64) -> Harness<'static, SlideApp> 
 }
 
 fn ok_and_size(h: &mut Harness<'_, SlideApp>) -> (f64, f64) {
-    h.get_by_label("OK").click();
+    h.get_by_label("확인").click();
     h.run_steps(3);
     let size = h.state().session.active().unwrap().doc.slide_size;
     (size.width, size.height)

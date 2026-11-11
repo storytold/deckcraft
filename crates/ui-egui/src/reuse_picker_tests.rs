@@ -1,4 +1,4 @@
-//! Home › New Slide › Reuse Slides…: the dialog lists the slides of the picked file and inserts the
+﻿//! Home › New Slide › Reuse Slides…: the dialog lists the slides of the picked file and inserts the
 //! ticked ones; what is inserted is what was listed, and a failed insert keeps the dialog open.
 
 use std::cell::RefCell;

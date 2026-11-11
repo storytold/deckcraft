@@ -1,4 +1,4 @@
-//! The Spelling dialog with a dictionary: suggestions change the word, Ignore All hides it.
+﻿//! The Spelling dialog with a dictionary: suggestions change the word, Ignore All hides it.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use deckcraft_engine::Session;
@@ -278,7 +278,7 @@ fn notes_menu_language_dialog_and_repeated_words() {
     assert_eq!(crate::dialogs::selected_language(h.state()).0, "xx-NM");
     h.get_by_label("Do not check spelling or grammar").click();
     h.run_steps(2);
-    h.get_by_label("OK").click();
+    h.get_by_label("확인").click();
     h.run_steps(3);
     assert_eq!(crate::dialogs::selected_language(h.state()), ("xx-NM".to_string(), true));
     let st = h.state().session.active().unwrap().clone();

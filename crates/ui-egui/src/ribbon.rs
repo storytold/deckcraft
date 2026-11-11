@@ -1,4 +1,4 @@
-//! Title bar, ribbon tabs and the ribbon card with every tab's groups.
+﻿//! Title bar, ribbon tabs and the ribbon card with every tab's groups.
 
 use deckcraft_engine::Target;
 use deckcraft_model::{ShapeId, ShapeKind, anim::AnimClass};
@@ -117,6 +117,27 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     v
 }
 
+fn tab_label(tab: &str) -> &str {
+    match tab {
+        "File" => "파일",
+        "Home" => "홈",
+        "Insert" => "삽입",
+        "Draw" => "그리기",
+        "Design" => "디자인",
+        "Transitions" => "전환",
+        "Animations" => "애니메이션",
+        "Slide Show" => "슬라이드 쇼",
+        "Record" => "녹음/녹화",
+        "Review" => "검토",
+        "View" => "보기",
+        "Picture Format" => "그림 서식",
+        "Shape Format" => "도형 서식",
+        "Chart Design" => "차트 디자인",
+        "Playback" => "재생",
+        other => other,
+    }
+}
+
 const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "Animations", "Slide Show", "Record", "Review", "View"];
 
 /// Tab row and the ribbon card.
@@ -134,15 +155,15 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut x = rect.min.x + 12.0;
         let y = rect.min.y + 2.0;
         {
-            let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(tab_label("File").to_string(), theme::font(13.0), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "File"));
             if resp.hovered() {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "File", theme::font(13.0), t.text);
-            if resp.on_hover_text("File (Alt+F)").clicked() {
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, tab_label("File"), theme::font(13.0), t.text);
+            if resp.on_hover_text("파일 (Alt+F)").clicked() {
                 app.open_backstage(crate::backstage::Page::Home);
             }
             x += w + 2.0;
@@ -150,7 +171,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
             let font = theme::font(13.0);
-            let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(tab_label(name).to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
@@ -160,7 +181,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             }
             let col = if contextual { t.contextual } else { t.text };
             let f = if active { theme::bold(13.0) } else { font };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, name, f, col);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, tab_label(name), f, col);
             if active {
                 let uw = (w - 20.0).max(16.0);
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);

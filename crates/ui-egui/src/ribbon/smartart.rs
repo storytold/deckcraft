@@ -1,4 +1,4 @@
-use super::arrange::arrange_group;
+﻿use super::arrange::arrange_group;
 use super::galleries::smartart_gallery;
 use super::{Icon, SlideApp, Ui, Value, big_button, group, json, rows, run, small_button, small_button_ex, widgets};
 

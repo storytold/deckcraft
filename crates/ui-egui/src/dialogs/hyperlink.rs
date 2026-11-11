@@ -1,4 +1,4 @@
-use super::{Value, json};
+﻿use super::{Value, json};
 
 /// What Insert Hyperlink would edit on the current selection.
 #[derive(Clone, Debug, PartialEq)]

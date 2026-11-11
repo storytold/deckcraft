@@ -1,4 +1,4 @@
-use super::galleries::{Fl, kurbo_flatten, shapes_gallery};
+﻿use super::galleries::{Fl, kurbo_flatten, shapes_gallery};
 use super::home::layout_menu;
 use super::view::zoom_menu;
 use super::{
@@ -9,7 +9,7 @@ use super::{
 /// Photo Album is a split button: the main click starts a new album, the arrow edits one.
 fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
     let en = enabled(app, "insert.photoAlbum");
-    let (main, arrow) = big_button_ex(ui, Icon::Picture, "Photo\nAlbum", en, true, false);
+    let (main, arrow) = big_button_ex(ui, Icon::Picture, "사진\n앨범", en, true, false);
     let _ = main.clone().on_hover_text(tip("insert.photoAlbum", "Photo Album…"));
     main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album…"));
     if let Some(a) = &arrow {
@@ -31,7 +31,7 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
 
 pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
+        let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "새\n슬라이드", enabled(app, "slide.new"), true, false);
         if main.clicked() {
             run(app, "slide.new", json!({}));
         }
@@ -40,7 +40,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         }
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Table, "Table", enabled(app, "insert.table"));
+        let r = big_button(ui, Icon::Table, "표", enabled(app, "insert.table"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some((rr, cc)) = table_grid_picker(ui) {
                 run(app, "insert.table", json!({"rows": rr, "cols": cc}));
@@ -51,29 +51,29 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
                 app.dialog = Some(crate::dialogs::Dialog::new("table"));
                 ui.close();
             }
-            if ui.button("Draw Table").clicked() {
+            if ui.button("표 그리기").clicked() {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: deckcraft_engine::tools::DRAW_TABLE.into() });
                 ui.close();
             }
         });
     });
     group(ui, |ui| {
-        big(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
+        big(app, ui, Icon::Picture, "그림", "app.insertPictureDialog", json!({}));
         photo_album_button(app, ui);
-        let r = big_button(ui, Icon::Screenshot, "Screenshot", false);
+        let r = big_button(ui, Icon::Screenshot, "스크린샷", false);
         let _ = r.on_hover_text("Screenshot (not available yet)");
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"));
+        let r = big_button(ui, Icon::Shapes, "도형", enabled(app, "shape.insert"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some(p) = shapes_gallery(ui) {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
             }
         });
-        let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
+        let r = big_button(ui, Icon::Icons, "아이콘", enabled(app, "insert.icon"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
-        big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
-        let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
+        big(app, ui, Icon::SmartArt, "스마트아트", "app.dialog", json!({"id": "smartart"}));
+        let r = big_button(ui, Icon::Chart, "차트", enabled(app, "insert.chart"));
         egui::Popup::menu(&r).show(|ui| {
             for k in chart_menu_types() {
                 if k.is_none() {
@@ -88,10 +88,10 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Zoom, "Zoom", enabled(app, "insert.zoom"));
+        let r = big_button(ui, Icon::Zoom, "확대/축소", enabled(app, "insert.zoom"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(300.0).show(|ui| zoom_menu(app, ui));
-        big(app, ui, Icon::Link, "Link", "app.dialog", json!({"id": "hyperlink"}));
-        let r = big_button(ui, Icon::Action, "Action", enabled(app, "insert.actionButton"));
+        big(app, ui, Icon::Link, "링크", "app.dialog", json!({"id": "hyperlink"}));
+        let r = big_button(ui, Icon::Action, "실행", enabled(app, "insert.actionButton"));
         egui::Popup::menu(&r).show(|ui| {
             for k in ["back", "forward", "beginning", "end", "home", "information", "return", "movie", "document", "sound", "help", "custom"] {
                 if ui.button(format!("Action Button: {k}")).clicked() {
@@ -106,29 +106,29 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        big(app, ui, Icon::Comment, "Comment", "app.dialog", json!({"id": "comment"}));
+        big(app, ui, Icon::Comment, "메모", "app.dialog", json!({"id": "comment"}));
     });
     group(ui, |ui| {
-        big(app, ui, Icon::TextBox, "Text\nBox", "insert.textBox", json!({}));
-        big(app, ui, Icon::HeaderFooter, "Header &\nFooter", "app.dialog", json!({"id": "headerFooter"}));
-        let r = big_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"));
+        big(app, ui, Icon::TextBox, "텍스트\n상자", "insert.textBox", json!({}));
+        big(app, ui, Icon::HeaderFooter, "머리글/\\n바닥글", "app.dialog", json!({"id": "headerFooter"}));
+        let r = big_button(ui, Icon::WordArt, "워드아트", enabled(app, "insert.wordArt"));
         egui::Popup::menu(&r).show(|ui| {
             for i in 0..6 {
-                if ui.button(format!("WordArt style {}", i + 1)).clicked() {
+                if ui.button(format!("워드아트 스타일 {}", i + 1)).clicked() {
                     run(app, "insert.wordArt", json!({"style": i}));
                 }
             }
         });
-        big(app, ui, Icon::DateTime, "Date &\nTime", "insert.dateTime", json!({}));
-        big(app, ui, Icon::SlideNumber, "Slide\nNumber", "insert.slideNumber", json!({}));
+        big(app, ui, Icon::DateTime, "날짜 및\\n시간", "insert.dateTime", json!({}));
+        big(app, ui, Icon::SlideNumber, "슬라이드\\n번호", "insert.slideNumber", json!({}));
     });
     group(ui, |ui| {
-        big(app, ui, Icon::Equation, "Equation", "app.dialog", json!({"id": "equation"}));
-        big(app, ui, Icon::Symbol, "Symbol", "app.dialog", json!({"id": "symbol"}));
+        big(app, ui, Icon::Equation, "수식", "app.dialog", json!({"id": "equation"}));
+        big(app, ui, Icon::Symbol, "기호", "app.dialog", json!({"id": "symbol"}));
     });
     group(ui, |ui| {
-        big(app, ui, Icon::Video, "Video", "app.insertVideoDialog", json!({}));
-        big(app, ui, Icon::Audio, "Audio", "app.insertAudioDialog", json!({}));
+        big(app, ui, Icon::Video, "비디오", "app.insertVideoDialog", json!({}));
+        big(app, ui, Icon::Audio, "오디오", "app.insertAudioDialog", json!({}));
     });
 }
 

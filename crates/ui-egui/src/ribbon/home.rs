@@ -1,4 +1,4 @@
-use super::arrange::arrange_menu;
+﻿use super::arrange::arrange_menu;
 use super::galleries::{cref_param, effects_menu, outline_menu, quick_styles, shapes_gallery, smartart_gallery};
 use super::{
     Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, big, big_button, big_button_ex, color_split, dropdown, enabled,
@@ -9,32 +9,32 @@ use super::{
 
 fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let (main, arrow) = big_button_ex(ui, Icon::Paste, "Paste", enabled(app, "edit.paste"), true, false);
+        let (main, arrow) = big_button_ex(ui, Icon::Paste, "붙여넣기", enabled(app, "edit.paste"), true, false);
         if main.on_hover_text("Paste (⌘V)").clicked() {
             run(app, "edit.paste", json!({}));
         }
         if let Some(a) = arrow {
             egui::Popup::menu(&a).show(|ui| {
-                if ui.button("Paste").clicked() {
+                if ui.button("붙여넣기").clicked() {
                     run(app, "edit.paste", json!({}));
                 }
-                if ui.button("Paste and Match Formatting").clicked() {
+                if ui.button("서식에 맞추어 붙여넣기").clicked() {
                     run(app, "edit.pasteText", json!({}));
                 }
                 if ui.button("Paste Special…").clicked() {
                     run(app, "app.pasteSpecial", json!({}));
                 }
-                if ui.button("Paste Formatting").clicked() {
+                if ui.button("서식만 붙여넣기").clicked() {
                     run(app, "format.painterApply", json!({}));
                 }
             });
         }
         rows(ui, |ui| {
-            small(app, ui, Icon::Cut, "Cut", "edit.cut", json!({}));
-            small(app, ui, Icon::Copy, "Copy", "edit.copy", json!({}));
+            small(app, ui, Icon::Cut, "잘라내기", "edit.cut", json!({}));
+            small(app, ui, Icon::Copy, "복사", "edit.copy", json!({}));
             let on = app.session.painter.is_some();
             let en = enabled(app, "format.painter");
-            let r = small_button(ui, Icon::FormatPainter, "Format", en, on).on_hover_text("Format Painter (double-click to keep it on)");
+            let r = small_button(ui, Icon::FormatPainter, "서식 복사", en, on).on_hover_text("서식 복사 (두 번 클릭하여 고정)");
             if r.double_clicked() {
                 run(app, "format.painter", json!({"sticky": true}));
             } else if r.clicked() {
@@ -99,7 +99,7 @@ pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
 /// Render the Home Slides group: New Slide, Layout, Reset, and Section controls.
 fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
+        let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "새 슬라이드", enabled(app, "slide.new"), true, false);
         if main.on_hover_text("New Slide (⇧⌘N)").clicked() {
             run(app, "slide.new", json!({}));
         }
@@ -107,12 +107,12 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
             egui::Popup::menu(&a).width(420.0).show(|ui| new_slide_menu(app, ui));
         }
         rows(ui, |ui| {
-            let (main, arrow) = small_button_ex(ui, Icon::Layout, "Layout", enabled(app, "slide.layout"), false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::Layout, "레이아웃", enabled(app, "slide.layout"), false, true);
             if let Some(arrow) = arrow {
                 widgets::split_menu(&main, &arrow, |ui| layout_menu(app, ui, "slide.layout"));
             }
-            small(app, ui, Icon::ResetSlide, "Reset", "slide.reset", json!({}));
-            let (main, arrow) = small_button_ex(ui, Icon::Section, "Section", enabled(app, "section.add"), false, true);
+            small(app, ui, Icon::ResetSlide, "다시 설정", "slide.reset", json!({}));
+            let (main, arrow) = small_button_ex(ui, Icon::Section, "구역", enabled(app, "section.add"), false, true);
             if let Some(arrow) = arrow {
                 widgets::split_menu(&main, &arrow, |ui| section_menu(app, ui));
             }
@@ -124,7 +124,7 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
 fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
     layout_menu(app, ui, "slide.new");
     ui.separator();
-    if ui.button("Duplicate Selected Slides").clicked() {
+    if ui.button("선택한 슬라이드 복제").clicked() {
         run(app, "slide.duplicate", json!({}));
     }
     if ui.button("Slides from Outline…").clicked() {
@@ -142,10 +142,10 @@ fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
 
 /// The Section split button's menu.
 fn section_menu(app: &mut SlideApp, ui: &mut Ui) {
-    if ui.button("Add Section").clicked() {
+    if ui.button("구역 추가").clicked() {
         run(app, "section.add", json!({}));
     }
-    if ui.button("Remove All Sections").clicked() {
+    if ui.button("모든 구역 제거").clicked() {
         run(app, "section.removeAll", json!({}));
     }
 }
@@ -220,7 +220,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 toggle(app, ui, Icon::Subscript, "Subscript", "format.subscript", b("subscript"));
                 let r = icon_toggle(ui, Icon::CharSpacing, "Character Spacing", en, false);
                 egui::Popup::menu(&r).show(|ui| {
-                    for (label, pt) in [("Very Tight", -3.0), ("Tight", -1.5), ("Normal", 0.0), ("Loose", 3.0), ("Very Loose", 6.0)] {
+                    for (label, pt) in [("Very Tight", -3.0), ("밀접 반사", -1.5), ("Normal", 0.0), ("Loose", 3.0), ("Very Loose", 6.0)] {
                         if ui.button(label).clicked() {
                             run(app, "format.spacing", json!({"pt": pt}));
                         }
@@ -259,7 +259,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         run(app, "format.color", json!({"color": cref_param(&c)}));
                     }
                 });
-                if ui.add_enabled(en, egui::Button::new("Font…").min_size(vec2(52.0, 22.0))).on_hover_text("Font").clicked() {
+                if ui.add_enabled(en, egui::Button::new("글꼴...").min_size(vec2(52.0, 22.0))).on_hover_text("Font").clicked() {
                     run(app, "format.fontDialog", json!({}));
                 }
             });
@@ -359,9 +359,9 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 1.0;
                 let al = st.get("align").and_then(Value::as_str).unwrap_or("");
-                toggle(app, ui, Icon::AlignLeft, "Align Left", "format.alignLeft", al == "l");
+                toggle(app, ui, Icon::AlignLeft, "왼쪽 맞춤", "format.alignLeft", al == "l");
                 toggle(app, ui, Icon::AlignCenter, "Center", "format.alignCenter", al == "ctr");
-                toggle(app, ui, Icon::AlignRight, "Align Right", "format.alignRight", al == "r");
+                toggle(app, ui, Icon::AlignRight, "오른쪽 맞춤", "format.alignRight", al == "r");
                 toggle(app, ui, Icon::Justify, "Justify", "format.justify", al == "just");
                 let r = icon_toggle(ui, Icon::TextDirection, "Text Direction", en, false);
                 egui::Popup::menu(&r).show(|ui| {
@@ -386,7 +386,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 });
                 let r = icon_toggle(ui, Icon::SmartArt, "Convert to SmartArt", enabled(app, "smartArt.fromText"), false);
                 egui::Popup::menu(&r).show(|ui| smartart_gallery(app, ui, "smartArt.fromText", json!({}), "", ("", ""), None));
-                if ui.add_enabled(en, egui::Button::new("Paragraph…").min_size(vec2(88.0, 22.0))).on_hover_text("Paragraph").clicked() {
+                if ui.add_enabled(en, egui::Button::new("단락...").min_size(vec2(88.0, 22.0))).on_hover_text("Paragraph").clicked() {
                     run(app, "format.paragraphDialog", json!({}));
                 }
             });
@@ -398,21 +398,21 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
 fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let en = enabled(app, "shape.insert");
-        let r = big_button(ui, Icon::Shapes, "Shapes", en).on_hover_text("Shapes");
+        let r = big_button(ui, Icon::Shapes, "도형", en).on_hover_text("도형");
         egui::Popup::menu(&r).show(|ui| {
             if let Some(p) = shapes_gallery(ui) {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
             }
         });
-        big(app, ui, Icon::TextBox, "Text Box", "insert.textBox", json!({}));
+        big(app, ui, Icon::TextBox, "텍스트 상자", "insert.textBox", json!({}));
         let sel = enabled(app, "shape.fill");
-        let r = big_button(ui, Icon::Arrange, "Arrange", sel);
+        let r = big_button(ui, Icon::Arrange, "정렬", sel);
         egui::Popup::menu(&r).show(|ui| arrange_menu(app, ui));
-        let r = big_button(ui, Icon::QuickStyles, "Quick\nStyles", sel);
+        let r = big_button(ui, Icon::QuickStyles, "빠른 스타일", sel);
         egui::Popup::menu(&r).width(330.0).show(|ui| quick_styles(app, ui));
         rows(ui, |ui| {
             let sc = scheme(app);
-            let (m, a) = small_button_ex(ui, Icon::ShapeFill, "Shape Fill", sel, false, true);
+            let (m, a) = small_button_ex(ui, Icon::ShapeFill, "도형 채우기", sel, false, true);
             if m.clicked() {
                 let c = app.last_fill.clone();
                 run(app, "shape.fill", json!({"color": c}));
@@ -430,7 +430,7 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 });
             }
-            let (m, a) = small_button_ex(ui, Icon::ShapeOutline, "Shape Outline", sel, false, true);
+            let (m, a) = small_button_ex(ui, Icon::ShapeOutline, "도형 윤곽선", sel, false, true);
             if m.clicked() {
                 let c = app.last_outline.clone();
                 run(app, "shape.line", json!({"color": c}));
@@ -438,7 +438,7 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
             if let Some(a) = a {
                 widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc));
             }
-            let (main, arrow) = small_button_ex(ui, Icon::ShapeEffects, "Shape Effects", sel, false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::ShapeEffects, "도형 효과", sel, false, true);
             if let Some(arrow) = arrow {
                 widgets::split_menu(&main, &arrow, |ui| effects_menu(app, ui));
             }
@@ -453,22 +453,22 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui) {
     font_group(app, ui, &st);
     paragraph_group(app, ui, &st);
     group(ui, |ui| {
-        big(app, ui, Icon::Picture, "Picture", "app.insertPictureDialog", json!({}));
+        big(app, ui, Icon::Picture, "그림", "app.insertPictureDialog", json!({}));
     });
     drawing_group(app, ui);
     // Editing, as in PowerPoint: Find, Replace and Replace Fonts, then the Selection Pane.
     group(ui, |ui| {
         ui.vertical(|ui| {
-            small(app, ui, Icon::Search, "Find", "app.find", json!({}));
-            small(app, ui, Icon::Spelling, "Replace", "app.replace", json!({}));
-            if small_button(ui, Icon::Fonts, "Replace Fonts…", enabled(app, "font.replace"), false).clicked() {
+            small(app, ui, Icon::Search, "찾기", "app.find", json!({}));
+            small(app, ui, Icon::Spelling, "바꾸기", "app.replace", json!({}));
+            if small_button(ui, Icon::Fonts, "글꼴 바꾸기...", enabled(app, "font.replace"), false).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("replaceFonts"));
             }
         });
         // Also under Arrange, but that is disabled until something is selected (#132).
-        big(app, ui, Icon::SelectionPane, "Selection\nPane", "view.pane", json!({"pane": "selection"}));
+        big(app, ui, Icon::SelectionPane, "선택 창", "view.pane", json!({"pane": "selection"}));
     });
     group(ui, |ui| {
-        big(app, ui, Icon::DesignIdeas, "Design\nIdeas", "view.pane", json!({"pane": "designer"}));
+        big(app, ui, Icon::DesignIdeas, "디자인 아이디어", "view.pane", json!({"pane": "designer"}));
     });
 }

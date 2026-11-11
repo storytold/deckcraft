@@ -1,4 +1,4 @@
-//! The Animation Pane's advanced timeline driven with the mouse: dragging a bar changes the
+﻿//! The Animation Pane's advanced timeline driven with the mouse: dragging a bar changes the
 //! delay, dragging its right edge changes the duration, each one undoable command.
 
 use deckcraft_engine::Session;
@@ -105,7 +105,7 @@ fn play_from_starts_at_the_selected_effect() {
 
     h.state_mut().session.execute("edit.deselect", &json!({})).unwrap();
     h.run_steps(2);
-    assert!(play(&mut h, "▶ Play All") < 0.1);
+    assert!(play(&mut h, "▶ 모두 재생") < 0.1);
 }
 
 #[test]

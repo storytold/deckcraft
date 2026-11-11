@@ -1,4 +1,4 @@
-use super::arrange::{arrange_group, size_group};
+﻿use super::arrange::{arrange_group, size_group};
 use super::galleries::{cref_param, shapes_gallery};
 use super::{
     Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, Value, big, big_button, color_split, enabled, group, json, pos2, rows, run, scheme,
@@ -87,7 +87,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         });
         rows(ui, |ui| {
             small(app, ui, Icon::ChangePicture, "Change Picture", "app.changePictureDialog", json!({}));
-            small(app, ui, Icon::ResetPicture, "Reset Picture", "picture.reset", json!({}));
+            small(app, ui, Icon::ResetPicture, "그림 원래대로", "picture.reset", json!({}));
             let (main, arrow) = small_button_ex(ui, Icon::CompressPictures, "Compress Pictures", enabled(app, "picture.compress"), false, true);
             if let Some(arrow) = arrow {
                 widgets::split_popup(&main, &arrow)
@@ -130,7 +130,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let sc = scheme(app);
-        let (m, a) = color_split(ui, Icon::QuickStyles, "Picture Border", Color32::BLACK, true);
+        let (m, a) = color_split(ui, Icon::QuickStyles, "그림 테두리", Color32::BLACK, true);
         if m.clicked() {
             run(app, "shape.line", json!({"color": "#000000", "width": 1.0}));
         }
@@ -171,9 +171,9 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     arrange_group(app, ui);
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Crop, "Crop", true);
+        let r = big_button(ui, Icon::Crop, "자르기", true);
         egui::Popup::menu(&r).show(|ui| {
-            ui.label("Crop to Shape");
+            ui.label("도형에 맞춰 자르기");
             if let Some(p) = shapes_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));
             }

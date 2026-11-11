@@ -1,4 +1,4 @@
-//! Format Shape ▸ Effects: the Shadow, Glow and Soft Edges preset tiles.
+﻿//! Format Shape ▸ Effects: the Shadow, Glow and Soft Edges preset tiles.
 
 use deckcraft_engine::Session;
 use deckcraft_model::style::Effects;
@@ -44,7 +44,7 @@ fn preset_tiles_set_shadow_glow_and_soft_edges() {
     let sw = effects(&h).outer_shadow.unwrap();
     assert_eq!((sw.dir, sw.dist), (90.0, 3.0));
     // The Size slider appears once there is a shadow.
-    assert!(h.query_all_by_label("Size").count() >= 2);
+    assert!(h.query_all_by_label("크기").count() >= 2);
 
     click(&mut h, "Inner shadow");
     let fx = effects(&h);

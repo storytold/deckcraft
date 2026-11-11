@@ -1,14 +1,14 @@
-use super::{Icon, SlideApp, Target, Ui, big_button, big_button_ex, group, json, rows, run, theme};
+﻿use super::{Icon, SlideApp, Target, Ui, big_button, big_button_ex, group, json, rows, run, theme};
 
 pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
     use crate::ViewMode;
     group(ui, |ui| {
         for (icon, label, id, mode) in [
-            (Icon::ViewNormal, "Normal", "view.normal", Some(ViewMode::Normal)),
-            (Icon::ViewOutline, "Outline\nView", "view.outline", Some(ViewMode::Outline)),
-            (Icon::ViewSorter, "Slide\nSorter", "view.sorter", Some(ViewMode::Sorter)),
-            (Icon::ViewNotesPage, "Notes\nPage", "view.notesPage", Some(ViewMode::NotesPage)),
-            (Icon::ViewReading, "Reading\nView", "view.reading", None),
+            (Icon::ViewNormal, "기본", "view.normal", Some(ViewMode::Normal)),
+            (Icon::ViewOutline, "개요\n보기", "view.outline", Some(ViewMode::Outline)),
+            (Icon::ViewSorter, "여러 슬라이드", "view.sorter", Some(ViewMode::Sorter)),
+            (Icon::ViewNotesPage, "슬라이드 노트", "view.notesPage", Some(ViewMode::NotesPage)),
+            (Icon::ViewReading, "읽기용\n보기", "view.reading", None),
         ] {
             let sel = mode.is_some_and(|m| app.ui.view == m);
             if big_button_ex(ui, icon, label, true, false, sel).0.clicked() {
@@ -18,44 +18,44 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
-        if big_button_ex(ui, Icon::SlideMaster, "Slide\nMaster", true, false, in_master).0.clicked() {
+        if big_button_ex(ui, Icon::SlideMaster, "슬라이드\n마스터", true, false, in_master).0.clicked() {
             let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
         }
         let in_handout = app.session.active().is_some_and(|d| d.selection.target == Target::Handout);
-        if big_button_ex(ui, Icon::HandoutMaster, "Handout\nMaster", true, false, in_handout).0.clicked() {
+        if big_button_ex(ui, Icon::HandoutMaster, "유인물\n마스터", true, false, in_handout).0.clicked() {
             let _ = app.run(if in_handout { "view.closeMaster" } else { "view.handoutMaster" }, json!({}));
         }
         let in_notes = app.session.active().is_some_and(|d| d.selection.target == Target::NotesMaster);
-        if big_button_ex(ui, Icon::NotesMaster, "Notes\nMaster", true, false, in_notes).0.clicked() {
+        if big_button_ex(ui, Icon::NotesMaster, "노트\n마스터", true, false, in_notes).0.clicked() {
             let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
         }
     });
     group(ui, |ui| {
         rows(ui, |ui| {
             let mut r = app.ui.ruler;
-            if ui.checkbox(&mut r, "Ruler").changed() {
+            if ui.checkbox(&mut r, "눈금자").changed() {
                 app.ui.ruler = r;
             }
             let mut g = app.ui.gridlines;
-            if ui.checkbox(&mut g, "Gridlines").changed() {
+            if ui.checkbox(&mut g, "눈금선").changed() {
                 app.ui.gridlines = g;
             }
             let mut gd = app.ui.guides;
-            if ui.checkbox(&mut gd, "Guides").changed() {
+            if ui.checkbox(&mut gd, "안내선").changed() {
                 app.ui.guides = gd;
             }
         });
-        if big_button(ui, Icon::Gridlines, "Grid\nOptions", true).clicked() {
+        if big_button(ui, Icon::Gridlines, "격자\n옵션", true).clicked() {
             let _ = app.run("view.gridOptions", json!({}));
         }
         let n = app.ui.notes;
-        if big_button_ex(ui, Icon::Notes, "Notes", true, false, n).0.clicked() {
+        if big_button_ex(ui, Icon::Notes, "슬라이드 노트", true, false, n).0.clicked() {
             app.ui.notes = !n;
         }
     });
     group(ui, |ui| {
-        let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, "Zoom", true, true, false);
-        if main.on_hover_text("Zoom").clicked() {
+        let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, "확대/축소", true, true, false);
+        if main.on_hover_text("확대/축소").clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
         if let Some(a) = arrow {
@@ -66,31 +66,31 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
                         ui.close();
                     }
                 }
-                if ui.button("Fit").clicked() {
+                if ui.button("창에 맞춤").clicked() {
                     let _ = app.run("view.fit", json!({}));
                     ui.close();
                 }
             });
         }
-        if big_button(ui, Icon::FitToWindow, "Fit to\nWindow", true).clicked() {
+        if big_button(ui, Icon::FitToWindow, "창에\n맞춤", true).clicked() {
             app.ui.zoom = None;
         }
     });
     group(ui, |ui| {
         let has = app.session.active().is_some();
         let on = app.doc_window.is_some();
-        let resp = big_button_ex(ui, Icon::NewWindow, "New\nWindow", has, false, on).0;
-        if resp.on_hover_text("Open another window on this presentation").clicked() {
+        let resp = big_button_ex(ui, Icon::NewWindow, "새\n창", has, false, on).0;
+        if resp.on_hover_text("이 프레젠테이션의 새 창 열기").clicked() {
             let _ = app.run("view.newWindow", json!({}));
         }
     });
     group(ui, |ui| {
         let gs = app.ui.grayscale;
-        if big_button_ex(ui, Icon::Grayscale, "Grayscale", true, false, gs).0.clicked() {
+        if big_button_ex(ui, Icon::Grayscale, "흑백", true, false, gs).0.clicked() {
             app.ui.grayscale = !gs;
         }
         let dark = app.ui.brightness == theme::Brightness::Dark;
-        if big_button_ex(ui, Icon::Palette, "Dark\nMode", true, false, dark).0.clicked() {
+        if big_button_ex(ui, Icon::Palette, "다크\n모드", true, false, dark).0.clicked() {
             let _ = app.run("view.dark", json!({}));
         }
     });
@@ -103,7 +103,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
     let id = egui::Id::unique("insert_zoom_menu");
     let (mut kind, mut picked): (u8, Vec<usize>) = ui.data_mut(|d| d.get_temp(id).unwrap_or((0, vec![])));
     ui.horizontal(|ui| {
-        for (k, label) in [(0u8, "Slide Zoom"), (1, "Section Zoom"), (2, "Summary Zoom")] {
+        for (k, label) in [(0u8, "슬라이드 확대/축소"), (1, "구역 확대/축소"), (2, "요약 확대/축소")] {
             if ui.selectable_label(kind == k, label).clicked() && kind != k {
                 kind = k;
                 picked.clear();
@@ -124,7 +124,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
             .collect()
     };
     if items.is_empty() {
-        ui.label(if kind == 1 { "The presentation has no sections. Add one with Home › Section." } else { "No slides." });
+        ui.label(if kind == 1 { "The presentation has no sections. Add one with Home › Section." } else { "슬라이드가 없습니다." });
     }
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
         for (i, label) in items.iter().enumerate() {

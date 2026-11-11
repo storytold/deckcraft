@@ -1,4 +1,4 @@
-use super::effect_presets;
+﻿use super::effect_presets;
 use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, json, run, scheme, theme, vec2, widgets};
 
 /// Percent transparency (0 = opaque) of a solid fill, the same number `shape.fill`'s
@@ -47,7 +47,7 @@ fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
 }
 
 fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
-    ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("그림자").font(theme::bold(13.0)));
     let fx = sh.effects.clone().unwrap_or_default();
     if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
         run(app, "shape.effects", json!({"shadow": v}));
@@ -59,7 +59,7 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             app,
             ui,
             ("shadow", sh.id.0, "t"),
-            "Transparency",
+            "투명도",
             (1.0 - sw.color.alpha()) * 100.0,
             0.0..=100.0,
             "%",
@@ -67,15 +67,15 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             "transparency",
             0.01,
         );
-        fx_slider(app, ui, ("shadow", sh.id.0, "s"), "Size", sw.sx * 100.0, 1.0..=200.0, "%", "shadowProps", "size", 0.01);
+        fx_slider(app, ui, ("shadow", sh.id.0, "s"), "크기", sw.sx * 100.0, 1.0..=200.0, "%", "shadowProps", "size", 0.01);
         fx_slider(app, ui, ("shadow", sh.id.0, "b"), "Blur", sw.blur, 0.0..=100.0, " pt", "shadowProps", "blur", 1.0);
-        fx_slider(app, ui, ("shadow", sh.id.0, "a"), "Angle", sw.dir, 0.0..=359.0, "°", "shadowProps", "dir", 1.0);
+        fx_slider(app, ui, ("shadow", sh.id.0, "a"), "각도", sw.dir, 0.0..=359.0, "°", "shadowProps", "dir", 1.0);
         fx_slider(app, ui, ("shadow", sh.id.0, "d"), "Distance", sw.dist, 0.0..=200.0, " pt", "shadowProps", "dist", 1.0);
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Reflection").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("반사").font(theme::bold(13.0)));
     ui.horizontal_wrapped(|ui| {
-        for (l, v) in [("None", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
+        for (l, v) in [("없음", "none"), ("밀접 반사", "tight"), ("반 반사", "half"), ("전체 반사", "full")] {
             if ui.button(l).clicked() {
                 run(app, "shape.effects", json!({"reflection": v}));
             }
@@ -86,7 +86,7 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             app,
             ui,
             ("refl", sh.id.0, "t"),
-            "Transparency",
+            "투명도",
             (1.0 - r.start_alpha) * 100.0,
             0.0..=100.0,
             "%",
@@ -94,24 +94,24 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             "transparency",
             0.01,
         );
-        fx_slider(app, ui, ("refl", sh.id.0, "s"), "Size", r.end_pos * 100.0, 0.0..=100.0, "%", "reflectionProps", "size", 0.01);
+        fx_slider(app, ui, ("refl", sh.id.0, "s"), "크기", r.end_pos * 100.0, 0.0..=100.0, "%", "reflectionProps", "size", 0.01);
         fx_slider(app, ui, ("refl", sh.id.0, "d"), "Distance", r.dist, 0.0..=100.0, " pt", "reflectionProps", "dist", 1.0);
         fx_slider(app, ui, ("refl", sh.id.0, "b"), "Blur", r.blur, 0.0..=100.0, " pt", "reflectionProps", "blur", 1.0);
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Glow").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("네온").font(theme::bold(13.0)));
     let radius = fx.glow.as_ref().map_or(0.0, |g| g.radius);
     if let Some(r) = effect_presets::glow_row(ui, radius) {
         run(app, "shape.effects", json!({"glowProps": {"radius": r}}));
     }
-    fx_slider(app, ui, ("glow", sh.id.0, "r"), "Size", radius, 0.0..=150.0, " pt", "glowProps", "radius", 1.0);
+    fx_slider(app, ui, ("glow", sh.id.0, "r"), "크기", radius, 0.0..=150.0, " pt", "glowProps", "radius", 1.0);
     if let Some(g) = &fx.glow {
         color_button(app, ui, "Color", None, |c| ("shape.effects".into(), json!({"glowProps": {"color": c.as_ref().map(cref_param)}})));
         fx_slider(
             app,
             ui,
             ("glow", sh.id.0, "t"),
-            "Transparency",
+            "투명도",
             (1.0 - g.color.alpha()) * 100.0,
             0.0..=100.0,
             "%",
@@ -120,17 +120,17 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             0.01,
         );
     }
-    ui.label(egui::RichText::new("Soft Edges").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("부드러운 가장자리").font(theme::bold(13.0)));
     let mut s = sh.effects.as_ref().and_then(|e| e.soft_edge).unwrap_or(0.0);
     if let Some(r) = effect_presets::soft_edge_row(ui, s) {
         run(app, "shape.effects", json!({"softEdges": r}));
     }
-    if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("size (pt)")).drag_stopped() {
+    if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("크기(pt)")).drag_stopped() {
         run(app, "shape.effects", json!({"softEdges": s}));
     }
     let raw3d = sh.effects.as_ref().and_then(|e| e.raw3d.clone());
     three_d_options(app, ui, sh.id.0, raw3d.as_deref());
-    if ui.button("Reset Effects").clicked() {
+    if ui.button("효과 원래대로").clicked() {
         run(app, "shape.effects", json!({"reset": true}));
     }
 }
@@ -188,7 +188,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
             }
         });
     };
-    ui.label(egui::RichText::new("Size").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("크기").font(theme::bold(13.0)));
     fields(ui, "Height", "fh", x.h, "h", "shape.resize", false);
     fields(ui, "Width", "fw", x.w, "w", "shape.resize", false);
     fields(ui, "Rotation", "fr", x.rot, "deg", "shape.rotate", true);
@@ -209,11 +209,11 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
             })
         });
     }
-    if ui.checkbox(&mut lock, "Lock aspect ratio").changed() {
+    if ui.checkbox(&mut lock, "가로세로 비율 고정").changed() {
         ui.data_mut(|d| d.insert_temp(lock_id, lock));
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Position").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("위치").font(theme::bold(13.0)));
     ui.add_enabled_ui(single, |ui| {
         ui.horizontal(|ui| {
             ui.add_sized(vec2(90.0, 20.0), egui::Label::new("From"));
@@ -243,7 +243,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     pos(ui, "Horizontal", "fx", px, dx, "x");
     pos(ui, "Vertical", "fy", py, dy, "y");
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Alt Text").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("대체 텍스트").font(theme::bold(13.0)));
     let id = ui.scope_id().with(("alt", uid, sh.id.0));
     let stored: Option<(String, String)> = ui.data_mut(|d| d.get_temp(id));
     let mut alt = widgets::text_draft(stored, &sh.descr);
@@ -272,14 +272,14 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         "effects" => effects_tab(app, ui, &sh),
         "size" => size_tab(app, ui, &sh, x, single, uid),
         "text" => {
-            ui.label(egui::RichText::new("Text Fill").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new("텍스트 채우기").font(theme::bold(13.0)));
             color_button(app, ui, "Color", None, |c| match c {
                 Some(c) => ("format.color".into(), json!({"color": cref_param(&c)})),
                 None => ("format.color".into(), json!({"color": "tx1"})),
             });
             text_transparency_slider(app, ui, &sh);
             ui.add_space(6.0);
-            ui.label(egui::RichText::new("Text Box").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new("텍스트 상자").font(theme::bold(13.0)));
             ui.horizontal(|ui| {
                 ui.label("Vertical alignment");
                 for (l, a) in [("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")] {
@@ -343,7 +343,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             }
             let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
             let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("투명도")).drag_stopped() {
                 run(app, "picture.adjust", json!({"transparency": tr}));
             }
             if ui.button("Reset Picture").clicked() {
@@ -368,10 +368,10 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             let background_ok = selection_takes_background_fill(app);
             for (l, k) in [
                 ("No fill", "none"),
-                ("Solid fill", "solid"),
-                ("Gradient fill", "gradient"),
-                ("Picture or texture fill", "picture"),
-                ("Pattern fill", "pattern"),
+                ("단색 채우기", "solid"),
+                ("그라데이션 채우기", "gradient"),
+                ("그림 또는 질감 채우기", "picture"),
+                ("패턴 채우기", "pattern"),
                 ("Slide background fill", "background"),
                 ("Automatic", "auto"),
             ] {
@@ -410,7 +410,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 if !transparency {
                     return;
                 }
-                let label = ui.label("Transparency");
+                let label = ui.label("투명도");
                 // Seed from this shape. A shared temp defaulted to 0, so a shape that was
                 // already 40% transparent showed as opaque, and leaving the slider wrote 0.
                 let seed = match &sh.fill {
@@ -529,14 +529,14 @@ fn line_details(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
         LineCap::Round => "round",
         LineCap::Square => "square",
     };
-    line_choice(app, ui, "Cap type", "cap", cap, &[("Flat", "flat"), ("Round", "round"), ("Square", "square")]);
+    line_choice(app, ui, "Cap type", "cap", cap, &[("평면", "flat"), ("Round", "round"), ("Square", "square")]);
     let join = match l.join.unwrap_or_default() {
         LineJoin::Round => "round",
         LineJoin::Bevel => "bevel",
         LineJoin::Miter => "miter",
     };
-    line_choice(app, ui, "Join type", "join", join, &[("Round", "round"), ("Bevel", "bevel"), ("Miter", "miter")]);
-    let arrows = [("None", "none"), ("Arrow", "triangle"), ("Open Arrow", "arrow"), ("Stealth", "stealth"), ("Diamond", "diamond"), ("Oval", "oval")];
+    line_choice(app, ui, "Join type", "join", join, &[("Round", "round"), ("입체 효과", "bevel"), ("Miter", "miter")]);
+    let arrows = [("없음", "none"), ("Arrow", "triangle"), ("Open Arrow", "arrow"), ("Stealth", "stealth"), ("Diamond", "diamond"), ("Oval", "oval")];
     let sizes = [("Small", "sm"), ("Medium", "med"), ("Large", "lg")];
     for (label, key, size_label, size_key, end) in
         [("Begin arrow", "head", "Begin size", "headSize", &l.head), ("End arrow", "tail", "End size", "tailSize", &l.tail)]
@@ -734,27 +734,27 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     let s3 = raw.map(Shape3d::parse).unwrap_or_default();
     let with_none: Vec<&str> = std::iter::once("none").chain(BEVELS.iter().copied()).collect();
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("3-D Format").font(theme::bold(13.0)));
-    for (label, key, b) in [("Top bevel", "bevelTop", &s3.top), ("Bottom bevel", "bevelBottom", &s3.bottom)] {
+    ui.label(egui::RichText::new("3차원 서식").font(theme::bold(13.0)));
+    for (label, key, b) in [("위쪽 입체", "bevelTop", &s3.top), ("아래쪽 입체", "bevelBottom", &s3.bottom)] {
         three_d_combo(app, ui, id, label, key, b.as_ref().map_or("none", |b| b.preset.as_str()), &with_none);
         if let Some(b) = b {
             three_d_drag(app, ui, "   Width", b.w, " pt", &format!("{key}W"));
             three_d_drag(app, ui, "   Height", b.h, " pt", &format!("{key}H"));
         }
     }
-    three_d_drag(app, ui, "Depth", s3.depth, " pt", "depth");
-    three_d_drag(app, ui, "Contour", s3.contour, " pt", "contour");
-    three_d_combo(app, ui, id, "Material", "material", &s3.material, MATERIALS);
-    three_d_combo(app, ui, id, "Lighting", "lighting", &s3.light, LIGHTS);
+    three_d_drag(app, ui, "깊이", s3.depth, " pt", "depth");
+    three_d_drag(app, ui, "외곽선", s3.contour, " pt", "contour");
+    three_d_combo(app, ui, id, "재질", "material", &s3.material, MATERIALS);
+    three_d_combo(app, ui, id, "조명", "lighting", &s3.light, LIGHTS);
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("3-D Rotation").font(theme::bold(13.0)));
-    three_d_combo(app, ui, id, "Presets", "camera", &s3.camera, CAMERAS);
+    ui.label(egui::RichText::new("3차원 회전").font(theme::bold(13.0)));
+    three_d_combo(app, ui, id, "미리 설정", "camera", &s3.camera, CAMERAS);
     let (rx, ry, rz) = s3.rot.unwrap_or((0.0, 0.0, 0.0));
-    three_d_drag(app, ui, "X Rotation", rx, "°", "rotX");
-    three_d_drag(app, ui, "Y Rotation", ry, "°", "rotY");
-    three_d_drag(app, ui, "Z Rotation", rz, "°", "rotZ");
-    three_d_drag(app, ui, "Distance from ground", s3.z, " pt", "z");
-    if ui.add_enabled(raw.is_some(), egui::Button::new("Reset 3-D")).clicked() {
+    three_d_drag(app, ui, "X축 회전", rx, "°", "rotX");
+    three_d_drag(app, ui, "Y축 회전", ry, "°", "rotY");
+    three_d_drag(app, ui, "Z축 회전", rz, "°", "rotZ");
+    three_d_drag(app, ui, "바닥에서의 거리", s3.z, " pt", "z");
+    if ui.add_enabled(raw.is_some(), egui::Button::new("3차원 서식 원래대로")).clicked() {
         run(app, "shape.effects", json!({"threeD": {"reset": true}}));
     }
 }
@@ -772,7 +772,7 @@ pub(crate) fn text_transparency_of(sh: &deckcraft_model::Shape) -> f64 {
 /// Text Fill › Transparency, as in PowerPoint's Format Shape › Text Options (#32).
 pub(crate) fn text_transparency_slider(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     ui.horizontal(|ui| {
-        let label = ui.label("Transparency");
+        let label = ui.label("투명도");
         let id = ui.scope_id().with(("text-transparency", sh.id));
         let stored = (text_transparency_of(sh) * 100.0) as f32;
         let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(stored));

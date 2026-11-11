@@ -1,4 +1,4 @@
-use super::{Dialog, SlideApp, Ui, buttons};
+﻿use super::{Dialog, SlideApp, Ui, buttons};
 
 /// Preset percents in the Zoom dialog, largest first.
 const ZOOM_PRESETS: &[u32] = &[400, 200, 150, 100, 75, 66, 50, 33];
@@ -44,7 +44,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     });
     d.fields.insert("mode".into(), mode.clone());
     d.fields.insert("percent".into(), percent.clone());
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         if mode == "fit" {
             app.ui.zoom = None;

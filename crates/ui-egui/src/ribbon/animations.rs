@@ -1,4 +1,4 @@
-use super::{
+﻿use super::{
     Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
     pos2, rows, run, theme, vec2, widgets,
 };
@@ -15,8 +15,8 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let playing = app.anim_preview_active();
-        let (resp, _) = big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
-        if resp.on_hover_text("Play this slide's animations on the canvas").clicked() {
+        let (resp, _) = big_button_ex(ui, Icon::Preview, "미리 보기", true, false, playing);
+        if resp.on_hover_text("캔버스에서 슬라이드의 애니메이션 재생").clicked() {
             run(app, "animation.preview", json!({}));
         }
     });
@@ -61,7 +61,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let more = widgets::drop_button(ui, "", vec2(14.0, 52.0), has_sel);
         egui::Popup::menu(&more).width(420.0).show(|ui| {
             for (cls, label) in
-                [(AnimClass::Entrance, "Entrance"), (AnimClass::Emphasis, "Emphasis"), (AnimClass::Exit, "Exit"), (AnimClass::Path, "Motion Paths")]
+                [(AnimClass::Entrance, "나타내기"), (AnimClass::Emphasis, "강조"), (AnimClass::Exit, "끝내기"), (AnimClass::Path, "이동 경로")]
             {
                 ui.label(egui::RichText::new(label).font(theme::bold(12.0)));
                 ui.horizontal_wrapped(|ui| {
@@ -83,7 +83,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let effect = cur.as_ref().map(|c| c.effect.as_str()).unwrap_or_default();
         let build = cur.as_ref().map(|c| text_build_id(c.text_build));
         let build_rows = marked_options(&["asOne", "byParagraph"], build);
-        let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty());
+        let r = big_button(ui, Icon::EffectOptions, "효과\\n옵션", !effect_rows.is_empty());
         egui::Popup::menu(&r).show(|ui| {
             for &(o, on) in &effect_rows {
                 if ui.selectable_label(on, animation_option_label(effect, o)).clicked() {
@@ -93,7 +93,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             for &(id, on) in &build_rows {
-                let label = if id == "byParagraph" { "By Paragraph" } else { "As One Object" };
+                let label = if id == "byParagraph" { "단락별로" } else { "하나의 개체로" };
                 if ui.selectable_label(on, label).clicked() {
                     run(app, "animation.options", json!({"textBuild": id}));
                     ui.close();
@@ -102,7 +102,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
+        let r = big_button(ui, Icon::AddAnimation, "애니메이션\\n추가", has_sel);
         // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
         // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
         let max_h = (r.ctx.viewport_rect().height() - 160.0).max(120.0);
@@ -127,23 +127,23 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-        big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
-        let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
+        big(app, ui, Icon::AnimationPane, "애니메이션\\n창", "view.pane", json!({"pane": "animation"}));
+        let r = big_button(ui, Icon::Trigger, "트리거", cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
             if ui.button("On Click of… (none)").clicked() {
-                run(app, "animation.timing", json!({"trigger": null}));
+                run(app, "animation.timing", json!({"트리거": null}));
             }
             let shapes: Vec<(u32, String)> =
                 app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
             for (id, name) in shapes {
                 if ui.button(format!("On Click of {name}")).clicked() {
-                    run(app, "animation.timing", json!({"trigger": id}));
+                    run(app, "animation.timing", json!({"트리거": id}));
                 }
             }
         });
         let on = app.session.anim_painter.is_some();
         let en = enabled(app, "animation.painter");
-        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
+        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "애니메이션\\n복사", en, false, on);
         let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
         if r.double_clicked() {
             run(app, "animation.painter", json!({"sticky": true}));
@@ -158,14 +158,14 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Start:");
+                ui.label("시작:");
                 let s = cur.as_ref().map(|c| match c.start {
-                    deckcraft_model::AnimStart::OnClick => "On Click",
-                    deckcraft_model::AnimStart::WithPrevious => "With Previous",
-                    deckcraft_model::AnimStart::AfterPrevious => "After Previous",
+                    deckcraft_model::AnimStart::OnClick => "클릭할 때",
+                    deckcraft_model::AnimStart::WithPrevious => "이전 효과와 함께",
+                    deckcraft_model::AnimStart::AfterPrevious => "이전 효과 다음에",
                 });
                 dropdown(ui, "Start", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
-                    for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
+                    for (l, v) in [("클릭할 때", "onClick"), ("이전 효과와 함께", "withPrevious"), ("이전 효과 다음에", "afterPrevious")] {
                         if ui.button(l).clicked() {
                             run(app, "animation.timing", json!({"start": v}));
                             ui.close();
@@ -174,7 +174,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
             ui.horizontal(|ui| {
-                ui.label("Duration:");
+                ui.label("재생 시간:");
                 if let Some(v) =
                     widgets::spinner(ui, "adur", "Duration", cur.as_ref().map(|c| c.duration_ms as f64 / 1000.0).unwrap_or(0.5), 0.25, "", 46.0)
                 {
@@ -182,7 +182,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Delay:");
+                ui.label("지연:");
                 if let Some(v) =
                     widgets::spinner(ui, "adelay", "Delay", cur.as_ref().map(|c| c.delay_ms as f64 / 1000.0).unwrap_or(0.0), 0.25, "", 46.0)
                 {
@@ -218,14 +218,14 @@ pub(super) fn animation_effect_rows(effect: &str, class: AnimClass, current: Opt
 
 fn animation_option_label(effect: &str, option: &str) -> String {
     let direction = match option {
-        "b" => Some("From Bottom"),
-        "lb" => Some("From Bottom-Left"),
-        "l" => Some("From Left"),
-        "lt" => Some("From Top-Left"),
-        "t" => Some("From Top"),
-        "rt" => Some("From Top-Right"),
-        "r" => Some("From Right"),
-        "rb" => Some("From Bottom-Right"),
+        "b" => Some("아래에서"),
+        "lb" => Some("왼쪽 아래에서"),
+        "l" => Some("왼쪽에서"),
+        "lt" => Some("왼쪽 위에서"),
+        "t" => Some("위에서"),
+        "rt" => Some("오른쪽 위에서"),
+        "r" => Some("오른쪽에서"),
+        "rb" => Some("오른쪽 아래에서"),
         _ => None,
     };
     if matches!(effect, "fly" | "flyOut" | "wipe" | "wipeOut" | "peek" | "peekOut" | "crawl" | "crawlOut")
@@ -303,11 +303,11 @@ mod animation_option_label_tests {
                 assert_ne!(label, option, "raw option shown for {effect}/{option}");
             }
         }
-        assert_eq!(animation_option_label("fly", "lb"), "From Bottom-Left");
+        assert_eq!(animation_option_label("fly", "lb"), "왼쪽 아래에서");
         assert_eq!(animation_option_label("flyOut", "rt"), "To Top-Right");
         assert_eq!(animation_option_label("flyOut", "b"), "To Bottom");
         assert_eq!(animation_option_label("peekOut", "l"), "To Left");
-        assert_eq!(animation_option_label("wipe", "b"), "From Bottom");
+        assert_eq!(animation_option_label("wipe", "b"), "아래에서");
         assert_eq!(animation_option_label("wheel", "1"), "1 Spoke");
         assert_eq!(animation_option_label("split", "vertOut"), "Vertical Out");
         assert_eq!(animation_option_label("shape", "circleIn"), "Circle In");
@@ -318,10 +318,10 @@ mod animation_option_label_tests {
         assert_eq!(animation_option_label("strips", "ru"), "Right Up");
         assert_eq!(animation_option_label("strips", "ld"), "Left Down");
         assert_eq!(animation_option_label("strips", "rd"), "Right Down");
-        assert_eq!(animation_option_label("crawl", "b"), "From Bottom");
-        assert_eq!(animation_option_label("crawl", "l"), "From Left");
-        assert_eq!(animation_option_label("crawl", "t"), "From Top");
-        assert_eq!(animation_option_label("crawl", "r"), "From Right");
+        assert_eq!(animation_option_label("crawl", "b"), "아래에서");
+        assert_eq!(animation_option_label("crawl", "l"), "왼쪽에서");
+        assert_eq!(animation_option_label("crawl", "t"), "위에서");
+        assert_eq!(animation_option_label("crawl", "r"), "오른쪽에서");
         assert_eq!(animation_option_label("crawlOut", "l"), "To Left");
         assert_eq!(animation_option_label("crawlOut", "r"), "To Right");
         assert_eq!(animation_option_label("plus", "in"), "In");

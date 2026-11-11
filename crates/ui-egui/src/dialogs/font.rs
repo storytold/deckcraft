@@ -1,4 +1,4 @@
-use super::{Dialog, SlideApp, Ui, buttons, check, choice, color_label, finite_pt, json, json_text, labeled_text, seed_once, vec2};
+﻿use super::{Dialog, SlideApp, Ui, buttons, check, choice, color_label, finite_pt, json, json_text, labeled_text, seed_once, vec2};
 
 fn seed_font_fields(d: &mut Dialog) {
     seed_once(d, "family", json_text(d.params.get("family"), ""));
@@ -25,7 +25,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         fams.insert(0, family.clone());
     }
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Font"));
+        let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new("글꼴"));
         let combo = craft_ui::ComboBox::from_id_salt("font_dialog_family")
             .selected_text(if family.is_empty() { " " } else { family.as_str() })
             .width(300.0)
@@ -41,52 +41,51 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         let _ = combo.response.labelled_by(field.id);
     });
     ui.horizontal(|ui| {
-        let _ = labeled_text(ui, d, "Size", "size", 64.0);
+        let _ = labeled_text(ui, d, "크기", "size", 64.0);
         ui.add_space(16.0);
-        check(ui, d, "Bold", "bold", false);
-        check(ui, d, "Italic", "italic", false);
+        check(ui, d, "굵게", "bold", false);
+        check(ui, d, "기울임꼴", "italic", false);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Underline"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("밑줄 스타일"));
         choice(
             ui,
             d,
             "font_dialog_underline",
-            "Underline",
-            "underline",
-            &[("none", "None"), ("sng", "Single"), ("dbl", "Double"), ("heavy", "Heavy"), ("dotted", "Dotted"), ("dash", "Dash"), ("wavy", "Wavy")],
+            "밑줄 스타일", "underline",
+            &[("none", "(없음)"), ("sng", "실선"), ("dbl", "이중선"), ("heavy", "굵은 실선"), ("dotted", "점선"), ("dash", "파선"), ("wavy", "물결선")],
         );
         ui.add_space(8.0);
-        let _ = labeled_text(ui, d, "Color", "color", 110.0);
+        let _ = labeled_text(ui, d, "글꼴 색", "color", 110.0);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Strikethrough"));
-        choice(ui, d, "font_dialog_strike", "Strikethrough", "strike", &[("none", "None"), ("sng", "Single"), ("dbl", "Double")]);
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("취소선"));
+        choice(ui, d, "font_dialog_strike", "취소선", "strike", &[("none", "(없음)"), ("sng", "실선"), ("dbl", "이중선")]);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Baseline"));
-        choice(ui, d, "font_dialog_baseline", "Baseline", "baseline", &[("none", "None"), ("super", "Superscript"), ("sub", "Subscript")]);
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("위치"));
+        choice(ui, d, "font_dialog_baseline", "위치", "baseline", &[("none", "(없음)"), ("super", "위 첨자"), ("sub", "아래 첨자")]);
         ui.add_space(8.0);
         ui.label("Caps");
-        choice(ui, d, "font_dialog_caps", "Caps", "caps", &[("none", "None"), ("small", "Small caps"), ("all", "All caps")]);
+        choice(ui, d, "font_dialog_caps", "대소문자", "caps", &[("none", "(없음)"), ("small", "작은 대문자"), ("all", "모두 대문자")]);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Spacing"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("문자 간격"));
         let mut spacing = d.get("spacing", "0");
         let edited = ui.add(egui::TextEdit::singleline(&mut spacing).desired_width(64.0).hint_text("pt"));
         let mut picked = None;
         let combo = craft_ui::ComboBox::from_id_salt("font_dialog_spacing")
             .selected_text(match spacing.as_str() {
-                "-3" => "Very tight",
-                "-1.5" => "Tight",
-                "0" => "Normal",
-                "3" => "Loose",
-                "6" => "Very loose",
+                "-3" => "매우 좁게",
+                "-1.5" => "좁게",
+                "0" => "표준",
+                "3" => "넓게",
+                "6" => "매우 넓게",
                 other => other,
             })
             .width(120.0)
             .show_ui(ui, |ui| {
-                for (v, l) in [("-3", "Very tight"), ("-1.5", "Tight"), ("0", "Normal"), ("3", "Loose"), ("6", "Very loose")] {
+                for (v, l) in [("-3", "매우 좁게"), ("-1.5", "좁게"), ("0", "표준"), ("3", "넓게"), ("6", "매우 넓게")] {
                     if ui.selectable_label(spacing == v, l).clicked() {
                         picked = Some(v.to_string());
                     }
@@ -120,20 +119,20 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     }
     ui.add_space(6.0);
     ui.label(sample);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let family = d.get("family", "");
         let family = family.trim();
         if family.is_empty() {
-            app.set_status("Choose a font");
+            app.set_status("글꼴을 선택하십시오");
             return false;
         }
         let Some(size) = finite_pt(&d.get("size", "")) else {
-            app.set_status("Font size must be a number");
+            app.set_status("글꼴 크기는 숫자여야 합니다");
             return false;
         };
         let Some(spacing) = finite_pt(&d.get("spacing", "0")) else {
-            app.set_status("Character spacing must be a number");
+            app.set_status("문자 간격은 숫자여야 합니다");
             return false;
         };
         let mut params = json!({

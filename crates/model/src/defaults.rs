@@ -1,4 +1,4 @@
-//! A new presentation: one master with the standard set of layouts, master text styles, and a
+﻿//! A new presentation: one master with the standard set of layouts, master text styles, and a
 //! first title slide. Positions and sizes are our own (16:9 at 960 × 540 pt, 4:3 scaled).
 
 use std::sync::Arc;
@@ -296,7 +296,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         });
         let mut v = vec![t, st];
         v.extend(footers(&mut b));
-        lay(&mut b, "Title Slide", LayoutType::Title, v);
+        lay(&mut b, "제목 슬라이드", LayoutType::Title, v);
     }
     // Title and Content
     {
@@ -304,7 +304,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         let c = body_with_ph(body_box(&mut b, "Content Placeholder 2", 1, 60.0, 144.0, 840.0, 343.0), PhType::Obj);
         let mut v = vec![t, c];
         v.extend(footers(&mut b));
-        lay(&mut b, "Title and Content", LayoutType::TitleAndContent, v);
+        lay(&mut b, "제목 및 내용", LayoutType::TitleAndContent, v);
     }
     // Section Header
     {
@@ -331,7 +331,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         }
         let mut v = vec![t, s];
         v.extend(footers(&mut b));
-        lay(&mut b, "Section Header", LayoutType::SectionHeader, v);
+        lay(&mut b, "구역 머리글", LayoutType::SectionHeader, v);
     }
     // Two Content
     {
@@ -340,7 +340,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         let rr = body_with_ph(body_box(&mut b, "Content Placeholder 3", 2, 488.0, 144.0, 412.0, 343.0), PhType::Obj);
         let mut v = vec![t, l, rr];
         v.extend(footers(&mut b));
-        lay(&mut b, "Two Content", LayoutType::TwoContent, v);
+        lay(&mut b, "2개 내용", LayoutType::TwoContent, v);
     }
     // Comparison
     {
@@ -365,18 +365,18 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         let c2 = body_with_ph(body_box(&mut b, "Content Placeholder 5", 4, 488.0, 198.0, 412.0, 289.0), PhType::Obj);
         let mut v = vec![t, h1, c1, h2, c2];
         v.extend(footers(&mut b));
-        lay(&mut b, "Comparison", LayoutType::Comparison, v);
+        lay(&mut b, "비교", LayoutType::Comparison, v);
     }
     // Title Only
     {
         let mut v = vec![title_box(&mut b)];
         v.extend(footers(&mut b));
-        lay(&mut b, "Title Only", LayoutType::TitleOnly, v);
+        lay(&mut b, "제목만", LayoutType::TitleOnly, v);
     }
     // Blank
     {
         let v = footers(&mut b);
-        lay(&mut b, "Blank", LayoutType::Blank, v);
+        lay(&mut b, "빈 화면", LayoutType::Blank, v);
     }
     // Content with Caption
     {
@@ -400,7 +400,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         }
         let mut v = vec![t, c, cap];
         v.extend(footers(&mut b));
-        lay(&mut b, "Content with Caption", LayoutType::ContentWithCaption, v);
+        lay(&mut b, "캡션 있는 내용", LayoutType::ContentWithCaption, v);
     }
     // Picture with Caption
     {
@@ -425,7 +425,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         }
         let mut v = vec![t, p, cap];
         v.extend(footers(&mut b));
-        lay(&mut b, "Picture with Caption", LayoutType::PictureWithCaption, v);
+        lay(&mut b, "캡션 있는 그림", LayoutType::PictureWithCaption, v);
     }
     // Title and Vertical Text
     {

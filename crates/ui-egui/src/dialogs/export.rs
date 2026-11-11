@@ -1,4 +1,4 @@
-use super::{Dialog, SlideApp, Ui, Value, check, field, json, num, vec2};
+﻿use super::{Dialog, SlideApp, Ui, Value, check, field, json, num, vec2};
 
 /// The export dialog's Animated GIF options (size, seconds per slide, loop, slide range, hidden
 /// slides) as `file.export` params; a slide range that doesn't fit the deck is an error message.
@@ -15,7 +15,7 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
     };
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Size:"));
+        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new("크기:"));
         let combo = craft_ui::ComboBox::from_id_salt("gif_size").selected_text(size_label(&size)).show_ui(ui, |ui| {
             for k in SIZE_PRESETS.iter().map(|(k, _)| *k).chain(["custom"]) {
                 if ui.selectable_label(size == k, size_label(k)).clicked() {

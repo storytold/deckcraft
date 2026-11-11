@@ -1,4 +1,4 @@
-//! Insert › Date and Time, driven like a person: the ribbon opens the dialog, a format is
+﻿//! Insert › Date and Time, driven like a person: the ribbon opens the dialog, a format is
 //! chosen, OK inserts it in one undo, Cancel leaves the slide alone.
 
 use deckcraft_engine::Session;
@@ -52,7 +52,7 @@ fn insert_opens_the_dialog_and_ok_inserts_one_field() {
     let sample = deckcraft_text::datetime::field_text("datetime2", Some("en-US"), now).unwrap();
     h.get_by_label(&sample).click();
     h.run_steps(1);
-    h.get_by_label("OK").click();
+    h.get_by_label("확인").click();
     h.run_steps(2);
     assert!(h.state().dialog.is_none());
     let run = date_run(&h).unwrap();

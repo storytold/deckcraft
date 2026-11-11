@@ -1,4 +1,4 @@
-//! Dialogs (Insert Table, Slide Size, Font, Paragraph, Tabs, Header & Footer, Hyperlink, Set Up Show, Zoom, …) and the
+﻿//! Dialogs (Insert Table, Slide Size, Font, Paragraph, Tabs, Header & Footer, Hyperlink, Set Up Show, Zoom, …) and the
 //! About window. The start screen is File › Home (`backstage.rs`).
 
 use deckcraft_color::SchemeSlot;
@@ -32,14 +32,14 @@ impl Dialog {
 fn title(id: &str) -> &'static str {
     match id {
         "table" => "Insert Table",
-        "slideSize" => "Slide Size",
-        "sizePosition" => "Size and Position",
-        "headerFooter" => "Header and Footer",
-        "hyperlink" => "Insert Hyperlink",
-        "setupShow" => "Set Up Slide Show",
+        "slideSize" => "슬라이드 크기",
+        "sizePosition" => "크기 및 위치",
+        "headerFooter" => "머리글 및 바닥글",
+        "hyperlink" => "하이퍼링크 삽입",
+        "setupShow" => "쇼 설정",
         "zoom" => "Zoom",
         "comment" => "New Comment",
-        "altText" => "Alt Text",
+        "altText" => "대체 텍스트",
         "outline" => "Slides from Outline",
         "renameSection" => "Rename Section",
         "reuseSlides" => "Reuse Slides",
@@ -51,29 +51,29 @@ fn title(id: &str) -> &'static str {
         "about" => "About DeckCraft",
         "preferences" => "Preferences",
         "autocorrect" => "AutoCorrect",
-        "gridOptions" => "Grid Options",
+        "gridOptions" => "눈금 및 안내선",
         "columns" => "Columns",
         "export" => "Export",
-        "symbol" => "Symbol",
-        "photoAlbum" => "Photo Album",
-        "replaceFonts" => "Replace Font",
-        "equation" => "Equation",
+        "symbol" => "기호",
+        "photoAlbum" => "사진 앨범",
+        "replaceFonts" => "글꼴 바꾸기",
+        "equation" => "수식",
         "dateTime" => "Date and Time",
         "spelling" => "Spelling",
-        "pasteSpecial" => "Paste Special",
+        "pasteSpecial" => "선택하여 붙여넣기",
         "find" => "Find and Replace",
-        "accessibility" => "Accessibility Checker",
+        "accessibility" => "접근성 검사",
         "language" => "Language",
         "customShow" => "Custom Shows",
         "chartData" => "Chart Data",
         "trim" => "Trim Media",
-        "smartart" => "Choose a SmartArt Graphic",
+        "smartart" => "SmartArt 그래픽 선택",
         "bullets" => "Bullets and Numbering",
         "action" => "Action Settings",
-        "quit" => "DeckCraft",
+        "quit" => "기본(DeckCraft)",
         "themeColors" => "Create New Theme Colors",
         "themeFonts" => "Create New Theme Fonts",
-        _ => "DeckCraft",
+        _ => "기본(DeckCraft)",
     }
 }
 
@@ -113,12 +113,12 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     if open && !close && !escape {
         app.dialog = Some(d);
     } else if !close && d.id == "preferences" {
-        // Esc or the window's close button: the same as Cancel.
+        // Esc or the window's close button: the same as 취소.
         restore_preferences(app, &d);
     } else if app.dialog.is_none()
         && let Some(ret) = d.params.get("returnParams").filter(|v| v.is_object()).cloned()
     {
-        // Tabs… opened from Paragraph: closing it (OK, Cancel, Esc or the window) returns there.
+        // Tabs… opened from Paragraph: closing it (확인, 취소, Esc or the window) returns there.
         let id = d.params.get("returnId").and_then(Value::as_str).unwrap_or("paragraph");
         let mut back = Dialog::new(id);
         back.params = ret;
@@ -137,7 +137,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new("취소").min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });

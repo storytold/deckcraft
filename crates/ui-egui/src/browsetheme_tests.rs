@@ -1,4 +1,4 @@
-//! Design › Browse for Themes…: picking a .pptx applies its theme.
+﻿//! Design › Browse for Themes…: picking a .pptx applies its theme.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -41,7 +41,7 @@ fn browse_button_applies_the_picked_files_theme() {
         app,
     );
     h.run_steps(3);
-    h.get_by_label("Browse for Themes…").click();
+    h.get_by_label("테마 찾아보기...").click();
     h.run_steps(3);
     assert_eq!(asked.borrow().as_slice(), ["theme"]);
     assert_eq!(h.state().session.active().unwrap().doc.masters[0].theme.fonts.major.latin, "Lato");

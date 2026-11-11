@@ -1,4 +1,4 @@
-//! The File tab (Backstage, #76) through real egui input: the File tab, Alt+F and Esc, every page,
+﻿//! The File tab (Backstage, #76) through real egui input: the File tab, Alt+F and Esc, every page,
 //! and the commands its pages run.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -193,7 +193,7 @@ fn new_tiles_keep_the_right_margin_in_a_narrow_window() {
     );
     h.state_mut().run("app.backstage", json!({"page": "new"})).unwrap();
     h.run_steps(3);
-    let tiles = ["DeckCraft", "Harbor", "Ember", "Meadow", "Nocturne", "Paper", "Briefing"];
+    let tiles = ["기본(DeckCraft)", "Harbor", "Ember", "Meadow", "Nocturne", "Paper", "Briefing"];
     for label in tiles {
         let r = h.get_by_label(label).rect();
         assert!(r.right() <= 1000.0 - 36.0, "{label} ends at {}, inside the 36pt right margin", r.right());
@@ -355,11 +355,11 @@ fn close_closes_and_asks_about_unsaved_changes() {
     let mut h = harness(new_app());
     h.state_mut().run("app.backstage", json!({})).unwrap();
     h.run_steps(3);
-    click_nav(&h, "Close");
+    click_nav(&h, "닫기");
     h.run_steps(3);
     assert_eq!(h.state().session.documents().len(), 0);
     assert_eq!(page(&h), Some(Page::Home), "the start screen shows");
-    assert!(h.query_by_label("Back").is_none() && h.query_by_label("Close").is_none(), "nothing to go back to or close");
+    assert!(h.query_by_label("Back").is_none() && h.query_by_label("닫기").is_none(), "nothing to go back to or close");
 
     // Unsaved: Cancel keeps it, Don't Save closes it.
     h.get_by_label("Blank Presentation").click();
@@ -367,14 +367,14 @@ fn close_closes_and_asks_about_unsaved_changes() {
     h.state_mut().run("slide.new", json!({})).unwrap();
     h.state_mut().run("app.backstage", json!({})).unwrap();
     h.run_steps(3);
-    click_nav(&h, "Close");
+    click_nav(&h, "닫기");
     h.run_steps(3);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
     h.get_by_label("Cancel").click();
     h.run_steps(3);
     assert_eq!(h.state().session.documents().len(), 1);
     assert!(h.state().backstage_open(), "Cancel leaves the File tab as it was");
-    click_nav(&h, "Close");
+    click_nav(&h, "닫기");
     h.run_steps(3);
     h.get_by_label("Don't Save").click();
     h.run_steps(3);

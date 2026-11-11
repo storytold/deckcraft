@@ -1,5 +1,5 @@
-//! In-canvas animation preview: the current slide's effects played on the editor canvas
-//! (Animations ▸ Preview, Animation Pane ▸ Play All). The slide show uses the same mapping.
+﻿//! In-canvas animation preview: the current slide's effects played on the editor canvas
+//! (Animations ▸ Preview, Animation Pane ▸ 모두 재생). The slide show uses the same mapping.
 
 use deckcraft_anim::Timeline;
 use deckcraft_geom::Vec2;
@@ -31,7 +31,7 @@ pub fn shape_state(tl: &Timeline, id: ShapeId, step: usize, t: f64) -> ShapeStat
     }
 }
 
-/// State on the play-everything clock (preview and Play All).
+/// State on the play-everything clock (preview and 모두 재생).
 pub fn shape_state_at(tl: &Timeline, id: ShapeId, time: f64) -> ShapeState {
     let (step, t) = tl.locate(time);
     shape_state(tl, id, step, t)

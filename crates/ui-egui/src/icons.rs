@@ -1,4 +1,4 @@
-//! Ribbon and UI icons, drawn in code.
+﻿//! Ribbon and UI icons, drawn in code.
 //!
 //! Every icon here is an original drawing made from egui painter primitives on a 24×24 design
 //! grid (contributor-original, `MIT OR Apache-2.0`). Nothing is traced from or modelled on any

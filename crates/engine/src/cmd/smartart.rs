@@ -1,4 +1,4 @@
-//! SmartArt: a diagram's outline (the Text Pane) and the shapes generated from it.
+﻿//! SmartArt: a diagram's outline (the Text Pane) and the shapes generated from it.
 //!
 //! A SmartArt graphic is a group whose `diagram` holds its layout and its nodes (text + outline
 //! level). Every edit changes the nodes and regenerates the group's children inside the group's
@@ -42,14 +42,14 @@ pub const LAYOUTS: [(&str, &str); 45] = [
     ("list", "Vertical Bullet List"),
     ("blockList", "Basic Block List"),
     ("hBulletList", "Horizontal Bullet List"),
-    ("process", "Basic Process"),
+    ("process", "기본 프로세스형"),
     ("chevron", "Basic Chevron Process"),
     ("verticalProcess", "Vertical Process"),
     ("stepUp", "Step Up Process"),
-    ("cycle", "Basic Cycle"),
+    ("cycle", "기본 주기형"),
     ("blockCycle", "Block Cycle"),
     ("radial", "Basic Radial"),
-    ("hierarchy", "Hierarchy"),
+    ("hierarchy", "계층 구조형"),
     ("pyramid", "Basic Pyramid"),
     ("invertedPyramid", "Inverted Pyramid"),
     ("matrix", "Basic Matrix"),

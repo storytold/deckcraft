@@ -1,4 +1,4 @@
-//! Opening a presentation in the background (#350): reading and parsing a large PPTX no longer
+﻿//! Opening a presentation in the background (#350): reading and parsing a large PPTX no longer
 //! freezes the window. A modal shows the file being opened and the time so far, and Cancel (or
 //! Escape) gives the window back at once; the abandoned read finishes on its thread and is dropped.
 

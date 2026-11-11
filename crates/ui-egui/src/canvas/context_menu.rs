@@ -1,4 +1,4 @@
-use super::{Hit, SlideApp, json};
+﻿use super::{Hit, SlideApp, json};
 
 pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
     // Right-clicking a vertex in Edit Points picks it for the point menu.
@@ -18,7 +18,7 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
             spelling_menu(app, ui, &w);
         }
         let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
-        for (l, id) in [("Cut", "edit.cut"), ("Copy", "edit.copy"), ("Paste", "edit.paste")] {
+        for (l, id) in [("잘라내기", "edit.cut"), ("복사", "edit.copy"), ("붙여넣기", "edit.paste")] {
             if ui.add_enabled(crate::ribbon::enabled(app, id), egui::Button::new(l)).clicked() {
                 let _ = app.run(id, json!({}));
                 ui.close();
@@ -172,7 +172,7 @@ fn spelling_menu(app: &mut SlideApp, ui: &mut egui::Ui, w: &crate::squiggles::Me
 }
 
 fn text_items(app: &mut SlideApp, ui: &mut egui::Ui) {
-    if ui.button("Paragraph…").clicked() {
+    if ui.button("단락...").clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("paragraph"));
         ui.close();
     }
@@ -187,14 +187,14 @@ fn text_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         ui.close();
     }
     ui.separator();
-    if ui.button("Format Shape…").clicked() {
+    if ui.button("도형 서식...").clicked() {
         let _ = app.run("view.pane", json!({"pane": "format"}));
         ui.close();
     }
 }
 
 fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
-    if ui.button("Edit Text").clicked() {
+    if ui.button("텍스트 편집").clicked() {
         let _ = app.run("text.edit", json!({}));
         ui.close();
     }
@@ -205,25 +205,25 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         let _ = app.run("shape.editPoints", json!({"on": true}));
         ui.close();
     }
-    if ui.button("Font…").clicked() {
+    if ui.button("글꼴...").clicked() {
         let _ = app.run("format.fontDialog", json!({}));
         ui.close();
     }
-    if ui.button("Paragraph…").clicked() {
+    if ui.button("단락...").clicked() {
         let _ = app.run("format.paragraphDialog", json!({}));
         ui.close();
     }
-    ui.menu_button("Bring to Front", |ui| {
-        crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringToFront, "Bring to Front", "arrange.bringToFront", json!({}));
-        crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringForward, "Bring Forward", "arrange.bringForward", json!({}));
+    ui.menu_button("맨 앞으로 가져오기", |ui| {
+        crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringToFront, "맨 앞으로 가져오기", "arrange.bringToFront", json!({}));
+        crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringForward, "앞으로 가져오기", "arrange.bringForward", json!({}));
     });
-    ui.menu_button("Send to Back", |ui| {
-        crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendToBack, "Send to Back", "arrange.sendToBack", json!({}));
-        crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendBackward, "Send Backward", "arrange.sendBackward", json!({}));
+    ui.menu_button("맨 뒤로 보내기", |ui| {
+        crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendToBack, "맨 뒤로 보내기", "arrange.sendToBack", json!({}));
+        crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendBackward, "뒤로 보내기", "arrange.sendBackward", json!({}));
     });
-    ui.menu_button("Group", |ui| {
-        crate::ribbon::menu_item(app, ui, crate::icons::Icon::Group, "Group", "arrange.group", json!({}));
-        crate::ribbon::menu_item(app, ui, crate::icons::Icon::Ungroup, "Ungroup", "arrange.ungroup", json!({}));
+    ui.menu_button("그룹", |ui| {
+        crate::ribbon::menu_item(app, ui, crate::icons::Icon::Group, "그룹", "arrange.group", json!({}));
+        crate::ribbon::menu_item(app, ui, crate::icons::Icon::Ungroup, "그룹 해제", "arrange.ungroup", json!({}));
     });
     let locked = app.session.active().is_some_and(|d| d.selected_shapes().iter().all(|s| s.locked));
     if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
@@ -248,11 +248,11 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         let _ = app.run("shape.setDefault", json!({}));
         ui.close();
     }
-    if ui.button("Size and Position…").clicked() {
+    if ui.button("크기 및 위치...").clicked() {
         let _ = app.run("shape.sizePosition", json!({}));
         ui.close();
     }
-    if ui.button("Format Shape…").clicked() {
+    if ui.button("도형 서식...").clicked() {
         let _ = app.run("view.pane", json!({"pane": "format"}));
         ui.close();
     }
@@ -272,7 +272,7 @@ fn slide_items(app: &mut SlideApp, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.menu_button("Grid and Guides", |ui| {
+    ui.menu_button("눈금 및 안내선", |ui| {
         let mut on = app.ui.guides;
         if ui.checkbox(&mut on, "Guides").clicked() {
             let _ = app.run("view.guides", json!({"on": on}));

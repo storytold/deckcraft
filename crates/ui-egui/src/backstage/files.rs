@@ -1,4 +1,4 @@
-use super::{
+﻿use super::{
     Align2, Backstage, CONTENT_W, Color32, CornerRadius, Icon, Outcome, Page, Rect, RichText, Sense, SlideApp, Stroke, StrokeKind, Tokens, Ui, Value,
     arrow_link, dim, heading, icons, json, pos2, search, theme, vec2,
 };
@@ -41,7 +41,7 @@ fn new_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize, blank: 
     }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-        if blank && tile(ui, "Blank Presentation", None, false).clicked() {
+        if blank && tile(ui, "빈 프레젠테이션", None, false).clicked() {
             let _ = app.run("file.new", json!({}));
         }
         let mut shown = 0;
@@ -55,7 +55,7 @@ fn new_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize, blank: 
             shown += 1;
         }
         if sample && shown < limit {
-            let th = deckcraft_model::theme::builtin_themes().into_iter().find(|t| t.name == "DeckCraft");
+            let th = deckcraft_model::theme::builtin_themes().into_iter().find(|t| t.name == "기본(DeckCraft)");
             if tile(ui, "Sample deck: Northern Lights", th.as_ref(), false).clicked()
                 && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session)
             {
@@ -210,13 +210,13 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
         crate::dialogs::paint_logo(ui.painter(), r);
-        ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
+        ui.label(RichText::new("기본(DeckCraft)").font(theme::bold(24.0)).color(t.text));
     });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("New").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new("새로 만들기").font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if arrow_link(ui, "More themes") {
+            if arrow_link(ui, "테마 더 보기") {
                 out.page = Some(Page::New);
             }
         });
@@ -225,9 +225,9 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     new_tiles(app, ui, "", 5, true);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Templates").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new("서식 파일").font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if arrow_link(ui, "More templates") {
+            if arrow_link(ui, "서식 파일 더 보기") {
                 out.page = Some(Page::New);
             }
         });
@@ -236,9 +236,9 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     template_tiles(app, ui, "", 3);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Recent").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new("최근 항목").font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            search(ui, &mut bs.query, "Search for a file", 280.0);
+            search(ui, &mut bs.query, "파일 검색", 280.0);
         });
     });
     ui.add_space(6.0);
@@ -246,7 +246,7 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     if app.ui.recent.len() > 8 {
         ui.add_space(6.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if arrow_link(ui, "More presentations") {
+            if arrow_link(ui, "프레젠테이션 더 보기") {
                 out.page = Some(Page::Open);
             }
         });
@@ -258,7 +258,7 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
 /// New: a blank presentation, then every theme and starter template, with a search box.
 pub(super) fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
-    if tile(ui, "Blank Presentation", None, true).clicked() {
+    if tile(ui, "빈 프레젠테이션", None, true).clicked() {
         let _ = app.run("file.new", json!({}));
     }
     ui.add_space(8.0);
@@ -309,7 +309,7 @@ pub(super) fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
         ui.add_space(24.0);
         ui.vertical(|ui| {
-            search(ui, &mut bs.query, "Search for a file", 380.0);
+            search(ui, &mut bs.query, "파일 검색", 380.0);
             ui.add_space(12.0);
             heading(ui, "Presentations");
             let q = bs.query.clone();

@@ -1,4 +1,4 @@
-use super::arrange::arrange_group;
+﻿use super::arrange::arrange_group;
 use super::galleries::cref_param;
 use super::{
     Color32, CornerRadius, Icon, Rect, Sense, ShapeKind, SlideApp, Stroke, Ui, Value, big, big_button, big_button_ex, color_split, group, json,
@@ -15,31 +15,31 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
             let flags = tbl.as_ref().map(|t| (t.first_row, t.last_row, t.band_row, t.first_col, t.last_col, t.band_col)).unwrap_or_default();
             ui.horizontal(|ui| {
                 let mut a = flags.0;
-                if ui.checkbox(&mut a, "Header Row").changed() {
+                if ui.checkbox(&mut a, "머리글 행").changed() {
                     run(app, "table.options", json!({"headerRow": a}));
                 }
                 let mut d = flags.3;
-                if ui.checkbox(&mut d, "First Column").changed() {
+                if ui.checkbox(&mut d, "첫째 열").changed() {
                     run(app, "table.options", json!({"firstColumn": d}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut b = flags.1;
-                if ui.checkbox(&mut b, "Total Row").changed() {
+                if ui.checkbox(&mut b, "요약 행").changed() {
                     run(app, "table.options", json!({"totalRow": b}));
                 }
                 let mut e = flags.4;
-                if ui.checkbox(&mut e, "Last Column").changed() {
+                if ui.checkbox(&mut e, "마지막 열").changed() {
                     run(app, "table.options", json!({"lastColumn": e}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut c = flags.2;
-                if ui.checkbox(&mut c, "Banded Rows").changed() {
+                if ui.checkbox(&mut c, "줄무늬 행").changed() {
                     run(app, "table.options", json!({"bandedRows": c}));
                 }
                 let mut f = flags.5;
-                if ui.checkbox(&mut f, "Banded Columns").changed() {
+                if ui.checkbox(&mut f, "줄무늬 열").changed() {
                     run(app, "table.options", json!({"bandedColumns": f}));
                 }
             });
@@ -192,9 +192,9 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::DeleteTable, "Delete", true);
         egui::Popup::menu(&r).show(|ui| {
-            menu_item(app, ui, Icon::DeleteTable, "Delete Columns", "table.deleteColumn", json!({}));
-            menu_item(app, ui, Icon::DeleteTable, "Delete Rows", "table.deleteRow", json!({}));
-            menu_item(app, ui, Icon::DeleteTable, "Delete Table", "edit.delete", json!({}));
+            menu_item(app, ui, Icon::DeleteTable, "열 삭제", "table.deleteColumn", json!({}));
+            menu_item(app, ui, Icon::DeleteTable, "행 삭제", "table.deleteRow", json!({}));
+            menu_item(app, ui, Icon::DeleteTable, "표 삭제", "edit.delete", json!({}));
         });
         big(app, ui, Icon::InsertAbove, "Insert\nAbove", "table.insertRowAbove", json!({}));
         big(app, ui, Icon::InsertBelow, "Insert\nBelow", "table.insertRowBelow", json!({}));
@@ -207,16 +207,16 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         rows(ui, |ui| {
-            small(app, ui, Icon::DistributeV, "Distribute Rows", "table.distributeRows", json!({}));
-            small(app, ui, Icon::DistributeH, "Distribute Columns", "table.distributeColumns", json!({}));
+            small(app, ui, Icon::DistributeV, "행 높이를 같게", "table.distributeRows", json!({}));
+            small(app, ui, Icon::DistributeH, "열 너비를 같게", "table.distributeColumns", json!({}));
         });
     });
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                toggle(app, ui, Icon::AlignLeft, "Align Left", "format.alignLeft", false);
+                toggle(app, ui, Icon::AlignLeft, "왼쪽 맞춤", "format.alignLeft", false);
                 toggle(app, ui, Icon::AlignCenter, "Center", "format.alignCenter", false);
-                toggle(app, ui, Icon::AlignRight, "Align Right", "format.alignRight", false);
+                toggle(app, ui, Icon::AlignRight, "오른쪽 맞춤", "format.alignRight", false);
             });
             ui.horizontal(|ui| {
                 for (l, a) in [("Top", "top"), ("Center", "middle"), ("Bottom", "bottom")] {

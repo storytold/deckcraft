@@ -1,4 +1,4 @@
-//! The Selection pane driven like a person would: clicks, Ctrl+click, drag and drop, the eye,
+﻿//! The Selection pane driven like a person would: clicks, Ctrl+click, drag and drop, the eye,
 //! the padlock, renaming and the keyboard.
 
 use deckcraft_engine::Session;
@@ -118,10 +118,10 @@ fn eye_and_padlock_toggle_and_undo() {
     h.get_by_label("Unlock D").click();
     h.run_steps(2);
     assert!(!shape(&h, "D").locked && shape(&h, "G").locked);
-    h.get_by_label("Hide All").click();
+    h.get_by_label("모두 숨기기").click();
     h.run_steps(2);
     assert!(["A", "B", "C", "G"].iter().all(|n| shape(&h, n).hidden));
-    h.get_by_label("Show All").click();
+    h.get_by_label("모두 표시").click();
     h.run_steps(2);
     assert!(["A", "B", "C", "G", "D", "E"].iter().all(|n| !shape(&h, n).hidden));
     h.state_mut().run("edit.undo", json!({})).unwrap();
@@ -178,17 +178,17 @@ fn bring_forward_and_send_backward_buttons() {
     let (mut h, _) = harness();
     h.get_by_label("A").click();
     h.run_steps(2);
-    h.get_by_label("Bring Forward").click();
+    h.get_by_label("앞으로 가져오기").click();
     h.run_steps(2);
     assert_eq!(names(&h), "B A C G[D E]");
     h.get_by_label("D").click();
     h.run_steps(2);
-    h.get_by_label("Bring Forward").click();
+    h.get_by_label("앞으로 가져오기").click();
     h.run_steps(2);
-    h.get_by_label("Bring Forward").click();
+    h.get_by_label("앞으로 가져오기").click();
     h.run_steps(2);
     assert_eq!(names(&h), "B A C G[E D]", "a child stays in its group");
-    h.get_by_label("Send Backward").click();
+    h.get_by_label("뒤로 보내기").click();
     h.run_steps(2);
     assert_eq!(names(&h), "B A C G[D E]");
 }

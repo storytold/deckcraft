@@ -1,4 +1,4 @@
-use super::about::{about, credits_block};
+﻿use super::about::{about, credits_block};
 use super::alt_text::alt_text_starts_decorative;
 use super::columns::columns_dialog;
 use super::date_time::{date_rows, date_time_dialog};
@@ -67,7 +67,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "dateTime" => date_time_dialog(app, ui, d),
         _ => {
             ui.label(format!("“{}” is not available yet.", d.id));
-            let (ok, cancel) = buttons(ui, "OK");
+            let (ok, cancel) = buttons(ui, "확인");
             ok || cancel
         }
     }
@@ -80,7 +80,7 @@ fn run(app: &mut SlideApp, id: &str, p: Value) {
 fn dlg_table(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     field(ui, d, "Number of columns:", "cols", "5");
     field(ui, d, "Number of rows:", "rows", "2");
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = buttons(ui, "삽입");
     if ok {
         let (r, c) = (num(d, "rows", 2.0) as usize, num(d, "cols", 5.0) as usize);
         run(app, "insert.table", json!({"rows": r, "cols": c}));
@@ -126,8 +126,8 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             put_slide_dim(d, "h", w, ppu);
         }
     });
-    let maximize = check(ui, d, "Maximize content (else ensure fit)", "max", false);
-    let (ok, cancel) = buttons(ui, "OK");
+    let maximize = check(ui, d, "콘텐츠 최대화(해제 시 맞춤 확인)", "max", false);
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let (w, h) = (slide_dim_points(d, "w", ppu, cur.width), slide_dim_points(d, "h", ppu, cur.height));
         run(app, "design.slideSize", json!({"w": w, "h": h, "scale": if maximize { "maximize" } else { "ensureFit" }}));
@@ -137,8 +137,8 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 
 fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let hf = app.session.active().map(|s| s.doc.header_footer.clone()).unwrap_or_default();
-    let date = check(ui, d, "Date and time", "date", hf.date);
-    field(ui, d, "  Fixed date (empty = update automatically):", "dateText", &hf.date_text);
+    let date = check(ui, d, "날짜 및 시간", "date", hf.date);
+    field(ui, d, "  고정 날짜 (비워둘 경우 자동 업데이트):", "dateText", &hf.date_text);
     // The format applies to an automatic date; a fixed one is the text as typed.
     let automatic = d.get("dateText", &hf.date_text).is_empty();
     let fmt_now = if hf.date_format.is_empty() { "datetime1".to_string() } else { hf.date_format.clone() };
@@ -148,7 +148,7 @@ fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let label = rows.iter().find(|(k, _)| *k == fmt).map(|(_, s)| s.clone()).unwrap_or_else(|| fmt.clone());
     ui.add_enabled_ui(date && automatic, |ui| {
         ui.horizontal(|ui| {
-            ui.label("  Format:");
+            ui.label("  형식:");
             craft_ui::ComboBox::from_id_salt("hf-date-format").selected_text(label).width(200.0).show_ui(ui, |ui| {
                 for (kind, sample) in &rows {
                     if ui.selectable_label(fmt == *kind, sample).clicked() {
@@ -158,17 +158,17 @@ fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             });
         });
     });
-    let num_on = check(ui, d, "Slide number", "num", hf.slide_number);
+    let num_on = check(ui, d, "슬라이드 번호", "num", hf.slide_number);
     let foot = check(ui, d, "Footer", "footer", hf.footer);
-    field(ui, d, "  Footer text:", "footerText", &hf.footer_text);
-    let hide = check(ui, d, "Don't show on title slide", "hide", hf.hide_on_title);
+    field(ui, d, "  바닥글 텍스트:", "footerText", &hf.footer_text);
+    let hide = check(ui, d, "제목 슬라이드에는 표시 안 함", "hide", hf.hide_on_title);
     ui.add_space(6.0);
     let mut apply_all = false;
     let mut apply = false;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        apply_all = ui.button("Apply to All").clicked();
-        apply = ui.button("Apply").clicked();
-        if ui.button("Cancel").clicked() {
+        apply_all = ui.button("모두 적용").clicked();
+        apply = ui.button("적용").clicked();
+        if ui.button("취소").clicked() {
             d.fields.insert("cancel".into(), "1".into());
         }
     });
@@ -228,7 +228,7 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         _ => field(ui, d, "Address:", "url", &seed.url),
     }
     field(ui, d, "ScreenTip:", "tip", &seed.tip);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let mode_now = d.get("mode", seed.mode);
         let url = d.get("url", &seed.url);
@@ -245,27 +245,27 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let sh = app.session.active().map(|s| s.doc.show.clone()).unwrap_or_default();
     let ty = d.get("type", &sh.show_type);
-    ui.label("Show type");
+    ui.label("쇼 형식");
     for (l, v) in [
-        ("Presented by a speaker (full screen)", "speaker"),
-        ("Browsed by an individual (window)", "browsed"),
-        ("Browsed at a kiosk (full screen)", "kiosk"),
+        ("발표자가 진행(전체 화면)", "speaker"),
+        ("웹 형식으로 진행(창)", "browsed"),
+        ("키오스크로 진행(전체 화면)", "kiosk"),
     ] {
         if ui.radio(ty == v, l).clicked() {
             d.fields.insert("type".into(), v.into());
         }
     }
-    let lp = check(ui, d, "Loop continuously until 'Esc'", "loop", sh.loop_until_esc);
-    let nn = check(ui, d, "Show without narration", "nn", sh.without_narration);
-    let na = check(ui, d, "Show without animation", "na", sh.without_animation);
-    let ut = check(ui, d, "Use timings, if present", "ut", sh.use_timings);
-    let kc = check(ui, d, "Keep mouse cursor visible", "kc", app.ui.show_keep_cursor);
+    let lp = check(ui, d, "Esc 키를 누를 때까지 계속 반복", "loop", sh.loop_until_esc);
+    let nn = check(ui, d, "설명 없이 쇼 진행", "nn", sh.without_narration);
+    let na = check(ui, d, "애니메이션 없이 쇼 진행", "na", sh.without_animation);
+    let ut = check(ui, d, "저장된 설명 타이밍 사용", "ut", sh.use_timings);
+    let kc = check(ui, d, "마우스 커서 계속 표시", "kc", app.ui.show_keep_cursor);
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
     let field = ui.label("Slides");
-    let label = if chosen.is_empty() { "All slides".to_string() } else { chosen.clone() };
+    let label = if chosen.is_empty() { "모두".to_string() } else { chosen.clone() };
     let combo = craft_ui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
-        if ui.selectable_label(chosen.is_empty(), "All slides").clicked() {
+        if ui.selectable_label(chosen.is_empty(), "모두").clicked() {
             d.fields.insert("custom".into(), String::new());
         }
         for n in &names {
@@ -275,7 +275,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let _ = combo.response.labelled_by(field.id);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
@@ -314,7 +314,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new("취소").min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
@@ -347,7 +347,7 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new("취소").min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
@@ -427,7 +427,7 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ];
     let color = d.get("color", "");
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Color:"));
+        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new("색:"));
         let combo = craft_ui::ComboBox::from_id_salt("bullet-color")
             .selected_text(colors.iter().find(|c| c.0 == color).map_or("Automatic", |c| c.1))
             .show_ui(ui, |ui| {
@@ -444,7 +444,7 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             d.fields.insert("none".into(), "1".into());
         }
     });
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     let none = d.fields.contains_key("none");
     if none {
         run(app, if tab == "numbered" { "format.numbering" } else { "format.bullets" }, json!({"on": false}));
@@ -500,7 +500,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         Some(Action::Slide { slide }) => ("slide", slides.iter().position(|(id, _)| id == slide).unwrap_or(0).to_string()),
     };
     ui.horizontal(|ui| {
-        for (k, l) in [("click", "Mouse Click"), ("hover", "Mouse Over")] {
+        for (k, l) in [("click", "Mouse 클릭"), ("hover", "Mouse Over")] {
             if ui.selectable_label(tab == k, l).clicked() && tab != k {
                 d.fields.clear();
                 d.fields.insert("tab".into(), k.into());
@@ -577,7 +577,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     pick(d, ui, "playMedia", "Play the shape's media");
     let hl = check(ui, d, "Highlight click", "highlight", cur.as_ref().is_none_or(|h| h.highlight_click));
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let kind = d.get("kind", cur_kind);
         let arg = d.get("arg", &cur_arg);
@@ -610,7 +610,7 @@ fn dlg_alt_text(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.add(egui::TextEdit::multiline(&mut v).hint_text("Alt text").desired_rows(4).desired_width(340.0));
     d.fields.insert("text".into(), v.clone());
     let deco = check(ui, d, "Mark as decorative", "deco", deco_now);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         run(app, "shape.altText", json!({"text": v, "decorative": deco}));
     }
@@ -622,7 +622,7 @@ fn dlg_outline(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut v = d.get("text", "");
     ui.add(egui::TextEdit::multiline(&mut v).hint_text("Outline").desired_rows(10).desired_width(380.0).code_editor());
     d.fields.insert("text".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = buttons(ui, "삽입");
     if ok {
         run(app, "slide.fromOutline", json!({"text": v}));
     }
@@ -679,7 +679,7 @@ fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         o.insert("keep".into(), json!(keep));
     }
     let picked: Vec<usize> = slides.iter().map(|(i, _)| *i).filter(|i| !off(d, *i)).collect();
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = buttons(ui, "삽입");
     if ok {
         if picked.is_empty() {
             app.set_status("Tick at least one slide to insert".to_string());
@@ -813,7 +813,7 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut from = d.get("from", used.first().map(String::as_str).unwrap_or(""));
     let mut to = d.get("to", "");
     egui::Grid::new("replace_fonts").num_columns(2).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
-        let field = ui.label("Replace:");
+        let field = ui.label("현재 글꼴:");
         let combo = craft_ui::ComboBox::from_id_salt("rf_from").width(240.0).selected_text(from.clone()).show_ui(ui, |ui| {
             for f in &used {
                 ui.selectable_value(&mut from, f.clone(), f);
@@ -821,9 +821,9 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         });
         let _ = combo.response.labelled_by(field.id);
         ui.end_row();
-        ui.label("With:");
+        ui.label("새 글꼴:");
         ui.vertical(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut to).desired_width(240.0).hint_text("Font name"));
+            ui.add(egui::TextEdit::singleline(&mut to).desired_width(240.0).hint_text("글꼴 이름"));
             let needle = to.trim().to_lowercase();
             egui::ScrollArea::vertical().max_height(140.0).id_salt("rf_list").show(ui, |ui| {
                 for f in crate::ribbon::font_families(app).iter().filter(|f| needle.is_empty() || f.to_lowercase().contains(&needle)).take(200) {
@@ -840,10 +840,10 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     d.fields.insert("from".into(), from.clone());
     d.fields.insert("to".into(), to.clone());
-    let (ok, cancel) = buttons(ui, "Replace");
+    let (ok, cancel) = buttons(ui, "바꾸기");
     if ok && !from.is_empty() && !to.trim().is_empty() {
         let n = app.run("font.replace", json!({"from": from, "to": to.trim()})).ok().and_then(|v| v["replaced"].as_u64()).unwrap_or(0);
-        let msg = if n == 0 { format!("“{from}” isn't used explicitly.") } else { format!("Replaced “{from}” with “{}”.", to.trim()) };
+        let msg = if n == 0 { format!("“{from}” 글꼴이 사용되지 않았습니다.") } else { format!("Replaced “{from}” with “{}”.", to.trim()) };
         d.fields.insert("result".into(), msg);
         d.fields.remove("from");
         // Stay open, like PowerPoint, so several fonts can be replaced in a row.
@@ -853,14 +853,14 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 }
 
 fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
-    ui.label("Click a symbol to insert it at the insertion point.");
+    ui.label("클릭 a symbol to insert it at the insertion point.");
     let groups: [(&str, &str); 6] = [
         ("Punctuation", "–—‘’“”…•·§¶†‡‰′″‹›«»¡¿"),
         ("Currency", "$€£¥¢₹₩₽₺₿"),
         ("Math", "±×÷≠≈≤≥∞√∑∏∫∂∆∇∈∉∩∪⊂⊃∀∃¬∧∨⇒⇔°′"),
         ("Greek", "αβγδεζηθικλμνξοπρστυφχψωΓΔΘΛΞΠΣΦΨΩ"),
         ("Arrows", "←↑→↓↔↕⇐⇑⇒⇓↖↗↘↙⟵⟶"),
-        ("Shapes", "■□▪▫▲△▶▷▼▽◀◁◆◇○●◎★☆✓✔✗✘♠♣♥♦"),
+        ("도형", "■□▪▫▲△▶▷▼▽◀◁◆◇○●◎★☆✓✔✗✘♠♣♥♦"),
     ];
     for (g, chars) in groups {
         ui.label(egui::RichText::new(g).font(theme::bold(12.0)));
@@ -875,7 +875,7 @@ fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             }
         });
     }
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = buttons(ui, "닫기");
     ok || cancel
 }
 
@@ -884,7 +884,7 @@ fn dlg_equation(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut v = d.get("eq", "");
     ui.add(egui::TextEdit::singleline(&mut v).hint_text("Equation").desired_width(340.0).font(theme::font(15.0)));
     d.fields.insert("eq".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = buttons(ui, "삽입");
     if ok && !v.is_empty() {
         let pretty = pretty_equation(&v);
         let size = app.session.active().map(|s| s.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
@@ -912,7 +912,7 @@ fn dlg_paste_special(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ui.add_enabled_ui(ok, |ui| ui.radio_value(&mut cur, id.to_string(), label));
     }
     d.fields.insert("as".into(), cur.clone());
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         run(app, "edit.pasteSpecial", json!({"as": cur}));
     }
@@ -957,7 +957,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let shape = item.get("shape").cloned().unwrap_or_default();
             ui.horizontal(|ui| {
                 ui.label(format!("Slide {}: “{w}”", slide.as_u64().unwrap_or(0) + 1));
-                if ui.small_button("Go to").clicked() {
+                if ui.small_button("이동").clicked() {
                     let _ = app.run("slide.go", json!({"index": slide}));
                     let _ = app.run("edit.select", json!({"ids": [shape]}));
                 }
@@ -1009,7 +1009,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     ui.add_space(16.0);
                     ui.label(egui::RichText::new("Change to:").weak());
                     for to in &sug {
-                        let r = ui.small_button(to.as_str()).on_hover_text("Click to change this one; Shift-click to change all");
+                        let r = ui.small_button(to.as_str()).on_hover_text("클릭 to change this one; Shift-click to change all");
                         if r.clicked() {
                             let all = ui.input(|i| i.modifiers.shift);
                             if item.get("notes").and_then(Value::as_bool).unwrap_or(false) {
@@ -1058,7 +1058,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if let Some(w) = add_ignore {
         d.fields.insert("ignore".into(), format!("{ignored}{w}\n"));
     }
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = buttons(ui, "닫기");
     ok || cancel
 }
 
@@ -1077,7 +1077,7 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                     item.get("issue").and_then(Value::as_str).unwrap_or(""),
                     item.get("name").and_then(Value::as_str).map(|n| format!(" — {n}")).unwrap_or_default()
                 ));
-                if ui.small_button("Go to").clicked() {
+                if ui.small_button("이동").clicked() {
                     let _ = app.run("slide.go", json!({"index": item.get("slide").cloned().unwrap_or_default()}));
                     if let Some(id) = item.get("shape") {
                         let _ = app.run("edit.select", json!({"ids": [id]}));
@@ -1086,7 +1086,7 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             });
         }
     });
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = buttons(ui, "닫기");
     ok || cancel
 }
 
@@ -1099,7 +1099,7 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let has_sel = deckcraft_engine::cmd::has_text_or_shapes(&app.session).is_ok();
     let mut all = !has_sel || d.get("scope", "") == "all";
     ui.horizontal(|ui| {
-        ui.label("Apply to:");
+        ui.label("적용 to:");
         if ui.add_enabled(has_sel, egui::RadioButton::new(!all, "Selected text")).clicked() {
             d.fields.insert("scope".into(), "sel".into());
             all = false;
@@ -1130,7 +1130,7 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if ui.checkbox(&mut no_proof, "Do not check spelling or grammar").changed() {
         d.fields.insert("noProof".into(), if no_proof { "1".into() } else { String::new() });
     }
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let lang = d.get("lang", &cur);
         run(app, if all { "format.languageAll" } else { "format.language" }, json!({"lang": lang, "noProof": no_proof}));
@@ -1175,7 +1175,7 @@ fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     });
     let Some((c, id)) = ch else {
         ui.label("Select a chart first.");
-        let (ok, cancel) = buttons(ui, "Close");
+        let (ok, cancel) = buttons(ui, "닫기");
         return ok || cancel;
     };
     ui.label("Edit the data: first row = series names, first column = categories.");
@@ -1210,7 +1210,7 @@ fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     d.params = json!({"grid": grid});
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let names: Vec<String> = grid.first().map(|r| r.iter().skip(1).cloned().collect()).unwrap_or_default();
         let cats: Vec<String> = grid.iter().skip(1).map(|r| r.first().cloned().unwrap_or_default()).collect();
@@ -1226,7 +1226,7 @@ fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     field(ui, d, "End trim (s):", "end", &seed.end);
     field(ui, d, "Fade in (s):", "fin", &seed.fade_in);
     field(ui, d, "Fade out (s):", "fout", &seed.fade_out);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         run(
             app,
@@ -1243,16 +1243,16 @@ fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 }
 
 fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Pick a graphic; type one item per line.");
+    ui.label("그래픽을 선택하고 한 줄에 한 항목씩 입력하십시오.");
     let kind = d.get("kind", "process");
     ui.horizontal_wrapped(|ui| {
         for (k, l) in [
-            ("list", "Basic List"),
-            ("process", "Basic Process"),
-            ("cycle", "Basic Cycle"),
-            ("hierarchy", "Hierarchy"),
-            ("pyramid", "Pyramid"),
-            ("matrix", "Matrix"),
+            ("list", "기본 목록형"),
+            ("process", "기본 프로세스형"),
+            ("cycle", "기본 주기형"),
+            ("hierarchy", "계층 구조형"),
+            ("pyramid", "피라미드형"),
+            ("matrix", "행렬형"),
         ] {
             if ui.selectable_label(kind == k, l).clicked() {
                 d.fields.insert("kind".into(), k.into());
@@ -1262,7 +1262,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut v = d.get("text", "Plan\nBuild\nLaunch");
     ui.add(egui::TextEdit::multiline(&mut v).hint_text("SmartArt items").desired_rows(5).desired_width(320.0));
     d.fields.insert("text".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = buttons(ui, "삽입");
     if ok {
         run(app, "insert.smartArt", json!({"kind": kind, "items": v.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>()}));
         app.ui.pane = Some("smartart".into());
@@ -1286,7 +1286,7 @@ fn dlg_about(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
         _ => about(app, ui),
     }
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = buttons(ui, "닫기");
     ok || cancel
 }
 
@@ -1331,13 +1331,13 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
         });
     });
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     ok || cancel
 }
 
 fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // The controls apply as they change, so the dialog remembers what it opened with and
-    // Cancel (or Esc, or the close button: see `show`) puts that back.
+    // 취소 (or Esc, or the close button: see `show`) puts that back.
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
@@ -1374,7 +1374,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     });
     ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
     ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
+    ui.checkbox(&mut app.session.prefs.snap_to_grid, "개체를 눈금에 맞춤");
     ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
     ui.horizontal(|ui| {
         ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");

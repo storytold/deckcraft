@@ -1,4 +1,4 @@
-//! Quick Access Toolbar: the command buttons at the left of the title bar, which the user can
+﻿//! Quick Access Toolbar: the command buttons at the left of the title bar, which the user can
 //! add to (right-click a ribbon button, or the toolbar's Customize menu), remove from and reset.
 
 use egui::Ui;
@@ -50,7 +50,7 @@ pub fn common() -> Vec<QatItem> {
         QatItem::new("edit.redo", "Redo", Icon::Redo),
         QatItem::new("show.fromStart", "Start from Beginning", Icon::PlayFromStart),
         QatItem::new("app.find", "Find", Icon::Search),
-        QatItem::new("review.spelling", "Spelling", Icon::Spelling),
+        QatItem::new("review.spelling", "맞춤법 검사", Icon::Spelling),
         QatItem::new("app.exportDialog", "Export", Icon::Export),
     ]
 }
@@ -144,7 +144,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             run(app, q);
         }
         r.context_menu(|ui| {
-            if ui.button("Remove from Quick Access Toolbar").clicked() {
+            if ui.button("빠른 실행 도구 모음에서 제거").clicked() {
                 let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 ui.close();
             }
@@ -172,7 +172,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         ui.separator();
         ui.label(egui::RichText::new("Right-click any ribbon button to add it.").weak());
-        if ui.button("Reset to Defaults").clicked() {
+        if ui.button("기본값으로 다시 설정").clicked() {
             let _ = command(app, &json!({"reset": true}));
             ui.close();
         }
@@ -183,7 +183,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 pub fn ribbon_menu(app: &mut SlideApp, r: &egui::Response, icon: Icon, label: &str, id: &str, p: &Value) {
     r.context_menu(|ui| {
         let has = app.ui.qat.iter().any(|q| q.same(id, p));
-        let text = if has { "Remove from Quick Access Toolbar" } else { "Add to Quick Access Toolbar" };
+        let text = if has { "빠른 실행 도구 모음에서 제거" } else { "빠른 실행 도구 모음에 추가" };
         if ui.button(text).clicked() {
             let label = label.replace('\n', " ");
             let key = if has { "remove" } else { "add" };

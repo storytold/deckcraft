@@ -1,4 +1,4 @@
-use super::{Dialog, SlideApp, Ui, Value, buttons, field, json, num, vec2};
+﻿use super::{Dialog, SlideApp, Ui, Value, buttons, field, json, num, vec2};
 
 const TAB_KINDS: [(&str, &str); 4] = [("l", "Left"), ("ctr", "Center"), ("r", "Right"), ("dec", "Decimal")];
 
@@ -36,7 +36,7 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         for (i, (pos, align)) in stops.iter().enumerate() {
             ui.label(format!("{pos:.2}\""));
             ui.label(TAB_KINDS.iter().find(|k| k.0 == align).map(|k| k.1).unwrap_or("Left"));
-            if ui.small_button("Clear").on_hover_text(format!("Clear the tab at {pos:.2}\"")).clicked() {
+            if ui.small_button("투명").on_hover_text(format!("Clear the tab at {pos:.2}\"")).clicked() {
                 remove = Some(i);
             }
             ui.end_row();
@@ -75,7 +75,7 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         }
     });
     d.fields.insert("stops".into(), stops.iter().map(|(p, a)| format!("{p}:{a}")).collect::<Vec<_>>().join("|"));
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         let set: Vec<Value> = stops.iter().map(|(p, a)| json!({"pos": p * 72.0, "align": a})).collect();
         let dt = num(d, "default", 1.0).clamp(0.02, 56.0) * 72.0;

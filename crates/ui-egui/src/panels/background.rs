@@ -1,4 +1,4 @@
-use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
+﻿use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
 
 pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
@@ -14,15 +14,15 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
         Some(Fill::Pattern(_)) => "pattern",
         _ => "auto",
     };
-    // What "Apply to All" re-applies: the current slide's background as command params.
+    // What "모두 적용" re-applies: the current slide's background as command params.
     let mut current: Option<Value> = None;
-    ui.label(egui::RichText::new("Fill").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new("채우기").font(theme::bold(13.0)));
     for (l, k) in [
-        ("Solid fill", "solid"),
-        ("Gradient fill", "gradient"),
-        ("Picture or texture fill", "picture"),
-        ("Pattern fill", "pattern"),
-        ("Follow the layout", "auto"),
+        ("단색 채우기", "solid"),
+        ("그라데이션 채우기", "gradient"),
+        ("그림 또는 질감 채우기", "picture"),
+        ("패턴 채우기", "pattern"),
+        ("레이아웃 따름", "auto"),
     ] {
         if ui.radio(kind == k, l).clicked() && kind != k {
             match k {
@@ -50,8 +50,8 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
         Some(Fill::Solid { color }) => {
             current = Some(json!({"color": cref_param(color)}));
             ui.horizontal(|ui| {
-                ui.label("Color");
-                let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
+                ui.label("색");
+                let r = widgets::drop_button(ui, "색", vec2(70.0, 20.0), true);
                 widgets::color_popup(&r).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                         run(app, "design.background", json!({"color": cref_param(&c)}));
@@ -59,7 +59,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
             let mut tr = ((1.0 - color.alpha()) * 100.0) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("Transparency").suffix("%")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("투명도").suffix("%")).drag_stopped() {
                 run(app, "design.background", json!({"transparency": (f64::from(tr) / 100.0).clamp(0.0, 1.0)}));
             }
         }
@@ -90,13 +90,13 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     ui.add_space(4.0);
     let hide = app.session.active().and_then(|d| d.current_slide().map(|s| !s.show_master_shapes)).unwrap_or(false);
     let mut h = hide;
-    if ui.checkbox(&mut h, "Hide background graphics").changed() {
+    if ui.checkbox(&mut h, "배경 그래픽 숨기기").changed() {
         run(app, "design.hideBackgroundGraphics", json!({"hide": h}));
     }
     ui.add_space(8.0);
     let picture = matches!(fill, Some(Fill::Picture(_)));
     ui.horizontal(|ui| {
-        if ui.add_enabled(current.is_some() || picture, egui::Button::new("Apply to All")).clicked() {
+        if ui.add_enabled(current.is_some() || picture, egui::Button::new("모두 적용")).clicked() {
             if let Some(Value::Object(mut o)) = current.clone() {
                 o.insert("all".into(), json!(true));
                 run(app, "design.background", Value::Object(o));
@@ -104,7 +104,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "design.background", json!({"copy": true}));
             }
         }
-        if ui.button("Reset Background").clicked() {
+        if ui.button("배경 원래대로").clicked() {
             run(app, "design.background", json!({"reset": true}));
         }
     });
@@ -116,7 +116,7 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
     use deckcraft_model::style::PictureMode;
     let alpha = pf.alpha.unwrap_or(1.0);
     let mut tr = ((1.0 - alpha) * 100.0) as f32;
-    if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("Transparency").suffix("%")).drag_stopped() {
+    if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("투명도").suffix("%")).drag_stopped() {
         run(app, "design.background", json!({"transparency": (f64::from(tr) / 100.0).clamp(0.0, 1.0)}));
     }
     let mut tile = matches!(pf.mode, PictureMode::Tile { .. });

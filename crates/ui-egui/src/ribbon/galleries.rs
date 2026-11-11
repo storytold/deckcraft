@@ -1,4 +1,4 @@
-use super::{Align2, Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, json, pos2, run, scheme, theme, vec2, widgets};
+﻿use super::{Align2, Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, json, pos2, run, scheme, theme, vec2, widgets};
 
 /// A ColorRef as a command colour parameter.
 pub fn cref_param(c: &deckcraft_model::ColorRef) -> Value {
@@ -229,7 +229,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
                 app.last_outline = cref_param(&c);
                 run(app, "shape.line", json!({"color": cref_param(&c)}));
             }
-            None => run(app, "shape.line", json!({"none": true})),
+            None => run(app, "shape.line", json!({"없음": true})),
         }
     }
     ui.menu_button("Weight", |ui| {
@@ -258,11 +258,11 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
     });
     ui.menu_button("Arrows", |ui| {
         for (l, h, tl) in [
-            ("None", "none", "none"),
-            ("Arrow at end", "none", "triangle"),
-            ("Arrow at start", "triangle", "none"),
+            ("None", "없음", "없음"),
+            ("Arrow at end", "없음", "triangle"),
+            ("Arrow at start", "triangle", "없음"),
             ("Arrows at both ends", "triangle", "triangle"),
-            ("Stealth end", "none", "stealth"),
+            ("Stealth end", "없음", "stealth"),
             ("Oval ends", "oval", "oval"),
         ] {
             if ui.button(l).clicked() {
@@ -274,28 +274,28 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
 }
 
 pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
-    ui.menu_button("Shadow", |ui| {
+    ui.menu_button("그림자", |ui| {
         for (l, v) in [
-            ("No Shadow", "none"),
-            ("Outer", "outer"),
+            ("그림자 없음", "없음"),
+            ("바깥쪽", "outer"),
             ("Bottom", "bottom"),
             ("Centered", "center"),
-            ("Inner", "inner"),
-            ("Perspective", "perspective"),
+            ("안쪽", "inner"),
+            ("원근감", "perspective"),
         ] {
             if ui.button(l).clicked() {
                 run(app, "shape.effects", json!({"shadow": v}));
             }
         }
     });
-    ui.menu_button("Reflection", |ui| {
-        for (l, v) in [("No Reflection", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
+    ui.menu_button("반사", |ui| {
+        for (l, v) in [("반사 없음", "없음"), ("밀접 반사", "tight"), ("반 반사", "half"), ("전체 반사", "full")] {
             if ui.button(l).clicked() {
                 run(app, "shape.effects", json!({"reflection": v}));
             }
         }
     });
-    ui.menu_button("Glow", |ui| {
+    ui.menu_button("네온", |ui| {
         if ui.button("No Glow").clicked() {
             run(app, "shape.effects", json!({"glow": null}));
         }
@@ -305,35 +305,35 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    ui.menu_button("Soft Edges", |ui| {
+    ui.menu_button("부드러운 가장자리", |ui| {
         for r in [0.0, 1.0, 2.5, 5.0, 10.0, 25.0] {
             if ui.button(if r == 0.0 { "No Soft Edges".to_string() } else { format!("{r} pt") }).clicked() {
                 run(app, "shape.effects", json!({"softEdges": r}));
             }
         }
     });
-    ui.menu_button("Bevel", |ui| {
+    ui.menu_button("입체 효과", |ui| {
         for b in [
-            "none",
-            "circle",
-            "relaxedInset",
-            "cross",
-            "coolSlant",
-            "angle",
-            "softRound",
-            "convex",
-            "slope",
-            "divot",
-            "riblet",
-            "hardEdge",
-            "artDeco",
+            "없음",
+            "둥글게",
+            "부드러운 입체",
+            "십자형",
+            "시원한 기울기",
+            "각도",
+            "부드러운 원형",
+            "볼록",
+            "경사",
+            "오목",
+            "리브형",
+            "거친 모서리",
+            "아르데코",
         ] {
             if ui.button(b).clicked() {
                 run(app, "shape.effects", json!({"bevel": b}));
             }
         }
     });
-    if ui.button("Format Shape…").clicked() {
+    if ui.button("도형 서식...").clicked() {
         let _ = app.run("view.pane", json!({"pane": "format", "tab": "effects"}));
     }
 }

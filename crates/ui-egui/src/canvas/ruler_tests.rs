@@ -1,4 +1,4 @@
-//! The ruler's indent and tab markers driven with the mouse while editing text.
+﻿//! The ruler's indent and tab markers driven with the mouse while editing text.
 
 use deckcraft_engine::Session;
 use egui::{Modifiers, PointerButton, Pos2};
@@ -149,9 +149,9 @@ fn tabs_dialog_sets_clears_and_applies_on_ok() {
     }
     // Nothing changes until OK.
     assert_eq!(ruler(&mut h)["tabs"].as_array().unwrap().len(), 1);
-    h.query_all_by_label("Clear").next().expect("a Clear button per stop").click();
+    h.query_all_by_label("투명").next().expect("a Clear button per stop").click();
     h.run_steps(2);
-    h.get_by_label("OK").click();
+    h.get_by_label("확인").click();
     h.run_steps(2);
     assert!(h.state().dialog.is_none());
     let r = ruler(&mut h);

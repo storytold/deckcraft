@@ -1,4 +1,4 @@
-//! The Columns dialog: Home › Columns › More Columns… and Format Shape › Text Box › Columns… open it
+﻿//! The Columns dialog: Home › Columns › More Columns… and Format Shape › Text Box › Columns… open it
 //! with the text box's values, and OK sets the number and spacing in one undo step.
 
 use deckcraft_engine::Session;
@@ -61,7 +61,7 @@ fn ok_with(h: &mut Harness<'_, SlideApp>, fields: &[(&str, &str)]) {
     for (key, value) in fields {
         d.fields.insert((*key).into(), (*value).into());
     }
-    h.get_by_label("OK").click_accesskit();
+    h.get_by_label("확인").click_accesskit();
     h.run_steps(2);
     assert!(h.state().dialog.is_none(), "status {:?}", h.state().status);
 }
@@ -111,7 +111,7 @@ fn more_columns_sets_the_number_and_spacing_in_one_undo() {
         d.fields.insert("spacing".into(), "0.5".into());
     }
     let n = h.state().session.active().unwrap().history.undo.len();
-    h.get_by_label("OK").click_accesskit();
+    h.get_by_label("확인").click_accesskit();
     h.run_steps(2);
     assert!(h.state().dialog.is_none(), "status {:?}", h.state().status);
     assert_eq!(columns_of(&h), (Some(2), Some(36.0)));
@@ -128,7 +128,7 @@ fn ok_with_the_spacing_unchanged_keeps_the_exact_spacing() {
     h.run_steps(2);
     assert_eq!(field(&h, "spacing").as_deref(), Some("0.12"), "shown rounded to two places");
     h.state_mut().dialog.as_mut().unwrap().fields.insert("count".into(), "4".into());
-    h.get_by_label("OK").click_accesskit();
+    h.get_by_label("확인").click_accesskit();
     h.run_steps(2);
     assert!(h.state().dialog.is_none(), "status {:?}", h.state().status);
     assert_eq!(columns_of(&h), (Some(4), Some(9.0)));
@@ -158,7 +158,7 @@ fn a_bad_number_keeps_the_dialog_open_and_changes_nothing() {
             d.fields.insert("count".into(), count.into());
             d.fields.insert("spacing".into(), spacing.into());
         }
-        h.get_by_label("OK").click_accesskit();
+        h.get_by_label("확인").click_accesskit();
         h.run_steps(2);
         assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("columns"), "{count} / {spacing}");
         assert!(field(&h, "error").is_some_and(|e| !e.is_empty()), "{count} / {spacing}");

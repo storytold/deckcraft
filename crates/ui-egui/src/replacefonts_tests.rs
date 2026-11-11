@@ -1,4 +1,4 @@
-//! Home › Replace Fonts…: the dialog lists the deck's fonts and replaces one, as one undo step.
+﻿//! Home › Replace Fonts…: the dialog lists the deck's fonts and replaces one, as one undo step.
 
 use deckcraft_engine::Session;
 use egui_kittest::Harness;
@@ -57,7 +57,7 @@ fn reveal_ribbon_end(h: &mut Harness<'_, SlideApp>) {
 fn ribbon_button_opens_the_dialog_and_replaces() {
     let mut h = harness();
     reveal_ribbon_end(&mut h);
-    let button = h.get_by_label("Replace Fonts…");
+    let button = h.get_by_label("글꼴 바꾸기...");
     assert!(button.rect().max.x <= 1440.0 && button.rect().min.x >= 0.0, "Replace Fonts… is on screen at the default width: {:?}", button.rect());
     if let Some(left) = h.query_by_label("Scroll ribbon left") {
         let cue = left.rect();

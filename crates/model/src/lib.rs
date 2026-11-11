@@ -1,4 +1,4 @@
-//! The DeckCraft document model.
+﻿//! The DeckCraft document model.
 //!
 //! A [`Presentation`] has slide masters (each with a theme and layouts) and slides. Each slide
 //! uses a layout; placeholders on a slide inherit position, formatting and text styles from the
@@ -141,9 +141,9 @@ impl PhType {
     /// The prompt shown in an empty placeholder in Normal view.
     pub fn prompt(self) -> &'static str {
         match self {
-            PhType::Title | PhType::CtrTitle => "Click to add title",
-            PhType::SubTitle => "Click to add subtitle",
-            PhType::Body | PhType::Obj => "Click to add text",
+            PhType::Title | PhType::CtrTitle => "제목을 입력하십시오",
+            PhType::SubTitle => "부제목을 입력하십시오",
+            PhType::Body | PhType::Obj => "텍스트를 입력하십시오",
             PhType::Chart => "Click icon to add chart",
             PhType::Table => "Click icon to add table",
             PhType::Diagram => "Click icon to add SmartArt graphic",

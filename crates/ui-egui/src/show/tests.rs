@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+﻿#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
 
@@ -102,7 +102,7 @@ fn set_up_slide_show_keeps_the_cursor_visible() {
         harness.run_steps(6);
         harness.get_by_label("Keep mouse cursor visible").click();
         harness.run_steps(3);
-        harness.get_by_label("OK").click();
+        harness.get_by_label("확인").click();
         harness.run_steps(2);
         assert!(harness.state().dialog.is_none());
         assert_eq!(harness.state().ui.show_keep_cursor, on);

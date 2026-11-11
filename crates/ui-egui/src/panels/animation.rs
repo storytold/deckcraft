@@ -1,4 +1,4 @@
-use super::{
+﻿use super::{
     Align2, AnimClass, AnimStart, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, animtimeline, icons, json, paint_anim_tile,
     pos2, run, theme, vec2,
 };
@@ -15,7 +15,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     let names: Vec<(u32, String)> = st.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect();
     let selected: Vec<u32> = st.selection.shapes.iter().map(|i| i.0).collect();
     // Play From starts at the effect last clicked here, or else the first effect of the selected
-    // shape; with nothing selected it is Play All. Reordering or removing forgets the click: the
+    // shape; with nothing selected it is 모두 재생. Reordering or removing forgets the click: the
     // index would point at another effect.
     let pick_id = egui::Id::unique(("anim_pane_pick", st.uid, st.selection.slide));
     let pick = ui.data(|m| m.get_temp::<usize>(pick_id));
@@ -27,7 +27,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
         let label = match (playing, from) {
             (true, _) => "■ Stop",
             (false, Some(_)) => "▶ Play From",
-            (false, None) => "▶ Play All",
+            (false, None) => "▶ 모두 재생",
         };
         if ui.button(label).clicked() {
             let p = match (playing, from) {

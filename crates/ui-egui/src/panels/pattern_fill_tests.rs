@@ -1,4 +1,4 @@
-//! Format Shape and Format Background ▸ Pattern fill: the preset gallery and the Foreground and
+﻿//! Format Shape and Format Background ▸ Pattern fill: the preset gallery and the Foreground and
 //! Background color menus.
 
 use deckcraft_color::Rgba;
@@ -85,7 +85,7 @@ fn shape_pattern_fill_picks_a_preset_from_the_gallery() {
         assert!(deckcraft_render::pattern_presets().any(|p| p == name), "{name}");
         let _ = h.get_by_label(crate::fillui::pattern_label(name));
     }
-    for label in ["Horizontal", "Vertical", "Cross", "Downward diagonal", "Upward diagonal", "Diagonal cross"] {
+    for label in ["Horizontal", "Vertical", "십자형", "Downward diagonal", "Upward diagonal", "Diagonal cross"] {
         assert!(h.query_by_label(label).is_none(), "{label} is not in the gallery");
     }
     let undo = h.state().session.active().unwrap().history.undo.len();

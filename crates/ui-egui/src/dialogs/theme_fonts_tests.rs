@@ -1,4 +1,4 @@
-//! Design › Fonts › Customize Fonts… opens Create New Theme Fonts and saves in one step.
+﻿//! Design › Fonts › Customize Fonts… opens Create New Theme Fonts and saves in one step.
 
 use deckcraft_engine::Session;
 use egui_kittest::Harness;
@@ -31,7 +31,7 @@ fn undo_len(h: &Harness<'_, SlideApp>) -> usize {
 fn open_dialog(h: &mut Harness<'_, SlideApp>) {
     h.get_by_label("Fonts").click();
     h.run_steps(2);
-    h.get_by_label("Customize Fonts…").click();
+    h.get_by_label("글꼴 사용자 지정...").click();
     h.run_steps(3);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("themeFonts"));
 }

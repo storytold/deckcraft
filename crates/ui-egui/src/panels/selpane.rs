@@ -1,4 +1,4 @@
-//! Selection pane: every object on the slide, front-most first, groups expanded with their
+﻿//! Selection pane: every object on the slide, front-most first, groups expanded with their
 //! children. Click to select (Ctrl toggles, Shift selects a run), drag to restack among
 //! siblings, eye to show or hide, padlock to lock, double-click or F2 to rename, arrows to move
 //! through the list. Everything it changes goes through engine commands.
@@ -120,17 +120,17 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
 
 fn toolbar(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, has_sel: bool) {
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new("모두 표시").stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.showAll", json!({}));
         }
-        if ui.add(egui::Button::new("Hide All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new("모두 숨기기").stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.hideAll", json!({}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if small_icon_button(ui, Icon::ChevronDown, "Send Backward", has_sel).clicked() {
+            if small_icon_button(ui, Icon::ChevronDown, "뒤로 보내기", has_sel).clicked() {
                 run(app, "arrange.sendBackward", json!({}));
             }
-            if small_icon_button(ui, Icon::ChevronUp, "Bring Forward", has_sel).clicked() {
+            if small_icon_button(ui, Icon::ChevronUp, "앞으로 가져오기", has_sel).clicked() {
                 run(app, "arrange.bringForward", json!({}));
             }
         });
@@ -387,10 +387,10 @@ fn keys(app: &mut SlideApp, ui: &Ui, rows: &[Row], selected: &[u32], focused: u3
 fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
     resp.context_menu(|ui| {
         for (label, cmd) in [
-            ("Bring to Front", "arrange.bringToFront"),
-            ("Bring Forward", "arrange.bringForward"),
-            ("Send Backward", "arrange.sendBackward"),
-            ("Send to Back", "arrange.sendToBack"),
+            ("맨 앞으로 가져오기", "arrange.bringToFront"),
+            ("앞으로 가져오기", "arrange.bringForward"),
+            ("뒤로 보내기", "arrange.sendBackward"),
+            ("맨 뒤로 보내기", "arrange.sendToBack"),
         ] {
             if ui.button(label).clicked() {
                 run(app, cmd, json!({"ids": [row.id]}));

@@ -1,4 +1,4 @@
-//! Split controls on real ribbon callers: a dropdown-only control must not expose a dead named
+﻿//! Split controls on real ribbon callers: a dropdown-only control must not expose a dead named
 //! half, while Group and Rotate keep a real main action beside their options arrow.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -97,14 +97,14 @@ fn home_section_menu_enters_wraps_and_closes_from_either_keyboard_trigger() {
 /// Format.
 #[test]
 fn shape_effects_opens_the_effects_menu_from_its_label_and_arrow_on_both_tabs() {
-    both_halves_open_same_menu("Home", "Shape Effects", "Format Shape…");
-    both_halves_open_same_menu("Shape Format", "Shape Effects", "Format Shape…");
+    both_halves_open_same_menu("Home", "도형 효과", "도형 서식...");
+    both_halves_open_same_menu("Shape Format", "도형 효과", "도형 서식...");
 }
 
 /// Text Fill's label and chevron both open its colour menu.
 #[test]
 fn shape_format_text_fill_opens_its_colour_menu_from_its_label_and_arrow() {
-    both_halves_open_same_menu("Shape Format", "Text Fill", "More Colors… #");
+    both_halves_open_same_menu("Shape Format", "텍스트 채우기", "More Colors… #");
 }
 
 /// The Group main area executes grouping while only its chevron opens the group menu.

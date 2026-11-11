@@ -1,4 +1,4 @@
-//! The File tab (Backstage, #76): a full-window view that replaces the ribbon, slides and status
+﻿//! The File tab (Backstage, #76): a full-window view that replaces the ribbon, slides and status
 //! bar until Esc or the back arrow returns to the presentation. With nothing open it is the start
 //! screen: PowerPoint's start screen and File › Home are the same page.
 //!
@@ -56,14 +56,14 @@ impl Page {
     /// The id `app.backstage {page}` takes.
     pub fn id(self) -> &'static str {
         match self {
-            Page::Home => "home",
-            Page::New => "new",
-            Page::Open => "open",
-            Page::Info => "info",
+            Page::Home => "홈",
+            Page::New => "새로 만들기",
+            Page::Open => "열기",
+            Page::Info => "정보",
             Page::SaveAs => "saveAs",
-            Page::Print => "print",
+            Page::Print => "인쇄",
             Page::Export => "export",
-            Page::About => "about",
+            Page::About => "정보",
         }
     }
 
@@ -79,14 +79,14 @@ impl Page {
     /// Side-menu label and page heading.
     pub fn label(self) -> &'static str {
         match self {
-            Page::Home => "Home",
-            Page::New => "New",
-            Page::Open => "Open",
-            Page::Info => "Info",
-            Page::SaveAs => "Save As",
-            Page::Print => "Print",
+            Page::Home => "홈",
+            Page::New => "새로 만들기",
+            Page::Open => "열기",
+            Page::Info => "정보",
+            Page::SaveAs => "다른 이름으로 저장",
+            Page::Print => "인쇄",
             Page::Export => "Export",
-            Page::About => "About",
+            Page::About => "정보",
         }
     }
 
@@ -123,8 +123,8 @@ impl Nav {
         match self {
             Nav::Page(p) => p.label(),
             Nav::Save => "Save",
-            Nav::Close => "Close",
-            Nav::Options => "Options",
+            Nav::Close => "닫기",
+            Nav::Options => "옵션",
         }
     }
     fn icon(self) -> Icon {

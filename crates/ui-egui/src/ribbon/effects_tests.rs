@@ -1,4 +1,4 @@
-//! Design ▸ Effects: the menu applies a theme effect scheme.
+﻿//! Design ▸ Effects: the menu applies a theme effect scheme.
 
 use deckcraft_engine::Session;
 use egui_kittest::Harness;
@@ -27,19 +27,19 @@ fn format_name(h: &Harness<'_, SlideApp>) -> String {
 #[test]
 fn effects_menu_applies_a_scheme_once() {
     let mut h = harness();
-    assert_eq!(format_name(&h), "DeckCraft");
+    assert_eq!(format_name(&h), "기본(DeckCraft)");
     let n = h.state().session.active().unwrap().history.undo.len();
     h.get_by_label("Effects").click();
     h.run_steps(2);
-    h.get_by_label("Soft").click();
+    h.get_by_label("부드럽게").click();
     h.run_steps(2);
-    assert_eq!(format_name(&h), "Soft");
+    assert_eq!(format_name(&h), "부드럽게");
     assert_eq!(h.state().session.active().unwrap().history.undo.len(), n + 1);
-    assert_eq!(h.state().session.active().unwrap().doc.masters[0].theme.name, "DeckCraft");
+    assert_eq!(h.state().session.active().unwrap().doc.masters[0].theme.name, "기본(DeckCraft)");
 
     h.get_by_label("Effects").click();
     h.run_steps(2);
-    h.get_by_label("Soft").click();
+    h.get_by_label("부드럽게").click();
     h.run_steps(2);
     assert_eq!(h.state().session.active().unwrap().history.undo.len(), n + 1, "the same scheme is not an undo step");
 }

@@ -1,4 +1,4 @@
-//! Photo Album dialog: the Insert ribbon opens it, and Create inserts the pictures in one step.
+﻿//! Photo Album dialog: the Insert ribbon opens it, and Create inserts the pictures in one step.
 
 use deckcraft_engine::Session;
 use deckcraft_model::ShapeKind;
@@ -73,7 +73,7 @@ fn create_inserts_the_album_in_one_step() {
     assert_eq!(pics.len(), 1);
     assert_eq!(pics[0].line.as_ref().and_then(|l| l.width), Some(1.5));
     let text: Vec<_> = st.doc.slides[2].shapes.iter().filter(|sh| sh.text_box).filter_map(|sh| sh.text.as_ref().map(|t| t.text())).collect();
-    assert_eq!(text, ["Text Box"]);
+    assert_eq!(text, ["텍스트 상자"]);
 }
 
 /// Updating photo-album data reflows the already-open album without requiring it to be

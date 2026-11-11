@@ -1,4 +1,4 @@
-//! Charts: an embedded data grid plus type and element options.
+﻿//! Charts: an embedded data grid plus type and element options.
 
 use serde::{Deserialize, Serialize};
 
@@ -73,32 +73,32 @@ impl ChartType {
     ];
     pub fn label(self) -> &'static str {
         match self {
-            ChartType::Column => "Clustered Column",
+            ChartType::Column => "묶은 세로 막대형",
             ChartType::StackedColumn => "Stacked Column",
             ChartType::PercentColumn => "100% Stacked Column",
-            ChartType::Bar => "Clustered Bar",
+            ChartType::Bar => "묶은 가로 막대형",
             ChartType::StackedBar => "Stacked Bar",
             ChartType::PercentBar => "100% Stacked Bar",
-            ChartType::Line => "Line",
+            ChartType::Line => "꺾은선형",
             ChartType::LineMarkers => "Line with Markers",
             ChartType::StackedLine => "Stacked Line",
-            ChartType::Area => "Area",
+            ChartType::Area => "영역형",
             ChartType::StackedArea => "Stacked Area",
-            ChartType::Pie => "Pie",
-            ChartType::Doughnut => "Doughnut",
-            ChartType::Scatter => "Scatter",
+            ChartType::Pie => "원형",
+            ChartType::Doughnut => "도넛형",
+            ChartType::Scatter => "분산형",
             ChartType::Bubble => "Bubble",
-            ChartType::Radar => "Radar",
+            ChartType::Radar => "방사형",
             ChartType::FilledRadar => "Filled Radar",
             ChartType::Stock => "Stock",
             ChartType::Surface => "Surface",
-            ChartType::Histogram => "Histogram",
-            ChartType::Pareto => "Pareto",
-            ChartType::BoxWhisker => "Box and Whisker",
-            ChartType::Waterfall => "Waterfall",
-            ChartType::Funnel => "Funnel",
-            ChartType::Treemap => "Treemap",
-            ChartType::Sunburst => "Sunburst",
+            ChartType::Histogram => "히스토그램",
+            ChartType::Pareto => "파레토",
+            ChartType::BoxWhisker => "상자 수염",
+            ChartType::Waterfall => "폭포차트",
+            ChartType::Funnel => "깔때기형",
+            ChartType::Treemap => "트리맵",
+            ChartType::Sunburst => "선버스트",
             ChartType::RegionMap => "Map",
             ChartType::Combo => "Combo",
         }

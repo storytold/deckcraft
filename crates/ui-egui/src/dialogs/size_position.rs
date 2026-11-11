@@ -1,4 +1,4 @@
-use super::{Dialog, SlideApp, Ui, Value, buttons, check, edited, exact_of, field_of, json, num_text, parse_shown, text_row};
+﻿use super::{Dialog, SlideApp, Ui, Value, buttons, check, edited, exact_of, field_of, json, num_text, parse_shown, text_row};
 
 fn put_dim(d: &mut Dialog, key: &str, exact: f64, shown: String) {
     d.fields.insert(key.into(), shown.clone());
@@ -180,20 +180,20 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     seed_size_position(app, d);
-    ui.label(egui::RichText::new("Size").strong());
-    text_row(ui, d, "Height (in):", "h");
-    text_row(ui, d, "Width (in):", "w");
-    text_row(ui, d, "Rotation (°):", "rot");
-    text_row(ui, d, "Scale height (%):", "scaleH");
-    text_row(ui, d, "Scale width (%):", "scaleW");
-    check(ui, d, "Lock aspect ratio", "lock", false);
+    ui.label(egui::RichText::new("크기").strong());
+    text_row(ui, d, "높이(in):", "h");
+    text_row(ui, d, "너비(in):", "w");
+    text_row(ui, d, "회전(°):", "rot");
+    text_row(ui, d, "높이 배율(%):", "scaleH");
+    text_row(ui, d, "너비 배율(%):", "scaleW");
+    check(ui, d, "가로세로 비율 고정", "lock", false);
     ui.add_space(8.0);
-    ui.label(egui::RichText::new("Position").strong());
-    ui.label("From the top-left corner of the slide");
-    text_row(ui, d, "Horizontal (in):", "x");
-    text_row(ui, d, "Vertical (in):", "y");
+    ui.label(egui::RichText::new("위치").strong());
+    ui.label("슬라이드의 왼쪽 위 모서리 기준");
+    text_row(ui, d, "가로(in):", "x");
+    text_row(ui, d, "세로(in):", "y");
     reconcile_size_fields(d);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, "확인");
     if ok {
         match size_position_value(d) {
             Ok(p) => return app.run("shape.sizePosition", p).is_ok(),

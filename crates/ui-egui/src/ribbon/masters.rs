@@ -1,4 +1,4 @@
-use super::{Icon, SlideApp, Target, Ui, big, big_button, group, json, rows, run};
+﻿use super::{Icon, SlideApp, Target, Ui, big, big_button, group, json, rows, run};
 
 /// Preserve, and whether the open master or layout has a title or any footer placeholder.
 fn master_checks(app: &SlideApp) -> (bool, bool, bool) {
@@ -57,7 +57,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Browse for Themes…").clicked() {
+            if ui.button("테마 찾아보기...").clicked() {
                 run(app, "app.browseThemeDialog", json!({}));
             }
         });

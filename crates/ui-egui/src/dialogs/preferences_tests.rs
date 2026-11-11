@@ -1,4 +1,4 @@
-//! The Preferences (Options) dialog: controls apply as they change and Cancel, Esc and the
+﻿//! The Preferences (Options) dialog: controls apply as they change and Cancel, Esc and the
 //! window's close button put the settings back the way they were (#752, reported as #878).
 
 use deckcraft_engine::Session;
@@ -64,7 +64,7 @@ fn options_cancel_undoes_every_editing_setting() {
     let before = h.state().session.prefs.clone();
     open_options(&mut h);
 
-    for label in ["Snap objects to grid", "Replace straight quotes with smart quotes", "AutoCorrect as you type"] {
+    for label in ["개체를 눈금에 맞춤", "Replace straight quotes with smart quotes", "AutoCorrect as you type"] {
         h.query_by_label(label).unwrap_or_else(|| panic!("the {label} checkbox is there")).click();
         h.run_steps(1);
     }

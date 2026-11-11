@@ -1,4 +1,4 @@
-use super::{Dialog, SlideApp, Ui, Value, check, field, json, vec2};
+﻿use super::{Dialog, SlideApp, Ui, Value, check, field, json, vec2};
 
 /// Home › Find / Replace: step through matches (slide text, table cells, notes) or replace them.
 pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -57,7 +57,7 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         } else if ui.button("Replace…").clicked() {
             d.fields.insert("replace".into(), "1".into());
         }
-        if ui.button("Close").clicked() {
+        if ui.button("닫기").clicked() {
             close = true;
         }
     });

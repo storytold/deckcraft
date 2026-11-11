@@ -1,4 +1,4 @@
-use super::{
+﻿use super::{
     Align2, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, enabled, group, json, pos2, run, scheme,
     small_button, theme, vec2, widgets,
 };
@@ -28,7 +28,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
         {
             run(app, "design.theme", json!({"name": n}));
         }
-        if small_button(ui, Icon::Themes, "Browse for Themes…", enabled(app, "design.browseTheme"), false).clicked() {
+        if small_button(ui, Icon::Themes, "테마 찾아보기...", enabled(app, "design.browseTheme"), false).clicked() {
             run(app, "app.browseThemeDialog", json!({}));
         }
     });
@@ -56,8 +56,8 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
         });
     }
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Colors, "Colors", true);
-        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Colors"));
+        let r = big_button(ui, Icon::Colors, "색", true);
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "색"));
         egui::Popup::menu(&r).width(240.0).show(|ui| {
             for cs in deckcraft_model::theme::builtin_color_schemes() {
                 ui.horizontal(|ui| {
@@ -83,8 +83,8 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                 ui.close();
             }
         });
-        let r = big_button(ui, Icon::Fonts, "Fonts", true);
-        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Fonts"));
+        let r = big_button(ui, Icon::Fonts, "글꼴", true);
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "글꼴"));
         egui::Popup::menu(&r).width(220.0).show(|ui| {
             for fs in deckcraft_model::theme::builtin_font_schemes() {
                 if ui.button(format!("{}\n   {} / {}", fs.name, fs.major.latin, fs.minor.latin)).clicked() {
@@ -92,22 +92,31 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Customize Fonts…").clicked() {
+            if ui.button("글꼴 사용자 지정...").clicked() {
                 run(app, "design.fonts", json!({}));
                 ui.close();
             }
         });
-        let r = big_button(ui, Icon::ShapeEffects, "Effects", true);
-        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Effects"));
+        let r = big_button(ui, Icon::ShapeEffects, "효과", true);
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "효과"));
         egui::Popup::menu(&r).width(180.0).show(|ui| {
             for fs in deckcraft_model::theme::builtin_format_schemes() {
-                if ui.button(&fs.name).clicked() {
+                let label = match fs.name.as_str() {
+                    "기본(DeckCraft)" => "기본(DeckCraft)",
+                    "부드럽게" => "부드럽게",
+                    "선명하게" => "선명하게",
+                    "입체감" | "입체감" => "입체감",
+                    "네온" | "네온" => "네온",
+                    "단순하게" | "단순하게" => "단순하게",
+                    other => other,
+                };
+                if ui.button(label).clicked() {
                     run(app, "design.effects", json!({"name": fs.name}));
                     ui.close();
                 }
             }
         });
-        let r = big_button(ui, Icon::BackgroundStyles, "Background\nStyles", true);
+        let r = big_button(ui, Icon::BackgroundStyles, "배경\n스타일", true);
         egui::Popup::menu(&r).show(|ui| {
             egui::Grid::new("bgstyles").show(ui, |ui| {
                 let sc = scheme(app);
@@ -126,7 +135,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                     };
                     let (rect, resp) = ui.allocate_exact_size(vec2(48.0, 28.0), Sense::click());
                     ui.painter().rect(rect, CornerRadius::same(2), shade, Stroke::new(1.0, Tokens::get(ui.ctx()).border), egui::StrokeKind::Inside);
-                    if resp.on_hover_text(format!("Style {i}")).clicked() {
+                    if resp.on_hover_text(format!("{i}번 스타일")).clicked() {
                         run(app, "design.background", json!({"style": i, "all": true}));
                         ui.close();
                     }
@@ -135,28 +144,28 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            if ui.button("Reset Slide Background").clicked() {
+            if ui.button("슬라이드 배경 원래대로").clicked() {
                 run(app, "design.background", json!({"reset": true}));
             }
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::SlideSize, "Slide\nSize", true);
+        let r = big_button(ui, Icon::SlideSize, "슬라이드\n크기", true);
         egui::Popup::menu(&r).show(|ui| {
-            if ui.button("Standard (4:3)").clicked() {
+            if ui.button("표준 (4:3)").clicked() {
                 run(app, "design.slideSize", json!({"preset": "standard"}));
             }
-            if ui.button("Widescreen (16:9)").clicked() {
+            if ui.button("와이드스크린 (16:9)").clicked() {
                 run(app, "design.slideSize", json!({"preset": "widescreen"}));
             }
             if ui.button("Page Setup…").clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("slideSize"));
             }
         });
-        big(app, ui, Icon::FormatBackground, "Format\nBackground", "view.pane", json!({"pane": "background"}));
+        big(app, ui, Icon::FormatBackground, "배경\n서식", "view.pane", json!({"pane": "background"}));
     });
     group(ui, |ui| {
-        big(app, ui, Icon::DesignIdeas, "Design\nIdeas", "view.pane", json!({"pane": "designer"}));
+        big(app, ui, Icon::DesignIdeas, "디자인\n아이디어", "view.pane", json!({"pane": "designer"}));
     });
 }
 

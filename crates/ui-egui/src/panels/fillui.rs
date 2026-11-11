@@ -1,4 +1,4 @@
-//! The gradient editor of the Format pane (shape fill and slide background): preset variations,
+﻿//! The gradient editor of the Format pane (shape fill and slide background): preset variations,
 //! type, direction, angle and a stop bar (add, drag, recolour, set transparency, remove stops); and
 //! the pattern editor: a gallery of the preset patterns with foreground and background colors.
 
@@ -216,8 +216,8 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     });
     if let GradientShape::Linear { angle, .. } = &g.shape {
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Angle"));
-            if let Some(a) = widgets::spinner(ui, &format!("{id}-angle"), "Angle", *angle, 15.0, "°", 70.0) {
+            ui.add_sized(vec2(70.0, 20.0), egui::Label::new("각도"));
+            if let Some(a) = widgets::spinner(ui, &format!("{id}-angle"), "각도", *angle, 15.0, "°", 70.0) {
                 out = Some(Gradient { shape: GradientShape::Linear { angle: a.rem_euclid(360.0), scaled: false }, ..g.clone() });
             }
         });
@@ -303,8 +303,8 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             }
         });
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Position"));
-            if let Some(v) = widgets::spinner(ui, &format!("{id}-pos-{sel}"), "Position", (s.pos * 100.0).round(), 5.0, "%", 70.0) {
+            ui.add_sized(vec2(70.0, 20.0), egui::Label::new("위치"));
+            if let Some(v) = widgets::spinner(ui, &format!("{id}-pos-{sel}"), "위치", (s.pos * 100.0).round(), 5.0, "%", 70.0) {
                 let mut ng = g.clone();
                 ng.stops[sel].pos = (v / 100.0).clamp(0.0, 1.0);
                 ng.stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
@@ -355,7 +355,7 @@ const PATTERN_LABELS: [(&str, &str); 54] = [
     ("narVert", "Narrow vertical"),
     ("dashHorz", "Dashed horizontal"),
     ("dashVert", "Dashed vertical"),
-    ("cross", "Cross"),
+    ("cross", "십자형"),
     ("dnDiag", "Downward diagonal"),
     ("upDiag", "Upward diagonal"),
     ("ltDnDiag", "Light downward diagonal"),

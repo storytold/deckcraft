@@ -1,4 +1,4 @@
-//! The Font dialog: Home › Font › Font… and Cmd+T open it, OK applies one undo step, Cancel does not.
+﻿//! The Font dialog: Home › Font › Font… and Cmd+T open it, OK applies one undo step, Cancel does not.
 
 use deckcraft_engine::Session;
 use egui_kittest::Harness;
@@ -37,7 +37,7 @@ fn bold_of(h: &Harness<'_, SlideApp>) -> Option<bool> {
 #[test]
 fn font_button_applies_bold_from_the_dialog() {
     let mut h = harness();
-    h.get_by_label("Font…").click();
+    h.get_by_label("글꼴...").click();
     // The opening frame ignores the click that summoned the window; the next one is live.
     h.run_steps(2);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("font"));
@@ -45,11 +45,11 @@ fn font_button_applies_bold_from_the_dialog() {
     // the accessibility click does, and it is the same toggle a pointer click runs.
     h.get_by_label("Bold").click_accesskit();
     h.run_steps(1);
-    h.get_by_label("OK").click();
+    h.get_by_label("확인").click();
     h.run_steps(1);
     assert!(h.state().dialog.is_none(), "status {:?}", h.state().status);
     assert_eq!(bold_of(&h), Some(true));
-    assert_eq!(h.state().session.active().unwrap().history.undo.last().unwrap().label, "Font…");
+    assert_eq!(h.state().session.active().unwrap().history.undo.last().unwrap().label, "글꼴...");
 }
 
 #[test]

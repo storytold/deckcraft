@@ -1,4 +1,4 @@
-//! Bounded screenshot completion for the control channel.
+﻿//! Bounded screenshot completion for the control channel.
 //!
 //! egui 0.37 replaced the `UserData` token and `Event::Screenshot` with a one-shot callback.
 //! The callback belongs to the viewport output and may run on a different thread; it must not

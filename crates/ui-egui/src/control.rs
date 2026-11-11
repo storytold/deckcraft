@@ -1,4 +1,4 @@
-//! Programmatic control of the running app (agents, tests, MCP `--connect`).
+﻿//! Programmatic control of the running app (agents, tests, MCP `--connect`).
 //!
 //! Methods (JSON lines over the host's transport, see `docs/control-protocol.md`):
 //! - `engine.execute {command, params}` / `ui.menu.invoke {command, params}`: run any command (engine or UI)

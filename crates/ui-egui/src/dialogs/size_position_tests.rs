@@ -1,4 +1,4 @@
-//! Size and Position dialog: the Shape Format launcher opens it, and OK applies one undo step.
+﻿//! Size and Position dialog: the Shape Format launcher opens it, and OK applies one undo step.
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -32,7 +32,7 @@ fn size_button_sets_width_in_one_undo() {
         .unwrap();
     h.state_mut().ui.tab = "Shape Format".into();
     h.run_steps(2);
-    h.get_by_label("Size and Position…").click();
+    h.get_by_label("크기 및 위치...").click();
     h.run_steps(2);
     let dlg = h.state().dialog.as_ref().unwrap();
     assert_eq!(dlg.id, "sizePosition");
@@ -41,12 +41,12 @@ fn size_button_sets_width_in_one_undo() {
     assert_eq!(dlg.fields.get("lock").map(String::as_str), Some("0"));
     h.state_mut().dialog.as_mut().unwrap().fields.insert("w".into(), "4".into());
     h.run_steps(1);
-    h.get_by_label("OK").click_accesskit();
+    h.get_by_label("확인").click_accesskit();
     h.run_steps(2);
     assert!(h.state().dialog.is_none());
     assert_eq!(box_of(h.state(), id), (40.0, 50.0, 288.0, 100.0, 0.0));
     let undo = &h.state().session.active().unwrap().history.undo;
-    assert_eq!(undo.last().unwrap().label, "Size and Position…");
+    assert_eq!(undo.last().unwrap().label, "크기 및 위치...");
     let n = undo.len();
     h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(box_of(h.state(), id), (40.0, 50.0, 200.0, 100.0, 0.0));
@@ -67,7 +67,7 @@ fn lock_aspect_from_the_dialog_scales_height() {
         fields.insert("lock".into(), "1".into());
         fields.insert("w".into(), "4".into());
     }
-    h.get_by_label("OK").click_accesskit();
+    h.get_by_label("확인").click_accesskit();
     h.run_steps(2);
     assert_eq!(box_of(h.state(), id), (40.0, 50.0, 288.0, 144.0, 0.0));
 }

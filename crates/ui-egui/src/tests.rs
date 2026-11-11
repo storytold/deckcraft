@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+﻿#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
 use egui_kittest::kittest::Queryable;
@@ -109,7 +109,7 @@ fn quick_access_toolbar_adds_removes_resets_and_persists() {
     let app = harness.state_mut();
     app.run("app.qat", json!({"add": "insert.table", "label": "Table", "icon": "table"})).unwrap();
     app.run("app.qat", json!({"add": "insert.table"})).unwrap();
-    app.run("app.qat", json!({"add": "view.pane", "params": {"pane": "selection"}, "label": "Selection Pane"})).unwrap();
+    app.run("app.qat", json!({"add": "view.pane", "params": {"pane": "selection"}, "label": "선택 창"})).unwrap();
     assert!(app.run("app.qat", json!({"add": "no.such"})).is_err());
     app.run("app.qat", json!({"remove": "edit.redo"})).unwrap();
     assert_eq!(ids(app), ["app.home", "file.save", "app.exportDialog", "edit.undo", "show.fromStart", "insert.table", "view.pane"]);
@@ -173,7 +173,7 @@ fn opening_a_file_with_missing_fonts_shows_a_toast_once() {
     assert!(text.starts_with("Qqq Nonexistent Sans isn't installed"), "{text}");
     assert!(harness.query_by_label_contains("Qqq Nonexistent Sans isn't installed").is_some());
     // Closed, it stays closed for that document.
-    harness.get_by_label("Close").click();
+    harness.get_by_label("닫기").click();
     harness.run_steps(2);
     assert!(harness.state().toast.is_none());
     harness.run_steps(2);
@@ -627,7 +627,7 @@ fn grid_options_dialog_lists_spacing_and_display() {
     harness.state_mut().run("view.gridOptions", json!({})).unwrap();
     harness.run_steps(2);
     assert!(harness.query_by_label_contains("Display grid on screen").is_some());
-    assert!(harness.query_by_label_contains("Snap objects to grid").is_some());
+    assert!(harness.query_by_label_contains("개체를 눈금에 맞춤").is_some());
     assert!(harness.query_by_label_contains("Spacing (pt)").is_some());
     let show_grid = harness
         .query_all_by_role_and_label(egui::accesskit::Role::CheckBox, "Display grid on screen")
@@ -635,7 +635,7 @@ fn grid_options_dialog_lists_spacing_and_display() {
         .unwrap_or_else(|| panic!("no grid checkbox"));
     show_grid.click_accesskit();
     harness.run_steps(2);
-    harness.query_all_by_role_and_label(egui::accesskit::Role::Button, "OK").next().unwrap_or_else(|| panic!("no OK button")).click_accesskit();
+    harness.query_all_by_role_and_label(egui::accesskit::Role::Button, "확인").next().unwrap_or_else(|| panic!("no OK button")).click_accesskit();
     harness.run_steps(2);
     assert!(harness.state().dialog.is_none(), "OK closes Grid Options");
     assert!(harness.state().ui.gridlines, "OK applies the grid checkbox");
@@ -672,7 +672,7 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
     let change = |harness: &mut egui_kittest::Harness<'static, SlideApp>| {
         harness.state_mut().run("app.preferences", json!({})).unwrap();
         harness.run_steps(2);
-        for label in ["Dark appearance", "Show smart guides", "Snap objects to grid"] {
+        for label in ["Dark appearance", "Show smart guides", "개체를 눈금에 맞춤"] {
             harness
                 .query_all_by_role_and_label(egui::accesskit::Role::CheckBox, label)
                 .next()
@@ -742,7 +742,7 @@ fn about_dialog_close_and_cancel_close_it() {
     harness.run_steps(2);
     assert!(harness.state().dialog.is_some());
     harness
-        .query_all_by_role_and_label(egui::accesskit::Role::Button, "Close")
+        .query_all_by_role_and_label(egui::accesskit::Role::Button, "닫기")
         .next()
         .unwrap_or_else(|| panic!("no Close button in About dialog"))
         .click_accesskit();
@@ -1050,7 +1050,7 @@ fn the_language_dialog_marks_the_selected_text() {
     // Installed dictionaries append a marker to the language's accessible label.
     harness.get_by_label_contains("Français (France)").click();
     harness.run_steps(2);
-    harness.get_by_label("OK").click();
+    harness.get_by_label("확인").click();
     harness.run_steps(2);
     assert!(harness.state().dialog.is_none());
     let d = harness.state().session.active().unwrap();
@@ -1083,7 +1083,7 @@ fn the_language_dialog_marks_the_whole_presentation() {
     harness.run_steps(2);
     harness.get_by_label("Español (España)").click();
     harness.run_steps(2);
-    harness.get_by_label("OK").click();
+    harness.get_by_label("확인").click();
     harness.run_steps(2);
     assert!(harness.state().dialog.is_none());
     let d = harness.state().session.active().unwrap();
@@ -1118,7 +1118,7 @@ fn the_language_dialog_marks_the_whole_presentation_with_nothing_selected() {
     assert!(harness.get_by_label("Selected text").accesskit_node().is_disabled());
     harness.get_by_label("Español (España)").click();
     harness.run_steps(2);
-    harness.get_by_label("OK").click();
+    harness.get_by_label("확인").click();
     harness.run_steps(2);
     assert!(harness.state().dialog.is_none());
     let d = harness.state().session.active().unwrap();

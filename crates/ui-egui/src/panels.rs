@@ -1,4 +1,4 @@
-//! Task panes on the right: Format Shape, Format Background, Animation, Selection, Comments and
+﻿//! Task panes on the right: Format Shape, Format Background, Animation, Selection, Comments and
 //! Design Ideas.
 
 use deckcraft_model::{AnimClass, AnimStart, Fill, ShapeKind};
@@ -41,13 +41,13 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         .show(ui, |ui| {
             app.ui.pane_width = ui.available_width() + 20.0;
             let title = match pane.as_str() {
-                "format" => "Format Shape",
-                "background" => "Format Background",
-                "animation" => "Animation Pane",
-                "selection" => "Selection",
+                "format" => "도형 서식",
+                "background" => "배경 서식",
+                "animation" => "애니메이션 창",
+                "선택 창" => "선택 창",
                 "comments" => "Comments",
                 "designer" => "Design Ideas",
-                "smartart" => "Text Pane",
+                "smartart" => "텍스트 창",
                 "thesaurus" => "Thesaurus",
                 "revisions" => "Revisions",
                 _ => "Pane",
@@ -70,7 +70,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "format" => format_shape(app, ui),
                 "background" => background(app, ui),
                 "animation" => animation(app, ui),
-                "selection" => crate::selpane::show(app, ui),
+                "선택 창" => crate::selpane::show(app, ui),
                 "comments" => comments(app, ui),
                 "designer" => designer(app, ui),
                 "smartart" => smartart(app, ui),

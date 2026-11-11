@@ -1,4 +1,4 @@
-//! Format Shape ▸ Effects (#1356): Reflection "None" clears the effect after another preset.
+﻿//! Format Shape ▸ Effects (#1356): Reflection "None" clears the effect after another preset.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use egui_kittest::Harness;
@@ -64,9 +64,9 @@ fn reflection_none_stays_cleared_when_a_slider_only_had_focus() {
     // Focus a reflection slider without editing it, then click "None": the slider's value must not
     // be written back over the cleared reflection.
     // The reflection's Size comes before the glow's (the same label).
-    h.get_all_by_role_and_label(egui::accesskit::Role::Slider, "Size").next().unwrap().focus();
+    h.get_all_by_role_and_label(egui::accesskit::Role::Slider, "크기").next().unwrap().focus();
     h.run_steps(4);
-    assert!(h.get_all_by_role_and_label(egui::accesskit::Role::Slider, "Size").next().unwrap().is_focused(), "the reflection size slider has focus");
+    assert!(h.get_all_by_role_and_label(egui::accesskit::Role::Slider, "크기").next().unwrap().is_focused(), "the reflection size slider has focus");
     h.get_all_by_label("None").last().unwrap().click();
     h.run_steps(4);
     assert!(!has_reflection(&h), "a slider that only had focus does not re-add the reflection");

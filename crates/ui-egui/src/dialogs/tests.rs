@@ -1,4 +1,4 @@
-use deckcraft_model::text::{Action, Hyperlink, Run, TextBody};
+﻿use deckcraft_model::text::{Action, Hyperlink, Run, TextBody};
 use deckcraft_model::{Presentation, SlideId};
 
 use super::{

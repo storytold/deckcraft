@@ -1,4 +1,4 @@
-//! Themes: colour scheme, font scheme and format scheme (the fill/line/effect "style matrix").
+﻿//! Themes: colour scheme, font scheme and format scheme (the fill/line/effect "style matrix").
 
 use deckcraft_color::{ColorScheme, ColorTransform, Rgba, SchemeSlot};
 use serde::{Deserialize, Serialize};
@@ -68,8 +68,8 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         builtin_themes().into_iter().next().unwrap_or_else(|| Theme {
-            name: "DeckCraft".into(),
-            colors: ColorScheme { name: "DeckCraft".into(), colors: [Rgba::BLACK; 12] },
+            name: "기본(DeckCraft)".into(),
+            colors: ColorScheme { name: "기본(DeckCraft)".into(), colors: [Rgba::BLACK; 12] },
             fonts: FontScheme::default(),
             format: FormatScheme::default(),
             raw_extra: None,
@@ -119,7 +119,7 @@ pub fn default_format() -> FormatScheme {
         })
     };
     FormatScheme {
-        name: "DeckCraft".into(),
+        name: "기본(DeckCraft)".into(),
         fills: vec![Fill::solid(ph()), grad(110000, 92000), grad(105000, 80000)],
         lines: vec![Line::solid(ph(), 0.75), Line::solid(ph(), 1.0), Line::solid(ph(), 1.5)],
         effects: vec![
@@ -322,26 +322,26 @@ fn glow(radius: f64) -> Effects {
 /// (subtle, moderate and intense fills, lines and effects) and leaves the colour and font schemes.
 pub fn builtin_format_schemes() -> Vec<FormatScheme> {
     let mut soft = default_format();
-    soft.name = "Soft".into();
+    soft.name = "부드럽게".into();
     soft.lines = vec![Line::solid(ph(), 0.5), Line::solid(ph(), 0.75), Line::solid(ph(), 1.0)];
     soft.effects = vec![shadow(16.0, 1.0, 18_000), shadow(12.0, 2.0, 22_000), shadow(10.0, 3.0, 28_000)];
 
     let mut crisp = default_format();
-    crisp.name = "Crisp".into();
+    crisp.name = "선명하게".into();
     crisp.fills = vec![Fill::solid(ph()), Fill::solid(ph()), Fill::solid(ph())];
     crisp.lines = vec![Line::solid(ph(), 1.0), Line::solid(ph(), 1.5), Line::solid(ph(), 2.25)];
     crisp.effects = vec![Effects::default(), Effects::default(), shadow(0.0, 2.0, 55_000)];
 
     let mut lift = default_format();
-    lift.name = "Lift".into();
+    lift.name = "입체감".into();
     lift.effects = vec![Effects::default(), shadow(8.0, 6.0, 28_000), shadow(12.0, 10.0, 35_000)];
 
     let mut glow_scheme = default_format();
-    glow_scheme.name = "Glow".into();
+    glow_scheme.name = "네온".into();
     glow_scheme.effects = vec![Effects::default(), glow(6.0), glow(12.0)];
 
     let mut plain = default_format();
-    plain.name = "Plain".into();
+    plain.name = "단순하게".into();
     plain.fills = vec![Fill::solid(ph()), Fill::solid(ph()), Fill::solid(ph())];
     plain.lines = vec![Line::solid(ph(), 0.75), Line::solid(ph(), 0.75), Line::solid(ph(), 0.75)];
     plain.effects = vec![Effects::default(), Effects::default(), Effects::default()];
