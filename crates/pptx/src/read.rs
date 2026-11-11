@@ -55,12 +55,24 @@ pub struct Imp<'a> {
     pub tag_bytes: usize,
     /// The tag budget ran out and the warning was given.
     pub tags_capped: bool,
+    /// What the file lost that the reader kept going past (see [`MAX_IMPORT_WARNINGS`]).
+    pub warnings: Vec<String>,
     /// Whether a part has relationships of its own, by normalized part name: looked up once
     /// however many embedded objects point at the part.
     pub has_rels: HashMap<String, bool>,
 }
 
+/// Import warnings kept; a hostile file with many oversized tables adds no more than this.
+const MAX_IMPORT_WARNINGS: usize = 32;
+
 impl Imp<'_> {
+    /// Record something the file lost, and log it.
+    pub fn warn(&mut self, msg: String) {
+        log::warn!("pptx: {msg}");
+        if self.warnings.len() < MAX_IMPORT_WARNINGS {
+            self.warnings.push(msg);
+        }
+    }
     pub fn alloc(&mut self) -> u32 {
         self.next = self.next.saturating_add(1);
         self.next
@@ -462,6 +474,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        warnings: vec![],
         has_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
@@ -476,11 +489,22 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
 /// [`import`], plus the parts of the slide list the file names but that couldn't be read (a
 /// missing or truncated slide): those slides are left out, so a caller can say so (#203).
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
-    import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
+    import_report(bytes).map(|(p, lost, _)| (p, lost))
+}
+
+/// [`import_checked`], plus warnings for content the file had that was cut to fit a limit (a
+/// table past the cell cap keeps its leading rows).
+pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
+    import_report_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
 }
 
 /// [`import_checked`] with the presentation's chart point budget set (tests lower it).
 pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>), PptxError> {
+    import_report_with_chart_points(bytes, chart_points_cap).map(|(p, lost, _)| (p, lost))
+}
+
+/// [`import_report`] with the presentation's chart point budget set.
+fn import_report_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
     let mut lost_slides: Vec<String> = vec![];
     let pkg = Package::open(bytes)?;
     let root_rels = pkg.rels("");
@@ -513,6 +537,7 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        warnings: vec![],
         has_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
@@ -544,7 +569,7 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
     p.media = std::mem::take(&mut imp.media);
     p.next_id = imp.next;
     p.fix_next_id();
-    Ok((p, lost_slides))
+    Ok((p, lost_slides, std::mem::take(&mut imp.warnings)))
 }
 
 /// Masters, layouts and slides to read, in file order and without duplicates: (master paths,

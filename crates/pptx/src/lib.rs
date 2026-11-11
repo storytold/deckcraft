@@ -70,6 +70,12 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     read::import_checked(bytes)
 }
 
+/// [`import_checked`], plus warnings for content cut to fit a limit (a table past the cell cap
+/// keeps its leading rows); the file still opens.
+pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
+    read::import_report(bytes)
+}
+
 /// [`import`] with a lower presentation-wide chart point budget, so tests reach the over-budget
 /// path without a multi-million-point chart.
 #[doc(hidden)]
