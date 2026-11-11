@@ -2071,6 +2071,87 @@ fn emfplus_wrap_line_linear_performance() {
 fn clip_polygon_work_bound() {
     let poly: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
     let clip: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
-    let clipped = crate::cliprect::clip_polygon(&poly, &clip);
-    assert!(clipped.is_empty(), "excessive polygon clip product rejected");
+    assert!(crate::cliprect::clip_polygon_within(&poly, &clip, &mut 1_000_000).is_none(), "excessive polygon clip product rejected");
+}
+
+#[test]
+fn clip_polygon_charges_actual_work_not_projected_growth() {
+    // Two convex 1,000-gons: the product is exactly the budget, and a cut that adds a vertex must
+    // not make a later step look over budget.
+    let gon = |cx: f64| -> Vec<(f64, f64)> {
+        (0..1000).map(|i| (i as f64 / 1000.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (cx + 100.0 * c, 100.0 * s)).collect()
+    };
+    let clipped = crate::cliprect::clip_polygon_within(&gon(0.0), &gon(30.0), &mut 4_000_000).unwrap();
+    assert!(clipped.len() > 100, "the intersection is kept: {}", clipped.len());
+}
+
+#[test]
+fn clip_work_is_shared_by_fill_and_stroke() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    // One zigzag subpath crossing a 512-gon's edge: about 510k point-edge tests per pass, so a
+    // fill alone fits the allowance but a fill plus a stroke would spend it twice.
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    let mut ops = vec![Op::M((0.0, 95.0))];
+    ops.extend((1..1000).map(|i| Op::L((i as f64 * 0.19, if i % 2 == 0 { 95.0 } else { 300.0 }))));
+    ops.push(Op::Z);
+    let raw = |fill, stroke| Raw::Path { ops: ops.clone(), fill, stroke, even_odd: false, region: None };
+    let black = [0, 0, 0, 255];
+    assert!(!crate::cliprect::clip_raw(raw(Some(black), None), &clip).is_empty(), "a fill alone is within the allowance");
+    assert!(crate::cliprect::clip_raw(raw(Some(black), Some((black, 1.0))), &clip).is_empty(), "fill and stroke share one allowance");
+}
+
+#[test]
+fn clip_work_is_bounded_across_subpaths() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    // 512-gon clip; 4,000 small triangles crossing its edge: each under the per-polygon cap, together
+    // far over it, for both the fill and the stroke.
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    let tri = |x: f64| [Op::M((x, 95.0)), Op::L((x + 1.0, 95.0)), Op::L((x, 300.0)), Op::Z];
+    let many: Vec<Op> = (0..4000).flat_map(|i| tri(i as f64 % 200.0)).collect();
+    let raw = |ops| Raw::Path { ops, fill: Some([0, 0, 0, 255]), stroke: Some(([0, 0, 0, 255], 1.0)), even_odd: false, region: None };
+    assert!(crate::cliprect::clip_raw(raw(many), &clip).is_empty(), "the whole item's clipping work is bounded");
+    assert_eq!(crate::cliprect::clip_raw(raw(tri(100.0).to_vec()), &clip).len(), 2, "a small crossing shape is still clipped");
+}
+
+/// Clipping a fill can add a vertex at every clip edge, so a polygon's work isn't its input size:
+/// shapes that pass the up-front estimate but grow while clipped are charged as they grow, against
+/// one budget for the whole item.
+#[test]
+fn growing_fill_clips_share_one_budget() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    // A triangle around the whole circle: clipped, it becomes the 512-gon, about 130,000 steps.
+    let tri = [Op::M((-1000.0, -1000.0)), Op::L((1000.0, -1000.0)), Op::L((100.0, 1000.0)), Op::Z];
+    let raw = |n: usize| Raw::Path { ops: tri.repeat(n), fill: Some([0, 0, 0, 255]), stroke: None, even_odd: false, region: None };
+    // 400 of them pass the estimate (400 x 4 x 512 is under a million) but cost about 52 million.
+    assert!(crate::cliprect::clip_raw(raw(400), &clip).is_empty(), "the growing work is charged");
+    assert_eq!(crate::cliprect::clip_raw(raw(2), &clip).len(), 1, "a couple of them are still clipped");
+}
+
+#[test]
+fn stroke_work_is_charged_and_outside_items_are_cheap() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    // A stroke-only zigzag of 4,000 segments across the edge: 4,000 x 512 tests, over the allowance.
+    let mut ops = vec![Op::M((0.0, 95.0))];
+    ops.extend((1..4000).map(|i| Op::L((i as f64 * 0.05, if i % 2 == 0 { 95.0 } else { 300.0 }))));
+    let raw = Raw::Path { ops, fill: None, stroke: Some(([0, 0, 0, 255], 1.0)), even_odd: false, region: None };
+    assert!(crate::cliprect::clip_raw(raw, &clip).is_empty(), "stroke work is bounded");
+}
+
+#[test]
+fn region_intersection_over_budget_keeps_the_previous_area() {
+    let gon = |cx: f64| -> Vec<(f64, f64)> {
+        (0..1000).map(|i| (i as f64 / 1000.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (cx + 100.0 * c, 100.0 * s)).collect()
+    };
+    assert!(crate::cliprect::clip_polygon_within(&gon(0.0), &gon(30.0), &mut 10).is_none());
+    assert!(crate::cliprect::clip_polygon_within(&gon(0.0), &gon(30.0), &mut crate::cliprect::MAX_AREA_CLIP_WORK.clone()).is_some());
 }

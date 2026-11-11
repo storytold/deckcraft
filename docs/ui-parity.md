@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-10 · **Change:** minor (rotation drags across groups share a slide pivot; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** minor (Shift rotation snaps are independent of selection order; synced with upstream 0.18.0; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -31,6 +31,10 @@ invertible groups retain adjustment and undo behavior.
 When rotating selected shapes from different groups, their positions turn around the centre of
 the shape whose handle was grabbed. Their handles turn together even through reflections and
 uneven group scaling. A stationary pointer leaves the selection in place.
+
+For shapes sharing one parent, Shift snaps each member to its own absolute 15-degree angle;
+its position follows that member’s snapped turn about the grabbed pivot. Each snap starts from
+the raw pointer turn, so reversing selection order gives the same result.
 
 ## Empty list paragraphs
 
@@ -194,6 +198,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Same-parent Shift rotation snaps each member from the raw pointer turn, independent of selection order; upstream ink handling and gesture limits retained during merge (#1095) |
 | 2026-11-10 | minor | Rotation drags across groups share the grabbed handle’s slide pivot and do not jump at the start; reflected, unevenly scaled and nested group cases are covered (#1095) |
 | 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
 | 2026-11-05 | trivial | Sync grouped-editing fixes and regression coverage with current upstream; preserve both documentation updates and unchanged parity scores (#1095) |

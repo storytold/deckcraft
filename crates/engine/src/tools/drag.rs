@@ -12,9 +12,16 @@ struct MoveDrag {
     enter_text: Option<(ShapeId, Point)>,
 }
 
+/// Samples one ink or freeform gesture keeps; later pointer moves extend it no further.
+pub(crate) const MAX_GESTURE_POINTS: usize = 100_000;
+
 impl Session {
     /// Apply a slide-space pointer movement to the active gesture, mapping group members locally.
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
+        if matches!(self.tool.drag, Some(Drag::Ink { .. })) {
+            self.extend_ink(p);
+            return Ok(Value::Null);
+        }
         let Some(drag) = self.tool.drag.clone() else { return Ok(Value::Null) };
         match drag {
             Drag::Guide { index } => {
@@ -168,7 +175,7 @@ impl Session {
             }
             Drag::Freeform { mode, mut points, pressed } => {
                 // Dragging scribbles (except for curves, which only take clicked points).
-                if pressed && mode != "curve" && points.last().is_none_or(|l| (*l - p).hypot() >= 1.5) {
+                if pressed && mode != "curve" && points.len() < MAX_GESTURE_POINTS && points.last().is_none_or(|l| (*l - p).hypot() >= 1.5) {
                     points.push(p);
                 }
                 let mut v = points.clone();
@@ -178,11 +185,8 @@ impl Session {
                 self.tool.path_preview = v;
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed });
             }
-            Drag::Ink { mut points } => {
-                points.push(self.ink_sample(p));
-                self.tool.ink_preview = points.clone();
-                self.tool.drag = Some(Drag::Ink { points });
-            }
+            // Handled above.
+            Drag::Ink { .. } => {}
         }
         Ok(Value::Null)
     }
@@ -203,9 +207,9 @@ impl Session {
             delta = ((heading + delta) / 15.0).round() * 15.0 - heading;
         }
         for (id, o, parent) in origs {
-            if !mixed && mods.shift {
-                delta = ((o.rot + delta) / 15.0).round() * 15.0 - o.rot;
-            }
+            // Same-parent members snap to their own absolute angles and orbit by their
+            // own snapped turns. Never feed one member's snap into the next member.
+            let delta = if !mixed && mods.shift { ((o.rot + delta) / 15.0).round() * 15.0 - o.rot } else { delta };
             let mut nx = *o;
             if delta != 0.0 {
                 let spin = Affine::rotate(delta.to_radians());
@@ -231,6 +235,18 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Ink grows by one sample per move: extend it (and its preview) in place rather than
+    /// copying the whole stroke twice per event, up to [`MAX_GESTURE_POINTS`].
+    fn extend_ink(&mut self, p: Point) {
+        let sample = self.ink_sample(p);
+        if let Some(Drag::Ink { points }) = self.tool.drag.as_mut()
+            && points.len() < MAX_GESTURE_POINTS
+        {
+            points.push(sample);
+            self.tool.ink_preview.push(sample);
+        }
     }
 
     /// Move each selected shape by the slide displacement expressed in its containing group.
