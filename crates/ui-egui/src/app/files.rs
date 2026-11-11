@@ -176,10 +176,19 @@ impl SlideApp {
         }
     }
 
-    /// The file name a save or export suggests: the presentation's title with `ext`.
-    fn suggested_name(&self, ext: &str) -> String {
-        let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        format!("{name}.{ext}")
+    /// The file name a save or export suggests: the presentation's title with `ext`, or the name
+    /// typed on the Save As page (`custom`, see [`clean_file_stem`]) with `ext`.
+    fn suggested_name(&self, ext: &str, custom: Option<&str>) -> String {
+        format!("{}.{ext}", self.file_stem(ext, custom))
+    }
+
+    /// The name, without extension, a save or export uses: `custom` once cleaned, else the
+    /// presentation's title (cleaned the same way, so "Plan.pdf" exports as "Plan.pdf", not "Plan.pdf.pdf").
+    fn file_stem(&self, ext: &str, custom: Option<&str>) -> String {
+        custom
+            .and_then(|c| clean_file_stem(c, ext))
+            .or_else(|| self.session.active().and_then(|d| clean_file_stem(&d.title(), ext)))
+            .unwrap_or_else(|| "Presentation".into())
     }
 
     /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `pptx`,
@@ -187,6 +196,11 @@ impl SlideApp {
     /// on the web. `extra` adds `file.export` params (the PDF's layout, slides…). The
     /// presentation keeps its own file. Returns whether a file was written or handed over.
     pub fn export_as(&mut self, fmt: &str, extra: Value) -> bool {
+        self.export_as_named(fmt, extra, None)
+    }
+
+    /// [`Self::export_as`] under the file name typed on the Save As page, when there is one.
+    pub fn export_as_named(&mut self, fmt: &str, extra: Value, name: Option<&str>) -> bool {
         let Some(slide) = self.session.active().map(|d| d.selection.slide) else { return false };
         let (ext, format, all) = match fmt {
             "pdf" => ("pdf", "pdf", false),
@@ -203,7 +217,7 @@ impl SlideApp {
                 return false;
             }
         };
-        let suggested = self.suggested_name(ext);
+        let suggested = self.suggested_name(ext, name);
         if let Some(pick) = self.services.pick_save.as_mut() {
             let Some(path) = pick(&suggested) else { return false };
             let mut params = json!({"path": path, "format": format, "all": all});
@@ -222,7 +236,7 @@ impl SlideApp {
         let bytes = match format {
             "png" | "jpeg" => {
                 // Every slide for "all slides", one download each, named like the desktop export (#64).
-                let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
+                let name = self.file_stem(ext, name);
                 let mut any = false;
                 let transparent = extra.get("transparentBackground").and_then(Value::as_bool).unwrap_or(false);
                 for (file, bytes) in web_image_files(&doc, slide, all, &name, ext, transparent) {
@@ -448,9 +462,14 @@ impl SlideApp {
     }
 
     pub fn save_as_dialog(&mut self, format: &str) {
-        let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
+        self.save_as_named(format, None);
+    }
+
+    /// [`Self::save_as_dialog`] under the file name typed on the Save As page, when there is one:
+    /// the Save dialog opens with it, and a web download or a page that keeps the files gets it.
+    pub fn save_as_named(&mut self, format: &str, name: Option<&str>) {
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
-        let suggested = format!("{name}.{ext}");
+        let suggested = self.suggested_name(ext, name);
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
@@ -463,7 +482,7 @@ impl SlideApp {
                 }
             }
         } else if self.services.host_save.is_some() {
-            let _ = self.save_to_host(Some(ext));
+            let _ = self.save_to_host(Some(ext), name);
         } else if let Some(dl) = self.services.download.as_mut()
             && let Some(d) = self.session.active()
         {
@@ -490,7 +509,7 @@ impl SlideApp {
 
     pub fn save(&mut self) {
         if self.services.host_save.is_some() {
-            let _ = self.save_to_host(None);
+            let _ = self.save_to_host(None, None);
             return;
         }
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
@@ -510,13 +529,14 @@ impl SlideApp {
     /// As (`pptx`, `deckcraft`) is a new file named after the presentation. Once the page has the
     /// bytes, the presentation is saved and that name is its file. Returns the name, or why it
     /// wasn't saved (also shown in the status bar).
-    pub(super) fn save_to_host(&mut self, ext: Option<&str>) -> Result<String, String> {
+    pub(super) fn save_to_host(&mut self, ext: Option<&str>, custom: Option<&str>) -> Result<String, String> {
         use deckcraft_engine::cmd::file::{format_for_path, mark_saved, save_bytes};
+        let stem = self.file_stem(ext.unwrap_or("deckcraft"), custom);
         let Some(d) = self.session.active() else { return Err("no presentation is open".into()) };
         let own = d.path.as_deref().and_then(|p| std::path::Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string());
         let (name, save_as) = match (ext, own) {
             (None, Some(own)) => (own, false),
-            (ext, _) => (format!("{}.{}", d.title(), ext.unwrap_or("deckcraft")), true),
+            (ext, _) => (format!("{stem}.{}", ext.unwrap_or("deckcraft")), true),
         };
         let saved = save_bytes(&d.doc, format_for_path(&name)).map_err(|e| e.to_string()).and_then(|bytes| {
             let host = self.services.host_save.as_mut().ok_or("no page to save to")?;
@@ -792,6 +812,21 @@ impl SlideApp {
     }
 }
 
+/// The file name typed on the Save As page, ready to use before `ext`: spaces at both ends and
+/// control characters are dropped, a folder separator (a name can't hold one) becomes a space, and
+/// a trailing `.ext` is cut so "Talk.pptx" doesn't save as "Talk.pptx.pptx". `None` when nothing
+/// is left, so the presentation's title is used instead.
+pub(crate) fn clean_file_stem(typed: &str, ext: &str) -> Option<String> {
+    let mut name: String = typed.chars().filter(|c| !c.is_control()).map(|c| if matches!(c, '/' | '\\') { ' ' } else { c }).collect();
+    name = name.trim().to_string();
+    let suffix = format!(".{ext}");
+    if name.len() >= suffix.len() && name.to_ascii_lowercase().ends_with(&suffix) {
+        name.truncate(name.len() - suffix.len());
+        name = name.trim().to_string();
+    }
+    (!name.is_empty() && name != "." && name != "..").then_some(name)
+}
+
 /// Images for the browser download: the current slide, or every slide (named `<name>1.png`,
 /// `<name>2.png`... like the native export) when `all`. `transparent` leaves the slide
 /// background out (PNG only, #784).
@@ -863,5 +898,23 @@ mod print_preview_tests {
 
         assert!(!dir.exists());
         std::fs::remove_dir(base).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod file_stem_tests {
+    use crate::{Services, SlideApp};
+    use deckcraft_engine::Session;
+
+    /// With no usable name typed, a title that already ends in the export's extension isn't doubled.
+    #[test]
+    fn fallback_title_does_not_double_the_extension() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        if let Some(d) = app.session.active_mut() {
+            d.title = "Plan.pdf".into();
+        }
+        assert_eq!(app.suggested_name("pdf", None), "Plan.pdf");
+        assert_eq!(app.suggested_name("pdf", Some("  / ")), "Plan.pdf");
+        assert_eq!(app.suggested_name("pptx", None), "Plan.pdf.pptx");
     }
 }

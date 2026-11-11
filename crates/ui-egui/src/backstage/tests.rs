@@ -801,3 +801,120 @@ fn about_appearance_stays_on_the_page_at_minimum_width() {
     let r = h.query_all_by_role_and_label(Role::ComboBox, "Appearance").next().expect("Appearance selector").rect();
     assert!(r.right() <= 900.0, "Appearance selector ends at {}, inside the window", r.right());
 }
+
+/// Types `name` into Save As › File name, in place of what the field holds.
+fn type_file_name(h: &mut Harness<'static, SlideApp>, name: &str) {
+    h.get_by_role_and_label(Role::TextInput, "File name").click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::TextInput, "File name").type_text(name);
+    h.run_steps(2);
+}
+
+/// Save As has a File name field (#1077) that starts with the presentation's title. On the desktop
+/// the Save dialog opens with what was typed, and the presentation takes that file.
+#[test]
+fn save_as_file_name_names_the_saved_file() {
+    let dir = temp_dir("saveas-name");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    let title = h.state().session.active().unwrap().title();
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.get_by_role_and_label(Role::TextInput, "File name").value().as_deref(), Some(title.as_str()));
+    type_file_name(&mut h, "Quarterly review");
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*asked.borrow(), vec!["Quarterly review.pptx".to_string()]);
+    let saved = dir.join("Quarterly review.pptx");
+    assert!(saved.is_file());
+    assert_eq!(h.state().session.active().unwrap().path.as_deref(), Some(saved.to_string_lossy().as_ref()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An emptied field, or one that holds nothing usable, saves under the presentation's title.
+#[test]
+fn save_as_empty_file_name_uses_the_title() {
+    let dir = temp_dir("saveas-empty-name");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    let title = h.state().session.active().unwrap().title();
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    type_file_name(&mut h, "  / ");
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*asked.borrow(), vec![format!("{title}.pptx")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// In the browser the file downloads under the typed name, whatever the file type, and a typed
+/// extension that is the type's own isn't doubled.
+#[test]
+fn web_save_as_downloads_under_the_typed_name() {
+    let got: Rc<RefCell<Vec<String>>> = Default::default();
+    let log = got.clone();
+    let services = Services { download: Some(Box::new(move |name: &str, _: &[u8]| log.borrow_mut().push(name.to_string()))), ..Default::default() };
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    type_file_name(&mut h, "Plan.pptx");
+    click_on_page(&h, "Download");
+    h.run_steps(3);
+    assert_eq!(*got.borrow(), vec!["Plan.pptx".to_string()]);
+
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    type_file_name(&mut h, "Plan");
+    h.get_by_role_and_label(Role::ComboBox, "Save as type").click();
+    h.run_steps(2);
+    h.get_by_label("PDF (*.pdf)").click();
+    h.run_steps(2);
+    click_on_page(&h, "Download");
+    h.run_steps(3);
+    assert_eq!(*got.borrow(), vec!["Plan.pptx".to_string(), "Plan.pdf".to_string()]);
+}
+
+/// A page that keeps the files gets the typed name too, as a new file.
+#[test]
+fn host_save_as_uses_the_typed_name() {
+    let got: Rc<RefCell<Vec<(String, bool)>>> = Default::default();
+    let saves = got.clone();
+    let services = Services {
+        host_save: Some(Box::new(move |name: &str, _: &[u8], save_as: bool| {
+            saves.borrow_mut().push((name.to_string(), save_as));
+            Ok(())
+        })),
+        download: Some(Box::new(|_: &str, _: &[u8]| {})),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::new(), services);
+    app.start_for_host().unwrap();
+    let deck = deckcraft_engine::cmd::file::save_bytes(&Session::with_new().doc().unwrap().doc, "pptx").unwrap();
+    app.open_from_host(Some("deck.pptx"), &deck);
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    type_file_name(&mut h, "copy");
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*got.borrow(), [("copy.pptx".to_string(), true)]);
+}
+
+/// What is typed becomes a file stem: no folder separators or control characters, no doubled
+/// extension, and nothing left means "use the title".
+#[test]
+fn typed_file_names_are_cleaned() {
+    use crate::app::clean_file_stem;
+    assert_eq!(clean_file_stem("Talk", "pptx").as_deref(), Some("Talk"));
+    assert_eq!(clean_file_stem("  Talk.PPTX ", "pptx").as_deref(), Some("Talk"));
+    assert_eq!(clean_file_stem("Talk.pdf", "pptx").as_deref(), Some("Talk.pdf"));
+    assert_eq!(clean_file_stem("x .pptx", "pptx").as_deref(), Some("x"));
+    assert_eq!(clean_file_stem("café.PPTX", "pptx").as_deref(), Some("café"));
+    assert_eq!(clean_file_stem("a/b\\c", "pptx").as_deref(), Some("a b c"));
+    assert_eq!(clean_file_stem("a\tb", "pptx").as_deref(), Some("ab"));
+    for nothing in ["", "   ", "/", ".", "..", ".pptx"] {
+        assert_eq!(clean_file_stem(nothing, "pptx"), None, "{nothing:?}");
+    }
+}

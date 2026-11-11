@@ -144,14 +144,30 @@ pub fn format_bytes(b: u64) -> String {
     }
 }
 
-/// Save As: the file type, then the system Save dialog (desktop) or a download (web). A
-/// presentation saved as .pptx or .deckcraft takes the new file; the other types are copies.
+/// Save As: the file name (it starts as the presentation's title), the file type, then the
+/// system Save dialog (desktop) or a download (web). A presentation saved as .pptx or .deckcraft
+/// takes the new file; the other types are copies.
 pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();
     ui.label(RichText::new(&title).font(theme::font(15.0)).color(t.text));
     dim(ui, path.as_deref().unwrap_or("Not saved yet"));
     ui.add_space(14.0);
+    // The name the file gets: the desktop Save dialog opens with it, a web download uses it (#1077).
+    // The label sits above the field, so the field lines up with the type list below it.
+    let label = ui.label(RichText::new("File name").color(t.text));
+    ui.add_space(2.0);
+    let mut text = bs.file_name.clone().unwrap_or_else(|| title.clone());
+    let field = ui.add(egui::TextEdit::singleline(&mut text).desired_width(340.0)).labelled_by(label.id);
+    // egui outlines a focused field in the selection colour, which here is white (it is also the
+    // colour of selected text, so it can't change), and a white outline vanishes on the field.
+    if field.has_focus() {
+        ui.painter().rect_stroke(field.rect, egui::CornerRadius::same(5), egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    }
+    if field.changed() {
+        bs.file_name = Some(text);
+    }
+    ui.add_space(8.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {
         craft_ui::ComboBox::from_id_salt("backstage_save_type")
@@ -186,10 +202,10 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
                 // and the dirty flag as they were; a cancelled dialog or a failed save doesn't.
                 let snapshot = |app: &SlideApp| app.session.active().map(|d| (d.path.clone(), d.is_dirty(), d.revision));
                 let before = snapshot(app);
-                app.save_as_dialog(fmt);
+                app.save_as_named(fmt, bs.file_name.as_deref());
                 web || snapshot(app) != before
             } else {
-                app.export_as(fmt, json!({}))
+                app.export_as_named(fmt, json!({}), bs.file_name.as_deref())
             };
             if done {
                 out.close = true;

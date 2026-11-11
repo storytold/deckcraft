@@ -23,7 +23,7 @@ mod playback;
 #[cfg(test)]
 pub(crate) use clipboard::{OBJECTS_MARKER, system_clipboard_text};
 #[cfg(test)]
-pub(crate) use files::web_image_files;
+pub(crate) use files::{clean_file_stem, web_image_files};
 pub use keys::key_name;
 
 /// How long a transient status message stays visible.
