@@ -417,8 +417,11 @@ impl Decoder {
                     .saturating_mul(2)
             })
             .fold(0, u64::saturating_add);
+        // A queued frame still being decoded is one of the in-flight pictures already reserved, so the
+        // queue and the in-flight reservation overlap: charge the larger, not both.
         let pictures = u64::from(sps.max_dec_pic_buffering) + 1 + self.max_in_flight as u64;
-        let total = shape.store_bytes(pictures).map(|b| b.saturating_add(queued));
+        let flight = shape.store_bytes(self.max_in_flight as u64);
+        let total = shape.store_bytes(pictures).zip(flight).map(|(all, flight)| all - flight + flight.max(queued));
         ensure!(
             total.is_some_and(|b| b <= self.memory_budget),
             "{}x{} pictures with {pictures} in the decoder and {queued} bytes queued exceed the memory budget",
