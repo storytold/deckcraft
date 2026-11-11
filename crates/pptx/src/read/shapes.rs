@@ -471,33 +471,53 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
     };
     // Keep the parts it points to so a save writes it back whole (#203). A part with relationships
     // of its own, or an external link, can't be carried: the save then falls back to the preview.
-    let (xml_before, media_before) = (imp.diagram_xml_bytes, imp.media.len());
-    let parts = super::rel_refs(e)
-        .into_iter()
-        .map(|id| {
-            let rel = part.rels.get(&id).filter(|r| !r.external)?;
-            let pkg = imp.pkg;
-            if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
-                return None;
+    // Validate every relationship (and charge the budget) before copying anything, so a fallback
+    // that cannot be kept whole copies no part at all.
+    let mark = imp.mark();
+    let mut planned = Vec::new();
+    let mut spent = imp.diagram_xml_bytes;
+    let mut ok = true;
+    for id in super::rel_refs(e) {
+        let Some(rel) = part.rels.get(&id).filter(|r| !r.external) else {
+            ok = false;
+            break;
+        };
+        let pkg = imp.pkg;
+        if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
+            ok = false;
+            break;
+        }
+        // A diagram's definition parts copied here count against the same presentation-wide budget.
+        if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&rel.target)) {
+            let len = pkg.get(&rel.target).map_or(0, |b| b.len());
+            if len > MAX_DIAGRAM_PART_BYTES || spent.saturating_add(len) > MAX_DIAGRAM_XML_BYTES {
+                ok = false;
+                break;
             }
-            let (kind, target) = (rel.ty.clone(), rel.target.clone());
-            // A diagram's definition parts copied here count against the same presentation-wide budget.
-            if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&target)) {
-                let len = pkg.get(&target).map_or(0, |b| b.len());
-                if len > MAX_DIAGRAM_PART_BYTES || imp.diagram_xml_bytes.saturating_add(len) > MAX_DIAGRAM_XML_BYTES {
-                    return None;
-                }
-                imp.diagram_xml_bytes += len;
-            }
-            let media = if rel.kind == "diagramData" { diagram_data(imp, &target) } else { imp.media_for(&target) };
-            Some((id, kind, media?))
-        })
-        .collect::<Option<Vec<_>>>();
-    // A fallback that drops its parts does not keep their bytes charged.
-    if parts.is_none() {
-        imp.diagram_xml_bytes = xml_before;
-        imp.forget_media_from(media_before);
+            spent += len;
+        }
+        if pkg.get(&rel.target).is_none() {
+            ok = false;
+            break;
+        }
+        planned.push((id, rel.ty.clone(), rel.target.clone(), rel.kind == "diagramData"));
     }
+    let parts = if ok {
+        imp.diagram_xml_bytes = spent;
+        let copied: Option<Vec<_>> = planned
+            .into_iter()
+            .map(|(id, kind, target, data)| {
+                let media = if data { diagram_data(imp, &target) } else { imp.media_for(&target) };
+                Some((id, kind, media?))
+            })
+            .collect();
+        if copied.is_none() {
+            imp.rollback(&mark);
+        }
+        copied
+    } else {
+        None
+    };
     let parts = parts.unwrap_or_default();
     s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label, parts };
     s
@@ -569,6 +589,7 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
         data: std::sync::Arc::new(xml.into_bytes()),
         link: None,
     });
+    imp.media_keys.push(norm_target.clone());
     imp.media_by_part.insert(norm_target, id);
     Some(id)
 }
@@ -602,7 +623,7 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let tree = d.root.child("spTree")?;
     let mut sub = IdCtx { fresh: true, ..Default::default() };
     let before = imp.smartart_shapes;
-    let (xml_before, media_before) = (imp.diagram_xml_bytes, imp.media.len());
+    let mark = imp.mark();
     let children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
     if children.is_empty() {
         return None;
@@ -612,8 +633,7 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     if total > MAX_SMARTART_SHAPES {
         // Over the presentation's remaining budget: a placeholder, and nothing charged, nested SmartArt included.
         imp.smartart_shapes = before;
-        imp.diagram_xml_bytes = xml_before;
-        imp.forget_media_from(media_before);
+        imp.rollback(&mark);
         return None;
     }
     imp.smartart_shapes = total;

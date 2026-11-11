@@ -24,11 +24,24 @@ use crate::PptxError;
 use crate::opc::{self, Package, Rels};
 use crate::xml::{Doc, El, Node};
 
+/// A snapshot of the import state a discarded read rolls back to.
+pub struct Mark {
+    diagram_xml_bytes: usize,
+    media: usize,
+    media_keys: usize,
+    tag_bytes: usize,
+    tags_capped: bool,
+    kept_sidecar_bytes: usize,
+    kept_chart_keys: usize,
+}
+
 /// Import state shared by all parts.
 pub struct Imp<'a> {
     pub pkg: &'a Package,
     pub media: Vec<MediaItem>,
     pub media_by_part: HashMap<String, MediaId>,
+    /// Keys added to `media_by_part`, in order, so a rollback removes only its own.
+    pub media_keys: Vec<String>,
     pub next: u32,
     pub slide_by_part: HashMap<String, SlideId>,
     pub custom_show_names: HashMap<String, String>,
@@ -40,6 +53,8 @@ pub struct Imp<'a> {
     pub kept_sidecar_bytes: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Keys added to `kept_charts`, in order, for rollback.
+    pub kept_chart_keys: Vec<String>,
     /// Add-in tags parts, parsed once each, by normalized part name.
     pub tags_by_part: HashMap<String, Arc<[(String, String)]>>,
     /// Bytes of tags copied into the model so far (see [`MAX_TAG_BYTES`]).
@@ -73,16 +88,36 @@ impl Imp<'_> {
         let content_type = self.pkg.content_type(part).filter(|c| !c.is_empty()).unwrap_or_else(|| crate::mime_for(&name).to_string());
         let id = MediaId(self.alloc());
         self.media.push(MediaItem { id, name, content_type, data: Arc::new(data), link: None });
+        self.media_keys.push(key.clone());
         self.media_by_part.insert(key, id);
         Some(id)
     }
-    /// Drop the media copied since the list was `len` long, with their part-cache entries: used when
-    /// the content that read them is discarded, so they are neither kept nor reused uncharged.
-    pub fn forget_media_from(&mut self, len: usize) {
-        if self.media.len() > len {
-            let gone: std::collections::HashSet<MediaId> = self.media[len..].iter().map(|m| m.id).collect();
-            self.media.truncate(len);
-            self.media_by_part.retain(|_, id| !gone.contains(id));
+    /// What a discarded read must give back: the budgets it charged and the media and kept-chart
+    /// entries it added (see [`Imp::rollback`]).
+    pub fn mark(&self) -> Mark {
+        Mark {
+            diagram_xml_bytes: self.diagram_xml_bytes,
+            media: self.media.len(),
+            media_keys: self.media_keys.len(),
+            tag_bytes: self.tag_bytes,
+            tags_capped: self.tags_capped,
+            kept_sidecar_bytes: self.kept_sidecar_bytes,
+            kept_chart_keys: self.kept_chart_keys.len(),
+        }
+    }
+    /// Undo everything since `m`: only the entries added since are removed, so the cost follows
+    /// what the discarded read added, not the size of the caches.
+    pub fn rollback(&mut self, m: &Mark) {
+        self.diagram_xml_bytes = m.diagram_xml_bytes;
+        self.tag_bytes = m.tag_bytes;
+        self.tags_capped = m.tags_capped;
+        self.kept_sidecar_bytes = m.kept_sidecar_bytes;
+        self.media.truncate(m.media);
+        for k in self.media_keys.drain(m.media_keys..) {
+            self.media_by_part.remove(&k);
+        }
+        for k in self.kept_chart_keys.drain(m.kept_chart_keys..) {
+            self.kept_charts.remove(&k);
         }
     }
     /// Media item for an external link.
@@ -454,6 +489,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         pkg: &pkg,
         media: vec![],
         media_by_part: HashMap::new(),
+        media_keys: vec![],
         next: 0,
         slide_by_part: HashMap::new(),
         custom_show_names: HashMap::new(),
@@ -461,6 +497,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
         kept_charts: HashMap::new(),
+        kept_chart_keys: vec![],
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
@@ -499,6 +536,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         pkg: &pkg,
         media: vec![],
         media_by_part: HashMap::new(),
+        media_keys: vec![],
         next: max_id.max(1),
         slide_by_part: HashMap::new(),
         custom_show_names: HashMap::new(),
@@ -506,6 +544,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
         kept_charts: HashMap::new(),
+        kept_chart_keys: vec![],
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,

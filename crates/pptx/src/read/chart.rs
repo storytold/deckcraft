@@ -485,6 +485,7 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: r.target, external: false });
         }
     }
+    imp.kept_chart_keys.push(key.clone());
     imp.kept_charts.insert(key, kept.clone());
     kept
 }
