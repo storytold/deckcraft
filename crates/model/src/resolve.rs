@@ -50,31 +50,16 @@ impl<'a> Ctx<'a> {
     }
 }
 
-fn compatible(slide: PhType, other: PhType) -> bool {
-    use PhType::*;
-    match slide {
-        Title | CtrTitle => matches!(other, Title | CtrTitle),
-        SubTitle | Body | Obj | Chart | Table | ClipArt | Diagram | Media | Picture => {
-            !matches!(other, Title | CtrTitle | Date | Footer | SlideNum | Header)
-        }
-        k => k == other,
-    }
-}
+/// The idx of a placeholder with no counterpart in any layout (one pasted from another deck).
+pub const ORPHAN_IDX: u32 = u32::MAX;
 
-fn find_ph<'s>(shapes: &'s [Shape], shape: &Shape, by_idx: bool) -> Option<&'s Shape> {
-    let ph = shape.ph.as_ref()?;
-    if by_idx
-        && ph.idx != 0
-        && let Some(s) = shapes.iter().find(|s| s.ph.as_ref().is_some_and(|p| p.idx == ph.idx && compatible(ph.kind, p.kind)))
-    {
-        return Some(s);
-    }
-    // Same type first, then a compatible one.
-    shapes
-        .iter()
-        .find(|s| s.ph.as_ref().is_some_and(|p| p.kind == ph.kind && (!by_idx || ph.idx == 0 || p.idx == ph.idx || ph.kind.is_title())))
-        .or_else(|| shapes.iter().find(|s| s.ph.as_ref().is_some_and(|p| p.kind == ph.kind)))
-        .or_else(|| shapes.iter().find(|s| s.ph.as_ref().is_some_and(|p| compatible(ph.kind, p.kind))))
+/// The layout placeholder a slide placeholder takes its place from. PowerPoint pairs them by idx
+/// and nothing else, whatever either one's type: a body with no idx takes the layout's title
+/// (idx 0), a title with idx 1 takes its body. An idx the layout does not have, 0 included, and
+/// the orphan idx pair with nothing.
+fn find_ph<'s>(shapes: &'s [Shape], shape: &Shape) -> Option<&'s Shape> {
+    let ph = shape.ph.as_ref().filter(|p| p.idx != ORPHAN_IDX)?;
+    shapes.iter().find(|s| s.ph.as_ref().is_some_and(|p| p.idx == ph.idx))
 }
 
 fn master_ph(master: &Master, kind: PhType) -> Option<&Shape> {
@@ -91,13 +76,39 @@ pub fn parents<'a>(ctx: &Ctx<'a>, shape: &Shape) -> (Option<&'a Shape>, Option<&
     let Some(ph) = shape.ph.as_ref() else { return (None, None) };
     match ctx.owner {
         Owner::Slide => {
-            let lp = ctx.layout.and_then(|l| find_ph(&l.shapes, shape, true));
+            let lp = ctx.layout.and_then(|l| find_ph(&l.shapes, shape));
+            // An unpaired placeholder has no parents at all: no frame, geometry or body properties
+            // (a title's centred anchor) come from the master's placeholder either. Only the
+            // master's text styles for its type reach it, through `master_list_style`.
+            if lp.is_none() && pairs_by_idx(ctx, ph.idx) {
+                return (None, None);
+            }
             let kind = lp.and_then(Shape::ph_type).unwrap_or(ph.kind);
             (lp, master_ph(ctx.master, kind))
         }
         Owner::Layout => (None, master_ph(ctx.master, ph.kind)),
         Owner::Master => (None, None),
     }
+}
+
+/// Whether a slide placeholder of this idx is paired with a layout placeholder by idx: it is on a
+/// slide that has a layout, unless it carries the orphan idx, which goes to the master by type.
+fn pairs_by_idx(ctx: &Ctx, idx: u32) -> bool {
+    matches!(ctx.owner, Owner::Slide) && ctx.layout.is_some() && idx != ORPHAN_IDX
+}
+
+/// A slide placeholder whose idx (not the orphan one) matches no layout placeholder, 0 included.
+/// In PowerPoint it takes no frame, geometry or body properties from anywhere: with no frame of its
+/// own nothing of it is drawn, and with one its text shows without a fill or an outline, top
+/// anchored. Its text still follows the master's style for its type. The orphan idx, by contrast,
+/// takes the master's placeholder of its type, frame and geometry included.
+pub fn unpaired_placeholder(ctx: &Ctx, shape: &Shape) -> bool {
+    shape.ph.as_ref().is_some_and(|ph| pairs_by_idx(ctx, ph.idx)) && ctx.layout.and_then(|l| find_ph(&l.shapes, shape)).is_none()
+}
+
+/// Whether a shape is left with no frame: an unpaired placeholder without one of its own.
+pub fn lacks_frame(ctx: &Ctx, shape: &Shape) -> bool {
+    shape.xfrm.is_none() && unpaired_placeholder(ctx, shape)
 }
 
 /// The text style group (title / body / other) a shape draws from. Text in a table takes the
@@ -109,7 +120,9 @@ pub fn master_list_style<'a>(ctx: &Ctx<'a>, shape: &Shape) -> &'a ListStyle {
     if matches!(shape.kind, crate::ShapeKind::Table(_)) {
         return &ctx.master.other_style;
     }
-    match shape.ph_type() {
+    // The group follows the layout placeholder the shape is paired with, not its own type: a body
+    // that takes the layout's title is drawn in the title style.
+    match parents(ctx, shape).0.and_then(Shape::ph_type).or_else(|| shape.ph_type()) {
         Some(PhType::Title | PhType::CtrTitle) => &ctx.master.title_style,
         Some(
             PhType::Body

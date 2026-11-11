@@ -108,3 +108,70 @@ fn a_picture_placeholder_without_geometry_takes_its_layouts() {
     let photo = q.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Picture { .. })).expect("picture");
     assert!(matches!(&photo.geom, Geom::Preset { name, .. } if name == "ellipse"), "{:?}", photo.geom);
 }
+
+#[test]
+fn an_orphan_placeholder_takes_nothing_from_a_layout_picture_placeholder() {
+    // A layout whose only placeholder is an ellipse picture slot, and a slide placeholder with the
+    // orphan idx 4294967295 (no counterpart in any layout). PowerPoint draws the latter without the
+    // ellipse, with the master's geometry; one with the picture slot's idx 15 still takes the ellipse.
+    let mut p = defaults::new_presentation(None);
+    let layout = p.slides[0].layout;
+    let slot = Shape {
+        id: ShapeId(p.alloc_id().expect("ids")),
+        name: "Picture Placeholder".into(),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 200.0)),
+        geom: Geom::Preset { name: "ellipse".into(), adj: vec![] },
+        ph: Some(Placeholder { kind: PhType::Picture, idx: 15, ..Default::default() }),
+        ..Default::default()
+    };
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    let l = m.layouts.iter_mut().find(|l| l.id == layout).expect("layout");
+    l.shapes = vec![slot];
+    let mut content = |name: &str, idx: u32| Shape {
+        id: ShapeId(p.alloc_id().expect("ids")),
+        name: name.into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 300.0, 100.0)),
+        ph: Some(Placeholder { idx, ..Default::default() }),
+        ..Default::default()
+    };
+    let shapes = vec![content("Orphan", u32::MAX), content("Matching", 15), content("Unpaired", 7), content("Bare", 0)];
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = shapes;
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let bare = edit_slides(&bytes, |mut s| {
+        while let Some(i) = s.find("<a:prstGeom") {
+            let Some(j) = s[i..].find("</a:prstGeom>").map(|j| j + i + "</a:prstGeom>".len()) else { break };
+            s.replace_range(i..j, "");
+        }
+        s
+    });
+    let q = deckcraft_pptx::import(&bare).expect("import");
+    let geom_of = |name: &str| &q.slides[0].shapes.iter().find(|s| s.name == name).expect("shape").geom;
+    assert!(!matches!(geom_of("Orphan"), Geom::Preset { name, .. } if name == "ellipse"), "{:?}", geom_of("Orphan"));
+    assert!(matches!(geom_of("Matching"), Geom::Preset { name, .. } if name == "ellipse"), "{:?}", geom_of("Matching"));
+    // An idx no layout placeholder has takes no geometry from anywhere (a red fill is not drawn on
+    // it in PowerPoint); it keeps the empty geometry rather than becoming a rectangle.
+    assert!(matches!(geom_of("Unpaired"), Geom::Custom { paths } if paths.is_empty()), "{:?}", geom_of("Unpaired"));
+    // So does idx 0 in a layout with no placeholder of idx 0: nothing pairs by type.
+    assert!(matches!(geom_of("Bare"), Geom::Custom { paths } if paths.is_empty()), "{:?}", geom_of("Bare"));
+}
+
+#[test]
+fn an_unpaired_placeholder_with_a_fill_keeps_its_geometry_unset_through_a_save() {
+    // A placeholder no layout placeholder pairs with has no geometry, so a fill of its own is not
+    // drawn; saving must not give it a rectangle that draws it.
+    let mut p = defaults::new_presentation(None);
+    let shape = Shape {
+        id: ShapeId(p.alloc_id().expect("ids")),
+        name: "Unpaired".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 300.0, 100.0)),
+        geom: Geom::Custom { paths: vec![] },
+        fill: Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)))),
+        ph: Some(Placeholder { kind: PhType::Obj, idx: 7, ..Default::default() }),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![shape];
+    let q = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("import");
+    let back = q.slides[0].shapes.iter().find(|s| s.name == "Unpaired").expect("shape");
+    assert!(matches!(&back.geom, Geom::Custom { paths } if paths.is_empty()), "{:?}", back.geom);
+    assert!(back.fill.is_some(), "the fill itself is kept");
+}
