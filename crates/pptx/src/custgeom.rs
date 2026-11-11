@@ -161,8 +161,15 @@ fn pt(g: &Guides, e: &El) -> (f64, f64) {
 /// Convert `a:custGeom` to custom paths. `w`/`h` is the shape size in EMU (used for guides and for
 /// paths that don't give their own coordinate space).
 pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
+    read_cust_geom_counting(cg, w_emu, h_emu).0
+}
+
+/// [`read_cust_geom`], and how many paths were left out for lack of room in the guide caches
+/// (`(too many coordinate spaces, too many guide-name bytes)`); each cause is also logged once.
+fn read_cust_geom_counting(cg: &El, w_emu: f64, h_emu: f64) -> (Vec<CustomPath>, (usize, usize)) {
     let mut out = vec![];
-    let Some(pl) = cg.child("pathLst") else { return out };
+    let mut dropped = (0usize, 0usize);
+    let Some(pl) = cg.child("pathLst") else { return (out, dropped) };
     let mut spaces: HashMap<(u64, u64), Guides> = HashMap::new();
     let mut name_bytes = 0usize;
     let mut budget_full = false;
@@ -177,6 +184,11 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
         let key = (gw.to_bits(), gh.to_bits());
         if !spaces.contains_key(&key) {
             if guided && (budget_full || spaces.len() >= MAX_SPACES) {
+                if budget_full {
+                    dropped.1 += 1;
+                } else {
+                    dropped.0 += 1;
+                }
                 continue;
             }
             let mut g = Guides::new(gw, gh);
@@ -187,6 +199,7 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
             if guided && !spaces.is_empty() && name_bytes.saturating_add(bytes) > MAX_SPACE_NAME_BYTES {
                 // Every space holds the same names, so no later space fits either.
                 budget_full = true;
+                dropped.1 += 1;
                 continue;
             }
             name_bytes = name_bytes.saturating_add(bytes);
@@ -270,7 +283,16 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
         let (ow, oh) = if pw > 0.0 || ph > 0.0 { (pw, ph) } else { (w_emu.max(1.0), h_emu.max(1.0)) };
         out.push(CustomPath { w: ow, h: oh, d: d.trim_end().to_string(), fill, stroke: p.bool("stroke").unwrap_or(true) });
     }
-    out
+    if dropped.0 > 0 {
+        log::warn!("pptx: a custom geometry uses more than {MAX_SPACES} distinct path coordinate spaces; {} later path(s) are not kept", dropped.0);
+    }
+    if dropped.1 > 0 {
+        log::warn!(
+            "pptx: a custom geometry's guide names pass {MAX_SPACE_NAME_BYTES} bytes across its coordinate spaces; {} later path(s) are not kept",
+            dropped.1
+        );
+    }
+    (out, dropped)
 }
 
 /// Ellipse parametric angle for a visual angle `a` (radians).
@@ -513,8 +535,9 @@ mod tests {
             path(10)
         );
         let d = parse(x.as_bytes()).unwrap();
-        let out = read_cust_geom(&d.root, 1.0, 1.0);
+        let (out, dropped) = read_cust_geom_counting(&d.root, 1.0, 1.0);
         assert_eq!(out.len(), MAX_SPACES + 1, "16 spaces plus the repeat of the first");
+        assert_eq!(dropped, (40 - MAX_SPACES, 0), "the paths of later spaces are counted, to be warned about");
         assert!(out[0].d.starts_with("M 5 1"), "{}", out[0].d);
         assert!(out[MAX_SPACES].d.starts_with("M 5 1"), "{}", out[MAX_SPACES].d);
     }
@@ -530,8 +553,9 @@ mod tests {
             path(10)
         );
         let d = parse(x.as_bytes()).unwrap();
-        let out = read_cust_geom(&d.root, 1.0, 1.0);
+        let (out, dropped) = read_cust_geom_counting(&d.root, 1.0, 1.0);
         assert_eq!(out.len(), 2, "the second 3 MiB space is over budget and left out; the first space's repeat stays");
+        assert_eq!(dropped, (0, 1), "the path left out is counted, to be warned about");
     }
 
     #[test]
