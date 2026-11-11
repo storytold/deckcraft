@@ -50,7 +50,12 @@ pub(crate) fn fit_raster(edges: usize, pw: u32, ph: u32) -> (u32, u32) {
         return (pw, ph);
     }
     let k = (MAX_EDGE_WORK as f64 / work as f64).sqrt();
-    (((f64::from(pw) * k) as u32).max(1), ((f64::from(ph) * k) as u32).max(1))
+    let w = ((f64::from(pw) * k) as u32).max(1);
+    let h = ((f64::from(ph) * k) as u32).max(1);
+    // A side held at 1 pixel leaves the other to take the rest of the cut.
+    let room = |side: u32| u32::try_from(MAX_EDGE_WORK / u64::from(side).saturating_mul(edges.max(1) as u64).max(1)).unwrap_or(u32::MAX).max(1);
+    let w = w.min(room(h));
+    (w, h.min(room(w)))
 }
 
 /// Colour position (0 at the focus, 1 at the edge) of `p` for path `kind` in `bounds` with the
@@ -141,23 +146,28 @@ fn shape_position(outline: &[Vec<Point>], c: Point, p: Point) -> f64 {
 /// The outline flattened into closed polygons.
 pub fn polygons(path: &BezPath) -> Vec<Vec<Point>> {
     // `kurbo::flatten` buffers all of a cubic's quads before calling back, and cannot be stopped
-    // once running, so bound the quads the cubics will make (kurbo's own count) first. An ordinary
+    // once running, so bound the quads the cubics will make (kurbo's own count: it splits cubics into quads at a tenth of the tolerance) first. An ordinary
     // curve makes a few; only those past the first of each count.
     let mut extra_quads = 0.0f64;
     let mut at = Point::ZERO;
+    let mut start = Point::ZERO;
     for el in path.iter() {
         match el {
-            PathEl::MoveTo(p) | PathEl::LineTo(p) | PathEl::QuadTo(_, p) => at = p,
+            PathEl::MoveTo(p) => {
+                at = p;
+                start = p;
+            }
+            PathEl::LineTo(p) | PathEl::QuadTo(_, p) => at = p,
             PathEl::CurveTo(a, b, p) => {
                 let err = ((b.to_vec2() * 3.0 - p.to_vec2()) - (a.to_vec2() * 3.0 - at.to_vec2())).hypot2();
-                extra_quads += (err / (432.0 * FLATTEN_TOLERANCE * FLATTEN_TOLERANCE)).powf(1.0 / 6.0).ceil().max(1.0) - 1.0;
+                extra_quads += (err / (432.0 * (FLATTEN_TOLERANCE * 0.1).powi(2))).powf(1.0 / 6.0).ceil().max(1.0) - 1.0;
                 // A non-finite estimate is over the limit too.
                 if extra_quads.is_nan() || extra_quads > MAX_EXTRA_QUADS {
                     return Vec::new();
                 }
                 at = p;
             }
-            PathEl::ClosePath => {}
+            PathEl::ClosePath => at = start,
         }
     }
     let mut out: Vec<Vec<Point>> = Vec::new();
@@ -459,7 +469,7 @@ mod tests {
     fn huge_cubics_are_refused_before_flattening() {
         let mut p = BezPath::new();
         p.move_to((0.0, 0.0));
-        // About 130,000 quads each: three are over the limit.
+        // About 250,000 quads each: over the limit.
         for _ in 0..3 {
             p.curve_to((1e15, -1e15), (-1e15, 1e15), (1.0, 1.0));
         }
