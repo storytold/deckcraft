@@ -1053,7 +1053,9 @@ dependencies = [
  "image",
  "log",
  "rfd",
+ "rustix 1.1.5",
  "serde_json",
+ "windows 0.62.2",
  "winit",
  "winresource",
 ]

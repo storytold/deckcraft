@@ -328,6 +328,16 @@ pub fn shapes_mut<'a>(doc: &'a mut Presentation, sel: &Selection) -> Option<&'a 
     }
 }
 
+/// The name a run starts with until the person names themselves in the Preferences dialog
+/// ("Your name (comments)"): DeckCraft's own placeholder, saved as any other name would be.
+/// "Presenter" is an ordinary word of a talk, so anything that asks "is this still our default?"
+/// compares against this constant and never against the word itself (#2209).
+pub const DEFAULT_AUTHOR: &str = "Presenter";
+
+/// The most characters a name in the preferences can hold: `prefs.json` is a file on disk, and a
+/// hand-edited or damaged one must not give the session an unbounded name.
+pub const MAX_AUTHOR_CHARS: usize = 256;
+
 /// Engine preferences (the UI keeps its own).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -381,7 +391,7 @@ impl Default for Prefs {
             ac_lists: true,
             ac_entries: Vec::new(),
             ac_removed: Vec::new(),
-            author: "Presenter".into(),
+            author: DEFAULT_AUTHOR.into(),
             undo_limit: 500,
             recovery_minutes: 1.0,
             units: deckcraft_geom::Unit::Inches,
@@ -402,8 +412,8 @@ impl Prefs {
         self.duplicate_offset = within(self.duplicate_offset, -1000.0, 1000.0, d.duplicate_offset);
         self.undo_limit = self.undo_limit.min(MAX_UNDO_LIMIT);
         self.recovery_minutes = within(self.recovery_minutes, 0.1, 24.0 * 60.0, d.recovery_minutes);
-        if self.author.chars().count() > 256 {
-            self.author = self.author.chars().take(256).collect();
+        if self.author.chars().count() > MAX_AUTHOR_CHARS {
+            self.author = self.author.chars().take(MAX_AUTHOR_CHARS).collect();
         }
         self
     }
