@@ -166,6 +166,52 @@ fn ogg_opus() {
     check_tone("opus", &fixture("tone.opus"), 48_000, 1);
 }
 
+/// Ogg Opus timing saturates on a hostile granule position instead of failing, so the end-trim
+/// arithmetic on its total must not overflow either: a three-channel file that ends with a page
+/// carrying the largest granule still probes and decodes.
+#[test]
+fn ogg_opus_with_a_huge_granule_does_not_overflow() {
+    fn seal(mut page: Vec<u8>) -> Vec<u8> {
+        page[22..26].fill(0);
+        let crc = craft_media::ogg::crc32(&page);
+        page[22..26].copy_from_slice(&crc.to_le_bytes());
+        page
+    }
+    let f = fixture("tone.opus");
+    let mut pages: Vec<Vec<u8>> = Vec::new();
+    let mut at = 0;
+    while at + 27 <= f.len() && &f[at..at + 4] == b"OggS" {
+        let nseg = f[at + 26] as usize;
+        let end = at + 27 + nseg + f[at + 27..at + 27 + nseg].iter().map(|&b| b as usize).sum::<usize>();
+        pages.push(f[at..end].to_vec());
+        at = end;
+    }
+    assert_eq!(at, f.len(), "the fixture is whole pages");
+    // an OpusHead for three channels (mapping family 1), each playing the one mono stream
+    let head = pages[0][28..].to_vec();
+    let mut first = pages[0][..26].to_vec();
+    first.extend_from_slice(&[1, 24]);
+    first.extend_from_slice(&head[..9]);
+    first.push(3);
+    first.extend_from_slice(&head[10..18]);
+    first.extend_from_slice(&[1, 1, 0, 0, 0, 0]);
+    pages[0] = seal(first);
+    // the last page once more, as the next page of the stream, with the largest granule
+    let last = pages.len() - 1;
+    let mut extra = pages[last].clone();
+    pages[last][5] &= !0x04;
+    pages[last] = seal(pages[last].clone());
+    extra[6..14].copy_from_slice(&i64::MAX.to_le_bytes());
+    let seq = u32::from_le_bytes([extra[18], extra[19], extra[20], extra[21]]) + 1;
+    extra[18..22].copy_from_slice(&seq.to_le_bytes());
+    pages.push(seal(extra));
+    let b: Bytes = Arc::new(pages.concat());
+    assert!(probe(&b).is_ok_and(|i| i.duration_ms > 1 << 40), "the granule is taken at its word");
+    let p = audio::decode(&b).expect("decode");
+    assert_eq!(p.channels, 3);
+    assert!(!p.samples.is_empty());
+}
+
 #[test]
 fn wma_is_probed_but_not_decoded() {
     let b = fixture("tone.wma");
