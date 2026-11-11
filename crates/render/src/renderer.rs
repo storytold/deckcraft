@@ -433,6 +433,10 @@ impl Renderer {
         if !st.visible || st.opacity <= 0.001 {
             return;
         }
+        // A placeholder no layout placeholder pairs with has no frame to draw in, as in PowerPoint.
+        if resolve::lacks_frame(rctx, s) {
+            return;
+        }
         let x = resolve::xfrm(rctx, s);
         if !x.is_finite() {
             return;

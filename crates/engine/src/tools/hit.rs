@@ -218,6 +218,10 @@ pub(super) fn in_table_cell(st: &crate::DocState, id: ShapeId, p: Point) -> bool
 
 /// Resolve a shape's target at slide point `p`, using its effective fill for interior hits.
 pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<Hit> {
+    // A placeholder that is not drawn (no frame) is not there to click.
+    if cmd::lacks_frame(&st.doc, &st.selection, sh) {
+        return None;
+    }
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let inv = x.affine().inverse();
     let local = inv * p;

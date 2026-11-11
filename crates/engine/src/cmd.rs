@@ -449,6 +449,16 @@ pub fn table_drawn_heights(doc: &deckcraft_model::Presentation, sel: &crate::Sel
     }
 }
 
+/// Whether `shape` is left with no frame to draw in (see [`deckcraft_model::resolve::lacks_frame`]),
+/// so it cannot be hit either. Only slide shapes can be.
+pub fn lacks_frame(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> bool {
+    use deckcraft_model::resolve::{self, Ctx};
+    match sel.target {
+        crate::Target::Slides => doc.slides.get(sel.slide).and_then(|s| Ctx::for_slide(doc, s)).is_some_and(|c| resolve::lacks_frame(&c, shape)),
+        _ => false,
+    }
+}
+
 fn ctx_xfrm(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Xfrm {
     use deckcraft_model::resolve::{self, Ctx};
     match sel.target {

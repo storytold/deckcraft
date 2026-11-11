@@ -242,7 +242,10 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
     if let Some(xf) = &s.xfrm {
         dml::xfrm(w, "a:xfrm", xf, None);
     }
-    if geom && (s.xfrm.is_some() || s.ph.is_none() || !matches!(&s.geom, Geom::Preset { name, adj } if name == "rect" && adj.is_empty())) {
+    // A placeholder's empty geometry is unset (it takes its parents', or none): writing a rectangle
+    // would draw the fill of one that has no parents.
+    let unset = s.ph.is_some() && matches!(&s.geom, Geom::Custom { paths } if paths.is_empty());
+    if geom && !unset && (s.xfrm.is_some() || s.ph.is_none() || !matches!(&s.geom, Geom::Preset { name, adj } if name == "rect" && adj.is_empty())) {
         geometry(w, &s.geom);
     }
     if let Some(f) = &s.fill {
