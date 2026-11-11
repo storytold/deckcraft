@@ -159,7 +159,7 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     p.media.retain(|m| seen.insert(m.id));
     // zip 9 compares every entry's name for one it hasn't indexed, so a deck naming many missing
     // members would scan the archive for each; they're looked up in this one pass instead.
-    let names: std::collections::HashSet<String> = z.file_names().filter_map(|n| n.ok().map(|n| n.into_owned())).collect();
+    let names = member_index(z.file_names().filter_map(|n| n.ok()));
     let mut left = budget.total;
     for item in &mut p.media {
         let name = format!("media/{}", item.id.0);
@@ -186,6 +186,16 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     chart_parts::restore(&mut p, &mut z, &names, &mut left, items, budget.items, &mut damaged)?;
     repair(&mut p);
     Ok((p, damaged))
+}
+
+/// The members a deck can reference (`media/<id>`, `chart-parts/<n>`), by name. Any other or
+/// longer name is never looked up, so a hostile archive can't make the index grow with unrelated names.
+fn member_index<S: AsRef<str>>(names: impl Iterator<Item = S>) -> std::collections::HashSet<String> {
+    const MAX_NAME: usize = 64;
+    names
+        .filter(|n| n.as_ref().len() <= MAX_NAME && (n.as_ref().starts_with("media/") || n.as_ref().starts_with("chart-parts/")))
+        .map(|n| n.as_ref().to_owned())
+        .collect()
 }
 
 /// Make a loaded presentation safe to edit: a master exists, every slide's layout exists, tables

@@ -425,3 +425,13 @@ fn outline_includes_table_text() {
     assert!(out.contains("Cell A1\tCell B1"), "{out}");
     assert!(out.contains("Cell A2\tCell B2"), "{out}");
 }
+
+#[test]
+fn member_index_keeps_only_referenceable_short_names() {
+    let long = format!("media/{}", "x".repeat(10_000));
+    let names = ["media/7", "chart-parts/0", "presentation.json", "unrelated/zzz", long.as_str()];
+    let index = super::member_index(names.into_iter());
+    let mut got: Vec<_> = index.iter().map(String::as_str).collect();
+    got.sort();
+    assert_eq!(got, ["chart-parts/0", "media/7"]);
+}
