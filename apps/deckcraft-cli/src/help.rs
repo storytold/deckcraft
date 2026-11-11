@@ -47,6 +47,28 @@ OUT-t0.250.png and so on. Prints each image's path, size, transition and time.
   deckcraft-cli render-transition deck.deckcraft --slide 1 --t 0.25,0.5,0.75 fade.png",
     },
     Subcommand {
+        name: "camera-background",
+        usage: "camera-background --image IN.png --mode normal|removed|blur|custom --out OUT.png [--background BG.png] [--color R,G,B] [--feather N] [--blur N] [--model DIR]",
+        summary: "run the camera-background segmentation pipeline on one image",
+        details: "Reads a picture, runs the user-installed birefnet-lite-512 model (or the model under --model), composites
+the chosen background mode, writes OUT.png and prints the size and time in milliseconds. Normal needs
+no model.
+
+  --image IN       the camera frame: a PNG or JPEG up to 16 MB and 1280x1280 pixels
+  --mode           normal, removed, blur, or custom (replacement picture or colour). `--mode` is
+                   case-insensitive and trimmed, and the aliases none = normal, remove = removed,
+                   replace = custom are accepted
+  --background     the replacement picture for custom mode (PNG or JPEG, up to 16 MB and
+                   1280x1280 pixels; resized to the frame)
+  --color R,G,B    the replacement colour for custom mode (three 0..255 channels)
+  --model DIR      the model root holding birefnet-lite-512/onnx/model.onnx
+  --feather N      soft-edge radius in pixels, 0..64 (2 by default; larger values clamp)
+  --blur N         blur radius in pixels, 0..64 (0, the default, picks 1/24 of the shorter side,
+                   clamped to 2..24; 1..64 is used as given)
+
+  deckcraft-cli camera-background --image frame.png --mode removed --out cutout.png",
+    },
+    Subcommand {
         name: "convert",
         usage: "convert IN OUT",
         summary: "save a presentation in the format OUT's extension names",

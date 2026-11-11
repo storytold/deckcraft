@@ -339,3 +339,28 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
 }
+
+#[test]
+fn camera_background_modes_parse_serialize_and_name_their_xml_child() {
+    use crate::{CameraBackground, CameraBackgroundMode};
+    assert_eq!(CameraBackgroundMode::parse("NORMAL"), Some(CameraBackgroundMode::Normal));
+    assert_eq!(CameraBackgroundMode::parse("remove"), Some(CameraBackgroundMode::Removed));
+    assert_eq!(CameraBackgroundMode::parse("replacement"), Some(CameraBackgroundMode::Custom));
+    assert_eq!(CameraBackgroundMode::parse("blurred"), Some(CameraBackgroundMode::Blur));
+    assert_eq!(CameraBackgroundMode::parse("magic"), None);
+    for mode in [CameraBackgroundMode::Normal, CameraBackgroundMode::Removed, CameraBackgroundMode::Blur, CameraBackgroundMode::Custom] {
+        assert_eq!(CameraBackgroundMode::from_xml_name(mode.xml_name()), Some(mode));
+        assert_eq!(CameraBackgroundMode::parse(mode.as_str()), Some(mode));
+        let json = serde_json::to_string(&CameraBackground::new(mode)).expect("serialize");
+        let back: CameraBackground = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.mode, mode, "{json}");
+    }
+    assert_eq!(CameraBackground::default().mode, CameraBackgroundMode::Normal);
+    // A cameo's background is optional and survives JSON omission/serialization.
+    let sh = Shape { kind: ShapeKind::Picture { fill: style::PictureFill::default() }, cameo: Some(crate::Cameo::live()), ..Default::default() };
+    let json = serde_json::to_string(&sh).expect("shape");
+    assert!(!json.contains("background"), "a plain cameo writes no background: {json}");
+    let back: Shape = serde_json::from_str(&json).expect("shape back");
+    assert!(back.is_cameo());
+    assert_eq!(back.cameo.and_then(|c| c.background), None);
+}

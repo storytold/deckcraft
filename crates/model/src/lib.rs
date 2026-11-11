@@ -254,6 +254,132 @@ pub struct MediaClip {
     pub height: u32,
 }
 
+/// What a Cameo puts behind its subject (Camera Format ▸ Camera Background in PowerPoint):
+/// the untouched camera view, the background removed (transparent), the background blurred, or a
+/// replacement picture.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CameraBackgroundMode {
+    /// The camera view as-is.
+    #[default]
+    Normal,
+    /// Keep the subject, drop the background (transparent alpha).
+    Removed,
+    /// Keep the subject, blur the background.
+    Blur,
+    /// Keep the subject, draw a replacement picture or colour behind it.
+    Custom,
+}
+
+impl CameraBackgroundMode {
+    /// The stable id the commands, the file and the UI use.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            CameraBackgroundMode::Normal => "normal",
+            CameraBackgroundMode::Removed => "removed",
+            CameraBackgroundMode::Blur => "blur",
+            CameraBackgroundMode::Custom => "custom",
+        }
+    }
+
+    /// The `alf:backgroundProps` child PowerPoint writes for this mode (`Normal`, `Removed`…).
+    pub const fn xml_name(self) -> &'static str {
+        match self {
+            CameraBackgroundMode::Normal => "Normal",
+            CameraBackgroundMode::Removed => "Removed",
+            CameraBackgroundMode::Blur => "Blur",
+            CameraBackgroundMode::Custom => "Custom",
+        }
+    }
+
+    /// The UI label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            CameraBackgroundMode::Normal => "Normal",
+            CameraBackgroundMode::Removed => "Remove Background",
+            CameraBackgroundMode::Blur => "Blur Background",
+            CameraBackgroundMode::Custom => "Replace Background",
+        }
+    }
+
+    /// Parse a command or file id (`normal`, `removed`, `blur`, `custom`, case-insensitive).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "normal" | "none" => Some(CameraBackgroundMode::Normal),
+            "removed" | "remove" | "removedbackground" => Some(CameraBackgroundMode::Removed),
+            "blur" | "blurred" => Some(CameraBackgroundMode::Blur),
+            "custom" | "replace" | "replacement" => Some(CameraBackgroundMode::Custom),
+            _ => None,
+        }
+    }
+
+    /// Parse the `alf:backgroundProps` child local name (`Normal`, `Removed`…).
+    pub fn from_xml_name(name: &str) -> Option<Self> {
+        match name {
+            "Normal" => Some(CameraBackgroundMode::Normal),
+            "Removed" => Some(CameraBackgroundMode::Removed),
+            "Blur" => Some(CameraBackgroundMode::Blur),
+            "Custom" => Some(CameraBackgroundMode::Custom),
+            _ => None,
+        }
+    }
+}
+
+/// A Cameo's background choice, stored on the shape and written back as
+/// `alf:liveFeedProps/alf:backgroundProps`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CameraBackground {
+    pub mode: CameraBackgroundMode,
+    /// A solid replacement colour, used when `image` is absent (DeckCraft's own field: the
+    /// livefeed schema has no colour element).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgba>,
+    /// The replacement picture for [`CameraBackgroundMode::Custom`] (DeckCraft's own field: the
+    /// livefeed schema names no image relationship, so PowerPoint keeps the mode and drops it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<MediaId>,
+}
+
+impl CameraBackground {
+    pub fn new(mode: CameraBackgroundMode) -> Self {
+        CameraBackground { mode, ..Default::default() }
+    }
+}
+
+/// A Cameo (Camera Format tab): PowerPoint's live camera feed on a picture shape. The shape stays
+/// a [`ShapeKind::Picture`] — its `PictureFill` is the placeholder art — so picture formatting,
+/// cropping and arrangement keep working. The marker in the file is `alf:liveFeedProps` inside
+/// `p:cNvPicPr/a:extLst`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Cameo {
+    /// Live feed (`true`) rather than a frozen still.
+    pub live: bool,
+    /// The feed's `alf:liveFeedProps` element kept verbatim (`backgroundProps`, `extLst`…), so a
+    /// camera background set in PowerPoint survives a save. `None` writes a plain live feed.
+    ///
+    /// A feed whose children name a package relationship (`r:embed`, `r:link`, `r:id`) is **not**
+    /// kept: export creates no such relationship, so writing the old feed back would leave a
+    /// dangling reference in a file PowerPoint repairs. Such a feed is replaced by one carrying only
+    /// the structured background; a replacement picture PowerPoint stored behind a relationship is
+    /// therefore not read back (DeckCraft's own `CameraBackground.image` is a media id, written as
+    /// package media rather than as a feed relationship).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+    /// The background the cameo applies to its feed. `None` is an ordinary (Normal) feed imported
+    /// without a `backgroundProps` element.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<CameraBackground>,
+}
+
+impl Cameo {
+    /// A live feed from the default camera.
+    pub fn live() -> Self {
+        Cameo { live: true, ..Default::default() }
+    }
+}
+
 /// One ink stroke (Draw tab): points in slide coordinates with pressure (`0..=1`,
 /// where `1` is [`InkStroke::width`]).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -361,6 +487,10 @@ pub struct Shape {
     /// On a SmartArt group: the diagram's text outline, from which its shapes are regenerated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<Diagram>,
+    /// Set when this picture is a Cameo (Camera Format tab): a camera feed shown in the picture's
+    /// frame. `None` for ordinary pictures.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cameo: Option<Cameo>,
 }
 
 /// A SmartArt diagram's data: its layout and its outline of nodes (the Text Pane).
@@ -436,6 +566,7 @@ impl Default for Shape {
             tags: vec![],
             raw_ext: None,
             diagram: None,
+            cameo: None,
         }
     }
 }
@@ -454,6 +585,10 @@ impl Shape {
     }
     pub fn is_group(&self) -> bool {
         matches!(self.kind, ShapeKind::Group { .. })
+    }
+    /// Is this picture a Cameo (Camera Format tab)?
+    pub fn is_cameo(&self) -> bool {
+        self.cameo.is_some() && matches!(self.kind, ShapeKind::Picture { .. })
     }
     pub fn children(&self) -> &[Shape] {
         match &self.kind {

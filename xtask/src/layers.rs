@@ -46,6 +46,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("av1", Class::Layer(1)),
     ("isobmff", Class::Layer(1)),
     ("media", Class::Layer(2)),
+    // Camera-background manifest, pre/post-processing and compositing (pure, wasm-clean).
+    ("matte", Class::Layer(2)),
     ("color", Class::Layer(0)),
     // WMF/EMF reader (ported from WordCraft).
     ("metafile", Class::Layer(0)),
@@ -58,6 +60,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("pptx", Class::Layer(3)),
     ("pdf", Class::Layer(4)),
     ("engine", Class::Layer(5)),
+    // Camera-background inference (RTen). Native only, like the UI.
+    ("matte-rten", Class::Layer(6)),
     ("ui-egui", Class::Layer(6)),
     ("mcp", Class::Layer(6)),
     ("testkit", Class::Testkit),

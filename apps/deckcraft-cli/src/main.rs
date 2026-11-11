@@ -71,6 +71,7 @@ fn main() -> ExitCode {
         Some("render-transition") => report(render_transition(rest)),
         Some("convert") => report(convert(rest)),
         Some("run") => report(run(rest)),
+        Some("camera-background") => report(camera_background(rest)),
         Some("commands") => {
             let f = rest.first().map(|x| x.to_lowercase());
             for c in deckcraft_engine::command_specs()
@@ -274,6 +275,103 @@ fn info(args: &[String]) -> Result<(), String> {
     let v = s.execute("document.inspect", &json!({})).map_err(|e| e.to_string())?;
     outln!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
     Ok(())
+}
+
+/// `camera-background`: the offscreen proof of the segmentation pipeline. It reads a PNG, runs the
+/// installed model (or the model at `--model`), writes the composite as a PNG and prints the time.
+fn camera_background(args: &[String]) -> Result<(), String> {
+    let mut image = None;
+    let mut mode = None;
+    let mut background = None;
+    let mut color = None;
+    let mut out = None;
+    let mut model = None;
+    let mut feather = None;
+    let mut blur = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--image" => image = Some(it.next().ok_or("--image needs a path")?.clone()),
+            "--mode" => mode = Some(it.next().ok_or("--mode needs normal, removed, blur or custom")?.clone()),
+            "--background" => background = Some(it.next().ok_or("--background needs a path")?.clone()),
+            "--color" => color = Some(it.next().ok_or("--color needs r,g,b")?.clone()),
+            "--out" | "-o" => out = Some(it.next().ok_or("--out needs a path")?.clone()),
+            "--model" => model = Some(it.next().ok_or("--model needs a directory")?.clone()),
+            "--feather" => feather = Some(it.next().and_then(|v| v.parse::<f64>().ok()).ok_or("--feather needs a number")?),
+            "--blur" => blur = Some(it.next().and_then(|v| v.parse::<f64>().ok()).ok_or("--blur needs a number")?),
+            "--help" | "-h" => {
+                outln!("{}", help_page("camera-background"));
+                return Ok(());
+            }
+            other => return Err(format!("unknown argument `{other}`")),
+        }
+    }
+    let image = image.ok_or("camera-background needs --image")?;
+    let mode = mode.ok_or("camera-background needs --mode")?;
+    // The engine's own parser, so `NORMAL`, ` normal ` and `none` are Normal here too: only the
+    // modes that segment need the model.
+    let mode = deckcraft_engine::model::CameraBackgroundMode::parse(&mode)
+        .ok_or_else(|| format!("unknown --mode `{mode}`; use normal, removed, blur or custom"))?;
+    let out = out.ok_or("camera-background needs --out")?;
+    let bytes = read_picture(&image)?;
+    let mut params = json!({"frame": deckcraft_engine::cmd::base64_encode(&bytes), "mode": mode.as_str()});
+    if let Some(bg) = background {
+        let bytes = read_picture(&bg)?;
+        params["background"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+    }
+    if let Some(c) = color {
+        let ch: Vec<u8> = c.split(',').map(|v| v.trim().parse::<u8>().ok().ok_or("--color needs r,g,b (0..255)")).collect::<Result<_, _>>()?;
+        if ch.len() != 3 {
+            return Err("--color needs r,g,b (0..255)".into());
+        }
+        params["color"] = json!(ch);
+    }
+    if let Some(f) = feather {
+        params["feather"] = json!(f);
+    }
+    if let Some(b) = blur {
+        params["blur"] = json!(b);
+    }
+    let mut s = Session::with_new();
+    if mode != deckcraft_engine::model::CameraBackgroundMode::Normal {
+        let segmenter = match &model {
+            Some(dir) => deckcraft_matte_rten::RtenSegmenter::load(&deckcraft_matte::manifest::MANIFEST.path_in(std::path::Path::new(dir))),
+            None => deckcraft_matte_rten::RtenSegmenter::load_installed(),
+        }
+        .map_err(|e| {
+            format!("{e}\nInstall the model under $DECKCRAFT_MODELS, the config models/ directory, beside the executable, or pass --model")
+        })?;
+        s.set_segmenter(Box::new(segmenter));
+    }
+    let answer = s.execute("cameo.backgroundPreview", &params).map_err(|e| e.to_string())?;
+    let data = answer.get("image").and_then(Value::as_str).and_then(deckcraft_engine::cmd::base64_decode).ok_or("the preview returned no image")?;
+    std::fs::write(&out, &data).map_err(|e| format!("{out}: {e}"))?;
+    // The answer carries the composite's size; decoding the PNG again only to learn it would cost
+    // another full decode for nothing.
+    let w = answer.get("width").and_then(Value::as_u64).unwrap_or(0);
+    let h = answer.get("height").and_then(Value::as_u64).unwrap_or(0);
+    outln!("{out} ({w}×{h}, {} ms)", answer.get("ms").and_then(Value::as_u64).unwrap_or(0));
+    Ok(())
+}
+
+/// Read a picture after checking its size and magic: a huge file or a non-picture is refused before
+/// the bytes are read into memory and base64-encoded.
+fn read_picture(path: &str) -> Result<Vec<u8>, String> {
+    let limit = deckcraft_engine::cmd::cameo_background::MAX_INLINE_IMAGE_BYTES as u64;
+    let size = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?.len();
+    if size == 0 || size > limit {
+        return Err(format!("{path} is {size} bytes; the pipeline accepts 1 to {limit} bytes"));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("{path} grew past the {limit} byte limit while it was read"));
+    }
+    let png = bytes.starts_with(&[0x89, b'P', b'N', b'G']);
+    let jpeg = bytes.starts_with(&[0xFF, 0xD8]);
+    if !png && !jpeg {
+        return Err(format!("{path} is not a PNG or JPEG picture"));
+    }
+    Ok(bytes)
 }
 
 fn render(args: &[String]) -> Result<(), String> {
@@ -717,6 +815,13 @@ so drop --connect (or use --connect without the roots)"
         Some(c) => Box::new(Remote::connect(&control_addr(&c)).map_err(|e| format!("can't reach the app at {c}: {e}"))?),
         None => {
             let mut h = Headless::new();
+            // `cameo.backgroundPreview` runs offscreen in this session: let it find the model the
+            // user installed. The loader runs on the first preview, not at startup.
+            h.session.set_segmenter_loader(deckcraft_engine::SegmenterLoader {
+                // `cameo.background.state` answers from the file system; a preview loads the model.
+                name: Box::new(deckcraft_matte_rten::RtenSegmenter::installed_name),
+                load: Box::new(|| deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)),
+            });
             // `--sample` is the operator's own choice, made before the roots come into force.
             if sample {
                 deckcraft_engine::sample::open_sample(&mut h.session).map_err(|e| e.to_string())?;
@@ -835,6 +940,155 @@ mod tests {
         assert!(run(&args(&["--sample", "--export", &bad, "--export-params", "[1]"])).is_err());
         assert!(run(&args(&["--sample", "--export-params", "{}"])).is_ok());
         assert!(run(&args(&["--sample", "--export-params", r#"{"width": 64}"#])).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A 1x1 RGBA PNG: the preview needs a real image, not a placeholder file.
+    const ONE_PIXEL_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    /// A unique, cleared temporary directory, removed by the caller: a pid alone collides across
+    /// runs and leaves stale files behind.
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-{tag}-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Width and height from a PNG's IHDR, without an image decoder.
+    fn png_size(bytes: &[u8]) -> (u32, u32) {
+        assert_eq!(&bytes[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], "not a PNG");
+        let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+        let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+        (w, h)
+    }
+
+    fn write_one_pixel(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, deckcraft_engine::cmd::base64_decode(ONE_PIXEL_PNG).expect("png")).expect("write");
+        path
+    }
+
+    fn camera_background_args(dir: &std::path::Path, mode: &str, extra: &[&str]) -> Vec<String> {
+        let image = write_one_pixel(dir, "in.png");
+        let out = dir.join(format!("out-{}.png", mode.trim().replace(' ', "_")));
+        let mut a = vec![
+            "--image".to_string(),
+            image.to_string_lossy().to_string(),
+            "--mode".into(),
+            mode.into(),
+            "--out".into(),
+            out.to_string_lossy().to_string(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        a
+    }
+
+    /// Normal mode writes the frame's composite and prints the size the answer reported.
+    #[test]
+    fn camera_background_writes_the_preview_at_the_frame_size() {
+        let dir = temp_dir("normal-writes");
+        let a = camera_background_args(&dir, "normal", &[]);
+        camera_background(&a).expect("normal preview");
+        let out = dir.join("out-normal.png");
+        let bytes = std::fs::read(&out).expect("the output exists");
+        assert_eq!(png_size(&bytes), (1, 1), "the composite keeps the frame's size");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The replacement picture, colour, feather and blur arguments all parse and reach the command:
+    /// on a host without the model the run then stops at the model sentence, not at an argument.
+    #[test]
+    fn camera_background_parses_a_background_colour_feather_and_blur() {
+        let dir = temp_dir("custom");
+        let bg = write_one_pixel(&dir, "bg.png");
+        let bg = bg.to_string_lossy().to_string();
+        let a = camera_background_args(&dir, "custom", &["--background", &bg, "--color", "10,20,30", "--feather", "4", "--blur", "8"]);
+        match camera_background(&a) {
+            // A host with the model installed exports the picture.
+            Ok(()) => {
+                let bytes = std::fs::read(dir.join("out-custom.png")).expect("the output exists");
+                assert_eq!(png_size(&bytes), (1, 1));
+            }
+            // Without it, every argument was still accepted: the failure names the model.
+            Err(e) => assert!(e.contains("Install the model"), "{e}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Missing and unknown arguments are errors with the argument's name, and nothing is written.
+    #[test]
+    fn camera_background_names_missing_and_unknown_arguments() {
+        let dir = temp_dir("args");
+        let err = camera_background(&[]).unwrap_err();
+        assert!(err.contains("--image"), "{err}");
+        let mut a = camera_background_args(&dir, "normal", &[]);
+        a.push("--nope".into());
+        let err = camera_background(&a).unwrap_err();
+        assert!(err.contains("unknown argument"), "{err}");
+        let a = camera_background_args(&dir, "normal", &["--feather", "wide"]);
+        let err = camera_background(&a).unwrap_err();
+        assert!(err.contains("--feather needs a number"), "{err}");
+        let a = vec!["--image".to_string(), "in.png".into(), "--mode".into()];
+        let err = camera_background(&a).unwrap_err();
+        assert!(err.contains("--mode"), "{err}");
+        assert!(!dir.join("out-normal.png").exists(), "a failed run wrote nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file that is not a picture is refused before it is read into the command, and the --model
+    /// path reports the install sentence when the directory holds no model.
+    #[test]
+    fn camera_background_refuses_a_non_picture_and_names_a_missing_model() {
+        let dir = temp_dir("inputs");
+        let text = dir.join("notes.txt");
+        std::fs::write(&text, b"not a picture").expect("text");
+        let a = vec![
+            "--image".to_string(),
+            text.to_string_lossy().to_string(),
+            "--mode".into(),
+            "normal".into(),
+            "--out".into(),
+            dir.join("o.png").to_string_lossy().to_string(),
+        ];
+        let err = camera_background(&a).unwrap_err();
+        assert!(err.contains("PNG or JPEG"), "{err}");
+
+        let empty = dir.join("no-model");
+        std::fs::create_dir_all(&empty).expect("dir");
+        let empty = empty.to_string_lossy().to_string();
+        let a = camera_background_args(&dir, "removed", &["--model", &empty]);
+        let err = camera_background(&a).unwrap_err();
+        assert!(err.contains("Install the model"), "{err}");
+        assert!(!dir.join("out-removed.png").exists(), "no output without a model");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `10,x,20,30` is three parseable channels; the old parser dropped `x` and used `[10,20,30]`.
+    #[test]
+    fn camera_background_rejects_a_colour_channel_it_cannot_parse() {
+        let dir = temp_dir("colour");
+        let a = camera_background_args(&dir, "normal", &["--color", "10,x,20,30"]);
+        let err = camera_background(&a).unwrap_err();
+        assert!(err.contains("--color"), "{err}");
+        assert!(!dir.join("out-normal.png").exists(), "nothing was written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The engine's aliases decide whether a model is needed: `none` and any case of Normal are
+    /// Normal, so the command succeeds with no model installed.
+    #[test]
+    fn camera_background_treats_none_and_case_aliases_as_normal() {
+        let dir = temp_dir("aliases");
+        for mode in ["none", "Normal", " NORMAL "] {
+            let a = camera_background_args(&dir, mode, &[]);
+            camera_background(&a).unwrap_or_else(|e| panic!("{mode}: {e}"));
+        }
+        let err = camera_background(&camera_background_args(&dir, "magic", &[])).unwrap_err();
+        assert!(err.contains("unknown --mode"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

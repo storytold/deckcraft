@@ -1,0 +1,17 @@
+[package]
+name = "deckcraft-matte-rten"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft camera backgrounds on RTen: loads the user-installed BiRefNet Lite 512 ONNX model, runs it on a bounded CPU pool, and keeps the last matte while the next inference runs"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-matte = { workspace = true }
+deckcraft-model = { workspace = true }
+rten = "0.27"
+rten-tensor = "0.27"
+ureq = "3"
+log = { workspace = true }

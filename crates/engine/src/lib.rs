@@ -482,6 +482,18 @@ pub struct Clipboard {
     pub pastes: u32,
 }
 
+/// How a host provides its camera-background model to a [`Session`]. Two callbacks, because a
+/// status query must stay cheap: `name` answers from the file system, and only a preview pays for
+/// `load` (verify 191 MB, parse the graph).
+pub struct SegmenterLoader {
+    /// The segmenter's name while a model is installed, worked out without hashing or parsing the
+    /// file — `cameo.background.state` asks this on the UI thread. `None` when nothing is
+    /// installed.
+    pub name: Box<dyn Fn() -> Option<&'static str>>,
+    /// Load and verify the installed model, or say why it cannot.
+    pub load: Box<dyn Fn() -> std::result::Result<Box<dyn deckcraft_matte::Segmenter>, String>>,
+}
+
 pub struct Session {
     docs: Vec<DocState>,
     active: Option<usize>,
@@ -506,6 +518,20 @@ pub struct Session {
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
+    /// The host's camera-background segmenter. `None` until a host installs one (the CLI for an
+    /// offscreen preview) or the loader below supplies one; commands that need it say so.
+    segmenter: Option<Box<dyn deckcraft_matte::Segmenter>>,
+    /// How the host finds a model when nobody installed a segmenter; see
+    /// [`Session::set_segmenter_loader`].
+    segmenter_loader: Option<SegmenterLoader>,
+    /// Why the loader last failed. Kept so `cameo.background.state`, which the panels poll, does
+    /// not re-verify the model file on every call; [`Session::clear_segmenter`] forgets it.
+    segmenter_failed: Option<String>,
+    /// What the host's cheap probe said when that failure was recorded (`None` = no model
+    /// installed then). A probe that now disagrees means a model appeared or went away, and the
+    /// loader is asked again: an MCP server that started before the user installed the model
+    /// picks it up without a restart.
+    segmenter_failed_probe: Option<&'static str>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
     /// ends) instead of Windows and Linux (Ctrl+arrows by word or paragraph). Defaults to the
     /// platform DeckCraft was built for.
@@ -517,6 +543,10 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// The matte of the last `cameo.backgroundPreview`, keyed by the frame's pixels. A panel that
+    /// asks for the same frame again (a preview loop, a repeated CLI run) must not pay 2 s of
+    /// inference a second time; a new segmenter, or a frame that changed, invalidates it.
+    preview_matte: Option<(u64, deckcraft_matte::Matte)>,
 }
 
 impl Default for Session {
@@ -546,13 +576,122 @@ impl Session {
             recovery_dir: None,
             media_status: Default::default(),
             gif_paused: Default::default(),
+            segmenter: None,
+            segmenter_loader: None,
+            segmenter_failed: None,
+            segmenter_failed_probe: None,
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            preview_matte: None,
         }
     }
+    /// Install (or replace) the camera-background segmenter. The host owns the model; the engine
+    /// only runs `cameo.backgroundPreview` through it.
+    pub fn set_segmenter(&mut self, segmenter: Box<dyn deckcraft_matte::Segmenter>) {
+        self.segmenter = Some(segmenter);
+        self.segmenter_failed = None;
+        self.segmenter_failed_probe = None;
+        self.preview_matte = None;
+    }
+
+    /// Hand the engine the host's way of finding its model. A desktop app that knows where the
+    /// model lives (and that installing or removing it is out of the engine's hands) points the
+    /// session at its loader once. Nothing is loaded until a preview asks: `cameo.background.state`
+    /// only calls the cheap `name` probe, so a status query never stalls the UI thread on 191 MB.
+    /// A load failure is remembered as an actionable sentence until [`Session::clear_segmenter`]
+    /// (see also [`Session::sync_segmenter`]).
+    pub fn set_segmenter_loader(&mut self, loader: SegmenterLoader) {
+        self.segmenter_loader = Some(loader);
+        self.clear_segmenter();
+    }
+
+    /// Load the host's segmenter if no one installed one. Returns the sentence to show when the
+    /// host cannot provide a model; a session with neither a segmenter nor a loader is
+    /// `Ok(())` and its commands name the missing model themselves.
+    pub fn ensure_segmenter(&mut self) -> std::result::Result<(), String> {
+        if self.segmenter.is_some() {
+            return Ok(());
+        }
+        // A model that appeared since the failure (installed while the app was running) is worth
+        // another attempt; an unchanged probe keeps the remembered sentence instead of hashing the
+        // file on every call.
+        let probe = self.probe_model();
+        if let Some(detail) = &self.segmenter_failed
+            && self.segmenter_failed_probe == probe
+        {
+            return Err(detail.clone());
+        }
+        let Some(loader) = &self.segmenter_loader else { return Ok(()) };
+        match (loader.load)() {
+            Ok(segmenter) => {
+                self.segmenter = Some(segmenter);
+                self.segmenter_failed = None;
+                self.segmenter_failed_probe = None;
+                Ok(())
+            }
+            Err(detail) => {
+                self.segmenter_failed = Some(detail.clone());
+                self.segmenter_failed_probe = probe;
+                Err(detail)
+            }
+        }
+    }
+
+    /// The host's cheap "is a model installed" answer, when it has one: a name, never a load.
+    fn probe_model(&self) -> Option<&'static str> {
+        self.segmenter_loader.as_ref().and_then(|loader| (loader.name)())
+    }
+
+    /// Drop the segmenter (the model was removed or failed verification) and the remembered
+    /// failure, so the next command asks the loader again.
+    pub fn clear_segmenter(&mut self) {
+        self.segmenter = None;
+        self.segmenter_failed = None;
+        self.segmenter_failed_probe = None;
+        self.preview_matte = None;
+    }
+
+    /// The matte of an identical frame from the last preview, if the segmenter has not changed
+    /// since. `key` is a hash of the frame's pixels (see [`preview_key`]).
+    pub(crate) fn cached_preview_matte(&self, key: u64) -> Option<deckcraft_matte::Matte> {
+        match &self.preview_matte {
+            Some((cached, matte)) if *cached == key => Some(matte.clone()),
+            _ => None,
+        }
+    }
+
+    /// Remember the matte a preview just computed, so the same frame is not segmented twice.
+    pub(crate) fn cache_preview_matte(&mut self, key: u64, matte: deckcraft_matte::Matte) {
+        self.preview_matte = Some((key, matte));
+    }
+
+    /// Forget a loaded segmenter or a remembered failure that disagrees with the host's model
+    /// state. `ready` is what the host's model panel reports; a host calls this where it learns
+    /// the model was installed or removed, then the next command asks the loader again.
+    pub fn sync_segmenter(&mut self, ready: bool) {
+        let stale = if ready { self.segmenter_failed.is_some() } else { self.segmenter.is_some() };
+        if stale {
+            self.clear_segmenter();
+        }
+    }
+
+    /// The segmenter's name, for `cameo.background.state`: the loaded one, else the host's cheap
+    /// "is a model installed" probe. This never loads the model, so a status query cannot stall
+    /// the caller; a preview does the loading.
+    pub fn segmenter_name(&self) -> Option<&'static str> {
+        if let Some(segmenter) = &self.segmenter {
+            return Some(segmenter.name());
+        }
+        self.probe_model()
+    }
+
+    pub(crate) fn segmenter_mut(&mut self) -> Option<&mut (dyn deckcraft_matte::Segmenter + 'static)> {
+        self.segmenter.as_deref_mut()
+    }
+
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
     /// `file.adopt` with the returned token adds it as a document, through the command path like
     /// `file.open` (journaled, panic-guarded). Only the latest few wait; older ones are dropped.

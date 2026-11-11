@@ -14,6 +14,7 @@ use crate::widgets::{
 
 mod animations;
 mod arrange;
+mod camera_format;
 mod chart;
 mod design;
 mod draw;
@@ -37,6 +38,7 @@ pub use animations::paint_anim_tile;
 #[cfg(test)]
 use animations::{animation_effect_rows, marked_options, text_build_id};
 pub use arrange::{align_menu, arrange_menu};
+use camera_format::camera_format;
 use chart::chart_design;
 use design::design;
 pub use design::paint_theme_tile;
@@ -98,8 +100,11 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     {
         v.push("Shape Format");
     }
-    if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Picture { .. })) {
+    if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Picture { .. }) && !s.is_cameo()) {
         v.push("Picture Format");
+    }
+    if shapes.iter().any(|s| s.is_cameo()) {
+        v.push("Camera Format");
     }
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Table(_))) || st.selection.text.as_ref().is_some_and(|t| t.cell.is_some()) {
         v.push("Table Design");
@@ -224,6 +229,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         "View" => view(app, ui),
                         "Shape Format" => shape_format(app, ui),
                         "Picture Format" => picture_format(app, ui),
+                        "Camera Format" => camera_format(app, ui),
                         "Table Design" => table_design(app, ui),
                         "Layout" => table_layout(app, ui),
                         "Chart Design" => chart_design(app, ui),
