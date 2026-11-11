@@ -200,6 +200,17 @@ consistency is open (#73, #56).
 | A screenshot comparison pass on the most-used tabs | 2–4 |
 | **Total** | **~26–46** |
 
+## Row forms not modelled
+
+These measured row changes have no renderer, for the reasons given (not layout work left undone):
+
+- Set Up, View › Color/Grayscale and View › Window have fewer than three commands, so they cannot fill
+  a three-row form; they keep one row.
+- Design › Themes is measured 1 → 0 rows at 1024 px; the ribbon has no zero-row form (DeckCraft keeps
+  the Themes gallery).
+- Camera, Power BI, Forms, Monitors, Captions, Ink and Draw Undo do not exist in DeckCraft (feature
+  gaps), so their measured groups are absent.
+
 ## Measured section rows
 
 Office 16.0.20527, 125% DPI, unmaximised window; widths are outer px. Each entry is the section's
