@@ -554,8 +554,9 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     import_checked(bytes).map(|(p, _)| p)
 }
 
-/// [`import`], plus the parts of the slide list the file names but that couldn't be read (a
-/// missing or truncated slide): those slides are left out, so a caller can say so (#203).
+/// [`import`], plus the slides the file's slide list names but that couldn't be read (a missing
+/// or truncated slide part, or an entry whose relationship is missing): those slides are left
+/// out, so a caller can say so (#203).
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
     import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
 }
