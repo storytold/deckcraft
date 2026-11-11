@@ -291,8 +291,8 @@ impl Plus {
         match typ {
             0x4008 => {
                 let done = self.object(flags, r, cv.used());
-                // The retained objects share the canvas's byte budget.
-                cv.hold(self.object_bytes);
+                // The retained objects, and the pieces of a continued object still arriving, share the canvas's byte budget.
+                cv.hold(self.object_bytes.saturating_add(self.partial.as_ref().map_or(0, |p| p.data.len())));
                 done
             }
             0x4009 | 0x4013 | 0x401A..=0x401C | 0x4036 => self.record_image_text_region(cv, typ, flags, r),
@@ -1598,5 +1598,16 @@ mod cost_tests {
         let item = || Item::Pattern { segs: vec![Seg::Move(0.0, 0.0), Seg::Line(1.0, 1.0)], even_odd: false, tile: tile.clone(), region: None };
         let items: Vec<Item> = (0..257).map(|_| item()).collect();
         assert!(picture_cost(&items) < 2 << 20, "{}", picture_cost(&items));
+    }
+
+    #[test]
+    fn pieces_of_a_continued_object_count_against_the_shared_budget() {
+        let (mut plus, mut cv) = (Plus::new(), Canvas::new());
+        plus.active = true;
+        // Image object (kind 5), id 0, continued: 1000 bytes announced, 100 delivered.
+        let mut rec = 1000u32.to_le_bytes().to_vec();
+        rec.extend([0u8; 100]);
+        plus.record(&mut cv, 0x4008, 0x8000 | (5 << 8), Bytes(&rec));
+        assert_eq!(cv.held(), 100);
     }
 }

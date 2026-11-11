@@ -372,6 +372,11 @@ impl Canvas {
     }
 
     /// True once the item cap is hit; the readers stop there and keep what they have.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> usize {
+        self.held
+    }
+
     /// Bytes the canvas has retained so far.
     pub fn used(&self) -> usize {
         self.used
