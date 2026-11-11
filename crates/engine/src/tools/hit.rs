@@ -247,7 +247,10 @@ pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) ->
     // Table borders resize rows and columns.
     let near = local.x >= -tol && local.y >= -tol && local.x <= x.w + tol && local.y <= x.h + tol;
     if near && let Some(f) = cmd::table::table_frame(st, sh) {
-        match f.border_at(f.local(p), tol) {
+        // This hit walk may already be in a containing group's space. Keep its point local;
+        // table_frame itself maps to slide space for cell outlines and pointer gestures.
+        let table_local = sh.xfrm.unwrap_or(x).affine().inverse() * p;
+        match f.border_at(table_local, tol) {
             Some(cmd::table::TableBorder::Column(col)) => return Some(Hit::TableColumn { id: sh.id, col }),
             Some(cmd::table::TableBorder::Row(row)) => return Some(Hit::TableRow { id: sh.id, row }),
             None => {}

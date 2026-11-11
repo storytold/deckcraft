@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** minor (grouped resize snaps in slide space; member moves exclude ancestor snap targets; Shift rotation remains independent of selection order; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** minor (grouped table cell frames, carets and hit tests share slide coordinates; context clicks respect covering siblings; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -198,6 +198,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Grouped table-cell frames, caret/underline geometry and pointer cell selection use the renderer’s slide-space mapping, including growing rows; context clicks respect covering siblings (#1095) |
 | 2026-11-11 | minor | Axis-aligned grouped resizing snaps dragged edges in slide space, including scale/reflection; moving members exclude their ancestors from smart-guide targets; pointer and undo regressions (#1095) |
 | 2026-11-11 | minor | Same-parent Shift rotation snaps each member from the raw pointer turn, independent of selection order; upstream ink handling and gesture limits retained during merge (#1095) |
 | 2026-11-10 | minor | Rotation drags across groups share the grabbed handle’s slide pivot and do not jump at the start; reflected, unevenly scaled and nested group cases are covered (#1095) |

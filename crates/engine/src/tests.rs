@@ -1678,6 +1678,137 @@ fn grouped_spelling_underlines_in_table_cell_follow_rendered_word() {
     }
 }
 
+fn grouped_table_cell_scene(group: Option<deckcraft_geom::Xfrm>, nested: bool, grown: bool) -> (Session, ShapeId) {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout":"blank"})).unwrap();
+    let id = ShapeId(
+        s.execute("insert.table", &json!({"rows":2,"cols":2,"rect":[10,20,280,160],"data":[["Cell A","Cell B"],["Cell C","Cell D"]]})).unwrap()["id"]
+            .as_u64()
+            .unwrap() as u32,
+    );
+    if grown {
+        for row in 0..2 {
+            s.execute("table.rowHeight", &json!({"id":id,"row":row,"height":4})).unwrap();
+        }
+        s.execute("shape.rotate", &json!({"ids":[id],"deg":17})).unwrap();
+    }
+    if let Some(group) = group {
+        wrap_test_member_in_group(&mut s, id, group, nested);
+    }
+    (s, id)
+}
+
+#[test]
+fn grouped_table_frame_and_caret_match_rendered_cells() {
+    use deckcraft_geom::{Point, Xfrm};
+    for nested in [false, true] {
+        for group in
+            [None, Some(Xfrm::new(300.0, 100.0, 420.0, 120.0)), Some(Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(300.0, 100.0, 420.0, 120.0) })]
+        {
+            for grown in [false, true] {
+                let (s, id) = grouped_table_cell_scene(group, nested, grown);
+                let st = s.doc().unwrap();
+                let frame = cmd::table::table_frame(st, st.shape(id).unwrap()).unwrap();
+                let placed = deckcraft_render::place_slide(&st.doc, st.selection.slide);
+                for (row, col, label) in [(0, 0, "Cell A"), (0, 1, "Cell B"), (1, 0, "Cell C"), (1, 1, "Cell D")] {
+                    let drawn = placed.texts.iter().find(|t| t.body.text() == label).unwrap();
+                    let rect = frame.cell_rect(row, col).unwrap();
+                    let cell_transform = deckcraft_render::text_transform(frame.affine, rect, drawn.layout.rotation);
+                    for p in [Point::new(rect.x0, rect.y0), Point::new(rect.x1, rect.y1)] {
+                        assert!(
+                            (cell_transform * p - drawn.transform * p).hypot() < 1e-8,
+                            "cell frame disagrees with renderer: {group:?}/{nested}/{grown}"
+                        );
+                    }
+                    let ts = TextSel { shape: id, cell: Some((row, col)), caret: (0, 3), ..Default::default() };
+                    let (cx, top, bottom) =
+                        drawn.layout.caret_drawn(deckcraft_text::Pos { para: 0, ch: 3 }, deckcraft_text::Affinity::Downstream).unwrap();
+                    let (a, b) = cmd::text::caret_line(st, &ts).unwrap();
+                    assert!(
+                        (a - drawn.transform * Point::new(cx, top)).hypot() < 1e-8 && (b - drawn.transform * Point::new(cx, bottom)).hypot() < 1e-8,
+                        "caret disagrees with rendered cell"
+                    );
+                    let expected: Vec<_> = drawn
+                        .layout
+                        .composition_underlines(deckcraft_text::Pos { para: 0, ch: 0 }, deckcraft_text::Pos { para: 0, ch: 4 })
+                        .into_iter()
+                        .map(|(x0, x1, y)| (drawn.transform * Point::new(x0, y), drawn.transform * Point::new(x1, y)))
+                        .collect();
+                    let actual = cmd::text::cell_range_underlines(st, id, row, col, &[(0, 0, 4)]);
+                    assert!(!expected.is_empty());
+                    assert_eq!(actual.len(), expected.len());
+                    for ((a, b), (x, y)) in actual.into_iter().zip(expected) {
+                        assert!((a - x).hypot() < 1e-8 && (b - y).hypot() < 1e-8, "cell underline disagrees with renderer");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn grouped_table_clicks_and_cell_selection_use_slide_space() {
+    use deckcraft_geom::{Point, Xfrm};
+    for nested in [false, true] {
+        for group in
+            [None, Some(Xfrm::new(300.0, 100.0, 420.0, 120.0)), Some(Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(300.0, 100.0, 420.0, 120.0) })]
+        {
+            let (mut s, id) = grouped_table_cell_scene(group, nested, false);
+            let st = s.doc().unwrap();
+            let placed = deckcraft_render::place_slide(&st.doc, st.selection.slide);
+            let points: [Point; 4] = ["Cell A", "Cell B", "Cell C", "Cell D"].map(|label| {
+                let drawn = placed.texts.iter().find(|t| t.body.text() == label).unwrap();
+                let (x, y0, y1) = drawn.layout.caret_drawn(deckcraft_text::Pos { para: 0, ch: 3 }, deckcraft_text::Affinity::Downstream).unwrap();
+                drawn.transform * Point::new(x, (y0 + y1) / 2.0)
+            });
+            let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 0.5, ..Default::default() };
+            s.execute("text.edit", &json!({"id":id,"cell":[0,0],"at":[0,0]})).unwrap();
+            for (i, p) in points.into_iter().enumerate() {
+                s.pointer(ev(PointerKind::Down, p)).unwrap();
+                s.pointer(ev(PointerKind::Up, p)).unwrap();
+                let text = s.doc().unwrap().selection.text.as_ref();
+                assert_eq!(text.and_then(|t| t.cell), Some((i / 2, i % 2)), "wrong cell for {group:?}/{nested}/{i}");
+                assert_eq!(text.unwrap().caret, (0, 3));
+            }
+            s.pointer(ev(PointerKind::Down, points[0])).unwrap();
+            s.pointer(ev(PointerKind::Drag, points[3])).unwrap();
+            assert_eq!(s.doc().unwrap().selection.cells, Some((id, (0, 0), (1, 1))));
+            s.pointer(ev(PointerKind::Drag, points[0])).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text.as_ref().and_then(|t| t.cell), Some((0, 0)));
+            s.pointer(ev(PointerKind::Up, points[0])).unwrap();
+            let before = s.doc().unwrap().doc.clone();
+            s.execute("text.insert", &json!({"text":"!"})).unwrap();
+            assert_eq!(table_of(&s, id).cell(0, 0).unwrap().text.text(), "Cel!l A");
+            assert_eq!(table_of(&s, id).cell(1, 1).unwrap().text.text(), "Cell D");
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().doc, before);
+        }
+    }
+}
+
+#[test]
+fn grouped_context_click_respects_covering_sibling() {
+    use deckcraft_geom::Xfrm;
+    for nested in [false, true] {
+        for (rot, flip_h, flip_v, scale) in [(0.0, false, false, 1.0), (27.0, false, false, 2.0), (15.0, true, false, 0.5), (0.0, false, true, 2.0)] {
+            for covered in [false, true] {
+                let group = Xfrm { rot, flip_h, flip_v, ..Xfrm::new(300.0, 100.0, 140.0 * scale, 60.0 * scale) };
+                let (mut s, id, p) = grouped_text_sibling_case(group, nested, covered);
+                let before = s.doc().unwrap().selection.text.clone();
+                let reply = s.pointer(PointerEvent { kind: PointerKind::ContextClick, x: p.x, y: p.y, tol: 1.0, ..Default::default() }).unwrap();
+                if covered {
+                    assert_eq!(reply["editing"], false, "covered text took the context menu: {group:?}/{nested}");
+                    assert!(s.doc().unwrap().selection.text.is_none());
+                    assert!(!s.doc().unwrap().selection.shapes.contains(&id));
+                } else {
+                    assert_eq!(reply["hit"], json!({"kind":"text","id":id}));
+                    assert_eq!(s.doc().unwrap().selection.text, before, "uncovered context click preserves caret and range");
+                }
+            }
+        }
+    }
+}
+
 /// Drag an individual grouped line end near a slide-space site. An optional root-level decoy
 /// near the parent-local point distinguishes the lookup space from the returned site's space.
 fn check_grouped_line_end_snap(nested: bool, end: u8, decoy: bool, rotated: bool) {

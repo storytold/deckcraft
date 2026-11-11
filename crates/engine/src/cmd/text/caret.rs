@@ -13,8 +13,8 @@ pub(super) fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) 
     let ShapeKind::Table(tb) = &sh.kind else { return None };
     let cell = tb.cell(row, col)?;
     let ctx = ctx_for(&st.doc, &st.selection)?;
-    let heights = crate::cmd::table_drawn_heights(&st.doc, &st.selection, tb);
-    let rect = deckcraft_render::table_cell_rects(tb, &heights).into_iter().find(|(r, c, _)| *r == row && *c == col)?.2;
+    let frame = crate::cmd::table::table_frame(st, sh)?;
+    let rect = frame.cell_rect(row, col)?;
     let mut body = deckcraft_render::table_cell_body(&ctx, tb, row, col, cell);
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
@@ -26,7 +26,7 @@ pub(super) fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) 
         &body,
         &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
     );
-    let to_slide = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), rect, layout.rotation);
+    let to_slide = deckcraft_render::text_transform(frame.affine, rect, layout.rotation);
     Some(CellText { layout, to_slide })
 }
 
