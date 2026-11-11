@@ -3745,6 +3745,25 @@ fn undo_history_is_capped_by_memory_as_well_as_steps() {
     assert_eq!(s.doc().unwrap().history.undo.len(), 120);
 }
 
+/// A slide's notes count toward the undo budget: small edits to a slide with large notes keep a
+/// copy of those notes per step, and must not slip past the budget as if the slide were empty.
+#[test]
+fn undo_history_counts_slide_notes() {
+    let mut s = Session::with_new();
+    let notes = "n".repeat(1 << 20);
+    s.edit(|doc, _| {
+        std::sync::Arc::make_mut(&mut doc.slides[0]).notes = deckcraft_model::text::TextBody::from_text(&notes);
+        Ok(())
+    })
+    .unwrap();
+    s.doc_mut().unwrap().history = History { limit: 500, byte_limit: 8 << 20, ..Default::default() };
+    for i in 0..40 {
+        s.execute("slide.rename", &json!({"name": format!("v{i}"), "index": 0})).unwrap();
+    }
+    let n = s.doc().unwrap().history.undo.len();
+    assert!((1..=8).contains(&n), "{n} steps of 1 MB notes kept under an 8 MB budget");
+}
+
 #[test]
 fn picture_styles_replace_each_other_in_one_step() {
     const PNG: &[u8] = &[
@@ -6900,6 +6919,18 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+/// A shape named many times in one edit is edited once and not copied per mention.
+#[test]
+fn repeated_target_ids_edit_the_shape_once() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "x".repeat(100_000)})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let edited = s.execute("shape.fill", &json!({"ids": vec![id; 50_000], "color": "#ff0000"})).unwrap();
+    assert_eq!(edited, json!(1));
+    let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
+    assert_eq!(v["shape"]["fill"]["color"]["base"]["rgb"], json!({"a": 255, "b": 0, "g": 0, "r": 255}));
 }
 
 #[test]
