@@ -525,6 +525,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
                     text: texts.get(id).cloned().unwrap_or_default(),
                     level: 0,
                     picture: None,
+                    picture_place: None,
                     assistant: assistants.contains(id),
                     title: titles.get(id).cloned().unwrap_or_default(),
                 },
