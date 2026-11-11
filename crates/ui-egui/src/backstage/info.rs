@@ -96,10 +96,10 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 for (i, (key, label, hint)) in PROPERTIES.iter().enumerate() {
                     let saved = props.get(*key).and_then(Value::as_str).unwrap_or("").to_string();
                     let Some(draft) = bs.props.get_mut(i) else { continue };
-                    let l = ui.label(RichText::new(crate::i18n::tr(*label)).color(t.text_dim));
+                    let l = ui.label(RichText::new(crate::i18n::tr(label)).color(t.text_dim));
                     let id = ui.make_persistent_id(("backstage_prop", *key));
                     let resp =
-                        ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(crate::i18n::tr(*hint)).desired_width(300.0)).labelled_by(l.id);
+                        ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(crate::i18n::tr(hint)).desired_width(300.0)).labelled_by(l.id);
                     if resp.lost_focus() && *draft != saved {
                         // Commit first: a click on another field takes the focus before this one is drawn.
                         let mut p = serde_json::Map::new();
