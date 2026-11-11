@@ -80,6 +80,12 @@ pub(super) fn photo_album_edit(s: &mut Session, p: &Value) -> Result<Value> {
     let opts = album_opts(p)?;
     let items = album_items(p)?;
     let (id, ids) = album_target(s, p)?;
+    // The editor is seeded within the album limits; replacing the album from a trimmed seed would
+    // delete what it left out, so refuse rather than lose it.
+    let st = s.doc()?;
+    if items_from_slides(&st.doc, &album_slides(st, &ids)).1 {
+        return Err(bad("insert.photoAlbumEdit", "this album holds more than the editor can carry; editing it would delete the rest"));
+    }
     commit_album(s, items, opts, Some((id, ids)))
 }
 
@@ -595,12 +601,15 @@ fn infer_album(slides: &[&deckcraft_model::Slide], theme_now: &str) -> (String, 
 /// The album's items for the dialog, within the limits `insert.photoAlbum` itself takes (items,
 /// bytes per picture and in all), checked before a picture is encoded: an album slide set can
 /// name one large picture many times.
-fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_model::Slide]) -> Vec<Value> {
+///
+/// The flag is true when something was left out for a limit.
+fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_model::Slide]) -> (Vec<Value>, bool) {
     let mut items = Vec::new();
     let mut total = 0usize;
+    let mut omitted = false;
     'slides: for slide in slides {
         if items.len() >= ALBUM_MAX_ITEMS {
-            break;
+            return (items, true);
         }
         let pics: Vec<&deckcraft_model::Shape> = slide.shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).collect();
         if pics.is_empty() {
@@ -621,6 +630,7 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
             let media = doc.media(fill.media);
             let size = media.map_or(0, |m| m.data.len());
             if items.len() >= ALBUM_MAX_ITEMS || size > ALBUM_MAX_BYTES || total.saturating_add(size) > ALBUM_MAX_TOTAL {
+                omitted = true;
                 break 'slides;
             }
             total += size;
@@ -638,14 +648,19 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
             }));
         }
     }
-    items
+    (items, omitted)
+}
+
+/// The slides of album `ids` as the editor would seed them.
+fn album_slides<'a>(st: &'a crate::DocState, ids: &[u64]) -> Vec<&'a deckcraft_model::Slide> {
+    ids.iter().filter_map(|sid| u32::try_from(*sid).ok()).filter_map(|n| st.doc.slide(deckcraft_model::SlideId(n))).collect()
 }
 
 fn album_seed(s: &Session) -> Result<Value> {
     let (id, ids) = album_target(s, &Value::Null)?;
     let st = s.doc()?;
-    let slides: Vec<&deckcraft_model::Slide> =
-        ids.iter().filter_map(|sid| u32::try_from(*sid).ok()).filter_map(|n| st.doc.slide(deckcraft_model::SlideId(n))).collect();
+    let slides = album_slides(st, &ids);
+    let (items, _) = items_from_slides(&st.doc, &slides);
     let theme_now = st.doc.masters.first().map(|m| m.theme.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "DeckCraft".into());
     let inferred = infer_album(&slides, &theme_now);
     let mark = slides.first().and_then(|sl| sl.raw_ext.as_deref().and_then(parse_album_mark));
@@ -667,7 +682,7 @@ fn album_seed(s: &Session) -> Result<Value> {
         "captions": captions,
         "grayscale": grayscale,
         "theme": theme,
-        "items": items_from_slides(&st.doc, &slides),
+        "items": items,
     }))
 }
 
@@ -756,6 +771,29 @@ mod seed_tests {
         };
         Arc::make_mut(&mut p.slides[0]).shapes = (0..500).map(pic).collect();
         let slides: Vec<&deckcraft_model::Slide> = p.slides.iter().map(|s| s.as_ref()).collect();
-        assert_eq!(items_from_slides(&p, &slides).len(), ALBUM_MAX_ITEMS);
+        let (items, omitted) = items_from_slides(&p, &slides);
+        assert_eq!(items.len(), ALBUM_MAX_ITEMS);
+        assert!(omitted);
+        let few: Vec<&deckcraft_model::Slide> = Vec::new();
+        assert!(!items_from_slides(&p, &few).1);
+    }
+
+    /// An album too big for the editor's seed cannot be replaced from that seed: the replace would
+    /// delete what the seed left out.
+    #[test]
+    fn editing_an_album_the_editor_cannot_hold_is_refused() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let texts: Vec<Value> = (0..ALBUM_MAX_ITEMS).map(|i| json!({"text": format!("t{i}")})).collect();
+        s.execute("insert.photoAlbum", &json!({"pictures": texts, "layout": "1"})).unwrap();
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let mut extra = doc.slides.last().unwrap().as_ref().clone();
+        extra.id = deckcraft_model::SlideId(doc.alloc_id().unwrap());
+        doc.slides.push(Arc::new(extra));
+        let n = doc.slides.len();
+        let e = s.execute("insert.photoAlbumEdit", &json!({"pictures": [{"text": "x"}], "layout": "1"})).unwrap_err().to_string();
+        assert!(e.contains("delete the rest"), "{e}");
+        assert_eq!(s.doc().unwrap().doc.slides.len(), n);
     }
 }
