@@ -916,6 +916,7 @@ fn cx_text(w: &mut W, t: &str) {
 
 /// A `cx:lvl` of points.
 fn cx_level(w: &mut W, pts: &[String], format: Option<&str>) {
+    let pts = capped(pts);
     let mut a = A::new().a("ptCount", pts.len());
     if let Some(f) = format {
         a = a.a("formatCode", f);
@@ -944,11 +945,31 @@ fn kept_region_layout(raw: &str) -> Option<String> {
 /// Writes an Office 2016 chart from the model, as PowerPoint lays the part out: one `cx:data`
 /// per series (categories and values), then the plot area with each series' layout, the axes
 /// the layout uses, the title and the legend.
+/// Points one `chartEx` part may carry in all, categories repeated for every series: Excel's 255
+/// series x 32,000 points. Series past it are left out with a warning (the first is always written).
+const MAX_CHARTEX_POINTS: usize = 255 * 32_000;
+
+/// How many of `c`'s series fit [`MAX_CHARTEX_POINTS`] (at least one).
+fn chartex_series_within_budget(c: &Chart) -> usize {
+    let cats = c.categories.len().saturating_add(c.category_levels.iter().map(Vec::len).fold(0usize, usize::saturating_add));
+    let mut left = MAX_CHARTEX_POINTS;
+    for (n, s) in c.series.iter().enumerate() {
+        let cost = cats.saturating_add(s.values.len());
+        if n > 0 && cost > left {
+            log::warn!("pptx: chart part stopped after {n} series; its data passed {MAX_CHARTEX_POINTS} points");
+            return n;
+        }
+        left = left.saturating_sub(cost);
+    }
+    c.series.len()
+}
+
 pub fn build_chartex(c: &Chart) -> Vec<u8> {
+    let n_series = chartex_series_within_budget(c);
     let mut w = W::new();
     w.open("cx:chartSpace", A::new().a("xmlns:a", NS_A).a("xmlns:r", NS_R).a("xmlns:cx", NS_CX));
     w.open0("cx:chartData");
-    for (i, s) in c.series.iter().enumerate() {
+    for (i, s) in c.series.iter().enumerate().take(n_series) {
         w.open("cx:data", A::new().a("id", i));
         if !c.categories.is_empty() {
             w.open("cx:strDim", A::new().a("type", "cat"));
@@ -988,7 +1009,7 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
         _ => "clusteredColumn",
     };
     let one = !matches!(c.kind, ChartType::BoxWhisker);
-    for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { usize::MAX }) {
+    for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { n_series }) {
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
         if c.series_data_labels(s) {
@@ -1189,6 +1210,20 @@ mod cache_cap_tests {
 
     /// A cache longer than the cap is cut, never refused; anything a real chart holds (32,000
     /// points per series) is far under it. Zero-sized elements, so the test allocates nothing.
+    #[test]
+    fn a_chartex_part_stops_adding_series_past_excels_point_count() {
+        const { assert!(MAX_CHARTEX_POINTS >= 255 * 32_000) };
+        let mut c = Chart::sample(ChartType::Waterfall);
+        c.categories = vec![String::new(); 32_000];
+        let mut s = c.series[0].clone();
+        s.values = Vec::new();
+        c.series = vec![s; 300];
+        // 32,000 categories per series: 255 fit exactly, the 256th does not.
+        assert_eq!(chartex_series_within_budget(&c), 255);
+        c.series.truncate(3);
+        assert_eq!(chartex_series_within_budget(&c), 3);
+    }
+
     #[test]
     fn caches_are_cut_at_the_cap_not_refused() {
         const { assert!(MAX_CACHE_POINTS >= 32_000) };
