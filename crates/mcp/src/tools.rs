@@ -384,7 +384,13 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
                     return ToolResult { content: vec![json!({"type": "text", "text": Value::Array(out).to_string()})], is_error: true };
                 }
             }
-            ToolResult::json(&Value::Array(out))
+            // The reply is pretty-printed, which is longer than the compact entries counted above.
+            let reply = ToolResult::json(&Value::Array(out));
+            let text = reply.content[0]["text"].as_str().unwrap_or_default();
+            if json!(text).to_string().len() > MAX_BATCH_BYTES {
+                return ToolResult::error("the batch's results passed 64 MiB; nothing is returned");
+            }
+            reply
         }
         "new_presentation" => wrap(exec(b, "file.new", a)),
         "open_presentation" => wrap(exec(b, "file.open", a)),
