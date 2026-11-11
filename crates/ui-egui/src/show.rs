@@ -18,6 +18,7 @@ mod presenter;
 mod render;
 mod ui;
 mod zoom;
+pub(crate) use zoom::GRID_CAP;
 
 #[cfg(test)]
 use media::{on_screen, pointer_on_media_bar, shown_slide_rect, slide_media_bars};
@@ -65,6 +66,8 @@ pub struct Show {
     preview_spawns: usize,
     remote_preview: Option<crate::presenter::Preview>,
     remote_next: Option<(usize, crate::presenter::Preview)>,
+    /// All slides thumbnails sent to the web presenter window while its grid is open (#1866).
+    remote_grid: Vec<crate::presenter::Preview>,
     remote_sent: f64,
     remote_opened: bool,
     /// The next slide's first frame, rendered in the background while this one is shown so
@@ -237,6 +240,7 @@ impl Show {
             preview_spawns: 0,
             remote_preview: None,
             remote_next: None,
+            remote_grid: vec![],
             remote_sent: f64::NEG_INFINITY,
             remote_opened: false,
             prefetch: None,
@@ -267,6 +271,27 @@ impl Show {
             media_cues: vec![],
             hidden_anchor: None,
         }
+    }
+
+    /// Play this slide's transition from the previous slide (or black for slide 0) as a preview (#1654).
+    pub fn start_transition_preview(&mut self, doc: &Presentation, now: f64) {
+        let i = self.state.slide;
+        let from = i.checked_sub(1);
+        let (kind, option, dur) = doc
+            .slides
+            .get(i)
+            .and_then(|s| s.transition.as_ref())
+            .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
+            .unwrap_or(("none".into(), String::new(), 0.0));
+        self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
+            Some(Transition { old: None, from, morph: None, parts: None, start: now, kind, option, dur, reverse: false })
+        } else {
+            None
+        };
+        self.preview_only = true;
+        self.slide_start = now;
+        self.step_start = now;
+        self.step_end = now;
     }
 
     /// Identity of the show state a queued window-point event belongs to.

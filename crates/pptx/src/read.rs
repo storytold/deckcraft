@@ -47,6 +47,9 @@ pub struct Imp<'a> {
     pub tag_bytes: usize,
     /// The tag budget ran out and the warning was given.
     pub tags_capped: bool,
+    /// Whether a part has relationships of its own, by normalized part name: looked up once
+    /// however many embedded objects point at the part.
+    pub has_rels: HashMap<String, bool>,
 }
 
 impl Imp<'_> {
@@ -527,6 +530,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        has_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -568,6 +572,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        has_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let slide_ids = register_slides(&mut imp, &docs, &slide_entries, &mut lost_slides);
@@ -744,52 +749,55 @@ fn read_slides(
     let pkg = imp.pkg;
     let fallback_layout = p.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
     let mut file_slide_ids: HashMap<u32, SlideId> = HashMap::new();
-    let mut notes_by_target: HashMap<String, TextBody> = HashMap::new();
+    // A notes or comments part belongs to one slide; one shared by many must not be read (and
+    // copied) once per slide that names it.
+    let mut owned_parts: HashSet<String> = HashSet::new();
     for (file_id, path, id) in slide_ids {
         let Some(doc) = docs.get(&opc::norm(path)) else { continue };
         let part = Part::new(pkg, path, doc);
         let layout = part.rels.first_of("slideLayout").and_then(|r| layout_by_part.get(&opc::norm(&r.target)).copied()).unwrap_or(fallback_layout);
         let mut slide = read_slide(imp, &part, doc, *id, layout);
-        if let Some(notes) = slide_notes(imp, &part, &mut notes_by_target) {
+        if let Some(notes) = slide_notes(imp, &part, &mut owned_parts) {
             slide.notes = notes;
         }
-        read_slide_comments(pkg, pres_part, &part, &mut slide);
+        read_slide_comments(pkg, pres_part, &part, &mut slide, &mut owned_parts);
         file_slide_ids.insert(*file_id, *id);
         p.slides.push(Arc::new(slide));
     }
     file_slide_ids
 }
 
-/// The slide's notes text, read once per notes part.
-fn slide_notes(imp: &mut Imp, part: &Part, cache: &mut HashMap<String, TextBody>) -> Option<TextBody> {
+/// The slide's notes text. A notes part is the notes of the first slide that names it.
+fn slide_notes(imp: &mut Imp, part: &Part, owned: &mut HashSet<String>) -> Option<TextBody> {
     let n = part.rels.first_of("notesSlide")?;
-    let key = opc::norm(&n.target);
-    if let Some(cached) = cache.get(&key) {
-        return Some(cached.clone());
+    if !owned.insert(opc::norm(&n.target)) {
+        log::warn!("pptx: notes part {} is named by more than one slide; kept on the first", n.target);
+        return None;
     }
     let pkg = imp.pkg;
     let nd = load(pkg, &n.target)?;
     let np = Part::new(pkg, &n.target, &nd);
-    let notes = read_notes(imp, &np, &nd.root);
-    cache.insert(key, notes.clone());
-    Some(notes)
+    Some(read_notes(imp, &np, &nd.root))
 }
 
 /// Comments. A modern part and the legacy part can describe the same threads (PowerPoint
 /// writes both): the modern one wins, its flattened legacy copy is skipped.
-fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide) {
-    let mut parts: Vec<(Doc, bool)> = vec![];
+/// Each comments part is read once, for the first slide that names it.
+fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide, owned: &mut HashSet<String>) {
+    let mut parts: Vec<(Doc, bool, bool)> = vec![];
     for c in part.rels.all_of("comments") {
+        // An already-owned part is not re-read, but its kind still decides modern precedence.
+        let fresh = owned.insert(opc::norm(&c.target));
         if let Some(cd) = pkg.xml(&c.target) {
             // The content type names the modern part; a package that types it only through a
             // Default entry instead of an Override is still modern when its root is p188.
             let modern = pkg.content_type(&c.target).as_deref() == Some(crate::write::CT_COMMENTS_MODERN) || cd.root.prefix() == "p188";
-            parts.push((cd, modern));
+            parts.push((cd, modern, fresh));
         }
     }
-    let has_modern = parts.iter().any(|(_, m)| *m);
-    for (cd, modern) in parts {
-        if has_modern && !modern {
+    let has_modern = parts.iter().any(|(_, m, _)| *m);
+    for (cd, modern, fresh) in parts {
+        if !fresh || (has_modern && !modern) {
             continue;
         }
         slide.comments.extend(read_comments(pkg, pres_part, &cd.root, modern));
@@ -1424,6 +1432,7 @@ fn read_show(sp: &El, shows: &HashMap<String, String>) -> ShowSettings {
         without_narration: sp.bool("showNarration") == Some(false),
         without_animation: sp.bool("showAnimation") == Some(false),
         use_timings: sp.bool("useTimings").unwrap_or(true),
+        show_media_controls: sp.find("showMediaCtrls").and_then(|e| e.bool("val")).unwrap_or(true),
         ..Default::default()
     };
     if sp.child("browse").is_some() {
