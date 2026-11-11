@@ -228,6 +228,11 @@ impl Session {
         d += snap;
         self.tool.guides = guides;
         let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
+        // A connector dragged away from shapes that stay put comes unglued at those ends. That is
+        // a document change of its own and the room's operation carries boxes only, so a shared
+        // session leaves the glue alone: every replica keeps it (a remote step does too) and the
+        // connector reroutes with the shapes instead of only this replica losing the attachment.
+        let unglue = !self.collab_queue;
         self.edit(|doc, sel| {
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
             for (id, o) in &origs2 {
@@ -235,18 +240,19 @@ impl Session {
                     sh.xfrm = Some(Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o });
                 }
             }
-            // A connector dragged away from shapes that stay put comes unglued at those ends.
-            let mut moved: Vec<ShapeId> = vec![];
-            for (id, _) in &origs2 {
-                if let Some(sh) = deckcraft_model::find_shape(list, *id) {
-                    deckcraft_model::walk(std::slice::from_ref(sh), &mut |s, _| moved.push(s.id));
+            if unglue {
+                let mut moved: Vec<ShapeId> = vec![];
+                for (id, _) in &origs2 {
+                    if let Some(sh) = deckcraft_model::find_shape(list, *id) {
+                        deckcraft_model::walk(std::slice::from_ref(sh), &mut |s, _| moved.push(s.id));
+                    }
                 }
-            }
-            for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
-                if let ShapeKind::Connector { start, end } = &mut sh.kind {
-                    for c in [start, end] {
-                        if c.is_some_and(|(to, _)| !moved.contains(&to)) {
-                            *c = None;
+                for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
+                    if let ShapeKind::Connector { start, end } = &mut sh.kind {
+                        for c in [start, end] {
+                            if c.is_some_and(|(to, _)| !moved.contains(&to)) {
+                                *c = None;
+                            }
                         }
                     }
                 }

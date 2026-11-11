@@ -1010,6 +1010,34 @@ fn a_viewer_drag_moves_nothing_and_a_shared_drag_is_one_operation() {
 }
 
 #[test]
+fn a_shared_connector_drag_keeps_its_glue() {
+    let mut s = session();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.connect", &json!({"from": a, "to": b})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 4.0, pressure: None };
+    s.set_collab_queue(true);
+    // Drag the connector itself: the room's operation carries boxes, not glue, so the local copy
+    // must not unglue ends the other replicas still hold.
+    s.pointer(ev(PointerKind::Down, 300.0, 125.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 320.0, 165.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 320.0, 165.0)).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.shape(ShapeId(c as u32)).unwrap();
+    assert!(
+        matches!(sh.kind, deckcraft_model::ShapeKind::Connector { start: Some(_), end: Some(_) }),
+        "a shared drag unglued the connector on one replica only: {:?}",
+        sh.kind
+    );
+    let queued = s.take_pending_commands();
+    assert_eq!(queued.len(), 1, "the drag still goes to the room: {queued:?}");
+    assert_eq!(queued[0].0, "shape.setBoundsMany");
+}
+
+#[test]
 fn pointer_draw_move_resize() {
     let mut s = session();
     s.set_tool(ToolKind::Shape { preset: "rect".into() });
