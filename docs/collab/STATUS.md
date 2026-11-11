@@ -10,23 +10,33 @@ exactly as before. On top of `1b057cbf` are two review-pass commits — `5b6fcfc
 `2bbe723f` (code, the second review) and `4a64e764` (docs, the second review's triage and the
 restart limits), then `9ad80547` (code, tests and docs: the fourth review's triage), then
 `f6239baf` (the docs-only STATUS sync), `891187f5` (code and tests: the fifth review's triage,
-§Fifth CodeRabbit review) and `38a20a9c` (docs: the triage table, the session log,
-`production.md`'s close-failure contract).
-**`38a20a9c` is the delivered head — and this branch's local HEAD, with a clean tree.
-`git ls-remote fork refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` both name it.**
-The push delivered `891187f5` and `38a20a9c` (the four workflow runs on the new head were created
-2026-11-11T11:31:32Z), so nothing is un-pushed: the fifth review's triage is delivered too — a room
+§Fifth CodeRabbit review), `38a20a9c` (docs: the triage table, the session log,
+`production.md`'s close-failure contract) and `1f78cadb` (docs: name `38a20a9c` the delivered head
+and record the unrun gate), then `fd5914e8` (the **presence heartbeat**: an unchanged presence is
+repeated every 10 s, inside the room's 30 s TTL, and a moved one stays capped at 20 Hz; the test
+drives the pump over an in-process pipe and fails without the heartbeat).
+**`fd5914e8` is the last code slice; the branch `collab/pr15` — this working tree, the fork
+(`copoka/deckcraft`) and PR #2012 — carries this STATUS commit on top of it, and the tree is
+clean. `git ls-remote fork refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` name
+the exact head; both point at the docs commit above `fd5914e8`.**
+The push delivered `fd5914e8` on top of `1f78cadb`, so nothing is un-pushed: the fifth review's
+triage is delivered too — a room
 whose snapshot fails stays live and answers `500` instead of closing, a snapshot that does not
 cover a rewind is refused and not installed, and a move dropped by a role change is cancelled
 exactly. The triage of `5852391245` was already delivered in `9ad80547`: `4a64e764` is its parent
 and the commit adds 7 files, +498/−116. `7f93069e` — the connector-glue commit the earlier notes
-named — is a dangling commit with the same subject as `2bbe723f` and is **not** in the branch. The
-gate on `38a20a9c` has not run: the four workflow runs (CI, House rules, Nix, SonarCloud) were
-created 2026-11-11T11:31:32Z and are all `completed / action_required`, the only check run is
-CodeRabbit `completed / skipped`, the combined status is empty and `mergeStateStatus` is
-`UNSTABLE`. Three PRs for this one feature are open in `storytold/deckcraft` — #2012
-(`38a20a9c`), #1998 (`6e9d10e7`, `CLEAN`) and #1975 (`be706a11`, `UNSTABLE`) — and closing the
-superseded two is the maintainer's decision, not an agent's.
+named — is a dangling commit with the same subject as `2bbe723f` and is **not** in the branch. GitHub's
+workflow runs on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
+`completed / action_required`; the new head (the docs commit above `fd5914e8`) has not been
+approved for a run yet, so the rollup still carries no executed job. The local TASK.md §8 gate on `fd5914e8` **did** run on
+the build host and is green: `cargo fmt --all -- --check` clean, `cargo clippy -p
+deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D warnings` clean, `cargo test -p
+deckcraft-collab` 288 + 8 passed, and `cargo test -p deckcraft-ui-egui --lib` 522 passed + 4
+ignored with the one known host-font test skipped — it fails identically on `1f78cadb` (no CJK
+glyph on the host), so it is an environment gap, not this change. Three PRs for this one feature
+are open in `storytold/deckcraft` — #2012 (`fd5914e8` + docs, the leading PR), #1998 (`6e9d10e7`,
+`CLEAN`) and #1975 (`be706a11`, open) — and closing the superseded two is the maintainer's
+decision, not an agent's.
 The CodeRabbit findings of #2012 (11 Major + 7 Minor) are triaged and fixed, with that table in §PR
 publication. The second review's commits close the second review (§Second CodeRabbit review): a
 shape drag now goes through the room, a client commit
@@ -110,23 +120,27 @@ description is [`pr10.md`](pr10.md).
 ## PR publication (2026-11-11)
 
 **[PR #2012](https://github.com/storytold/deckcraft/pull/2012)** is open from
-`copoka/deckcraft:collab/pr15` (head `38a20a9c`) into `storytold/deckcraft:main` and is **ready**
-(not a draft); its body is [`pr10.md`](pr10.md). GitHub reports `MERGEABLE` / `UNSTABLE` at
-`38a20a9c` with an empty `reviewDecision`; the PR carries 115 commits, 100 files, +41 185/−567
-(the counts are the PR API's `commits`/`changed_files`/`additions`/`deletions`; `gh pr view --json
-commits` pages at 100, which is why an earlier figure differed). The
-fork head **is** the PR head: `git ls-remote fork refs/heads/collab/pr15` →
-`38a20a9c21346054c5e973a989b04f894b5a2a42` and `gh pr view 2012 --json headRefOid` → the same, and
-it is this branch's local HEAD. Everything the branch holds is delivered: the second review's
-commits, the fourth review's triage, the STATUS sync, the fifth review's triage (`891187f5`) and
-its docs commit (`38a20a9c`).
+`copoka/deckcraft:collab/pr15` (last code slice `fd5914e8`, this STATUS commit on top) into
+`storytold/deckcraft:main` and is **ready** (not a draft); its body is [`pr10.md`](pr10.md). The
+fork head **is** the PR head: `git ls-remote fork refs/heads/collab/pr15` and
+`gh pr view 2012 --json headRefOid` name the same commit — this docs commit above `fd5914e8` —
+and it is this branch's local HEAD. Everything the branch holds is delivered: the second review's
+commits, the fourth review's triage, the STATUS sync, the fifth review's triage (`891187f5`), its
+docs commit (`38a20a9c`), the delivered-head note (`1f78cadb`) and the presence heartbeat
+(`fd5914e8`). GitHub's merge verdict on the new head is recomputed after the push; the local
+TASK.md §8 gate is green (see below).
 
-The **gate on that head is still not green, and nothing on it ran**: the four workflow runs (CI,
-House rules, Nix, SonarCloud) on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
-`completed / action_required` — they wait for a maintainer's approval and executed no job. The
-combined status for `38a20a9c` is empty (`state: pending`, no statuses) and the only check run is
-CodeRabbit's, `completed / skipped` (started 11:33:45Z), so the rollup carries no other signal;
-GitHub's verdict is `mergeStateStatus: UNSTABLE` for exactly that reason. CodeRabbit's
+The **workflow gate has not run on any of these heads**: the four workflow runs (CI, House rules,
+Nix, SonarCloud) on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
+`completed / action_required` — they wait for a maintainer's approval and executed no job; the
+runs for `fd5914e8` wait for the same approval. The combined status for `38a20a9c` is empty
+(`state: pending`, no statuses) and the only check run is CodeRabbit's, `completed / skipped`
+(started 11:33:45Z), so the rollup carries no other signal; GitHub's verdict is
+`mergeStateStatus: UNSTABLE` for exactly that reason. Locally, on `fd5914e8`: `cargo fmt --all --
+--check` clean, `cargo clippy -p deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D
+warnings` clean, `cargo test -p deckcraft-collab` 288 + 8 passed, `cargo test -p
+deckcraft-ui-egui --lib` 522 passed + 4 ignored with only the known host-font test skipped (it
+fails identically on `1f78cadb`). CodeRabbit's
 last completed check run is `completed / success` on `4a64e764`; its run on `9ad80547` was
 submitted as review `5855491108` at 07:49:58Z (see §Fifth CodeRabbit review). Its five submitted
 reviews are
@@ -144,9 +158,9 @@ Merging is a human step. Closing the superseded PRs is a human decision as well.
 
 | PR | Branch | Head | GitHub state |
 |---|---|---|---|
-| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `38a20a9c` | `MERGEABLE` / `UNSTABLE` (its gate has not run) |
-| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `6e9d10e7` | `MERGEABLE` / `CLEAN` |
-| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `be706a11` | `MERGEABLE` / `UNSTABLE` |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `fd5914e8` + docs | leading PR; local §8 gate green; workflow runs await approval (`mergeStateStatus` recomputed after the push) |
+| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `6e9d10e7` | `MERGEABLE` / `CLEAN`, superseded |
+| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `be706a11` | `MERGEABLE` / `UNSTABLE`, superseded |
 
 #2012 is the top of the stack and supersedes the other two: #1998 carries the earlier
 `collab/pr11` head and #1975 the earlier `collab/pr10` head, both already contained in #2012's
@@ -1150,7 +1164,7 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `38a20a9c` = the fork head = the PR head = the local branch head), rebased onto `origin/main`; every review pass, the STATUS sync and the fourth and fifth reviews' triage are delivered; the head's four workflow runs are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), its only check run is CodeRabbit `skipped`, the combined status is empty and GitHub reads `UNSTABLE`; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, last code slice `fd5914e8` with this STATUS commit on top = the fork head = the PR head = the local branch head), rebased onto `origin/main`; every review pass, the STATUS sync and the presence heartbeat are delivered; the local TASK.md §8 gate is green on `fd5914e8`, while the four workflow runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed) and the runs for the new head wait for the same approval; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
 
 Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
 pass pushed as `9b43c611a`, on
@@ -1414,11 +1428,12 @@ was not touched, and PR #1975 is unchanged.
 9. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
     (§ Rebase onto origin/main), so the fork branches no longer fast-forward and the publish was a
     `--force-with-lease`; that push is done. Nothing was pushed to `storytold/deckcraft`. The fork
-    head and the PR head are `38a20a9c`, and it is the local branch head as well: the fourth
-    review's triage is delivered in `9ad80547`, the fifth's in `891187f5`, and `38a20a9c` is the
-    docs commit on top. Nothing is pending a push. The gate still needs a maintainer's approval (see
-    §PR publication), and three PRs for one feature stay open until a person closes the superseded
-    two.
+    head and the PR head are `fd5914e8` plus this STATUS commit, and it is the local branch head
+    as well: the fourth review's triage is delivered in `9ad80547`, the fifth's in `891187f5`,
+    `38a20a9c`/`1f78cadb` are the docs commits and `fd5914e8` is the presence heartbeat on top.
+    Nothing is pending a push. The workflow gate still needs a maintainer's approval (see §PR
+    publication); the local §8 gate is green on `fd5914e8`, and three PRs for one feature stay
+    open until a person closes the superseded two.
 
 ## How to run locally
 
@@ -1460,12 +1475,13 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `38a20a9c` =
-   fork head = PR head = local branch head, `MERGEABLE`/`UNSTABLE`, 115 commits, 100 files,
-   +41 185/−567); every review pass and the STATUS sync are delivered. The gate on that head is
-   **not green and has not run**: CI, House rules, Nix and SonarCloud are `action_required`
-   (created 2026-11-11T11:31:32Z) and wait for a maintainer's approval, the only check run is
-   CodeRabbit `skipped`, and the combined status is empty — which is why GitHub reads `UNSTABLE`.
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (last code slice
+   `fd5914e8` with the STATUS commit on top = fork head = PR head = local branch head); every
+   review pass, the STATUS sync and the presence heartbeat are delivered. The local TASK.md §8 gate is green on that head (fmt, clippy over
+   `deckcraft-collab` and `deckcraft-ui-egui`, `collab` 288 + 8, `ui-egui --lib` 522 + 4 ignored
+   with only the known host-font test skipped). The **workflow** gate still has not run: CI, House
+   rules, Nix and SonarCloud on `38a20a9c` are `action_required` (created 2026-11-11T11:31:32Z)
+   and wait for a maintainer's approval; the runs for `fd5914e8` wait for the same approval.
    CodeRabbit's second review is closed, the third (`fd1ee71a`) found nothing in code, the fourth
    (`5852391245`, on `4a64e764`) is delivered in `9ad80547`, and the fifth (`5855491108`,
    submitted 07:49:58Z on `9ad80547`) is delivered in `891187f5` with its docs in `38a20a9c`; the
@@ -1512,6 +1528,32 @@ token from the cabinet.
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-11 — the presence heartbeat delivered on top of `1f78cadb`; the §8 gate is green
+
+- **What was wrong.** A client sent presence only when it changed, but the room keeps a
+  participant only while their last message is younger than the 30 s TTL and never echoes a
+  presence back to its author. An idle editor therefore vanished from every peer's list after
+  30 s, and a client that joined later never learned about anyone — the cabinet's bar showed one
+  participant while edits converged. The fix had been committed as `9c93ae66` on a branch cut
+  from `6e9d10e7`, which is an ancestor of the delivered head; it was not on `1f78cadb`.
+- **Delivered.** Cherry-picked onto `1f78cadb` as `fd5914e8` (conflict-free; the only file is
+  `crates/ui-egui/src/collab.rs`, +65/−8): `PRESENCE_HEARTBEAT_MS = 10_000` repeats an unchanged
+  presence, `PRESENCE_MIN_GAP_MS = 50` keeps a moved one at 20 Hz, and
+  `an_unchanged_presence_is_repeated_before_the_room_forgets_it` drives the pump over
+  `PipeTransport` and fails without the heartbeat.
+- **Gate on `fd5914e8`** (build host, TASK.md §8 verification): `cargo fmt --all -- --check`
+  clean; `cargo clippy -p deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D warnings`
+  clean; `cargo test -p deckcraft-collab` 288 + 8 passed; `cargo test -p deckcraft-ui-egui
+  --lib` 522 passed + 4 ignored with `ime_tests::korean_composes_in_the_notes_pane` skipped —
+  that test fails identically on `1f78cadb` with `No glyph for "ㄴ"`, so it is the known
+  host-without-CJK-font gap, not this change.
+- **Delivered to the fork.** `git push fork collab/pr15` → `1f78cadb..fd5914e8`;
+  `git ls-remote fork refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` both name
+  `fd5914e8`, so #2012 carries the heartbeat. No history was rewritten, no force-push.
+- **Three PRs.** #2012 (`fd5914e8`, leading), #1998 (`6e9d10e7`, `CLEAN`) and #1975
+  (`be706a11`) stay open; closing the superseded two is the maintainer's decision.
+- **Commits.** `fd5914e8` (code + test) and this docs commit on `collab/pr15`; both pushed.
 
 ### 2026-11-11 — STATUS moved to the delivered head `38a20a9c`; the gate has not run
 
