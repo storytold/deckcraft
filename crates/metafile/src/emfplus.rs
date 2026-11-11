@@ -288,18 +288,23 @@ impl Plus {
         if !self.active {
             return None;
         }
-        match typ {
-            0x4008 => {
-                let done = self.object(flags, r, cv.used());
-                // The retained objects, and the pieces of a continued object still arriving, share the canvas's byte budget.
-                cv.hold(self.object_bytes.saturating_add(self.partial.as_ref().map_or(0, |p| p.data.len())));
-                done
-            }
+        let done = match typ {
+            0x4008 => self.object(flags, r, cv.used().saturating_add(self.clip_bytes())),
             0x4009 | 0x4013 | 0x401A..=0x401C | 0x4036 => self.record_image_text_region(cv, typ, flags, r),
             0x4025..=0x4035 => self.record_state(cv, typ, flags, r),
             0x4010..=0x4012 | 0x4016..=0x4019 => self.record_curve(cv, typ, flags, r),
             _ => self.record_shape(cv, typ, flags, r),
-        }
+        };
+        // What this player retains (objects, a continued object's pieces, the current and saved
+        // clips) shares the canvas's byte budget; clip changes are charged as they happen.
+        cv.hold(self.object_bytes.saturating_add(self.partial.as_ref().map_or(0, |p| p.data.len())).saturating_add(self.clip_bytes()));
+        done
+    }
+
+    /// Bytes of the current clip and of every saved one.
+    fn clip_bytes(&self) -> usize {
+        let area = |a: &Area| a.as_ref().map_or(0, |v| v.len().saturating_mul(std::mem::size_of::<P>()));
+        self.stack.iter().map(|s| area(&s.clip)).fold(area(&self.clip), usize::saturating_add)
     }
 
     /// Rectangle, polygon, ellipse and path records.
@@ -1609,5 +1614,22 @@ mod cost_tests {
         rec.extend([0u8; 100]);
         plus.record(&mut cv, 0x4008, 0x8000 | (5 << 8), Bytes(&rec));
         assert_eq!(cv.held(), 100);
+    }
+
+    #[test]
+    fn current_and_saved_clips_count_against_the_shared_budget() {
+        let (mut plus, mut cv) = (Plus::new(), Canvas::new());
+        plus.active = true;
+        let pts = vec![(0.0, 0.0); 1000];
+        plus.clip = Some(pts.clone());
+        plus.stack.push(Saved { id: 1, world: IDENTITY, page: 1.0, clip: Some(pts) });
+        // Any record refreshes the held count (an unknown record draws nothing).
+        plus.record(&mut cv, 0x40FF, 0, Bytes(&[]));
+        assert_eq!(cv.held(), 2 * 1000 * std::mem::size_of::<P>());
+        // Restoring the saved state releases the charge of what it dropped.
+        plus.stack.clear();
+        plus.clip = None;
+        plus.record(&mut cv, 0x40FF, 0, Bytes(&[]));
+        assert_eq!(cv.held(), 0);
     }
 }
