@@ -70,6 +70,13 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     read::import_checked(bytes)
 }
 
+/// [`import`] with a lower presentation-wide chart point budget, so tests reach the over-budget
+/// path without a multi-million-point chart.
+#[doc(hidden)]
+pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
+    read::import_with_chart_points(bytes, points).map(|(p, _)| p)
+}
+
 /// Read the theme of a `.thmx` file, or of a `.pptx` / `.potx`'s first master, with its media.
 pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<deckcraft_model::MediaItem>), PptxError> {
     read::import_theme(bytes)

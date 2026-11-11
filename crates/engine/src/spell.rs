@@ -699,6 +699,8 @@ pub fn add_user_word(word: &str) -> std::io::Result<()> {
         return Ok(());
     }
     let path = user_dictionary_path().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no folder for the user dictionary"))?;
+    // A confined automation client may write only inside its write roots, this file included.
+    crate::file_access::check_write_path(&path).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
@@ -1018,6 +1020,20 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         };
         let w: Vec<String> = paragraph_words(&p, "en-US").into_iter().map(|w| w.text).collect();
         assert_eq!(w, vec!["check", "done"]);
+    }
+
+    #[test]
+    fn a_confined_client_cannot_write_the_user_dictionary_outside_its_roots() {
+        let root = std::env::temp_dir().join(format!("deckcraft-dict-root-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let roots = crate::file_access::AutomationRoots::new(std::slice::from_ref(&root), std::slice::from_ref(&root)).unwrap();
+        // The user dictionary is a file of its own outside `root`, not whatever HOME points at.
+        let outside = std::env::temp_dir().join(format!("deckcraft-dict-outside-{}", std::process::id()));
+        set_user_dictionary_path(outside.join("user.dic"));
+        let r = crate::file_access::confine(roots.as_ref(), || add_user_word("zqxconfinedword"));
+        assert_eq!(r.map_err(|e| e.kind()), Err(std::io::ErrorKind::PermissionDenied));
+        assert!(!outside.exists(), "the refused write created nothing");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
