@@ -1,6 +1,7 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top).
+Updated: 2026-11-12 (the PR delivery record only; the verification numbers below are from
+2026-11-09 and 2026-11-11). Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top).
 
 **Rebased onto `origin/main` at `0623b430`** on 2026-11-09: the branch is 55 commits, its
 pre-rebase head was `922a4bf4`, and the commit hashes in this file are the pre-rebase ones (every
@@ -66,14 +67,25 @@ carries the protocol, `session-state`/`presence` go back to the cabinet, Save as
 and `deckcraft:committed` records the stored version. Nothing there talks to the network without a
 session message.
 
-The fork branch `copoka/deckcraft:collab/pr10` is published at `922a4bf4` (the pre-rebase head)
-and is the head of [PR #1975](https://github.com/storytold/deckcraft/pull/1975), which reports
-`CONFLICTING` against `main` until the rebased branch is published. The local branch was rebased
-onto `origin/main` (`0623b430`) and now has rewritten history, so publishing it is a
-`git push --force-with-lease fork collab/pr10` (and the same for `collab/pr11`), not a
-fast-forward. A `git push --dry-run` from this workspace is refused by the environment policy, so
-the publish is a manual step (the chair does it). Nothing was pushed to `storytold/deckcraft`; the
-PR comes from the fork and a human decision still governs merging it. The PR body is prepared in
+The fork branch `copoka/deckcraft:collab/pr10` is the head of
+[PR #1975](https://github.com/storytold/deckcraft/pull/1975). **Delivery, as of
+2026-11-11T23:40Z** (`gh pr view 1975`, `gh api`): `headRefOid` = `0bdedb6e`, `baseRefOid` =
+`2127bd1b`, 58 commits, `MERGEABLE`/`UNSTABLE`; the local `HEAD`, the fork branch and the PR head
+are the same commit and the tree is clean. The head is the merge `7379064f` (parents `be706a11`
+and `origin/main` `2127bd1b`) plus `0bdedb6e` "regenerate Cargo.lock" (`Cargo.lock` +647/−5, the
+only path the merge left stale). Before that delivery the fork and the PR held the pre-rebase
+`922a4bf4`, which reported `CONFLICTING`; the rebased-and-merged head is `MERGEABLE` now. The four
+runs created on `0bdedb6e` at 23:34:37Z are `completed/action_required` — they wait for a
+maintainer's approve, not for us: CI `43120875859`, Nix `43120875439`, SonarCloud `43120875351`,
+House rules `43120875527`. The host gate on `0bdedb6e` is fmt, pdf-deps and clippy ok; `test` 2039
+passed / 1 failed (`deckcraft-render`
+`tests::east_asian_vertical_text_stands_ideographs_upright`, the known host failure without a
+sibling `craft-fonts` checkout, reproduced on `main`); doctest, assets, layers and wasm ok when run
+separately (`cargo xtask ci` stops at the first failure). Any further local commit would need
+another manual `git push --force-with-lease fork collab/pr10` from a checkout that may push — a
+`git push --dry-run` from this workspace is refused by the environment policy. Nothing was pushed
+to `storytold/deckcraft` itself; the PR comes from the fork and a human decision still governs
+merging it, approving the runs and closing the overlapping PRs. The PR body is prepared in
 [`pr10.md`](pr10.md): title `feat(collab): realtime collaborative editing`, one description, a
 review order over the slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the
 human decision.
@@ -400,7 +412,7 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint and CORS remain external | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork, MERGEABLE at the last check; local head is ahead of the PR head and the push is manual | [`pr10.md`](pr10.md); merge needs a human decision |
+| PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork; at 2026-11-11T23:40Z its head `0bdedb6e` equals the local head and the fork head, base `2127bd1b`, 58 commits, `MERGEABLE`/`UNSTABLE`, and its four runs sit `action_required` until a maintainer approves them — a CI verdict is not available from our side | [`pr10.md`](pr10.md); merging and closing the overlapping PRs need a human decision |
 
 Re-run on 2026-11-09 after the browser link (`66d4658c`, on `agents`): `fmt --check` clean,
 `collab` 129 + 8, `collab-proto` 22, `collab-server` 10 unit + 4 commit + 4 gates + 6 socket,
@@ -412,6 +424,26 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
 `-D warnings` clean; `xtask layers` 32 crates; `xtask wasm` 26 crates;
 `cargo check -p deckcraft-web --target wasm32-unknown-unknown` ok; `trunk build` (0.22.1) ok in
 4m7s cold (3m44s of it rustc), `dist/web` with a 49 MB `_bg.wasm` and the JS glue.
+
+### Three open pull requests on one feature (as of 2026-11-11T23:45Z)
+
+| PR | Branch | Head | Base | State |
+|---|---|---|---|---|
+| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `collab/pr10` | `0bdedb6e` | `2127bd1b` | `MERGEABLE`/`UNSTABLE`, 58 commits, four runs `action_required` |
+| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `collab/pr11` | `cf9b71cd` | `2127bd1b` | `MERGEABLE`/`UNSTABLE`, 99 commits, four runs `action_required` |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `collab/pr15` | `96783106` | `c6846f6a` | `MERGEABLE`/`UNSTABLE`, 100 commits, four runs `action_required` |
+
+The branches diverged, and this is code, not only docs:
+`git rev-list --left-right --count collab/pr15...collab/pr11` = 24 / 9, so neither is a superset
+of the other. `collab/pr11` carries its own merge of the newer `origin/main` (`2127bd1b`) and the
+`picture_place` empty-diagram fallback (`crates/pptx/src/dgm.rs:362`, commit `cf9b71cd`: the
+fallback node gets `picture_place: None`, which the merged model requires);
+`collab/pr15` carries the presence heartbeat, the 3-D model, SmartArt, the chunked base and the
+desktop commit, and holds the current cabinet documentation. Canonical for acceptance is **#2012
+(`collab/pr15`, head `96783106`)** because the wider stack and this file live there; the
+`picture_place` fix moves over as its own slice (one file, one function), not by pulling presence,
+3-D or SmartArt into `pr11`. Closing #1998/#1975 and approving the runs is the maintainer's
+decision; agents do not close pull requests.
 
 ## What is NOT done (ordered by production impact)
 
@@ -463,8 +495,11 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
    `COLLAB_MAX_BASE_INLINE`) the message names the base without bytes and the client must reopen
    the file from the cabinet. A chunked baseline or an HTTP-served base (the media endpoint
    pattern) is the next step for 100-slide decks with media.
-10. **Upstream PR head.** The PR is open from the fork; the local head is ahead of it and the push
-    is manual. Nothing was pushed to `storytold/deckcraft`.
+10. **Upstream PR head.** At 2026-11-11T23:40Z the fork branch and PR #1975 hold `0bdedb6e`,
+    which is also the local head, so the earlier gap between the local head and the PR head is
+    closed; the four runs on it wait for a maintainer's approve. A further local commit would
+    again need a manual push from a checkout that may push. Nothing was pushed to
+    `storytold/deckcraft` itself.
 
 ## How to run locally
 
@@ -504,9 +539,15 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr10` (or branch
    `collab/pr11` from it).
-2. **PR #1975 is open from the fork**; the local head is ahead of the PR head. Publishing the new
-   head needs a manual push from a checkout that may push; do not touch CI and do not mention
-   agents. Merging needs a human decision.
+2. **PR #1975 is open from the fork, and as of 2026-11-11T23:40Z its head is `0bdedb6e` — the
+   same commit as the local head and the fork head** (58 commits, base `2127bd1b`,
+   `MERGEABLE`/`UNSTABLE`), so at that moment no unpublished head was waiting for a push (these
+   documentation commits on top stay local until a person pushes). Its four runs
+   (CI `43120875859`, Nix `43120875439`, SonarCloud `43120875351`, House rules `43120875527`,
+   created 23:34:37Z) are `action_required` until a maintainer approves them. A new local commit
+   would again need a manual push from a checkout that may push; do not touch CI and do not
+   mention agents. Merging, and closing the overlapping #1998/#2012, needs a human decision, and
+   #2012 (`collab/pr15`, head `96783106`) is the canonical branch for acceptance.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The cabinet must still implement its side:
