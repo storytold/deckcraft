@@ -3745,6 +3745,25 @@ fn undo_history_is_capped_by_memory_as_well_as_steps() {
     assert_eq!(s.doc().unwrap().history.undo.len(), 120);
 }
 
+/// A slide's notes count toward the undo budget: small edits to a slide with large notes keep a
+/// copy of those notes per step, and must not slip past the budget as if the slide were empty.
+#[test]
+fn undo_history_counts_slide_notes() {
+    let mut s = Session::with_new();
+    let notes = "n".repeat(1 << 20);
+    s.edit(|doc, _| {
+        std::sync::Arc::make_mut(&mut doc.slides[0]).notes = deckcraft_model::text::TextBody::from_text(&notes);
+        Ok(())
+    })
+    .unwrap();
+    s.doc_mut().unwrap().history = History { limit: 500, byte_limit: 8 << 20, ..Default::default() };
+    for i in 0..40 {
+        s.execute("slide.rename", &json!({"name": format!("v{i}"), "index": 0})).unwrap();
+    }
+    let n = s.doc().unwrap().history.undo.len();
+    assert!((1..=8).contains(&n), "{n} steps of 1 MB notes kept under an 8 MB budget");
+}
+
 #[test]
 fn picture_styles_replace_each_other_in_one_step() {
     const PNG: &[u8] = &[
