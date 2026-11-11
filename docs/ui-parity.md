@@ -168,7 +168,13 @@ chevron in the name band, and the whole section in a popup on click. The planner
 section's width at both layouts on earlier frames and folds sections from the right until the row
 fits, so the sections a reader reaches first keep their layout longest. At 819x614 pt (a
 1024x768 client on a 125% display) Clipboard keeps its three rows and every other Home section is
-one drop-down, matching the measured reference; at 1228x768 pt Clipboard, Slides and Font expand.
+one drop-down, matching the measured reference; at 1228x768 pt Clipboard, Slides, Font, Paragraph
+and Images expand.
+
+Home's Font and Paragraph sections follow the measured three-row to wide two-row change: their
+natural layout is three control rows, and from 1280 pt (1600 px at 125%) for Font and from 1520 pt
+(1900 px) for Paragraph the same controls are rearranged into two rows. The label band and
+separator span both forms, and a folded section's drop-down still holds the three-row layout.
 Every group keeps its name in the band in both layouts, and a row that is still too wide after
 every section has folded scrolls with the edge chevrons, as before.
 
@@ -231,6 +237,7 @@ measured narrow breakpoint; two-row states beyond the implemented sections are n
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-10 | minor | Home's Font and Paragraph use the measured three-row form below 1280 pt and 1520 pt (window width at 125% DPI: 1600 px and 1900 px) and rearrange the same controls into two rows above those widths; the label band and compact popup are unchanged |
 | 2026-11-10 | minor | Adaptive ribbon sections: each group has its designed layout and a one-row drop-down (icon, name and chevron in the label band, contents in a popup). At 819x614 pt Clipboard keeps three rows and every other Home group folds; at 1228x768 pt Clipboard, Slides and Font expand. Labels stay in the band in both layouts; a still-too-wide row scrolls as before |
 | 2026-11-10 | minor | Ribbon card is three bands at every width: tabs, commands and reference group names centred under each group, each group at least as wide as its name. The name row is unconditional (480 px to maximized); narrow windows scroll groups and keep names; section control rows change independently at measured widths (see Measured section rows, PR #2008) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |

@@ -340,6 +340,31 @@ mod ui_tests {
         assert!(h.query_by_label("New Slide").is_some(), "the drop-down stays open after the release");
     }
 
+    /// The number of control rows a set of named controls is laid out in.
+    fn control_rows(h: &Harness<'static, SlideApp>, labels: &[&str]) -> usize {
+        let mut ys: Vec<i32> = labels.iter().filter_map(|l| h.query_by_label(l).map(|n| n.rect().center().y.round() as i32)).collect();
+        ys.sort_unstable();
+        ys.dedup();
+        ys.len()
+    }
+
+    /// PowerPoint's Home narrows Font and Paragraph to three rows and widens each to two at the
+    /// measured window widths: Font at 1600 px (1280 pt), Paragraph at 1900 px (1520 pt).
+    #[test]
+    fn font_and_paragraph_use_the_wide_two_row_form_at_the_measured_widths() {
+        let font = ["Font", "Change Case", "Text Highlight Color"];
+        let h = home(1228.0, 768.0);
+        assert_eq!(control_rows(&h, &font), 3, "Font keeps PowerPoint's three rows at 1536 px");
+        let h = home(1280.0, 768.0);
+        assert_eq!(control_rows(&h, &font), 2, "Font is two rows at 1600 px");
+
+        let paragraph = ["Bullets", "Text Direction", "Paragraph…"];
+        let h = home(1400.0, 768.0);
+        assert_eq!(control_rows(&h, &paragraph), 3, "Paragraph keeps PowerPoint's three rows below 1900 px");
+        let h = home(1520.0, 768.0);
+        assert_eq!(control_rows(&h, &paragraph), 2, "Paragraph is two rows at 1900 px");
+    }
+
     /// A card too narrow for even the folded row keeps the horizontal scroll and its edge chevrons,
     /// so every section stays reachable.
     #[test]
@@ -355,12 +380,13 @@ mod ui_tests {
         assert!(h.query_by_role_and_label(Role::Button, "Designer").is_some(), "the last section is reachable");
     }
 
-    /// 1228x768 pt at 1.25 (a 1536 px window) has expanded layouts: Clipboard, Slides and Font no
-    /// longer fold, while the later sections still do; the name band stays for both.
+    /// 1228x768 pt at 1.25 (a 1536 px window) has expanded layouts: Clipboard, Slides, Font,
+    /// Paragraph and Images no longer fold, while Drawing, Editing and Designer still do; the name
+    /// band stays for both.
     #[test]
     fn home_sections_expand_as_the_card_grows() {
         let h = home(1228.0, 768.0);
-        assert_eq!(levels(&h, &HOME), vec![FULL, FULL, FULL, COMPACT, COMPACT, COMPACT, COMPACT, COMPACT]);
+        assert_eq!(levels(&h, &HOME), vec![FULL, FULL, FULL, FULL, FULL, COMPACT, COMPACT, COMPACT]);
         let labels: Vec<crate::widgets::DrawnGroupLabel> = crate::widgets::GROUP_LABELS.with(|g| g.borrow_mut().drain(..).collect());
         for l in &labels {
             assert!(
