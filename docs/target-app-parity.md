@@ -1,5 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
+> **Last reviewed:** 2026-11-06 - **Last updated:** 2026-11-06 - **Change:** minor (native See All Slides scrolls through every slide and filters by section; presenter selection closes the grid; parity scores unchanged) - **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
@@ -288,6 +289,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | native See All Slides scrolls through every slide and filters by section; presenter selection closes the grid; parity scores unchanged. The remote web presenter retains its 48-slide cap; section tabs are a DeckCraft navigation addition |
 | 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |
