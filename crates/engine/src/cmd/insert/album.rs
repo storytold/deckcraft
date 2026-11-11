@@ -608,9 +608,6 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
     let mut total = 0usize;
     let mut omitted = false;
     'slides: for slide in slides {
-        if items.len() >= ALBUM_MAX_ITEMS {
-            return (items, true);
-        }
         let pics: Vec<&deckcraft_model::Shape> = slide.shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).collect();
         if pics.is_empty() {
             let text = slide
@@ -621,6 +618,10 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
                 .find(|t| !t.trim().is_empty())
                 .unwrap_or_default();
             if !text.trim().is_empty() {
+                if items.len() >= ALBUM_MAX_ITEMS {
+                    omitted = true;
+                    break 'slides;
+                }
                 items.push(json!({"text": text.trim()}));
             }
             continue;
