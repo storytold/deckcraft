@@ -525,7 +525,11 @@ fn strip_vml_conditionals(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
         out.extend_from_slice(&bytes[at..start]);
         let rest = &bytes[start..];
         let conditional = rest.starts_with(b"<!--[if") || rest.starts_with(b"<![if") || rest.starts_with(b"<![endif");
-        if conditional && let Some(end) = rest.iter().position(|b| *b == b'>') {
+        if conditional {
+            let Some(end) = rest.iter().position(|b| *b == b'>') else {
+                out.extend_from_slice(rest);
+                break;
+            };
             let mut next = start + end + 1;
             if bytes.get(next..next + 3) == Some(b"-->") {
                 next += 3;
