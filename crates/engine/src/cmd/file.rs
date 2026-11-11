@@ -348,12 +348,22 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
         f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
-        "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
-        "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc).into_bytes()),
+        "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc, true).into_bytes()),
+        "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc, true).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
         "png" | "jpeg" | "jpg" => Err(EngineError::Other("saving a presentation as a single image isn't supported; use file.export".into())),
         _ => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
+    }
+}
+
+/// Encode `outline`/`txt` or `rtf` for export params: the outline is what the show reads out,
+/// so hidden slides are left out unless `includeHidden` — as the PDF and GIF exports do.
+/// A file save keeps them ([`save_bytes`], the web download and the desktop export use this).
+pub fn text_bytes(doc: &Presentation, format: &str, p: &Value) -> Result<Vec<u8>> {
+    match format {
+        "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc, bool_or(p, "includeHidden", false)).into_bytes()),
+        _ => Ok(deckcraft_format::slides_to_outline(doc, bool_or(p, "includeHidden", false)).into_bytes()),
     }
 }
 
@@ -655,8 +665,20 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
                 "secondsPerSlide": f64::from(out.delay_cs) / 100.0,
             }))
         }
-        "pptx" | "potx" | "ppsx" | "deckcraft" | "outline" | "txt" | "rtf" => {
+        "pptx" | "potx" | "ppsx" | "deckcraft" => {
             let bytes = save_bytes(&st.doc, &format)?;
+            write_file(&path, &bytes)?;
+            Ok(json!({"path": path, "bytes": bytes.len()}))
+        }
+        // The outline is what the show reads out, so it skips hidden slides unless
+        // `includeHidden` — as the PDF and GIF exports do. A file save keeps them.
+        "outline" | "txt" => {
+            let bytes = text_bytes(&st.doc, "outline", p)?;
+            write_file(&path, &bytes)?;
+            Ok(json!({"path": path, "bytes": bytes.len()}))
+        }
+        "rtf" => {
+            let bytes = text_bytes(&st.doc, "rtf", p)?;
             write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
@@ -785,7 +807,25 @@ mod color_at_tests;
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{parse_slide_range, write_file};
+    use super::{parse_slide_range, save_bytes, text_bytes, write_file};
+
+    /// The text exports are what the show reads out: a hidden slide is skipped unless
+    /// `includeHidden`, on the desktop export and the web download alike.
+    #[test]
+    fn text_export_skips_hidden_slides_unless_included() {
+        let mut doc = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        assert_eq!(deckcraft_format::outline_to_slides(&mut doc, "Shown\n\tVisible\nHidden\n\tSecret"), 2);
+        std::sync::Arc::make_mut(&mut doc.slides[1]).hidden = true;
+        let text = String::from_utf8(text_bytes(&doc, "outline", &serde_json::json!({})).unwrap()).unwrap();
+        assert!(text.contains("Shown") && !text.contains("Secret"), "{text}");
+        let text = String::from_utf8(text_bytes(&doc, "outline", &serde_json::json!({"includeHidden": true})).unwrap()).unwrap();
+        assert!(text.contains("Shown") && text.contains("Secret"), "{text}");
+        let text = String::from_utf8(text_bytes(&doc, "rtf", &serde_json::json!({})).unwrap()).unwrap();
+        assert!(text.contains("Shown") && !text.contains("Secret"), "{text}");
+        // A file save keeps the full deck, including hidden slides.
+        let text = String::from_utf8(save_bytes(&doc, "outline").unwrap()).unwrap();
+        assert!(text.contains("Shown") && text.contains("Secret"), "{text}");
+    }
 
     #[test]
     fn broad_and_repeated_slide_ranges_expand_once() {

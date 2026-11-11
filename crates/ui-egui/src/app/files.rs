@@ -232,6 +232,8 @@ impl SlideApp {
             }
             "pdf" => deckcraft_engine::cmd::file::pdf_bytes(&doc, &extra),
             "gif" => deckcraft_engine::cmd::file::gif_bytes(&doc, &extra),
+            "outline" | "txt" => deckcraft_engine::cmd::file::text_bytes(&doc, "outline", &extra),
+            "rtf" => deckcraft_engine::cmd::file::text_bytes(&doc, "rtf", &extra),
             other => deckcraft_engine::cmd::file::save_bytes(&doc, other),
         };
         self.download(&suggested, bytes)

@@ -21,7 +21,9 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     let case = check(ui, d, "Match case", "matchCase", false);
     let whole = check(ui, d, "Find whole words only", "wholeWords", false);
     let text = d.get("text", "");
-    let q = json!({"text": text, "matchCase": case, "wholeWords": whole});
+    // Editor search covers hidden slides and shapes, as PowerPoint's does: the engine's
+    // `text.find` skips them unless `includeHidden`, so the dialog asks for them.
+    let q = json!({"text": text, "matchCase": case, "wholeWords": whole, "includeHidden": true});
     let mut close = false;
     let mut find_next = false;
     ui.add_space(6.0);
