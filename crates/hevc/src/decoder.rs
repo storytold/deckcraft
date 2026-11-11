@@ -415,7 +415,7 @@ impl Decoder {
         let queued: u64 = self
             .out_queue
             .iter()
-            .filter(|o| !self.dpb.entries.iter().any(|e| Arc::ptr_eq(&e.frame, &o.frame)))
+            .filter(|o| !self.dpb.entries.iter().any(|e| Arc::ptr_eq(&e.frame, &o.frame)) && !self.in_flight.iter().any(|f| Arc::ptr_eq(f, &o.frame)))
             .map(|o| frame_bytes(&o.frame))
             .fold(0, u64::saturating_add);
         // Frames the DPB holds now count at their own size too (an SPS change flushes them into the
@@ -430,7 +430,7 @@ impl Decoder {
             .store_bytes(1)
             .zip(slots)
             .zip(flight)
-            .map(|((one, slots), flight)| slots.max(held).saturating_add(one).saturating_add(flight.max(queued)));
+            .map(|((one, slots), flight)| slots.max(held).saturating_add(one).saturating_add(flight).saturating_add(queued));
         ensure!(
             total.is_some_and(|b| b <= self.memory_budget),
             "{}x{} pictures with {pictures} in the decoder and {queued} bytes queued exceed the memory budget",
