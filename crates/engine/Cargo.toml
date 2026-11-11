@@ -26,6 +26,7 @@ thiserror = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
 chrono = { workspace = true }
+unicode-properties = { workspace = true }
 
 [dev-dependencies]
 deckcraft-anim = { workspace = true }

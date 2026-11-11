@@ -5405,6 +5405,28 @@ fn find_and_replace_across_shapes_and_notes() {
     assert_eq!(s.execute("text.find", &q).unwrap().as_array().unwrap().len(), n - 1);
 }
 
+#[test]
+fn find_and_replace_whole_words_respects_unicode_combining_marks() {
+    let mut s = session();
+    s.execute("insert.textBox", &json!({"rect": [10, 10, 300, 80], "text": "cafe\u{301}ine cafe!"})).unwrap();
+
+    let found = s.execute("text.find", &json!({"text": "cafe", "wholeWords": true})).unwrap();
+    assert_eq!(found.as_array().unwrap().len(), 1);
+    assert_eq!(found[0]["start"].as_u64(), Some(9));
+    assert_eq!(found[0]["end"].as_u64(), Some(13));
+
+    let replaced = s.execute("text.replace", &json!({"text": "cafe", "with": "tea", "wholeWords": true})).unwrap();
+    assert_eq!(replaced["replaced"].as_u64(), Some(1));
+    let text = s.doc().unwrap().doc.slides[0]
+        .shapes
+        .iter()
+        .filter_map(|shape| shape.text.as_ref())
+        .map(|body| body.text())
+        .find(|text| !text.is_empty())
+        .unwrap_or_default();
+    assert_eq!(text, "cafe\u{301}ine tea!");
+}
+
 /// Find and Replace count a line break as one character, so offsets agree with the editor and no
 /// match spans the break.
 #[test]
