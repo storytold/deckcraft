@@ -942,19 +942,21 @@ fn kept_region_layout(raw: &str) -> Option<String> {
     lp.name.starts_with("cx:").then(|| lp.to_xml())
 }
 
-/// Writes an Office 2016 chart from the model, as PowerPoint lays the part out: one `cx:data`
-/// per series (categories and values), then the plot area with each series' layout, the axes
-/// the layout uses, the title and the legend.
 /// Points one `chartEx` part may carry in all, categories repeated for every series: Excel's 255
 /// series x 32,000 points. Series past it are left out with a warning (the first is always written).
 const MAX_CHARTEX_POINTS: usize = 255 * 32_000;
 
 /// How many of `c`'s series fit [`MAX_CHARTEX_POINTS`] (at least one).
 fn chartex_series_within_budget(c: &Chart) -> usize {
-    let cats = c.categories.len().saturating_add(c.category_levels.iter().map(Vec::len).fold(0usize, usize::saturating_add));
+    let level = |v: &Vec<String>| v.len().min(MAX_CACHE_POINTS);
+    let cats = if c.categories.is_empty() {
+        0
+    } else {
+        level(&c.categories).saturating_add(c.category_levels.iter().map(level).fold(0usize, usize::saturating_add))
+    };
     let mut left = MAX_CHARTEX_POINTS;
     for (n, s) in c.series.iter().enumerate() {
-        let cost = cats.saturating_add(s.values.len());
+        let cost = cats.saturating_add(s.values.len().min(MAX_CACHE_POINTS));
         if n > 0 && cost > left {
             log::warn!("pptx: chart part stopped after {n} series; its data passed {MAX_CHARTEX_POINTS} points");
             return n;
@@ -964,6 +966,9 @@ fn chartex_series_within_budget(c: &Chart) -> usize {
     c.series.len()
 }
 
+/// Writes an Office 2016 chart from the model, as PowerPoint lays the part out: one `cx:data`
+/// per series (categories and values), then the plot area with each series' layout, the axes
+/// the layout uses, the title and the legend.
 pub fn build_chartex(c: &Chart) -> Vec<u8> {
     let n_series = chartex_series_within_budget(c);
     let mut w = W::new();
@@ -1208,8 +1213,6 @@ mod tests {
 mod cache_cap_tests {
     use super::*;
 
-    /// A cache longer than the cap is cut, never refused; anything a real chart holds (32,000
-    /// points per series) is far under it. Zero-sized elements, so the test allocates nothing.
     #[test]
     fn a_chartex_part_stops_adding_series_past_excels_point_count() {
         const { assert!(MAX_CHARTEX_POINTS >= 255 * 32_000) };
@@ -1224,6 +1227,8 @@ mod cache_cap_tests {
         assert_eq!(chartex_series_within_budget(&c), 3);
     }
 
+    /// A cache longer than the cap is cut, never refused; anything a real chart holds (32,000
+    /// points per series) is far under it. Zero-sized elements, so the test allocates nothing.
     #[test]
     fn caches_are_cut_at_the_cap_not_refused() {
         const { assert!(MAX_CACHE_POINTS >= 32_000) };
