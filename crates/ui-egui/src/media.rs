@@ -234,7 +234,17 @@ impl MediaHost {
         let feedless = self.videos.get(&id).is_some_and(|v| v.feed.is_none());
         if clip.video && (source_changed || feedless || !self.videos.contains_key(&id)) {
             // One decoder and frame queue per video shape: past the cap a shape plays its sound only.
-            let live = self.videos.iter().filter(|(vid, v)| **vid != id && v.feed.is_some()).count();
+            let mut live = self.videos.iter().filter(|(vid, v)| **vid != id && v.feed.is_some()).count();
+            if live >= MAX_VIDEO_FEEDS {
+                // Videos that have ended no longer need their decoder: free it and keep the last
+                // picture (a replay makes a new feed).
+                for (vid, v) in self.videos.iter_mut() {
+                    if *vid != id && v.feed.is_some() && self.player.status(key(*vid)).is_some_and(|s| s.state == PlayState::Ended) {
+                        v.feed = None;
+                        live -= 1;
+                    }
+                }
+            }
             let feed = if live >= MAX_VIDEO_FEEDS {
                 log::info!("video {id}: more than {MAX_VIDEO_FEEDS} videos playing; showing no picture");
                 None
