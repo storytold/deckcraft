@@ -1,6 +1,7 @@
-use super::presenter::NOTES_STEP;
+use super::presenter::{NOTES_STEP, pick_presenter_slide};
 use super::zoom::{plain, toggle_blank};
 use super::{Color32, Presentation, Show, ShowAction};
+use crate::sections::{self, GridFilter};
 
 /// Read the current viewport's show keys before its widgets can consume them. Both the
 /// audience window and Presenter View use this path, including animation steps and end-of-show.
@@ -27,20 +28,17 @@ pub(super) fn handle_keys(
     keys: Vec<(egui::Key, egui::Modifiers)>,
     presenter: bool,
 ) -> (bool, Vec<(egui::Key, egui::Modifiers)>) {
+    if grid_open(show, presenter) {
+        show.normalize_grid_filter(doc);
+    }
     let mut consumed = vec![];
     let mut keep = true;
     let mut actions = vec![];
     for (k, m) in keys {
-        let handled = if grid_open(show, presenter) && !matches!(k, egui::Key::Escape | egui::Key::Minus) {
-            // See All Slides takes no other keys until a slide is chosen.
-            if k == egui::Key::G && plain(m) {
-                close_grid(show, presenter);
-                true
-            } else {
-                false
-            }
+        let handled = if grid_open(show, presenter) {
+            grid_key(show, doc, k, m, presenter, &mut actions)
         } else {
-            navigation_key(show, doc, k, m, presenter, &mut keep, &mut actions) || tool_key(show, k, m, now, presenter)
+            navigation_key(show, doc, k, m, presenter, &mut keep, &mut actions) || tool_key(show, doc, k, m, now, presenter)
         };
         if !handled {
             continue;
@@ -57,6 +55,28 @@ pub(super) fn handle_keys(
     (keep, consumed)
 }
 
+/// The remote popup has no section tabs: preserve its existing close-only grid keyboard policy.
+pub(super) fn remote_key(show: &mut Show, doc: &Presentation, now: f64, key: egui::Key, modifiers: egui::Modifiers) -> bool {
+    if show.presenter_grid {
+        match key {
+            egui::Key::Escape => {
+                if !show.clear_goto() {
+                    show.presenter_grid = false;
+                }
+            }
+            egui::Key::Minus => show.presenter_grid = false,
+            egui::Key::G if plain(modifiers) => show.presenter_grid = false,
+            _ => {}
+        }
+        true
+    } else if key == egui::Key::G && plain(modifiers) {
+        show.presenter_grid = true;
+        true
+    } else {
+        handle_keys(show, doc, now, vec![(key, modifiers)], true).0
+    }
+}
+
 /// Whether the grid that the presenter key G opens is showing in this viewport.
 fn grid_open(show: &Show, presenter: bool) -> bool {
     if presenter { show.presenter_grid } else { show.grid }
@@ -69,6 +89,56 @@ fn close_grid(show: &mut Show, presenter: bool) {
     } else {
         show.grid = false;
     }
+}
+
+/// Keys while See All Slides is open: scroll the grid, switch its section tabs, or go to the
+/// first slide of the selected tab. Esc and G close it, as before.
+fn grid_key(show: &mut Show, doc: &Presentation, k: egui::Key, m: egui::Modifiers, presenter: bool, actions: &mut Vec<ShowAction>) -> bool {
+    use egui::Key::*;
+    match k {
+        Escape => {
+            if !show.clear_goto() {
+                close_grid(show, presenter);
+            }
+        }
+        Minus => close_grid(show, presenter),
+        G if plain(m) => close_grid(show, presenter),
+        PageDown => show.grid_scroll = (show.grid_scroll + 400.0).max(0.0),
+        PageUp => show.grid_scroll = (show.grid_scroll - 400.0).max(0.0),
+        Home => show.grid_scroll = 0.0,
+        End => show.grid_scroll = f32::MAX,
+        ArrowDown => show.grid_scroll = (show.grid_scroll + 80.0).max(0.0),
+        ArrowUp => show.grid_scroll = (show.grid_scroll - 80.0).max(0.0),
+        ArrowRight => cycle_tab(show, doc, 1),
+        ArrowLeft => cycle_tab(show, doc, -1),
+        Enter => {
+            if let Some(&i) = sections::grid_slides(doc, show.grid_filter).first() {
+                if presenter {
+                    pick_presenter_slide(show);
+                } else {
+                    close_grid(show, presenter);
+                }
+                actions.push(show.state.goto(doc, i));
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Move to the next or previous section tab, wrapping around. With no tabs, the filter is "all".
+fn cycle_tab(show: &mut Show, doc: &Presentation, delta: isize) {
+    let tabs = sections::tabs(doc);
+    if tabs.is_empty() {
+        show.grid_filter = GridFilter::All;
+        show.grid_scroll = 0.0;
+        return;
+    }
+    let current = tabs.iter().position(|(filter, _, _)| *filter == show.grid_filter).unwrap_or(0);
+    let next = (current as isize + delta).rem_euclid(tabs.len() as isize) as usize;
+    show.grid_filter = tabs.get(next).map(|(filter, _, _)| *filter).unwrap_or(GridFilter::All);
+    show.grid_scroll = 0.0;
+    show.grid_tab_reveal = true;
 }
 
 /// Keys that move through the show or end it. False when `k` isn't one of them.
@@ -138,7 +208,7 @@ fn navigation_key(
 
 /// Pen, laser, blanking, zoom, the timer, note size and typed slide numbers. False when `k`
 /// isn't one of them.
-fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, presenter: bool) -> bool {
+fn tool_key(show: &mut Show, doc: &Presentation, k: egui::Key, m: egui::Modifiers, now: f64, presenter: bool) -> bool {
     use egui::Key::*;
     match k {
         L if m.command => show.set_laser(!show.laser),
@@ -146,7 +216,7 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         B | Period => toggle_blank(show, Color32::BLACK),
         W | Comma => toggle_blank(show, Color32::WHITE),
         E => show.strokes.clear(),
-        G if plain(m) => show.open_grid(presenter),
+        G if plain(m) => show.open_grid(presenter, doc),
         Z if plain(m) => show.zoom_key(),
         T if plain(m) => show.timer.toggle(now),
         R if plain(m) => show.timer.reset(now),
