@@ -113,6 +113,7 @@ fn avcc_rejects_a_valid_picture_slice_without_starting_a_picture() {
             poc_lsb: Some(0),
             poc_delta: None,
             wt: None,
+            first_mb: 0,
         },
         false,
     );
@@ -153,6 +154,8 @@ struct Pic {
     /// Explicit weights (luma, cb, cr) as (weight, offset) for refIdx 0 of list 0 and list 1;
     /// log2 denominators are 5 (luma) and 3 (chroma).
     wt: Option<[[(i32, i32); 3]; 2]>,
+    /// first_mb_in_slice (`mbs` then lists the slice's macroblocks from there).
+    first_mb: u32,
 }
 
 impl Pic {
@@ -165,7 +168,7 @@ impl Pic {
 }
 
 fn slice_header(w: &mut BitWriter, p: &Pic, cabac: bool) {
-    w.write_ue(0); // first_mb
+    w.write_ue(p.first_mb);
     w.write_ue(if p.b {
         6
     } else if p.is_p() {
@@ -659,4 +662,64 @@ fn frame_num_gap_is_filled_when_the_sps_allows_gaps() {
     assert!(dec.take_error().is_none());
     assert_eq!(out.len(), 2);
     assert_eq!(dec.stats().frame_num_gaps, 1);
+}
+
+/// An IDR picture followed by `pictures` reference P pictures of P_Skip macroblocks.
+fn skip_stream(pictures: u32) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let mut seed = 11u32;
+    let a: Vec<Option<Vec<u8>>> = (0..NMB).map(|_| Some(random_mb(&mut seed))).collect();
+    let mut head = sps(66, 2, false, PocType::T2);
+    head.extend(pps(false, false));
+    head.extend(slice_nal(&Pic { idr: true, frame_num: 0, ref_idc: 3, mbs: a, ..Default::default() }, false));
+    let ps = (1..=pictures).map(|k| slice_nal(&Pic { frame_num: k % 16, ref_idc: 2, mbs: vec![None; NMB], ..Default::default() }, false)).collect();
+    (head, ps)
+}
+
+#[test]
+fn overlapping_slices_are_not_reconstructed_twice() {
+    let (head, ps) = skip_stream(1);
+    let mut once = Decoder::with_threads(1);
+    let mut out = once.decode(&[head.clone(), ps[0].clone()].concat(), 0).unwrap();
+    out.extend(once.flush());
+    assert!(once.take_error().is_none());
+    assert_eq!(out.len(), 2);
+    // A second slice of the same picture starting at macroblock 1 covers those macroblocks again.
+    let again = slice_nal(&Pic { frame_num: 1, ref_idc: 2, mbs: vec![None; NMB - 1], first_mb: 1, ..Default::default() }, false);
+    let mut twice = Decoder::with_threads(1);
+    let result = twice.decode(&[head, ps[0].clone(), again].concat(), 0);
+    twice.flush();
+    let err = result.err().or_else(|| twice.take_error()).expect("overlapping slice refused");
+    assert!(err.to_string().contains("overlaps"), "{err}");
+}
+
+#[test]
+fn output_queue_counts_against_the_memory_budget() {
+    let (head, ps) = skip_stream(40);
+    let sps_nal = sps(66, 2, false, PocType::T2);
+    let parsed = crate::params::Sps::parse(&deckcraft_bitstream::unescape_rbsp(&sps_nal[5..])).unwrap();
+    let one = (NMB * 256 + 2 * NMB * 64) as u64;
+    let budget = (parsed.max_dpb_frames() + 1 + 3) as u64 * one;
+    // One access unit per call: output drains as it goes, and the stream fits.
+    let mut dec = Decoder::with_threads(1);
+    dec.set_memory_budget(budget);
+    let mut out = dec.decode(&head, 0).unwrap();
+    for (i, p) in ps.iter().enumerate() {
+        out.extend(dec.decode(p, i as i64 + 1).unwrap());
+    }
+    out.extend(dec.flush());
+    assert!(dec.take_error().is_none());
+    assert_eq!(out.len(), 41);
+    // Every access unit in one call: the pictures held for output stop fitting the budget.
+    let mut dec = Decoder::with_threads(1);
+    dec.set_memory_budget(budget);
+    let err = dec.decode(&[head, ps.concat()].concat(), 0).expect_err("output queue is over budget");
+    assert!(err.to_string().contains("memory budget"), "{err}");
+}
+
+/// A held picture is charged at its own size (luma and both 4:2:0 chroma planes), the same
+/// count the budget uses for the incoming SPS's pictures.
+#[test]
+fn a_held_frame_is_charged_at_its_own_size() {
+    let f = crate::picture::Frame::new(0, 0, 2, 3);
+    assert_eq!(f.bytes(), (2 * 3 * 256 + 2 * 2 * 3 * 64) as u64);
 }
