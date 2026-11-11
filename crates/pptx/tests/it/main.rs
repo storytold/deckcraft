@@ -29,3 +29,5 @@ mod table_styles;
 mod tags;
 mod transition_xml;
 mod trigger_steps;
+
+mod picture_backing;
