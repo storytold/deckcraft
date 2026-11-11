@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-09 · **Change:** minor (legacy `.ppt` import landed; its entry lists what it leaves out; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -117,12 +117,18 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** macro decks can't be opened even to view.
 - **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
 
-### No legacy `.ppt`/`.pot`/`.pps` import
-- **Evidence:** PowerPoint for Mac still opens and saves the 97–2003 binary formats
-  (`CFBundleDocumentTypes`); DeckCraft doesn't read them.
-- **Impact:** archives of older decks don't open.
-- **Estimate:** 20–35 h (import only, from the public [MS-PPT] spec). Owner decision whether it's
-  worth it.
+### Legacy `.ppt` import is partial
+- **Evidence:** `crates/ppt` opens PowerPoint 97–2003 files (slides, masters, text and styles, shapes,
+  pictures, notes) but leaves out transitions, animations, hyperlinks and actions, sounds and
+  video; tables arrive as grouped shapes, OLE objects and charts as their preview pictures, WordArt
+  as plain text; PICT pictures don't show, and embossed text is plain. Only checked against decks
+  built in tests and one outside lecture deck: committed tests use files built from records (no
+  PowerPoint-made files, AGENTS.md §1.1), so real decks need a corpus of files we own, kept in a
+  separate repository.
+- **Impact:** old decks open with their text, layout and pictures, but lose their motion, links,
+  sounds and video. Tables, OLE objects, charts and WordArt come in degraded and can't be edited as
+  such. PICT pictures are missing, and embossed text comes in plain.
+- **Estimate:** 10–18 h (transitions and build effects, interactive info, tables, a corpus).
 
 ### No OpenDocument `.odp`
 - **Evidence:** PowerPoint opens and saves `.odp`.
