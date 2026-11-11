@@ -130,6 +130,48 @@ pub fn read_chart_xml(bytes: &[u8]) -> Option<Chart> {
     Some(c)
 }
 
+/// The chart a graphic frame points at. A chart that would cross the presentation's point or
+/// decode limits is not modelled: it is kept as its original part with the relationships it
+/// reaches (`verbatim`), so a save writes it back whole instead of dropping it and its workbook.
+pub(crate) fn frame_chart(imp: &mut super::Imp, part: &super::Part, rid: &str, uri: &str) -> Option<Chart> {
+    let rel = part.rels.get(rid)?;
+    let chartex = uri.ends_with("/chartex");
+    let bytes = imp.pkg.xml_bytes(&rel.target)?;
+    if imp.chart_decode_bytes.saturating_add(bytes.len()) > MAX_CHART_DECODE_BYTES {
+        log::warn!("pptx: chart {} is past the presentation's chart decode limit and is not kept", rel.target);
+        return None;
+    }
+    imp.chart_decode_bytes += bytes.len();
+    let parsed = if imp.chart_points < imp.chart_points_cap {
+        let c = if chartex { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }?;
+        let n = point_count(&c);
+        if imp.chart_points.saturating_add(n) <= imp.chart_points_cap {
+            imp.chart_points = imp.chart_points.saturating_add(n);
+            let mut c = c;
+            c.kept = capture_kept(imp, &rel.target);
+            return Some(c);
+        }
+        Some(c)
+    } else {
+        None
+    };
+    // Past the limit: keep the part itself (charged to the sidecar budget) and show an empty chart.
+    if chartex || imp.kept_sidecar_bytes.saturating_add(bytes.len()) > MAX_KEPT_TOTAL_BYTES {
+        log::warn!("pptx: chart {} is past the presentation's chart limits and is not kept", rel.target);
+        return None;
+    }
+    imp.kept_sidecar_bytes += bytes.len();
+    log::warn!("pptx: chart {} is past the presentation's chart limits; shown empty and written back unchanged", rel.target);
+    let mut c = parsed.unwrap_or_default();
+    c.series.clear();
+    c.categories.clear();
+    c.category_levels.clear();
+    c.raw = Some(String::from_utf8_lossy(bytes).into_owned());
+    c.verbatim = true;
+    c.kept = capture_kept(imp, &rel.target);
+    Some(c)
+}
+
 pub(crate) fn chart_from(root: &El) -> Option<Chart> {
     chart_within(root, MAX_CHART_POINTS)
 }

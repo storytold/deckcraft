@@ -392,6 +392,9 @@ pub struct Chart {
     /// Original chart XML part kept for round-trip of unmodelled options.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
+    /// The chart was too large to model: `raw` and `kept` are written back unchanged on save.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub verbatim: bool,
     /// Package parts the original chart still points at (embedded workbook, styles, drawings).
     /// The PPTX writer clears this before comparing modelled state. Native saves keep it too.
     #[serde(skip_serializing_if = "ChartKept::is_empty")]
@@ -485,6 +488,7 @@ impl Default for Chart {
             bin_count: None,
             bin_size: None,
             raw: None,
+            verbatim: false,
             kept: ChartKept::default(),
         }
     }
@@ -1308,6 +1312,7 @@ impl Chart {
             series: vec![],
             gap_width: 0.0,
             raw: None,
+            verbatim: false,
             subtotals: vec![],
             ..self.clone()
         };
