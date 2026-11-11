@@ -171,7 +171,9 @@ impl Dictionary {
                 ["COMPOUNDWORDMAX", n, ..] => d.compound_max = n.parse().unwrap_or(0),
                 ["REP", n] => {
                     for _ in 0..n.parse::<usize>().unwrap_or(0) {
-                        let r: Vec<&str> = lines.next().unwrap_or("").split_whitespace().collect();
+                        // The count is the file's claim: stop when the records run out.
+                        let Some(line) = lines.next() else { break };
+                        let r: Vec<&str> = line.split_whitespace().collect();
                         if let [_, a, b, ..] = r.as_slice() {
                             d.rep.push((a.replace('_', " "), b.replace('_', " ")));
                         }
@@ -182,7 +184,8 @@ impl Dictionary {
                     let Some(flag) = one_flag(Some(flag), mode) else { continue };
                     let cross = cross.eq_ignore_ascii_case("y");
                     for _ in 0..n.parse::<usize>().unwrap_or(0) {
-                        let r: Vec<&str> = lines.next().unwrap_or("").split_whitespace().collect();
+                        let Some(line) = lines.next() else { break };
+                        let r: Vec<&str> = line.split_whitespace().collect();
                         let [_, _, strip, add, rest @ ..] = r.as_slice() else { continue };
                         let (add, cont) = match add.split_once('/') {
                             Some((a, c)) => (a, parse_flags(c, mode)),
@@ -304,7 +307,12 @@ impl Dictionary {
 
     /// `w` made of dictionary parts allowed in compounds (`COMPOUNDFLAG`, or the begin, middle and
     /// end flags), each at least `COMPOUNDMIN` characters long.
-    fn compounded(&self, w: &[char], index: usize) -> bool {
+    fn compounded(&self, w: &[char], index: usize, failed: &mut HashSet<(usize, usize)>) -> bool {
+        // `w` is always a tail of the checked word, so its length names it: a (tail, part index)
+        // that failed once fails again however the earlier parts were split.
+        if failed.contains(&(w.len(), index)) {
+            return false;
+        }
         if self.compound.is_none() && self.compound_end.is_none() {
             return false;
         }
@@ -322,10 +330,11 @@ impl Dictionary {
             if [self.compound, self.compound_end].into_iter().flatten().any(|f| self.compound_part(rest, f, true)) {
                 return true;
             }
-            if self.compounded(rest, index + 1) {
+            if self.compounded(rest, index + 1, failed) {
                 return true;
             }
         }
+        failed.insert((w.len(), index));
         false
     }
 
@@ -352,7 +361,7 @@ impl Dictionary {
                 return true;
             }
         }
-        self.compounded(&w, 0)
+        self.compounded(&w, 0, &mut HashSet::new())
     }
 
     /// Is `word` spelt correctly? Capitalised and upper-case forms of a lower-case word pass.
@@ -576,6 +585,15 @@ fn cache() -> &'static Cache {
     CACHE.get_or_init(Default::default)
 }
 
+/// Language strings remembered by [`dictionary`]; a string past it is resolved again on each call.
+const MAX_CACHED_LANGS: usize = 256;
+
+/// Parsed dictionaries by their affix file, so aliases of one language share it.
+fn by_files() -> &'static Mutex<HashMap<PathBuf, Arc<Dictionary>>> {
+    static M: OnceLock<Mutex<HashMap<PathBuf, Arc<Dictionary>>>> = OnceLock::new();
+    M.get_or_init(Default::default)
+}
+
 /// The dictionary for `lang` (a BCP-47 tag such as `en-US`), loaded once per process.
 pub fn dictionary(lang: &str) -> Option<Arc<Dictionary>> {
     let cache = cache();
@@ -586,10 +604,23 @@ pub fn dictionary(lang: &str) -> Option<Arc<Dictionary>> {
         return d.clone();
     }
     let loaded = find_in(&search_dirs(), lang).and_then(|(a, d)| {
-        let (a, d) = (std::fs::read(a).ok()?, std::fs::read(d).ok()?);
-        Some(Arc::new(Dictionary::parse(&a, &d)))
+        // Tags that resolve to the same files share one parsed dictionary.
+        if let Ok(m) = by_files().lock()
+            && let Some(dict) = m.get(&a)
+        {
+            return Some(dict.clone());
+        }
+        let (bytes_a, bytes_d) = (std::fs::read(&a).ok()?, std::fs::read(d).ok()?);
+        let dict = Arc::new(Dictionary::parse(&bytes_a, &bytes_d));
+        // A concurrent loader of the same files may have inserted first: share its copy.
+        if let Ok(mut m) = by_files().lock() {
+            return Some(m.entry(a).or_insert(dict).clone());
+        }
+        Some(dict)
     });
-    if let Ok(mut c) = cache.lock() {
+    if let Ok(mut c) = cache.lock()
+        && c.len() < MAX_CACHED_LANGS
+    {
         c.insert(key, loaded.clone());
     }
     loaded
@@ -897,6 +928,14 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(d.suggest("workingslides", 5).contains(&"working slides".to_string()));
     }
 
+    /// An affix header can claim billions of records; parsing stops where the file does.
+    #[test]
+    fn a_header_count_past_the_records_ends_with_them() {
+        let aff = b"SFX S Y 4000000000\nSFX S 0 s .\nREP 4000000000\nREP a b\n";
+        let d = Dictionary::parse(aff, b"1\ncat/S\n".as_slice());
+        assert!(d.check("cats"));
+    }
+
     /// #1175: compound splitting is quadratic in the word's length, so a word longer than
     /// `MAX_CHECK_CHARS` is not checked; shorter ones still are.
     #[test]
@@ -929,6 +968,17 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         for w in ["hausx", "fugs", "tuerhausz"] {
             assert!(!d.check(w), "{w}");
         }
+    }
+
+    #[test]
+    fn overlapping_compound_roots_with_a_failing_ending_stay_cheap() {
+        // Roots a..aaaaaaaa overlap, so many splits of "aaa…ab" reach the same (tail, part) state; unmemoized that is millions of searches.
+        let d = Dictionary::parse(
+            b"COMPOUNDFLAG X\nCOMPOUNDMIN 1\n".as_slice(),
+            b"8\na/X\naa/X\naaa/X\naaaa/X\naaaaa/X\naaaaaa/X\naaaaaaa/X\naaaaaaaa/X\n".as_slice(),
+        );
+        assert!(!d.check(&format!("{}b", "a".repeat(99))));
+        assert!(d.check(&"a".repeat(20)));
     }
 
     #[test]
