@@ -471,6 +471,7 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
     };
     // Keep the parts it points to so a save writes it back whole (#203). A part with relationships
     // of its own, or an external link, can't be carried: the save then falls back to the preview.
+    let xml_before = imp.diagram_xml_bytes;
     let parts = super::rel_refs(e)
         .into_iter()
         .map(|id| {
@@ -491,8 +492,12 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             let media = if rel.kind == "diagramData" { diagram_data(imp, &target) } else { imp.media_for(&target) };
             Some((id, kind, media?))
         })
-        .collect::<Option<Vec<_>>>()
-        .unwrap_or_default();
+        .collect::<Option<Vec<_>>>();
+    // A fallback that drops its parts does not keep their bytes charged.
+    if parts.is_none() {
+        imp.diagram_xml_bytes = xml_before;
+    }
+    let parts = parts.unwrap_or_default();
     s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label, parts };
     s
 }
@@ -596,6 +601,7 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let tree = d.root.child("spTree")?;
     let mut sub = IdCtx { fresh: true, ..Default::default() };
     let before = imp.smartart_shapes;
+    let xml_before = imp.diagram_xml_bytes;
     let children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
     if children.is_empty() {
         return None;
@@ -605,6 +611,7 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     if total > MAX_SMARTART_SHAPES {
         // Over the presentation's remaining budget: a placeholder, and nothing charged, nested SmartArt included.
         imp.smartart_shapes = before;
+        imp.diagram_xml_bytes = xml_before;
         return None;
     }
     imp.smartart_shapes = total;
