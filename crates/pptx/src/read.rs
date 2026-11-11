@@ -1482,3 +1482,47 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
     }
     hf
 }
+
+#[cfg(test)]
+mod rollback_tests {
+    use super::*;
+
+    /// A rolled-back read gives back its budgets and removes only the media and kept-chart entries it added.
+    #[test]
+    fn rollback_restores_budgets_and_removes_only_what_was_added() {
+        let bytes = crate::export(&deckcraft_model::Presentation::default()).expect("export");
+        let pkg = Package::open(&bytes).expect("package");
+        let mut imp = Imp {
+            pkg: &pkg,
+            media: vec![],
+            media_by_part: HashMap::new(),
+            media_keys: vec![],
+            next: 0,
+            slide_by_part: HashMap::new(),
+            custom_show_names: HashMap::new(),
+            table_style_ids: Vec::new(),
+            vml_previews: HashMap::new(),
+            kept_sidecar_bytes: 0,
+            kept_charts: HashMap::new(),
+            kept_chart_keys: vec![],
+            tags_by_part: HashMap::new(),
+            tag_bytes: 0,
+            tags_capped: false,
+            theme_extra_bytes: 0,
+            smartart_shapes: 0,
+            diagram_xml_bytes: 0,
+            has_rels: HashMap::new(),
+        };
+        let kept_before = imp.media_for("ppt/presentation.xml").expect("media");
+        let (m, items) = (imp.mark(), imp.media.len());
+        assert!(imp.media_for("ppt/presProps.xml").is_some());
+        imp.kept_chart_keys.push("ppt/charts/chart1.xml".into());
+        imp.kept_charts.insert("ppt/charts/chart1.xml".into(), Default::default());
+        (imp.diagram_xml_bytes, imp.tag_bytes, imp.tags_capped, imp.kept_sidecar_bytes) = (7, 5, true, 9);
+        imp.rollback(&m);
+        assert_eq!(imp.media.len(), items);
+        assert_eq!(imp.media_by_part.get("ppt/presentation.xml"), Some(&kept_before));
+        assert!(!imp.media_by_part.contains_key("ppt/presprops.xml") && imp.kept_charts.is_empty() && imp.kept_chart_keys.is_empty());
+        assert_eq!((imp.diagram_xml_bytes, imp.tag_bytes, imp.tags_capped, imp.kept_sidecar_bytes), (0, 0, false, 0));
+    }
+}
