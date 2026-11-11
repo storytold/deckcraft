@@ -43,6 +43,11 @@ pub(crate) const MAX_CHART_POINTS: usize = 1_000_000;
 /// it is read as a placeholder frame. Each frame that references a chart decodes its own copy.
 pub(crate) const MAX_PRESENTATION_CHART_POINTS: usize = 4_000_000;
 
+/// Chart part bytes all chart frames of a presentation may decode, counting every attempt: a
+/// chart that is rejected, or has no data slots, would otherwise be decoded again for each frame
+/// that shows it.
+pub(crate) const MAX_CHART_DECODE_BYTES: usize = 256 * 1024 * 1024;
+
 /// Slots a decoded chart holds, counting the chart itself as at least one.
 pub(crate) fn point_count(c: &Chart) -> usize {
     let series = |s: &deckcraft_model::chart::Series| {
@@ -499,6 +504,9 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
     }
 
     let charged_before = imp.kept_sidecar_bytes;
+    if imp.rejected_kept.get(&key) == Some(&charged_before) {
+        return ChartKept::default();
+    }
     let mut kept = ChartKept::default();
     // The chart document itself is rewritten; don't store a second copy of it.
     let mut seen = std::collections::HashMap::from([(key.clone(), true)]);
@@ -523,6 +531,7 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
         log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
         // The dropped parts must not stay charged against later charts.
         imp.kept_sidecar_bytes = charged_before;
+        imp.rejected_kept.insert(key, charged_before);
         return ChartKept::default();
     }
     imp.kept_sidecar_bytes += rel_total;

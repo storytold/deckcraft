@@ -42,6 +42,11 @@ pub struct Imp<'a> {
     pub chart_points: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Chart parts whose sidecar capture was refused, with the retained-byte total it started from:
+    /// the same start gives the same refusal, so the copy is not repeated.
+    pub rejected_kept: HashMap<String, usize>,
+    /// Bytes of chart parts decoded so far, rejected ones included (see `chart::MAX_CHART_DECODE_BYTES`).
+    pub chart_decode_bytes: usize,
     /// Add-in tags parts, parsed once each, by normalized part name.
     pub tags_by_part: HashMap<String, Arc<[(String, String)]>>,
     /// Bytes of tags copied into the model so far (see [`MAX_TAG_BYTES`]).
@@ -446,6 +451,8 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         kept_sidecar_bytes: 0,
         chart_points: 0,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
@@ -488,6 +495,8 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         kept_sidecar_bytes: 0,
         chart_points: 0,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
