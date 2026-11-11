@@ -54,6 +54,9 @@ pub struct RenderOpts<'a> {
     /// Text being edited: replace its prompt with gray markers on empty list paragraphs.
     /// Ignored outside editor rendering.
     pub editing_text: Option<ShapeId>,
+    /// The equation being typed in `editing_text`, and its table cell: drawn on a gray field, or as
+    /// its linear text (see [`deckcraft_text::with_typed_math`]).
+    pub editing_math: Option<(Option<(usize, usize)>, deckcraft_text::TypedMath)>,
     /// Animated GIF pictures and how far into their play they are (seconds); others show frame 1.
     pub gif_times: &'a [(ShapeId, f64)],
     /// Worker threads (0 = this thread; required when effects use filters).
@@ -83,6 +86,7 @@ impl Default for RenderOpts<'_> {
             skip: &[],
             skip_text: None,
             editing_text: None,
+            editing_math: None,
             gif_times: &[],
             threads: 0,
             offset: (0.0, 0.0),

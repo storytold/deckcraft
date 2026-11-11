@@ -1,7 +1,7 @@
 use super::caret::cell_on_slide;
 use super::{
     Affine, Arc, AutoFit, Ctx, DocState, Paragraph, Point, Pos, Presentation, Rect, Result, Selection, Session, Shape, ShapeId, Target, TextBody,
-    TextSel, Value, ed, resolve, xfrm_of,
+    TextSel, Value, body_of, ed, resolve, xfrm_of,
 };
 
 /// Refit a shape after its text changed: remember the shrink-on-overflow scale the layout
@@ -11,7 +11,8 @@ pub fn fit_text_box(s: &mut Session, id: ShapeId) -> Result<()> {
     fit_shrink_scale(s, id)?;
     let st = s.doc()?;
     let Some(sh) = st.shape(id).cloned() else { return Ok(()) };
-    let Some(body) = sh.text.clone() else { return Ok(()) };
+    // The text as the editor draws it (an equation being typed shows as its text).
+    let Some(body) = sh.text.as_ref().map(|b| as_edited(st, &TextSel { shape: id, ..Default::default() }, b).into_owned()) else { return Ok(()) };
     let doc = st.doc.clone();
     let sel = st.selection.clone();
     let Some(ctx) = ctx_for(&doc, &sel) else { return Ok(()) };
@@ -102,6 +103,14 @@ pub(crate) fn ctx_for<'a>(doc: &'a Presentation, sel: &Selection) -> Option<Ctx<
     }
 }
 
+/// `body` (text `t` edits) as the editor draws it: the equation being typed shows as its text.
+fn as_edited<'a>(st: &DocState, t: &TextSel, body: &'a TextBody) -> std::borrow::Cow<'a, TextBody> {
+    match crate::cmd::equation::shown(st, t) {
+        Some(m) => std::borrow::Cow::Owned(deckcraft_text::with_typed_math(body, m)),
+        None => std::borrow::Cow::Borrowed(body),
+    }
+}
+
 /// Lay out the text being edited (for vertical caret movement and hit testing).
 pub fn layout_for(st: &DocState, t: &TextSel) -> Option<deckcraft_text::TextLayout> {
     text_frame(st, t).map(|f| f.0)
@@ -125,10 +134,10 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
         let placed = cell_on_slide(st, t.shape, r, c)?;
         return Some((placed.layout, placed.to_slide));
     }
-    let body = sh.text.as_ref()?;
+    let body = as_edited(st, t, sh.text.as_ref()?);
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let l = lay(sh, body, tr);
+    let l = lay(sh, &body, tr);
     let m = deckcraft_render::text_transform(x.affine(), tr, l.rotation);
     Some((l, m))
 }
@@ -137,8 +146,18 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
 pub fn text_pos_at(st: &DocState, t: &TextSel, p: Point) -> Pos {
     match text_frame(st, t) {
         Some((l, m)) => {
-            let h = l.hit(m.inverse() * p);
-            (h.para, h.ch)
+            let q = m.inverse() * p;
+            let h = l.hit(q);
+            // A click on an equation (not the one shown as text) goes into it, at its end.
+            let shown = crate::cmd::equation::shown(st, t).filter(|m| m.linear).map(|m| (m.para, m.ch));
+            let under = |ahead: bool| {
+                let (_, s, e) = ed::math_at(body_of(st, t)?, (h.para, h.ch), ahead)?;
+                let hit = |li: &deckcraft_text::LineInfo| {
+                    li.para == h.para && (li.top..li.bottom).contains(&q.y) && li.span(s, e).is_some_and(|x| (x.0..=x.1).contains(&q.x))
+                };
+                (shown != Some((h.para, s)) && l.lines.iter().any(hit)).then_some(e)
+            };
+            (h.para, under(true).or_else(|| under(false)).unwrap_or(h.ch))
         }
         None => (0, 0),
     }
@@ -162,7 +181,7 @@ pub fn caret_line(st: &DocState, t: &TextSel) -> Option<(deckcraft_geom::Point, 
     let ctx = ctx_for(&st.doc, &st.selection)?;
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
-    let mut body = sh.text.clone().unwrap_or_default();
+    let mut body = as_edited(st, t, sh.text.as_ref().unwrap_or(&TextBody::default())).into_owned();
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
     }

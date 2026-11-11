@@ -169,6 +169,11 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
         let mut t = t0.clone();
         let body = body_mut(doc, sel, &t).ok_or_else(|| bad("text", "the text being edited is gone"))?;
         let r = f(body, &mut t);
+        // Having left an equation holds only where it was left: an edit that moves the caret on
+        // (typing after the equation) ends it.
+        if t.left_math != Some(t.caret) {
+            t.left_math = None;
+        }
         // The saved shrink-on-overflow scale was for the old text: fit the new text afresh. A
         // body whose file carried no `fontScale` keeps none (100 %) here; `fit_shrink_scale`
         // below fills in the computed scale when the new text overflows (#724).

@@ -1,4 +1,5 @@
 use super::autonum::autonum;
+use super::math;
 use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
 use super::symbol::{covers_symbol, is_symbol_font, map_symbol_bullet, symbol_font_char, symbol_map_char};
@@ -23,6 +24,7 @@ pub(crate) fn shape_para(
         let face = db.face("Inter", "Regular");
         return ParaShaped {
             cells: vec![],
+            atoms: vec![],
             styles: vec![],
             faces: vec![],
             props: ParaProps::default(),
@@ -42,21 +44,37 @@ pub(crate) fn shape_para(
     // The logical paragraph: its text and each character's style.
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
-    for run in &para.runs {
+    // Equations: their boxes, and the characters standing for each.
+    let mut atoms = vec![];
+    for (ri, run) in para.runs.iter().enumerate() {
         let rp = resolve::run(ctx, shape, para, &run.props);
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
         let t: String = match &run.kind {
             RunKind::Text => run.text.clone(),
             RunKind::Break => "\u{b}".into(),
             RunKind::Field { field } => opts.fields.field_in(field, rp.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
-            RunKind::Math { .. } => run.text.clone(),
+            RunKind::Math { .. } => {
+                let n = run.char_len();
+                if let Some(m) = para.equation(ri).filter(|_| n > 0) {
+                    let chars = (char_style.len(), char_style.len() + n);
+                    atoms.push((math::layout(&m, &resolve::font_family(ctx, &rp), rp.bold.unwrap_or(false), st.size), chars));
+                }
+                std::iter::once('\u{FFFC}').chain(std::iter::repeat_n('\u{2060}', n.saturating_sub(1))).take(n).collect()
+            }
         };
         let si = styles.len();
         styles.push(st);
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
         text.push_str(&t);
     }
-    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical);
+    let ranges: Vec<(usize, usize)> = atoms.iter().map(|a| a.1).collect();
+    let mut cells = shape_cells(ctx, &text, &char_style, &ranges, &styles, &mut faces, rtl, vertical);
+    for (ai, (m, (ci, _))) in atoms.iter().enumerate() {
+        if let Some(c) = cells.get_mut(*ci) {
+            c.atom = Some(ai);
+            c.adv = m.w;
+        }
+    }
     let lead = para.runs.first().map(|r| resolve::run(ctx, shape, para, &r.props)).unwrap_or_else(|| resolve::run(ctx, shape, para, &para.end_props));
     let lead_style = make_style(ctx, &lead, scale, opts.prompt_color);
     let lead_size = lead_style.size;
@@ -114,7 +132,7 @@ pub(crate) fn shape_para(
         }
         _ => None,
     };
-    ParaShaped { cells, styles, faces, props, lead_size, lead_face, end_size, end_face, bullet, level: para.level, rtl }
+    ParaShaped { cells, atoms, styles, faces, props, lead_size, lead_face, end_size, end_face, bullet, level: para.level, rtl }
 }
 
 /// A face that draws the bullet `label` when the bullet's own can't (circled numbers ①, arrows
@@ -138,11 +156,14 @@ pub(crate) fn run_effects(ctx: &Ctx, r: &RunProps, scale: f64) -> Option<RunEffe
     (shadow.is_some() || glow.is_some()).then_some(RunEffects { shadow, glow })
 }
 
+/// Shape a logical paragraph into cells. Characters in `atoms` (start, end) stand for an equation:
+/// they take part in bidi and line breaking but are not shaped, and only the first is a caret stop.
 #[allow(clippy::too_many_arguments)]
 fn shape_cells(
     ctx: &Ctx,
     text: &str,
     char_style: &[usize],
+    atoms: &[(usize, usize)],
     styles: &[Style],
     faces: &mut Vec<Arc<FontFace>>,
     rtl: bool,
@@ -159,6 +180,7 @@ fn shape_cells(
     let rtl_lang: Vec<bool> = char_style.iter().map(|&si| style_rtl.get(si).copied().unwrap_or(false)).collect();
     let levels = bidi::levels_lang(text, &chars, rtl, &rtl_lang);
     let scripts = script::resolve(&chars);
+    let atom = |i: usize| atoms.iter().find(|r| r.0 <= i && i < r.1);
     let mut boundary = vec![false; n];
     let mut graphemes: Vec<(usize, usize)> = Vec::new();
     for (b, g) in text.grapheme_indices(true) {
@@ -183,6 +205,14 @@ fn shape_cells(
         let Some(cluster) = chars.get(a..b) else { continue };
         let si = char_style.get(a).copied().unwrap_or(0);
         let Some(st) = styles.get(si) else { continue };
+        if atom(a).is_some() {
+            let fi = face_index(faces, &st.face);
+            for f in char_face.get_mut(a..b).into_iter().flatten() {
+                *f = fi;
+            }
+            prev = None;
+            continue;
+        }
         let (sc, slot) = scripts.get(a).copied().unwrap_or((None, FontSlot::Latin));
         // Spaces, digits and punctuation stay in the face of the text before them when it can
         // draw them, so a phrase isn't cut into items at every space; not in a symbol font
@@ -232,8 +262,12 @@ fn shape_cells(
             glyphs: vec![],
             adv: 0.0,
             head: i,
-            boundary: boundary.get(i).copied().unwrap_or(true),
+            boundary: match atom(i) {
+                Some(r) => r.0 == i,
+                None => boundary.get(i).copied().unwrap_or(true),
+            },
             upright: false,
+            atom: None,
         })
         .collect();
     // In East Asian vertical text, ideographs, kana, Hangul, full-width forms and the like stand
@@ -255,8 +289,12 @@ fn shape_cells(
     let mut items: Vec<(usize, usize)> = Vec::new();
     let mut a = 0;
     while a < n {
+        if let Some(r) = atom(a) {
+            a = r.1;
+            continue;
+        }
         let mut b = a + 1;
-        while b < n && key(b) == key(a) {
+        while b < n && atom(b).is_none() && key(b) == key(a) {
             b += 1;
         }
         items.push((a, b));

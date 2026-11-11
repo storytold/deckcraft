@@ -356,6 +356,11 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
             desc = desc.max(d);
             size = size.max(sz);
         }
+        // A tall equation (fractions, big operators) makes room for itself.
+        if let (Some((m, _)), Some(st)) = (c.atom.and_then(|a| p.atoms.get(a)), p.styles.get(c.style)) {
+            asc = asc.max(m.asc + st.size * 0.05);
+            desc = desc.max(m.desc + st.size * 0.05);
+        }
     }
     if size == 0.0 {
         // PowerPoint sizes an empty line by the mark that ends it: the `a:rPr` of the
@@ -704,6 +709,15 @@ fn emit_line_runs(out: &mut TextLayout, p: &ParaShaped, line: &LineInfo, place: 
         let Some(st) = p.styles.get(cell.style) else { continue };
         let Some(&(cx, cx1)) = line.edges.get(k) else { continue };
         let base_y = line.baseline - st.baseline * st.size;
+        if let Some((m, chars)) = cell.atom.and_then(|a| p.atoms.get(a)) {
+            // An equation: its box, never mirrored, at the place its cell was given. Its
+            // characters draw nothing else.
+            if let Some(r) = cur.take() {
+                out.runs.push(r);
+            }
+            cur_key = (cell.style, cell.face, false, cell.upright);
+            emit_math(out, m, st, (cx, base_y), line.para, *chars);
+        }
         let size = if st.baseline != 0.0 { st.size * SUB_SUPER } else { st.size };
         let small = st.caps == Caps::Small && cell.ch.is_lowercase();
         let size = if small { size * 0.8 } else { size };
@@ -811,6 +825,51 @@ fn push_cell_decos(out: &mut TextLayout, cell: &Cell, st: &Style, line: &LineInf
                 line: DecoLine::Solid,
             });
         }
+    }
+}
+
+/// Draw equation `m` with its origin at `at`: a glyph run per face and size, and its rules. Each
+/// glyph's cell is the equation's first character and the character the glyph draws.
+fn emit_math(out: &mut TextLayout, m: &super::math::MathBox, st: &Style, at: (f64, f64), para: usize, chars: (usize, usize)) {
+    let first = out.runs.len();
+    for g in &m.glyphs {
+        let same = out.runs.len() > first
+            && out
+                .runs
+                .last()
+                .is_some_and(|r| Arc::ptr_eq(&r.face, &g.face) && r.size == g.size && (r.fake_bold, r.fake_italic) == (g.fake_bold, g.fake_italic));
+        if !same {
+            out.runs.push(GlyphRun {
+                face: g.face.clone(),
+                size: g.size,
+                color: st.color,
+                glyphs: vec![],
+                cells: vec![],
+                fake_bold: g.fake_bold,
+                fake_italic: g.fake_italic,
+                outline: st.outline,
+                para,
+                chars,
+                link: st.link,
+                alpha: st.alpha,
+                gradient: st.gradient.clone(),
+                effects: st.effects,
+                upright: false,
+            });
+        }
+        if let Some(r) = out.runs.last_mut() {
+            r.glyphs.push((g.gid, at.0 + g.x, at.1 + g.y));
+            r.cells.push((chars.0, g.ch));
+        }
+    }
+    for &(x0, y0, x1, y1) in &m.rules {
+        out.decos.push(Deco {
+            rect: Rect::new(at.0 + x0, at.1 + y0, at.0 + x1, at.1 + y1),
+            color: st.color,
+            behind: false,
+            para,
+            line: DecoLine::Solid,
+        });
     }
 }
 

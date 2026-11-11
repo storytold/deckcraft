@@ -1,6 +1,6 @@
 use super::run::{RunEffects, Underline};
 use super::shape::run_effects;
-use super::{Arc, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, ParaProps, Rect, Rgba, RunProps, ScriptTag, Spacing, Strike, resolve};
+use super::{Arc, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, ParaProps, Rect, Rgba, RunProps, ScriptTag, Spacing, Strike, math, resolve};
 
 /// Values for fields (`slidenum`, `datetime…`, `footer`). `None` keeps the field's saved text.
 pub trait Fields {
@@ -83,6 +83,10 @@ pub(crate) struct Cell {
     pub(crate) boundary: bool,
     /// Drawn upright in East Asian vertical text.
     pub(crate) upright: bool,
+    /// The equation (index into `ParaShaped::atoms`) this cell draws. An equation is one object
+    /// character (U+FFFC) followed by a word joiner for each further character of its text, so
+    /// caret offsets match the run's text.
+    pub(crate) atom: Option<usize>,
 }
 
 impl Cell {
@@ -94,6 +98,8 @@ impl Cell {
 
 pub(crate) struct ParaShaped {
     pub(crate) cells: Vec<Cell>,
+    /// Laid-out equations referenced by `Cell::atom`, and the characters each stands for.
+    pub(crate) atoms: Vec<(math::MathBox, (usize, usize))>,
     pub(crate) styles: Vec<Style>,
     pub(crate) faces: Vec<Arc<FontFace>>,
     pub(crate) props: ParaProps,
@@ -110,7 +116,7 @@ pub(crate) struct ParaShaped {
     pub(crate) rtl: bool,
 }
 
-fn style_name(bold: bool, italic: bool) -> &'static str {
+pub(crate) fn style_name(bold: bool, italic: bool) -> &'static str {
     match (bold, italic) {
         (true, true) => "Bold Italic",
         (true, false) => "Bold",

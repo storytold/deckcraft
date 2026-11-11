@@ -277,6 +277,12 @@ pub(super) fn compose(s: &mut Session, p: &Value) -> Result<Value> {
             let (before, before_selection) = (st.doc.clone(), st.selection.clone());
             let (start, props) = edit_text(s, |body, t| {
                 let (a, b) = t.ordered();
+                if let Some((ri, ..)) = crate::cmd::equation::at(body, t) {
+                    let c = ed::math_replace(body, a.0, ri, a.1, b.1, &text);
+                    t.anchor = c;
+                    t.caret = c;
+                    return (a, None);
+                }
                 let at = ed::delete(body, a, b);
                 let props = if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) };
                 let c = ed::insert(body, at, &text, props.clone());
@@ -298,8 +304,13 @@ pub(super) fn compose(s: &mut Session, p: &Value) -> Result<Value> {
         Some(c) => {
             let (start, len, props) = (c.start, c.len, c.props.clone());
             edit_text(s, |body, t| {
-                ed::delete(body, start, (start.0, start.1 + len));
-                let e = ed::insert(body, start, &text, props);
+                let e = match ed::math_at(body, start, true).filter(|m| start.1 + len <= m.2) {
+                    Some((ri, ..)) => ed::math_replace(body, start.0, ri, start.1, start.1 + len, &text),
+                    None => {
+                        ed::delete(body, start, (start.0, start.1 + len));
+                        ed::insert(body, start, &text, props)
+                    }
+                };
                 t.anchor = e;
                 t.caret = e;
             })?;

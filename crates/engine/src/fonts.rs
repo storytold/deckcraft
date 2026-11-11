@@ -155,7 +155,7 @@ fn replace_body(body: &mut TextBody, fix: &mut dyn FnMut(&mut Option<String>)) {
         fix(&mut para.props.bullet_font);
         replace_run(&mut para.end_props, fix);
         for run in &mut para.runs {
-            replace_run(&mut run.props, fix);
+            run.restyle(|p| replace_run(p, fix));
         }
     }
 }

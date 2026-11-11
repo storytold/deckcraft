@@ -85,6 +85,10 @@ pub struct TextSel {
     /// start of the next line. Ignored once the caret moves anywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_end: Option<(usize, usize)>,
+    /// Where the caret left the equation that ends there (Right Arrow): text typed there goes
+    /// after the equation. Ignored once the caret is anywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_math: Option<(usize, usize)>,
 }
 
 impl TextSel {
@@ -782,15 +786,38 @@ impl Session {
         }
         let owner = |sel: &Selection| sel.text.as_ref().map(|t| (sel.slide, sel.target, t.shape, t.cell, t.notes));
         let before = owner(&st.selection);
+        let was_linear = linear_equation(st);
         f(&doc, &mut st.selection);
         clamp_selection(st);
         st.revision += 1;
+        let now_linear = linear_equation(st);
         // A composition belongs to the text body it began in: leaving that body settles it.
         if st.composition.is_some() && owner(&st.selection) != before {
             self.settle_composition();
         }
+        // An equation that turns from its linear text to its drawing, or back, takes another
+        // size: an auto-sizing box fits what it shows now. Only on the page being edited, where
+        // the shape's id finds it (ids repeat from slide to slide).
+        if was_linear != now_linear {
+            let here = {
+                let sel = &self.doc()?.selection;
+                (sel.slide, sel.target)
+            };
+            for (slide, target, id) in [was_linear, now_linear].into_iter().flatten() {
+                if (slide, target) == here {
+                    cmd::text::fit_text_box(self, id)?;
+                }
+            }
+        }
         Ok(())
     }
+}
+
+/// The shape (and its page) whose equation shows as its linear text (see
+/// [`cmd::equation::shown`]), outside table cells, whose rows grow with their text.
+fn linear_equation(st: &DocState) -> Option<(usize, Target, ShapeId)> {
+    let t = st.selection.text.as_ref().filter(|t| t.cell.is_none())?;
+    cmd::equation::shown(st, t).filter(|m| m.linear).map(|_| (st.selection.slide, st.selection.target, t.shape))
 }
 
 /// Keep the selection pointing at things that exist.

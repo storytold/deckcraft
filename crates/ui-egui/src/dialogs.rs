@@ -57,7 +57,6 @@ fn title(id: &str) -> &'static str {
         "symbol" => "Symbol",
         "photoAlbum" => "Photo Album",
         "replaceFonts" => "Replace Font",
-        "equation" => "Equation",
         "dateTime" => "Date and Time",
         "spelling" => "Spelling",
         "pasteSpecial" => "Paste Special",
@@ -207,7 +206,6 @@ mod alt_text;
 mod body;
 mod columns;
 mod date_time;
-mod equation;
 mod export;
 mod find;
 mod font;

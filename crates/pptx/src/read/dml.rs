@@ -674,10 +674,22 @@ fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
 }
 
 /// Appends an Office Math (a14:m) run: its plain text and its OMML.
-fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
+/// The properties of an Office Math (a14:m) run: the first math run's `a:rPr`, where PowerPoint
+/// keeps an equation's font, size and colour (its italics are the equation's own).
+fn math_props(imp: &mut Imp, part: &Part, e: &El) -> RunProps {
+    let mut rprs = vec![];
+    e.find_all("rPr", &mut rprs);
+    let mut props = rprs.into_iter().find(|r| r.prefix() == "a").map(|r| rpr(imp, part, r)).unwrap_or_default();
+    props.italic = None;
+    props
+}
+
+/// An Office Math run: its OMML kept as it is, with its linear form as the text.
+fn push_math_run(para: &mut Paragraph, part: &Part, e: &El, props: RunProps) {
     if para.runs.len() < MAX_PARAGRAPH_RUNS {
-        // The text of the outermost `t` elements: a `t` nested in another is already part of
-        // the outer one's text, and taking it again would copy it once per nesting level.
+        // The text of the outermost `t` elements, for OMML the equation parser can't read: a `t`
+        // nested in another is already part of the outer one's text, and taking it again would
+        // copy it once per nesting level.
         fn outer_t(e: &El, depth: usize, text: &mut String) {
             if depth > crate::xml::MAX_DEPTH {
                 return;
@@ -693,7 +705,7 @@ fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
         let mut text = String::new();
         outer_t(e, 0, &mut text);
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
-        para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
+        para.runs.push(Run::math(omml, props, &text));
     }
 }
 
@@ -723,7 +735,10 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
                 let text = e.child("t").map(|t| t.text()).unwrap_or_default();
                 para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
             }
-            "m" => push_math_run(&mut para, part, e),
+            "m" => {
+                let props = math_props(imp, part, e);
+                push_math_run(&mut para, part, e, props);
+            }
             "endParaRPr" => para.end_props = rpr(imp, part, e),
             _ => {}
         }
@@ -743,7 +758,7 @@ mod tests {
         let d = parse(x.as_bytes()).unwrap();
         let part = Part { name: "ppt/slides/slide1.xml".into(), rels: Default::default(), ns: vec![], inner_ns: vec![] };
         let mut para = Paragraph::default();
-        push_math_run(&mut para, &part, &d.root);
+        push_math_run(&mut para, &part, &d.root, RunProps::default());
         assert_eq!(para.runs[0].text, "word");
     }
 

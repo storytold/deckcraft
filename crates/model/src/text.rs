@@ -577,7 +577,9 @@ pub enum RunKind {
     Field {
         field: String,
     },
-    /// An inline equation (OMML kept as XML; `text` is its linear form).
+    /// An inline equation. `text` is its linear form, which is what is typed and edited; `omml` is
+    /// the imported OMML, written back unchanged until the equation is changed here (then it is
+    /// empty and the equation is built from `text`).
     Math {
         omml: String,
     },
@@ -604,12 +606,39 @@ fn is_text_kind(k: &RunKind) -> bool {
     *k == RunKind::Text
 }
 
+/// An equation's linear form with nothing in it but empty slots (`□`): what the parser makes of
+/// OMML it can't read.
+fn unreadable(linear: &str) -> bool {
+    linear.chars().all(|c| c == '\u{25A1}' || c.is_whitespace())
+}
+
 impl Run {
     pub fn new(text: impl Into<String>) -> Self {
         Run { text: text.into(), props: RunProps::default(), kind: RunKind::Text }
     }
     pub fn with(text: impl Into<String>, props: RunProps) -> Self {
         Run { text: text.into(), props, kind: RunKind::Text }
+    }
+    /// An imported equation: its OMML, with its linear form (on one line) as the text. OMML that
+    /// holds no equation the parser can read (another namespace, nesting past its limits) keeps
+    /// `fallback`, the plain text of its `m:t` elements, and is drawn from that.
+    pub fn math(omml: String, props: RunProps, fallback: &str) -> Self {
+        let linear = equashion_math::to_linear(&equashion_math::from_omml(&omml));
+        let linear = if unreadable(&linear) && !fallback.trim().is_empty() { fallback.to_string() } else { linear };
+        Run { text: linear.chars().map(|c| if c.is_control() { ' ' } else { c }).collect(), props, kind: RunKind::Math { omml } }
+    }
+    /// Change this run's formatting with `f`. An imported equation whose formatting changes drops
+    /// its OMML, so it is saved from its text in the new formatting (the kept OMML carries the old
+    /// font, size and colour in its math runs). Every edit of an equation's run properties goes
+    /// through here.
+    pub fn restyle(&mut self, f: impl FnOnce(&mut RunProps)) {
+        let before = matches!(&self.kind, RunKind::Math { omml } if !omml.is_empty()).then(|| self.props.clone());
+        f(&mut self.props);
+        if let (Some(before), RunKind::Math { omml }) = (before, &mut self.kind)
+            && before != self.props
+        {
+            omml.clear();
+        }
     }
     /// The characters this run contributes to the paragraph (a break is one `\u{b}`).
     pub fn content(&self) -> &str {
@@ -665,6 +694,24 @@ impl Paragraph {
     }
     pub fn text(&self) -> String {
         self.runs.iter().map(Run::content).collect()
+    }
+    /// The tree of equation run `i`: its imported OMML, else its linear text, where one typed
+    /// alone in its paragraph is a display equation. `None` for other runs.
+    pub fn equation(&self, i: usize) -> Option<equashion_math::Math> {
+        match &self.runs.get(i)?.kind {
+            RunKind::Math { omml } if omml.is_empty() => {
+                let mut m = equashion_math::from_linear(&self.runs.get(i)?.text);
+                m.para = self.runs.iter().filter(|r| !r.text.is_empty()).count() == 1;
+                Some(m)
+            }
+            RunKind::Math { omml } => {
+                let m = equashion_math::from_omml(omml);
+                // OMML the parser can't read is drawn from the text it was imported with.
+                let text = &self.runs.get(i)?.text;
+                Some(if !unreadable(text) && unreadable(&equashion_math::to_linear(&m)) { equashion_math::from_linear(text) } else { m })
+            }
+            _ => None,
+        }
     }
     pub fn char_len(&self) -> usize {
         self.runs.iter().map(Run::char_len).sum()
