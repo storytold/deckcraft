@@ -609,6 +609,13 @@ impl CollabDoc {
             }
             ServerMsg::Applied(applied) => self.apply_broadcast(session, &applied),
             ServerMsg::Snapshot(snapshot) => {
+                if self.client.take_refused_snapshot() {
+                    // The state machine refused this answer: it does not start at the version the
+                    // host rewound its replica to, so installing its base or replaying its tail
+                    // would leave the steps in between missing while the host claimed the head.
+                    // It stays behind and the tail is asked for again from the version it holds.
+                    return effect;
+                }
                 if snapshot.base.as_ref().is_some_and(BaseSnapshot::is_chained) {
                     // The base is on its way in chunks: the tail above it is replayed by
                     // `install_base` together with the base, so nothing may be applied to the old
@@ -4309,6 +4316,61 @@ mod tests {
         assert_eq!(x_of(&s, shapes[0]), 300.0, "and this replica's own step after it");
         assert_eq!(local.version(), 2);
         assert!(!local.is_previewing());
+    }
+
+    #[test]
+    fn a_snapshot_that_does_not_cover_a_rewind_is_not_installed_by_the_host() {
+        use deckcraft_collab_proto::{SnapshotMode, SnapshotMsg, SnapshotRef};
+
+        let (mut s, _doc, _slide, shapes) = deck();
+        let start = x_of(&s, shapes[0]);
+        let mut local = previewing(&mut s);
+        // A step that misses one asks for the tail, and the answer is on the wire from here.
+        local.on_msg(&mut s, bare_applied("remote-2", 2));
+        assert!(matches!(local.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })), "one resync is asked for");
+
+        // An edit of this replica is shown while that request waits: a preview may start because
+        // none of its own operations is on the wire.
+        local.submit(&mut s, "shape.move", &json!({"ids": [shapes[0].0], "x": 300.0, "y": 120.0}), "op-1").expect("submit");
+        assert!(local.is_previewing());
+
+        // A foreign step lands at 4 while the preview is outstanding: the preview is put back and
+        // the replica is rewound to the version it holds — with the resync already in flight, so
+        // the answer that arrives will have been asked from above it.
+        local.on_msg(&mut s, bare_applied("remote-4", 4));
+        assert!(!local.is_previewing());
+        assert_eq!(x_of(&s, shapes[0]), start, "the unconfirmed edit is out of the model again");
+        assert_eq!(local.version(), 0);
+
+        // The room cannot serve that tail (it was compacted) and cannot build a base either, so it
+        // answers with an empty tail at a head above the rewind. There is nothing in that answer
+        // the replica could hold, and applying it would make the host claim version 4 while steps
+        // 1..3 are missing — the tail that follows would then be skipped as already seen.
+        local.on_msg(
+            &mut s,
+            ServerMsg::Snapshot(SnapshotMsg {
+                version: 4,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@4".into() },
+                tail: vec![],
+                base: None,
+            }),
+        );
+        assert_eq!(local.version(), 0, "a refused snapshot moved the host's version");
+        assert!(
+            matches!(local.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })),
+            "the tail is asked for again from the version the replica holds"
+        );
+    }
+
+    /// A step that carries no command: tests that care about the order of versions, not documents.
+    fn bare_applied(op_id: &str, version: u64) -> ServerMsg {
+        ServerMsg::Applied(Applied {
+            op_id: op_id.into(),
+            version,
+            actor_id: "bob".into(),
+            command: None,
+            delta: deckcraft_collab_proto::Delta::default(),
+        })
     }
 
     #[test]

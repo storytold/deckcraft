@@ -665,27 +665,30 @@ fn close_session(id: &str, shared: &Arc<Shared>, request: &Request) -> std::io::
         return Ok(Response::json(401, json!({"error": "service token required"})));
     }
     let mut hubs = shared.hubs.lock().map_err(|_| std::io::Error::other("hub lock"))?;
-    match hubs.remove(id) {
-        Some(hub) => {
-            // The sockets still hold this `Arc`: mark the room closed first so their next message
-            // is refused and their pump exits, before a re-created session can load the same
-            // store directory and append to one journal from two in-memory rooms.
-            if let Ok(mut hub) = hub.lock() {
-                hub.close();
-                // The live document is captured before the room leaves the process. The journal
-                // alone is not a save: without a base at the head, a store whose journal is
-                // damaged afterwards can only be reopened from the cabinet's older bytes, and
-                // every accepted step since the last base is gone.
-                if let Some(store) = &shared.store
-                    && let Err(e) = store.snapshot(id, hub.session_mut())
-                {
-                    log::warn!("close {id}: the room could not be snapshotted: {e}");
-                }
-            }
-            Ok(Response::json(200, json!({"closed": true})))
-        }
-        None => Ok(Response::json(404, json!({"error": "no such session"}))),
+    let Some(hub) = hubs.get(id).cloned() else {
+        return Ok(Response::json(404, json!({"error": "no such session"})));
+    };
+    // The live document is captured while the room is still in the map and still serving. The
+    // journal alone is not a save: without a base at the head, a store whose journal is damaged
+    // afterwards can only be reopened from the cabinet's older bytes, and every accepted step
+    // since the last base is gone. A snapshot that fails is therefore a failed close: the room
+    // stays where it is — still answering its sockets and still the one a `commit` binds to — so
+    // the operator can retry instead of losing the only live copy of the document.
+    let Ok(mut hub) = hub.lock() else {
+        return Ok(Response::json(500, json!({"error": "the room could not be closed safely", "closed": false})));
+    };
+    if let Some(store) = &shared.store
+        && let Err(e) = store.snapshot(id, hub.session_mut())
+    {
+        return Ok(Response::json(500, json!({"error": format!("the room could not be snapshotted: {e}"), "closed": false})));
     }
+    // The sockets still hold this `Arc`: mark the room closed first so their next message
+    // is refused and their pump exits, before a re-created session can load the same
+    // store directory and append to one journal from two in-memory rooms.
+    hub.close();
+    drop(hub);
+    hubs.remove(id);
+    Ok(Response::json(200, json!({"closed": true})))
 }
 
 /// `POST /v1/sessions/{id}/commit`: build the `.pptx` from the authoritative document and give
@@ -1219,6 +1222,58 @@ mod tests {
         );
         assert!(matches!(build_and_publish_on(&hub, &shared, "file-h", None), Err(CommitFailure::NotFound)));
         assert!(build_and_publish_on(&fresh, &shared, "file-h", None).is_ok());
+    }
+
+    #[test]
+    fn a_close_whose_snapshot_fails_keeps_the_room_live() {
+        use deckcraft_collab::DocSession;
+        use store::Store;
+
+        let root = std::env::temp_dir().join(format!("deckcraft-close-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let config = Config::for_tests(b"secret", "service-token");
+        let store = Store::new(&root, 200).expect("store");
+        // The room's directory is a regular file: `create_dir_all` in `snapshot` fails, so the
+        // close cannot produce the recovery copy it promises.
+        let room = root.join(deckcraft_collab::sha256_hex(b"file-c"));
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(&room, b"not a directory").expect("room path");
+        let shared = Arc::new(Shared {
+            config,
+            hubs: Mutex::new(HashMap::new()),
+            names: Mutex::new(HashMap::new()),
+            metrics: Metrics::default(),
+            store: Some(store),
+            cabinet: None,
+        });
+        let engine = deckcraft_engine::Session::with_new();
+        let session =
+            DocSession::from_document("file-c", engine.doc().expect("document").doc.as_ref().clone(), SessionConfig::default()).expect("session");
+        let hub = Arc::new(Mutex::new(Hub::new(session)));
+        shared.hubs.lock().expect("hubs").insert("file-c".into(), hub.clone());
+        let request = Request {
+            method: "DELETE".into(),
+            path: "/v1/sessions/file-c".into(),
+            headers: vec![("authorization".into(), "Bearer service-token".into())],
+            body: Vec::new(),
+        };
+
+        let response = close_session("file-c", &shared, &request).expect("a response");
+        assert_eq!(response.status, 500, "a close without its recovery copy is not a close: {}", String::from_utf8_lossy(&response.body));
+        assert!(shared.hubs.lock().expect("hubs").contains_key("file-c"), "the hub left the map although its snapshot failed");
+        assert!(!hub.lock().expect("hub").is_closed(), "the live room was closed without a snapshot");
+        assert!(build_and_publish_on(&hub, &shared, "file-c", None).is_ok(), "the room still serves a commit");
+
+        // Once the store can be written again the same close succeeds and the base is on disk.
+        std::fs::remove_file(&room).expect("unsabotage");
+        let response = close_session("file-c", &shared, &request).expect("a response");
+        assert_eq!(response.status, 200);
+        assert!(!shared.hubs.lock().expect("hubs").contains_key("file-c"));
+        assert!(hub.lock().expect("hub").is_closed());
+        let base =
+            std::fs::read_dir(&room).expect("room directory").filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().starts_with("base-"));
+        assert!(base, "the close left a base to reopen from");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

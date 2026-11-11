@@ -144,11 +144,20 @@ impl Store {
             f.sync_all().map_err(|e| format!("base: {e}"))?;
         }
         fs::rename(&tmp, &base).map_err(|e| format!("base: {e}"))?;
+        // The temporary file's own `sync_all` makes its bytes durable, not the directory entry a
+        // rename creates. Without this sync a crash can lose the new base while the journal, below,
+        // has already dropped every step it holds — a room that reopens with acknowledged edits
+        // missing. A failure here stops the snapshot before the trim: an unsynced rename is not a
+        // recovery point.
+        sync_dir(&dir)?;
         let mut meta = serde_json::json!({"fileId": file_id, "version": state.version});
         if let Some(etag) = session.base_file_etag() {
             meta["fileEtag"] = serde_json::Value::String(etag.to_string());
         }
         write_atomic(&dir.join(META), meta.to_string().as_bytes())?;
+        // `meta.json` is replaced by a rename as well; its loss is survivable (the base's name
+        // carries the version), but it must be on disk before the trim drops what it summarises.
+        sync_dir(&dir)?;
         self.trim_journal(&dir, state.version);
         self.prune_bases(&dir, state.version);
         Ok(())
@@ -156,23 +165,29 @@ impl Store {
 
     /// The base to reopen from and the version it was taken at: the newest `base-<version>` file,
     /// else the legacy `base.deckcraft` with the version from its metadata.
+    ///
+    /// A directory that cannot be read is an error, never "no versioned base": a storage fault
+    /// reported as an empty room would let `create_session` replace the stored document with
+    /// `initialBytes` or a blank default without anyone noticing.
     fn latest_base(&self, dir: &Path, meta: Option<&serde_json::Value>) -> Result<Option<(PathBuf, u64)>, String> {
         let mut newest: Option<(PathBuf, u64)> = None;
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let Some(name) = name.to_str() else { continue };
-                let Some(rest) = name.strip_prefix(BASE_PREFIX) else { continue };
-                let Some(digits) = rest.strip_suffix(BASE_SUFFIX) else { continue };
-                let Ok(version) = digits.parse::<u64>() else { continue };
-                if newest.as_ref().is_none_or(|(_, found)| version > *found) {
-                    newest = Some((entry.path(), version));
-                }
+        let entries = fs::read_dir(dir).map_err(|e| format!("store: {}: {e}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("store: {}: {e}", dir.display()))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(rest) = name.strip_prefix(BASE_PREFIX) else { continue };
+            let Some(digits) = rest.strip_suffix(BASE_SUFFIX) else { continue };
+            let Ok(version) = digits.parse::<u64>() else { continue };
+            if newest.as_ref().is_none_or(|(_, found)| version > *found) {
+                newest = Some((entry.path(), version));
             }
         }
         if newest.is_some() {
             return Ok(newest);
         }
+        // Only now, with the directory read in full and no versioned base in it, does the
+        // pre-`base-<version>` name mean anything.
         let legacy = dir.join(LEGACY_BASE);
         if !legacy.exists() {
             return Ok(None);
@@ -289,6 +304,23 @@ impl Store {
         let path = self.media_path(sha)?;
         fs::read(path).ok()
     }
+}
+
+/// Make a rename inside `dir` durable.
+///
+/// On POSIX a file's own `fsync` does not persist the directory entry the rename created: after a
+/// power loss the new name can be gone while the file it replaced is gone too. Syncing the
+/// directory is what makes "the base is on disk under its version's name" true before the journal
+/// is trimmed. Platforms whose directory handles cannot be synced (Windows) fall back to the
+/// rename's own guarantee.
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> Result<(), String> {
+    fs::File::open(dir).and_then(|f| f.sync_all()).map_err(|e| format!("store: {}: {e}", dir.display()))
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// Replace `path` with `bytes` in one step: a temporary file flushed to disk, then a rename. A
@@ -604,6 +636,73 @@ mod tests {
         let restored = store.load("file-9").expect("load").expect("stored");
         assert_eq!(restored.version(), 1);
         assert_eq!(restored.document().expect("doc").slides[0].shapes[0].xfrm.expect("xfrm").x, 300.0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_room_directory_that_cannot_be_read_is_an_error_not_a_new_room() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-unreadable-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        // The room's directory exists as something that is not a directory: `read_dir` fails with
+        // `ENOTDIR`, deterministically and for every user, root included.
+        let room = store.room_dir("file-u");
+        fs::write(&room, b"not a directory").expect("room path");
+        let err = match store.load("file-u") {
+            Err(err) => err,
+            Ok(_) => panic!("a directory that cannot be read is not an empty room"),
+        };
+        assert!(err.contains("store:"), "{err}");
+        // The old behaviour — `Ok(None)` — let `create_session` open a blank room over the store.
+        let _ = fs::remove_file(&room);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_base_that_cannot_be_made_durable_stops_the_snapshot_before_the_journal_is_trimmed() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-sync-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-s", deck(), SessionConfig::default()).expect("session");
+        for n in 1..=2u64 {
+            let op = OpEnvelope {
+                op_id: format!("slide-{n}"),
+                doc: "file-s".into(),
+                base_version: n - 1,
+                kind: deckcraft_collab_proto::OpKind::Structural,
+                target: Default::default(),
+                payload: deckcraft_collab_proto::Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+                history: None,
+                preview: None,
+            };
+            let applied = session.apply("alice", &op).expect("apply");
+            store.record("file-s", &mut session, &applied).expect("record");
+        }
+        let room = store.room_dir("file-s");
+        let journal_bytes = fs::read(room.join(JOURNAL)).expect("journal").len();
+        assert!(journal_bytes > 0);
+        // A directory that can be written and entered but not opened: every write of the snapshot
+        // succeeds, and only the sync of the directory itself fails. This is the crash window the
+        // sync exists to close, so the base must not become a recovery point and the journal must
+        // keep the steps it holds.
+        fs::set_permissions(&room, fs::Permissions::from_mode(0o300)).expect("permissions");
+        if fs::File::open(&room).is_ok() {
+            // Root ignores the mode; nothing to observe in this environment.
+            fs::set_permissions(&room, fs::Permissions::from_mode(0o700)).expect("permissions");
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        }
+        let err = store.snapshot("file-s", &mut session).expect_err("an unsynced base is not a snapshot");
+        assert!(err.contains("store:"), "{err}");
+        assert_eq!(fs::read(room.join(JOURNAL)).expect("journal").len(), journal_bytes, "the journal is trimmed only after the base is durable");
+        fs::set_permissions(&room, fs::Permissions::from_mode(0o700)).expect("permissions");
+        // Once the directory can be synced again the same snapshot goes through.
+        store.snapshot("file-s", &mut session).expect("snapshot");
+        let restored = store.load("file-s").expect("load").expect("stored");
+        assert_eq!(restored.version(), 2);
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -968,6 +968,37 @@ fn distribute_wide_middle_stays_in_selection_bounds() {
 }
 
 #[test]
+fn a_role_change_during_a_move_puts_the_local_box_back() {
+    let mut s = session();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 300, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let undo_steps = s.doc().unwrap().history.undo.len();
+
+    // An editor drags the first shape: the boxes follow the pointer through `edit`, below the
+    // command gate, so the model holds a position the room has not accepted yet.
+    s.pointer(ev(PointerKind::Down, 140.0, 130.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 240.0, 180.0)).unwrap();
+    assert_eq!(box_of(&mut s, a)["x"], 200.0, "the drag has written the local position");
+
+    // Another participant's step lands while the pointer is still down: a confirmed value.
+    s.apply_remote("shape.move", &json!({"id": b, "dx": 10.0, "dy": 0.0})).unwrap();
+
+    // The room turns this participant into a viewer mid-gesture. The next press must not adopt the
+    // local-only position: it goes back to the box the drag started from, and the confirmed step
+    // on the other shape stays where the room put it.
+    s.set_read_only(true);
+    s.pointer(ev(PointerKind::Down, 240.0, 180.0)).unwrap();
+    assert_eq!(box_of(&mut s, a)["x"], 100.0, "a viewer kept a position the room never accepted");
+    assert_eq!(box_of(&mut s, b)["x"], 410.0, "the confirmed remote step was rolled back with the gesture");
+    assert!(s.doc().unwrap().interaction.is_none(), "the cancelled move left its interaction open");
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo_steps, "a cancelled gesture is not an undo step");
+}
+
+#[test]
 fn a_viewer_tool_press_writes_nothing() {
     let mut s = session();
     s.prefs.snap_to_grid = false;

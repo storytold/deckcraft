@@ -24,7 +24,7 @@ impl Session {
                 let pos = if self.prefs.snap_to_grid && !mods.alt { pos.round() } else { pos };
                 self.tool.guide_drag = Some((index, pos));
             }
-            Drag::Move { ids, start, origs, moved, duplicate, enter_text } => {
+            Drag::Move { ids, start, origs, moved, duplicate, enter_text, .. } => {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
             Drag::Resize { id, orig, ids, handle, origs, start } => {
@@ -259,8 +259,15 @@ impl Session {
             }
             Ok(())
         })?;
-        self.tool.drag =
-            Some(Drag::Move { ids: ids_now, start, origs: origs2, moved: true, duplicate: false, enter_text: enter_text.filter(|_| false) });
+        self.tool.drag = Some(Drag::Move {
+            ids: ids_now,
+            start,
+            origs: origs2,
+            delta: d,
+            moved: true,
+            duplicate: false,
+            enter_text: enter_text.filter(|_| false),
+        });
         Ok(Value::Null)
     }
 

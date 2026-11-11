@@ -115,6 +115,11 @@ pub struct ClientSession {
     /// The snapshot whose base is being assembled: its key map, tail and head reach the host only
     /// when the base is whole (`take_ready_base`).
     pending_snapshot: Option<SnapshotMsg>,
+    /// The last snapshot was refused because it did not cover a rewind. Kept for the host, which
+    /// must skip it as well: installing its base or tail would put the replica past the steps the
+    /// rewind left missing even though this state machine did not move (see
+    /// [`Self::take_refused_snapshot`]).
+    snapshot_refused: bool,
     /// A base that finished assembling, for the host to install.
     ready_base: Option<ReadyBase>,
     /// Journal steps that arrived while the base was assembling. They are not applied to the
@@ -210,6 +215,7 @@ impl ClientSession {
             base_download: None,
             base_request: None,
             pending_snapshot: None,
+            snapshot_refused: false,
             ready_base: None,
             missed_while_rebuilding: false,
             commit_pending: None,
@@ -446,6 +452,9 @@ impl ClientSession {
                 }
             }
             ServerMsg::Snapshot(snapshot) => {
+                // The host asks this after every snapshot: a refusal is final for the answer and
+                // must not be mistaken for the previous one.
+                self.snapshot_refused = false;
                 // The resync is answered: operations may be sent again, against the head the
                 // snapshot installs (the queued ones take their `base_version` at send time).
                 self.resync_in_flight = false;
@@ -457,6 +466,7 @@ impl ClientSession {
                     // the replica and its tail starts above it. Applying it would leave a hole
                     // between them and advance the replica past the steps it is missing, so the
                     // replica stays where it is and the tail is asked for again from there.
+                    self.snapshot_refused = true;
                     self.resync_wanted = true;
                     return Effect::Rollback;
                 }
@@ -553,6 +563,7 @@ impl ClientSession {
         self.resync_wanted = false;
         self.resync_in_flight = false;
         self.rewind_pending = None;
+        self.snapshot_refused = false;
         self.base_request = None;
         // A commit that was sent has no answer to resend: the user is told it did not finish and
         // presses Save again. One that never left stays queued for the next connection.
@@ -635,6 +646,14 @@ impl ClientSession {
     /// replica; at most once per chain. `None` while a chain is still being assembled.
     pub fn take_ready_base(&mut self) -> Option<ReadyBase> {
         self.ready_base.take()
+    }
+
+    /// Whether the last snapshot was refused because it did not cover a rewind. The host must skip
+    /// that snapshot: its state machine stayed at the rewound version, and installing the answer's
+    /// base or tail would advance the replica past the steps it is missing. Reading it clears the
+    /// flag, so one refusal is reported once.
+    pub fn take_refused_snapshot(&mut self) -> bool {
+        std::mem::take(&mut self.snapshot_refused)
     }
 
     /// Whether a chained base is being assembled right now (the status bar says "rebuilding").

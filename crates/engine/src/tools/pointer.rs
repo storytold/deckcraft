@@ -1,7 +1,7 @@
 use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
 use super::{
     Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind, TABLE_ERASER,
-    TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
+    TextTarget, ToolKind, Value, Vec2, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
 };
 
 impl Session {
@@ -354,8 +354,15 @@ impl Session {
                     sel.text = None;
                     sel.cells = None;
                 })?;
-                self.tool.drag =
-                    Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt && !self.collab_queue, enter_text: None });
+                self.tool.drag = Some(Drag::Move {
+                    ids: vec![id],
+                    start: p,
+                    origs,
+                    delta: Vec2::ZERO,
+                    moved: false,
+                    duplicate: mods.alt && !self.collab_queue,
+                    enter_text: None,
+                });
             }
             Some(Hit::Warp { id, index }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
@@ -425,7 +432,7 @@ impl Session {
                 // no command for that copy yet, so the gesture stays a move there instead of
                 // leaving a shape only this replica has.
                 let duplicate = mods.alt && !self.collab_queue && origs.len() == ids.len();
-                self.tool.drag = Some(Drag::Move { ids, start: p, origs, moved: false, duplicate, enter_text });
+                self.tool.drag = Some(Drag::Move { ids, start: p, origs, delta: Vec2::ZERO, moved: false, duplicate, enter_text });
                 // Format Painter applies on click.
                 if self.painter.is_some() && !toggle {
                     let _ = self.execute("format.painterApply", &json!({"ids": [id]}));
@@ -471,9 +478,23 @@ impl Session {
     /// selection and a marquee). A viewer's press must never leave a writing gesture armed,
     /// whichever path started it: a tool chosen before the role changed, a freeform or ink stroke
     /// already in progress, or one of the early returns in `down`.
+    ///
+    /// A move has already written the boxes it was following, so dropping the gesture as it stands
+    /// would leave the replica showing a position the room never accepted. Only the values this
+    /// gesture wrote are put back — the box at the press plus the last offset it applied — so a
+    /// step another participant settled meanwhile is a confirmed value and stays where it is.
     fn drop_writing_drag(&mut self) {
-        if matches!(self.tool.drag, None | Some(Drag::TextSelect { .. } | Drag::Marquee { .. })) {
-            return;
+        let restore = match &self.tool.drag {
+            None | Some(Drag::TextSelect { .. } | Drag::Marquee { .. }) => return,
+            Some(Drag::Move { origs, delta, moved: true, duplicate: false, .. }) => Some((origs.clone(), *delta)),
+            // An Alt-drag duplicate has made new objects the room has no command for; a gesture
+            // that only armed a drag wrote nothing at all.
+            Some(_) => None,
+        };
+        if let Some((origs, delta)) = restore
+            && !origs.is_empty()
+        {
+            self.cancel_move_drag(&origs, delta);
         }
         self.tool.drag = None;
         self.tool.preview = None;
@@ -481,6 +502,36 @@ impl Session {
         self.tool.guide_drag = None;
         self.tool.ink_preview.clear();
         self.tool.path_preview.clear();
+    }
+
+    /// Put back the boxes a move gesture wrote and close its interaction without an undo step.
+    ///
+    /// Only a box this gesture wrote — the value at the press plus the offset it last applied — is
+    /// reverted, so a step another participant settled meanwhile is a confirmed value and stays.
+    fn cancel_move_drag(&mut self, origs: &[(ShapeId, Xfrm)], delta: Vec2) {
+        let _ = self.edit(|doc, sel| {
+            let Some(list) = crate::shapes_mut(doc, sel) else { return Ok(()) };
+            for (id, orig) in origs {
+                let Some(sh) = deckcraft_model::find_shape_mut(list, *id) else { continue };
+                let written = sh.xfrm.is_some_and(|x| {
+                    (x.x - (orig.x + delta.x)).abs() < 1e-6
+                        && (x.y - (orig.y + delta.y)).abs() < 1e-6
+                        && (x.w - orig.w).abs() < 1e-6
+                        && (x.h - orig.h).abs() < 1e-6
+                });
+                if written {
+                    sh.xfrm = Some(*orig);
+                }
+            }
+            Ok(())
+        });
+        // The gesture is cancelled, not undone: its interaction closes without an undo step, and
+        // the next press records its own before-image instead of inheriting this one.
+        if let Some(st) = self.active_mut()
+            && st.interaction.as_ref().is_some_and(|i| i.label == "Move")
+        {
+            st.interaction = None;
+        }
     }
 
     /// Handle a pointer release and finalize the active tool interaction.
@@ -627,12 +678,17 @@ impl Session {
                 out = self.paint_if_selection_changed(before, out)?;
                 self.commit();
             }
-            Some(Drag::Move { moved: true, ids, .. }) => {
+            Some(Drag::Move { moved: true, ids, origs, delta, duplicate, .. }) => {
                 // The shapes followed the pointer through `edit`; a shared session submits where
                 // the drag left them so the room orders the move instead of one replica keeping
-                // it to itself.
-                out = self.submit_drag_move(&ids)?;
-                self.commit();
+                // it to itself. A role that changed mid-gesture takes that right away: the boxes
+                // go back instead of being kept locally and offered to the room.
+                if self.read_only && !duplicate {
+                    self.cancel_move_drag(&origs, delta);
+                } else {
+                    out = self.submit_drag_move(&ids)?;
+                    self.commit();
+                }
             }
             Some(_) => self.commit(),
             None => {}

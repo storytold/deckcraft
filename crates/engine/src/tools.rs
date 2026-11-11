@@ -144,6 +144,10 @@ enum Drag {
         ids: Vec<ShapeId>,
         start: Point,
         origs: Vec<(ShapeId, Xfrm)>,
+        /// The offset the last `drag` wrote on top of `origs`. Kept so a gesture that is dropped
+        /// before its release can put back exactly the boxes it wrote and leave a value another
+        /// replica settled meanwhile alone (a role change turns an editor into a viewer mid-drag).
+        delta: Vec2,
         moved: bool,
         duplicate: bool,
         enter_text: Option<(ShapeId, Point)>,
