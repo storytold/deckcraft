@@ -22,9 +22,19 @@ pub(crate) fn format_run_levels(
     let st = s.doc()?;
     if let Some(t) = st.selection.text.clone() {
         let (a, b) = format_range(st, &t);
+        let resumed = t.resumed_props().cloned().map(|mut props| {
+            f(&mut props);
+            props
+        });
+        if let Some(props) = resumed.clone().filter(|_| a == b) {
+            if let Some(sel) = s.doc_mut()?.selection.text.as_mut() {
+                sel.typing_props = Some((sel.caret, props));
+            }
+            return ok();
+        }
         // Only the levels of the paragraphs the selected range touches.
         let levels = if a == b { Vec::new() } else { master_levels(st, &t, t.ordered()) };
-        edit_text(s, |body, _| {
+        edit_text(s, |body, sel| {
             if levels.is_empty() {
                 ed::format(body, a, b, f);
             } else {
@@ -35,6 +45,9 @@ pub(crate) fn format_run_levels(
                 lf(&mut lvl.run, eff);
                 body.list_style.set(*l, lvl);
             }
+            // A pending symbol-font restoration must not hide the word from formatting.
+            // Keep the restored font for subsequent typing, with this change applied too.
+            sel.typing_props = resumed.map(|props| (sel.caret, props));
         })?;
         return ok();
     }
@@ -183,7 +196,8 @@ pub(crate) fn link_text(s: &mut Session, link: Hyperlink, display: &str) -> Resu
         return Err(bad("insert.hyperlink", "nothing to link: select text or give `text`"));
     }
     let pos = edit_text(s, |body, t| {
-        let mut props = ed::props_at(body, a);
+        let mut props = t.resumed_props().cloned().unwrap_or_else(|| ed::props_at(body, a));
+        t.typing_props = None;
         props.link = Some(link);
         let c = ed::insert(body, a, display, Some(props));
         t.anchor = c;

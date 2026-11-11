@@ -1,5 +1,6 @@
 # UI parity with PowerPoint
 
+> **Last updated:** 2026-11-05 · **Change:** minor (font-based Symbol browser and insertion formatting fixes, #1131; parity scores unchanged)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -66,6 +67,8 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Options | Opens the PowerPoint Options dialog | Opens Preferences |
 
 ## Panes and dialogs
+
+Insert Symbol shows the selected font's characters in a virtualized grid, rendered in that font. Font and Unicode subset selectors, hexadecimal character-code entry, recent symbols and a Special Characters tab cover characters beyond a fixed palette. Insert keeps the dialog open; double-click also inserts. A chosen symbol font applies only to the inserted character, and subsequent typing resumes in the surrounding font. Both `.deckcraft` and `.pptx` retain the symbol's font (#1131). When no font override is chosen, formatting at a caret inside a word applies to that word. Insertion ends hyperlinks at their boundary, promotes a paragraph whose first strong character is Arabic or Hebrew, and resumes the remaining text's formatting after replacing a selection.
 
 | Pane / dialog | PowerPoint | DeckCraft |
 |---|---|---|
@@ -173,6 +176,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | minor | Font-based Symbol browser, symbol-only font overrides and insertion formatting regression coverage (#1131). Scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |

@@ -270,7 +270,8 @@ fn current_run(s: &Session) -> RunProps {
         Some(t) => {
             let Some(body) = super::text::body_of(st, t) else { return RunProps::default() };
             let a = t.ordered().0;
-            let rp = if t.is_range() { ed::props_at(body, (a.0, a.1 + 1)) } else { ed::props_at(body, a) };
+            let rp =
+                if t.is_range() { ed::props_at(body, (a.0, a.1 + 1)) } else { t.resumed_props().cloned().unwrap_or_else(|| ed::props_at(body, a)) };
             let para = body.paragraphs.get(a.0).cloned().unwrap_or_default();
             (st.shape(t.shape).cloned().unwrap_or_default(), para, rp)
         }

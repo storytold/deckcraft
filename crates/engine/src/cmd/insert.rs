@@ -18,6 +18,8 @@ mod album;
 mod chart;
 mod links;
 mod picture;
+#[cfg(test)]
+mod symbol_tests;
 mod text_fields;
 
 use album::{photo_album, photo_album_edit};
@@ -102,7 +104,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             date_time
         ),
-        cmd!("insert.symbol", "Symbol", ["Insert", "Symbols"], None, "{text: character(s)}", has_slide, symbol),
+        cmd!(
+            "insert.symbol",
+            "Symbol",
+            ["Insert", "Symbols"],
+            None,
+            "{text: character(s), font?: family} — the font applies only to the inserted symbols",
+            has_slide,
+            symbol
+        ),
         cmd!(
             "shape.action",
             "Action Settings",

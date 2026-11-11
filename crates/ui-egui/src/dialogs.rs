@@ -15,11 +15,13 @@ pub struct Dialog {
     /// Field values while the dialog is open.
     #[serde(skip)]
     pub fields: std::collections::HashMap<String, String>,
+    #[serde(skip)]
+    symbol: Option<symbol::SymbolForm>,
 }
 
 impl Dialog {
     pub fn new(id: &str) -> Self {
-        Dialog { id: id.into(), params: Value::Null, fields: Default::default() }
+        Dialog { id: id.into(), params: Value::Null, fields: Default::default(), symbol: None }
     }
     pub fn modal(&self) -> bool {
         true
@@ -95,6 +97,8 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         window = window.default_size(vec2(760.0, 420.0)).min_width(720.0).min_height(420.0);
     } else if d.id == "themeFonts" {
         window = window.default_size(vec2(460.0, 320.0)).min_width(420.0).min_height(300.0);
+    } else if d.id == "symbol" {
+        window = window.min_width(560.0);
     }
     window.show(ctx, |ui| {
         ui.set_min_width(match d.id.as_str() {
@@ -219,6 +223,7 @@ mod photo_album;
 mod preferences;
 mod size_position;
 mod slide_size;
+pub(crate) mod symbol;
 mod tabs;
 mod theme_colors;
 mod theme_fonts;

@@ -6896,7 +6896,7 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
         |s: &Session, l: u8| s.doc().unwrap().doc.masters[0].shapes[body_idx].text.as_ref().unwrap().list_style.level(l).cloned().unwrap_or_default();
     // Bolding the level-2 paragraph reaches level 2 only.
     s.doc_mut().unwrap().selection.shapes = vec![id];
-    s.doc_mut().unwrap().selection.text = Some(TextSel { shape: id, anchor: (1, 0), caret: (1, 4), cell: None, notes: false, line_end: None });
+    s.doc_mut().unwrap().selection.text = Some(TextSel { shape: id, anchor: (1, 0), caret: (1, 4), ..Default::default() });
     s.execute("format.bold", &json!({"on": true})).unwrap();
     assert_eq!(level(&s, 1).run.bold, Some(true));
     for l in [0, 2, 3, 8] {
