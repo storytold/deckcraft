@@ -132,7 +132,20 @@ fn title(w: &mut W, text: &str, c: &Chart) {
     w.close("c:title");
 }
 
+/// Points one cache writes. Excel and PowerPoint hold 32,000 points per series, so this is far
+/// above any chart they make; a longer vector is cut here with a warning, not refused.
+const MAX_CACHE_POINTS: usize = 1_000_000;
+
+/// `vals` cut to [`MAX_CACHE_POINTS`].
+fn capped<T>(vals: &[T]) -> &[T] {
+    if vals.len() > MAX_CACHE_POINTS {
+        log::warn!("pptx: chart data cache cut from {} to {MAX_CACHE_POINTS} points", vals.len());
+    }
+    &vals[..vals.len().min(MAX_CACHE_POINTS)]
+}
+
 fn str_cache(w: &mut W, f: &str, vals: &[String]) {
+    let vals = capped(vals);
     w.open0("c:strRef");
     w.elt("c:f", f);
     w.open0("c:strCache");
@@ -147,6 +160,7 @@ fn str_cache(w: &mut W, f: &str, vals: &[String]) {
 }
 
 fn num_cache(w: &mut W, f: &str, vals: &[Option<f64>]) {
+    let vals = capped(vals);
     w.open0("c:numRef");
     w.elt("c:f", f);
     w.open0("c:numCache");
@@ -165,6 +179,7 @@ fn num_cache(w: &mut W, f: &str, vals: &[Option<f64>]) {
 
 /// Numbers written into the chart itself (`c:numLit`), with no worksheet range behind them.
 fn num_lit(w: &mut W, vals: &[Option<f64>]) {
+    let vals = capped(vals);
     w.open0("c:numLit");
     w.val("c:ptCount", vals.len());
     for (i, v) in vals.iter().enumerate() {
@@ -246,6 +261,9 @@ fn point_fills(w: &mut W, s: &Series, g: Group) {
     }
 }
 
+/// Data points (categories and values counted per series) one chart group writes to its caches.
+const MAX_EXPORT_POINTS: usize = 4_000_000;
+
 fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group) {
     w.open0("c:ser");
     w.val("c:idx", i);
@@ -305,7 +323,7 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
             trendline(w, t);
         }
     }
-    let n = c.categories.len().max(s.values.len());
+    let n = c.categories.len().max(s.values.len()).min(MAX_CACHE_POINTS);
     let last = n + 1;
     if let Some(e) = &s.error_bars {
         error_bars(w, e, g);
@@ -491,6 +509,24 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
     w.close("c:valAx");
 }
 
+/// Points `series` writes into its caches for group `g`, synthesized vectors included.
+fn series_points(c: &Chart, s: &Series, g: Group) -> usize {
+    let v = s.values.len();
+    if matches!(g, Group::Scatter | Group::Bubble) {
+        let xs = if s.x_values.is_empty() { v } else { s.x_values.len() };
+        let sizes = if g != Group::Bubble {
+            0
+        } else if s.sizes.is_empty() {
+            v
+        } else {
+            s.sizes.len()
+        };
+        xs.saturating_add(v).saturating_add(sizes)
+    } else {
+        c.categories.len().saturating_add(v)
+    }
+}
+
 fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) {
     let g = group_of(kind);
     let grouping = if kind.percent() {
@@ -529,7 +565,17 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
     if g != Group::Stock {
         w.val("c:varyColors", vary);
     }
-    for (i, s) in list {
+    // Each series repeats the categories in its own cache, so the output grows with series times
+    // categories: stop adding series once a group's caches pass the budget (the first is always written).
+    // The first series is always written; each of its caches is cut at MAX_CACHE_POINTS.
+    let mut left = MAX_EXPORT_POINTS;
+    for (n, (i, s)) in list.iter().enumerate() {
+        let cost = series_points(c, s, g);
+        if n > 0 && cost > left {
+            log::warn!("pptx: chart export stopped after {n} series; the data caches passed {MAX_EXPORT_POINTS} points");
+            break;
+        }
+        left = left.saturating_sub(cost);
         series(w, c, s, *i, kind, g);
     }
     if c.data_labels {
@@ -1061,7 +1107,21 @@ mod region_map_tests {
 mod tests {
     use deckcraft_color::{ColorTransform, Rgba};
     use deckcraft_model::ColorRef;
-    use deckcraft_model::chart::{Chart, ChartType};
+    use deckcraft_model::chart::{Chart, ChartType, Series};
+
+    #[test]
+    fn export_cost_counts_the_caches_each_group_writes() {
+        let s = Series { values: vec![Some(1.0); 600], ..Default::default() };
+        let mut c = Chart::sample(ChartType::Column);
+        c.categories = vec!["a".into(); 1000];
+        // Category and value caches: 1,000 + 600, however the series is stored.
+        assert_eq!(super::series_points(&c, &s, super::Group::Bar), 1600);
+        // A bubble series without x values or sizes still writes three value-length caches.
+        assert_eq!(super::series_points(&c, &s, super::Group::Bubble), 1800);
+        assert_eq!(super::series_points(&c, &s, super::Group::Scatter), 1200);
+        let s = Series { values: vec![Some(1.0); 600], x_values: vec![Some(1.0); 5], sizes: vec![Some(1.0); 7], ..Default::default() };
+        assert_eq!(super::series_points(&c, &s, super::Group::Bubble), 612);
+    }
 
     /// The chart's text colour is written where PowerPoint keeps it (`c:txPr` on the axes, legend,
     /// data labels and chart, the title's run defaults) and read back as the same colour.
@@ -1120,5 +1180,21 @@ mod tests {
         assert!(crate::read::chart::read_chart_xml(&xml).unwrap().cat_reversed);
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
+    }
+}
+
+#[cfg(test)]
+mod cache_cap_tests {
+    use super::*;
+
+    /// A cache longer than the cap is cut, never refused; anything a real chart holds (32,000
+    /// points per series) is far under it. Zero-sized elements, so the test allocates nothing.
+    #[test]
+    fn caches_are_cut_at_the_cap_not_refused() {
+        const { assert!(MAX_CACHE_POINTS >= 32_000) };
+        let over = vec![(); MAX_CACHE_POINTS + 1];
+        assert_eq!(capped(&over).len(), MAX_CACHE_POINTS);
+        let real = vec![(); 32_000];
+        assert_eq!(capped(&real).len(), 32_000);
     }
 }
