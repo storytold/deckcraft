@@ -210,6 +210,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let scroll =
             area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).auto_shrink([false, false]).show(&mut sui, |ui| {
                 ui.set_min_height(RIBBON_CARD_H);
+                crate::ribbon_fit::begin(ui.ctx(), &tab, scroll_rect.width() - 2.0 * edge);
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
                     match tab.as_str() {
@@ -236,6 +237,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         _ => {}
                     }
                 });
+                crate::ribbon_fit::end(ui.ctx());
             });
         let r = scroll.inner_rect;
         // A gallery sized from this reads it on the next frame, so a change (a resize, a tab

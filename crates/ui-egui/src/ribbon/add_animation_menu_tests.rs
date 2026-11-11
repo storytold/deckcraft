@@ -1,6 +1,7 @@
 //! Add Animation (#1370): the menu scrolls, so the last effect can be reached and added.
 
 use deckcraft_engine::Session;
+use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
@@ -25,6 +26,13 @@ fn harness(size: egui::Vec2) -> Harness<'static, SlideApp> {
 }
 
 fn open_add_animation(h: &mut Harness<'static, SlideApp>, window: egui::Vec2) {
+    // In a narrow window the group is folded to one drop-down holding its three big buttons.
+    if h.query_by_label("Add Animation").is_none()
+        && let Some(group) = h.query_by_role_and_label(Role::Button, "Advanced Animation")
+    {
+        group.click();
+        h.run_steps(3);
+    }
     // The Animations ribbon is wider than a short window. The edge chevron is what a person uses
     // to reach Add Animation; scroll-into-view on the button does not move that bar.
     for _ in 0..12 {

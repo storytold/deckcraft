@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-10 · **Last updated:** 2026-11-10 · **Change:** minor (ribbon card is three bands — tabs, commands, group names — at every width; no two-row breakpoint; group names verified against the reference build) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-10 · **Last updated:** 2026-11-10 · **Change:** minor (ribbon card is three bands — tabs, commands, group names — at every width; sections fold to one-row drop-downs when their layout does not fit, as PowerPoint does at 1024; no two-row breakpoint; group names verified against the reference build) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -162,6 +162,16 @@ group name centred below its commands in the dim text token at 11 pt (100%), siz
 wide as the name so long names never cross the separators. Separators run from the top of the
 commands through the name band.
 
+The card also folds sections as it narrows, as PowerPoint does. Each section has its designed
+layout and a one-row drop-down layout: the group's icon in the command band, its name and a
+chevron in the name band, and the whole section in a popup on click. The planner measures each
+section's width at both layouts on earlier frames and folds sections from the right until the row
+fits, so the sections a reader reaches first keep their layout longest. At 819x614 pt (a
+1024x768 client on a 125% display) Clipboard keeps its three rows and every other Home section is
+one drop-down, matching the measured reference; at 1228x768 pt Clipboard, Slides and Font expand.
+Every group keeps its name in the band in both layouts, and a row that is still too wide after
+every section has folded scrolls with the edge chevrons, as before.
+
 Colours, spacing, ribbon card and tab geometry follow the observations in
 `plan/powerpoint/01-observed-ui.md`; the ribbon and menu icons are original (~240, drawn in code)
 and must not imitate Microsoft's. Insert › Icons places Lucide stroke icons (ISC, release 1.56.0)
@@ -188,6 +198,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-10 | minor | Adaptive ribbon sections: each group has its designed layout and a one-row drop-down (icon, name and chevron in the label band, contents in a popup). At 819x614 pt Clipboard keeps three rows and every other Home group folds; at 1228x768 pt Clipboard, Slides and Font expand. Labels stay in the band in both layouts; a still-too-wide row scrolls as before |
 | 2026-11-10 | minor | Ribbon card is three bands at every width: tabs, commands and reference group names centred under each group, each group at least as wide as its name. The name row is unconditional (480 px to maximized); narrow windows scroll groups and keep names, so there is no two-row breakpoint (PR #2008) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |

@@ -1,6 +1,7 @@
 //! Home › Replace Fonts…: the dialog lists the deck's fonts and replaces one, as one undo step.
 
 use deckcraft_engine::Session;
+use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
@@ -56,7 +57,13 @@ fn reveal_ribbon_end(h: &mut Harness<'_, SlideApp>) {
 #[test]
 fn ribbon_button_opens_the_dialog_and_replaces() {
     let mut h = harness();
-    reveal_ribbon_end(&mut h);
+    // At the default window Home's Editing group folds; its commands live in the drop-down.
+    if h.query_by_role_and_label(Role::Button, "Editing").is_some() {
+        h.get_by_role_and_label(Role::Button, "Editing").click();
+        h.run_steps(2);
+    } else {
+        reveal_ribbon_end(&mut h);
+    }
     let button = h.get_by_label("Replace Fonts…");
     assert!(button.rect().max.x <= 1440.0 && button.rect().min.x >= 0.0, "Replace Fonts… is on screen at the default width: {:?}", button.rect());
     if let Some(left) = h.query_by_label("Scroll ribbon left") {

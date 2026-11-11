@@ -312,29 +312,219 @@ pub fn color_split(ui: &mut Ui, icon: Icon, tip: &str, color: Color32, enabled: 
 
 /// A ribbon group: its contents, its name centred in the band below them, then a thin vertical
 /// separator. Office's card has three bands (tabs, commands, group names); the name band is part
-/// of every group, at every window width.
-pub fn group<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let t = Tokens::get(ui.ctx());
-    let label_y = ui.max_rect().min.y + RIBBON_H + RIBBON_LABEL_H * 0.5;
-    // The name is centred under its group, so the group is at least as wide as its name: a long
-    // name over a narrow group would otherwise run across the separators (Accessibility, Design
-    // Ideas, Color/Grayscale).
-    let name_w = if label.is_empty() {
-        0.0
+/// of every group, at every window width. When the card is too narrow the group folds to one
+/// drop-down button ([`crate::ribbon_fit::COMPACT`]): the icon sits in the command band, the name
+/// and chevron in the label band, and the button opens the whole group in a popup. The name band
+/// is drawn in both layouts.
+pub fn group(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+    let level = crate::ribbon_fit::level(ui.ctx(), label);
+    let position = crate::ribbon_fit::position(ui.ctx());
+    let start = ui.cursor().min.x;
+    if level == crate::ribbon_fit::COMPACT {
+        compact_group(ui, label, position, add);
     } else {
-        let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), theme::font(11.0), t.text_dim).size().x).max(0.0);
-        w + 8.0
-    };
-    let r = ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
-        ui.set_min_width(name_w);
-        add(ui)
-    });
-    if !label.is_empty() {
-        ui.painter().text(pos2(r.response.rect.center().x, label_y), Align2::CENTER_CENTER, label, theme::font(11.0), t.text_dim);
+        ui.data_mut(|d| d.remove_temp::<bool>(compact_open_id(ui, label, position)));
+        let t = Tokens::get(ui.ctx());
+        let label_y = ui.max_rect().min.y + RIBBON_H + RIBBON_LABEL_H * 0.5;
+        // The name is centred under its group, so the group is at least as wide as its name: a long
+        // name over a narrow group would otherwise run across the separators (Accessibility, Design
+        // Ideas, Color/Grayscale).
+        let name_w = if label.is_empty() {
+            0.0
+        } else {
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), theme::font(11.0), t.text_dim).size().x).max(0.0);
+            w + 8.0
+        };
+        let r = ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+            ui.set_min_width(name_w);
+            add(ui)
+        });
+        if !label.is_empty() {
+            let text = ui.painter().text(pos2(r.response.rect.center().x, label_y), Align2::CENTER_CENTER, label, theme::font(11.0), t.text_dim);
+            #[cfg(not(test))]
+            let _ = text;
+            #[cfg(test)]
+            draw_label(
+                label,
+                Rect::from_min_max(
+                    pos2(r.response.rect.min.x, label_y - RIBBON_LABEL_H * 0.5),
+                    pos2(r.response.rect.max.x, label_y + RIBBON_LABEL_H * 0.5),
+                ),
+                text,
+            );
+        }
+        separator(ui);
     }
+    let width = ui.cursor().min.x - start;
+    crate::ribbon_fit::record(ui.ctx(), label, level, width, compact_group_width(ui, label));
+}
+
+/// Width of a compact group's button plus its separator.
+fn compact_group_width(ui: &Ui, label: &str) -> f32 {
+    let t = Tokens::get(ui.ctx());
+    let text_w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), theme::font(11.5), t.text).size().x).max(0.0);
+    (text_w + 3.0 + 9.0 + 12.0).max(52.0) + 13.0
+}
+
+/// Where a folded group remembers whether its drop-down is open.
+fn compact_open_id(ui: &Ui, label: &str, position: usize) -> egui::Id {
+    ui.scope_id().with(("compact_group", label, position))
+}
+
+/// A group folded to one row: a button showing the group's icon over its name and chevron. The
+/// drop-down holds the group as designed, with its name and separator, and stays open while its
+/// controls and their own menus are used.
+fn compact_group(ui: &mut Ui, label: &str, position: usize, add: impl FnOnce(&mut Ui)) {
+    let t = Tokens::get(ui.ctx());
+    let width = compact_group_width(ui, label) - 13.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, RIBBON_CARD_H), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let open_id = compact_open_id(ui, label, position);
+    let was_open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    if let Some(c) = bg(ui, &resp, was_open, &t) {
+        ui.painter().rect_filled(rect, CornerRadius::same(4), c);
+    }
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(pos2(rect.center().x, rect.min.y + RIBBON_H * 0.5), vec2(28.0, 28.0)),
+        compact_icon(label),
+        t.text,
+        false,
+    );
+    // The name stays in the card's label band, with the drop-down chevron beside it.
+    let band_y = rect.min.y + RIBBON_H + RIBBON_LABEL_H * 0.5;
+    let text_w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), theme::font(11.5), t.text).size().x).max(0.0);
+    let total = text_w + 3.0 + 9.0;
+    let x = rect.center().x - total * 0.5;
+    let text = ui.painter().text(pos2(x, band_y), Align2::LEFT_CENTER, label, theme::font(11.5), t.text);
+    #[cfg(not(test))]
+    let _ = text;
+    chevron(ui.painter(), pos2(x + text_w + 3.0 + 4.5, band_y), 2.6, t.text_dim);
+    #[cfg(test)]
+    draw_label(label, Rect::from_min_max(pos2(rect.min.x, band_y - RIBBON_LABEL_H * 0.5), pos2(rect.max.x, band_y + RIBBON_LABEL_H * 0.5)), text);
+
+    let mut shown = was_open;
+    if resp.clicked() {
+        shown = !shown;
+    } else if was_open && ui.input(|i| i.pointer.any_click()) {
+        // Popups (this drop-down, its controls' menus and lists) sit above the ribbon; a click on
+        // the window below them is outside. The button itself is not outside: the control socket
+        // can deliver one click's press and release on different frames, and the second must not
+        // close the drop-down the first opened.
+        let pos = ui.input(|i| i.pointer.interact_pos());
+        let inside = pos.and_then(|p| ui.ctx().layer_id_at(p)).is_some_and(|l| matches!(l.order, egui::Order::Foreground | egui::Order::Tooltip));
+        if !inside && !pos.is_some_and(|p| rect.contains(p)) {
+            shown = false;
+        }
+    }
+    let child_open = egui::Popup::is_any_open(ui.ctx());
+    if shown {
+        egui::Popup::menu(&resp).open_bool(&mut shown).close_behavior(egui::PopupCloseBehavior::IgnoreClicks).show(|ui| {
+            ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+                add(ui);
+            });
+            let (band, _) = ui.allocate_exact_size(vec2(ui.min_rect().width(), RIBBON_LABEL_H), Sense::hover());
+            ui.painter().text(band.center(), Align2::CENTER_CENTER, label, theme::font(11.0), t.text_dim);
+        });
+        if !shown && child_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            shown = true;
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(open_id, shown));
     separator(ui);
-    r.inner
+}
+
+/// The icon a folded group's button shows: the command readers know the group by.
+fn compact_icon(label: &str) -> Icon {
+    match label {
+        "Clipboard" => Icon::Paste,
+        "Slides" | "Slide Size" => Icon::NewSlide,
+        "Tables" | "Rows & Columns" | "Insert Placeholder" => Icon::Table,
+        "Images" => Icon::Picture,
+        "Illustrations" | "Drawing" | "Insert Shapes" => Icon::Shapes,
+        "Links" => Icon::Link,
+        "Comments" => Icon::NewComment,
+        "Text" => Icon::TextBox,
+        "Symbols" => Icon::Symbol,
+        "Media" => Icon::Video,
+        "Font" => Icon::Bold,
+        "Paragraph" | "Alignment" => Icon::AlignLeft,
+        "Editing" => Icon::Search,
+        "Designer" | "Design Ideas" => Icon::DesignIdeas,
+        "Drawing Tools" => Icon::LassoSelect,
+        "Pens" => Icon::Pen,
+        "Convert" => Icon::InkToShape,
+        "Themes" | "Edit Theme" => Icon::Themes,
+        "Variants" => Icon::Variants,
+        "Customize" => Icon::Colors,
+        "Preview" => Icon::Preview,
+        "Transition to This Slide" | "Options" => Icon::EffectOptions,
+        "Effect Options" => Icon::EffectOptions,
+        "Timing" => Icon::Duration,
+        "Animation" => Icon::AnimEntrance,
+        "Advanced Animation" => Icon::AddAnimation,
+        "Start Slide Show" => Icon::PlayFromStart,
+        "Set Up" => Icon::SetUpShow,
+        "Rehearse" => Icon::RehearseTimings,
+        "Record" => Icon::Record,
+        "Help" => Icon::Help,
+        "Proofing" => Icon::Spelling,
+        "Accessibility" => Icon::Accessibility,
+        "Language" => Icon::Language,
+        "Compare" => Icon::Compare,
+        "Presentation Views" => Icon::ViewNormal,
+        "Master Views" | "Master Layout" => Icon::SlideMaster,
+        "Show" => Icon::Gridlines,
+        "Zoom" => Icon::ZoomGlass,
+        "Window" => Icon::NewWindow,
+        "Color/Grayscale" => Icon::Grayscale,
+        "Shape Styles" => Icon::QuickStyles,
+        "WordArt Styles" => Icon::TextEffects,
+        "Format" => Icon::FormatBackground,
+        "Adjust" => Icon::Corrections,
+        "Picture Styles" => Icon::Picture,
+        "Picture Border" => Icon::ShapeOutline,
+        "Crop" => Icon::Crop,
+        "Table Style Options" | "Table Styles" => Icon::Table,
+        "Shading" => Icon::ShapeFill,
+        "Borders" => Icon::Borders,
+        "Draw Borders" => Icon::Pencil,
+        "Merge" => Icon::MergeCells,
+        "Cell Size" => Icon::AlignObjects,
+        "Arrange" => Icon::Arrange,
+        "Size" => Icon::SlideSize,
+        "Edit Master" | "Layouts" | "Placeholders" => Icon::Layout,
+        "Close" => Icon::Close,
+        "Background" => Icon::BackgroundStyles,
+        "Page Setup" => Icon::SlideSize,
+        "Create Graphic" => Icon::SmartArt,
+        "SmartArt Styles" => Icon::QuickStyles,
+        "Volume" => Icon::Sound,
+        "Data" => Icon::Chart,
+        _ => Icon::More,
+    }
+}
+
+/// The group labels drawn in a test frame, with the band they must stay in.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct DrawnGroupLabel {
+    pub title: String,
+    pub band: Rect,
+    pub text: Rect,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static GROUP_LABELS: std::cell::RefCell<Vec<DrawnGroupLabel>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn draw_label(title: &str, band: Rect, text: Rect) {
+    GROUP_LABELS.with(|g| g.borrow_mut().push(DrawnGroupLabel { title: title.to_string(), band, text }));
 }
 
 pub fn separator(ui: &mut Ui) {

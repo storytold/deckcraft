@@ -1259,14 +1259,24 @@ fn ribbon_dropdowns_are_named_by_purpose_even_when_empty() {
     h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [100.0, 100.0, 200.0, 100.0]})).unwrap();
     h.state_mut().run("text.exit", json!({})).unwrap();
     h.state_mut().ui.tab = "Animations".into();
-    h.run_steps(2);
+    h.run_steps(3);
+    // At this width the Timing group is folded; its start box lives in the group's drop-down.
+    if h.query_by_role_and_label(Role::Button, "Timing").is_some() {
+        h.get_by_role_and_label(Role::Button, "Timing").click();
+        h.run_steps(2);
+    }
     let start = h.get_by_role_and_label(Role::ComboBox, "Start");
     assert_eq!(start.value(), None, "no animation, no start value");
     assert!(h.query_by_label("astart").is_none(), "the internal key is not a name");
 
     h.state_mut().ui.tab = "Home".into();
     h.state_mut().run("edit.select", json!({"ids": []})).unwrap();
-    h.run_steps(2);
+    h.run_steps(3);
+    // Home's Font group folds at this width; open it to reach the font and size boxes.
+    if h.query_by_role_and_label(Role::Button, "Font").is_some() {
+        h.get_by_role_and_label(Role::Button, "Font").click();
+        h.run_steps(2);
+    }
     for (name, key) in [("Font", "font"), ("Font size", "size")] {
         assert!(h.query_by_role_and_label(Role::ComboBox, name).is_some(), "{name} is named while empty");
         assert!(h.query_by_role_and_label(Role::ComboBox, key).is_none(), "{key} is not announced");
