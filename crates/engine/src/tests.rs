@@ -1266,6 +1266,125 @@ fn double_click_edits_text_inside_group() {
     assert_eq!(s.doc().unwrap().selection.text.as_ref().map(|t| t.shape.0 as u64), Some(a));
 }
 
+/// A member whose rendered bounds coincide with its containing groups' bounds.
+fn grouped_snap_scene(scale: f64, reflected: bool, nested: bool) -> (Session, ShapeId) {
+    use deckcraft_geom::Xfrm;
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout":"blank"})).unwrap();
+    s.prefs.smart_guides = true;
+    s.prefs.snap_to_grid = false;
+    let id = ShapeId(s.execute("shape.insert", &json!({"preset":"rect", "rect":[0,0,100,80]})).unwrap()["id"].as_u64().unwrap() as u32);
+    wrap_test_member_in_group(
+        &mut s,
+        id,
+        Xfrm {
+            flip_h: reflected,
+            flip_v: reflected,
+            ..if scale == 1.0 { Xfrm::new(0.0, 2.0, 100.0, 80.0) } else { Xfrm::new(300.0, 102.0, 100.0 * scale, 120.0) }
+        },
+        false,
+    );
+    if nested {
+        s.edit(|doc, sel| {
+            let outer_id = ShapeId(doc.alloc_id().unwrap());
+            let list = crate::shapes_mut(doc, sel).unwrap();
+            let inner = list.pop().unwrap();
+            let child = inner.xfrm.unwrap();
+            list.push(Shape {
+                id: outer_id,
+                xfrm: Some(Xfrm { x: child.x + 25.0, y: child.y + 20.0, ..child }),
+                kind: deckcraft_model::ShapeKind::Group { children: vec![inner], child },
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+    }
+    s.execute("edit.select", &json!({"ids":[id]})).unwrap();
+    (s, id)
+}
+
+#[test]
+fn grouped_resize_snaps_dragged_edges_in_slide_space() {
+    use deckcraft_geom::{Point, Vec2};
+    for (scale, reflected, nested) in [(1.0, false, false), (2.0, false, false), (1.5, true, false), (2.0, true, true)] {
+        for handle in [1, 3, 5, 7] {
+            let (mut s, id) = grouped_snap_scene(scale, reflected, nested);
+            let st = s.doc().unwrap();
+            let orig = st.shape(id).unwrap().xfrm.unwrap();
+            let parent = cmd::parent_transform(st, id);
+            let start = parent * tools::box_handles(&orig).0[handle];
+            let center = cmd::shape_to_slide(st, st.shape(id).unwrap()) * Point::new(orig.w / 2.0, orig.h / 2.0);
+            let horizontal = matches!(handle, 3 | 7);
+            let direction = if horizontal { (start.x - center.x).signum() } else { (start.y - center.y).signum() };
+            let target = if horizontal { start.x } else { start.y } + direction * 20.0;
+            let rect = if horizontal { [target, 650.0, 70.0, 50.0] } else { [850.0, target, 70.0, 50.0] };
+            let fixed = ShapeId(s.execute("shape.insert", &json!({"preset":"rect", "rect":rect})).unwrap()["id"].as_u64().unwrap() as u32);
+            s.execute("edit.select", &json!({"ids":[id]})).unwrap();
+            let before = s.doc().unwrap().doc.clone();
+            let to = start + if horizontal { Vec2::new(direction * 19.0, 0.0) } else { Vec2::new(0.0, direction * 19.0) };
+            let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, mods: Mods::default(), tol: 1.0, pressure: None };
+            s.pointer(ev(PointerKind::Down, start)).unwrap();
+            s.pointer(ev(PointerKind::Drag, to)).unwrap();
+            assert!(s.tool.guides.iter().any(|g| g.vertical == horizontal && (g.pos - target).abs() < 1e-8), "missing slide-space resize guide");
+            s.pointer(ev(PointerKind::Up, to)).unwrap();
+            let st = s.doc().unwrap();
+            let world = cmd::shape_to_slide(st, st.shape(id).unwrap());
+            let x = st.shape(id).unwrap().xfrm.unwrap();
+            let edge = world
+                * match handle {
+                    1 => Point::new(x.w / 2.0, 0.0),
+                    3 => Point::new(x.w, x.h / 2.0),
+                    5 => Point::new(x.w / 2.0, x.h),
+                    _ => Point::new(0.0, x.h / 2.0),
+                };
+            assert!(
+                (if horizontal { edge.x } else { edge.y } - target).abs() < 1e-8,
+                "{scale}/{reflected}/{nested}/{handle}: {edge:?} expected {target}"
+            );
+            let after_center = world * Point::new(x.w / 2.0, x.h / 2.0);
+            let opposite = after_center + (after_center - edge);
+            assert!((opposite - (center + (center - start))).hypot() < 1e-8, "fixed edge moved");
+            assert_eq!(st.shape(fixed), deckcraft_model::find_shape(&before.slides[st.selection.slide].shapes, fixed));
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().doc, before);
+        }
+    }
+}
+
+#[test]
+fn grouped_move_does_not_snap_to_ancestors_but_keeps_other_targets() {
+    use deckcraft_geom::{Point, Vec2};
+    for nested in [false, true] {
+        for external in [false, true] {
+            let (mut s, id) = grouped_snap_scene(2.0, false, nested);
+            let st = s.doc().unwrap();
+            let world = cmd::shape_to_slide(st, st.shape(id).unwrap());
+            let start = world * Point::new(25.0, -1.0);
+            let left = world * Point::ZERO;
+            if external {
+                s.execute("shape.insert", &json!({"preset":"rect", "rect":[left.x + 5.0,650.0,70.0,50.0]})).unwrap();
+            }
+            s.execute("edit.select", &json!({"ids":[id]})).unwrap();
+            s.execute("text.edit", &json!({"id":id, "at":[0,0]})).unwrap();
+            let before = s.doc().unwrap().doc.clone();
+            let ev = |kind, dx| PointerEvent { kind, x: start.x + dx, y: start.y, mods: Mods::default(), tol: 3.0, pressure: None };
+            let down = s.pointer(ev(PointerKind::Down, 0.0)).unwrap();
+            assert_eq!(down["hit"], json!({"kind":"frame", "id":id}));
+            for dx in [4.0, 8.0] {
+                s.pointer(ev(PointerKind::Drag, dx)).unwrap();
+                let st = s.doc().unwrap();
+                let actual = cmd::shape_to_slide(st, st.shape(id).unwrap()) * Point::ZERO;
+                let expected = left + Vec2::new(if external { 5.0 } else { dx }, 0.0);
+                assert!((actual - expected).hypot() < 1e-8, "nested={nested}, external={external}, dx={dx}: {actual:?} != {expected:?}");
+            }
+            s.pointer(ev(PointerKind::Up, 8.0)).unwrap();
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().doc, before);
+        }
+    }
+}
+
 /// Reuse the moved/scaled child-space fixture for text, tables and line-end gestures.
 fn wrap_test_member_in_group(s: &mut Session, id: ShapeId, xfrm: deckcraft_geom::Xfrm, nested: bool) {
     use deckcraft_geom::Xfrm;
@@ -1747,6 +1866,9 @@ fn grouped_text_editing_matches_rendered_text() {
     for nested in [false, true] {
         for (rotation, flip_h, flip_v) in [(0.0, false, false), (27.0, false, false), (15.0, true, false), (0.0, false, true)] {
             let mut s = session();
+            // Assert exact coordinate mapping here; slide-space snapping has its own pointer
+            // regression and may intentionally correct the requested resize displacement.
+            s.prefs.smart_guides = false;
             let id = ShapeId(
                 s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 20.0, 140.0, 60.0], "text": "Hello group"})).unwrap()["id"]
                     .as_u64()

@@ -39,7 +39,7 @@ impl Session {
                 let local = parent.inverse() * p;
                 let keep_aspect = mods.shift || self.is_picture(id);
                 let nx = resize_box(&orig, handle, local - start, keep_aspect, mods.alt);
-                let nx = if parent == Affine::IDENTITY { self.snap_resize(nx, handle, &ids, tol) } else { nx };
+                let nx = self.snap_resize(nx, parent, handle, &ids, tol);
                 let sx = if orig.w > 1e-9 { (nx.w / orig.w) * if nx.flip_h != orig.flip_h { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let sy = if orig.h > 1e-9 { (nx.h / orig.h) * if nx.flip_v != orig.flip_v { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let div = if mods.alt { 2.0 } else { 1.0 };

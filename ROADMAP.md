@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** minor (Shift rotation snaps are independent of selection order; synced with upstream 0.18.0; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** minor (grouped resize snaps in slide space; member moves exclude ancestor snap targets; Shift rotation remains independent of selection order; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -156,6 +156,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-11 | Grouped snapping: resize edges snap in slide space; moving a member no longer snaps against its containing groups. Nested, scaled/reflected and undo regressions (#1095) |
 | 2026-11-11 | Shape rotation: Shift snapping no longer carries one selected member’s snapped turn into the next. Grouped/ungrouped and reversed-selection regressions; synced with upstream 0.18.0 (#1095) |
 | 2026-11-10 | Grouped editing: selected members of different groups rotate about one slide pivot without jumping when the pointer is still (#1095) |
 | 2026-11-06 | Grouped shape adjustments: skip drags when the parent transform cannot be inverted, preserving callout geometry in native saves; regression coverage includes collapsed and tiny invertible groups (#1095) |
@@ -348,6 +349,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Axis-aligned grouped resizing snaps dragged edges in slide space, including scale/reflection; moving members exclude their ancestors from smart-guide targets; pointer and undo regressions (#1095) |
 | 2026-11-11 | minor | Same-parent Shift rotation snaps each member from the raw pointer turn, independent of selection order; upstream ink handling and gesture limits retained during merge (#1095) |
 | 2026-11-10 | minor | Rotation drags across groups share the grabbed handle’s slide pivot and do not jump at the start; reflected, unevenly scaled and nested group cases are covered (#1095) |
 | 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
