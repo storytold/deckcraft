@@ -86,8 +86,8 @@ mod tests {
         assert!(!rec.undo(10.0));
     }
 
-    /// Undo after Stop restores the pre-Reset value: the timer's own elapsed state excludes
-    /// time recorded while paused, both before and after Reset.
+    /// Undo after Stop keeps the time recorded after Reset: the timer's own elapsed state
+    /// already excludes paused stretches, both before and after Reset.
     #[test]
     fn undo_after_stop_restores_the_stopped_interval() {
         let mut rec = RecordView::default();
@@ -102,6 +102,6 @@ mod tests {
         rec.pause(&mut show, 12.0);
         rec.stop(&mut show, 14.0);
         assert!(rec.undo(14.0));
-        assert!((rec.elapsed(14.0) - 7.0).abs() < 1e-6, "pre-Reset 7 s, frozen: {}", rec.elapsed(14.0));
+        assert!((rec.elapsed(14.0) - 9.0).abs() < 1e-6, "7 s before Reset + 2 s after: {}", rec.elapsed(14.0));
     }
 }

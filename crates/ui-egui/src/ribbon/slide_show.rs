@@ -122,7 +122,10 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         rows(ui, |ui| {
-            let clear_on = super::enabled(app, "show.clearRecording");
+            // The command itself stays callable (batch saves and empty scopes included); only the
+            // menu dims, once no slide holds recorded material.
+            let clear_on = super::enabled(app, "show.clearRecording")
+                && app.session.active().is_some_and(|d| deckcraft_engine::cmd::review::deck_has_recording(&d.doc));
             let clear = ui
                 .add_enabled(clear_on, egui::Button::new("Clear Recording"))
                 .on_hover_text("Remove recorded narration, camera and screen media, ink, laser and advance timings");

@@ -987,7 +987,9 @@ fn rgba_value(v: &Value) -> Option<Rgba> {
 
 /// PowerPoint's three laser-pointer colours, or an explicit `[r, g, b]`.
 fn apply_laser_color(sh: &mut deckcraft_model::ShowSettings, p: &Value) -> Result<()> {
-    let Some(v) = p.get("laserColor") else { return Ok(()) };
+    // `null` is how a control-channel client spells an optional key: it means "absent", as in
+    // `slide_scope`, `recording_scope` and `target_slide`.
+    let Some(v) = p.get("laserColor").filter(|v| !v.is_null()) else { return Ok(()) };
     let c = match v {
         Value::String(s) => match s.to_ascii_lowercase().as_str() {
             "red" => Rgba::rgb(255, 0, 0),
@@ -1445,6 +1447,13 @@ fn slide_has_recording(sl: &Arc<deckcraft_model::Slide>) -> bool {
         || sl.laser.is_some()
         || sl.transition.as_ref().is_some_and(|t| t.advance_after_ms.is_some())
         || cameo_recorded(&sl.shapes)
+}
+
+/// Whether any slide holds recorded material (narration, camera/screen media, recorded ink,
+/// a laser trace or an advance timing): the Record tab's Clear Recording menu reads disabled
+/// when there is nothing to clear.
+pub fn deck_has_recording(doc: &deckcraft_model::Presentation) -> bool {
+    doc.slides.iter().any(slide_has_recording)
 }
 
 /// Enabled state of Reset to Cameo: the deck has a Cameo on some slide.
@@ -1976,9 +1985,16 @@ mod tests {
         assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 0, 255));
         assert!(s.execute("show.setup", &json!({"laserColor": "purple"})).is_err());
         assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 0, 255));
+        // #1836 review: `null` is an absent optional, not a bad color, and leaves the rest of
+        // the call's settings to apply.
+        s.execute("show.setup", &json!({"laserColor": null, "useTimings": true})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 0, 255));
         let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
         let q = deckcraft_pptx::import(&bytes).unwrap();
         assert_eq!(q.show.laser_color, Rgba::rgb(0, 0, 255));
+        // The `null`-color call above pushed its own undo step (applying `useTimings`); walk the
+        // stack back past it to the blue-to-green change.
+        s.execute("edit.undo", &json!({})).unwrap();
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 255, 0));
     }

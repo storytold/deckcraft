@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 
 use super::camera::has_cameo_or_preview;
-use super::{CommandSpec, always, cmd};
+use super::{CommandSpec, always, bad, cmd};
 use crate::{Result, Session, UiRequest};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -33,10 +33,16 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// Ask the UI host to toggle, start or stop the preview. `on` absent means "flip it"; `device`
-/// names the camera to open and is ignored when `on` is `false`.
+/// Ask the UI host to toggle, start or stop the preview. `on` absent or `null` means "flip it";
+/// `device` names the camera to open and is ignored when `on` is `false`.
 fn preview(s: &mut Session, p: &Value) -> Result<Value> {
-    let on = p.get("on").and_then(Value::as_bool);
+    // A wrong-typed `on` must not silently toggle: `"false"` would otherwise start the camera
+    // the caller asked to stop.
+    let on = match p.get("on") {
+        None | Some(Value::Null) => None,
+        Some(Value::Bool(b)) => Some(*b),
+        Some(_) => return Err(bad("cameo.preview", "`on` must be true or false")),
+    };
     let device = p.get("device").and_then(Value::as_str).map(str::to_string);
     s.ui_requests.push(UiRequest::CameraPreview { on, device: device.clone() });
     Ok(json!({"on": on, "device": device}))
@@ -93,6 +99,17 @@ mod tests {
         assert_eq!(s.ui_requests.pop(), Some(UiRequest::CameraPreview { on: Some(true), device: Some("cam-2".into()) }));
         s.execute("cameo.preview", &json!({"on": false})).expect("stop");
         assert_eq!(s.ui_requests.pop(), Some(UiRequest::CameraPreview { on: Some(false), device: None }));
+    }
+    /// #1836 review: a wrong-typed `on` must not silently toggle the camera.
+    #[test]
+    fn preview_rejects_a_non_boolean_on() {
+        let mut s = with_cameo();
+        s.execute("cameo.preview", &json!({"on": null})).expect("null stays a toggle");
+        s.ui_requests.clear();
+        for bad_on in [json!("false"), json!(0), json!(1.5)] {
+            assert!(s.execute("cameo.preview", &json!({"on": bad_on})).is_err(), "{bad_on}");
+        }
+        assert!(s.ui_requests.is_empty(), "a rejected value asks the UI for nothing");
     }
 
     #[test]
