@@ -49,6 +49,8 @@ enum Paint {
     Pattern(String, Rgba, Rgba),
     /// `a:noFill`: only the outline, if any, shows.
     Nothing,
+    /// A line series' legend key: its colour and width, and whether it carries a marker.
+    Line(Rgba, f64, bool),
 }
 
 /// The paint of fill `f` as a bar or legend key draws it; the palette's `fallback` when the file
@@ -72,6 +74,20 @@ fn fill_with(ctx: &mut RenderContext, p: &Paint, r: Rect, m: Affine) {
         }
         Paint::Pattern(name, fg, bg) => crate::pattern::fill(ctx, name, *fg, *bg, 1.0, &r.to_path(0.1), m),
         Paint::Nothing => {}
+        Paint::Line(c, width, marker) => {
+            // A short stretch of the series' line through the key's middle, with the marker on it.
+            let mid = (r.y0 + r.y1) / 2.0;
+            let mut p = BezPath::new();
+            p.move_to((r.x0, mid));
+            p.line_to((r.x1, mid));
+            ctx.set_transform(m);
+            ctx.set_paint(color(*c, 1.0));
+            ctx.set_stroke(kurbo::Stroke::new(width.min(r.height() * 0.4)));
+            ctx.stroke_path(&p);
+            if *marker {
+                ctx.fill_path(&kurbo::Circle::new(((r.x0 + r.x1) / 2.0, mid), r.height() * 0.3).to_path(0.1));
+            }
+        }
     }
 }
 
@@ -591,7 +607,10 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
             .map(|(i, s)| {
                 let k = c.series_kind(s);
                 let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
-                if line {
+                if matches!(k, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine) {
+                    let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
+                    (s.name.clone(), Paint::Line(series_line(rctx, c, i, s), lw, k == ChartType::LineMarkers), None)
+                } else if line {
                     (s.name.clone(), Paint::Color(series_line(rctx, c, i, s)), None)
                 } else if k.is_bar_like() {
                     let paint = if c.vary_colors && c.series.len() == 1 && s.fill.is_none() {
