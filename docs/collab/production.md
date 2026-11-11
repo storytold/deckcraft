@@ -345,14 +345,35 @@ With `COLLAB_STORE_DIR` set, a room is a native base (`base.deckcraft`, written 
 an append-only `journal.jsonl`. An accepted operation is applied in memory and broadcast first,
 then appended and flushed; a base is taken every `COLLAB_SNAPSHOT_EVERY` operations (default 200)
 and the journal is trimmed to the tail after it. On start the latest base is loaded and the tail
-replayed through the same `apply` path, so versions, dedup and undo history come back.
+replayed through the same `apply` path, so the document, the version and the dedup window come
+back. **The per-actor undo history does not**: the replay calls `apply_confirmed`, which records
+no before/after image, so a step taken before a restart cannot be undone after it (`undo` answers
+`undo-conflict`/`invalid` instead of restoring it). The version itself is not in the base: it is
+read from `meta.json`, so a base taken at version 200 reopens at 200 and the journal tail above it
+keeps its numbers.
 
 The append is not part of the acknowledgement: **if it fails, the error is logged and the room
 keeps serving**. The accepted edit exists in memory and on every replica but not in the journal,
-so a restart loses it. Treat an `journal …` error in the log as a durability incident: stop the
-room, keep the store directory, and reopen it from the cabinet after checking the journal. The
-next base still captures the in-memory document, so a snapshot after the failure is safe; only a
-restart before one loses the acknowledged tail.
+so a restart loses it. Treat a `journal …` error in the log as a durability incident: the next
+base still captures the in-memory document, so a snapshot after the failure makes the
+acknowledged tail durable again, and only a restart before one loses it.
+
+### Recovering a damaged store
+
+Re-creating the session does **not** reopen the cabinet file: `POST /v1/sessions` loads the
+stored room when its directory exists and uses `initialBytes` only when it does not, and a
+journal line that cannot be parsed makes that load fail with `500`. Recover in this order:
+
+1. Keep the store directory — it is the only copy of the accepted tail. The room directory is
+   the SHA-256 of the cabinet's file id (`meta.json` names the file), so record that name in the
+   incident.
+2. Stop the room, and if the process still runs, force a snapshot (the next `COLLAB_SNAPSHOT_EVERY`
+   boundary does it): the base captures the in-memory document and the failure stops costing data.
+3. Move the directory out of the store, e.g. `mv <store>/<sha256> <store>/<sha256>.damaged`, so the
+   next create finds no stored room instead of failing again.
+4. Create the session again with the cabinet's last committed bytes in `initialBytes`. The new
+   room starts from that version without the damaged room's in-memory tail.
+5. Keep the `.damaged` directory for inspection; the journal is the evidence of what was lost.
 
 The room directory is the SHA-256 of the cabinet's file id, and `meta.json` names the file; a
 file id never becomes a path component. Without `COLLAB_STORE_DIR` the server is memory-only and
@@ -380,7 +401,7 @@ inside a 1024-chunk chain at the default 1 MiB chunk.
 | Suite | What it covers |
 |---|---|
 | `cargo test -p deckcraft-collab` | 283 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit, a base sent as a chunk chain — order, one request at a time, resume at the missing index, a second snapshot for the same chain, a stale chain, the protocol ceilings, a short chunk and a wrong digest, steps collected by a catch-up), a per-connection peer key (two connections of one actor keep their own outbox and slot; a closed room refuses messages), an operation held until the snapshot that answers its resync, commit |
-| `cargo test -p deckcraft-collab-server` | 13 unit + 18 real-socket + 5 commit + 5 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); a 20 MiB body read by the HTTP reader, an audio object replayed after a restart, a closed room refusing its sockets; 120 slides with media, LibreOffice on the commit, three sessions across a conflict, a three-client soak across compaction with a base transfer, and the big-deck soak: 322 edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base sent in 48 chunks plus its tail, a fifth participant that drops mid-chain and resumes at the missing chunk, and a commit at the head whose file reimports with every replica's values |
+| `cargo test -p deckcraft-collab-server` | 13 unit + 18 real-socket + 5 commit + 5 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including a `slide_restore` and a `shape_restore` operation — an operation is replayed, the actor history is not), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); a 20 MiB body read by the HTTP reader, an audio object replayed after a restart, a closed room refusing its sockets; 120 slides with media, LibreOffice on the commit, three sessions across a conflict, a three-client soak across compaction with a base transfer, and the big-deck soak: 322 edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base sent in 48 chunks plus its tail, a fifth participant that drops mid-chain and resumes at the missing chunk, and a commit at the head whose file reimports with every replica's values |
 | `cargo test -p deckcraft-ui-egui collab::` | 24 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets, the painter's sequence over the link disarming a one-shot pick |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 6 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |

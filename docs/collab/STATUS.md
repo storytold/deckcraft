@@ -1,13 +1,18 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-10. Branch: `collab/pr15`, branched from `collab/pr14` at `6e42a7ab` (the desktop
+Updated: 2026-11-11. Branch: `collab/pr15`, branched from `collab/pr14` at `6e42a7ab` (the desktop
 commit and its docs commit): **optimistic preview** (RFC §3) — with `DECKCRAFT_COLLAB_PREVIEW=1`
 one local operation is shown before the room answers, settled by `applied`, rolled back exactly on
 a refusal and abandoned for a `resync` when another participant's step lands in between; the wire
 carries an optional `preview` local id that the server never stores, so a client without it behaves
 exactly as before. On top of `1b057cbf` are two review-pass commits — `5b6fcfcd` (code) and
-`9b43c611` (docs) — pushed as the new PR head `9b43c611a`: the CodeRabbit findings of #2012
-(11 Major + 7 Minor) are triaged and fixed, with the table in §PR publication. `collab/pr14` is branched from `collab/pr13` at `baa845ec` (the
+`9b43c611` (docs) — and on top of those the STATUS sync `fd1ee71a`, which is the pushed PR head:
+the CodeRabbit findings of #2012 (11 Major + 7 Minor) are triaged and fixed, with that table in
+§PR publication. Three further local commits — `d56272e6`, `082b7c7b` and `7f93069e` (all code) — close the
+second review (§Second CodeRabbit review): a shape drag now goes through the room, a client commit
+is bound to the hub it was authorized against, a base reopens at its own version, one resync is on
+the wire at a time, and the restart/recovery wording is corrected. `collab/pr14` is branched from
+`collab/pr13` at `baa845ec` (the
 chunked-base slice and its docs commit): Save in a live desktop session now commits the room —
 one commit in flight, the document stays dirty until `commit-result`, a refusal keeps the edits
 and offers a copy — with its docs commit on top. `collab/pr13`, branched from `collab/pr12` at
@@ -80,19 +85,28 @@ The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
 
-## PR publication (2026-11-10)
+## PR publication (2026-11-11)
 
 **[PR #2012](https://github.com/storytold/deckcraft/pull/2012)** is open from
-`copoka/deckcraft:collab/pr15` (head `9b43c611a`) into `storytold/deckcraft:main` and is **ready**
-(not a draft); its body is [`pr10.md`](pr10.md). GitHub reports `MERGEABLE` at `9b43c611a`; the PR
-carries 106 commits, 97 files, +39 834/−522, and is 106 ahead of `origin/main`. The review pass
-below is two commits — `5b6fcfcd` (code) and `9b43c611` (docs) — **pushed** on 2026-11-10
-(`git ls-remote fork refs/heads/collab/pr15` → `9b43c611a`), so the PR head is `9b43c611a`.
-The **gate on that head is not green**: the four workflow runs (CI, House rules, Nix, SonarCloud)
-are `completed / action_required` (created 17:19:49Z) — they wait for a maintainer's approval —
-and CodeRabbit's check run is `completed / success` but its second review left five actionable
-findings untriaged (§Second review). Merging is a human step. This STATUS correction is a local
-commit on top of `9b43c611a` and is **not pushed**, so the fork head stays `9b43c611a`.
+`copoka/deckcraft:collab/pr15` (head `fd1ee71a`) into `storytold/deckcraft:main` and is **ready**
+(not a draft); its body is [`pr10.md`](pr10.md). GitHub reports `MERGEABLE` / `UNSTABLE` at
+`fd1ee71a` with an empty `reviewDecision`; the PR carries 100 commits, 97 files, +39 861/−522. The
+fork head is the local `collab/pr15` head (`git ls-remote fork refs/heads/collab/pr15` →
+`fd1ee71a`), so the 2026-11-10 STATUS sync is pushed too.
+
+The **gate on that head is still not green**: the four workflow runs (CI, House rules, Nix,
+SonarCloud) are `completed / action_required`, created 2026-11-10T20:15:47Z — they wait for a
+maintainer's approval. CodeRabbit's check run is `completed / success`, and its three reviews are
+all on record: `5845265345` (16:15Z, on `1b057cbf`, 11 Major + 7 Minor — fixed in `5b6fcfcd` +
+`9b43c611`), `5846427839` (17:33Z, on `9b43c611a`, five actionable comments — triaged and closed
+in `d56272e6`, §Second CodeRabbit review) and `5848775355` (20:22Z, on `fd1ee71a`), which
+reviewed only this file ("Files not fully reviewed: 1"), posted **no inline comment and no
+actionable finding**; its only red pre-merge item is Docstring Coverage from `.coderabbit.yaml`,
+which is not a repository gate.
+
+Merging is a human step. The triage of the second review — `d56272e6`, `082b7c7b` and `7f93069e`
+(code), this STATUS and the `production.md` correction (docs) — is **local and not pushed**, so the
+fork head stays `fd1ee71a`. Closing the superseded PRs is a human decision as well.
 
 [PR #1998](https://github.com/storytold/deckcraft/pull/1998) still points at
 `copoka/deckcraft:collab/pr11` (head `6e9d10e7`) and is superseded by #2012.
@@ -135,19 +149,25 @@ commit + 5 gates + 18 socket; `engine` 594 + 1 ignored (+ 6 + 8 integration); `p
 needs a CJK face and the build host has no `craft-fonts` — unrelated to this diff and present
 before it.
 
-### Second CodeRabbit review on the new head (`9b43c611a`)
+### Second CodeRabbit review (`5846427839`, 17:33Z on `9b43c611a`), triaged and closed
 
-The review posted at 17:33Z on `9b43c611a` reports five actionable comments and is **not triaged**;
-its check run is `success`, so it does not gate the PR. Four are Major:
-`apps/deckcraft-collab-server/src/lib.rs:846` (the authorisation of the commit path),
-`docs/collab/production.md:348` (the claim that a journal replay restores undo history — the replay
-calls `apply_confirmed`, which does not rebuild actor history), `docs/collab/production.md:353`
-(the recovery procedure — recreating a room does not necessarily reopen the cabinet file, and a
-damaged journal answers `500`), and `crates/engine/src/tools/drag.rs:225-240` (shape drags bypass
-the ordered path: a viewer's drag moves locally and an editor's release submits nothing). One is
-Minor: `crates/collab/src/client.rs:441` (an operation queued across a resync). A typo nit outside
-the diff ("SafeArt") is fixed in this STATUS correction. These are the first items of the next
-session (§Next session, item 2).
+The review posted at 17:33Z on `9b43c611a` reported five actionable comments (four Major, one
+Minor), a "SafeArt" typo nit and two trivial test nits. Each was opened against this tree first;
+**six are live and fixed here**, each with a test that fails without the fix (all six were run
+against the un-fixed code and failed). One finding's wording was narrower than the code: the
+comment is anchored at `lib.rs:846` (`fn rejected`), but the commit path it names is
+`commit_from_client` — the anchor was found by `ServerMsg::Commit`, not by the line number.
+
+| # | Finding (path:line) | Severity | Disposition |
+|---|---|---|---|
+| 1 | `crates/engine/src/tools/drag.rs:225-240` — a shape drag bypasses the ordered path: a viewer's drag moves locally, an editor's release submits nothing | Major | **Fixed** (`d56272e6`, `crates/engine/src/tools/pointer.rs`): a viewer's press no longer starts a writing gesture (the drag is dropped after the selection, before any `edit`), and an editor's release submits the boxes the drag left as one `shape.setBoundsMany` with final values — the same final-value form `arrange.align` uses — which the client normalises into one `ShapesSetBounds` (`crates/collab/src/local.rs`, new `drag_bounds`). Alt-drag duplication makes new objects and has no command yet, so a shared session treats the gesture as a move instead of leaving a copy on one replica. Ungluing a dragged connector from shapes that stay put is a document change the box value cannot carry, so `7f93069e` leaves the glue alone in a shared session (every replica keeps it) and keeps the single-user unglue. Tests: `a_viewer_drag_moves_nothing_and_a_shared_drag_is_one_operation`, `a_shared_connector_drag_keeps_its_glue` (engine) and `a_finished_drag_normalises_to_one_operation_with_its_final_boxes` (collab) |
+| 2 | `apps/deckcraft-collab-server/src/lib.rs:846` — a commit is authorized against one hub and built from another, so a socket that outlived `DELETE` can publish the room that replaced it | Major | **Fixed** (`d56272e6`): `build_and_publish_on` takes the hub the caller was authorized against and refuses when it is no longer the live room (`still_live`: same `Arc` in the map and not closed); the accepted etag is adopted only by that hub. Test: `a_commit_is_bound_to_the_hub_it_was_authorized_against` |
+| 3 | `docs/collab/production.md:348` — the replay claim: `apply_confirmed` does not rebuild actor history | Major | **Fixed in docs** (`production.md`) and in the `store.rs` module doc: replay brings back the document, the version and the dedup window; a step taken before a restart cannot be undone after it |
+| 4 | `docs/collab/production.md:348` — a room reopened from a base at version 200 reports version 0 | Major | **Fixed** (`d56272e6`): the base carries the document only, so `Store::load` now continues the numbering from `meta.json` (`DocSession::set_version`) before replaying the tail. Test: `a_base_reopens_at_the_version_it_was_taken_at` |
+| 5 | `docs/collab/production.md:353` — recreating a room does not reopen the cabinet file, and a damaged journal answers `500` | Major | **Fixed in docs**: new §Recovering a damaged store — keep and name the store directory, force a snapshot while the process lives, move the damaged directory aside, then create the session with the cabinet's committed bytes |
+| 6 | `crates/collab/src/client.rs:441` — a second `Resync` while one is in flight can drop an edit | Minor | **Fixed** (`d56272e6`): one resync on the wire at a time (`resync_in_flight` also gates the request); the snapshot that answers it clears the flag a gap raised meanwhile. Test: `a_gap_during_an_outstanding_resync_never_puts_a_second_request_on_the_wire` |
+| — | `docs/collab/STATUS.md:1350-1351` — "SafeArt" | Minor | **Fixed in docs**: the typo was already corrected in `fd1ee71a`; no occurrence is left |
+| — | `crates/ui-egui/src/host_save_tests.rs:128`, `crates/ui-egui/src/collab.rs:1726` — the tests ignore the `Result` of `save()` | Trivial | **Fixed** (`082b7c7b`): both assert the `Err` the UI reports |
 
 This file is the handoff between sessions: what is done, how it was verified, what is not done,
 and what to do next. Update it at the end of every collaboration session.
@@ -372,7 +392,13 @@ human decision.
   closures and `Rc`, which never cross a thread on wasm32.
 - `Session::set_collab_queue`: with a room attached, every mutating path (ribbon, keys, pointer,
   IME, control channel) queues the command instead of executing it; `CollabUi::pump` sends it.
-  `apply_remote` still applies the server's command directly.
+  `apply_remote` still applies the server's command directly. A pointer gesture is a command too:
+  a viewer's press starts no writing drag at all, and an editor's finished shape drag submits the
+  boxes it left as one `shape.setBoundsMany` (final values, normalised to one `ShapesSetBounds`),
+  so a drag is one version and one undo step and never a local-only move. Alt-drag duplication
+  makes new objects and is not on the wire yet, so a shared session treats that gesture as a move;
+  a connector dragged away from shapes that stay put keeps its glue there too, because the
+  operation carries boxes and not glue.
 - Text: `text.insert`/`text.delete` carry character offsets; the server rebases them against the
   journal tail since `baseVersion` (inserts shift right, deletes pull left and clamp), so two
   people typing in one paragraph keep both texts. Confirmed commands carry the rebased offset.
@@ -1028,7 +1054,7 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `9b43c611a`), rebased onto `origin/main`; the review pass is pushed and is the PR head; the head's four CI runs are `action_required` (awaiting approval) | [`pr10.md`](pr10.md); merge is a human decision |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `fd1ee71a`), rebased onto `origin/main`; the first review pass and the STATUS sync are pushed and are the PR head; the head's four CI runs are `action_required` (awaiting approval); the second review's five findings are closed by three local commits (`d56272e6`, `082b7c7b`, `7f93069e`) that are not pushed yet; the third review found nothing in code | [`pr10.md`](pr10.md); merge is a human decision |
 
 Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
 pass pushed as `9b43c611a`, on
@@ -1045,6 +1071,22 @@ no `craft-fonts`. The new tests cover the 20 MiB HTTP body, the closed room, the
 operation held across a resync, two connections of one actor, a nested list lead on a viewer and
 with the collab queue, a non-finite camera and crop, the cabinet chunk size and the SmartArt
 picture's opacity round trip.
+
+Re-run on 2026-11-11 after the second review pass (`d56272e6`, `082b7c7b` and `7f93069e`, code, on
+`agents`, rust 1.99.1): `cargo fmt --all -- --check` clean (EXIT=0); `cargo clippy --workspace
+--all-targets -- -D warnings` clean (EXIT=0); `cargo test -p deckcraft-engine -p deckcraft-collab
+-p deckcraft-collab-proto -p deckcraft-collab-server -j 12`: engine 596 + 1 ignored, collab 285 +
+8, collab-proto 42, collab-server 15 unit + 5 commit + 5 gates (16.8 s, LibreOffice skipped on the
+build host) + 18 socket, all passed, 0 failed (EXIT=0); `cargo test -p deckcraft-ui-egui --lib
+collab::` 24 and `host_save` 12 passed; `cargo test -p deckcraft-collab-web -p deckcraft-web` 15 +
+6 passed; `cargo xtask layers` 32 crates, no violations (EXIT=0). The six new tests were each run
+against the un-fixed code first and failed there: `a_viewer_drag_moves_nothing_and_a_shared_drag_is_one_operation`,
+`a_shared_connector_drag_keeps_its_glue`,
+`a_finished_drag_normalises_to_one_operation_with_its_final_boxes`,
+`a_gap_during_an_outstanding_resync_never_puts_a_second_request_on_the_wire`,
+`a_base_reopens_at_the_version_it_was_taken_at`,
+`a_commit_is_bound_to_the_hub_it_was_authorized_against`. `git status` is clean after the three code
+commits; nothing was pushed, CI was not touched, and #1975/#1998 are unchanged.
 
 Re-run on 2026-11-10 after the SmartArt node-picture slice (`44489f34`, on `agents`, rust 1.99.1):
 `cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings`
@@ -1266,8 +1308,9 @@ was not touched, and PR #1975 is unchanged.
    the chain already covers.
 9. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
     (§ Rebase onto origin/main), so the fork branches no longer fast-forward and the publish is a
-    `--force-with-lease`. The push is manual (the chair does it). Nothing was pushed to
-    `storytold/deckcraft`.
+    `--force-with-lease`. The push is manual (it needs a human decision). Nothing was pushed to
+    `storytold/deckcraft`. The fork head is `fd1ee71a`; three code commits and the docs since then
+    are local.
 
 ## How to run locally
 
@@ -1309,14 +1352,14 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `9b43c611a`,
-   `MERGEABLE`, 106 commits, 97 files, +39 834/−522); the review pass (`5b6fcfcd` + `9b43c611`)
-   is pushed and is the head. The gate on that head is **not green**: CI, House rules, Nix and
-   SonarCloud wait in `action_required` for a maintainer's approval, and CodeRabbit's second
-   review left five actionable findings untriaged (§Second review). A STATUS correction follows
-   the head locally and is not pushed. #1998 and #1975 are superseded but still open. Pushing
-   that correction, closing them and merging are human steps. Do not touch CI and do not mention
-   agents.
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `fd1ee71a`,
+   `MERGEABLE`/`UNSTABLE`, 100 commits, 97 files, +39 861/−522); the first review pass and the
+   STATUS sync are pushed and are the head. The gate on that head is **not green**: CI, House
+   rules, Nix and SonarCloud wait in `action_required` (created 20:15:47Z) for a maintainer's
+   approval. CodeRabbit's second review is closed by three local commits (`d56272e6`, `082b7c7b`, `7f93069e`)
+   and its third review, on `fd1ee71a`, found nothing in code. Pushing those commits and this
+   STATUS, closing #1998/#1975 (superseded) and merging are human steps. Do not touch CI and do
+   not mention agents.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
@@ -1357,7 +1400,47 @@ token from the cabinet.
 
 ## Session log
 
-### 2026-11-10 — the CodeRabbit review of #2012, triaged and fixed
+### 2026-11-11 — the second CodeRabbit review of #2012, triaged and closed
+
+- **What was reviewed.** CodeRabbit's review `5846427839` at 17:33Z on `9b43c611a`: five
+  actionable comments (drag through the ordered path, the commit path's hub binding, the undo
+  history claim, the restart version, the recovery procedure, plus one Minor on a second resync),
+  a "SafeArt" typo and two test assertions. Each was checked against the tree at `fd1ee71a`
+  first; the five code findings were live, the typo was already fixed, the two assertions were a
+  real gap. The table is in §Second CodeRabbit review.
+- **Drag.** `Session::pointer` mutated the document through `edit` for every gesture, so a
+  viewer's drag moved a shape no room ordered and an editor's release sent nothing. The press of
+  a viewer no longer starts a writing drag; an editor's release submits the final boxes of the
+  shapes the drag moved as one `shape.setBoundsMany`, and the client turns that into one
+  `ShapesSetBounds` (new `drag_bounds` in `crates/collab/src/local.rs`). Alt-drag duplication
+  stays a local-only copy, so a shared session treats the gesture as a move until duplication has
+  a command.
+- **Commit path.** `commit_from_client` authorized against the socket's hub and `build_and_publish`
+  re-looked the file id up, so a socket that outlived `DELETE` could publish the room that
+  replaced it. `build_and_publish_on` takes the authorized hub and refuses unless it is still the
+  live room (`still_live`: same `Arc`, not closed); the accepted etag is adopted only there.
+- **Restart.** A base opens at version 0, and `meta.json`'s version was never applied, so a room
+  reopened from a base at version 200 answered 0 with an empty tail. `Store::load` now continues
+  the numbering before replaying; the `store.rs` module doc and `production.md` say that replay
+  brings back the document, the version and the dedup window but not the per-actor undo history.
+- **Recovery.** `production.md` has a new §Recovering a damaged store: keep and name the store
+  directory, force a snapshot while the process lives, move the damaged directory aside, then
+  create the session with the cabinet's committed bytes — a plain re-create reopens the damaged
+  store and a damaged journal answers `500`.
+- **Resync.** A gap raised while a resync was on the wire sent a second `Resync`; the first
+  snapshot released the queue and the second could drop an operation the server never applied.
+  One resync is in flight at a time, and the answering snapshot clears the flag a gap raised
+  meanwhile.
+- **Gates on `agents`.** fmt clean; clippy `-D warnings` clean; engine 596 + 1 ignored; collab
+  285 + 8; collab-proto 42; collab-server 15 unit + 5 commit + 5 gates (16.8 s, LibreOffice
+  skipped) + 18 socket; `ui-egui collab::` 24 and `host_save` 12; `collab-web` 15; `deckcraft-web`
+  6; `xtask layers` 32 crates. The six new tests were run against the un-fixed code first and
+  failed there.
+- **Commits.** `d56272e6` (code and tests), `082b7c7b` (the two Save assertions) and `7f93069e`
+  (a connector's glue in a shared drag) on `collab/pr15`, local. The PR head stays `fd1ee71a` (100 commits, 97 files, +39 861/−522); CI was
+  not touched and its four runs on the head remain `action_required` (created 20:15:47Z).
+  CodeRabbit's third review `5848775355` (20:22Z, on `fd1ee71a`) read only this file and left no
+  actionable comment.
 
 - **What was reviewed.** The CodeRabbit review on PR #2012 at head `1b057cbf`: 11 Major and
   7 Minor. Each finding was opened against the code first; the table in §PR publication records
