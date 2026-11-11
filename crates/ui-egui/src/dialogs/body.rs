@@ -1328,6 +1328,19 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         });
     });
     let (ok, cancel) = buttons(ui, "OK");
+    if ok || cancel {
+        if let Some(parent_id) = d.params.get("parent_id").and_then(|v| v.as_str()) {
+            let mut parent = Dialog::new(parent_id);
+            if let Some(params) = d.params.get("parent_params") {
+                parent.params = params.clone();
+            }
+            if let Some(fields) = d.params.get("parent_fields").and_then(|v| v.as_object()) {
+                parent.fields = fields.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string())).collect();
+            }
+            *d = parent;
+            return false;
+        }
+    }
     ok || cancel
 }
 
@@ -1434,7 +1447,14 @@ pub(super) fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -
     d.fields.insert("prefs_tab".into(), active_tab);
 
     if open_autocorrect {
-        *d = Dialog::new("autocorrect");
+        let mut child = Dialog::new("autocorrect");
+        // Preserve the parent Preferences dialog state so it can be restored when AutoCorrect closes
+        child.params = json!({
+            "parent_id": d.id,
+            "parent_params": d.params,
+            "parent_fields": d.fields,
+        });
+        *d = child;
     }
 
     if d.id != "preferences" {
