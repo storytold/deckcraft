@@ -379,6 +379,9 @@ fn lock(s: &mut Session, p: &Value) -> Result<Value> {
     let mut ids = super::targets(s, p)?;
     if ids.len() > 1 {
         let doc = s.doc()?;
+        // Walk each distinct group once, however often `ids` repeats it.
+        let mut once = std::collections::HashSet::new();
+        ids.retain(|id| once.insert(*id));
         let mut inside = std::collections::HashSet::new();
         for id in &ids {
             if let Some(g) = doc.shape(*id) {
