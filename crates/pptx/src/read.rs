@@ -76,6 +76,15 @@ impl Imp<'_> {
         self.media_by_part.insert(key, id);
         Some(id)
     }
+    /// Drop the media copied since the list was `len` long, with their part-cache entries: used when
+    /// the content that read them is discarded, so they are neither kept nor reused uncharged.
+    pub fn forget_media_from(&mut self, len: usize) {
+        if self.media.len() > len {
+            let gone: std::collections::HashSet<MediaId> = self.media[len..].iter().map(|m| m.id).collect();
+            self.media.truncate(len);
+            self.media_by_part.retain(|_, id| !gone.contains(id));
+        }
+    }
     /// Media item for an external link.
     pub fn media_link(&mut self, url: &str) -> MediaId {
         if let Some(m) = self.media.iter().find(|m| m.link.as_deref() == Some(url)) {
