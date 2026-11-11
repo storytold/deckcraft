@@ -4,6 +4,7 @@
 //! Save panel (Go to Folder, the file name) ignored ⌘V. While a panel is showing, this small menu
 //! bar replaces the usual one. It goes away with the panel because the app's own text handling
 //! gets these keys from egui.
+//! Its application menu has Hide, Hide Others and Show All; Quit comes back with the usual menu bar.
 
 use muda::{Menu, PredefinedMenuItem, Submenu};
 use objc2::MainThreadMarker;
@@ -57,6 +58,7 @@ pub fn while_open<T>(pick: impl FnOnce() -> T) -> T {
 fn edit_menu() -> Option<Menu> {
     let menu = Menu::new();
     let app = Submenu::new("DeckCraft", true);
+    app.append_items(&[&PredefinedMenuItem::hide(None), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None)]).ok()?;
     let edit = Submenu::new("Edit", true);
     edit.append_items(&[
         &PredefinedMenuItem::cut(None),

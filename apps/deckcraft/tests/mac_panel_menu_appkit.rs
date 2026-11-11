@@ -6,7 +6,8 @@
 #[path = "../src/panel_menu.rs"]
 mod panel_menu;
 
-/// ⌘X, ⌘C, ⌘V and ⌘A each have an item in the panel's menu bar that sends the matching edit action.
+/// ⌘X, ⌘C, ⌘V and ⌘A each have an item in the panel's menu bar that sends the matching edit action,
+/// ⌘H hides the app, and there is no Quit item.
 #[cfg(target_os = "macos")]
 fn assert_panel_shortcuts(app: &objc2_app_kit::NSApplication, usual: &objc2_app_kit::NSMenu) {
     use objc2::sel;
@@ -17,12 +18,13 @@ fn assert_panel_shortcuts(app: &objc2_app_kit::NSApplication, usual: &objc2_app_
     for menu in (0..bar.numberOfItems()).filter_map(|i| bar.itemAtIndex(i)?.submenu()) {
         items.extend((0..menu.numberOfItems()).filter_map(|i| menu.itemAtIndex(i)));
     }
-    for (key, action) in [("x", sel!(cut:)), ("c", sel!(copy:)), ("v", sel!(paste:)), ("a", sel!(selectAll:))] {
+    for (key, action) in [("x", sel!(cut:)), ("c", sel!(copy:)), ("v", sel!(paste:)), ("a", sel!(selectAll:)), ("h", sel!(hide:))] {
         assert!(
             items.iter().any(|item| item.keyEquivalent().to_string() == key && item.action() == Some(action)),
             "no menu item sends {action:?} on ⌘{key}"
         );
     }
+    assert!(!items.iter().any(|item| item.action() == Some(sel!(terminate:))), "no Quit while a panel is up");
 }
 
 /// Shows and hides the panel's menu bar against a stand-in for the usual one.
