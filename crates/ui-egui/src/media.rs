@@ -377,9 +377,86 @@ pub fn clip_on(doc: &Presentation, index: usize, id: ShapeId) -> Option<MediaCli
 fn walk_clip(shapes: &[deckcraft_model::Shape], id: ShapeId) -> Option<MediaClip> {
     shapes.iter().find_map(|s| match &s.kind {
         ShapeKind::Media(m) if s.id == id => Some(m.clone()),
+        ShapeKind::Picture { .. } if s.id == id => cameo_clip(s),
         ShapeKind::Group { children, .. } => walk_clip(children, id),
         _ => None,
     })
+}
+
+/// Whether a click on a clip starts it. A media shape always can be clicked; a recorded Cameo
+/// keeps the picture's click (advance, a link, a trigger) unless it is waiting for a click — its
+/// `autoplay` is off — in which case the click plays its recording.
+pub fn click_plays(cameo: bool, clip: &MediaClip) -> bool {
+    !cameo || !clip.autoplay
+}
+
+/// Whether `id` on slide `index` is a recorded Cameo rather than a media shape. Its clip plays,
+/// but it keeps the picture's interactions: a click on it still advances the show, and it has no
+/// media bar of its own (PowerPoint plays it as the picture it is).
+pub fn is_recorded_cameo(doc: &Presentation, index: usize, id: ShapeId) -> bool {
+    doc.slides.get(index).and_then(|s| s.shape(id)).is_some_and(|sh| cameo_clip(sh).is_some())
+}
+
+/// The clip a recorded Cameo plays: the recording in the picture's frame, started when the slide
+/// appears, cropped as the picture is and silent (the recorder writes no audio track). `None` for
+/// a live Cameo (there is nothing recorded to play) and for an ordinary picture.
+pub fn cameo_clip(shape: &Shape) -> Option<MediaClip> {
+    let ShapeKind::Picture { fill } = &shape.kind else { return None };
+    let cameo = shape.cameo.as_ref()?;
+    let media = cameo.recorded?;
+    Some(MediaClip {
+        media,
+        video: true,
+        crop: fill.crop,
+        autoplay: cameo.autoplay,
+        // The length `show.cameo` accepted, so the show stops where the command said it would.
+        duration_ms: cameo.duration_ms.unwrap_or(0),
+        // A take this app recorded has no audio track (silent); an imported Cameo keeps its level.
+        volume: cameo.volume.unwrap_or(0.0),
+        ..Default::default()
+    })
+}
+
+/// The outline a recorded Cameo's playing frame is clipped to, in 0–1 of the shape's box: its
+/// Camera Shape (a round Cameo stays round while its clip plays). `None` when the geometry is not
+/// a single convex body, which needs no clip (a rectangle) or cannot be fanned (a custom path).
+pub fn cameo_outline(shape: &Shape, w: f64, h: f64) -> Option<Vec<(f32, f32)>> {
+    let (w, h) = (w.max(1.0), h.max(1.0));
+    let geom = deckcraft_render::shape_geometry(shape, w, h);
+    let [body] = geom.paths.as_slice() else { return None };
+    let mut points: Vec<(f64, f64)> = Vec::new();
+    deckcraft_geom::preset_flatten(&body.path, &mut |el| match el {
+        deckcraft_geom::PathEl::MoveTo(p) | deckcraft_geom::PathEl::LineTo(p) => points.push((p.x, p.y)),
+        _ => {}
+    });
+    // Flatten ends a closed sub-path back at its start; the fan closes it itself.
+    if points.len() > 1
+        && points.first().is_some_and(|a| (a.0 - points[points.len() - 1].0).abs() < 1e-6 && (a.1 - points[points.len() - 1].1).abs() < 1e-6)
+    {
+        points.pop();
+    }
+    if points.len() < 3 || !is_convex(&points) {
+        return None;
+    }
+    Some(points.into_iter().map(|(x, y)| ((x / w) as f32, (y / h) as f32)).collect())
+}
+
+/// Whether the polygon is convex, so a triangle fan from its centroid covers it.
+fn is_convex(points: &[(f64, f64)]) -> bool {
+    let mut sign = 0.0f64;
+    for i in 0..points.len() {
+        let (a, b, c) = (points[i], points[(i + 1) % points.len()], points[(i + 2) % points.len()]);
+        let cross = (b.0 - a.0) * (c.1 - b.1) - (b.1 - a.1) * (c.0 - b.0);
+        if cross.abs() < 1e-12 {
+            continue;
+        }
+        if sign == 0.0 {
+            sign = cross.signum();
+        } else if cross.signum() != sign {
+            return false;
+        }
+    }
+    sign != 0.0
 }
 
 /// Whether the voice `id`, playing `clip` (the clip it was started with), keeps playing on slide
@@ -388,13 +465,15 @@ pub fn carries_over(clip: &MediaClip, doc: &Presentation, id: ShapeId, to: usize
     clip.play_across_slides && clip_on(doc, to, id).is_none_or(|c| c.media == clip.media)
 }
 
-/// Media shapes directly on slide `index`: (id, box in slide points, clip).
+/// Media shapes directly on slide `index`, and recorded Cameos (a picture whose recorded clip
+/// plays in its frame): (id, box in slide points, clip).
 pub fn slide_media(doc: &Presentation, index: usize) -> Vec<(ShapeId, deckcraft_geom::Xfrm, MediaClip)> {
     let Some(s) = doc.slides.get(index) else { return vec![] };
     s.shapes
         .iter()
         .filter_map(|sh| match (&sh.kind, sh.xfrm) {
             (ShapeKind::Media(m), Some(x)) => Some((sh.id, x, m.clone())),
+            (ShapeKind::Picture { .. }, Some(x)) => cameo_clip(sh).map(|c| (sh.id, x, c)),
             _ => None,
         })
         .collect()
@@ -428,6 +507,66 @@ pub fn paint_frame(painter: &egui::Painter, host: &MediaHost, id: ShapeId, rect:
     painter.rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
     painter.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     true
+}
+
+/// Draw the playing clip of shape `id` into `rect`: a media shape's video as [`paint_frame`] does,
+/// a recorded Cameo's clip filling the picture's frame and clipped to its Camera Shape, so a round
+/// Cameo stays round while its recording plays and its crop still applies.
+pub fn paint_clip(painter: &egui::Painter, host: &MediaHost, doc: &Presentation, slide: usize, id: ShapeId, rect: Rect, clip: &MediaClip) -> bool {
+    let shape = doc.slides.get(slide).and_then(|s| s.shape(id)).filter(|sh| cameo_clip(sh).is_some_and(|c| c.media == clip.media));
+    let Some(shape) = shape else { return paint_frame(painter, host, id, rect, clip.crop) };
+    let Some(tex) = host.texture(id) else { return false };
+    let uv = crop_uv(clip.crop);
+    let xfrm = shape.xfrm.unwrap_or_default();
+    // A round Camera Shape clips the frame; a rectangular one is its own four corners. Either way
+    // the picture's turn and flips apply to the video, so playback matches the poster.
+    let outline = cameo_outline(shape, xfrm.w.max(1.0), xfrm.h.max(1.0));
+    let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+    let points = outline.unwrap_or_else(|| corners.to_vec());
+    // Positions take the picture's turn; the texture stays mapped from the outline's own points,
+    // so the content turns with the shape instead of the UVs turning under it.
+    let turned: Vec<(f32, f32)> = points.iter().map(|p| turn(*p, rect, xfrm.rot, xfrm.flip_h, xfrm.flip_v)).collect();
+    paint_clipped(painter, tex, rect, uv, &turned, &points);
+    true
+}
+
+/// A point in 0–1 of a picture's box after the picture's own turn: mirror the flips, then rotate
+/// in the box's own pixels about its centre (`Xfrm::rot`, degrees clockwise on screen), so a
+/// non-square box turns as a whole instead of shearing.
+fn turn(p: (f32, f32), rect: Rect, rot: f64, flip_h: bool, flip_v: bool) -> (f32, f32) {
+    let (w, h) = (rect.width().max(1e-3), rect.height().max(1e-3));
+    let (mut x, mut y) = ((p.0 - 0.5) * w, (p.1 - 0.5) * h);
+    if flip_h {
+        x = -x;
+    }
+    if flip_v {
+        y = -y;
+    }
+    if rot.is_finite() && rot.rem_euclid(360.0) != 0.0 {
+        let (sin, cos) = (rot as f32).to_radians().sin_cos();
+        (x, y) = (x * cos - y * sin, x * sin + y * cos);
+    }
+    (0.5 + x / w, 0.5 + y / h)
+}
+
+/// Paint `tex` over `rect` showing `uv`, clipped to `outline` (points in 0–1 of `rect`): a triangle
+/// fan from the outline's centroid, so a convex Camera Shape is covered exactly.
+fn paint_clipped(painter: &egui::Painter, tex: &TextureHandle, rect: Rect, uv: Rect, outline: &[(f32, f32)], texels: &[(f32, f32)]) {
+    let pos = |p: (f32, f32)| rect.min + vec2(p.0 * rect.width(), p.1 * rect.height());
+    let texel = |p: (f32, f32)| pos2(uv.min.x + p.0 * uv.width(), uv.min.y + p.1 * uv.height());
+    let at = |p: (f32, f32), t: (f32, f32)| egui::epaint::Vertex { pos: pos(p), uv: texel(t), color: Color32::WHITE };
+    let n = outline.len() as u32;
+    let mid = outline.iter().fold((0.0f32, 0.0f32), |a, p| (a.0 + p.0, a.1 + p.1));
+    let mid = (mid.0 / n as f32, mid.1 / n as f32);
+    let mid_texel = texels.iter().fold((0.0f32, 0.0f32), |a, p| (a.0 + p.0, a.1 + p.1));
+    let mid_texel = (mid_texel.0 / n as f32, mid_texel.1 / n as f32);
+    let mut mesh = egui::Mesh::with_texture(tex.id());
+    mesh.vertices.push(at(mid, mid_texel));
+    mesh.vertices.extend(outline.iter().zip(texels).map(|(p, t)| at(*p, *t)));
+    for i in 0..n {
+        mesh.indices.extend([0, 1 + i, 1 + (i + 1) % n]);
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Changes whenever a GIF shows another frame (part of the slide texture's cache key).
@@ -803,5 +942,108 @@ mod tests {
         assert_eq!(a.frame, 1, "the clock runs");
         assert_eq!((a.rect.x, a.rect.y, a.rect.w, a.rect.h), (100.0, 50.0, 20.0, 20.0));
         assert_eq!((b.rect.x, b.rect.y, b.rect.w, b.rect.h), (120.0, 50.0, 20.0, 20.0));
+    }
+
+    /// A slide with a Cameo picture whose marker names `cameo` (`recorded`) or nothing (`live`),
+    /// in the shape of its Camera Shape (`round`), as `show.cameo` commits one.
+    fn cameo_deck(round: bool, recorded: bool) -> (Presentation, ShapeId, deckcraft_model::MediaId) {
+        let mut doc = Presentation::default();
+        let poster = doc.add_media("cameo1.png", "image/png", vec![0u8; 8]).expect("poster");
+        let media = doc.add_media("cameo1.mp4", "video/mp4", vec![0u8; 16]).expect("media");
+        let id = ShapeId(9021);
+        let slide = Arc::make_mut(&mut doc.slides[0]);
+        slide.shapes.push(Shape {
+            id,
+            xfrm: Some(Xfrm::new(10.0, 20.0, 120.0, 100.0)),
+            kind: ShapeKind::Picture { fill: PictureFill { media: poster, crop: [0.1, 0.0, 0.1, 0.0], ..Default::default() } },
+            geom: deckcraft_model::Geom::Preset { name: if round { "ellipse" } else { "rect" }.into(), adj: vec![] },
+            cameo: Some(if recorded { deckcraft_model::Cameo::recorded(media) } else { deckcraft_model::Cameo::live() }),
+            ..Default::default()
+        });
+        (doc, id, media)
+    }
+
+    #[test]
+    fn a_recorded_cameo_plays_its_clip_inside_its_picture_frame() {
+        let (mut doc, id, media) = cameo_deck(true, true);
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shape_mut(id).expect("shape").cameo.as_mut().expect("cameo").volume = Some(0.4);
+        // The length `show.cameo` accepted is the playback limit, not just a JSON answer.
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shape_mut(id).expect("shape").cameo.as_mut().expect("cameo").duration_ms = Some(2_500);
+        let listed = slide_media(&doc, 0);
+        let (_, x, clip) = listed.iter().find(|(i, _, _)| *i == id).expect("a recorded Cameo is a playing clip");
+        assert_eq!((x.x, x.y, x.w, x.h), (10.0, 20.0, 120.0, 100.0), "the picture's frame");
+        assert_eq!(clip.media, media);
+        assert!(clip.video, "the recording is painted as frames");
+        assert!(clip.autoplay, "a recorded Cameo starts with its slide");
+        assert_eq!(clip.crop, [0.1, 0.0, 0.1, 0.0], "the picture's crop still applies");
+        assert_eq!(clip.volume, 0.4, "an imported level is kept, so the clip's sound plays");
+        assert_eq!(clip.duration_ms, 2_500, "the accepted length limits playback");
+        assert_eq!(find_clip(&doc, id, None).map(|c| c.media), Some(media), "a media cue finds it too");
+        assert!(
+            crate::media::cameo_outline(doc.slides[0].shape(id).expect("shape"), 120.0, 100.0).is_some(),
+            "a round Camera Shape clips its playing frame"
+        );
+    }
+
+    /// A recorded Cameo that waits for a click is clicked to play; one that autoplays keeps the
+    /// picture's click, so the show still advances over it.
+    #[test]
+    fn a_recorded_cameo_waiting_for_a_click_plays_on_one() {
+        let media = MediaClip { media: deckcraft_model::MediaId(7), ..Default::default() };
+        assert!(click_plays(false, &media), "a media shape is always clicked");
+        let playing = MediaClip { video: true, autoplay: true, ..media.clone() };
+        assert!(!click_plays(true, &playing), "an autoplaying Cameo keeps the picture's click");
+        let waiting = MediaClip { autoplay: false, ..playing.clone() };
+        assert!(click_plays(true, &waiting), "a Cameo waiting for a click starts on one");
+        // The clip `slide_media` builds for a Cameo with `autoplay` off is the waiting one.
+        let (mut doc, id, _) = cameo_deck(true, true);
+        let slide = Arc::make_mut(&mut doc.slides[0]);
+        let shape = slide.shape_mut(id).expect("shape");
+        shape.cameo.as_mut().expect("cameo").autoplay = false;
+        let listed = slide_media(&doc, 0);
+        let clip = &listed.iter().find(|(i, ..)| *i == id).expect("the Cameo's clip").2;
+        assert!(click_plays(is_recorded_cameo(&doc, 0, id), clip), "the picker's Cameo starts on a click");
+    }
+
+    #[test]
+    fn a_live_cameo_is_not_a_playing_clip() {
+        let (doc, id, _) = cameo_deck(true, false);
+        assert!(slide_media(&doc, 0).iter().all(|(i, _, _)| *i != id), "nothing is recorded to play");
+        assert!(find_clip(&doc, id, Some(0)).is_none());
+    }
+
+    /// The video plays in the picture's own orientation: the turn rotates the outline in the box's
+    /// pixels (so a non-square box is not sheared) and the flips mirror it, while the texture's UVs
+    /// stay put.
+    #[test]
+    fn a_turned_cameo_paints_its_video_in_the_pictures_orientation() {
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 100.0)); // 2:1, so axes differ
+        let round = |p: (f32, f32)| ((p.0 * 1000.0).round() / 1000.0, (p.1 * 1000.0).round() / 1000.0);
+        let corner = (0.0f32, 0.0f32); // the box's top-left
+        assert_eq!(round(turn(corner, rect, 0.0, false, false)), (0.0, 0.0), "no turn: the corner stays");
+        // 90°: (-100, -50) px -> (50, -100) px -> 0.75, -0.5 of a 200x100 box.
+        assert_eq!(round(turn(corner, rect, 90.0, false, false)), (0.75, -0.5), "a quarter turn in pixels");
+        assert_eq!(round(turn(corner, rect, 0.0, true, false)), (1.0, 0.0), "a horizontal flip mirrors it");
+        assert_eq!(round(turn(corner, rect, 0.0, false, true)), (0.0, 1.0), "a vertical flip mirrors it down");
+        // 45°: the diamond's extremes stay on the box's centre lines, not on an ellipse.
+        let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+        let turned: Vec<_> = corners.iter().map(|p| turn(*p, rect, 45.0, false, false)).collect();
+        assert!(turned.iter().all(|(_, y)| (y - 0.5).abs() > 0.2), "a 45° turn lifts the corners off the middle row: {turned:?}");
+        assert!(turned.iter().any(|(x, _)| *x < 0.0 || *x > 1.0), "and pushes them out sideways: {turned:?}");
+    }
+
+    #[test]
+    fn a_round_camera_shape_clips_the_playing_frame_and_a_rectangle_does_not() {
+        let (round, id, _) = cameo_deck(true, true);
+        let ellipse = cameo_outline(round.slides[0].shape(id).expect("shape"), 120.0, 100.0).expect("an ellipse has an outline");
+        assert!(ellipse.len() > 4, "the curve is flattened, not four corners");
+        assert!(ellipse.iter().all(|(x, y)| (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y)), "0–1 of the box");
+        assert!(ellipse.iter().any(|(x, y)| (x - 0.5).abs() < 0.06 && *y < 0.02), "the top of the circle");
+        assert!(ellipse.iter().any(|(x, _)| x < &0.02), "its leftmost point");
+
+        let (square, id, _) = cameo_deck(false, true);
+        let rect = cameo_outline(square.slides[0].shape(id).expect("shape"), 120.0, 100.0).expect("a rectangle has an outline");
+        assert_eq!(rect.len(), 4, "a rectangle is its own corners");
+        assert_eq!(rect, vec![(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
     }
 }

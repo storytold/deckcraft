@@ -128,19 +128,22 @@ pub fn geometry(w: &mut W, g: &Geom) {
     }
 }
 
-fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
+fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, click: Option<&deckcraft_model::text::Hyperlink>) {
+    // A recorded Cameo that waits for a click needs a PlayMedia link without a clone of the
+    // whole shape: the caller passes the override instead.
+    let click = click.or(s.click.as_ref());
     let a = A::new()
         .a("id", id)
         .a("name", if s.name.is_empty() { format!("Shape {id}") } else { s.name.clone() })
         .o("descr", (!s.descr.is_empty()).then_some(s.descr.as_str()))
         .t("hidden", s.hidden)
         .o("title", (!s.title.is_empty()).then_some(s.title.as_str()));
-    if s.click.is_none() && s.hover.is_none() && !s.decorative {
+    if click.is_none() && s.hover.is_none() && !s.decorative {
         w.empty("p:cNvPr", a);
         return;
     }
     w.open("p:cNvPr", a);
-    if let Some(h) = &s.click {
+    if let Some(h) = click {
         dml::hyperlink(w, x, o, "a:hlinkClick", h);
     }
     if let Some(h) = &s.hover {
@@ -157,7 +160,12 @@ fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
 }
 
 fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
-    if s.ph.is_none() && s.tags.is_empty() {
+    nv_pr_with(w, x, o, s, None);
+}
+
+/// `p:nvPr`, plus the video part of a recorded Cameo (`a:videoFile`, `p14:media`).
+fn nv_pr_with(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, recorded: Option<deckcraft_model::MediaId>) {
+    if s.ph.is_none() && s.tags.is_empty() && recorded.is_none() {
         w.empty0("p:nvPr");
         return;
     }
@@ -178,7 +186,23 @@ fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
                 .t("hasCustomPrompt", ph.has_custom_prompt),
         );
     }
+    // `p:nvPr` order: `p:ph`, the media element, `p:custDataLst`, `p:extLst`.
+    let mut embed = None;
+    if let Some(media) = recorded {
+        let link = x.media_rel(o, media, "video");
+        embed = x.media_rel_new(o, media, crate::opc::RT_MEDIA);
+        if let Some(l) = &link {
+            w.empty("a:videoFile", A::new().a("r:link", l));
+        }
+    }
     super::cust_data(w, x, o, &s.tags);
+    if let Some(e) = &embed {
+        w.open0("p:extLst");
+        w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
+        w.empty("p14:media", A::new().a("xmlns:p14", crate::opc::NS_P14).a("r:embed", e));
+        w.close("p:ext");
+        w.close("p:extLst");
+    }
     w.close("p:nvPr");
 }
 
@@ -263,8 +287,12 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
 }
 
 /// Write the children of a shape tree.
+/// How deep a shape tree is written; the timing writer collects media and cameo targets to the
+/// same depth, so every target it names has a serialized picture.
+pub(crate) const MAX_SHAPE_DEPTH: usize = 32;
+
 pub fn shapes(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, list: &[Shape], depth: usize) {
-    if depth > 32 {
+    if depth > MAX_SHAPE_DEPTH {
         return;
     }
     for s in list {
@@ -295,13 +323,30 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             w.open0("p:pic");
             w.open0("p:nvPicPr");
-            cnvpr(w, x, o, id, s);
+            // A click-waiting clip plays on a click of the shape, as `media()` does for videos.
+            let play = deckcraft_model::text::Hyperlink {
+                action: deckcraft_model::text::Action::PlayMedia,
+                tooltip: String::new(),
+                highlight_click: false,
+                sound: None,
+                stop_sound: false,
+                zoom_return: None,
+            };
+            let click = (s.click.is_none() && s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && !c.autoplay)).then_some(&play);
+            cnvpr(w, x, o, id, s, click);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
+            if let Some(c) = &s.cameo {
+                crate::cameo::write_live_feed(w, c.raw.as_deref());
+            }
             w.close("p:cNvPicPr");
-            nv_pr(w, x, o, s);
+            nv_pr_with(w, x, o, s, s.cameo.as_ref().and_then(|c| c.recorded));
             w.close("p:nvPicPr");
-            dml::blip_fill(w, x, o, "p:blipFill", fill);
+            if s.cameo.is_some() {
+                dml::cameo_blip_fill(w, x, o, "p:blipFill", fill);
+            } else {
+                dml::blip_fill(w, x, o, "p:blipFill", fill);
+            }
             let mut s2 = s.clone();
             if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
                 s2.fill = None;
@@ -312,7 +357,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             w.close("p:pic");
         }
-        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < 32 => {
+        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < MAX_SHAPE_DEPTH => {
             if let Some(d) = &s.diagram {
                 diagram(w, x, o, cx, s, d, children, child);
             }
@@ -321,7 +366,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             w.open0("p:grpSp");
             w.open0("p:nvGrpSpPr");
-            cnvpr(w, x, o, id, s);
+            cnvpr(w, x, o, id, s, None);
             w.open0("p:cNvGrpSpPr");
             locks(w, "a:grpSpLocks", s, A::new());
             w.close("p:cNvGrpSpPr");
@@ -357,7 +402,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             w.open0("p:cxnSp");
             w.open0("p:nvCxnSpPr");
-            cnvpr(w, x, o, id, s);
+            cnvpr(w, x, o, id, s, None);
             let st = start.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             let en = end.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             if st.is_none() && en.is_none() && !s.locked {
@@ -440,7 +485,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let xf = s.xfrm.unwrap_or_default();
             w.open0("p:grpSp");
             w.open0("p:nvGrpSpPr");
-            cnvpr(w, x, o, id, s);
+            cnvpr(w, x, o, id, s, None);
             w.empty0("p:cNvGrpSpPr");
             w.empty0("p:nvPr");
             w.close("p:nvGrpSpPr");
@@ -468,7 +513,7 @@ fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Optio
 fn write_model_part(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, rid: &str) {
     w.open("p:contentPart", A::new().a("r:id", rid));
     w.open0("p:nvContentPartPr");
-    cnvpr(w, x, o, id, s);
+    cnvpr(w, x, o, id, s, None);
     w.empty0("p:cNvContentPartPr");
     w.empty0("p:nvPr");
     w.close("p:nvContentPartPr");
@@ -643,7 +688,7 @@ fn ink_shape(st: &deckcraft_model::InkStroke, i: usize) -> Option<Shape> {
 fn sp(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, math: bool) {
     w.open("p:sp", A::new().t("useBgFill", matches!(s.fill, Some(Fill::Background))));
     w.open0("p:nvSpPr");
-    cnvpr(w, x, o, id, s);
+    cnvpr(w, x, o, id, s, None);
     let mut cnv = A::new();
     if s.text_box {
         cnv = cnv.a("txBox", "1");
@@ -688,7 +733,7 @@ fn sp(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, math: bool) {
 fn frame_open(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
     w.open0("p:graphicFrame");
     w.open0("p:nvGraphicFramePr");
-    cnvpr(w, x, o, id, s);
+    cnvpr(w, x, o, id, s, None);
     w.open0("p:cNvGraphicFramePr");
     w.empty("a:graphicFrameLocks", A::new().a("noGrp", "1").t("noDrilldown", s.locked).t("noMove", s.locked).t("noResize", s.locked));
     w.close("p:cNvGraphicFramePr");
@@ -806,7 +851,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
             zoom_return: None,
         });
     }
-    cnvpr(w, x, o, id, &s2);
+    cnvpr(w, x, o, id, &s2, None);
     w.open0("p:cNvPicPr");
     w.empty("a:picLocks", A::new().a("noChangeAspect", "1"));
     w.close("p:cNvPicPr");
@@ -918,7 +963,7 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
     if let ShapeKind::Picture { fill } = &s.kind {
         w.open0("p:pic");
         w.open0("p:nvPicPr");
-        cnvpr(w, x, o, id, s);
+        cnvpr(w, x, o, id, s, None);
         w.open0("p:cNvPicPr");
         w.empty("a:picLocks", A::new().a("noChangeAspect", "1"));
         w.close("p:cNvPicPr");

@@ -254,6 +254,51 @@ pub struct MediaClip {
     pub height: u32,
 }
 
+/// A Cameo (Camera Format tab): PowerPoint's live camera feed on a picture shape. The shape stays
+/// a [`ShapeKind::Picture`] — its `PictureFill` is the placeholder or poster art — so picture
+/// formatting, cropping and arrangement keep working. The marker in the file is
+/// `alf:liveFeedProps` inside `p:cNvPicPr/a:extLst`. An imported file may use an SVG placeholder
+/// (as PowerPoint writes); a deck we create or record uses the PNG camera poster/fallback, because
+/// our renderers decode rasters but not SVG.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Cameo {
+    /// Live feed (`true`) rather than a frozen still or a recorded clip.
+    pub live: bool,
+    /// The capture device the cameo shows, when one is named.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// A recording played by the cameo instead of the live feed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<MediaId>,
+    /// The feed's `alf:liveFeedProps` element kept verbatim (`backgroundProps`, `extLst`…), so a
+    /// camera background set in PowerPoint survives a save. `None` writes a plain live feed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+    /// A recorded clip plays when the slide appears (`p:video` in the timing tree).
+    pub autoplay: bool,
+    /// How much of the recording plays, in milliseconds: the length `show.cameo` accepted, clamped
+    /// to the clip and to ten minutes. `None` plays the whole clip (`p:cTn/@dur` in the file).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u32>,
+    /// Volume of a recording (0–1, from the timing node's `vol`/`mute`). `None` is a take this app
+    /// recorded, which has no audio track; an imported Cameo keeps its own level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+}
+
+impl Cameo {
+    /// A live feed from the default camera.
+    pub fn live() -> Self {
+        Cameo { live: true, ..Default::default() }
+    }
+
+    /// A recorded clip in the cameo's frame, played from the slide's start.
+    pub fn recorded(media: MediaId) -> Self {
+        Cameo { live: false, recorded: Some(media), autoplay: true, ..Default::default() }
+    }
+}
+
 /// One ink stroke (Draw tab): points in slide coordinates with pressure (`0..=1`,
 /// where `1` is [`InkStroke::width`]).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -361,6 +406,10 @@ pub struct Shape {
     /// On a SmartArt group: the diagram's text outline, from which its shapes are regenerated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<Diagram>,
+    /// Set when this picture is a Cameo (Camera Format tab): a camera feed or recording shown in
+    /// the picture's frame. `None` for ordinary pictures.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cameo: Option<Cameo>,
 }
 
 /// A SmartArt diagram's data: its layout and its outline of nodes (the Text Pane).
@@ -436,6 +485,7 @@ impl Default for Shape {
             tags: vec![],
             raw_ext: None,
             diagram: None,
+            cameo: None,
         }
     }
 }
@@ -454,6 +504,10 @@ impl Shape {
     }
     pub fn is_group(&self) -> bool {
         matches!(self.kind, ShapeKind::Group { .. })
+    }
+    /// Is this picture a Cameo (Camera Format tab)?
+    pub fn is_cameo(&self) -> bool {
+        self.cameo.is_some() && matches!(self.kind, ShapeKind::Picture { .. })
     }
     pub fn children(&self) -> &[Shape] {
         match &self.kind {
@@ -1093,11 +1147,17 @@ impl Presentation {
     }
     /// Add media bytes, reusing an identical existing item.
     pub fn add_media(&mut self, name: &str, content_type: &str, data: Vec<u8>) -> Option<MediaId> {
-        if let Some(m) = self.media.iter().find(|m| m.data.len() == data.len() && *m.data == data) {
+        self.add_media_shared(name, content_type, Arc::new(data))
+    }
+
+    /// [`Presentation::add_media`] for bytes the caller already keeps behind an [`Arc`]: the
+    /// recorder commits a clip without copying it a second time.
+    pub fn add_media_shared(&mut self, name: &str, content_type: &str, data: Arc<Vec<u8>>) -> Option<MediaId> {
+        if let Some(m) = self.media.iter().find(|m| m.data.len() == data.len() && *m.data == *data) {
             return Some(m.id);
         }
         let id = MediaId(self.alloc_id()?);
-        self.media.push(MediaItem { id, name: name.into(), content_type: content_type.into(), data: Arc::new(data), link: None });
+        self.media.push(MediaItem { id, name: name.into(), content_type: content_type.into(), data, link: None });
         Some(id)
     }
     /// Section index containing a slide (by position), when sections exist.

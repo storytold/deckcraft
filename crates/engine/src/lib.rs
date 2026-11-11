@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod cameo;
 pub mod cmd;
 pub mod compare;
 pub mod connect;
@@ -515,6 +516,9 @@ pub struct Session {
     /// Presentations a host read off the UI thread, waiting for `file.adopt` (by token).
     loaded: Vec<(u64, cmd::file::LoadedFile)>,
     next_loaded: u64,
+    /// A recorded Cameo clip handed to the next `show.cameo` run, so the engine's own recorder
+    /// uses the command path (undo, guards) without base64 in the parameters.
+    staged_cameo: Option<cmd::camera::Recorded>,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
 }
@@ -550,6 +554,7 @@ impl Session {
             panics_caught: 0,
             loaded: vec![],
             next_loaded: 0,
+            staged_cameo: None,
             composition_settles: 0,
         }
     }
@@ -565,6 +570,17 @@ impl Session {
         self.loaded.push((self.next_loaded, f));
         self.next_loaded
     }
+    /// Hand a recorded Cameo clip to the next `show.cameo` run (`staged: true`): the command path
+    /// with its undo step and guards, and no base64 copy of the clip.
+    pub(crate) fn stage_cameo(&mut self, clip: cmd::camera::Recorded) {
+        self.staged_cameo = Some(clip);
+    }
+
+    /// Take the clip staged for this `show.cameo` run.
+    pub(crate) fn take_staged_cameo(&mut self) -> Option<cmd::camera::Recorded> {
+        self.staged_cameo.take()
+    }
+
     /// The staged presentation for `token`, removed from the session.
     pub(crate) fn take_loaded(&mut self, token: u64) -> Option<cmd::file::LoadedFile> {
         let i = self.loaded.iter().position(|(t, _)| *t == token)?;
@@ -646,7 +662,14 @@ impl Session {
             self.settle_composition();
         }
         if let Err(e) = (spec.enabled)(self) {
-            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
+            // `ids`/`id`/`all` name the command's targets, so a selection-based enablement is not
+            // the last word: let the command validate them (AGENTS.md §4, the same for every host).
+            // `all` only counts for a command whose parameters declare it.
+            let declares_all = cmd::param_keys(spec.params).is_ok_and(|keys| keys.contains(&"all"));
+            let names_targets = params.get("ids").is_some()
+                || params.get("id").is_some()
+                || (declares_all && params.get("all").and_then(Value::as_bool) == Some(true));
+            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && names_targets;
             if !named {
                 return Err(EngineError::Disabled(id.into(), e));
             }

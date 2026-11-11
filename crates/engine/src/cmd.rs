@@ -4,6 +4,7 @@ pub mod animation;
 pub mod arrange;
 pub mod artistic;
 pub mod background;
+pub mod camera;
 pub mod compress;
 pub mod design;
 pub mod edit;
@@ -70,7 +71,8 @@ pub struct CommandInfo {
 }
 
 impl CommandSpec {
-    /// Holds because `Session::execute` skips the selection check when `id` or `ids` is given.
+    /// Holds because `Session::execute` skips the selection check for named targets (`id`/`ids`)
+    /// and for commands that take `all: true`.
     pub fn acts_on(&self) -> Option<String> {
         let keys = param_keys(self.params).unwrap_or_default();
         let named = if keys.contains(&"ids") {
@@ -167,6 +169,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(slide::specs());
         v.extend(reuse::specs());
         v.extend(insert::specs());
+        v.extend(camera::specs());
         v.extend(smartart::specs());
         v.extend(shape::specs());
         v.extend(background::specs());

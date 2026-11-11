@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeKind, TextBody, find_shape, find_shape_mut};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, TextBody, find_shape, find_shape_mut};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -204,17 +204,101 @@ fn behaviour_auto_reverses(c: &El) -> bool {
     !behaviours.is_empty() && behaviours.iter().all(|b| b.child("cTn").and_then(|t| t.bool("autoRev")).unwrap_or(false))
 }
 
+/// Does this time node wait for a click? Every condition in its start list must: a list that also
+/// names `onBegin` (or a delay) starts on its own, as automatic groups do.
+fn starts_on_click(e: &El) -> bool {
+    let conds: Vec<&El> = e.child("stCondLst").map(|s| s.elements().filter(|c| c.is("cond")).collect()).unwrap_or_default();
+    !conds.is_empty() && conds.iter().all(|c| c.attr("delay").is_some_and(|d| d.trim() == "indefinite") || c.attr("evt") == Some("onClick"))
+}
+
+/// A time node that only waits: every alternative in its start list is a click or a measured
+/// delay. One immediate alternative (`delay="0"`, `onBegin`) makes it part of the slide's entry,
+/// however many waiting alternatives sit beside it.
+fn starts_late(e: &El) -> bool {
+    e.child("stCondLst").is_some_and(|s| {
+        let conds: Vec<&El> = s.elements().filter(|c| c.is("cond")).collect();
+        !conds.is_empty()
+            && conds.iter().all(|c| {
+                c.attr("evt") == Some("onClick")
+                    || c.attr("delay").is_some_and(|d| {
+                        let d = d.trim();
+                        d == "indefinite" || d.parse::<f64>().is_ok_and(|ms| ms > 0.0)
+                    })
+            })
+    })
+}
+
+/// Shapes a slide-entry media call starts (`p:cmd type="call" cmd="playFrom(0.0)"`), which is how
+/// PowerPoint writes a video set to start automatically: its `p:video` node says
+/// `delay="indefinite"` and the call is what plays it. A call inside a click step, or inside a
+/// time node that waits a measured delay, is not the slide's entry.
+fn entry_media_calls(e: &El, ctx: &IdCtx, out: &mut std::collections::HashSet<ShapeId>, click: bool, depth: usize) {
+    if depth > crate::xml::MAX_DEPTH || out.len() >= 10_000 {
+        return;
+    }
+    let click = click || starts_late(e);
+    if e.is("cmd")
+        && !click
+        && e.attr("cmd").is_some_and(|c| c.trim().starts_with("playFrom"))
+        && let Some(id) = e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f))
+    {
+        out.insert(id);
+    }
+    for c in e.elements() {
+        entry_media_calls(c, ctx, out, click, depth + 1);
+    }
+}
+
+/// The `p:video`/`p:audio` nodes, each with whether an enclosing time node waits for a click.
+fn media_nodes<'a>(e: &'a El, click: bool, out: &mut Vec<(&'a El, bool)>, depth: usize) {
+    if depth > crate::xml::MAX_DEPTH || out.len() >= 10_000 {
+        return;
+    }
+    let click = click || starts_on_click(e);
+    if e.is("video") || e.is("audio") {
+        out.push((e, click));
+    }
+    for c in e.elements() {
+        media_nodes(c, click, out, depth + 1);
+    }
+}
+
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
-    let mut nodes = vec![];
-    for tag in ["video", "audio"] {
-        timing.find_all(tag, &mut nodes);
-    }
-    for node in nodes.into_iter().take(10_000) {
+    let mut found = vec![];
+    media_nodes(timing, false, &mut found, 0);
+    let mut started = std::collections::HashSet::new();
+    entry_media_calls(timing, ctx, &mut started, false, 0);
+    for (node, click) in found {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
-        let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
+        let Some(shape) = find_shape_mut(shapes, id) else { continue };
+        let ShapeKind::Media(clip) = &mut shape.kind else {
+            // A recorded Cameo's video is in the picture's timing node, not a media shape. It
+            // autoplays only when its own condition starts at slide entry and no enclosing step
+            // waits for a click (a click-step keeps `delay="0"` on the inner node).
+            if let Some(cameo) = shape.cameo.as_mut().filter(|c| c.recorded.is_some()) {
+                let own = cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("delay") == Some("0") && c.attr("evt") != Some("onClick"));
+                // A slide-entry media call starts it even when its own node says indefinite.
+                cameo.autoplay = (own && !click) || started.contains(&id);
+                // How much of the clip plays (`p:cTn/@dur`); absent: the whole recording.
+                cameo.duration_ms = cm.path(&["cTn"]).and_then(|t| t.u32("dur")).filter(|ms| *ms > 0);
+                // An imported recording can carry sound: keep its level (mute is a zero volume).
+                cameo.volume = if cm.bool("mute") == Some(true) {
+                    Some(0.0)
+                } else {
+                    // `vol` is in 1/100_000 and its schema default is 50%: a file that omits it
+                    // plays at half volume, not silently.
+                    let vol = match cm.attr("vol") {
+                        Some(v) => v.trim().parse::<f64>().ok().filter(|v| v.is_finite()).map_or(0.5, |v| (v / 100_000.0).clamp(0.0, 1.0)),
+                        None => 0.5,
+                    };
+                    Some(vol)
+                };
+            }
+            continue;
+        };
         if let Some(v) = cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
             clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
         }
@@ -368,4 +452,72 @@ fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
         matched = k + 1;
     }
     matched == effects.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use deckcraft_model::{Cameo, MediaId, ShapeId};
+
+    use super::*;
+
+    fn ctx() -> IdCtx {
+        let mut map = std::collections::HashMap::new();
+        map.insert(2, ShapeId(2));
+        IdCtx { used: Default::default(), map, fresh: false, count: 0 }
+    }
+
+    fn autoplay_of(xml: &str) -> bool {
+        let doc = crate::xml::parse(xml.as_bytes()).expect("xml");
+        let mut shapes =
+            vec![Shape { id: ShapeId(2), cameo: Some(Cameo { recorded: Some(MediaId(1)), ..Default::default() }), ..Default::default() }];
+        media_settings(&doc.root, &ctx(), &mut shapes);
+        shapes[0].cameo.as_ref().expect("cameo").autoplay
+    }
+
+    const ENTRY: &str = r#"<p:timing xmlns:p="urn:x"><p:tnLst><p:par><p:cTn id="1" dur="indefinite"><p:childTnLst><p:video><p:cMediaNode vol="100000"><p:cTn id="2"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cMediaNode></p:video></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#;
+
+    #[test]
+    fn a_cameo_autoplays_only_from_a_slide_entry_condition() {
+        assert!(autoplay_of(ENTRY), "delay 0 with no click above it is slide entry");
+        let click_event = ENTRY.replace(r#"<p:cond delay="0"/>"#, r#"<p:cond evt="onClick" delay="0"/>"#);
+        assert!(!autoplay_of(&click_event), "an on-click condition is not slide entry");
+        let click_step = ENTRY
+            .replace("<p:video>", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:video>"#)
+            .replace("</p:video>", "</p:video></p:childTnLst></p:cTn></p:par>");
+        assert!(!autoplay_of(&click_step), "an enclosing click step keeps delay 0 on the inner node");
+        let waiting = ENTRY.replace(r#"<p:cond delay="0"/>"#, r#"<p:cond delay="indefinite"/>"#);
+        assert!(!autoplay_of(&waiting), "an indefinite delay waits for a click");
+        // PowerPoint's own automatic video: the node says indefinite and a slide-entry media call
+        // plays it (`p:cmd type="call" cmd="playFrom(0.0)"`), so it starts by itself.
+        const POWERPOINT_ENTRY: &str = r#"<p:timing xmlns:p="urn:x"><p:tnLst><p:par><p:cTn id="1" dur="indefinite"><p:childTnLst><p:video><p:cMediaNode vol="100000"><p:cTn id="2"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cMediaNode></p:video><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="3" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#;
+        assert!(autoplay_of(POWERPOINT_ENTRY), "a slide-entry media call starts the video");
+        // Two waiting alternatives (a click and a delay) are still a wait, never the entry.
+        let two_waits = POWERPOINT_ENTRY
+            .replace(
+                "<p:cmd",
+                r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond evt="onClick" delay="0"/><p:cond delay="500"/></p:stCondLst><p:childTnLst><p:cmd"#,
+            )
+            .replace("</p:cmd>", "</p:cmd></p:childTnLst></p:cTn></p:par>");
+        assert!(!autoplay_of(&two_waits), "onClick and a delay together wait; they are not the entry");
+        // A delayed condition beside an immediate one (onBegin) is an alternative, not a wait.
+        let mixed_call = POWERPOINT_ENTRY
+            .replace("<p:cmd", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="500"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:cmd"#)
+            .replace("</p:cmd>", "</p:cmd></p:childTnLst></p:cTn></p:par>");
+        assert!(autoplay_of(&mixed_call), "an immediate alternative keeps the call at slide entry");
+        // A call that waits a measured delay is not the slide entry either.
+        let delayed_call = POWERPOINT_ENTRY
+            .replace("<p:cmd", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="500"/></p:stCondLst><p:childTnLst><p:cmd"#)
+            .replace("</p:cmd>", "</p:cmd></p:childTnLst></p:cTn></p:par>");
+        assert!(!autoplay_of(&delayed_call), "a playFrom call under a 500 ms delay waits its turn");
+        // The same call inside a click step does not.
+        let click_call = POWERPOINT_ENTRY
+            .replace("<p:cmd", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:cmd"#)
+            .replace("</p:cmd>", "</p:cmd></p:childTnLst></p:cTn></p:par>");
+        assert!(!autoplay_of(&click_call), "a media call in a click step waits for the click");
+        // A group that also starts `onBegin` runs by itself, so it is not a click step.
+        let automatic = ENTRY
+            .replace("<p:video>", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:video>"#)
+            .replace("</p:video>", "</p:video></p:childTnLst></p:cTn></p:par>");
+        assert!(autoplay_of(&automatic), "an automatic group is not a click wait");
+    }
 }

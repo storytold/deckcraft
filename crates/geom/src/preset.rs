@@ -15,6 +15,12 @@ mod catalog;
 mod shapes;
 
 pub use build::build;
+
+/// Does this preset enclose an area, so it can mask a picture? Lines, connectors, arcs and
+/// brackets only stroke, so a picture clipped to them would vanish.
+pub fn fills_area(name: &str) -> bool {
+    build(name, 26.0, 26.0, &[]).is_some_and(|g| !g.is_open())
+}
 use builder::{Corner, Dir, Pb, corner_rect, fill, fill_eo, fill_only, mid_sites, orient, shade, simple, stroke_only, vis};
 pub use catalog::{CATALOG, Category, FillMode, Geometry, Handle, PresetInfo, SubPath, info, is_line_like, mitred_by_default};
 

@@ -1,0 +1,944 @@
+//! Camera objects (Camera Format tab): inserting a Cameo picture and the nine Camera Styles.
+//!
+//! A Cameo is an ordinary picture shape with [`deckcraft_model::Cameo`] set: its frame, fill,
+//! outline, effects and crop are the picture's, so every picture command works on it unchanged.
+//! Live capture and background effects are separate layers; this module owns the model-side object
+//! and its drawing styles only.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use deckcraft_color::Rgba;
+use deckcraft_geom::Xfrm;
+use deckcraft_model::style::{Effects, PictureFill, Shadow};
+use deckcraft_model::{Cameo, ColorRef, Fill, Geom, Line, Shape, ShapeId, ShapeKind};
+use serde_json::{Value, json};
+
+use super::edit::walk_mut;
+use super::insert::first_free_name;
+use super::{CommandSpec, NO_ID_SPACE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, opt_usize_param, rect_param, str_param, targets};
+use crate::{Result, Session};
+
+/// Default side of an inserted cameo: 2.25 in.
+pub const DEFAULT_SIZE: f64 = 162.0;
+/// Gap between the cameo and the slide's right and bottom edges.
+pub const DEFAULT_MARGIN: f64 = 6.5;
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        cmd!("insert.cameo", "Cameo", ["Insert", "Images"], None, "{slide?: index, all?: bool, rect?: [x,y,w,h] pt}", has_slide, insert_cameo),
+        cmd!(
+            "camera.style",
+            "Camera Styles",
+            ["Camera Format", "Camera Styles"],
+            None,
+            "{style: none|simpleFrameRectangle|centerShadowRectangle|softEdgeRectangle|simpleFrameCircle|centerShadowCircle|softEdgeCircle|centerShadowDiamond|centerShadowHexagon (see camera.styles), all?: bool, ids?}",
+            has_cameo,
+            style
+        ),
+        // Not journaled: the clip arrives as base64 and would sit in the session journal for the
+        // whole run. Nothing replays journal entries to rebuild a document; undo keeps the edit,
+        // and the engine's own recorder commits through `commit_recorded` without base64.
+        CommandSpec {
+            id: "show.cameo",
+            label: "Record Cameo",
+            menu: &["Slide Show", "Record"],
+            shortcut: None,
+            params: "{slide?: index, data: base64 MP4, name?: string, durationMs?: number, rect?: [x,y,w,h] pt, staged?: bool (engine recorder: the clip handed over with Session::stage_cameo)} → {slide, id, media, poster, durationMs, width, height}. \
+                     `data` is a base64 MP4 (or QuickTime) with a video track, at most 64 MB; `path` is not accepted. \
+                     `durationMs` may shorten the playback timing but is clamped to the clip's probed length and to 10 minutes. \
+                     The poster is the first frame, or a PNG camera placeholder when no frame decodes. \
+                     The slide's existing Cameo is replaced (keeping its placement, crop and camera background), otherwise a Cameo is created. \
+                     Adds media up to the 512 MB total the deck may hold. One undo step. Not journaled: media is kept in the document, not the journal.",
+            enabled: has_slide,
+            run: record_cameo,
+            journal: false,
+            undoable: true,
+        },
+        cmd!(
+            "camera.applyToAll",
+            "Apply to All Slides",
+            ["Camera Format", "Camera Styles"],
+            None,
+            "{ids?} — copies the selected Cameo's shape, frame and effects onto every Cameo in the deck",
+            has_cameo,
+            apply_to_all
+        ),
+        cmd!(
+            query "camera.styles",
+            "Camera Style Gallery",
+            ["Camera Format", "Camera Styles"],
+            None,
+            "{} → [{id, label}]",
+            always,
+            list_styles
+        ),
+    ]
+}
+
+/// One Camera Styles gallery entry: the shape, frame and effects it gives the cameo.
+pub struct Style {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// Shape preset.
+    pub preset: &'static str,
+    /// Frame width in points; `None` for no frame.
+    pub frame: Option<f64>,
+    /// A centred outer shadow.
+    pub shadow: bool,
+    /// Soft-edge radius in points.
+    pub soft_edge: Option<f64>,
+}
+
+/// The gallery, in PowerPoint's order.
+pub const STYLES: [Style; 9] = [
+    Style { id: "none", label: "No Style", preset: "", frame: None, shadow: false, soft_edge: None },
+    Style { id: "simpleFrameRectangle", label: "Simple Frame Rectangle", preset: "rect", frame: Some(6.0), shadow: false, soft_edge: None },
+    Style { id: "centerShadowRectangle", label: "Center Shadow Rectangle", preset: "rect", frame: None, shadow: true, soft_edge: None },
+    Style { id: "softEdgeRectangle", label: "Soft Edge Rectangle", preset: "rect", frame: None, shadow: false, soft_edge: Some(10.0) },
+    Style { id: "simpleFrameCircle", label: "Simple Frame Circle", preset: "ellipse", frame: Some(6.0), shadow: false, soft_edge: None },
+    Style { id: "centerShadowCircle", label: "Center Shadow Circle", preset: "ellipse", frame: None, shadow: true, soft_edge: None },
+    Style { id: "softEdgeCircle", label: "Soft Edge Circle", preset: "ellipse", frame: None, shadow: false, soft_edge: Some(12.0) },
+    Style { id: "centerShadowDiamond", label: "Center Shadow Diamond", preset: "diamond", frame: None, shadow: true, soft_edge: None },
+    Style { id: "centerShadowHexagon", label: "Center Shadow Hexagon", preset: "hexagon", frame: None, shadow: true, soft_edge: None },
+];
+
+/// The style with this id; `none` included.
+pub fn look(id: &str) -> Option<&'static Style> {
+    STYLES.iter().find(|s| s.id == id)
+}
+
+fn center_shadow() -> Shadow {
+    Shadow {
+        color: ColorRef::rgb(Rgba::BLACK).with(deckcraft_color::ColorTransform::Alpha(40000)),
+        blur: 16.0,
+        dist: 0.0,
+        dir: 90.0,
+        inner: false,
+        sx: 1.0,
+        sy: 1.0,
+        kx: 0.0,
+        ky: 0.0,
+        align: "tl".into(),
+        rotate_with_shape: false,
+    }
+}
+
+/// Apply camera style `id` to `sh`. `none` clears the frame and effects but keeps the shape (the
+/// user's Camera Shape choice), exactly as the gallery's first tile reads.
+pub fn apply(sh: &mut Shape, id: &str) -> bool {
+    if id == "none" {
+        sh.line = None;
+        sh.effects = None;
+        return true;
+    }
+    let Some(st) = look(id) else { return false };
+    sh.geom = Geom::preset(st.preset);
+    sh.line = Some(match st.frame {
+        Some(w) => Line::solid(ColorRef::rgb(Rgba::WHITE), w),
+        None => Line::none(),
+    });
+    let fx = Effects { outer_shadow: st.shadow.then(center_shadow), soft_edge: st.soft_edge, ..Default::default() };
+    sh.effects = (!fx.is_empty()).then_some(fx);
+    true
+}
+
+/// The camera style `sh` currently matches, or `none` when it has no frame or effects. `None` when
+/// a custom frame or effect was applied on top (Camera Border, Camera Effects).
+pub fn style_of(sh: &Shape) -> Option<&'static str> {
+    let preset = sh.geom.preset_name()?;
+    let fx = sh.effects.as_ref();
+    let shadow = fx.and_then(|e| e.outer_shadow.as_ref()).is_some();
+    let soft = fx.and_then(|e| e.soft_edge);
+    let width = sh.line.as_ref().and_then(|l| l.width);
+    let framed = sh.line.as_ref().is_some_and(|l| matches!(l.fill, Some(Fill::Solid { .. })));
+    if !framed && !shadow && soft.is_none() {
+        return Some("none");
+    }
+    STYLES
+        .iter()
+        .find(|st| {
+            st.id != "none"
+                && st.preset == preset
+                && st.shadow == shadow
+                && match (st.frame, width, framed) {
+                    (Some(w), Some(v), true) => (w - v).abs() < 0.01,
+                    (None, _, false) => true,
+                    _ => false,
+                }
+                && match (st.soft_edge, soft) {
+                    (Some(a), Some(b)) => (a - b).abs() < 0.01,
+                    (None, None) => true,
+                    _ => false,
+                }
+        })
+        .map(|s| s.id)
+}
+
+fn list_styles(_s: &mut Session, _p: &Value) -> Result<Value> {
+    Ok(STYLES.iter().map(|s| json!({"id": s.id, "label": s.label})).collect())
+}
+
+/// Bottom-right default box for a slide.
+fn default_rect(size: deckcraft_geom::Size) -> Xfrm {
+    let w = DEFAULT_SIZE.min(size.width.max(0.0));
+    let h = DEFAULT_SIZE.min(size.height.max(0.0));
+    Xfrm::new((size.width - w - DEFAULT_MARGIN).max(0.0), (size.height - h - DEFAULT_MARGIN).max(0.0), w, h)
+}
+
+fn cameo(id: ShapeId, name: String, xfrm: Xfrm, media: deckcraft_model::MediaId) -> Shape {
+    Shape {
+        id,
+        name,
+        xfrm: Some(xfrm),
+        kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+        geom: Geom::preset("ellipse"),
+        cameo: Some(Cameo::live()),
+        descr: "Camera preview".into(),
+        ..Default::default()
+    }
+}
+
+/// Names and shape count of one slide, for `Camera N`.
+fn slide_names(shapes: &[Shape]) -> (std::collections::HashSet<String>, usize) {
+    let mut names = std::collections::HashSet::new();
+    let mut count = 0;
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        names.insert(sh.name.clone());
+        count += 1;
+    });
+    (names, count)
+}
+
+fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
+    let all = bool_or(p, "all", false);
+    let wanted = opt_usize_param(p, "slide", "insert.cameo")?;
+    let rect = rect_param(p, "rect");
+    if rect.is_some_and(|r| r.w < 1.0 || r.h < 1.0) {
+        return Err(bad("insert.cameo", "rect needs a positive width and height"));
+    }
+    let (target, ids, id) = s.edit(|doc, sel| {
+        let n = doc.slides.len();
+        if n == 0 {
+            return Err(bad("insert.cameo", "no slides"));
+        }
+        let target = match wanted {
+            Some(i) if i < n => i,
+            Some(i) => return Err(bad("insert.cameo", format!("no slide {}", i + 1))),
+            None => sel.slide.min(n - 1),
+        };
+        let size = doc.slide_size;
+        // Our own cameo placeholder: a camera body and lens, no vendor artwork. It is the PNG the
+        // PPTX reader also uses for a Cameo whose poster cannot be read, so every renderer draws it
+        // (the SVG art of the same camera is not renderable); PowerPoint shows it and the capture
+        // layer swaps it for the live feed.
+        let media =
+            doc.add_media("cameo-placeholder.png", "image/png", deckcraft_pptx::cameo_poster()).ok_or_else(|| bad("insert.cameo", NO_ID_SPACE))?;
+        let box_ = rect.unwrap_or_else(|| default_rect(size));
+        let mut ids = Vec::new();
+        let mut on_target = None;
+        for i in 0..n {
+            if !all && i != target {
+                continue;
+            }
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.cameo", NO_ID_SPACE))?);
+            let shapes = &mut Arc::make_mut(&mut doc.slides[i]).shapes;
+            let (taken, count) = slide_names(shapes);
+            let name = first_free_name("Camera", &taken, count);
+            shapes.push(cameo(id, name, box_, media));
+            if i == target {
+                on_target = Some(id);
+            }
+            ids.push(id);
+        }
+        sel.target = crate::Target::Slides;
+        sel.slide = target;
+        sel.text = None;
+        let Some(first) = on_target.or_else(|| ids.first().copied()) else {
+            return Err(bad("insert.cameo", "no slide"));
+        };
+        sel.shapes = vec![first];
+        Ok((target, ids, first))
+    })?;
+    Ok(json!({"id": id, "ids": ids, "slide": target}))
+}
+
+/// Largest recorded clip one slide's Cameo may hold.
+const MAX_CAMEO_BYTES: usize = deckcraft_media::MAX_CLIP_BYTES;
+
+/// A finished recording ready to commit: the recorder hands over its bytes, so the in-process
+/// path never base64-encodes a 64 MB clip into JSON and decodes it again.
+pub(crate) struct Recorded {
+    pub name: String,
+    /// The clip bytes, already shared with the caller so a failed commit does not copy them.
+    pub bytes: deckcraft_media::Bytes,
+    /// The slide; `None` commits to the selected one.
+    pub slide: Option<usize>,
+    /// The clip length to time the playback node with; clamped to the probed length.
+    pub duration_ms: Option<u32>,
+    pub rect: Option<Xfrm>,
+}
+
+/// Does `add` more media keep the deck inside [`crate::cameo::MAX_TOTAL_BYTES`]?
+fn media_fits(held: usize, add: usize) -> bool {
+    held.saturating_add(add) <= crate::cameo::MAX_TOTAL_BYTES
+}
+
+/// Commit recorded clip bytes as the slide's Cameo: the picture keeps its frame and format, its
+/// fill becomes the poster (first frame), and the MP4 plays from the slide's start.
+///
+/// The command and [`crate::cameo::CameoRun::commit`] share this; the command is the base64 entry
+/// point, the recorder calls it with the bytes it already holds.
+pub(crate) fn commit_recorded(s: &mut Session, clip: Recorded) -> Result<Value> {
+    let Recorded { name, bytes, slide, duration_ms: wanted_ms, rect } = clip;
+    if bytes.len() > MAX_CAMEO_BYTES {
+        return Err(bad("show.cameo", format!("{name} is larger than the {} MB a Cameo may hold", MAX_CAMEO_BYTES >> 20)));
+    }
+    let info = deckcraft_media::probe(&bytes).map_err(|e| bad("show.cameo", format!("{name}: {e}")))?;
+    let ct = super::insert::content_type(&name, &bytes);
+    if !matches!(ct, "video/mp4" | "video/quicktime") {
+        return Err(bad("show.cameo", format!("{name} is not an MP4 video ({ct})")));
+    }
+    let Some(video) = info.video.as_ref() else {
+        return Err(bad("show.cameo", format!("{name} has no video")));
+    };
+    let (width, height) = (video.width, video.height);
+    // The caller may time the node itself, but never longer than the clip really is or than a
+    // Cameo clip may last: a wrong `durationMs` would leave the video playing over black.
+    let probed = u32::try_from(info.duration_ms).unwrap_or(u32::MAX).min(deckcraft_media::MAX_CLIP_MS);
+    let duration_ms = match (wanted_ms, probed) {
+        (Some(ms), 0) => ms.clamp(1, deckcraft_media::MAX_CLIP_MS),
+        (Some(ms), probed) => ms.min(probed),
+        (None, probed) => probed,
+    };
+    if duration_ms == 0 {
+        return Err(bad("show.cameo", format!("{name} has no duration")));
+    }
+    let (poster, poster_ct) = match crate::cmd::media::poster_png(&bytes, 0) {
+        Some(png) => (png, "image/png"),
+        // A clip we cannot decode still plays in PowerPoint; its Cameo shows the raster camera
+        // placeholder (the renderer decodes rasters, not SVG).
+        None => (deckcraft_pptx::cameo_poster(), "image/png"),
+    };
+    let data = bytes.clone();
+    let (target, id, media, poster_id) = s.edit(move |doc, sel| {
+        let n = doc.slides.len();
+        if n == 0 {
+            return Err(bad("show.cameo", "no slides"));
+        }
+        let target = match slide {
+            Some(i) if i < n => i,
+            Some(i) => return Err(bad("show.cameo", format!("no slide {}", i + 1))),
+            None => sel.slide.min(n - 1),
+        };
+        let size = doc.slide_size;
+        // The Cameo this take replaces, and the clip and poster only it points at: those are freed
+        // with the replacement (undo keeps the previous document), so a replaced take does not
+        // count against the cap and the deck does not grow with every retake.
+        let mut existing = None;
+        let mut superseded: Vec<deckcraft_model::MediaId> = Vec::new();
+        deckcraft_model::walk(&doc.slides[target].shapes, &mut |sh, _| {
+            if existing.is_some() || !sh.is_cameo() {
+                return;
+            }
+            existing = Some(sh.id);
+            if let ShapeKind::Picture { fill } = &sh.kind {
+                superseded.push(fill.media);
+            }
+            if let Some(recorded) = sh.cameo.as_ref().and_then(|c| c.recorded) {
+                superseded.push(recorded);
+            }
+        });
+        // An id is only the replaced take's when every reference to it is on that Cameo (`media_refs`
+        // is the walker paste and reuse trust for exactly this question). Anything another shape,
+        // slide, note, background or theme also points at is kept and still counts.
+        let free: Vec<deckcraft_model::MediaId> = if superseded.is_empty() {
+            Vec::new()
+        } else {
+            let mut counts: HashMap<deckcraft_model::MediaId, usize> = HashMap::new();
+            {
+                let f: &mut crate::media_refs::visit::F = &mut |id: &deckcraft_model::MediaId| {
+                    *counts.entry(*id).or_default() += 1;
+                };
+                crate::media_refs::visit_presentation(doc, f);
+            }
+            // Only the references the replacement actually removes count as its own: the shape keeps
+            // its line, effects and text, so a picture they also use stays.
+            let mut removed: HashMap<deckcraft_model::MediaId, usize> = HashMap::new();
+            for m in &superseded {
+                *removed.entry(*m).or_default() += 1;
+            }
+            superseded.into_iter().filter(|m| counts.get(m) == removed.get(m)).collect()
+        };
+        // Drop them before the new parts are added: identical bytes would otherwise be deduplicated
+        // onto a part that is about to go, leaving the new Cameo pointing at nothing.
+        doc.media.retain(|m| !free.contains(&m.id));
+        // The show's copies of every part, not just camera clips, may not pass the cap: a deck
+        // that keeps every recording in memory must not grow without bound. The parts this take
+        // replaces are already its own, so they do not count.
+        let held: usize = doc.media.iter().map(|m| m.data.len()).sum();
+        if !media_fits(held, data.len().saturating_add(poster.len())) {
+            return Err(bad(
+                "show.cameo",
+                format!(
+                    "the deck already holds {} MB of media; the {} MB camera cap leaves no room",
+                    held >> 20,
+                    crate::cameo::MAX_TOTAL_BYTES >> 20
+                ),
+            ));
+        }
+        let media = doc.add_media_shared(&name, ct, data).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
+        let poster_media = doc.add_media(&format!("{name}-poster.png"), poster_ct, poster).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
+        // Allocate an id only when a shape is really going to be added.
+        let new_id = match existing {
+            Some(_) => None,
+            None => Some(ShapeId(doc.alloc_id().ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?)),
+        };
+        let slide = Arc::make_mut(&mut doc.slides[target]);
+        let id = match existing {
+            Some(id) => {
+                let Some(sh) = slide.shape_mut(id) else {
+                    return Err(bad("show.cameo", "the Cameo is missing"));
+                };
+                let crop = match &sh.kind {
+                    ShapeKind::Picture { fill } => fill.crop,
+                    _ => [0.0; 4],
+                };
+                sh.kind = ShapeKind::Picture { fill: PictureFill { media: poster_media, crop, ..Default::default() } };
+                // Keep the imported feed (background in `raw`, device) with the new recording.
+                let kept = sh.cameo.take().unwrap_or_default();
+                sh.cameo = Some(Cameo { raw: kept.raw, device: kept.device, duration_ms: Some(duration_ms), ..Cameo::recorded(media) });
+                if let Some(r) = rect {
+                    sh.xfrm = Some(r);
+                }
+                id
+            }
+            None => {
+                let next_id = new_id.ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
+                let (taken, count) = slide_names(&slide.shapes);
+                let name = first_free_name("Camera", &taken, count);
+                let box_ = rect.unwrap_or_else(|| default_rect(size));
+                let mut shape = cameo(next_id, name, box_, poster_media);
+                shape.cameo = Some(Cameo { duration_ms: Some(duration_ms), ..Cameo::recorded(media) });
+                shape.descr = "Recorded camera clip".into();
+                slide.shapes.push(shape);
+                next_id
+            }
+        };
+        sel.target = crate::Target::Slides;
+        sel.slide = target;
+        sel.text = None;
+        sel.shapes = vec![id];
+        Ok((target, id, media, poster_media))
+    })?;
+    Ok(json!({
+        "slide": target,
+        "id": id,
+        "media": media.0,
+        "poster": poster_id.0,
+        "durationMs": duration_ms,
+        "width": width,
+        "height": height,
+    }))
+}
+
+/// `show.cameo` for the command line and the web bridge: base64 `data` only, with the clip's name.
+/// A filesystem `path` is not accepted here — a 64 MB recording would travel as an ~85 MB string,
+/// and an arbitrary path is not something a show command should read.
+fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
+    // The engine's own camera recorder hands its clip over directly (`staged`): the same command
+    // path a UI caller takes — one undo step, composition settled, the guards run — without a
+    // base64 copy of the clip in the parameters.
+    if bool_or(p, "staged", false) {
+        let clip = s.take_staged_cameo().ok_or_else(|| bad("show.cameo", "no clip was staged for this run"))?;
+        return commit_recorded(s, clip);
+    }
+    if p.get("path").is_some() {
+        return Err(bad("show.cameo", "show.cameo takes base64 `data`, not `path`"));
+    }
+    let name = str_param(p, "name").unwrap_or("cameo.mp4").to_string();
+    let data = str_param(p, "data").ok_or_else(|| bad("show.cameo", "missing base64 `data`"))?;
+    let bytes = super::base64_decode(data).ok_or_else(|| bad("show.cameo", "invalid base64 `data`"))?;
+    let ct = super::insert::content_type(&name, &bytes);
+    if !matches!(ct, "video/mp4" | "video/quicktime") {
+        return Err(bad("show.cameo", format!("{name} is not an MP4 video ({ct})")));
+    }
+    let rect = rect_param(p, "rect");
+    if rect.is_some_and(|r| r.w < 1.0 || r.h < 1.0) {
+        return Err(bad("show.cameo", "rect needs a positive width and height"));
+    }
+    let slide = opt_usize_param(p, "slide", "show.cameo")?;
+    let duration_ms = p.get("durationMs").and_then(Value::as_u64).map(|v| u32::try_from(v).unwrap_or(u32::MAX));
+    commit_recorded(s, Recorded { name, bytes: Arc::new(bytes), slide, duration_ms, rect })
+}
+
+fn style(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = str_param(p, "style").ok_or_else(|| bad("camera.style", "missing `style`"))?.to_string();
+    if id != "none" && look(&id).is_none() {
+        return Err(bad("camera.style", format!("unknown style `{id}`; see camera.styles")));
+    }
+    if bool_or(p, "all", false) {
+        s.edit(|doc, _| {
+            for slide in &mut doc.slides {
+                walk_mut(&mut Arc::make_mut(slide).shapes, &mut |sh| {
+                    if sh.is_cameo() {
+                        apply(sh, &id);
+                    }
+                });
+            }
+            Ok(())
+        })?;
+        return Ok(json!({"style": id, "all": true}));
+    }
+    let ids = targets(s, p)?;
+    if ids.is_empty() {
+        return Err(bad("camera.style", "nothing selected"));
+    }
+    {
+        let doc = s.doc()?;
+        if !ids.iter().all(|id| doc.shape(*id).is_some_and(Shape::is_cameo)) {
+            return Err(bad("camera.style", "select a Cameo"));
+        }
+    }
+    edit_shapes(s, p, "camera.style", |sh| {
+        apply(sh, &id);
+        Ok(())
+    })?;
+    Ok(json!({"style": id}))
+}
+
+fn copy_format(from: &Shape, to: &mut Shape) {
+    to.geom = from.geom.clone();
+    to.line = from.line.clone();
+    to.effects = from.effects.clone();
+}
+
+fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = targets(s, p)?;
+    let source = {
+        let doc = s.doc()?;
+        let id = *ids.first().ok_or_else(|| bad("camera.applyToAll", "nothing selected"))?;
+        doc.shape(id).filter(|sh| sh.is_cameo()).cloned().ok_or_else(|| bad("camera.applyToAll", "select a Cameo"))?
+    };
+    let styled = s.edit(|doc, _| {
+        let mut styled = 0usize;
+        for slide in &mut doc.slides {
+            let slide = Arc::make_mut(slide);
+            let mut existing = Vec::new();
+            deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+                if sh.is_cameo() {
+                    existing.push(sh.id);
+                }
+            });
+            for id in existing {
+                if let Some(sh) = slide.shape_mut(id) {
+                    copy_format(&source, sh);
+                    styled += 1;
+                }
+            }
+        }
+        Ok(styled)
+    })?;
+    Ok(json!({"styled": styled}))
+}
+
+/// Enabled state of the Camera Styles commands: a Cameo must be selected.
+pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
+    has_doc(s)?;
+    let doc = s.active().ok_or_else(|| "no presentation open".to_string())?;
+    let shapes = doc.selected_shapes();
+    if shapes.is_empty() {
+        // `ids`/`id` callers name their targets; `style` and `applyToAll` check the targets.
+        return Err(super::NOTHING_SELECTED.into());
+    }
+    if shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::Session;
+
+    fn cameo_shapes(s: &Session) -> Vec<deckcraft_model::Shape> {
+        s.doc()
+            .expect("doc")
+            .doc
+            .slides
+            .iter()
+            .flat_map(|sl| {
+                let mut v = vec![];
+                deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
+                    if sh.is_cameo() {
+                        v.push(sh.clone());
+                    }
+                });
+                v
+            })
+            .collect()
+    }
+
+    fn cameo_count(s: &Session) -> usize {
+        cameo_shapes(s).len()
+    }
+
+    #[test]
+    fn insert_cameo_adds_a_round_bottom_right_picture() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.cameo", &json!({})).expect("insert");
+        let id = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
+        let doc = s.doc().expect("doc");
+        let sh = doc.doc.slides[0].shape(id).expect("shape");
+        assert_eq!(sh.name, "Camera 3");
+        assert!(sh.is_cameo());
+        assert_eq!(sh.geom.preset_name(), Some("ellipse"));
+        let x = sh.xfrm.expect("xfrm");
+        assert!((x.w - 162.0).abs() < 1e-9 && (x.h - 162.0).abs() < 1e-9);
+        let size = doc.doc.slide_size;
+        assert!((x.x - (size.width - 162.0 - 6.5)).abs() < 1e-9);
+        let media = match &sh.kind {
+            deckcraft_model::ShapeKind::Picture { fill } => fill.media,
+            _ => panic!("picture"),
+        };
+        // A PNG the renderer decodes: an SVG placeholder drew as a missing-image mark before the
+        // preview was on.
+        let placeholder = doc.doc.media(media).expect("placeholder media");
+        assert_eq!(placeholder.content_type, "image/png");
+        assert!(placeholder.data.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn insert_cameo_is_undoable() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        assert_eq!(cameo_count(&s), 1);
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(cameo_count(&s), 0);
+        s.execute("edit.redo", &json!({})).expect("redo");
+        assert_eq!(cameo_count(&s), 1);
+    }
+
+    #[test]
+    fn insert_cameo_all_adds_one_to_every_slide() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("slide.new", &json!({})).expect("slide");
+        let r = s.execute("insert.cameo", &json!({"all": true})).expect("insert");
+        assert_eq!(r["ids"].as_array().map(Vec::len), Some(3));
+        let doc = s.doc().expect("doc");
+        for slide in &doc.doc.slides {
+            let mut n = 0;
+            deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+                if sh.is_cameo() {
+                    n += 1;
+                }
+            });
+            assert_eq!(n, 1);
+        }
+    }
+
+    #[test]
+    fn insert_cameo_targets_the_named_slide_and_rect() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        let r = s.execute("insert.cameo", &json!({"slide": 1, "rect": [10, 20, 60, 60]})).expect("insert");
+        assert_eq!(r["slide"], 1);
+        let doc = s.doc().expect("doc");
+        assert_eq!(doc.selection.slide, 1);
+        let sh = doc.doc.slides[1].shape(deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32)).expect("shape");
+        assert_eq!(sh.xfrm, Some(deckcraft_geom::Xfrm::new(10.0, 20.0, 60.0, 60.0)));
+    }
+
+    #[test]
+    fn styles_set_shape_frame_and_effects() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        for st in &super::STYLES {
+            s.execute("camera.style", &json!({"style": st.id})).expect("style");
+            let sh = &cameo_shapes(&s)[0];
+            if st.id != "none" {
+                assert_eq!(sh.geom.preset_name(), Some(st.preset), "{}", st.id);
+                assert_eq!(sh.line.as_ref().and_then(|l| l.width), st.frame, "{}", st.id);
+                assert_eq!(sh.effects.as_ref().and_then(|e| e.soft_edge), st.soft_edge, "{}", st.id);
+                assert_eq!(sh.effects.as_ref().and_then(|e| e.outer_shadow.as_ref()).is_some(), st.shadow, "{}", st.id);
+            }
+            assert_eq!(super::style_of(sh), Some(st.id), "{}", st.id);
+        }
+    }
+
+    #[test]
+    fn apply_to_all_slides_copies_formatting_to_every_cameo_only() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"all": true})).expect("insert");
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("shape");
+        // `shape.insert` moved the selection to the new rectangle on the current (second) slide;
+        // address the Cameo there explicitly.
+        let cameo = cameo_shapes(&s).into_iter().next_back().expect("cameo").id;
+        s.doc_mut().expect("doc").selection.shapes = vec![cameo];
+        s.execute("camera.style", &json!({"style": "centerShadowCircle"})).expect("style");
+        let r = s.execute("camera.applyToAll", &json!({})).expect("apply");
+        assert_eq!(r["styled"], 2);
+        for sh in cameo_shapes(&s) {
+            assert_eq!(sh.geom.preset_name(), Some("ellipse"));
+            assert!(sh.effects.as_ref().and_then(|e| e.outer_shadow.as_ref()).is_some());
+        }
+        let doc = s.doc().expect("doc");
+        let plain = doc.doc.slides[1].shapes.iter().find(|sh| sh.name.starts_with("Rectangle")).expect("rectangle");
+        assert_ne!(plain.geom.preset_name(), Some("ellipse"));
+    }
+
+    #[test]
+    fn apply_to_all_copies_the_format_of_the_selected_slides_cameo() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        // Imported decks number each slide's shapes from 1 again, so two slides can share an id.
+        let same = s.doc().expect("doc").doc.slides[0].clone();
+        std::sync::Arc::make_mut(&mut s.doc_mut().expect("doc").doc).slides.push(same);
+        let id = cameo_shapes(&s)[0].id;
+        // The selected (second) slide's Cameo is a rectangle; the first slide's is the ellipse
+        // `insert.cameo` makes. `applyToAll` copies the selected one, not the first with that id.
+        {
+            let doc = s.doc_mut().expect("doc");
+            let pres = std::sync::Arc::make_mut(&mut doc.doc);
+            std::sync::Arc::make_mut(&mut pres.slides[1]).shape_mut(id).expect("cameo").geom = deckcraft_model::Geom::preset("rect");
+            doc.selection.slide = 1;
+            doc.selection.shapes = vec![id];
+        }
+        let r = s.execute("camera.applyToAll", &json!({})).expect("apply");
+        assert_eq!(r["styled"], 2);
+        assert!(cameo_shapes(&s).iter().all(|sh| sh.geom.preset_name() == Some("rect")), "the selected slide's Cameo is the source");
+    }
+
+    #[test]
+    fn recording_onto_an_imported_cameo_keeps_its_feed_properties() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.cameo", &json!({})).expect("insert");
+        let id = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
+        {
+            let doc = s.doc_mut().expect("doc");
+            let pres = std::sync::Arc::make_mut(&mut doc.doc);
+            let slide = std::sync::Arc::make_mut(&mut pres.slides[0]);
+            let cameo = slide.shape_mut(id).expect("cameo").cameo.get_or_insert_default();
+            cameo.raw = Some("<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\"><alf:backgroundProps><alf:Blur/></alf:backgroundProps></alf:liveFeedProps>".into());
+            cameo.device = Some("FaceTime HD Camera".into());
+        }
+        s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 300})).expect("record");
+        let doc = s.doc().expect("doc");
+        let cameo = doc.doc.slides[0].shape(id).expect("shape").cameo.clone().expect("cameo");
+        assert!(!cameo.live);
+        assert!(cameo.recorded.is_some());
+        assert_eq!(cameo.device.as_deref(), Some("FaceTime HD Camera"), "the device is kept");
+        assert!(cameo.raw.as_deref().is_some_and(|r| r.contains("backgroundProps")), "the camera background is kept");
+    }
+
+    /// A replaced take frees only the parts nothing else points at: the clip and poster it alone
+    /// used are gone (so repeated takes do not grow the deck or count against the cap), while a
+    /// clip another slide also plays is kept.
+    #[test]
+    fn a_replaced_take_frees_only_its_own_media() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        let first = s.execute("show.cameo", &json!({"slide": 0, "name": "one.mp4", "data": clip_data()})).expect("first");
+        let old = first["media"].as_u64().expect("media");
+        let old_poster = first["poster"].as_u64().expect("poster");
+        let second = s.execute("show.cameo", &json!({"slide": 0, "name": "two.mp4", "data": clip_data()})).expect("second");
+        let new = second["media"].as_u64().expect("media");
+        assert_ne!(old, new, "a replacement is a new part");
+        {
+            let doc = &s.doc().expect("doc").doc;
+            assert!(doc.media(deckcraft_model::MediaId(old as u32)).is_none(), "the replaced clip is freed");
+            assert!(doc.media(deckcraft_model::MediaId(old_poster as u32)).is_none(), "and its poster");
+            assert!(doc.media(deckcraft_model::MediaId(new as u32)).is_some());
+        }
+        // The next replacement shares its clip with a media shape on another slide: that clip stays.
+        let shared = new;
+        {
+            let state = s.doc_mut().expect("doc");
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[1]);
+            slide.shapes.push(deckcraft_model::Shape {
+                id: ShapeId(9001),
+                xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)),
+                kind: ShapeKind::Media(deckcraft_model::MediaClip { media: deckcraft_model::MediaId(shared as u32), ..Default::default() }),
+                ..Default::default()
+            });
+        }
+        s.execute("show.cameo", &json!({"slide": 0, "name": "three.mp4", "data": clip_data()})).expect("third");
+        assert!(s.doc().expect("doc").doc.media(deckcraft_model::MediaId(shared as u32)).is_some(), "a clip another slide plays is kept");
+    }
+
+    /// A Cameo's line is retained by the replacement, so a picture the line points at is not the
+    /// take's to free even when only that Cameo uses it.
+    #[test]
+    fn a_replaced_take_keeps_a_picture_its_line_still_uses() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("show.cameo", &json!({"slide": 0, "name": "one.mp4", "data": clip_data()})).expect("first");
+        let shape = cameo_shapes(&s).into_iter().next().expect("cameo shape");
+        let poster = match shape.kind {
+            ShapeKind::Picture { fill } => fill.media,
+            _ => panic!("the Cameo stays a picture"),
+        };
+        {
+            let state = s.doc_mut().expect("doc");
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            let cameo = slide.shape_mut(shape.id).expect("cameo shape");
+            // The same picture as the border: the replacement keeps the line, so the part must stay.
+            cameo.line = Some(deckcraft_model::style::Line {
+                fill: Some(deckcraft_model::style::Fill::Picture(deckcraft_model::style::PictureFill { media: poster, ..Default::default() })),
+                ..Default::default()
+            });
+        }
+        s.execute("show.cameo", &json!({"slide": 0, "name": "two.mp4", "data": clip_data()})).expect("second");
+        assert!(s.doc().expect("doc").doc.media(poster).is_some(), "the retained border still points at it");
+    }
+
+    /// A short real MP4, base64 as `show.cameo` takes it.
+    fn clip_data() -> String {
+        let mut track = deckcraft_media::H264Mp4Track::new(32, 32, 15, 30).expect("track");
+        for i in 0..5 {
+            track.push_rgba(&vec![i as u8; 32 * 32 * 4]).expect("push");
+        }
+        crate::cmd::base64_encode(&track.finish().expect("finish"))
+    }
+
+    #[test]
+    fn a_recorded_clip_is_not_kept_in_the_journal() {
+        let mut s = Session::with_new();
+        s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 300})).expect("record");
+        assert!(s.journal.iter().all(|(id, _)| id != "show.cameo"), "the base64 clip is not journaled");
+        // The edit is still one undo step.
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(cameo_count(&s), 0);
+        s.execute("edit.redo", &json!({})).expect("redo");
+        assert_eq!(cameo_count(&s), 1);
+    }
+
+    #[test]
+    fn camera_commands_take_named_targets_without_a_selection() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"all": true})).expect("cameo");
+        let id = cameo_shapes(&s).first().expect("cameo").id;
+        {
+            let doc = s.doc_mut().expect("doc");
+            doc.selection.shapes.clear();
+            doc.selection.slide = 0;
+        }
+        // `ids` names the target, so the selection-based enablement does not block it.
+        s.execute("camera.style", &json!({"style": "centerShadowCircle", "ids": [id.0]})).expect("style by id");
+        s.execute("camera.applyToAll", &json!({"ids": [id.0]})).expect("apply by id");
+        // `all` names its target too.
+        s.execute("camera.style", &json!({"style": "softEdgeCircle", "all": true})).expect("style all");
+        assert!(cameo_shapes(&s).iter().all(|sh| sh.geom.preset_name() == Some("ellipse")));
+    }
+
+    #[test]
+    fn the_all_bypass_needs_a_command_that_declares_all() {
+        let mut s = Session::with_new();
+        // `arrange.bringToFront` takes no `all`, so the named-target bypass must not let it run.
+        let err = s.execute("arrange.bringToFront", &json!({"all": true})).expect_err("undeclared all").to_string();
+        assert!(err.contains("nothing selected"), "the selection gate still applies: {err}");
+        // `camera.style` declares it and works without a selection.
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"all": true})).expect("cameo");
+        s.doc_mut().expect("doc").selection.shapes.clear();
+        s.execute("camera.style", &json!({"style": "softEdgeCircle", "all": true})).expect("style all");
+    }
+
+    #[test]
+    fn style_rejects_an_unknown_name_and_a_non_cameo() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        let err = s.execute("camera.style", &json!({"style": "nope"})).expect_err("unknown style").to_string();
+        assert!(err.contains("unknown style `nope`"), "{err}");
+        s.execute("shape.insert", &json!({"preset": "rect"})).expect("shape");
+        let err = s.execute("camera.style", &json!({"style": "none"})).expect_err("a plain shape is not a Cameo").to_string();
+        assert!(err.contains("no Cameo selected"), "{err}");
+    }
+
+    #[test]
+    fn a_cameo_keeps_its_picture_media_across_styles() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        let before = cameo_shapes(&s)[0].kind.clone();
+        s.execute("camera.style", &json!({"style": "softEdgeCircle"})).expect("style");
+        assert_eq!(cameo_shapes(&s)[0].kind, before);
+    }
+
+    #[test]
+    fn show_cameo_refuses_a_filesystem_path() {
+        let mut s = Session::with_new();
+        let err = s.execute("show.cameo", &json!({"path": "C:/Windows/notepad.exe"})).expect_err("a path is not accepted").to_string();
+        assert!(err.contains("base64 `data`"), "{err}");
+        assert_eq!(cameo_count(&s), 0);
+    }
+
+    #[test]
+    fn show_cameo_refuses_a_zero_duration_override() {
+        let mut s = Session::with_new();
+        let err = s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 0})).expect_err("zero is not a duration").to_string();
+        assert!(err.contains("no duration"), "{err}");
+        assert_eq!(cameo_count(&s), 0);
+    }
+
+    #[test]
+    fn show_cameo_refuses_an_invalid_slide_and_an_invalid_rect() {
+        let mut s = Session::with_new();
+        let err = s.execute("show.cameo", &json!({"data": clip_data(), "slide": 9})).expect_err("no such slide").to_string();
+        assert!(err.contains("no slide 10"), "{err}");
+        let err = s.execute("show.cameo", &json!({"data": clip_data(), "rect": [0, 0, 0, 0]})).expect_err("empty rect").to_string();
+        assert!(err.contains("positive width and height"), "{err}");
+        assert_eq!(cameo_count(&s), 0, "a rejected clip adds nothing");
+    }
+
+    #[test]
+    fn show_cameo_clamps_the_duration_to_the_clip() {
+        let mut s = Session::with_new();
+        // The clip is five 15 fps samples (~333 ms); a claimed hour is clamped to what it holds.
+        let r = s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 3_600_000})).expect("record");
+        let ms = r["durationMs"].as_u64().expect("duration");
+        assert!((300..=400).contains(&ms), "clamped to the clip's own length, got {ms}");
+        assert_eq!(cameo_count(&s), 1);
+    }
+
+    #[test]
+    fn show_cameo_falls_back_to_the_png_poster_when_no_frame_decodes() {
+        let mut s = Session::with_new();
+        // Probe reads the container, so truncating the sample data keeps the clip readable as a
+        // video while our decoder cannot produce a poster from it.
+        let full = {
+            let mut track = deckcraft_media::H264Mp4Track::new(32, 32, 15, 30).expect("track");
+            for i in 0..5 {
+                track.push_rgba(&vec![i as u8; 32 * 32 * 4]).expect("push");
+            }
+            track.finish().expect("finish")
+        };
+        let mut cut = full;
+        let at = cut.windows(4).position(|w| w == b"mdat").expect("mdat") + 4;
+        // Corrupt the sample payload only: the container's sample table still probes, while the
+        // decoder cannot produce a poster.
+        for b in &mut cut[at..] {
+            *b = 0xFF;
+        }
+        let data = crate::cmd::base64_encode(&cut);
+        let r = s.execute("show.cameo", &json!({"data": data})).expect("a clip whose poster cannot be decoded still commits");
+        let poster = deckcraft_model::MediaId(r["poster"].as_u64().expect("poster") as u32);
+        let doc = s.doc().expect("doc");
+        let m = doc.doc.media(poster).expect("poster media");
+        assert_eq!(m.content_type, "image/png");
+        assert_eq!(*m.data, deckcraft_pptx::cameo_poster(), "the raster camera placeholder is the poster");
+    }
+
+    #[test]
+    fn the_total_media_cap_has_a_boundary() {
+        use crate::cameo::MAX_TOTAL_BYTES;
+        assert!(media_fits(MAX_TOTAL_BYTES, 0));
+        assert!(!media_fits(MAX_TOTAL_BYTES, 1), "one byte over the cap is refused");
+        assert!(media_fits(MAX_TOTAL_BYTES - 1, 1));
+        assert!(!media_fits(usize::MAX, 1), "an overflowing sum is refused, not wrapped");
+    }
+}

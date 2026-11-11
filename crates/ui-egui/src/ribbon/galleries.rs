@@ -124,8 +124,75 @@ pub(super) fn smartart_gallery(
     });
 }
 
-/// Shapes gallery popup body: every preset by category. Returns the chosen preset.
+/// Shapes gallery popup body: every preset by category, the line and freeform tools included.
+/// Returns the chosen preset. Insert and draw tools accept the freeform entries; commands that
+/// only know presets (`shape.change`, Crop to Shape) use [`preset_gallery`].
 pub fn shapes_gallery(ui: &mut Ui) -> Option<&'static str> {
+    gallery(ui, true)
+}
+
+/// Preset-only shapes gallery: the freeform entries are not presets, so the menus behind
+/// `shape.change` must not offer them.
+pub fn preset_gallery(ui: &mut Ui) -> Option<&'static str> {
+    gallery(ui, false)
+}
+
+/// Picture-mask gallery (Crop to Shape, Camera Shape): only presets that enclose an area. An open
+/// preset (a line, a connector, an arc) has nothing to clip a picture to, so the picture would
+/// vanish.
+pub fn mask_gallery(ui: &mut Ui) -> Option<&'static str> {
+    ui.set_max_width(330.0);
+    let mut out = None;
+    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+        let t = Tokens::get(ui.ctx());
+        for (cat, names) in mask_catalog() {
+            ui.label(egui::RichText::new(cat.label()).font(theme::bold(12.0)));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+                for p in names {
+                    let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+                    if resp.hovered() || resp.has_focus() {
+                        ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
+                    }
+                    paint_preset(ui.painter(), r.shrink(4.0), p.name, Color32::TRANSPARENT, t.text);
+                    // A hand-rolled tile still needs a name for assistive tech, and the label must
+                    // show on keyboard focus as well as on hover.
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, p.label));
+                    if resp.has_focus() {
+                        resp.clone().show_tooltip_text(p.label);
+                    }
+                    if resp.on_hover_text(p.label).clicked() {
+                        out = Some(p.name);
+                    }
+                }
+            });
+            ui.add_space(4.0);
+        }
+    });
+    if out.is_some() {
+        ui.close();
+    }
+    out
+}
+
+/// The presets a picture may be masked to, by category, computed once: [`fills_area`] builds each
+/// preset's geometry, which must not happen for every catalog entry on every popup frame.
+fn mask_catalog() -> &'static [(deckcraft_geom::preset::Category, Vec<&'static deckcraft_geom::preset::PresetInfo>)] {
+    use deckcraft_geom::preset::{CATALOG, Category, PresetInfo, fills_area};
+    static KEEP: std::sync::LazyLock<Vec<(Category, Vec<&'static PresetInfo>)>> = std::sync::LazyLock::new(|| {
+        Category::ALL
+            .iter()
+            .map(|cat| {
+                let names: Vec<_> = CATALOG.iter().filter(|p| p.category == *cat && fills_area(p.name)).collect();
+                (*cat, names)
+            })
+            .filter(|(_, names)| !names.is_empty())
+            .collect()
+    });
+    &KEEP
+}
+
+fn gallery(ui: &mut Ui, freeform: bool) -> Option<&'static str> {
     let t = Tokens::get(ui.ctx());
     let mut out = None;
     ui.set_max_width(330.0);
@@ -136,7 +203,7 @@ pub fn shapes_gallery(ui: &mut Ui) -> Option<&'static str> {
                 ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
                 for p in deckcraft_geom::preset::CATALOG.iter().filter(|p| p.category == cat) {
                     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                    if resp.hovered() {
+                    if resp.hovered() || resp.has_focus() {
                         ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
                     }
                     paint_preset(ui.painter(), r.shrink(4.0), p.name, Color32::TRANSPARENT, t.text);
@@ -144,10 +211,10 @@ pub fn shapes_gallery(ui: &mut Ui) -> Option<&'static str> {
                         out = Some(p.name);
                     }
                 }
-                if cat == deckcraft_geom::preset::Category::Lines {
+                if freeform && cat == deckcraft_geom::preset::Category::Lines {
                     for (name, label) in deckcraft_engine::tools::FREEFORM_TOOLS {
                         let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                        if resp.hovered() {
+                        if resp.hovered() || resp.has_focus() {
                             ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
                         }
                         paint_freeform_icon(ui.painter(), r.shrink(5.0), name, t.text);
@@ -363,7 +430,7 @@ pub(super) fn quick_styles(app: &mut SlideApp, ui: &mut Ui) {
                 };
                 p.rect(rect.shrink(2.0), CornerRadius::same(3), fill, Stroke::new(1.5, stroke), egui::StrokeKind::Inside);
                 p.text(rect.center(), Align2::CENTER_CENTER, "Abc", theme::font(11.0), text);
-                if resp.hovered() {
+                if resp.hovered() || resp.has_focus() {
                     p.rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.5, Tokens::get(ui.ctx()).accent), egui::StrokeKind::Inside);
                 }
                 if resp.clicked() {
@@ -387,4 +454,36 @@ fn paint_freeform_icon(p: &egui::Painter, r: Rect, name: &str, ink: Color32) {
         _ => (0..=40).map(|i| i as f32 / 40.0).map(|u| at(u, 0.5 + 0.35 * (u * 19.0).sin() * (1.0 - u * 0.4))).collect(),
     };
     p.add(egui::Shape::line(pts, egui::Stroke::new(1.3, ink)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mask_gallery_offers_no_open_preset() {
+        let offered: Vec<&str> = mask_catalog().iter().flat_map(|(_, names)| names.iter().map(|p| p.name)).collect();
+        assert!(!offered.is_empty(), "the gallery offers the presets that can mask");
+        // Every open preset in the catalog is filtered out: a picture clipped to a line has no
+        // area and would vanish.
+        let open: Vec<&str> =
+            deckcraft_geom::preset::CATALOG.iter().map(|p| p.name).filter(|name| !deckcraft_geom::preset::fills_area(name)).collect();
+        assert!(!open.is_empty(), "the catalog has open presets to exclude");
+        for name in open {
+            assert!(!offered.contains(&name), "`{name}` cannot mask a picture but is offered");
+        }
+        for name in ["line", "lineInv", "straightConnector1"] {
+            assert!(!offered.contains(&name), "open preset `{name}` is offered");
+        }
+    }
+
+    #[test]
+    fn the_preset_gallery_offers_no_freeform_tool() {
+        // `gallery(ui, false)` (and so `preset_gallery`) iterates the catalog only; the freeform
+        // tools are a separate list and must not be in the catalog under a preset name.
+        let presets: Vec<&str> = deckcraft_geom::preset::CATALOG.iter().map(|p| p.name).collect();
+        for (name, _) in deckcraft_engine::tools::FREEFORM_TOOLS {
+            assert!(!presets.contains(&name), "freeform tool `{name}` is in the preset catalog");
+        }
+    }
 }

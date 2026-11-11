@@ -85,6 +85,8 @@ pub(super) fn slide_media_bars(srect: Rect, doc: &Presentation, slide: usize) ->
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
     crate::media::slide_media(doc, slide)
         .into_iter()
+        // A recorded Cameo plays as the picture it is: PowerPoint gives it no media bar.
+        .filter(|(id, ..)| !crate::media::is_recorded_cameo(doc, slide, *id))
         .map(|(id, x, clip)| {
             let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
             let bar = media_bar_rect(r);
@@ -122,17 +124,46 @@ pub(super) fn pointer_on_media_bar(ctx: &egui::Context, ui: &Ui, doc: &Presentat
     slide_media_bars(srect, doc, show.state.slide).iter().any(|(_, _, _, bar)| bar.contains(p))
 }
 
-/// The media shape under the pointer on the shown slide.
-pub(super) fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Presentation) -> Option<(ShapeId, deckcraft_model::MediaClip)> {
+/// The media shape under the pointer on the shown slide: a media shape, or a recorded Cameo that
+/// waits for a click. `under` is this pass's hit test (`shapes_under_pointer`): a waiting Cameo
+/// takes the click only where it is the topmost shown shape, so a picture or a text box over it
+/// keeps its own click.
+pub(super) fn media_hit(
+    ctx: &egui::Context,
+    ui: &Ui,
+    show: &Show,
+    doc: &Presentation,
+    under: Option<&Under>,
+) -> Option<(ShapeId, deckcraft_model::MediaClip)> {
     let p = ctx.input(|i| i.pointer.interact_pos())?;
     let full = ui.max_rect();
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, doc);
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
-    crate::media::slide_media(doc, show.state.slide).into_iter().rev().find_map(|(id, x, clip)| {
+    let slide = show.state.slide;
+    for (id, x, clip) in crate::media::slide_media(doc, slide).into_iter().rev() {
+        // A click on an autoplaying recorded Cameo keeps advancing the show, as on any picture; one
+        // that waits for a click plays its recording.
+        let cameo = crate::media::is_recorded_cameo(doc, slide, id);
+        if !crate::media::click_plays(cameo, &clip) {
+            continue;
+        }
         let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
-        r.contains(p).then_some((id, clip))
-    })
+        if !r.contains(p) {
+            continue;
+        }
+        if !cameo {
+            return Some((id, clip));
+        }
+        let Some(under) = under else { continue };
+        let Some((_, tl)) = &show.timeline else { continue };
+        let shown = |id: ShapeId| under.visible(id);
+        let top = show.state.top(doc, tl, &under.shapes, &shown);
+        if top.and_then(|i| under.shapes.get(i)).is_some_and(|h| h.id == id) {
+            return Some((id, clip));
+        }
+    }
+    None
 }
 
 /// What a click on the pointer's spot acts on.
@@ -179,7 +210,10 @@ impl Under {
 /// topmost of them that does something when clicked, and a text hyperlink on it. Only shapes that
 /// are shown can be clicked, and a shape without an action hides the ones beneath it.
 pub(super) fn shapes_under_pointer(ctx: &egui::Context, ui: &Ui, show: &mut Show, doc: &Presentation, now: f64) -> Option<Under> {
-    let p = ctx.input(|i| i.pointer.hover_pos())?;
+    // On the frame a click lands the pointer can already be gone (a touch release): test the
+    // click's own position there, the same one `media_hit` reads, so a waiting Cameo under the
+    // touch is not skipped while hovering still uses the pointer.
+    let p = ctx.input(|i| if i.pointer.primary_clicked() { i.pointer.interact_pos() } else { i.pointer.hover_pos() })?;
     let full = ui.max_rect();
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, doc);

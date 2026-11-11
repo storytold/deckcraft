@@ -19,6 +19,7 @@ deckcraft-vp9 = { workspace = true }
 deckcraft-av1 = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+web-time = { workspace = true }
 image = { workspace = true }
 # Audio decoding for the formats we have no decoder of our own for (MPL-2.0, used unmodified,
 # as in FilmCraft).

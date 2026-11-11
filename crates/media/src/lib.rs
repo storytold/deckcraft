@@ -17,7 +17,9 @@
 #![forbid(unsafe_code)]
 
 pub mod audio;
+pub mod camera;
 pub mod clip;
+pub mod encode;
 pub mod feed;
 mod mp4guard;
 pub mod player;
@@ -28,7 +30,12 @@ mod yuv;
 use std::sync::Arc;
 
 pub use audio::Pcm;
+pub use camera::{
+    CameoCap, CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraFrame, CameraIn, CameraInfo, CameraSession, Drained,
+    MAX_CLIP_BYTES, MAX_CLIP_MS, MAX_DRAIN, MAX_SAMPLES_PER_CALL, Seal,
+};
 pub use clip::ClipParams;
+pub use encode::{H264Mp4Track, fitted_rgba};
 pub use feed::VideoFeed;
 pub use player::{AudioOut, PlayState, Player, VoiceSpec, VoiceStatus};
 pub use probe::{AudioInfo, MediaInfo, VideoInfo, probe, probe_headers};

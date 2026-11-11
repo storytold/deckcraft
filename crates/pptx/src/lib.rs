@@ -7,12 +7,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod cameo;
 mod cfb;
 mod custgeom;
 mod dgm;
 mod maps;
 mod opc;
 mod png;
+pub use png::cameo_poster;
 pub(crate) mod read;
 pub use read::MAX_TAG_BYTES;
 mod tables;

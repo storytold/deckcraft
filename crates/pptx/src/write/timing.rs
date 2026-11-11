@@ -580,6 +580,77 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
 /// Most effects one slide's timing writes; animations past it are left out.
 const MAX_EFFECTS: usize = 100_000;
 
+/// Does the slide have a recorded Cameo? Its `p:video` node plays on entry or on a click.
+pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
+    fn at(shapes: &[Shape], depth: usize) -> bool {
+        if depth > super::shapes::MAX_SHAPE_DEPTH {
+            return false;
+        }
+        shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) || at(s.children(), depth + 1))
+    }
+    at(shapes, 0)
+}
+
+/// The shapes a recorded Cameo plays on, in document order, each with whether it starts with the
+/// slide (`autoplay`) or waits for a click, and how much of the clip plays (`p:cTn/@dur`).
+fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool, Option<u32>, Option<f64>)>, depth: usize) {
+    if depth > super::shapes::MAX_SHAPE_DEPTH {
+        return;
+    }
+    for s in shapes {
+        if let Some(c) = s.cameo.as_ref().filter(|c| c.recorded.is_some())
+            && let Some(spid) = idmap.get(s.id)
+        {
+            out.push((spid, c.autoplay, c.duration_ms, c.volume));
+        }
+        cameo_spids(s.children(), idmap, out, depth + 1);
+    }
+}
+
+/// One `p:video`/`p:audio` time node for a media shape. `entry` starts it with the slide;
+/// otherwise it waits for a click in the show, as a non-autoplaying recording does.
+fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool, entry: bool, dur: Option<u32>, vol: Option<f64>) {
+    let tag = if video { "p:video" } else { "p:audio" };
+    w.open0(tag);
+    // A click-waiting clip shows its poster until it starts; an entry clip starts at once.
+    // An imported recording keeps the level it came with; a take this app recorded has no audio
+    // track, and stays at the full-volume default PowerPoint writes for a clip without sound.
+    let level = vol.map(|v| (v.clamp(0.0, 1.0) * 100_000.0).round() as u32);
+    let level = level.unwrap_or(100_000).to_string();
+    w.open("p:cMediaNode", A::new().a("vol", &level).a("showWhenStopped", if entry { "0" } else { "1" }));
+    let mut ctn = A::new().a("id", ids.next()).a("fill", "hold").a("display", "0");
+    // A recording cut by `show.cameo` plays only that much, so the seek bar and the following
+    // media agree with the slide's timing.
+    if let Some(ms) = dur.filter(|ms| *ms > 0) {
+        let dur = ms.to_string();
+        ctn = ctn.a("dur", &dur);
+    }
+    w.open("p:cTn", ctn);
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", if entry { "0" } else { "indefinite" }));
+    w.close("p:stCondLst");
+    if entry {
+        // PowerPoint starts an automatic video with a media-call step, not the condition alone.
+        w.open0("p:childTnLst");
+        w.open("p:cmd", A::new().a("type", "call").a("cmd", "playFrom(0.0)"));
+        w.open0("p:cBhvr");
+        w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "1").a("fill", "hold"));
+        w.close("p:cTn");
+        w.open0("p:tgtEl");
+        w.empty("p:spTgt", A::new().a("spid", spid));
+        w.close("p:tgtEl");
+        w.close("p:cBhvr");
+        w.close("p:cmd");
+        w.close("p:childTnLst");
+    }
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(tag);
+}
+
 /// The shapes of the tree by id, the first in document order for a repeated id (as `find_shape`
 /// finds it), so each animation resolves its shape without a tree walk.
 fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections::HashMap<ShapeId, &'a Shape>) {
@@ -602,6 +673,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     let mut prev_para: Option<(ShapeId, AnimClass, Option<ShapeId>, u32)> = None;
     let mut by_id = std::collections::HashMap::new();
     shape_index(shapes, 0, &mut by_id);
+    let mut media_spids = vec![];
+    cameo_spids(shapes, idmap, &mut media_spids, 0);
     let mut roles_of: std::collections::HashMap<ShapeId, Vec<BuildRole>> = Default::default();
     let mut effect_count = 0usize;
     let mut warned = false;
@@ -686,7 +759,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    if main.is_empty() && triggered.is_empty() && media_spids.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -718,6 +791,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:cond");
         w.close("p:nextCondLst");
         w.close("p:seq");
+    }
+    for (spid, entry, dur, vol) in media_spids {
+        media_node(w, &mut ids, spid, true, entry, dur, vol);
     }
     for (trig, effs) in triggered {
         // The first step starts with the button's click. Later On Click effects must remain

@@ -1,8 +1,11 @@
-//! Clean-room pure-Rust H.264 / AVC decoder, implemented from ITU-T Rec. H.264 (ISO/IEC 14496-10).
+//! Clean-room pure-Rust H.264 / AVC decoder and encoder, implemented from ITU-T Rec. H.264 (ISO/IEC 14496-10).
 //!
-//! Supported: progressive (frame) coding, 8-bit 4:2:0, Baseline / Main / High profiles — CAVLC and CABAC,
+//! Decoder: progressive (frame) coding, 8-bit 4:2:0, Baseline / Main / High profiles — CAVLC and CABAC,
 //! I/P/B slices, 8x8 transform, custom scaling matrices, weighted prediction, spatial/temporal direct,
 //! multiple slices, long-term references and all MMCOs, deblocking.
+//!
+//! Encoder ([`Encoder`]): Constrained Baseline, CAVLC, 4:2:0, one slice per picture, every macroblock
+//! Intra 16×16 with skipped P macroblocks — for synthetic or small pictures (slides, recorded Cameos).
 //!
 //! ```no_run
 //! let mut dec = deckcraft_h264::Decoder::new();
@@ -27,6 +30,8 @@ mod cavlc;
 #[rustfmt::skip]
 mod cavlc_tables;
 mod deblock;
+mod encoder;
+pub use encoder::{ConfigError, EncodedPicture, Encoder, EncoderConfig};
 mod decoder;
 mod dpb;
 mod error;
