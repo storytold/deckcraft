@@ -1,7 +1,7 @@
 use super::geometry::{blur, color, pre_translate, scale_of};
 use super::opts::ParaState;
 use super::{
-    Affine, Arc, BezPath, Ctx, FontDb, HashMap, Opts, PhType, Rect, RenderContext, Rgba, Shape, TextBody, Vec2, colr, paint, peniko, resolve,
+    Affine, Arc, BezPath, Ctx, FontDb, HashMap, Opts, PhType, Rect, RenderContext, Rgba, Shape, TextBody, Vec2, colr, paint, peniko, resolve, reveal,
 };
 
 /// The prompt shown in an empty placeholder, formatted like its content would be.
@@ -111,12 +111,60 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
 
 /// Draw a laid-out text block with per-paragraph animation states.
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
+    // A paragraph that is revealed through a soft edge is drawn on its own, in a layer masked over
+    // its text; the others are drawn together.
+    let revealed: Vec<(usize, ParaState, deckcraft_anim::Reveal)> =
+        paras.iter().filter_map(|(p, s)| s.reveal.map(|r| (*p, *s, r))).filter(|(_, s, _)| s.visible && s.opacity > 0.001).collect();
+    draw_passes(ctx, l, tr, m, paras, &|p| !revealed.iter().any(|(q, _, _)| *q == p));
+    for (p, state, reveal) in revealed {
+        let mut opacity = 1.0;
+        let mask = para_bounds(l, p).and_then(|b| {
+            let device = (text_transform(m, tr, l.rotation) * Affine::translate(state.offset)).transform_rect_bbox(b);
+            let mask = reveal::mask(ctx.width(), ctx.height(), device, &reveal);
+            if mask.is_none() {
+                opacity = reveal.alpha(0.5, 0.5);
+            }
+            mask
+        });
+        ctx.set_transform(Affine::IDENTITY);
+        ctx.push_layer(None, None, Some(opacity as f32), mask, None);
+        draw_passes(ctx, l, tr, m, paras, &|q| q == p);
+        ctx.pop_layer();
+    }
+}
+
+/// The box a paragraph's reveal is measured on: its lines' text, a bullet or number included, from
+/// the top of its first line to the bottom of its last (observed in PowerPoint on paragraphs of
+/// several lines, centred ones and ones with bullets).
+fn para_bounds(l: &deckcraft_text::TextLayout, p: usize) -> Option<Rect> {
+    let &(first, count) = l.para_lines.get(p)?;
+    let lines = l.lines.get(first..first.saturating_add(count).min(l.lines.len()))?;
+    let mut b = lines.iter().filter_map(line_bounds).reduce(|a, b| a.union(b))?;
+    for run in l.runs.iter().filter(|r| r.para == p) {
+        for (_, x, _) in &run.glyphs {
+            if x.is_finite() {
+                b.x0 = b.x0.min(*x);
+            }
+        }
+    }
+    Some(b)
+}
+
+/// The passes of [`draw_layout_with`] for the paragraphs `include` accepts.
+fn draw_passes(
+    ctx: &mut RenderContext,
+    l: &deckcraft_text::TextLayout,
+    tr: Rect,
+    m: Affine,
+    paras: &[(usize, ParaState)],
+    include: &dyn Fn(usize) -> bool,
+) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
     let lines_of = LineIndex::new(l);
     let deco = |ctx: &mut RenderContext, d: &deckcraft_text::Deco| {
         let ps = para(d.para);
-        if !ps.visible || ps.opacity <= 0.001 {
+        if !include(d.para) || !ps.visible || ps.opacity <= 0.001 {
             return;
         }
         ctx.set_transform(m * Affine::translate(ps.offset));
@@ -130,7 +178,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
     for pass in [TextEffect::Shadow, TextEffect::Glow] {
         for run in &l.runs {
             let ps = para(run.para);
-            if ps.visible && ps.opacity > 0.001 {
+            if include(run.para) && ps.visible && ps.opacity > 0.001 {
                 text_effect(ctx, run, pass, m * Affine::translate(ps.offset), ps.opacity);
             }
         }
@@ -140,7 +188,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             continue;
         }
         let ps = para(run.para);
-        if !ps.visible || ps.opacity <= 0.001 {
+        if !include(run.para) || !ps.visible || ps.opacity <= 0.001 {
             continue;
         }
         let m = m * Affine::translate(ps.offset);

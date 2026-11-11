@@ -58,13 +58,6 @@ impl Reveal {
         Reveal { shape, inward, edge: if inward { 1.0 - travel } else { travel } }
     }
 
-    /// How far the effect has gone, 0 to 1: the inverse of the edge [`Reveal::new`] sets.
-    pub fn progress(&self) -> f64 {
-        let travel = if self.inward { 1.0 - self.edge } else { self.edge };
-        let p = travel / (1.0 + RAMP);
-        if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 }
-    }
-
     /// The distance of the point (`u`, `v`) of the bounds (0 to 1 across, y down) from the middle:
     /// 1 on the edge for Box, Wipe and Split, and at the corners for Circle, Diamond and Plus.
     pub fn distance(&self, u: f64, v: f64) -> f64 {

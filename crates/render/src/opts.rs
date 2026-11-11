@@ -42,23 +42,20 @@ pub struct ParaState {
     pub opacity: f64,
     /// Translation in shape-local points.
     pub offset: Vec2,
+    /// Soft edged reveal over the paragraph's own text (Box, Circle, Diamond, Plus, Wipe, Split).
+    pub reveal: Option<deckcraft_anim::Reveal>,
 }
 
 impl ParaState {
     /// The state of one paragraph of a by-paragraph build from its animation state.
-    ///
-    /// A paragraph is not revealed through a soft edge (that is measured on a shape's visual
-    /// bounds), so a reveal stands in as it did before the soft edge: the "in" directions fade the
-    /// paragraph in, and the others show it whole.
     pub fn from_anim(a: &deckcraft_anim::AnimState) -> ParaState {
-        let fade = a.reveal.filter(|r| r.inward).map_or(1.0, |r| r.progress());
-        ParaState { visible: a.visible, opacity: a.opacity * fade, offset: Vec2::new(a.offset_x, a.offset_y) }
+        ParaState { visible: a.visible, opacity: a.opacity, offset: Vec2::new(a.offset_x, a.offset_y), reveal: a.reveal }
     }
 }
 
 impl Default for ParaState {
     fn default() -> Self {
-        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO }
+        ParaState { visible: true, opacity: 1.0, offset: Vec2::ZERO, reveal: None }
     }
 }
 
