@@ -565,8 +565,8 @@ impl Canvas {
     /// of at most [`SHADE_RES`] cells on the longer side, laid out so that its one repeat covers
     /// the shape.
     pub fn shade_shape(&mut self, ops: &[Op], shade: &dyn Fn(P) -> [u8; 4]) {
-        // A full canvas keeps nothing more, so do not sample a tile for it.
-        if self.full {
+        // A full canvas or an empty clip keeps nothing more, so do not sample a tile for it.
+        if self.full || self.clip.as_ref().is_some_and(Vec::is_empty) {
             return;
         }
         let dev: Vec<Op> = ops.iter().map(|o| self.map_op(*o)).collect();
