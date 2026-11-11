@@ -62,6 +62,65 @@ fn handshake_and_tool_list() {
     assert!(s.handle_line("{}").is_some());
 }
 
+/// `batch {atomic: true}` runs engine `edit.batch`: every change to the presentation or none, in
+/// one undo step.
+#[test]
+fn atomic_batch_makes_every_change_or_none() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let count = |s: &mut Server| tool(s, "inspect_slide", json!({}))["shapes"].as_array().unwrap().len();
+    let rect = |x: i64| json!({"command": "shape.insert", "params": {"preset": "rect", "rect": [x, 300, 100, 80]}});
+    let bad = json!({"command": "shape.rename", "params": {"id": 4_000_000, "name": "Nobody"}});
+    let before = count(&mut s);
+    let r = call(&mut s, 1, "tools/call", json!({"name": "batch", "arguments": {"commands": [rect(20), rect(140), bad.clone()], "atomic": true}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("step 2 (`shape.rename`)"), "{r}");
+    assert_eq!(count(&mut s), before);
+    let out = tool(&mut s, "batch", json!({"commands": [rect(20), rect(140)], "atomic": true}));
+    assert_eq!(out.as_array().unwrap().len(), 2, "{out}");
+    assert_eq!(out[0]["ok"], true, "{out}");
+    assert!(out[1]["result"]["id"].is_u64(), "{out}");
+    assert_eq!(count(&mut s), before + 2);
+    assert_eq!(tool(&mut s, "inspect_document", json!({}))["undo"], "Batch Edit");
+    tool(&mut s, "run_command", json!({"command": "edit.undo"}));
+    assert_eq!(count(&mut s), before);
+    // atomic and keepGoing together are refused before anything runs.
+    let r = call(&mut s, 2, "tools/call", json!({"name": "batch", "arguments": {"commands": [rect(20)], "atomic": true, "keepGoing": true}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("leaves the presentation as it was"), "{r}");
+    assert_eq!(count(&mut s), before);
+    // Without atomic, the commands before the failing one stay.
+    let r = call(&mut s, 3, "tools/call", json!({"name": "batch", "arguments": {"commands": [rect(20), rect(140), bad]}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert_eq!(count(&mut s), before + 2);
+}
+
+/// `batch` refuses an `atomic` that is not true, false or null before any command runs. Null is
+/// the same as leaving it out: the commands run one by one.
+#[test]
+fn batch_refuses_an_atomic_that_is_not_a_boolean() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let count = |s: &mut Server| tool(s, "inspect_slide", json!({}))["shapes"].as_array().unwrap().len();
+    let depth = |s: &mut Server| tool(s, "inspect_document", json!({}))["undoDepth"].clone();
+    let rect = |x: i64| json!({"command": "shape.insert", "params": {"preset": "rect", "rect": [x, 300, 100, 80]}});
+    let bad = json!({"command": "shape.rename", "params": {"id": 4_000_000, "name": "Nobody"}});
+    let (before, undo) = (count(&mut s), depth(&mut s));
+    for atomic in [json!("true"), json!(1)] {
+        let r =
+            call(&mut s, 1, "tools/call", json!({"name": "batch", "arguments": {"commands": [rect(20), rect(140), bad.clone()], "atomic": atomic}}));
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        assert_eq!(count(&mut s), before, "atomic {atomic}: no command ran");
+        assert_eq!(depth(&mut s), undo, "atomic {atomic}");
+        assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("`atomic` takes true or false"), "{r}");
+    }
+    let r = call(&mut s, 2, "tools/call", json!({"name": "batch", "arguments": {"commands": [rect(20), rect(140), bad], "atomic": null}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let steps: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(steps.as_array().map(Vec::len), Some(3), "{r}");
+    assert_eq!(count(&mut s), before + 2);
+}
+
 /// #1151: `insert_chart` takes x, y, w and h like `insert_picture` and `insert_table`.
 #[test]
 fn insert_chart_takes_a_box() {
