@@ -327,6 +327,7 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         compat_ln_spc: None,
         vert_overflow: None,
         horz_overflow: None,
+        raw3d: None,
     });
     b
 }
