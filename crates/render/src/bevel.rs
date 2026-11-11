@@ -131,6 +131,7 @@ pub fn draw(ctx: &mut RenderContext, bevel: &Bevel, fill: Option<Rgba>, path: &B
     if polys.is_empty() {
         return;
     }
+    let (pw, ph) = crate::pathgrad::fit_raster(polys.iter().map(|p| p.len().saturating_sub(1)).sum(), pw, ph);
     let areas: Vec<f64> = polys.iter().map(|p| p.windows(2).map(|w| w[0].x * w[1].y - w[1].x * w[0].y).sum::<f64>() / 2.0).collect();
     let face = lit.factor([0.0, 0.0, 1.0]);
     let ratio = if bevel.w > 0.0 { bevel.h / bevel.w } else { 0.0 };

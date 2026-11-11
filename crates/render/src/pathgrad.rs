@@ -29,10 +29,28 @@ const MIN_POLY_EDGES: usize = 8;
 /// not drawn rather than held in memory first.
 const MAX_POINTS: usize = 2_000_000;
 
+/// Quads beyond one per cubic that a path's cubics may subdivide into before [`polygons`] refuses it.
+const MAX_EXTRA_QUADS: f64 = 200_000.0;
+
+/// Flattening tolerance of [`polygons`], in path units.
+const FLATTEN_TOLERANCE: f64 = 0.25;
+
 /// The edge budget for a `pw` x `ph` raster where each pixel tests every edge.
 pub(crate) fn edge_budget(pw: u32, ph: u32) -> usize {
     let pixels = u64::from(pw).saturating_mul(u64::from(ph)).max(1);
     usize::try_from(MAX_EDGE_WORK / pixels).unwrap_or(usize::MAX).max(MIN_POLY_EDGES)
+}
+
+/// `pw` x `ph` cut down (aspect kept) until every pixel testing all of `edges` stays within
+/// [`MAX_EDGE_WORK`]; the raster is stretched when painted, so a many-contour outline keeps every
+/// contour at a coarser sampling.
+pub(crate) fn fit_raster(edges: usize, pw: u32, ph: u32) -> (u32, u32) {
+    let work = u64::from(pw).saturating_mul(u64::from(ph)).saturating_mul(edges.max(1) as u64);
+    if work <= MAX_EDGE_WORK {
+        return (pw, ph);
+    }
+    let k = (MAX_EDGE_WORK as f64 / work as f64).sqrt();
+    (((f64::from(pw) * k) as u32).max(1), ((f64::from(ph) * k) as u32).max(1))
 }
 
 /// Colour position (0 at the focus, 1 at the edge) of `p` for path `kind` in `bounds` with the
@@ -122,10 +140,30 @@ fn shape_position(outline: &[Vec<Point>], c: Point, p: Point) -> f64 {
 
 /// The outline flattened into closed polygons.
 pub fn polygons(path: &BezPath) -> Vec<Vec<Point>> {
+    // `kurbo::flatten` buffers all of a cubic's quads before calling back, and cannot be stopped
+    // once running, so bound the quads the cubics will make (kurbo's own count) first. An ordinary
+    // curve makes a few; only those past the first of each count.
+    let mut extra_quads = 0.0f64;
+    let mut at = Point::ZERO;
+    for el in path.iter() {
+        match el {
+            PathEl::MoveTo(p) | PathEl::LineTo(p) | PathEl::QuadTo(_, p) => at = p,
+            PathEl::CurveTo(a, b, p) => {
+                let err = ((b.to_vec2() * 3.0 - p.to_vec2()) - (a.to_vec2() * 3.0 - at.to_vec2())).hypot2();
+                extra_quads += (err / (432.0 * FLATTEN_TOLERANCE * FLATTEN_TOLERANCE)).powf(1.0 / 6.0).ceil().max(1.0) - 1.0;
+                // A non-finite estimate is over the limit too.
+                if extra_quads.is_nan() || extra_quads > MAX_EXTRA_QUADS {
+                    return Vec::new();
+                }
+                at = p;
+            }
+            PathEl::ClosePath => {}
+        }
+    }
     let mut out: Vec<Vec<Point>> = Vec::new();
     let mut cur: Vec<Point> = Vec::new();
     let mut total = 0usize;
-    kurbo::flatten(path.iter(), 0.25, |el| {
+    kurbo::flatten(path.iter(), FLATTEN_TOLERANCE, |el| {
         total += 1;
         if total > MAX_POINTS {
             return;
@@ -165,7 +203,8 @@ pub fn polygons(path: &BezPath) -> Vec<Vec<Point>> {
 
 /// `outline` cut down to at most about `max_edges` edges in total: first by dropping points
 /// closer than `tol` to the last kept one (detail finer than a raster pixel), then, if still too
-/// many, by keeping every k-th point. Each polygon stays closed. Returns it unchanged when it fits.
+/// many, by keeping every k-th point (a polygon too small to thin stays whole, and none is
+/// dropped). Each polygon stays closed. Returns it unchanged when it fits.
 pub(crate) fn simplify(outline: Vec<Vec<Point>>, tol: f64, max_edges: usize) -> Vec<Vec<Point>> {
     let edges = |o: &[Vec<Point>]| o.iter().map(|p| p.len().saturating_sub(1)).sum::<usize>();
     if edges(&outline) <= max_edges {
@@ -209,15 +248,8 @@ pub(crate) fn simplify(outline: Vec<Vec<Point>>, tol: f64, max_edges: usize) -> 
             }
             *poly = kept;
         }
-        // Polygons too small to thin stay whole; drop the smallest ones if they alone overflow.
-        if edges(&out) > max_edges {
-            out.sort_by_key(|p| std::cmp::Reverse(p.len()));
-            let mut sum = 0usize;
-            out.retain(|p| {
-                sum = sum.saturating_add(p.len().saturating_sub(1));
-                sum <= max_edges
-            });
-        }
+        // Polygons too small to thin stay whole, so the total can still exceed `max_edges`: the
+        // caller shrinks its raster ([`fit_raster`]) rather than lose contours.
     }
     out
 }
@@ -252,12 +284,14 @@ pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64,
     let longest = bounds.width().max(bounds.height()) * k;
     let s = (MAX_SIDE / longest).min(1.0) * k;
     let (pw, ph) = (((bounds.width() * s).ceil() as u32).clamp(1, 4096), ((bounds.height() * s).ceil() as u32).clamp(1, 4096));
-    let outline = if kind == "shape" {
+    let (outline, pw, ph) = if kind == "shape" {
         let max_edges = edge_budget(pw, ph);
         let pixel = (bounds.width() / f64::from(pw)).min(bounds.height() / f64::from(ph));
-        simplify(polygons(path), pixel, max_edges)
+        let o = simplify(polygons(path), pixel, max_edges);
+        let (pw, ph) = fit_raster(o.iter().map(|p| p.len().saturating_sub(1)).sum(), pw, ph);
+        (o, pw, ph)
     } else {
-        Vec::new()
+        (Vec::new(), pw, ph)
     };
     // An outline `polygons` refused (too many points) has no contours: skip the shape rather than
     // paint it with the rectangle fallback's different gradient.
@@ -419,5 +453,34 @@ mod tests {
         assert_eq!(r[255], Rgba::rgb(255, 255, 255));
         assert!((r[64].r as i32 - 64).abs() <= 2);
         assert!(ramp(&[(0.3, Rgba::rgb(9, 9, 9))]).iter().all(|c| *c == Rgba::rgb(9, 9, 9)));
+    }
+
+    #[test]
+    fn huge_cubics_are_refused_before_flattening() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        // About 130,000 quads each: three are over the limit.
+        for _ in 0..3 {
+            p.curve_to((1e15, -1e15), (-1e15, 1e15), (1.0, 1.0));
+        }
+        p.close_path();
+        assert!(polygons(&p).is_empty());
+        // A cubic of ordinary size still flattens.
+        let mut q = BezPath::new();
+        q.move_to((0.0, 0.0));
+        q.curve_to((100.0, 0.0), (100.0, 100.0), (0.0, 100.0));
+        q.close_path();
+        assert_eq!(polygons(&q).len(), 1);
+    }
+
+    #[test]
+    fn many_contours_keep_every_contour_at_a_coarser_raster() {
+        let square = |x: f64| vec![Point::new(x, 0.0), Point::new(x + 1.0, 0.0), Point::new(x + 1.0, 1.0), Point::new(x, 1.0), Point::new(x, 0.0)];
+        let polys: Vec<Vec<Point>> = (0..100).map(|i| square(f64::from(i) * 2.0)).collect();
+        let simple = simplify(polys, 0.001, 244);
+        assert_eq!(simple.len(), 100, "no contour is dropped");
+        let (pw, ph) = fit_raster(400, 512, 512);
+        assert!(u64::from(pw) * u64::from(ph) * 400 <= MAX_EDGE_WORK && pw > 100, "{pw}x{ph}");
+        assert_eq!(fit_raster(200, 512, 512), (512, 512));
     }
 }
