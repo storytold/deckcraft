@@ -696,8 +696,8 @@ fn frame_close(w: &mut W) {
 }
 
 fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
-    let mut t = t.clone();
-    t.normalize();
+    x.table_over_cap |= t.over_cap();
+    let t = t.normalized();
     w.open0("a:tbl");
     let (guid, _) = crate::tables::guid_for_style(&t.style);
     if !x.table_styles.contains(&t.style) {

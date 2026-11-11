@@ -113,15 +113,24 @@ impl Table {
         self.rows.iter().map(|r| r.height).sum()
     }
     /// Insert an empty row before `at`. A merge the new row falls inside grows to cover it.
-    pub fn insert_row(&mut self, at: usize) {
+    /// Returns false, leaving the table as it was, when the row would take it past [`MAX_CELLS`].
+    pub fn insert_row(&mut self, at: usize) -> bool {
+        if self.cols.len().saturating_mul(self.rows.len().saturating_add(1)) > MAX_CELLS {
+            return false;
+        }
         let at = at.min(self.rows.len());
         let merges = self.merges();
         let h = self.rows.get(at.saturating_sub(1)).map(|r| r.height).unwrap_or(30.0);
         self.rows.insert(at, Row { height: h, cells: (0..self.cols.len()).map(|_| Cell::new("")).collect() });
         self.set_merges(merges.into_iter().map(|m| m.insert_row(at)));
+        true
     }
     /// Insert an empty column before `at`. A merge the new column falls inside grows to cover it.
-    pub fn insert_col(&mut self, at: usize) {
+    /// Returns false, leaving the table as it was, when the column would take it past [`MAX_CELLS`].
+    pub fn insert_col(&mut self, at: usize) -> bool {
+        if self.cols.len().saturating_add(1).saturating_mul(self.rows.len()) > MAX_CELLS {
+            return false;
+        }
         let at = at.min(self.cols.len());
         let merges = self.merges();
         let w = self.cols.get(at.saturating_sub(1)).copied().unwrap_or(80.0);
@@ -131,6 +140,7 @@ impl Table {
             r.cells.insert(i, Cell::new(""));
         }
         self.set_merges(merges.into_iter().map(|m| m.insert_col(at)));
+        true
     }
     /// Delete row `at`. Merges through it shrink; a merge anchored on it moves its anchor (and
     /// text) to the next row it covers.
@@ -321,6 +331,11 @@ impl Table {
     pub fn is_normalized(&self) -> bool {
         let n = self.cols.len();
         n <= MAX_CELLS && self.rows.len() <= (MAX_CELLS / n.max(1)).max(1) && self.rows.iter().all(|r| r.cells.len() == n)
+    }
+    /// Whether [`Table::normalize`] would drop rows or columns to fit [`MAX_CELLS`].
+    pub fn over_cap(&self) -> bool {
+        let n = self.cols.len();
+        n > MAX_CELLS || self.rows.len() > (MAX_CELLS / n.max(1)).max(1)
     }
     /// What [`Table::normalize`] would leave of this table, cloning only the rows and cells that
     /// survive (an oversized table is not copied whole first).
@@ -609,9 +624,24 @@ mod tests {
             }
         }
         assert_eq!(t.merges().len(), 1, "the first anchor already covers the whole grid");
-        t.insert_row(n);
+        assert!(t.insert_row(n));
         assert_eq!(t.n_rows(), n + 1);
         assert!(t.split(0, 0));
+    }
+
+    /// A table at the cell cap refuses another row or column instead of losing rows to
+    /// normalization, and the cap sits above PowerPoint's own 75 x 75.
+    #[test]
+    fn insert_past_the_cap_is_refused() {
+        const { assert!(MAX_CELLS >= 75 * 75) };
+        let mut t =
+            Table { cols: vec![1.0; 200], rows: vec![Row { height: 1.0, cells: vec![Cell::new(""); 200] }; MAX_CELLS / 200], ..Default::default() };
+        assert!(!t.over_cap());
+        let before = t.clone();
+        assert!(!t.insert_row(0));
+        assert!(!t.insert_col(0));
+        assert_eq!(t, before);
+        assert!(Table::new(75, 75, 100.0, 10.0).insert_row(0));
     }
 
     fn merged() -> Table {
@@ -647,10 +677,10 @@ mod tests {
     fn row_and_column_edits_keep_merges_consistent() {
         for at in 0..=4 {
             let mut t = merged();
-            t.insert_row(at);
+            assert!(t.insert_row(at));
             assert_topology(&t);
             let mut t = merged();
-            t.insert_col(at);
+            assert!(t.insert_col(at));
             assert_topology(&t);
         }
         for at in 0..4 {

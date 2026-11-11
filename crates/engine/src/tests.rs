@@ -6458,3 +6458,42 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
+
+#[test]
+fn table_edits_past_the_cell_cap_are_refused_not_trimmed() {
+    use deckcraft_model::table::{MAX_CELLS, Row};
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let cols = 200;
+    let rows = MAX_CELLS / cols;
+    let big = deckcraft_model::Table {
+        cols: vec![1.0; cols],
+        rows: vec![Row { height: 1.0, cells: vec![Default::default(); cols] }; rows],
+        ..Default::default()
+    };
+    for sl in std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides.iter_mut() {
+        for sh in std::sync::Arc::make_mut(sl).shapes.iter_mut() {
+            if sh.id == id {
+                sh.kind = deckcraft_model::ShapeKind::Table(big.clone());
+            }
+        }
+    }
+    for cmd in ["table.insertRowAbove", "table.insertRowBelow"] {
+        let e = s.execute(cmd, &json!({"id": id.0, "row": 0})).unwrap_err().to_string();
+        assert!(e.contains("cell limit"), "{cmd}: {e}");
+    }
+    let e = s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": 0})).unwrap_err().to_string();
+    assert!(e.contains("cell limit"), "{e}");
+    assert_eq!(table_of(&s, id), big, "a refused insert leaves every row in place");
+    // A table already over the cap is refused too, not trimmed behind a success.
+    let huge = deckcraft_model::Table { rows: vec![Row { height: 1.0, cells: vec![Default::default(); cols] }; rows + 1], ..big.clone() };
+    for sl in std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides.iter_mut() {
+        for sh in std::sync::Arc::make_mut(sl).shapes.iter_mut() {
+            if sh.id == id {
+                sh.kind = deckcraft_model::ShapeKind::Table(huge.clone());
+            }
+        }
+    }
+    assert!(s.execute("table.deleteRow", &json!({"id": id.0, "row": 0})).is_err());
+    assert_eq!(table_of(&s, id).n_rows(), rows + 1);
+}

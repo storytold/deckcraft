@@ -780,6 +780,9 @@ fn table(imp: &mut Imp, part: &Part, tbl: &El) -> Table {
         let n = t.rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
         t.cols = vec![72.0; n];
     }
+    if t.over_cap() {
+        imp.warn(format!("a table in {} is over {} cells; its last rows were left out", part.name, deckcraft_model::table::MAX_CELLS));
+    }
     t.normalize();
     t
 }

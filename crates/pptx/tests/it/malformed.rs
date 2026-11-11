@@ -287,3 +287,41 @@ fn unreadable_slide_is_reported() {
     assert_eq!(lost, vec!["ppt/slides/slide2.xml".to_string()]);
     assert_eq!(deckcraft_pptx::import(&broken).expect("import").slides.len(), 1);
 }
+
+fn table_deck(rows: usize, cols: usize) -> deckcraft_model::Presentation {
+    use deckcraft_model::table::Row;
+    use deckcraft_model::{Shape, ShapeId, ShapeKind, Table, Xfrm};
+    let mut p = defaults::new_presentation(None);
+    let id = ShapeId(p.alloc_id().expect("ids"));
+    let t = Table { cols: vec![1.0; cols], rows: vec![Row { height: 1.0, cells: vec![Default::default(); cols] }; rows], ..Default::default() };
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    slide.shapes.push(Shape { id, name: "T".into(), xfrm: Some(Xfrm::new(0.0, 0.0, 10.0, 10.0)), kind: ShapeKind::Table(t), ..Default::default() });
+    p
+}
+
+/// A table past the cell cap opens with its leading rows and an import warning; saving one that
+/// is over the cap is an error, never a silent trim.
+#[test]
+fn oversized_table_warns_on_import_and_refuses_export() {
+    let max = deckcraft_model::table::MAX_CELLS;
+    let cols = 1000;
+    let rows = max / cols;
+    // A table exactly at the cap round-trips with no warning.
+    let bytes = deckcraft_pptx::export(&table_deck(rows, cols)).expect("export at the cap");
+    let (_, _, warnings) = deckcraft_pptx::import_report(&bytes).expect("import");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // One more row in the file: kept truncated, and reported.
+    let mut es = entries(&bytes);
+    let slide = es.iter_mut().find(|(n, _)| n == "ppt/slides/slide1.xml").expect("slide1");
+    let xml = String::from_utf8(std::mem::take(&mut slide.1)).expect("utf8");
+    let start = xml.rfind("<a:tr ").expect("row");
+    let end = xml.rfind("</a:tr>").expect("row end") + "</a:tr>".len();
+    slide.1 = format!("{}{}{}", &xml[..end], &xml[start..end], &xml[end..]).into_bytes();
+    let (q, _, warnings) = deckcraft_pptx::import_report(&rezip(&es)).expect("import");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let t = q.slides[0].shapes.iter().find_map(|s| if let deckcraft_model::ShapeKind::Table(t) = &s.kind { Some(t) } else { None }).expect("table");
+    assert_eq!((t.rows.len(), t.cols.len()), (rows, cols));
+    // A model table past the cap is refused on export.
+    let err = deckcraft_pptx::export(&table_deck(rows + 1, cols)).expect_err("over the cap");
+    assert!(err.to_string().contains("table"), "{err}");
+}

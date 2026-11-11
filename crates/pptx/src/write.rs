@@ -63,6 +63,8 @@ pub struct Exp<'a> {
     n_kept: u32,
     pub slide_parts: HashMap<SlideId, String>,
     pub table_styles: Vec<String>,
+    /// A table past the cell cap was met; export fails rather than write a trimmed one.
+    pub table_over_cap: bool,
     placeholder: Option<String>,
 }
 
@@ -541,6 +543,7 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         n_kept: 0,
         slide_parts: HashMap::new(),
         table_styles: vec![],
+        table_over_cap: false,
         placeholder: None,
     };
     for (i, s) in p.slides.iter().enumerate() {
@@ -748,6 +751,12 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         root.add_new(&k.rel_type, &k.name, false);
     }
     x.pkg.rels("", &root);
+    if x.table_over_cap {
+        return Err(PptxError::Unsupported(format!(
+            "a table has more than {} cells; export refused rather than drop rows",
+            deckcraft_model::table::MAX_CELLS
+        )));
+    }
     x.pkg.finish()
 }
 
