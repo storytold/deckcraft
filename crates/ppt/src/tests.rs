@@ -845,7 +845,8 @@ fn a_picture_held_in_the_fill_property_is_read() {
 #[test]
 fn headers_and_footers_become_footer_placeholders() {
     let cstring = |instance: u16, s: &str| atom(rt::CSTRING, instance, &utf16(s));
-    // fHasDate | fHasUserDate | fHasSlideNumber | fHasFooter
+    // fHasDate | fHasUserDate | fHasSlideNumber | fHasFooter. The footer string ends in a NUL, as
+    // some writers add one: the text stops there.
     let flags: u16 = 0x01 | 0x04 | 0x08 | 0x20;
     let hf = container(
         rt::HEADERS_FOOTERS,
@@ -853,7 +854,7 @@ fn headers_and_footers_become_footer_placeholders() {
         &[
             atom(rt::HEADERS_FOOTERS_ATOM, 0, &[&0u16.to_le_bytes()[..], &flags.to_le_bytes()].concat()),
             cstring(0, "26 May 2004"),
-            cstring(2, "Workshop"),
+            cstring(2, "Workshop\0"),
         ],
     );
     // The master's slide number placeholder: bottom right, right-aligned 10 pt text.
@@ -890,7 +891,7 @@ fn headers_and_footers_become_footer_placeholders() {
 
 /// Numbered paragraphs (#1137 review: drawn with the bullet character) take their numbering from
 /// the document's `___PPT9` tag: the slide's outline block of that text type, and the entry the
-/// run's `pp9rt` names.
+/// run's `pp9rt` names. The tag's name ends in a NUL here, as some writers add one.
 #[test]
 fn outline_numbering_from_the_ppt9_tag() {
     // Entry 0: nothing. Entry 1: numbered, "1." (scheme 3), from 4.
@@ -904,7 +905,7 @@ fn outline_numbering_from_the_ppt9_tag() {
     let tag = container(
         rt::PROG_BINARY_TAG,
         0,
-        &[atom(rt::CSTRING, 0, &utf16("___PPT9")), atom(rt::BINARY_TAG_DATA, 0, &container(rt::OUTLINE_TEXT_PROPS9, 0, &tag_data))],
+        &[atom(rt::CSTRING, 0, &utf16("___PPT9\0")), atom(rt::BINARY_TAG_DATA, 0, &container(rt::OUTLINE_TEXT_PROPS9, 0, &tag_data))],
     );
     let list = container(rt::LIST, 0, &[container(rt::PROG_TAGS, 0, &[tag])]);
     // Two bulleted paragraphs: the second's run names entry 1 (pp9rt in fontStyle bits 10–13).
