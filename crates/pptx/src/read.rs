@@ -38,8 +38,17 @@ pub struct Imp<'a> {
     pub vml_previews: HashMap<String, HashMap<String, String>>,
     /// Aggregate byte count of retained chart sidecars across the presentation.
     pub kept_sidecar_bytes: usize,
+    /// Data slots of the charts decoded so far (see `chart::MAX_PRESENTATION_CHART_POINTS`).
+    pub chart_points: usize,
+    /// Points the presentation may hold across modelled charts.
+    pub chart_points_cap: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Chart parts whose sidecar capture was refused, with the retained-byte total it started from:
+    /// the same start gives the same refusal, so the copy is not repeated.
+    pub rejected_kept: HashMap<String, usize>,
+    /// Bytes of chart parts decoded so far, rejected ones included (see `chart::MAX_CHART_DECODE_BYTES`).
+    pub chart_decode_bytes: usize,
     /// Add-in tags parts, parsed once each, by normalized part name.
     pub tags_by_part: HashMap<String, Arc<[(String, String)]>>,
     /// Bytes of tags copied into the model so far (see [`MAX_TAG_BYTES`]).
@@ -445,7 +454,11 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
@@ -463,6 +476,11 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
 /// [`import`], plus the parts of the slide list the file names but that couldn't be read (a
 /// missing or truncated slide): those slides are left out, so a caller can say so (#203).
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
+    import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
+}
+
+/// [`import_checked`] with the presentation's chart point budget set (tests lower it).
+pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>), PptxError> {
     let mut lost_slides: Vec<String> = vec![];
     let pkg = Package::open(bytes)?;
     let root_rels = pkg.rels("");
@@ -487,7 +505,11 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
