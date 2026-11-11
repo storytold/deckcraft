@@ -14,6 +14,7 @@ mod fills;
 mod kept_parts;
 mod locks;
 mod malformed;
+mod master_text_styles;
 mod math_ns;
 mod media_timing;
 mod notes;
