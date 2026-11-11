@@ -321,6 +321,12 @@ pub struct HeadersFooters {
     pub footer_text: String,
 }
 
+/// The UTF-16 units of a `CString` body, up to its first NUL: the record has no terminator, but a
+/// writer that adds one would otherwise put a NUL into the text, or make a tag name fail to match.
+fn cstring_units(b: &[u8]) -> impl Iterator<Item = u16> + '_ {
+    b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).take_while(|&u| u != 0)
+}
+
 /// The slides' headers and footers in `container` (a slide, or the document for every slide).
 pub fn headers_footers(container: &Rec) -> Option<HeadersFooters> {
     let hf = container.children().find(|r| r.kind == rt::HEADERS_FOOTERS && r.instance == 3)?;
@@ -329,7 +335,7 @@ pub fn headers_footers(container: &Rec) -> Option<HeadersFooters> {
     let text = |instance: u16| {
         hf.children()
             .find(|r| r.kind == rt::CSTRING && r.instance == instance)
-            .map(|r| String::from_utf16_lossy(&r.data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<u16>>()))
+            .map(|r| String::from_utf16_lossy(&cstring_units(r.data).collect::<Vec<u16>>()))
             .unwrap_or_default()
     };
     Some(HeadersFooters {
@@ -350,9 +356,9 @@ pub fn outline_numbering(document: &Rec) -> HashMap<(u32, u32), Vec<Vec<crate::t
     let mut out: HashMap<(u32, u32), Vec<Vec<crate::text::Pf9>>> = HashMap::new();
     let tags = document.child(rt::LIST).and_then(|l| l.child(rt::PROG_TAGS));
     let Some(tags) = tags else { return out };
-    let ppt9 = tags.children_of(rt::PROG_BINARY_TAG).find(|tag| {
-        tag.child(rt::CSTRING).is_some_and(|name| name.data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).eq("___PPT9".encode_utf16()))
-    });
+    let ppt9 = tags
+        .children_of(rt::PROG_BINARY_TAG)
+        .find(|tag| tag.child(rt::CSTRING).is_some_and(|name| cstring_units(name.data).eq("___PPT9".encode_utf16())));
     let Some(data) = ppt9.and_then(|t| t.child(rt::BINARY_TAG_DATA)) else { return out };
     // The tag's data is an atom whose body holds records.
     for props in Records::new(data.data).filter(|r| r.kind == rt::OUTLINE_TEXT_PROPS9) {
