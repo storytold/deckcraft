@@ -132,7 +132,20 @@ fn title(w: &mut W, text: &str, c: &Chart) {
     w.close("c:title");
 }
 
+/// Points one cache writes. Excel and PowerPoint hold 32,000 points per series, so this is far
+/// above any chart they make; a longer vector is cut here with a warning, not refused.
+const MAX_CACHE_POINTS: usize = 1_000_000;
+
+/// `vals` cut to [`MAX_CACHE_POINTS`].
+fn capped<T>(vals: &[T]) -> &[T] {
+    if vals.len() > MAX_CACHE_POINTS {
+        log::warn!("pptx: chart data cache cut from {} to {MAX_CACHE_POINTS} points", vals.len());
+    }
+    &vals[..vals.len().min(MAX_CACHE_POINTS)]
+}
+
 fn str_cache(w: &mut W, f: &str, vals: &[String]) {
+    let vals = capped(vals);
     w.open0("c:strRef");
     w.elt("c:f", f);
     w.open0("c:strCache");
@@ -147,6 +160,7 @@ fn str_cache(w: &mut W, f: &str, vals: &[String]) {
 }
 
 fn num_cache(w: &mut W, f: &str, vals: &[Option<f64>]) {
+    let vals = capped(vals);
     w.open0("c:numRef");
     w.elt("c:f", f);
     w.open0("c:numCache");
@@ -165,6 +179,7 @@ fn num_cache(w: &mut W, f: &str, vals: &[Option<f64>]) {
 
 /// Numbers written into the chart itself (`c:numLit`), with no worksheet range behind them.
 fn num_lit(w: &mut W, vals: &[Option<f64>]) {
+    let vals = capped(vals);
     w.open0("c:numLit");
     w.val("c:ptCount", vals.len());
     for (i, v) in vals.iter().enumerate() {
@@ -308,7 +323,7 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
             trendline(w, t);
         }
     }
-    let n = c.categories.len().max(s.values.len());
+    let n = c.categories.len().max(s.values.len()).min(MAX_CACHE_POINTS);
     let last = n + 1;
     if let Some(e) = &s.error_bars {
         error_bars(w, e, g);
@@ -552,7 +567,7 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
     }
     // Each series repeats the categories in its own cache, so the output grows with series times
     // categories: stop adding series once a group's caches pass the budget (the first is always written).
-    // shortcut: the first series is not bounded here; export has no error path for an oversized one.
+    // The first series is always written; each of its caches is cut at MAX_CACHE_POINTS.
     let mut left = MAX_EXPORT_POINTS;
     for (n, (i, s)) in list.iter().enumerate() {
         let cost = series_points(c, s, g);
@@ -1153,5 +1168,21 @@ mod tests {
         assert!(crate::read::chart::read_chart_xml(&xml).unwrap().cat_reversed);
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
+    }
+}
+
+#[cfg(test)]
+mod cache_cap_tests {
+    use super::*;
+
+    /// A cache longer than the cap is cut, never refused; anything a real chart holds (32,000
+    /// points per series) is far under it. Zero-sized elements, so the test allocates nothing.
+    #[test]
+    fn caches_are_cut_at_the_cap_not_refused() {
+        const { assert!(MAX_CACHE_POINTS >= 32_000) };
+        let over = vec![(); MAX_CACHE_POINTS + 1];
+        assert_eq!(capped(&over).len(), MAX_CACHE_POINTS);
+        let real = vec![(); 32_000];
+        assert_eq!(capped(&real).len(), 32_000);
     }
 }
