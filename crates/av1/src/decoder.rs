@@ -425,6 +425,8 @@ impl Decoder {
 
     fn parse_obus(&mut self, data: &[u8], out: &mut Vec<(Output, usize, u32)>) -> Result<()> {
         let mut tu = 0usize;
+        // Repeated-frame outputs in `out`, counted as they are added rather than recounted per OBU.
+        let mut existing = out.iter().filter(|(o, _, _)| matches!(o, Output::Existing { .. })).count();
         let mut pos = 0;
         while pos < data.len() {
             let obu = parse_obu_unit(data, pos)?;
@@ -444,9 +446,10 @@ impl Decoder {
                 }
                 OBU_FRAME_HEADER_T | OBU_REDUNDANT_FRAME_HEADER_T | OBU_FRAME_T => {
                     if let Some(o) = self.frame_obu(&obu)? {
-                        if out.iter().filter(|(o, _, _)| matches!(o, Output::Existing { .. })).count() >= 32 {
+                        if existing >= 32 {
                             return Err(Error::Invalid("too many frame outputs in chunk"));
                         }
+                        existing += usize::from(matches!(o, Output::Existing { .. }));
                         out.push((o, tu, spatial_id));
                     }
                 }

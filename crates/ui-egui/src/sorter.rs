@@ -209,7 +209,8 @@ fn place_slides(app: &mut SlideApp, ui: &mut Ui, g: &Grid<'_>, budget: &mut u32,
                 // Only cells in view (plus a little margin) ask for a thumbnail, so a deck bigger
                 // than the thumbnail cache does not evict its own thumbnails forever (#969).
                 let near = ui.clip_rect().expand2(vec2(0.0, 2.0 * cell.height())).intersects(cell);
-                let tex = if near { app.textures.thumb(ui.ctx(), g.doc, i, (img.width() * ppp).round() as u32, budget) } else { None };
+                let tex =
+                    if near { app.textures.thumb(ui.ctx(), g.doc, i, (img.width() * ppp).round() as u32, app.ui.grayscale, budget) } else { None };
                 match tex {
                     Some(tex) => {
                         p.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -391,7 +392,7 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     }
     let ppp = ui.ctx().pixels_per_point();
     let mut budget = 2;
-    if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (srect.width() * ppp).round() as u32, &mut budget) {
+    if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (srect.width() * ppp).round() as u32, app.ui.grayscale, &mut budget) {
         ui.painter().image(tex.id(), srect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     ui.painter().rect_stroke(srect, CornerRadius::ZERO, Stroke::new(1.0, Color32::GRAY), egui::StrokeKind::Outside);
@@ -476,7 +477,7 @@ fn outline_estimate(s: &deckcraft_model::Slide) -> f32 {
     let lines: usize = s
         .shapes
         .iter()
-        .filter(|x| !x.ph_type().is_some_and(|k| k.is_title()))
+        .filter(|x| !x.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind()))
         .filter_map(|x| x.text.as_ref())
         .filter(|tb| !tb.is_empty())
         .map(|tb| tb.paragraphs.len().max(1))
@@ -512,7 +513,8 @@ fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deck
             ui.data_mut(|d| d.insert_temp(id, v));
         }
     });
-    for sh in s.shapes.iter().filter(|x| !x.ph_type().is_some_and(|k| k.is_title())) {
+    // Footer, date and slide-number placeholders are not outline text, as in PowerPoint.
+    for sh in s.shapes.iter().filter(|x| !x.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind())) {
         let Some(tb) = &sh.text else { continue };
         if tb.is_empty() {
             continue;
