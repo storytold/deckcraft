@@ -866,6 +866,25 @@ fn visible(s: &mut Session, p: &Value) -> Result<Value> {
 /// (a child can still be unlocked on its own afterwards), as PowerPoint does.
 fn lock(s: &mut Session, p: &Value) -> Result<Value> {
     let v = bool_param(p, "locked");
+    // A targeted shape inside another targeted group is reached through the group: editing it again
+    // would toggle it back.
+    let mut ids = super::targets(s, p)?;
+    if ids.len() > 1 {
+        let doc = s.doc()?;
+        // Walk each distinct group once, however often `ids` repeats it.
+        let mut once = std::collections::HashSet::new();
+        ids.retain(|id| once.insert(*id));
+        let mut inside = std::collections::HashSet::new();
+        for id in &ids {
+            if let Some(g) = doc.shape(*id) {
+                deckcraft_model::walk(g.children(), &mut |c, _| {
+                    inside.insert(c.id);
+                });
+            }
+        }
+        ids.retain(|id| !inside.contains(id));
+    }
+    let p = &json!({"ids": ids, "locked": p.get("locked")});
     edit_shapes(s, p, "shape.lock", |sh| {
         let to = v.unwrap_or(!sh.locked);
         set_locked(sh, to, 0);

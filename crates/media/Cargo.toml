@@ -9,10 +9,9 @@ description = "DeckCraft media: probing, audio decoding (MP3, AAC/M4A, WAV, AIFF
 workspace = true
 
 [dependencies]
-deckcraft-isobmff = { workspace = true }
-deckcraft-matroska = { workspace = true }
-deckcraft-ogg = { workspace = true }
-deckcraft-opus = { workspace = true }
+# Containers (MP4/MOV, Matroska/WebM, Ogg) and the Opus decoder, shared with the other Craft apps.
+craft-media = { workspace = true, features = ["isobmff", "matroska", "ogg"] }
+craft-audio = { workspace = true }
 deckcraft-h264 = { workspace = true }
 deckcraft-hevc = { workspace = true }
 deckcraft-vp9 = { workspace = true }

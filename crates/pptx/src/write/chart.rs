@@ -610,6 +610,18 @@ fn kept_chartex(c: &Chart) -> Option<Vec<u8>> {
 
 /// The chart part XML, and whether it is the original part (so its relationships still apply).
 pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
+    // A chart too large to model is written back as it was read.
+    if c.verbatim
+        && let Some(raw) = &c.raw
+        && let Ok(doc) = crate::xml::parse(raw.as_bytes())
+        && doc.root.is("chartSpace")
+    {
+        let mut keep = doc.root;
+        drop_unkept_refs(&mut keep, c);
+        let mut w = W::new();
+        w.raw(&keep.to_xml());
+        return (w.finish(), true);
+    }
     // Reuse the kept part when the chart is unchanged since it was read.
     if let Some(raw) = &c.raw
         && !raw.contains(NS_CX)
