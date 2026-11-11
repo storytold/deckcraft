@@ -93,14 +93,33 @@ impl<'a> Props<'a> {
             } else {
                 None
             };
-            self.map.entry(pid).or_insert(PropVal { op, complex });
+            self.fill_gap(pid, PropVal { op, complex });
         }
     }
 
     /// Fill gaps from another set (a master shape's or the drawing defaults).
     pub fn inherit(&mut self, other: &Props<'a>) {
         for (k, v) in &other.map {
-            self.map.entry(*k).or_insert(*v);
+            self.fill_gap(*k, *v);
+        }
+    }
+
+    /// Add `v` for `id` where this set doesn't say it already. A boolean property word ([MS-ODRAW]:
+    /// the last id of each 64-id group) holds sixteen flags, each with its own `fUse` bit 16
+    /// places up, so it is merged flag by flag: a shape that sets only `fNoFillHitTest` still
+    /// inherits `fFilled` from its master or the defaults.
+    fn fill_gap(&mut self, id: u16, v: PropVal<'a>) {
+        match self.map.get_mut(&id) {
+            None => {
+                self.map.insert(id, v);
+            }
+            Some(have) if id & 0x3F == 0x3F => {
+                let unset = !(have.op >> 16) & 0xFFFF;
+                let take = (v.op >> 16) & unset;
+                have.op |= take << 16;
+                have.op = (have.op & !take) | (v.op & take);
+            }
+            Some(_) => {}
         }
     }
 
@@ -348,6 +367,38 @@ mod tests {
         assert_eq!(p.string(prop::NAME).as_deref(), Some("Logo"));
         assert_eq!(p.flag(prop::FILL_BOOLS, 4), Some(false));
         assert_eq!(p.flag(prop::LINE_BOOLS, 3), None);
+    }
+
+    /// A boolean word inherits the flags it doesn't set (#1137 review): a text box that sets only
+    /// `fNoFillHitTest` (bit 4 is `fFilled`, bit 0 `fNoFillHitTest`) still gets "not filled"
+    /// from below, and its own flags win over the inherited ones.
+    #[test]
+    fn boolean_properties_merge_flag_by_flag() {
+        let mut p = Props::default();
+        p.set(prop::FILL_BOOLS, 0x0001_0001); // fNoFillHitTest = true; fFilled not said
+        p.set(prop::LINE_BOOLS, 0x0008_0008); // fLine = true
+        let mut below = Props::default();
+        below.set(prop::FILL_BOOLS, 0x0011_0000); // fFilled = false, fNoFillHitTest = false
+        below.set(prop::LINE_BOOLS, 0x0008_0000); // fLine = false
+        p.inherit(&below);
+        assert_eq!(p.flag(prop::FILL_BOOLS, 4), Some(false));
+        assert_eq!(p.flag(prop::FILL_BOOLS, 0), Some(true));
+        assert_eq!(p.flag(prop::LINE_BOOLS, 3), Some(true));
+        // The same merge applies between a shape's own tables.
+        let t = fopt(&[(prop::FILL_BOOLS, 0x0001_0001)], &[]);
+        let t2 = fopt(&[(prop::FILL_BOOLS, 0x0010_0010)], &[]);
+        let mut q = Props::default();
+        q.add_table(&Rec::at(&t, 0).unwrap());
+        q.add_table(&Rec::at(&t2, 0).unwrap());
+        assert_eq!(q.flag(prop::FILL_BOOLS, 4), Some(true));
+        assert_eq!(q.flag(prop::FILL_BOOLS, 0), Some(true));
+        // Non-boolean properties still keep the first value.
+        let mut r = Props::default();
+        r.set(prop::FILL_COLOR, 1);
+        let mut s = Props::default();
+        s.set(prop::FILL_COLOR, 2);
+        r.inherit(&s);
+        assert_eq!(r.get(prop::FILL_COLOR), Some(1));
     }
 
     #[test]
