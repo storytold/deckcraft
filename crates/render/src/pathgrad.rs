@@ -146,8 +146,9 @@ fn shape_position(outline: &[Vec<Point>], c: Point, p: Point) -> f64 {
 /// The outline flattened into closed polygons.
 pub fn polygons(path: &BezPath) -> Vec<Vec<Point>> {
     // `kurbo::flatten` buffers all of a cubic's quads before calling back, and cannot be stopped
-    // once running, so bound the quads the cubics will make (kurbo's own count: it splits cubics into quads at a tenth of the tolerance) first. An ordinary
-    // curve makes a few; only those past the first of each count.
+    // once running, so bound the quads the cubics will make first (kurbo's own count: it splits
+    // cubics into quads at a tenth of the tolerance). An ordinary curve makes a few; only those
+    // past the first of each count.
     let mut extra_quads = 0.0f64;
     let mut at = Point::ZERO;
     let mut start = Point::ZERO;
