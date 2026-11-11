@@ -494,6 +494,24 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
     w.close("c:valAx");
 }
 
+/// Points `series` writes into its caches for group `g`, synthesized vectors included.
+fn series_points(c: &Chart, s: &Series, g: Group) -> usize {
+    let v = s.values.len();
+    if matches!(g, Group::Scatter | Group::Bubble) {
+        let xs = if s.x_values.is_empty() { v } else { s.x_values.len() };
+        let sizes = if g != Group::Bubble {
+            0
+        } else if s.sizes.is_empty() {
+            v
+        } else {
+            s.sizes.len()
+        };
+        xs.saturating_add(v).saturating_add(sizes)
+    } else {
+        c.categories.len().saturating_add(v)
+    }
+}
+
 fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) {
     let g = group_of(kind);
     let grouping = if kind.percent() {
@@ -534,9 +552,10 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
     }
     // Each series repeats the categories in its own cache, so the output grows with series times
     // categories: stop adding series once a group's caches pass the budget (the first is always written).
+    // shortcut: the first series is not bounded here; export has no error path for an oversized one.
     let mut left = MAX_EXPORT_POINTS;
     for (n, (i, s)) in list.iter().enumerate() {
-        let cost = c.categories.len().max(s.values.len()).saturating_mul(2).saturating_add(s.x_values.len() + s.sizes.len());
+        let cost = series_points(c, s, g);
         if n > 0 && cost > left {
             log::warn!("pptx: chart export stopped after {n} series; the data caches passed {MAX_EXPORT_POINTS} points");
             break;
@@ -1061,7 +1080,21 @@ mod region_map_tests {
 mod tests {
     use deckcraft_color::{ColorTransform, Rgba};
     use deckcraft_model::ColorRef;
-    use deckcraft_model::chart::{Chart, ChartType};
+    use deckcraft_model::chart::{Chart, ChartType, Series};
+
+    #[test]
+    fn export_cost_counts_the_caches_each_group_writes() {
+        let s = Series { values: vec![Some(1.0); 600], ..Default::default() };
+        let mut c = Chart::sample(ChartType::Column);
+        c.categories = vec!["a".into(); 1000];
+        // Category and value caches: 1,000 + 600, however the series is stored.
+        assert_eq!(super::series_points(&c, &s, super::Group::Bar), 1600);
+        // A bubble series without x values or sizes still writes three value-length caches.
+        assert_eq!(super::series_points(&c, &s, super::Group::Bubble), 1800);
+        assert_eq!(super::series_points(&c, &s, super::Group::Scatter), 1200);
+        let s = Series { values: vec![Some(1.0); 600], x_values: vec![Some(1.0); 5], sizes: vec![Some(1.0); 7], ..Default::default() };
+        assert_eq!(super::series_points(&c, &s, super::Group::Bubble), 612);
+    }
 
     /// The chart's text colour is written where PowerPoint keeps it (`c:txPr` on the axes, legend,
     /// data labels and chart, the title's run defaults) and read back as the same colour.
