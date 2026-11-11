@@ -104,6 +104,9 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
     let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     let adj = &pf.adjust;
+    // Colour saturation has no `a:blip` child; PowerPoint keeps it as `a14:saturation` in an
+    // `a14:imgLayer`. A linked picture has no part to point the layer at, so it keeps none.
+    let saturation = adj.saturation.filter(|s| (s - 1.0).abs() > 1e-6 && !linked).map(|s| s.clamp(0.0, 4.0));
     let has_kids = pf.alpha.is_some()
         || adj.brightness != 0.0
         || adj.contrast != 0.0
@@ -112,6 +115,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         || adj.clear_color.is_some()
         || adj.bilevel.is_some()
         || adj.alpha_inv
+        || saturation.is_some()
         || pf.artistic.is_some();
     let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
@@ -149,17 +153,23 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         }
         // Artistic effect: the blip is the processed picture; the original rides in an
         // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
-        if let Some(art) = &pf.artistic
-            && art.effect.starts_with("artistic")
-            && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
-            && let Some(orig) = x.media_rel(o, art.original, "image")
-        {
+        let artistic = pf.artistic.as_ref().filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()));
+        let layer = match artistic {
+            Some(art) => x.media_rel(o, art.original, "image").map(|orig| (orig, Some(art))),
+            None => saturation.map(|_| (rid.clone(), None)),
+        };
+        if let Some((orig, art)) = layer {
             w.open0("a:extLst");
             w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
             w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
             w.open("a14:imgLayer", A::new().a("r:embed", &orig));
             w.open0("a14:imgEffect");
-            w.empty0(&format!("a14:{}", art.effect));
+            if let Some(art) = art {
+                w.empty0(&format!("a14:{}", art.effect));
+            }
+            if let Some(s) = saturation {
+                w.empty("a14:saturation", A::new().a("sat", pct(s)));
+            }
             w.close("a14:imgEffect");
             w.close("a14:imgLayer");
             w.close("a14:imgProps");
