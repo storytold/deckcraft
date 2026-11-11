@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::{
     CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, color_param, color_value, edit_geometry, edit_shapes, f64_param, has_selection,
-    has_slide, id_param, ok, str_param, targets, usize_param, with_param, xfrm_of,
+    has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param, with_param, xfrm_of,
 };
 use crate::{Result, Session};
 
@@ -282,7 +282,7 @@ fn requested_fill(s: &mut Session, p: &Value) -> Result<Option<Option<Fill>>> {
         let (name, bytes) = super::insert::media_bytes(&with_param(p, "data", p.get("picture").cloned().unwrap_or_default()), "shape.fill")?;
         let ct = super::insert::content_type(&name, &bytes);
         let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("shape.fill", NO_ID_SPACE)))?;
-        return Ok(Some(Some(Fill::Picture(PictureFill { media, ..Default::default() }))));
+        return Ok(Some(Some(Fill::Picture(PictureFill { media, svg: (ct == "image/svg+xml").then_some(media), ..Default::default() }))));
     }
     Ok(None)
 }

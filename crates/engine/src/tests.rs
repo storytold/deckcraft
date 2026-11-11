@@ -1716,6 +1716,31 @@ fn tab_moves_between_cells_skipping_merged_ones() {
 }
 
 #[test]
+fn format_paragraph_align_names_match_format_align() {
+    use deckcraft_model::text::Align;
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    let para = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes[0].text.as_ref().unwrap().paragraphs[0].props.align;
+    for (name, want) in [
+        ("justLow", Align::JustLow),
+        ("justifyLow", Align::JustLow),
+        ("thaiDist", Align::ThaiDistributed),
+        ("ctr", Align::Center),
+        ("centre", Align::Center),
+        ("r", Align::Right),
+        ("just", Align::Justify),
+        ("dist", Align::Distributed),
+        ("distributed", Align::Distributed),
+        ("left", Align::Left),
+    ] {
+        s.execute("format.paragraph", &json!({"align": name})).unwrap();
+        assert_eq!(para(&s), Some(want), "{name}");
+    }
+    assert!(s.execute("format.paragraph", &json!({"align": "bogus"})).is_err());
+}
+
+#[test]
 fn right_to_left_paragraphs() {
     let mut s = session();
     let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
@@ -5516,6 +5541,38 @@ fn pen_pressure_is_kept_and_a_mouse_draws_at_full_width() {
     assert_eq!(got, vec![vec![0.2, 1.0, 0.4], vec![1.0, 1.0]]);
 }
 
+#[test]
+fn a_long_ink_stroke_is_extended_in_place_and_capped() {
+    let mut s = session();
+    s.set_tool(tools::ToolKind::Ink { mode: "pen".into(), color: deckcraft_model::Rgba::rgb(20, 20, 20), width: 4.0 });
+    let ev = |kind, x: f64| tools::PointerEvent { kind, x, y: 80.0, mods: Mods::default(), tol: 3.0, pressure: Some(0.5) };
+    s.pointer(ev(PointerKind::Down, 0.0)).unwrap();
+    let n = tools::MAX_GESTURE_POINTS + 5_000;
+    for i in 1..n {
+        s.pointer(ev(PointerKind::Drag, (i % 500) as f64)).unwrap();
+    }
+    assert_eq!(s.tool.ink_preview.len(), tools::MAX_GESTURE_POINTS);
+    s.pointer(ev(PointerKind::Up, 0.0)).unwrap();
+    let kept: usize = ink_pressures(&s).iter().map(Vec::len).sum();
+    assert!((2..=tools::MAX_GESTURE_POINTS).contains(&kept), "{kept}");
+}
+
+#[test]
+fn double_clicking_a_capped_freeform_keeps_its_vertices() {
+    let mut s = session();
+    let ev = |kind, x: f64, y: f64| tools::PointerEvent { kind, x, y, mods: Default::default(), tol: 3.0, pressure: None };
+    s.set_tool(tools::ToolKind::Shape { preset: "freeform".into() });
+    s.pointer(ev(tools::PointerKind::Down, 100.0, 100.0)).unwrap();
+    // Densely clicked vertices, each within the double-click tolerance of the last.
+    for i in 0..tools::MAX_GESTURE_POINTS + 10 {
+        s.pointer(ev(tools::PointerKind::Down, 300.0 + i as f64 * 0.001, 100.0)).unwrap();
+    }
+    s.pointer(ev(tools::PointerKind::DoubleClick, 300.0, 100.0)).unwrap();
+    let st = s.doc().unwrap();
+    let deckcraft_model::Geom::Custom { paths } = &st.shapes().last().unwrap().geom else { panic!("no freeform") };
+    assert_eq!(paths[0].d.matches(" L ").count(), tools::MAX_GESTURE_POINTS - 1);
+}
+
 fn ink_pressures(s: &Session) -> Vec<Vec<f32>> {
     let st = s.doc().unwrap();
     let Some(sh) = st.shapes().iter().rev().find(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Ink { .. })) else {
@@ -6954,6 +7011,27 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
 }
 
 #[test]
+fn many_distinct_fonts_are_listed_once_each_without_a_quadratic_scan() {
+    // 30,000 runs in 15,000 families, each written twice in different case.
+    let mut p = deckcraft_model::Presentation::default();
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    let mut body = deckcraft_model::text::TextBody::from_text("x");
+    let run = body.paragraphs[0].runs[0].clone();
+    body.paragraphs[0].runs = (0..30_000)
+        .map(|i| {
+            let mut r = run.clone();
+            let name = format!("Qqq Font {}", i / 2);
+            r.props.font = Some(if i % 2 == 0 { name } else { name.to_uppercase() });
+            r
+        })
+        .collect();
+    slide.shapes[0].text = Some(body);
+    let used = crate::fonts::used_fonts(&p);
+    assert_eq!(used.iter().filter(|f| f.starts_with("Qqq Font ")).count(), 15_000);
+    assert_eq!(crate::fonts::missing_fonts(&p).iter().filter(|f| f.to_ascii_lowercase().starts_with("qqq font ")).count(), 15_000);
+}
+
+#[test]
 fn slide_master_view_rejects_invalid_indices() {
     let mut s = Session::with_new();
     for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
@@ -7157,4 +7235,62 @@ fn outline_export_skips_footer_date_and_slide_number() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(rtf.contains("Agenda") && rtf.contains("First point"), "{rtf:?}");
     assert!(!rtf.contains("Company Confidential") && !rtf.contains("1 May 2026"), "{rtf:?}");
+}
+
+#[test]
+fn shape_adjust_and_quick_style_reject_invalid_index() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 100, 200, 100]})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(id).unwrap().clone();
+    for bad in [json!(-1), json!(1.5)] {
+        assert!(s.execute("shape.adjust", &json!({"index": bad, "value": 0.4})).is_err(), "adjust accepted {bad}");
+        assert!(s.execute("shape.quickStyle", &json!({"index": bad})).is_err(), "quickStyle accepted {bad}");
+    }
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, before.geom);
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
+    s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
+}
+
+#[test]
+fn svg_album_validates_and_preserves_vector_aspect() {
+    let mut s = Session::with_new();
+    let invalid = cmd::base64_encode(b"<svg broken");
+    let before = s.doc().expect("doc").doc.slides.len();
+    assert!(s.execute("insert.photoAlbum", &json!({"pictures":[{"name":"bad.svg","data":invalid}]})).is_err());
+    assert_eq!(s.doc().expect("doc").doc.slides.len(), before);
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="20"><rect width="80" height="20"/></svg>"#;
+    s.execute("insert.photoAlbum", &json!({"pictures":[{"name":"wide.svg","data":cmd::base64_encode(svg)}]})).expect("album");
+    let doc = &s.doc().expect("doc").doc;
+    let picture = doc.slides.iter().flat_map(|s| &s.shapes).find(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).expect("picture");
+    let deckcraft_model::ShapeKind::Picture { fill } = &picture.kind else { panic!("picture") };
+    assert_eq!(fill.svg, Some(fill.media));
+    let rect = picture.xfrm.expect("rect");
+    assert!((rect.w / rect.h - 4.0).abs() < 0.001);
+}
+
+#[test]
+fn svg_shape_and_background_fills_keep_vector_references() {
+    use deckcraft_model::{Background, Fill, ShapeKind};
+    let mut s = Session::with_new();
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20"/></svg>"#;
+    let data = cmd::base64_encode(svg);
+    s.execute("shape.insert", &json!({"preset":"rect"})).expect("shape");
+    s.execute("shape.fill", &json!({"name":"fill.svg","picture":data})).expect("fill");
+    let shape = s.doc().expect("doc").selected_shapes()[0];
+    let Some(Fill::Picture(fill)) = &shape.fill else { panic!("picture fill") };
+    assert_eq!(fill.svg, Some(fill.media));
+    s.execute("design.background", &json!({"name":"background.svg","picture":data})).expect("background");
+    let doc = &s.doc().expect("doc").doc;
+    let Some(Background::Fill { fill: Fill::Picture(fill) }) = &doc.slides[0].background else { panic!("background") };
+    assert_eq!(fill.svg, Some(fill.media));
+    let bytes = deckcraft_pptx::export(doc).expect("export");
+    let reopened = deckcraft_pptx::import(&bytes).expect("import");
+    assert!(
+        reopened
+            .slides
+            .iter()
+            .flat_map(|s| &s.shapes)
+            .any(|s| !matches!(s.kind, ShapeKind::Picture { .. }) && matches!(&s.fill, Some(Fill::Picture(fill)) if fill.svg == Some(fill.media)))
+    );
 }

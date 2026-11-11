@@ -101,11 +101,16 @@ fn artistic_svg_survives_repeated_pptx_round_trips() {
     let ShapeKind::Picture { fill } = &mut shape.kind else { panic!("picture") };
     fill.artistic = Some(deckcraft_model::style::Artistic { effect: "artisticBlur".into(), original: fill.media, svg: fill.svg.take() });
     for _ in 0..2 {
-        p = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("import");
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let xml = slide_xml(&bytes);
+        assert!(!xml.contains("asvg:svgBlip"), "the processed raster must not expose the original SVG: {xml}");
+        p = deckcraft_pptx::import(&bytes).expect("import");
         let shape = p.slides[0].shapes.iter().find(|s| s.name == "Step").expect("picture");
         let ShapeKind::Picture { fill } = &shape.kind else { panic!("picture") };
         assert!(fill.svg.is_none());
         let art = fill.artistic.as_ref().expect("effect");
-        assert_eq!(p.media(art.svg.expect("svg")).expect("media").data.as_slice(), SVG);
+        assert_eq!(art.svg, Some(art.original));
+        assert_eq!(p.media(art.original).expect("original").data.as_slice(), SVG);
+        assert_eq!(p.media(fill.media).expect("processed raster").data.as_slice(), png());
     }
 }

@@ -103,7 +103,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
     let linked = x.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     // An SVG rides in Office's SVG extension. Without a raster fallback the blip itself names no
     // image, as PowerPoint writes it.
-    let svg = pf.svg.or_else(|| pf.artistic.as_ref().and_then(|a| a.svg));
+    let svg = pf.svg;
     let svg_rel = svg.and_then(|m| x.media_rel(o, m, "image"));
     let svg_linked = svg.and_then(|m| x.p.media(m)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     let svg_only = svg_rel.is_some() && svg == Some(pf.media);
@@ -164,13 +164,14 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
             .artistic
             .as_ref()
             .filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()))
-            .and_then(|art| x.media_rel(o, art.original, "image").map(|orig| (art, orig)));
+            .and_then(|art| x.media_rel(o, art.svg.unwrap_or(art.original), "image").map(|orig| (art, orig)));
         if art.is_some() || svg_rel.is_some() {
             w.open0("a:extLst");
             if let Some((art, orig)) = &art {
                 w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
                 w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
-                let original_linked = x.p.media(art.original).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+                // Keep the vector original on this layer, never beside the processed raster.
+                let original_linked = x.p.media(art.svg.unwrap_or(art.original)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
                 w.open("a14:imgLayer", A::new().a(if original_linked { "r:link" } else { "r:embed" }, orig));
                 w.open0("a14:imgEffect");
                 w.empty0(&format!("a14:{}", art.effect));
@@ -481,6 +482,21 @@ fn sound_label(name: &str) -> String {
     if label.is_empty() { "sound.wav".into() } else { label }
 }
 
+/// Validate an unmodelled 3-D fragment (`a:scene3d`, `a:sp3d`, `a:flatTx`) before writing raw XML.
+pub fn valid_raw3d<'a>(raw: &'a str, allowed: &[&str]) -> Option<&'a str> {
+    if raw.is_empty() || raw.len() > 64 * 1024 {
+        return None;
+    }
+    let wrap = format!("<r xmlns:a=\"{}\">{raw}</r>", crate::opc::NS_A);
+    let doc = crate::xml::parse(wrap.as_bytes()).ok()?;
+    let els: Vec<_> = doc.root.elements().collect();
+    (!els.is_empty()
+        && els.len() <= allowed.len()
+        && doc.root.children.len() == els.len()
+        && els.iter().all(|e| e.prefix() == "a" && allowed.contains(&e.local()) && !crate::read::has_rel_refs(e)))
+    .then_some(raw)
+}
+
 pub fn body_pr(w: &mut W, b: &BodyProps) {
     let a = A::new()
         .o("rot", b.rot.map(|r| (r * 60_000.0).round().clamp(-21_600_000.0, 21_600_000.0) as i64))
@@ -501,7 +517,8 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
         .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
-    if warp.is_none() && b.autofit.is_none() {
+    let raw3d = b.raw3d.as_deref().and_then(|s| valid_raw3d(s, &["scene3d", "sp3d", "flatTx"]));
+    if warp.is_none() && b.autofit.is_none() && raw3d.is_none() {
         w.empty("a:bodyPr", a);
         return;
     }
@@ -534,6 +551,9 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
             w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
+    }
+    if let Some(raw) = raw3d {
+        w.raw(raw);
     }
     w.close("a:bodyPr");
 }
