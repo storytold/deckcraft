@@ -1268,17 +1268,95 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
             s.shapes.extend(pics);
         }
     }
+    adopt_media_names(imp, &s.shapes);
     if let Some(t) = root.child("transition") {
         s.transition = timing::transition(imp, part, t);
     }
     if let Some(t) = root.child("timing") {
         s.animations = timing::animations(imp, part, &ctx, t, &s.shapes);
         timing::media_settings(t, &ctx, &mut s.shapes);
+        for cue in timing::media_cues(&ctx, t) {
+            if cue.interactive {
+                continue;
+            }
+            let Some(sh) = deckcraft_model::find_shape_mut(&mut s.shapes, cue.shape) else { continue };
+            // PowerPoint keeps the flag on `p:audio`; older DeckCraft files wrote it on the media
+            // node, and DeckCraft's own narration is named for it. Accept all three.
+            let narration = !cue.video && (cue.narration || sh.name.eq_ignore_ascii_case("Narration"));
+            // A clip that waits for a click keeps `autoplay` off: the slide does not start it.
+            if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind {
+                clip.autoplay = !cue.click;
+                if !cue.click && cue.delay_ms > 0 {
+                    clip.start_delay_ms = Some(cue.delay_ms);
+                }
+                if narration && !cue.click {
+                    clip.narration = true;
+                }
+            }
+        }
     }
+    // The trace is read before the rel-ref gate: a slide's comment extension carries an r:id,
+    // which would otherwise hide the laser trace beside it.
+    s.laser = root.child("extLst").and_then(laser_trace);
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
-        s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
+        let kept: String = ext.elements().filter(|e| e.attr("uri") != Some(crate::LASER_EXT_URI)).map(|e| part.keep(e)).collect();
+        if !kept.trim().is_empty() {
+            s.raw_ext = Some(kept);
+        }
     }
     s
+}
+
+/// PowerPoint names the media part `ppt/media/media1.wav` and keeps the original file name on the
+/// shape (`p:cNvPr/@name`). Adopt that name for the media item, so a save writes it back and the
+/// Audio Options and Record ▸ Audio names survive a round trip.
+fn adopt_media_names(imp: &mut Imp, shapes: &[deckcraft_model::Shape]) {
+    let mut found = Vec::new();
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        if let deckcraft_model::ShapeKind::Media(clip) = &sh.kind {
+            // PowerPoint names the shape after the file; `insert.audio`/`insert.video` keep it in
+            // `descr` and leave `name` generated. Prefer whichever carries a real file name.
+            let file_like = |s: &str| s.rsplit_once('.').is_some_and(|(stem, ext)| !stem.is_empty() && !ext.is_empty() && ext.len() <= 5);
+            let name = if file_like(&sh.name) { sh.name.clone() } else { sh.descr.clone() };
+            found.push((clip.media, if name.is_empty() { sh.name.clone() } else { name }));
+        }
+    });
+    for (media, name) in found {
+        // Only a generated part name is replaced: a name the file already carries is kept.
+        let Some(item) = imp.media.iter_mut().find(|m| m.id == media) else { continue };
+        let generated = item.name.rsplit_once('.').is_some_and(|(stem, _)| {
+            stem.strip_prefix("media").or_else(|| stem.strip_prefix("image")).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        });
+        let same_ext = match (name.rsplit_once('.'), item.name.rsplit_once('.')) {
+            (Some((_, a)), Some((_, b))) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        };
+        if generated && same_ext && !name.trim().is_empty() {
+            item.name = name;
+        }
+    }
+}
+
+fn laser_trace(ext: &El) -> Option<deckcraft_model::LaserTrace> {
+    let e = ext.elements().find(|e| e.attr("uri") == Some(crate::LASER_EXT_URI))?;
+    let laser = e.child("laser")?;
+    let byte = |name: &str, default: u8| laser.u32(name).map(|v| v.min(255) as u8).unwrap_or(default);
+    let color = deckcraft_model::Rgba::rgb(byte("r", 255), byte("g", 0), byte("b", 0));
+    let mut points = Vec::new();
+    for pt in laser.children_named("pt").take(4096) {
+        let Some(x) = pt.f64("x") else { continue };
+        let Some(y) = pt.f64("y") else { continue };
+        if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e7 || y.abs() > 1.0e7 {
+            continue;
+        }
+        let t_ms = pt.u32("t").unwrap_or(0).min(3_600_000);
+        points.push(deckcraft_model::LaserSample { x, y, t_ms });
+    }
+    if points.is_empty() {
+        return None;
+    }
+    points.sort_by_key(|p| p.t_ms);
+    Some(deckcraft_model::LaserTrace { color, points })
 }
 
 fn read_notes(imp: &mut Imp, part: &Part, root: &El) -> TextBody {
@@ -1370,6 +1448,15 @@ fn read_show(sp: &El, shows: &HashMap<String, String>) -> ShowSettings {
         && let deckcraft_model::ColorBase::Rgb { rgb } = c.base
     {
         s.pen_color = rgb;
+    }
+    if let Some(c) = sp
+        .child("extLst")
+        .and_then(|e| e.children_named("ext").find(|x| x.attr("uri") == Some(crate::LASER_CLR_URI)))
+        .and_then(|e| e.child("laserClr"))
+        .and_then(dml::color)
+        && let deckcraft_model::ColorBase::Rgb { rgb } = c.base
+    {
+        s.laser_color = rgb;
     }
     s
 }

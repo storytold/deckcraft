@@ -13,6 +13,8 @@ const SHOW_MS: f64 = 8000.0;
 pub struct Toast {
     pub text: String,
     pub at: f64,
+    /// Stays until the user closes it: a failure that must not scroll away unseen.
+    pub sticky: bool,
 }
 
 /// The notice for fonts a presentation uses that aren't installed, or `None` when all are.
@@ -28,6 +30,20 @@ pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
     Some(format!("{names} {it} installed on this computer. Text that uses {them} is shown in a similar font."))
 }
 
+/// Show `text` for a few seconds — unless a sticky notice is up. That one is a failure the user
+/// must read, so a transient note waits instead of replacing it unseen.
+pub fn note(app: &mut SlideApp, text: impl Into<String>) {
+    let text = text.into();
+    if app.toast.as_ref().is_some_and(|t| t.sticky) {
+        // Wait behind the failure the user must read, so an open error or a font note is not lost.
+        if app.toast_queue.len() < 8 && !app.toast_queue.contains(&text) {
+            app.toast_queue.push(text);
+        }
+        return;
+    }
+    app.toast = Some(Toast { text, at: crate::now_ms(), sticky: false });
+}
+
 /// Toast the active presentation's missing fonts, once per opened document.
 pub fn note_missing_fonts(app: &mut SlideApp) {
     let Some(d) = app.session.active() else { return };
@@ -35,15 +51,28 @@ pub fn note_missing_fonts(app: &mut SlideApp) {
         return;
     }
     if let Some(text) = missing_fonts_message(&d.missing_fonts) {
-        app.toast = Some(Toast { text, at: crate::now_ms() });
+        note(app, text);
     }
+}
+
+/// Show the notice that waited behind a sticky one, oldest first.
+pub(crate) fn show_queued(app: &mut SlideApp) {
+    if app.toast.is_some() || app.toast_queue.is_empty() {
+        return;
+    }
+    let text = app.toast_queue.remove(0);
+    app.toast = Some(Toast { text, at: crate::now_ms(), sticky: false });
 }
 
 /// Render and dismiss the active transient toast without disturbing the document.
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
-    let Some(toast) = &app.toast else { return };
-    if crate::now_ms() - toast.at > SHOW_MS {
+    let Some(toast) = &app.toast else {
+        show_queued(app);
+        return;
+    };
+    if !toast.sticky && crate::now_ms() - toast.at > SHOW_MS {
         app.toast = None;
+        show_queued(app);
         return;
     }
     let t = Tokens::get(ctx);
@@ -74,6 +103,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     });
     if close {
         app.toast = None;
+        show_queued(app);
     } else {
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }

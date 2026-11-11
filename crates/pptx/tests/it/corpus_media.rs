@@ -132,8 +132,15 @@ fn corpus() -> (Presentation, Vec<u8>, Vec<u8>, Vec<u8>) {
                 color: Rgba::rgb(20, 20, 20),
                 width: 2.0,
                 highlighter: false,
+                at_ms: None,
             },
-            InkStroke { points: vec![(50.0, 150.0, 1.0), (160.0, 156.0, 1.0)], color: Rgba::rgb(255, 230, 40), width: 12.0, highlighter: true },
+            InkStroke {
+                points: vec![(50.0, 150.0, 1.0), (160.0, 156.0, 1.0)],
+                color: Rgba::rgb(255, 230, 40),
+                width: 12.0,
+                highlighter: true,
+                at_ms: None,
+            },
         ],
     };
     aside.shapes.push(ink);

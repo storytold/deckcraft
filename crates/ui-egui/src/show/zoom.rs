@@ -151,6 +151,8 @@ impl Show {
             "notesPx": self.notes_px,
             "custom": self.state.custom_name(),
             "goto": if self.goto.is_empty() { None } else { Some(self.goto.clone()) },
+            "record": self.record,
+            "rehearse": self.rehearse,
         });
         if self.grid {
             let slides = grid_indices(n_slides);

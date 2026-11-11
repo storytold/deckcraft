@@ -1,5 +1,7 @@
 mod anchor;
 mod anim_auto_reverse;
+mod cameo;
+mod cameo_alt_text;
 mod chart_embed;
 mod comments;
 mod corpus;

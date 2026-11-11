@@ -15,6 +15,7 @@ use crate::{HistoryEntry, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!("edit.batch", "Batch Edit", [], None, "{commands: [{id, params?}], label?} — runs the commands as one undo step", has_doc, batch),
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
         cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
@@ -237,7 +238,7 @@ pub(crate) fn remap_animations(anims: &mut Vec<deckcraft_model::Animation>, map:
 }
 
 /// Visit every shape mutably, depth-first (groups included, depth-bounded like `walk`).
-fn walk_mut(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Shape)) {
+pub(crate) fn walk_mut(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Shape)) {
     fn rec(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Shape), depth: usize) {
         if depth > 64 {
             return;
@@ -756,4 +757,40 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
     })?;
     Ok(json!({"selected": s.doc()?.selection.shapes}))
+}
+/// Run several commands as one edit: the outer command pushes a single undo step for all of them
+/// (an inner command sees a depth above zero and keeps its own step only for a nested call).
+fn batch(s: &mut Session, p: &Value) -> Result<Value> {
+    let Some(commands) = p.get("commands").and_then(Value::as_array) else {
+        return Err(bad("edit.batch", "missing `commands`"));
+    };
+    if commands.len() > 10_000 {
+        return Err(bad("edit.batch", "more than 10,000 commands"));
+    }
+    let mut ran = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for c in commands {
+        let Some(id) = c.get("id").and_then(Value::as_str).or_else(|| c.get("command").and_then(Value::as_str)) else {
+            return Err(bad("edit.batch", "each command needs an `id`"));
+        };
+        let params = c.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Object(Default::default()));
+        // The engine rolls a failed command back only at depth 0; an inner one is put back here,
+        // so a half-applied command never joins the batch's single undo step.
+        let before = s.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
+        match s.execute(id, &params) {
+            Ok(_) => ran += 1,
+            // One bad clip must not discard the rest of the take: report it and carry on.
+            Err(e) => {
+                if let (Some((uid, doc, sel)), Some(st)) = (before, s.active_mut())
+                    && st.uid == uid
+                {
+                    st.doc = doc;
+                    st.selection = sel;
+                    st.revision += 1;
+                }
+                failed.push(format!("{id}: {e}"));
+            }
+        }
+    }
+    Ok(json!({"ran": ran, "failed": failed}))
 }

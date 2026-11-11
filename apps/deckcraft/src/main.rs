@@ -142,6 +142,8 @@ fn services(native_wayland: bool) -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        // Record ▸ Audio: the default microphone, on its own worker thread.
+        mic: std::env::var_os("DECKCRAFT_NO_AUDIO").is_none().then(|| Box::new(audio::CpalIn::default()) as Box<dyn deckcraft_media::MicIn>),
         ..Default::default()
     }
 }

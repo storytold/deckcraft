@@ -146,12 +146,23 @@ fn shown_number(d: &Dialog, key: &str, label: &str) -> Result<f64, String> {
     exact_of(d, key).ok_or_else(|| format!("{label} must be a number"))
 }
 
-fn size_position_value(d: &Dialog) -> Result<Value, String> {
+/// The command for the dialog's edited fields, or `None` when the user changed nothing: several
+/// objects share one dialog, and sending their shared seed would move them onto the first one.
+fn size_position_value(d: &Dialog) -> Result<Option<Value>, String> {
+    let touched = ["x", "y", "w", "h", "rot", "scaleW", "scaleH"].iter().any(|k| edited(d, k));
+    let lock = field_of(d, "lock") == "1";
+    // The aspect toggle belongs to this dialog's arithmetic, not to the document: sending it alone
+    // would ask the command for a dialog with no geometry and reopen it.
+    if !touched {
+        return Ok(None);
+    }
     let x = shown_points(d, "x", "Horizontal")?;
     let y = shown_points(d, "y", "Vertical")?;
     let rot = shown_number(d, "rot", "Rotation")?;
     let base_w = parse_shown(&field_of(d, "baseW")).unwrap_or(1.0);
     let base_h = parse_shown(&field_of(d, "baseH")).unwrap_or(1.0);
+    let scale_w = if edited(d, "scaleW") { shown_number(d, "scaleW", "Scale width").unwrap_or(100.0) } else { 100.0 };
+    let scale_h = if edited(d, "scaleH") { shown_number(d, "scaleH", "Scale height").unwrap_or(100.0) } else { 100.0 };
     let mut w = if edited(d, "w") {
         shown_points(d, "w", "Width")?
     } else if edited(d, "scaleW") {
@@ -175,7 +186,26 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
             w = h * ar;
         }
     }
-    Ok(json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "lockAspect": field_of(d, "lock") == "1"}))
+    let mut p = json!({"lockAspect": lock});
+    // Only what the user changed: a geometry field they left alone would push this dialog's seed
+    // onto every target. A percentage is sent as a percentage, which the command applies per
+    // target; the absolute size computed from the first target's base would pin them all to it.
+    for (key, value) in [("x", x), ("y", y), ("w", w), ("h", h), ("rot", rot)] {
+        if edited(d, key) {
+            p[key] = json!(value);
+        }
+    }
+    for (key, value) in [("scaleW", scale_w), ("scaleH", scale_h)] {
+        if edited(d, key) {
+            p[key] = json!(value);
+        }
+    }
+    // The launcher's targets, not whatever is selected when OK is pressed: Camera Format ▸ Size
+    // opens the dialog for a Cameo inside a mixed selection.
+    if let Some(ids) = d.params.get("ids") {
+        p["ids"] = ids.clone();
+    }
+    Ok(Some(p))
 }
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -196,7 +226,8 @@ pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dial
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
         match size_position_value(d) {
-            Ok(p) => return app.run("shape.sizePosition", p).is_ok(),
+            Ok(Some(p)) => return app.run("shape.sizePosition", p).is_ok(),
+            Ok(None) => return true,
             Err(msg) => {
                 app.set_status(msg);
                 return false;

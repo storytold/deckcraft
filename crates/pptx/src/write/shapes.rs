@@ -298,10 +298,17 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             cnvpr(w, x, o, id, s);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
+            if let Some(c) = &s.cameo {
+                crate::cameo::write_live_feed(w, c.raw.as_deref());
+            }
             w.close("p:cNvPicPr");
             nv_pr(w, x, o, s);
             w.close("p:nvPicPr");
-            dml::blip_fill(w, x, o, "p:blipFill", fill);
+            if s.cameo.is_some() {
+                dml::cameo_blip_fill(w, x, o, "p:blipFill", fill);
+            } else {
+                dml::blip_fill(w, x, o, "p:blipFill", fill);
+            }
             let mut s2 = s.clone();
             if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
                 s2.fill = None;
@@ -442,7 +449,9 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.open0("p:nvGrpSpPr");
             cnvpr(w, x, o, id, s);
             w.empty0("p:cNvGrpSpPr");
-            w.empty0("p:nvPr");
+            // The group's tags (the recorded-ink marker among them) ride on `p:nvPr`, as they do
+            // for shapes; an empty element dropped the marker and reopen lost it.
+            nv_pr(w, x, o, s);
             w.close("p:nvGrpSpPr");
             w.open0("p:grpSpPr");
             dml::xfrm(w, "a:xfrm", &xf, Some(&xf));
@@ -451,6 +460,14 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 let Some(stroke) = ink_shape(st, i) else { continue };
                 let sid = cx.ids.fresh();
                 sp(w, x, o, sid, &stroke, false);
+            }
+            // A recorded layer also keeps its strokes, each with the time it was drawn, in a
+            // private extension: a freeform line cannot say when its stroke appeared, and it
+            // flattens the pressure samples to one width.
+            if let Some(ext) = ink_ext(strokes) {
+                w.open0("p:extLst");
+                w.raw(&ext);
+                w.close("p:extLst");
             }
             w.close("p:grpSp");
         }
@@ -597,6 +614,47 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     w.empty("dgm:relIds", A::new().a("xmlns:dgm", dgm::NS_DGM).a("r:dm", dm).a("r:lo", lo).a("r:qs", qs).a("r:cs", cs));
     w.close("a:graphicData");
     frame_close(w);
+}
+
+/// The recorded-ink extension: every stroke of a layer a recording touched, with the samples,
+/// colour and width a freeform line cannot carry. A stroke without a time (one the editor drew)
+/// is part of the layer but has no `at`. `None` when no stroke carries a time: then the freeform
+/// lines alone stand for the ink.
+fn ink_ext(strokes: &[deckcraft_model::InkStroke]) -> Option<String> {
+    if !strokes.iter().take(10_000).any(|st| st.at_ms.is_some()) {
+        return None;
+    }
+    let mut body = String::new();
+    for st in strokes.iter().take(10_000) {
+        let mut pts = String::new();
+        for (x, y, p) in st.points.iter().filter(|p| p.0.is_finite() && p.1.is_finite()).take(4096) {
+            let (x, y) = (x.clamp(-1.0e7, 1.0e7), y.clamp(-1.0e7, 1.0e7));
+            let p = if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.5 };
+            let _ = std::fmt::Write::write_fmt(&mut pts, format_args!("<dc:pt x=\"{x:.2}\" y=\"{y:.2}\" p=\"{p:.3}\"/>"));
+        }
+        if pts.is_empty() {
+            continue;
+        }
+        let width = if st.width.is_finite() { st.width.clamp(0.0, 1.0e6) } else { 0.0 };
+        let at = match st.at_ms {
+            Some(at) => format!(" at=\"{at}\""),
+            None => String::new(),
+        };
+        let _ = std::fmt::Write::write_fmt(
+            &mut body,
+            format_args!(
+                "<dc:stroke r=\"{}\" g=\"{}\" b=\"{}\" w=\"{width:.2}\" hl=\"{}\"{at}>{pts}</dc:stroke>",
+                st.color.r,
+                st.color.g,
+                st.color.b,
+                u8::from(st.highlighter),
+            ),
+        );
+    }
+    if body.is_empty() {
+        return None;
+    }
+    Some(format!("<p:ext uri=\"{}\"><dc:ink xmlns:dc=\"https://deckcraft.app/ns/ink\">{body}</dc:ink></p:ext>", crate::INK_EXT_URI))
 }
 
 fn ink_shape(st: &deckcraft_model::InkStroke, i: usize) -> Option<Shape> {

@@ -252,6 +252,39 @@ pub struct MediaClip {
     /// Probed picture size of a video in pixels (0 = unknown).
     pub width: u32,
     pub height: u32,
+    /// Recorded with Record Slide Show. The show skips it when Play Narrations is off.
+    pub narration: bool,
+    /// Delay before slide-start media begins, from the timing tree's first start condition.
+    /// `None` starts with the slide; a click-triggered clip is not started by the slide at all.
+    pub start_delay_ms: Option<u32>,
+}
+
+/// A Cameo (Camera Format tab): PowerPoint's live camera feed on a picture shape. The shape stays
+/// a [`ShapeKind::Picture`] — its `PictureFill` is the placeholder art (an SVG, as PowerPoint
+/// writes) — so picture formatting, cropping and arrangement keep working. The marker in the file
+/// is `alf:liveFeedProps` inside `p:cNvPicPr/a:extLst`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Cameo {
+    /// Live feed (`true`) rather than a frozen still or a recorded clip.
+    pub live: bool,
+    /// The capture device the cameo shows, when one is named.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// A recording played by the cameo instead of the live feed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<MediaId>,
+    /// The feed's `alf:liveFeedProps` element kept verbatim (`backgroundProps`, `extLst`…), so a
+    /// camera background set in PowerPoint survives a save. `None` writes a plain live feed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+}
+
+impl Cameo {
+    /// A live feed from the default camera.
+    pub fn live() -> Self {
+        Cameo { live: true, ..Default::default() }
+    }
 }
 
 /// One ink stroke (Draw tab): points in slide coordinates with pressure (`0..=1`,
@@ -263,6 +296,10 @@ pub struct InkStroke {
     pub color: Rgba,
     pub width: f64,
     pub highlighter: bool,
+    /// When the stroke was drawn, in ms from the slide's entry, for a stroke a recording kept.
+    /// `None` for ink drawn in the editor: it has no timeline of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<u32>,
 }
 
 /// True when every sample is the placeholder `0.5` written before a device reported pressure.
@@ -281,6 +318,24 @@ pub fn ink_sample_width(pen: f64, pressure: f32, legacy: bool) -> f64 {
     }
     let p = if pressure.is_finite() { pressure.clamp(0.08, 1.0) } else { 1.0 };
     pen * f64::from(p)
+}
+
+/// One sample of a laser pointer recorded during Record Slide Show, in slide points.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaserSample {
+    pub x: f64,
+    pub y: f64,
+    /// Milliseconds from the start of the slide.
+    pub t_ms: u32,
+}
+
+/// The laser path recorded for one slide.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaserTrace {
+    pub color: Rgba,
+    pub points: Vec<LaserSample>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -361,6 +416,10 @@ pub struct Shape {
     /// On a SmartArt group: the diagram's text outline, from which its shapes are regenerated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<Diagram>,
+    /// Set when this picture is a Cameo (Camera Format tab): a camera feed or recording shown in
+    /// the picture's frame. `None` for ordinary pictures.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cameo: Option<Cameo>,
 }
 
 /// A SmartArt diagram's data: its layout and its outline of nodes (the Text Pane).
@@ -436,6 +495,7 @@ impl Default for Shape {
             tags: vec![],
             raw_ext: None,
             diagram: None,
+            cameo: None,
         }
     }
 }
@@ -454,6 +514,10 @@ impl Shape {
     }
     pub fn is_group(&self) -> bool {
         matches!(self.kind, ShapeKind::Group { .. })
+    }
+    /// Is this picture a Cameo (Camera Format tab)?
+    pub fn is_cameo(&self) -> bool {
+        self.cameo.is_some() && matches!(self.kind, ShapeKind::Picture { .. })
     }
     pub fn children(&self) -> &[Shape] {
         match &self.kind {
@@ -637,6 +701,9 @@ pub struct Slide {
     /// Unmodelled XML kept for round-trip (custom data).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
+    /// Laser pointer recorded with the slide. Empty when the show was not recording one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub laser: Option<LaserTrace>,
 }
 
 impl Default for Slide {
@@ -656,6 +723,7 @@ impl Default for Slide {
             color_map: None,
             tags: vec![],
             raw_ext: None,
+            laser: None,
         }
     }
 }

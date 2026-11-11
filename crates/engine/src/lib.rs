@@ -425,6 +425,12 @@ pub enum UiRequest {
     },
     StartShow {
         from: usize,
+        /// Record timings and pen ink, rather than only playing the show.
+        #[serde(default)]
+        record: bool,
+        /// Play the deck with the timings and narration already recorded, saving nothing.
+        #[serde(default)]
+        preview: bool,
     },
     Message {
         text: String,
@@ -438,6 +444,13 @@ pub enum UiRequest {
         action: String,
         shape: ShapeId,
         ms: Option<u64>,
+    },
+    /// Camera Format ▸ Camera ▸ Preview (`cameo.preview`). The UI host owns the camera source;
+    /// `on` is `Some` for an explicit start/stop and `None` for a toggle, and `device` names the
+    /// camera to open (the source's default when absent).
+    CameraPreview {
+        on: Option<bool>,
+        device: Option<String>,
     },
 }
 
@@ -504,6 +517,10 @@ pub struct Session {
     pub recovery_dir: Option<std::path::PathBuf>,
     /// Media playback state, written by the UI host every frame (empty without a host).
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
+    /// Live camera preview state, written by the UI host as its camera source reports it.
+    pub camera_status: deckcraft_media::camera::CameraStatus,
+    /// The camera the live preview has open, when one is.
+    pub camera_device: Option<String>,
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
@@ -545,6 +562,8 @@ impl Session {
             depth: 0,
             recovery_dir: None,
             media_status: Default::default(),
+            camera_status: Default::default(),
+            camera_device: None,
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,

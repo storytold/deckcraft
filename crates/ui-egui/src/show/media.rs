@@ -7,12 +7,14 @@ pub(crate) const TRANSITION_SOUND: ShapeId = ShapeId(u32::MAX);
 
 /// Start the media of a newly shown slide: media from the previous slide stops unless it plays
 /// across slides; media set to start automatically plays. Everything stops at the end.
-pub(super) fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation) {
+pub(super) fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation, now: f64) {
     let cur = if show.ended { None } else { Some(show.state.slide) };
     if show.media_slide == cur {
         return;
     }
     show.media_slide = cur;
+    // A pending start belongs to the slide it was scheduled on.
+    show.pending_media.clear();
     let trans = cur.and_then(|i| doc.slides.get(i)).and_then(|s| s.transition.as_ref());
     let sound = trans.and_then(|t| t.sound);
     let sound_loop = trans.is_some_and(|t| t.sound_loop);
@@ -41,11 +43,33 @@ pub(super) fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc:
     }
     if let Some(i) = cur {
         for (id, _, clip) in crate::media::slide_media(doc, i) {
-            if clip.autoplay && !keep.contains(&id) {
-                app.media.play(doc_uid, doc, id, &clip, None, crate::media::Owner::Show);
+            if !super::play_on_enter(&clip, show.without_narration(doc)) || keep.contains(&id) {
+                continue;
+            }
+            match clip.start_delay_ms.unwrap_or(0) {
+                // A delayed automatic clip starts that long after the slide, as in PowerPoint.
+                delay if delay > 0 => show.pending_media.push((id, now + f64::from(delay) / 1000.0)),
+                _ => app.media.play(doc_uid, doc, id, &clip, None, crate::media::Owner::Show),
             }
         }
     }
+}
+
+/// Start the automatic clips whose slide-start delay has come. Entries for a slide the show has
+/// left are dropped, so a pending start never fires late on another slide.
+pub(super) fn run_pending_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation, now: f64) {
+    let current = Some(show.state.slide);
+    show.pending_media.retain(|(id, due)| {
+        if *due > now {
+            return true;
+        }
+        if show.media_slide != current {
+            return false;
+        }
+        let Some(clip) = crate::media::find_clip(doc, *id, current) else { return false };
+        app.media.play(doc_uid, doc, *id, &clip, None, crate::media::Owner::Show);
+        false
+    });
 }
 
 /// Carry out the media effects the show's steps set off: Play starts from the beginning unless
@@ -53,6 +77,8 @@ pub(super) fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc:
 pub(super) fn run_media_cues(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation) {
     for (id, effect) in std::mem::take(&mut show.media_cues) {
         let Some(clip) = crate::media::find_clip(doc, id, Some(show.state.slide)) else { continue };
+        // The presenter took over the clip: a start scheduled for it must not fire later.
+        show.pending_media.retain(|(pending, _)| *pending != id);
         match effect.as_str() {
             "pause" => app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show),
             "stop" => app.media.stop(id),
@@ -307,5 +333,81 @@ mod hit_tests {
         let displaced = hit_point((55.0, 20.0), &shapes, &states, 1);
         assert!(unchanged.is_some_and(|(x, y)| (10.0..=30.0).contains(&x) && (10.0..=30.0).contains(&y)));
         assert!(!displaced.is_some_and(|(x, y)| (10.0..=30.0).contains(&x) && (10.0..=30.0).contains(&y)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use deckcraft_model::{MediaClip, ShapeKind};
+    use serde_json::json;
+
+    use super::*;
+    use crate::SlideApp;
+
+    /// A blank deck whose first slide holds one automatic audio clip starting `delay_ms` late.
+    fn app_with_delayed_clip(delay_ms: Option<u32>) -> SlideApp {
+        let mut s = deckcraft_engine::Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.edit(|doc, _| {
+            let media = doc
+                .add_media("tone.wav", "audio/wav", vec![0u8; 64])
+                .ok_or_else(|| deckcraft_engine::EngineError::BadParams { cmd: "test".into(), msg: "no media".into() })?;
+            let id = deckcraft_model::ShapeId(
+                doc.alloc_id().ok_or_else(|| deckcraft_engine::EngineError::BadParams { cmd: "test".into(), msg: "no id".into() })?,
+            );
+            let shape = deckcraft_model::Shape {
+                id,
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 40.0, 40.0)),
+                kind: ShapeKind::Media(MediaClip { media, autoplay: true, duration_ms: 500, start_delay_ms: delay_ms, ..Default::default() }),
+                ..Default::default()
+            };
+            std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(shape);
+            Ok(())
+        })
+        .unwrap();
+        SlideApp::new(s, crate::Services::default())
+    }
+
+    /// A delayed automatic clip waits for its delay instead of starting with the slide.
+    #[test]
+    fn a_delayed_automatic_clip_waits_for_its_delay() {
+        let mut app = app_with_delayed_clip(Some(2_000));
+        let doc = app.session.active().unwrap().doc.clone();
+        let uid = app.session.active().unwrap().uid;
+        let mut show = Show::new(&doc, 0, false, false);
+        show_media(&mut app, &mut show, uid, &doc, 10.0);
+        assert_eq!(show.pending_media.len(), 1, "the clip is scheduled, not started");
+        assert!((show.pending_media[0].1 - 12.0).abs() < 1e-9);
+        // Before its time the start is kept; the slide it belongs to is still showing.
+        run_pending_media(&mut app, &mut show, uid, &doc, 11.0);
+        assert_eq!(show.pending_media.len(), 1);
+    }
+
+    /// The hidden logic tick must keep waking for a pending start, or a hidden window leaves the
+    /// clip silent past its deadline.
+    #[test]
+    fn a_pending_start_keeps_hidden_playback_awake() {
+        let mut app = app_with_delayed_clip(Some(2_000));
+        let doc = app.session.active().unwrap().doc.clone();
+        let uid = app.session.active().unwrap().uid;
+        let mut show = Show::new(&doc, 0, false, false);
+        show.started = true;
+        show_media(&mut app, &mut show, uid, &doc, 10.0);
+        assert!(show.hidden_time_driven(&doc), "the pending clip is time-driven");
+        show.pending_media.clear();
+        assert!(!show.hidden_time_driven(&doc), "nothing is left to wake for");
+    }
+
+    /// A clip with no delay is started by the slide itself, so nothing is scheduled.
+    #[test]
+    fn a_clip_without_a_delay_is_not_scheduled() {
+        let mut app = app_with_delayed_clip(None);
+        let doc = app.session.active().unwrap().doc.clone();
+        let uid = app.session.active().unwrap().uid;
+        let mut show = Show::new(&doc, 0, false, false);
+        show_media(&mut app, &mut show, uid, &doc, 10.0);
+        assert!(show.pending_media.is_empty());
     }
 }

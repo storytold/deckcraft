@@ -96,10 +96,10 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
 | SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
 | Pictures | 60% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
-| Media | 67% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
+| Media | 71% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
 | Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
 | Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
-| Slide show and presenter view | 68% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
+| Slide show and presenter view | 71% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
 | Review | 70% | ~45% | 8–14 | [gaps](docs/gaps.md) |
 | Draw (ink) | 50% | ~30% | 5–9 | [hardware-parity](docs/hardware-parity.md) |
 | Undo and clipboard | 100% | ~75% | 3–5 | [ui-parity](docs/ui-parity.md) |
@@ -156,6 +156,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
+| 2026-11-03 | Record ▸ Audio: the Record tab records from the default microphone into the record bar's Stop/Cancel, then inserts the take as a WAV on the slide where the take started (not wherever the user has since moved; if that slide or presentation is gone, the current slide instead) in one undo step; a take that loses its device cancels with a notice. Desktop only |
+| 2026-11-03 | Record ▸ Preview (`show.preview`): plays the deck with the timings and narration already recorded, even when Use Timings / Play Narrations are off; it writes no timing, ink, narration or laser and leaves the editor's slide selection where it was (#1812) |
+| 2026-11-03 | Record ▸ Edit: Clear Recording on current/all slides drops recorded narration, camera/screen media, ink, laser and advance timings in one undo step and keeps ordinary media and user ink; Reset to Cameo returns the top-level Cameo to its default placement and marks it live again (a Cameo inside a group stays as it is) (#1817, #1818); live camera capture itself waits on #1837 |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
@@ -307,6 +310,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | Draw: pen pressure scales ink width when the pointer reports it (a mouse or a missing reading stays at the pen width; a stroke saved as a flat 0.5 still draws at the pen width). Tilt is not read |
 | 2026-10-13 | Saving a presentation keeps the embedded workbook behind an unchanged chart, and the chart part's relationships (#335). Editing the chart drops that workbook instead of writing numbers that no longer match it |
 | 2026-10-13 | A presentation whose object ids are used up refuses to grow instead of handing out duplicate ids (#407) |
+| 2026-11-03 | Record audio and Record slide show moved to partial (timings, narration, ink and laser kept; camera/screen capture open). Clear Timing and Clear Narration on the current slide or all slides. Breadth 84% |
+| 2026-11-03 | Record Slide Show narration and laser: each slide's microphone audio is embedded and plays in the show (Play Narrations turns it off), and it is written to PPTX; a laser trace is recorded and replayed. Screen capture and camera stay open |
+| 2026-11-03 | Record Slide Show (`show.record`): a recording badge in the show, slide timings kept on exit, and pen ink kept on the slide. Screen capture stays open |
 | 2026-10-13 | macOS: a Finder double-click, Open With, a drop on the Dock icon and `open -a DeckCraft deck.pptx` open the file (#138, #347). `Info.plist` now declares the documents DeckCraft opens (`.deckcraft`, `.pptx`, `.potx`, `.ppsx`, the same set as the Windows installer and the Linux desktop file, kept equal by a test), and the `kAEOpenDocuments` Apple event is handled through the pinned `fmv-macos-events` crate as in GridCraft; the `-psn_` argument older macOS adds on a Finder launch is ignored. PowerPoint stays the default until the user picks DeckCraft |
 | 2026-10-13 | Slide transitions like PowerPoint: every transition and option measured frame by frame against PowerPoint's video export and retuned (curves, directions, soft edges, 3-D perspective, contents moving over backgrounds); PowerPoint's own XML elements and defaults read and written (diagonal Wipe, Zoom, Shape In/Out, Glitter Hexagons, Shred In/Out, Page Curl Single); `deckcraft-cli render-transition` renders frames headless |
 | 2026-10-13 | Wild text cases measured against PowerPoint (102 synthetic slides): bidi by run language, East Asian vertical text upright, mongolianVert/wordArtVert/wordArtVertRtl, underline styles and strikethrough at the font's metrics, centre/right/decimal tabs, East Asian, Thai, Hindi, Arabic and Hebrew numbering, small caps, all-caps "ß", transparent text, soft hyphens, kinsoku, rtlCol and just/dist anchoring, emoji presentation, fallback faces that no longer move the baseline |
@@ -341,6 +347,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
+| 2026-11-03 | trivial | Progress log: Record ▸ Edit Clear Recording and Reset to Cameo (#1817, #1818). Scores and milestone names unchanged |
+| 2026-11-03 | trivial | Progress log: Record ▸ Preview plays the recorded timings and narration; writes nothing and keeps the editor's slide (#1812). Scores and milestone names unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-03 | trivial | Progress log: web `?host=parent` bridge to a framing page; scores unchanged |
@@ -438,6 +446,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | trivial | Progress log: Grid Options dialog |
 | 2026-10-14 | trivial | Progress log: pen pressure scales ink width |
 | 2026-10-13 | trivial | Progress log: chart workbook round-trip (#335) |
+| 2026-11-03 | trivial | Breadth 84% after Record audio and Record slide show moved to partial; Clear Timing and Clear Narration |
+| 2026-11-03 | trivial | Progress log: Record Slide Show keeps narration and a laser trace |
+| 2026-11-03 | trivial | Progress log: Record Slide Show keeps timings and pen ink |
 | 2026-10-13 | trivial | Progress log: Finder opens presentations on macOS (#138) |
 | 2026-10-13 | trivial | Progress log: wild text cases |
 | 2026-10-13 | trivial | Progress log: slide show for interactive decks |

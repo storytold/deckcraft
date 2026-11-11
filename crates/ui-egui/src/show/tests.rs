@@ -135,28 +135,28 @@ fn presenter_all_slides_does_not_cover_the_audience_screen() {
     let doc = session.active().unwrap().doc.clone();
     let show = Show::new(&doc, 0, false, true);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
-        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+        |ui, (app, doc, show, keep): &mut (SlideApp, std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(app, ui.ctx(), show, doc, now, keep);
         },
-        (doc, show, true),
+        (SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default()), doc, show, true),
     );
     harness.run_steps(2);
     harness.get_by_label("All slides").click();
     harness.run_steps(2);
-    assert!(harness.state().1.presenter_grid, "the grid opens in the Presenter View");
-    assert!(!harness.state().1.grid, "the audience screen keeps showing the slide");
+    assert!(harness.state().2.presenter_grid, "the grid opens in the Presenter View");
+    assert!(!harness.state().2.grid, "the audience screen keeps showing the slide");
     harness.key_press(egui::Key::Escape);
     harness.run_steps(2);
-    assert!(!harness.state().1.presenter_grid, "Esc closes the Presenter View grid");
-    assert!(harness.state().2, "and does not end the show");
+    assert!(!harness.state().2.presenter_grid, "Esc closes the Presenter View grid");
+    assert!(harness.state().3, "and does not end the show");
     harness.key_press(egui::Key::G);
     harness.run_steps(2);
-    assert!(harness.state().1.presenter_grid, "G in Presenter View opens its own grid");
-    assert!(!harness.state().1.grid, "G in Presenter View leaves the audience screen alone");
+    assert!(harness.state().2.presenter_grid, "G in Presenter View opens its own grid");
+    assert!(!harness.state().2.grid, "G in Presenter View leaves the audience screen alone");
     harness.key_press(egui::Key::G);
     harness.run_steps(2);
-    assert!(!harness.state().1.presenter_grid, "G again closes it");
+    assert!(!harness.state().2.presenter_grid, "G again closes it");
 }
 
 /// A silent mono 8 kHz WAV, so the clip has a real duration to seek in.
@@ -359,11 +359,11 @@ fn presenter_navigation_uses_its_own_keyboard_events() {
     let doc = session.active().unwrap().doc.clone();
     let show = Show::new(&doc, 0, false, true);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
-        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+        |ui, (app, doc, show, keep): &mut (SlideApp, std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(app, ui.ctx(), show, doc, now, keep);
         },
-        (doc, show, true),
+        (SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default()), doc, show, true),
     );
     harness.run_steps(2);
     for (key, slide) in [
@@ -377,33 +377,33 @@ fn presenter_navigation_uses_its_own_keyboard_events() {
     ] {
         harness.key_press(key);
         harness.run_steps(2);
-        assert_eq!(harness.state().1.state.slide, slide, "presenter key {key:?}");
+        assert_eq!(harness.state().2.state.slide, slide, "presenter key {key:?}");
     }
     harness.key_press(egui::Key::ArrowRight);
     harness.run_steps(2);
-    assert!(harness.state().1.ended);
+    assert!(harness.state().2.ended);
     harness.key_press(egui::Key::ArrowLeft);
     harness.run_steps(2);
-    assert!(!harness.state().1.ended);
-    assert_eq!(harness.state().1.state.slide, 2, "back from the end screen restores the last slide");
+    assert!(!harness.state().2.ended);
+    assert_eq!(harness.state().2.state.slide, 2, "back from the end screen restores the last slide");
     harness.key_press(egui::Key::ArrowRight);
     harness.run_steps(2);
-    assert!(harness.state().1.ended);
+    assert!(harness.state().2.ended);
     harness.get_by_label("◀ Previous").click();
     harness.run_steps(2);
-    assert!(!harness.state().1.ended, "the presenter Previous button also leaves the end screen");
+    assert!(!harness.state().2.ended, "the presenter Previous button also leaves the end screen");
     harness.key_press(egui::Key::Home);
     harness.run_steps(2);
     harness.get_by_label("Next ▶").click();
     harness.run_steps(2);
-    assert_eq!(harness.state().1.state.slide, 1);
+    assert_eq!(harness.state().2.state.slide, 1);
     harness.key_press(egui::Key::Space);
     harness.run_steps(2);
-    assert_eq!(harness.state().1.state.slide, 2);
-    assert!(!harness.state().1.ended, "Space must not also activate the focused Next button");
+    assert_eq!(harness.state().2.state.slide, 2);
+    assert!(!harness.state().2.ended, "Space must not also activate the focused Next button");
     harness.key_press(egui::Key::Escape);
     harness.run_steps(2);
-    assert!(!harness.state().2, "Escape from Presenter View ends the show");
+    assert!(!harness.state().3, "Escape from Presenter View ends the show");
 }
 
 #[test]
@@ -446,9 +446,9 @@ fn the_prefetched_frame_is_the_frame_shown_on_entry() {
     let doc = s.active().unwrap().doc.clone();
     let size = (96, 54);
     let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
-    assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
+    assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![], ink: 0 });
     let got = p.rx.recv().expect("the frame arrives");
-    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None);
+    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None, None);
     assert_eq!(got.size, want.size);
     assert_eq!(got.pixels, want.pixels);
 }
@@ -483,8 +483,8 @@ fn an_animation_frame_over_the_kept_backdrop_matches_a_full_render() {
     let tl = ShowState::timeline(&doc, 0);
     assert!(!tl.is_empty());
     // Half-way through the fade, the star half see-through over the glow.
-    let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], Some(&back));
-    let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], None);
+    let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], Some(&back), None);
+    let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], None, None);
     assert_eq!(fast.size, full.size);
     let worst =
         fast.pixels.iter().zip(&full.pixels).map(|(a, b)| a.to_array().iter().zip(b.to_array()).map(|(x, y)| x.abs_diff(y)).max().unwrap_or(0)).max();
@@ -508,7 +508,7 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     let ctx = egui::Context::default();
     let red = crate::textures::upload(&ctx, "show", egui::ColorImage::filled([1, 1], Color32::RED));
     let mut show = Show::new(&doc, 0, false, false);
-    show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![] }, red.clone()));
+    show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![], ink: 0 }, red.clone()));
     assert!(show.apply(ShowAction::Slide(1), &doc, 0.0));
     let tr = show.trans.as_ref().expect("the fade plays");
     assert_eq!(tr.old.as_ref().map(TextureHandle::id), Some(red.id()));
@@ -528,7 +528,7 @@ fn going_back_plays_the_left_slides_transition_reversed() {
     let ctx = egui::Context::default();
     let tex = |slide| {
         let t = crate::textures::upload(&ctx, "show", egui::ColorImage::filled([1, 1], Color32::RED));
-        Some((Key { slide, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![] }, t))
+        Some((Key { slide, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![], ink: 0 }, t))
     };
     let mut show = Show::new(&doc, 0, false, false);
     show.tex = tex(0);
@@ -1231,27 +1231,28 @@ fn the_presenter_next_preview_arrives_without_blocking_the_frame() {
     // preview and returns without it.
     let mut show = Show::new(&doc, 0, false, true);
     let mut keep = true;
+    let mut app = SlideApp::new(session, crate::Services::default());
     let ctx = egui::Context::default();
-    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, 0.0, &mut keep)).textures_delta.clear();
+    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(&mut app, ui.ctx(), &mut show, &doc, 0.0, &mut keep)).textures_delta.clear();
     assert!(show.next_job.is_some() && show.next_tex.is_none(), "the first frame leaves the preview pending");
     assert_eq!(show.preview_spawns, 1);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
-        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+        |ui, (app, doc, show, keep): &mut (SlideApp, std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(app, ui.ctx(), show, doc, now, keep);
         },
-        (doc, show, true),
+        (SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default()), doc, show, true),
     );
     for _ in 0..200 {
-        if harness.state().1.next_tex.is_some() {
+        if harness.state().2.next_tex.is_some() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
         harness.step();
     }
-    assert_eq!(harness.state().1.next_tex.as_ref().map(|(_, n, _)| *n), Some(1));
-    assert!(harness.state().1.next_job.is_none());
-    assert_eq!(harness.state().1.preview_spawns, 1, "the pending render landed; none started over");
+    assert_eq!(harness.state().2.next_tex.as_ref().map(|(_, n, _)| *n), Some(1));
+    assert!(harness.state().2.next_job.is_none());
+    assert_eq!(harness.state().2.preview_spawns, 1, "the pending render landed; none started over");
 }
 
 /// #964: paging quickly keeps one preview render running, and the preview that lands is the
@@ -1265,29 +1266,29 @@ fn paging_quickly_renders_one_preview_at_a_time_and_lands_on_the_newest() {
     let doc = session.active().unwrap().doc.clone();
     let show = Show::new(&doc, 0, false, true);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
-        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+        |ui, (app, doc, show, keep): &mut (SlideApp, std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(app, ui.ctx(), show, doc, now, keep);
         },
-        (doc, show, true),
+        (SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default()), doc, show, true),
     );
     let mut turns = 0;
     for _ in 0..6 {
-        let doc = harness.state().0.clone();
-        let a = harness.state_mut().1.state.next(&doc);
-        harness.state_mut().1.apply(a, &doc, 0.0);
+        let doc = harness.state().1.clone();
+        let a = harness.state_mut().2.state.next(&doc);
+        harness.state_mut().2.apply(a, &doc, 0.0);
         harness.step();
         turns += 1;
     }
-    let want = harness.state().1.state.peek_next(&harness.state().0);
+    let want = harness.state().2.state.peek_next(&harness.state().1);
     for _ in 0..400 {
-        if harness.state().1.next_tex.as_ref().map(|(_, k, _)| Some(*k)) == Some(want) {
+        if harness.state().2.next_tex.as_ref().map(|(_, k, _)| Some(*k)) == Some(want) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
         harness.step();
     }
-    let st = &harness.state().1;
+    let st = &harness.state().2;
     assert_eq!(st.next_tex.as_ref().map(|(_, k, _)| *k), want, "the newest preview lands");
     assert!(st.next_job.is_none());
     // A render starts only once the one before it has finished: never more than one per turn.
@@ -1295,14 +1296,14 @@ fn paging_quickly_renders_one_preview_at_a_time_and_lands_on_the_newest() {
 
     // While a render is pending, turning the page starts no other.
     let (_tx, rx) = std::sync::mpsc::channel();
-    let doc = harness.state().0.clone();
-    let spawns = harness.state().1.preview_spawns;
-    harness.state_mut().1.next_tex = None;
-    harness.state_mut().1.next_job = Some((doc.clone(), 0, rx));
-    let a = harness.state_mut().1.state.prev(&doc);
-    harness.state_mut().1.apply(a, &doc, 0.0);
+    let doc = harness.state().1.clone();
+    let spawns = harness.state().2.preview_spawns;
+    harness.state_mut().2.next_tex = None;
+    harness.state_mut().2.next_job = Some((doc.clone(), 0, rx));
+    let a = harness.state_mut().2.state.prev(&doc);
+    harness.state_mut().2.apply(a, &doc, 0.0);
     harness.step();
-    let st = &harness.state().1;
+    let st = &harness.state().2;
     assert_eq!(st.preview_spawns, spawns, "no render starts while one is pending");
     assert!(st.next_job.is_some());
 }
@@ -1316,23 +1317,23 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     let doc = session.active().unwrap().doc.clone();
     let show = Show::new(&doc, 0, false, true);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
-        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+        |ui, (app, doc, show, keep): &mut (SlideApp, std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(app, ui.ctx(), show, doc, now, keep);
         },
-        (doc, show, true),
+        (SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default()), doc, show, true),
     );
     harness.step();
-    let edited = std::sync::Arc::new((*harness.state().0).clone());
-    harness.state_mut().0 = edited.clone();
+    let edited = std::sync::Arc::new((*harness.state().1).clone());
+    harness.state_mut().1 = edited.clone();
     for _ in 0..400 {
-        if harness.state().1.next_tex.as_ref().is_some_and(|(d, _, _)| std::sync::Arc::ptr_eq(d, &edited)) {
+        if harness.state().2.next_tex.as_ref().is_some_and(|(d, _, _)| std::sync::Arc::ptr_eq(d, &edited)) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
         harness.step();
     }
-    let tex = harness.state().1.next_tex.as_ref().map(|(d, k, _)| (std::sync::Arc::ptr_eq(d, &edited), *k));
+    let tex = harness.state().2.next_tex.as_ref().map(|(d, k, _)| (std::sync::Arc::ptr_eq(d, &edited), *k));
     assert_eq!(tex, Some((true, 1)), "the preview comes from the edited presentation");
 }
 
@@ -1368,4 +1369,573 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.kind, "fade");
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
+}
+
+#[test]
+fn narration_skips_silence_and_play_narrations_can_turn_it_off() {
+    let quiet = vec![0.0f32; 4000];
+    assert!(narration_wav(8000, &quiet).is_none());
+    assert!(narration_wav(8000, &[0.2; 100]).is_none());
+    let tone: Vec<f32> = (0..4000).map(|i| (i as f32 * 0.2).sin() * 0.3).collect();
+    assert!(narration_wav(8000, &tone).is_some());
+    let narr = deckcraft_model::MediaClip { autoplay: true, narration: true, ..Default::default() };
+    assert!(play_on_enter(&narr, false));
+    assert!(!play_on_enter(&narr, true));
+    let clip = deckcraft_model::MediaClip { autoplay: true, ..Default::default() };
+    assert!(play_on_enter(&clip, true));
+}
+
+#[test]
+fn ctrl_shows_the_laser_without_a_trace_and_the_button_can_leave_it_on() {
+    assert!(pointer_is_laser(false, true, false));
+    assert!(pointer_is_laser(true, false, false));
+    assert!(!pointer_is_laser(false, false, false));
+    assert!(!pointer_is_laser(true, true, true));
+}
+
+#[test]
+fn laser_follows_the_slide_clock_then_goes_out() {
+    let pts = vec![deckcraft_model::LaserSample { x: 1.0, y: 2.0, t_ms: 0 }, deckcraft_model::LaserSample { x: 9.0, y: 8.0, t_ms: 400 }];
+    assert_eq!(laser_pos(&pts, 100), Some((1.0, 2.0)));
+    assert_eq!(laser_pos(&pts, 400), Some((9.0, 8.0)));
+    assert_eq!(laser_pos(&pts, 700), Some((9.0, 8.0)));
+    assert_eq!(laser_pos(&pts, 701), None);
+    assert_eq!(saved_status(true, false, true), "Recording saved: slide timings, narration and laser.");
+    assert_eq!(saved_status(false, false, false), "Recording saved: slide timings.");
+}
+
+/// #1812: a Record preview follows the recorded timings and narration even when the deck turns
+/// Use Timings and Play Narrations off, because it shows what was recorded.
+#[test]
+fn a_record_preview_forces_timings_and_narration() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("show.setup", &json!({"useTimings": false, "noNarration": true})).unwrap();
+    s.execute("transition.timing", &json!({"index": 0, "after": 1000})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    assert!(!show.state.auto_advance_due(&doc, 2.0), "the deck does not use timings");
+    assert!(show.without_narration(&doc), "the deck turns narration off");
+
+    show.recording_preview = true;
+    assert!(show.auto_advance_due(&doc, 2.0), "the preview follows the recorded timing");
+    assert!(!show.auto_advance_due(&doc, 0.5), "not before its time");
+    assert!(!show.without_narration(&doc), "the preview plays the narration");
+    // Hidden playback keeps waking for the preview's timings: the wake-up is asked for while the
+    // timing is still pending, before the turn is queued.
+    show.started = true;
+    assert!(show.hidden_time_driven(&doc));
+    let mut actions = Vec::new();
+    show.queue_clock_actions(&doc, 2.0, &mut actions);
+    assert!(matches!(actions.as_slice(), [ShowAction::Slide(1)]), "the slide turns by itself: {actions:?}");
+}
+
+/// #1812: a Record preview writes nothing, even if the show was flagged to record: no timings,
+/// ink, laser trace or narration end up in the recording buffers.
+#[test]
+fn a_record_preview_keeps_no_recorded_material() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.rehearse = true;
+    show.recording_preview = true;
+    show.begin_recording(0.0);
+    assert!(!show.keeps_recording());
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+        in_take: true,
+    });
+    show.laser_live.push((0.5, 0.5, 10));
+    let keep = show.keeps_recording();
+    assert!(!keep);
+    show.stash_ink(&doc, 0, keep, 1.0);
+    show.stash_laser(0, keep);
+    show.apply(ShowAction::Slide(1), &doc, 1.0);
+    assert!(show.recorded.is_empty(), "no ink");
+    assert!(show.laser_saved.is_empty(), "no laser trace");
+    assert!(show.timings.is_empty(), "no slide timing");
+    assert!(show.narration.is_empty(), "no narration");
+}
+
+/// While the Record view is up its command chords belong to the top bar: the show must not flip
+/// the pen with Ctrl+Shift+P (the take's Pause) nor erase the slide's ink with Ctrl+E (Export).
+#[test]
+fn the_record_view_keeps_its_command_chords() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+        in_take: true,
+    });
+    let command = egui::Modifiers { command: true, ..Default::default() };
+    let command_shift = egui::Modifiers { command: true, shift: true, ..Default::default() };
+    let mut mic: crate::show::MicSlot = None;
+    let (_, consumed) = super::keys::handle_keys(&mut mic, &mut show, &doc, 0.0, vec![(egui::Key::P, command_shift), (egui::Key::E, command)], false);
+    assert!(consumed.is_empty(), "the top bar reads these: {consumed:?}");
+    assert!(!show.pen, "Ctrl+Shift+P is Pause, not the pen");
+    assert_eq!(show.strokes.len(), 1, "Ctrl+E is Export, not erase-all");
+}
+
+/// #1812: an open Record view that is not capturing keeps nothing. Browsing the deck before
+/// Record, or after Stop, must not write timings, ink or laser for the browsed slides.
+#[test]
+fn an_idle_record_view_keeps_no_recorded_material() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    assert!(!show.keeps_recording(), "the Record view opens idle");
+    let stroke = || InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+        in_take: true,
+    };
+    show.strokes.push(stroke());
+    show.laser_live.push((0.5, 0.5, 10));
+    show.apply(ShowAction::Slide(1), &doc, 1.0);
+    assert!(show.recorded.is_empty(), "no ink before the take");
+    assert!(show.laser_saved.is_empty(), "no laser before the take");
+    assert!(show.timings.is_empty(), "no slide timing before the take");
+    // A take starts: the show records again.
+    show.begin_recording(1.0);
+    assert!(show.keeps_recording());
+    show.strokes.push(stroke());
+    show.laser_live.push((0.5, 0.5, 10));
+    show.apply(ShowAction::Slide(0), &doc, 2.0);
+    assert_eq!(show.recorded.len(), 1, "the take keeps its ink");
+    assert_eq!(show.laser_saved.len(), 1, "and its laser");
+    assert_eq!(show.timings.len(), 1, "and its timing");
+    // Stop keeps what the take captured and records nothing new.
+    show.end_recording();
+    assert!(!show.keeps_recording());
+    show.strokes.push(stroke());
+    show.apply(ShowAction::Slide(1), &doc, 3.0);
+    assert_eq!(show.recorded.len(), 1, "a stopped take records nothing more");
+    assert_eq!(show.timings.len(), 1);
+}
+
+/// A microphone that hands over one take of a steady tone, so narration_wav accepts it.
+struct ToneMic {
+    rate: u32,
+    samples: Vec<f32>,
+}
+
+impl deckcraft_media::MicIn for ToneMic {
+    fn start(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn take(&mut self) -> (u32, Vec<f32>) {
+        (self.rate, std::mem::take(&mut self.samples))
+    }
+    fn stop(&mut self) {}
+}
+
+/// The take a slide change ends belongs to the slide being left, not to the one that opened:
+/// navigation has already entered the destination when the shell hands the audio over.
+#[test]
+fn a_transition_take_belongs_to_the_slide_being_left() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.mic_ok = true;
+    // Cache the slide 0 timeline the way a frame does, then enter slide 1.
+    let _ = show.timeline(&doc);
+    show.state.slide = 1;
+    let rate = 8_000;
+    let tone: Vec<f32> = (0..rate / 2).map(|i| (i as f32 * 0.5).sin() * 0.4).collect();
+    let mut mic: crate::show::MicSlot = Some(Box::new(ToneMic { rate, samples: tone }));
+    super::before_slide_change_with(&mut mic, &mut show, &ShowAction::Slide(1));
+    assert_eq!(show.narration.len(), 1, "the take is kept");
+    assert_eq!(show.narration[0].0, 0, "under the slide it was spoken on");
+}
+
+/// A microphone that opens and then fails, as a refused permission or a device unplugged mid-take
+/// does after `start` returned `Ok`.
+struct FailingMic {
+    rate: u32,
+    samples: Vec<f32>,
+    failure: Option<String>,
+}
+
+impl deckcraft_media::MicIn for FailingMic {
+    fn start(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn take(&mut self) -> (u32, Vec<f32>) {
+        (self.rate, std::mem::take(&mut self.samples))
+    }
+    fn failure(&self) -> Option<String> {
+        self.failure.clone()
+    }
+    fn stop(&mut self) {}
+}
+
+/// The device opens asynchronously, so a refused microphone shows up only through `failure()`:
+/// the take keeps what was captured, stops the microphone and says why.
+#[test]
+fn a_microphone_that_fails_mid_take_keeps_what_it_captured_and_says_so() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.mic_ok = true;
+    let rate = 8_000;
+    let tone: Vec<f32> = (0..rate / 2).map(|i| (i as f32 * 0.5).sin() * 0.4).collect();
+    let mic = FailingMic { rate, samples: tone, failure: Some("no input device".into()) };
+    let mut app = crate::SlideApp::new(s, crate::Services { mic: Some(Box::new(mic)), ..Default::default() });
+    assert!(super::ui::mic_failure(&mut app, &mut show));
+    assert_eq!(show.narration.len(), 1, "the samples captured before the failure are kept");
+    assert_eq!(show.narration[0].0, 0, "under the slide they were spoken on");
+    assert!(!show.mic_ok, "the toolbar stops claiming a live microphone");
+    assert_eq!(show.mic_error.as_deref(), Some("no input device"));
+    assert!(show.record_view.devices.mic.failed);
+    assert_eq!(app.status.as_ref().map(|s| s.0.as_str()), Some("Microphone: no input device"));
+    // Nothing more to report: the next frame does not repeat the message or the handover.
+    assert!(!super::ui::mic_failure(&mut app, &mut show));
+    assert_eq!(show.narration.len(), 1);
+}
+
+/// The buffer stops at the WAV sample cap, and the ten-minute allowance only narrows it further.
+#[test]
+fn the_narration_buffer_never_grows_past_the_wav_cap() {
+    let cap = super::narration_sample_cap();
+    assert_eq!(super::narration_room(8_000, 0), 8_000 * 600, "a short clip is limited by ten minutes");
+    assert_eq!(super::narration_room(192_000, 0), cap, "a long clip is limited by the WAV cap");
+    assert_eq!(super::narration_room(192_000, cap - 10), 10, "what the clip already holds is subtracted");
+    assert_eq!(super::narration_room(192_000, cap + 5), 0, "and never wraps");
+}
+
+/// A take that runs past the WAV limit keeps its head and reports the cut, so `save_take` cannot
+/// call it complete.
+#[test]
+fn a_narration_cut_at_the_byte_limit_reports_the_cut() {
+    let rate = 8_000;
+    let tone: Vec<f32> = (0..rate).map(|i| (i as f32 * 0.5).sin() * 0.4).collect();
+    // A 44-byte header plus a quarter second of mono 16-bit samples.
+    let limit = 44 + 2 * rate as usize / 4;
+    let cut = super::narration_wav_within(rate, &tone, limit).expect("a wav");
+    assert!(cut.cut, "the tail past the limit is reported");
+    assert!(cut.wav.len() < rate as usize * 2, "only the head is encoded: {} bytes", cut.wav.len());
+    let full = super::narration_wav_within(rate, &tone, usize::MAX / 4).expect("a wav");
+    assert!(!full.cut, "a take under the limit is complete");
+    assert!(full.wav.len() > cut.wav.len());
+}
+
+/// Two advances queued before either is applied time each slide the take leaves, not the one the
+/// timeline cache happens to name.
+#[test]
+fn queued_slide_changes_time_the_slide_each_one_leaves() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.apply(ShowAction::Slide(1), &doc, 2.0);
+    show.apply(ShowAction::Slide(2), &doc, 3.0);
+    let timed: Vec<usize> = show.timings.iter().map(|(i, _)| *i).collect();
+    assert!(timed.contains(&0) && timed.contains(&1), "slide 0 and slide 1 are both timed: {timed:?}");
+    assert_ne!(timed, vec![1, 2], "the destination of each advance is not the one that was left");
+}
+
+/// A slide opened while the take is held starts its clock at resume: shifting its slide-entry
+/// time by the pause would undercount it, or make the timing negative after a long hold.
+#[test]
+fn a_slide_opened_during_a_pause_is_timed_from_resume() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.pause_recording(5.0);
+    // Held on slide 0, the presenter moves to slide 1 (the shell applies the change itself).
+    show.state.slide = 1;
+    show.slide_start = 6.0;
+    show.resume_recording(20.0);
+    assert!((show.slide_start - 20.0).abs() < 1e-9, "slide 1's clock starts at resume, got {}", show.slide_start);
+    assert!((show.step_start - 20.0).abs() < 1e-9);
+    // Staying on the slide through a pause shifts its clock, so the pause is not counted.
+    show.pause_recording(25.0);
+    show.resume_recording(30.0);
+    assert!((30.0 - show.slide_start - 5.0).abs() < 1e-9, "the pause is not added to the slide's time");
+}
+
+/// The red Record button starts a new take: earlier browsing and a previous take's buffers go,
+/// so one save never mixes two takes.
+#[test]
+fn a_new_take_replaces_the_previous_buffers() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+        in_take: true,
+    });
+    show.stash_ink(&doc, 0, true, 1.0);
+    show.laser_live.push((0.1, 0.1, 5));
+    show.stash_laser(0, true);
+    show.timings.push((0, 1.5));
+    show.narration.push((0, 8_000, vec![1.0, 2.0, 3.0]));
+    assert!(!show.recorded.is_empty() && !show.laser_saved.is_empty());
+    show.end_recording();
+    show.begin_recording(10.0);
+    assert!(show.recorded.is_empty(), "ink from the last take goes");
+    assert!(show.laser_saved.is_empty(), "laser from the last take goes");
+    assert!(show.timings.is_empty(), "timings from the last take go");
+    assert!(show.narration.is_empty(), "narration from the last take goes");
+}
+
+/// #1812: `show.preview` reaches the app as a preview that does not record, while `show.record`
+/// still starts a recording show.
+#[test]
+fn the_preview_command_turns_on_the_preview_not_the_recorder() {
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.session.execute("slide.new", &json!({})).unwrap();
+    app.run("show.preview", json!({"from": 0})).unwrap();
+    let show = app.show.as_ref().expect("the preview is up");
+    assert!(show.recording_preview);
+    assert!(!show.record, "a preview does not record");
+    app.run("show.record", json!({"from": 0})).unwrap();
+    let show = app.show.as_ref().expect("the recording show is up");
+    assert!(show.record);
+    assert!(!show.recording_preview, "a recording show is not a preview");
+}
+
+/// #1812: Esc still leaves a Record preview, and the editor keeps the slide it was on: a preview
+/// never moves the editor's selection.
+#[test]
+fn escape_leaves_a_record_preview_and_keeps_the_editor_slide() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    // The editor sits on slide 0 while the preview starts on slide 2, so a stray `slide.go` shows.
+    harness.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+    let editor_slide = harness.state().session.active().expect("document").selection.slide;
+    assert_eq!(editor_slide, 0);
+    harness.state_mut().start_show(2, false);
+    let show = harness.state_mut().show.as_mut().expect("preview is up");
+    show.recording_preview = true;
+    show.record = false;
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+    assert!(harness.state().show.is_none(), "Escape ends the preview");
+    assert_eq!(harness.state().session.active().expect("document").selection.slide, editor_slide, "the editor stays on its own slide");
+}
+
+/// Ink tools: selecting the pen, highlighter or eraser sets the derived pointer flag and the
+/// active state the recording toolbar reads; the arrow turns both off.
+#[test]
+fn the_ink_tools_drive_the_pen_flag_and_the_active_state() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    assert_eq!(show.ink_mode(), InkMode::Arrow);
+    assert!(!show.pen && !show.ink_active(), "the arrow leaves no ink");
+    show.set_ink_mode(InkMode::Pen);
+    assert!(show.pen && show.ink_active());
+    show.set_ink_mode(InkMode::Highlighter);
+    assert!(show.pen && show.ink_active(), "the highlighter captures drags like the pen");
+    show.set_ink_mode(InkMode::Eraser);
+    assert!(!show.pen && !show.ink_active(), "the eraser removes ink instead of drawing");
+    show.set_ink_mode(InkMode::Arrow);
+    assert!(!show.pen && !show.ink_active());
+}
+
+/// Picking an ink colour keeps the selected tool; the toolbar's swatch is active for that colour.
+#[test]
+fn an_ink_colour_sticks_to_the_selected_tool() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.set_ink_mode(InkMode::Highlighter);
+    let blue = deckcraft_model::Rgba::rgb(0x2E, 0x6F, 0xD8);
+    show.set_ink_color(blue);
+    assert_eq!(show.ink_color(), blue);
+    assert_eq!(show.ink_mode(), InkMode::Highlighter, "the colour does not switch the tool");
+}
+
+/// The eraser removes whole strokes it touches and leaves the rest alone.
+#[test]
+fn the_eraser_removes_touched_strokes() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    let stroke = |pts: &[(f32, f32)]| InkStroke {
+        points: pts.iter().map(|(x, y)| pos2(*x, *y)).collect(),
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+        in_take: true,
+    };
+    show.strokes.push(stroke(&[(0.1, 0.1), (0.2, 0.1)]));
+    show.strokes.push(stroke(&[(0.8, 0.8), (0.9, 0.8)]));
+    assert_eq!(show.stroke_count(), 2);
+    assert!(show.has_ink());
+    assert_eq!(show.erase_ink_at(pos2(0.15, 0.5), pos2(0.15, 0.11), 0.02), 1, "only the touched stroke goes");
+    assert_eq!(show.stroke_count(), 1);
+    assert_eq!(show.erase_ink_at(pos2(0.0, 0.0), pos2(1.0, 1.0), 0.02), 1, "the diagonal crosses the remaining stroke");
+    assert!(!show.has_ink() && show.stroke_count() == 0);
+}
+
+/// A stroke is erased by its segment between two pointer samples, not only by a sample that
+/// lands exactly on a vertex.
+#[test]
+fn the_eraser_catches_a_segment_that_crosses_the_stroke() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.5), pos2(0.9, 0.5)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+        in_take: true,
+    });
+    assert_eq!(show.erase_ink_at(pos2(0.5, 0.4), pos2(0.5, 0.6), 0.02), 1);
+    assert!(!show.has_ink());
+}
+
+/// A recorded highlighter stroke keeps its tool, colour and width, so the save path writes a
+/// translucent highlighter rather than the deck's plain pen colour.
+#[test]
+fn a_recorded_stroke_keeps_its_tool_colour_and_width() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    let color = deckcraft_model::Rgba::rgb(0xFF, 0xD4, 0x00);
+    show.strokes.push(InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Highlighter, color, width: 6.75, in_take: true });
+    show.stash_ink(&doc, 2, true, 1.0);
+    assert_eq!(show.recorded.len(), 1);
+    let (slide, pts, mode, saved, width, at) = &show.recorded[0];
+    assert_eq!(*slide, 2);
+    assert_eq!(pts.len(), 2);
+    assert_eq!(*mode, InkMode::Highlighter);
+    assert_eq!(*saved, color);
+    assert!((*width - 6.75).abs() < 1e-9);
+    assert_eq!(*at, 1000, "the stroke keeps the clock it was drawn on");
+}
+
+/// A microphone that stays open until `stop` runs, so a leaked capture is observable.
+struct LeakyMic {
+    rate: u32,
+    samples: Vec<f32>,
+    open: std::rc::Rc<std::cell::Cell<bool>>,
+    stopped: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl deckcraft_media::MicIn for LeakyMic {
+    fn start(&mut self) -> Result<(), String> {
+        self.open.set(true);
+        Ok(())
+    }
+    fn take(&mut self) -> (u32, Vec<f32>) {
+        (self.rate, std::mem::take(&mut self.samples))
+    }
+    fn stop(&mut self) {
+        self.open.set(false);
+        self.stopped.set(self.stopped.get() + 1);
+    }
+}
+
+/// #1836 review (`commands.rs:191`): ending the show when the document is already gone still
+/// stops the microphone instead of leaving it capturing with nowhere to save the take.
+#[test]
+fn ending_the_show_with_no_document_stops_the_microphone() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let open = std::rc::Rc::new(std::cell::Cell::new(false));
+    let stopped = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let mic = LeakyMic { rate: 8_000, samples: vec![0.1; 4_000], open: open.clone(), stopped: stopped.clone() };
+    let mut app = SlideApp::new(session, crate::Services { mic: Some(Box::new(mic)), ..Default::default() });
+    app.start_show(0, false);
+    app.services.mic.as_deref_mut().expect("mic").start().expect("mic opens");
+    assert!(open.get(), "the microphone is capturing");
+    app.show.as_mut().expect("show").mic_tried = true;
+    // `file.close` beats `show.end`: the take has nowhere to be saved.
+    let active = app.session.active_index().expect("an open presentation");
+    app.session.close_document(active);
+    assert!(app.session.active().is_none(), "no document left to save into");
+    app.end_show_now();
+    assert!(!open.get(), "the microphone stops even with no document to save into");
+    assert!(app.show.is_none(), "the show still ends");
+    assert!(stopped.get() >= 1, "stop runs exactly through the teardown path");
+}
+
+/// #1836 review (`show/ui.rs:741`): grouped recorded strokes count toward the preview frame key,
+/// so the cached overlay above a playing video is invalidated when the group's ink is revealed.
+#[test]
+fn grouped_recorded_ink_counts_toward_the_preview_frame_key() {
+    use deckcraft_model::{InkStroke, Rgba, Shape, ShapeKind, Xfrm};
+    let mut session = deckcraft_engine::Session::with_new();
+    session
+        .edit(|doc, _| {
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            slide.shapes.clear();
+            let stroke =
+                InkStroke { points: vec![(0.1, 0.1, 0.5), (0.2, 0.2, 0.5)], color: Rgba::BLACK, width: 2.25, highlighter: false, at_ms: Some(2_000) };
+            let ink = Shape { kind: ShapeKind::Ink { strokes: vec![stroke] }, xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)), ..Default::default() };
+            slide.shapes.push(Shape {
+                kind: ShapeKind::Group { children: vec![ink], child: Xfrm::new(0.0, 0.0, 100.0, 100.0) },
+                xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)),
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.recording_preview = true;
+    show.slide_start = 0.0;
+    // Before the stroke's clock: nothing due; after it: the group contributes one stroke.
+    let early_due = {
+        let sl = &doc.slides[0].shapes;
+        let mut due = 0usize;
+        let mut next = None;
+        super::ui::count_due_strokes(sl, 1_000, &mut due, &mut next);
+        due
+    };
+    let late_due = {
+        let sl = &doc.slides[0].shapes;
+        let mut due = 0usize;
+        let mut next = None;
+        super::ui::count_due_strokes(sl, 3_000, &mut due, &mut next);
+        due
+    };
+    assert_eq!(early_due, 0, "the grouped stroke is not due before its clock");
+    assert_eq!(late_due, 1, "the grouped stroke counts once its clock is reached");
+    let _ = show;
 }

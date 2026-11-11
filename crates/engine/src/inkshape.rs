@@ -160,6 +160,7 @@ mod tests {
             color: deckcraft_color::Rgba::rgb(200, 0, 0),
             width: 3.0,
             highlighter: false,
+            at_ms: None,
         };
         let strokes = vec![mk(&rect), mk(&zig)];
         s.edit(|doc, sel| {

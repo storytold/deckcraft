@@ -71,6 +71,9 @@ pub struct RenderOpts<'a> {
     /// only what is on the slide is drawn over transparency: PNG export with a transparent
     /// background. Shapes filled with the background (`useBgFill`) still show it.
     pub transparent_background: bool,
+    /// Strokes stamped later than this (ms from the slide's entry) stay hidden: a recording
+    /// preview reveals each stroke when the recording drew it. `None` draws the whole ink layer.
+    pub ink_until_ms: Option<u32>,
 }
 
 impl Default for RenderOpts<'_> {
@@ -91,6 +94,7 @@ impl Default for RenderOpts<'_> {
             date_text: None,
             now: None,
             transparent_background: false,
+            ink_until_ms: None,
         }
     }
 }
