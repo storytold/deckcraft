@@ -97,6 +97,18 @@ impl AutomationRoots {
         }
         let resolved = resolve(path)?;
         if roots.iter().any(|root| inside(&resolved, &root.resolved)) {
+            if access == Access::Write {
+                // A write root itself is not a file to write: a save writes a temporary sibling
+                // (`NAME.<pid>.<n>.saving`) next to its destination first, and next to the root that
+                // sibling is outside it. A folder inside a root is not a file to write either.
+                let is_root = |root: &Root| inside(&resolved, &root.resolved) && resolved.components().count() <= root.resolved.components().count();
+                if roots.iter().any(is_root) {
+                    return Err(format!("automation path rejected: the write root itself is not a file to write: {path}"));
+                }
+                if resolved.is_dir() {
+                    return Err(format!("automation path rejected: a folder is not a file to write: {path}"));
+                }
+            }
             return Ok(());
         }
         let roots = roots.iter().map(|root| root.shown.display().to_string()).collect::<Vec<_>>().join(", ");
@@ -298,6 +310,39 @@ mod tests {
         let e = roots.check(&s(base.join("in/a.deckcraft")), Access::Write).unwrap_err();
         assert!(e.contains("outside the write root"), "{e}");
         assert!(roots.check(&s(base.join("out/x.png")), Access::Read).unwrap_err().contains("outside the read root"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// The write root itself, and a folder inside it, are not files to write: a save's temporary
+    /// sibling next to the root would land outside it.
+    #[test]
+    fn the_write_root_itself_and_folders_are_not_files_to_write() {
+        let (base, roots) = folders("write-root");
+        std::fs::create_dir_all(base.join("out/folder")).unwrap();
+        for path in [base.join("out"), base.join("out/."), base.join("out/folder/..")] {
+            let e = roots.check(&s(path.clone()), Access::Write).unwrap_err();
+            assert!(e.contains("the write root itself is not a file to write"), "{path:?}: {e}");
+        }
+        let e = roots.check(&s(base.join("out/folder")), Access::Write).unwrap_err();
+        assert!(e.contains("a folder is not a file to write"), "{e}");
+        assert_eq!(roots.check(&s(base.join("out/folder/x.pptx")), Access::Write), Ok(()));
+        // Reading the root (listing it, say) is unchanged.
+        assert_eq!(roots.check(&s(base.join("in")), Access::Read), Ok(()));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// With several write roots, none of them is a file to write, a folder in any of them neither.
+    #[test]
+    fn no_write_root_is_a_file_to_write() {
+        let (base, _) = folders("write-roots");
+        let roots = AutomationRoots::new(&[base.join("in")], &[base.join("out"), base.join("outside")]).unwrap().unwrap();
+        for path in [base.join("out"), base.join("outside")] {
+            let e = roots.check(&s(path.clone()), Access::Write).unwrap_err();
+            assert!(e.contains("the write root itself is not a file to write"), "{path:?}: {e}");
+        }
+        let e = roots.check(&s(base.join("in/sub")), Access::Write).unwrap_err();
+        assert!(e.contains("outside the write roots"), "{e}");
+        assert_eq!(roots.check(&s(base.join("outside/new.pptx")), Access::Write), Ok(()));
         let _ = std::fs::remove_dir_all(base);
     }
 
