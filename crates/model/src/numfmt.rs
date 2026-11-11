@@ -143,9 +143,14 @@ fn group(digits: &str, sep: char) -> String {
     out
 }
 
+/// Longest number format applied, as in Excel (255 characters); a longer one formats as
+/// General, so a chart cannot make every label expand a huge format.
+pub const MAX_CODE_LEN: usize = 255;
+
 /// `v` formatted with the Excel number format `code` in language `lang` (axis labels: the text
 /// section of a format doesn't apply).
 pub fn format(code: &str, v: f64, lang: Option<&str>) -> String {
+    let code = if code.len() > MAX_CODE_LEN * 4 || code.chars().count() > MAX_CODE_LEN { "General" } else { code };
     let (sep, dec) = marks(lang);
     if !v.is_finite() {
         return String::new();
@@ -298,6 +303,14 @@ mod tests {
     use super::*;
 
     const RUB: &str = r#"_-* #\ ##0\ "₽"_-;\-* #\ ##0\ "₽"_-;_-* "-"??\ "₽"_-;_-@_-"#;
+
+    #[test]
+    fn an_overlong_format_is_general() {
+        let code = "0".repeat(100_000);
+        assert_eq!(format(&code, 12.5, None), format("General", 12.5, None));
+        let ok = "0".repeat(MAX_CODE_LEN);
+        assert_eq!(format(&ok, 7.0, None).len(), MAX_CODE_LEN);
+    }
 
     #[test]
     fn scientific_subnormal() {
