@@ -388,7 +388,12 @@ journal line that cannot be parsed makes that load fail with `500`. Recover in t
 2. Close the room with `DELETE /v1/sessions/{id}`. It takes a snapshot before the hub leaves the
    map, so the base then holds the live document at the current version and the journal is
    trimmed to an empty tail. Do not wait for the next `COLLAB_SNAPSHOT_EVERY` boundary: a room
-   that is gone never reaches one.
+   that is gone never reaches one. **A close whose snapshot fails answers `500` with
+   `{"closed": false}` and the room stays live** — still serving, still the room a `commit` is
+   bound to — because removing it would destroy the only copy of the accepted tail. Make the
+   store writable (disk space, permissions) and repeat the call; a `200` means the base is on
+   disk and durable. Do not fall through to step 3 on a `500`: quarantining a room that is still
+   live loses the tail this call was meant to save.
 3. Move the directory out of the store, e.g. `mv <store>/<sha256> <store>/<sha256>.damaged`, so the
    next create finds no stored room instead of failing again.
 4. Recover from the base in the quarantined directory when it is newer than the cabinet's copy:

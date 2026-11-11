@@ -11,15 +11,18 @@ exactly as before. On top of `1b057cbf` are two review-pass commits — `5b6fcfc
 restart limits), and then `9ad80547` (code, tests and docs: the fourth review's triage).
 **`9ad80547` is the delivered head — `git ls-remote fork refs/heads/collab/pr15` and `gh pr view
 2012 --json headRefOid` both name it.** The triage of `5852391245` is therefore
-delivered, not local: `4a64e764` is its parent and the commit adds 7 files, +498/−116. The only
-local commit on top is this docs-only sync, not pushed. `7f93069e` — the connector-glue commit the earlier notes
+delivered, not local: `4a64e764` is its parent and the commit adds 7 files, +498/−116. On top of it
+locally, not pushed, are `f6239baf` (the docs-only STATUS sync), `891187f5` (code and tests: the
+fifth review's triage, §Fifth CodeRabbit review) and this docs commit (the triage table, the
+session log, `production.md`'s close-failure contract). `7f93069e` — the connector-glue commit the earlier notes
 named — is a dangling commit with the same subject as `2bbe723f` and is **not** in the branch. The
 CodeRabbit findings of #2012 (11 Major + 7 Minor) are triaged and fixed, with that table in §PR
 publication. The second review's commits close the second review (§Second CodeRabbit review): a
 shape drag now goes through the room, a client commit
 is bound to the hub it was authorized against, a base reopens at its own version, one resync is on
 the wire at a time, and the restart/recovery wording is corrected. The fourth review
-(`5852391245`, on `4a64e764`) is triaged in §Fourth CodeRabbit review. `collab/pr14` is branched from
+(`5852391245`, on `4a64e764`) is triaged in §Fourth CodeRabbit review and the fifth
+(`5855491108`, on `9ad80547`) in §Fifth CodeRabbit review. `collab/pr14` is branched from
 `collab/pr13` at `baa845ec` (the
 chunked-base slice and its docs commit): Save in a live desktop session now commits the room —
 one commit in flight, the document stays dirty until `commit-result`, a refusal keeps the edits
@@ -104,19 +107,20 @@ is where the earlier 100-commit figure came from). The
 fork head **is** the PR head: `git ls-remote fork refs/heads/collab/pr15` →
 `9ad805473e64863d18ca1785d797c6a22c7587c0` and `gh pr view 2012 --json headRefOid` → the same, so
 the second review's commits, the STATUS sync and the fourth review's triage are all delivered.
-Only this docs-only sync sits on top locally, not pushed.
+Only `f6239baf` (docs) and `891187f5` (the fifth review's triage) sit on top locally, not pushed.
 
 The **gate on that head is still not green**: the four workflow runs (CI, House rules, Nix,
 SonarCloud) are `completed / action_required`, created 2026-11-11T01:24:39Z — they wait for a
 maintainer's approval. CodeRabbit's last completed check run is `completed / success` on
-`4a64e764`; its run on `9ad80547` started 2026-11-11T07:32:03Z and is `in_progress` (see §Fifth
-CodeRabbit review). Its four submitted reviews are
+`4a64e764`; its run on `9ad80547` was submitted as review `5855491108` at 07:49:58Z (see §Fifth
+CodeRabbit review). Its five submitted reviews are
 all on record: `5845265345` (16:15Z, on `1b057cbf`, 11 Major + 7 Minor — fixed in `5b6fcfcd` +
 `9b43c611`), `5846427839` (17:33Z, on `9b43c611a`, five actionable comments — triaged and closed
 in `d56272e6`, §Second CodeRabbit review), `5848775355` (20:22Z, on `fd1ee71a`), which
 reviewed only this file ("Files not fully reviewed: 1"), posted **no inline comment and no
-actionable finding**, and `5852391245` (2026-11-11T01:35Z, on `4a64e764`, four Major and one Minor
-— triaged in §Fourth CodeRabbit review).
+actionable finding**, `5852391245` (2026-11-11T01:35Z, on `4a64e764`, four Major and one Minor
+— triaged in §Fourth CodeRabbit review) and `5855491108` (07:49:58Z, on `9ad80547`, four Major
+and one Minor — triaged in §Fifth CodeRabbit review).
 
 Merging is a human step. Closing the superseded PRs is a human decision as well.
 
@@ -204,15 +208,38 @@ the build host) + 18 socket; `collab` 287 + 8; `engine` 597 + 1 ignored, plus 6 
 reverted-code runs failed exactly as intended: `the replica stays at the version it was rewound to`,
 `the acknowledged step was skipped`, `a viewer's ink stroke changed the slide`.
 
-### Fifth CodeRabbit review (started 07:32:03Z on `9ad80547`), in progress
+### Fifth CodeRabbit review (`5855491108`, submitted 07:49:58Z on `9ad80547`), triaged
 
-The `CodeRabbit` check run on the delivered head `9ad80547` started 2026-11-11T07:32:03Z and was
-still `in_progress` when this sync was written (checked at 07:38Z and again at 07:46Z, still
-running): no review object on
-`repos/storytold/deckcraft/pulls/2012/reviews`, no inline review comment since 07:00Z, and no
-issue comment. It was not waited on. Next session: read the submitted review first, then triage
-each finding against the tree — a confirmed one is fixed with a test that fails without it, an
-invalid one is rejected with the reason in the table — and record the table here.
+The check run that started at 2026-11-11T07:32:03Z submitted review `5855491108` on
+`repos/storytold/deckcraft/pulls/2012/reviews` at 07:49:58Z: five actionable inline comments
+(four Major, one Minor), all on files this PR touches (`lib.rs`, `store.rs` twice, `client.rs`,
+`pointer.rs`); its summary also names a docstring-coverage pre-merge check, which is advisory and
+not a finding. Each comment was opened against the tree at `9ad80547` before any change; **all
+five are live and fixed in `891187f5`**, each with a test that fails without the fix. The four
+reverted-code runs were made on the build host by undoing the production hunks only and running
+the new tests: `a viewer kept a position the room never accepted` (200.0 against 100.0),
+`a refused snapshot moved the host's version` (4 against 0), `a directory that cannot be read is
+not an empty room` (the old `Ok(None)`) and `a close without its recovery copy is not a close`
+(`200 {"closed": true}` against `500`); the durability test's old code simply returned `Ok(())`.
+
+| # | Finding (path:line) | Severity | Disposition |
+|---|---|---|---|
+| 1 | `apps/deckcraft-collab-server/src/lib.rs:679-682` — a failed `store.snapshot` in `close_session` still removes the hub and answers `{"closed": true}`, so the documented recovery copy does not exist | Major | **Fixed**: the snapshot is taken while the room is still in the map and still serving; a failure answers `500` with `closed: false` and leaves the room live — still answering its sockets and still the hub a commit is bound to (`still_live`). A poisoned hub lock is treated the same way. Only a successful snapshot closes the room and removes it. Test: `a_close_whose_snapshot_fails_keeps_the_room_live` (the room stays in the map, is not closed, still serves `build_and_publish_on`, and the retry after the store is writable leaves a `base-` file) |
+| 2 | `apps/deckcraft-collab-server/src/store.rs:161-162` — `latest_base` swallows `read_dir`/entry errors, so a storage fault reads as "no versioned base" and `create_session` opens `initialBytes` (or a blank deck) over the stored room | Major | **Fixed**: `read_dir` and every directory entry propagate their error, and the legacy `base.deckcraft` check runs only after the directory was listed in full and held no versioned base. Test: `a_room_directory_that_cannot_be_read_is_an_error_not_a_new_room` (the room path is a file, so `read_dir` is `ENOTDIR` for every user, root included) |
+| 3 | `apps/deckcraft-collab-server/src/store.rs:146` — the base is renamed into place but its directory is never synced, so a crash can lose the new base while the journal has already been trimmed to the steps above it | Major | **Fixed**: `sync_dir` (`File::open(dir).sync_all()`, a no-op on platforms without directory handles) runs after the base rename and again after `meta.json`, before `trim_journal`; a sync failure propagates and the snapshot stops with the journal intact. Test: `#[cfg(unix)] a_base_that_cannot_be_made_durable_stops_the_snapshot_before_the_journal_is_trimmed` (a directory that can be written and entered but not opened: `0o300`; the test returns early where permissions are not enforced, e.g. root) |
+| 4 | `crates/collab/src/client.rs:452-461` — a snapshot refused for not covering a rewind still advances the host: `CollabDoc::on_msg` applies the base/tail and takes `snapshot.version`, so the missing steps are skipped as already seen | Major | **Fixed**: `ClientSession` records the refusal (`take_refused_snapshot`) and `CollabDoc::on_msg` returns before installing anything; the replica stays at the rewound version and the tail is asked for again from there. Test: `a_snapshot_that_does_not_cover_a_rewind_is_not_installed_by_the_host` (a resync in flight, a preview abandoned by a foreign step, then an empty tail at version 4 with no base: version stays 0 and a `Resync { last_version: 0 }` goes out) |
+| 5 | `crates/engine/src/tools/pointer.rs:478-483` — a move dropped because the role turned read-only keeps the local boxes and an open interaction, so the viewer shows a position the room never accepted and the next gesture inherits a stale before-image | Minor | **Fixed**: `drop_writing_drag` cancels a move (`Drag::Move` carries the offset it last applied): only a box this gesture wrote is put back to its press-time value, a confirmed step another participant settled meanwhile stays, and the interaction closes without an undo step; the release path (`up`) does the same instead of offering the boxes to the room. Alt-drag duplicates are left alone (they make objects no operation carries). Tests: `a_role_change_during_a_move_puts_the_local_box_back` (an editor's drag, a remote step on another shape, then `set_read_only` and a new press: the dragged box is back, the remote box stays, no interaction, no undo step) |
+
+The Minor finding's wording named only the new-press path; the release path had the same hole (a
+viewer whose pointer came up after the role change kept the local move and got an undo step for
+it), so both are closed. What is **not** covered: a resize, rotate or Edit Points drag dropped by
+a role change still keeps the geometry it wrote — those gestures carry no stored "last written"
+value, so the same exact cancel needs one, and the move is the gesture the review named.
+
+Verification of this pass on the `agents` host: `cargo fmt --all --check` clean; `cargo clippy
+--workspace --all-targets -- -D warnings` EXIT=0; `engine` 598 + 1 ignored (+ 6 + 8 integration);
+`collab` 288 + 8; `collab-server` 19 unit + 5 commit + 5 gates (16.9 s, LibreOffice skipped on the
+build host) + 18 socket.
 
 This file is the handoff between sessions: what is done, how it was verified, what is not done,
 and what to do next. Update it at the end of every collaboration session.
@@ -1413,10 +1440,12 @@ token from the cabinet.
    Nix and SonarCloud wait in `action_required` (created 2026-11-11T01:24:39Z) for a maintainer's
    approval. CodeRabbit's second review is closed, the third (`fd1ee71a`) found nothing in code,
    and the fourth (`5852391245`, on `4a64e764`) is triaged and delivered in `9ad80547`: four
-   findings fixed, one docs correction. Its fifth review (check run started 2026-11-11T07:32:03Z
-   on `9ad80547`) had not submitted when this sync was written — read it first next session.
-   Closing #1998/#1975 (superseded) and merging are human steps. Do not
-   touch CI and do not mention agents.
+   findings fixed, one docs correction. The fifth (`5855491108`, submitted 07:49:58Z on
+   `9ad80547`) is triaged in §Fifth CodeRabbit review: all five findings fixed in `891187f5`,
+   which is local — the next step for a person is `git push fork collab/pr15` (a fast-forward of
+   three commits over the delivered head: `f6239baf`, `891187f5` and its docs commit). Closing
+   #1998/#1975 (superseded) and merging are human steps. Do not touch CI and do not mention
+   agents.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
@@ -1456,6 +1485,41 @@ token from the cabinet.
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-11 — the fifth CodeRabbit review of #2012 (`5855491108`), triaged
+
+- **What was reviewed.** The review submitted at 07:49:58Z on `9ad80547` (the head the check run
+  started at 07:32:03Z): five actionable inline comments, four Major and one Minor. Every one was
+  opened against the tree first; all five are live and fixed in `891187f5`, with a test that fails
+  without the fix. The table is in §Fifth CodeRabbit review.
+- **Server, close (finding 1).** `DELETE /v1/sessions/{id}` snapshotted the room after removing it
+  from the map and logged a failure, so a store that could not be written lost the only live copy
+  of the accepted tail while the answer said the close succeeded. The snapshot now happens while
+  the room is still live and still in the map; a failure answers `500 {"closed": false}` and
+  leaves it serving (and still the hub a `commit` binds to). `production.md` §Recovering a damaged
+  store says so: a `500` is retried, never followed by quarantining a live room.
+- **Server, store (findings 2 and 3).** `latest_base` turned an unreadable room directory into
+  "no stored room" and let `create_session` open `initialBytes` or a blank deck over the stored
+  document; it now propagates `read_dir` and entry errors and reads the legacy `base.deckcraft`
+  name only after the directory was listed in full. The base rename is synced with its directory
+  (and again after `meta.json`) before the journal is trimmed, and a failed sync stops the
+  snapshot with the journal intact.
+- **Client (finding 4).** A snapshot that does not cover a rewind was refused by `ClientSession`
+  but installed by `CollabDoc::on_msg` all the same, which took `snapshot.version` and left the
+  steps between missing; the state machine now reports the refusal (`take_refused_snapshot`) and
+  the host returns before installing anything.
+- **Engine (finding 5).** A move dropped because the role turned read-only kept the local boxes
+  and an open interaction. `Drag::Move` now carries the offset it last applied, so the cancel puts
+  back exactly the boxes the gesture wrote (a step another replica settled meanwhile stays) and
+  closes the interaction without an undo step; `up` does the same when the release comes after the
+  role change.
+- **Gates on `agents`** (rust 1.99.1): `cargo fmt --all --check` clean; `cargo clippy --workspace
+  --all-targets -- -D warnings` EXIT=0; `engine` 598 + 1 ignored, plus 6 + 8 integration;
+  `collab` 288 + 8; `collab-server` 19 unit + 5 commit + 5 gates (16.9 s) + 18 socket. The four
+  new tests were run against the reverted production hunks and failed on the intended assertions
+  (list in §Fifth CodeRabbit review).
+- **Commit.** `891187f5` on `collab/pr15`, code+tests+STATUS, plus this docs commit; neither is
+  pushed, so the fork and the PR still point at `9ad80547`. CI untouched.
 
 ### 2026-11-11 — STATUS synced to the delivered head `9ad80547`; fifth review still running
 
