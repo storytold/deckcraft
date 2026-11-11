@@ -233,36 +233,42 @@ impl MediaHost {
         // A shape whose feed could not be had (the cap, a decode error) tries again on each play.
         let feedless = self.videos.get(&id).is_some_and(|v| v.feed.is_none());
         if clip.video && (source_changed || feedless || !self.videos.contains_key(&id)) {
-            // One decoder and frame queue per video shape: past the cap a shape plays its sound only.
-            let mut live = self.videos.iter().filter(|(vid, v)| **vid != id && v.feed.is_some()).count();
-            if live >= MAX_VIDEO_FEEDS {
-                // Videos that have ended no longer need their decoder: free it and keep the last
-                // picture (a replay makes a new feed).
-                for (vid, v) in self.videos.iter_mut() {
-                    if *vid != id && v.feed.is_some() && self.player.status(key(*vid)).is_some_and(|s| s.state == PlayState::Ended) {
-                        v.feed = None;
-                        live -= 1;
-                    }
-                }
-            }
-            let feed = if live >= MAX_VIDEO_FEEDS {
-                log::info!("video {id}: more than {MAX_VIDEO_FEEDS} videos playing; showing no picture");
-                None
-            } else {
-                match VideoFeed::new(bytes.clone()) {
-                    Ok(f) => Some(f),
-                    Err(e) => {
-                        log::info!("video {id}: {e}");
-                        None
-                    }
-                }
-            };
+            let feed = self.new_feed(id, &bytes);
             self.videos.insert(id, Video { feed, frame: None, tex: None });
         } else if !clip.video {
             self.videos.remove(&id);
         }
         self.player.play(key(id), media_key as u64, &bytes, spec, from);
         self.owners.insert(id, Owned { owner, clip: clip.clone(), source: media_key });
+    }
+
+    /// A decoder for the video of shape `id`, within the cap on live decoders; `None` past it or
+    /// when the video cannot be decoded (the shape then plays its sound only).
+    fn new_feed(&mut self, id: ShapeId, bytes: &Arc<Vec<u8>>) -> Option<VideoFeed> {
+        // One decoder and frame queue per video shape: past the cap a shape plays its sound only.
+        let mut live = self.videos.iter().filter(|(vid, v)| **vid != id && v.feed.is_some()).count();
+        if live >= MAX_VIDEO_FEEDS {
+            // Videos that have ended no longer need their decoder: free it and keep the last
+            // picture (a replay makes a new feed).
+            for (vid, v) in self.videos.iter_mut() {
+                if *vid != id && v.feed.is_some() && self.player.status(key(*vid)).is_some_and(|s| s.state == PlayState::Ended) {
+                    v.feed = None;
+                    live -= 1;
+                }
+            }
+        }
+        if live >= MAX_VIDEO_FEEDS {
+            log::info!("video {id}: more than {MAX_VIDEO_FEEDS} videos playing; showing no picture");
+            None
+        } else {
+            match VideoFeed::new(bytes.clone()) {
+                Ok(f) => Some(f),
+                Err(e) => {
+                    log::info!("video {id}: {e}");
+                    None
+                }
+            }
+        }
     }
 
     pub fn pause(&mut self, id: ShapeId) {
@@ -301,6 +307,15 @@ impl MediaHost {
         if self.status(id).is_none() || !self.same_source(doc, id, clip) {
             self.play(doc_uid, doc, id, clip, Some(t), owner);
             self.pause(id);
+        }
+        // A video whose decoder was reclaimed (or refused at the cap) tries for one again, so its picture follows the seek.
+        if clip.video && self.videos.get(&id).is_some_and(|v| v.feed.is_none()) {
+            let bytes = doc.media(clip.media).map(|m| m.data.clone());
+            if let Some(feed) = bytes.and_then(|b| self.new_feed(id, &b))
+                && let Some(v) = self.videos.get_mut(&id)
+            {
+                v.feed = Some(feed);
+            }
         }
         self.player.seek(key(id), t);
     }
@@ -846,5 +861,27 @@ mod tests {
         host.play(1, &doc, extra, &clip, None, Owner::Editor);
         assert!(host.videos.get(&extra).is_some_and(|v| v.feed.is_some()), "a freed decoder is taken on the next play");
         assert_eq!(live(&host), MAX_VIDEO_FEEDS);
+    }
+
+    /// Seeking a video that has no decoder (refused at the cap, or reclaimed) retries one without
+    /// restarting playback, so its picture follows the seek.
+    #[test]
+    fn seeking_a_feedless_video_retries_its_decoder() {
+        let mut doc = Presentation::default();
+        let media = doc.add_media("clip.mp4", "video/mp4", include_bytes!("../../media/tests/fixtures/clip-h264.mp4").to_vec()).expect("media");
+        let clip = MediaClip { media, volume: 0.0, video: true, ..Default::default() };
+        let mut host = MediaHost::new(None);
+        for n in 0..=MAX_VIDEO_FEEDS as u32 {
+            host.play(1, &doc, ShapeId(7000 + n), &clip, None, Owner::Editor);
+        }
+        let extra = ShapeId(7000 + MAX_VIDEO_FEEDS as u32);
+        assert!(host.videos.get(&extra).is_some_and(|v| v.feed.is_none()));
+        // Still at the cap: a seek does not exceed it.
+        host.seek(1, &doc, extra, &clip, 0.0, Owner::Editor);
+        assert!(host.videos.get(&extra).is_some_and(|v| v.feed.is_none()));
+        host.stop(ShapeId(7000));
+        host.seek(1, &doc, extra, &clip, 0.0, Owner::Editor);
+        assert!(host.videos.get(&extra).is_some_and(|v| v.feed.is_some()), "the seek got a decoder");
+        assert_eq!(host.videos.values().filter(|v| v.feed.is_some()).count(), MAX_VIDEO_FEEDS);
     }
 }
