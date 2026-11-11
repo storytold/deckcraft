@@ -42,6 +42,12 @@ pub fn sniff(bytes: &[u8]) -> bool {
 
 /// Read a `.ppt` / `.pot` / `.pps` file.
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptError> {
+    import_checked(bytes).map(|(p, _)| p)
+}
+
+/// [`import`], plus the slides the file lists but whose objects couldn't be found, so they are not
+/// in the presentation.
+pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptError> {
     let file = cfb::CompoundFile::open(bytes).map_err(|e| match e {
         cfb::CfbError::NotCfb => PptError::NotPpt,
         other => PptError::Damaged(other.to_string()),
@@ -54,7 +60,7 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptError> {
     // A damaged or missing picture stream costs the pictures, not the presentation.
     let pictures = file.read_root_stream("Pictures").unwrap_or_default();
     let d = doc::read(&current_user, &stream)?;
-    Ok(convert::convert(&d, &pictures))
+    Ok((convert::convert(&d, &pictures), d.lost.clone()))
 }
 
 #[cfg(test)]

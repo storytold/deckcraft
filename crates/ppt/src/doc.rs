@@ -23,6 +23,13 @@ pub mod rt {
     pub const DRAWING_GROUP: u16 = 0x040B;
     pub const DRAWING: u16 = 0x040C;
     pub const COLOR_SCHEME: u16 = 0x07F0;
+    pub const LIST: u16 = 0x07D0;
+    pub const PROG_TAGS: u16 = 0x1388;
+    pub const PROG_BINARY_TAG: u16 = 0x138A;
+    pub const BINARY_TAG_DATA: u16 = 0x138B;
+    pub const STYLE_TEXT_PROP9: u16 = 0x0FAC;
+    pub const OUTLINE_TEXT_PROPS9: u16 = 0x0FAE;
+    pub const OUTLINE_TEXT_PROPS_HEADER: u16 = 0x0FAF;
     pub const FONT_COLLECTION: u16 = 0x07D5;
     pub const OUTLINE_TEXT_REF: u16 = 0x0F9E;
     pub const TEXT_HEADER: u16 = 0x0F9F;
@@ -34,7 +41,10 @@ pub mod rt {
     pub const TEXT_RULER: u16 = 0x0FA6;
     pub const TEXT_BYTES: u16 = 0x0FA8;
     pub const FONT_ENTITY: u16 = 0x0FB7;
+    pub const CSTRING: u16 = 0x0FBA;
     pub const SLIDE_NUMBER_MC: u16 = 0x0FD8;
+    pub const HEADERS_FOOTERS: u16 = 0x0FD9;
+    pub const HEADERS_FOOTERS_ATOM: u16 = 0x0FDA;
     pub const SLIDE_LIST_WITH_TEXT: u16 = 0x0FF0;
     pub const USER_EDIT: u16 = 0x0FF5;
     pub const CURRENT_USER: u16 = 0x0FF6;
@@ -86,6 +96,8 @@ pub struct Doc<'a> {
     pub masters: Vec<Listed<'a>>,
     pub slides: Vec<Listed<'a>>,
     pub notes: Vec<Listed<'a>>,
+    /// Slides the slide list names but whose objects couldn't be found: what a damaged file lost.
+    pub lost: Vec<String>,
 }
 
 /// Read the structure from the `Current User` and `PowerPoint Document` streams.
@@ -123,6 +135,9 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     // read to the end of the stream, once per edit (MAX_EDITS × the stream).
     let mut words = stream.len() / 4;
     let mut at = edit_at;
+    // The chain ends at an edit whose previous offset is 0. Ending anywhere else (a loop, an
+    // offset that isn't an edit, too many edits) means older edits were cut off.
+    let mut broken = true;
     for _ in 0..MAX_EDITS {
         if !seen.insert(at) {
             break;
@@ -141,8 +156,26 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
             read_persist_directory(dir.data, &mut persist, &mut words);
         }
         match edit.u32(8) {
-            Some(0) | None => break,
+            Some(0) => {
+                broken = false;
+                break;
+            }
+            None => break,
             Some(prev) => at = prev as usize,
+        }
+    }
+    if broken {
+        // Recover what the cut-off edits held: every edit in the stream, newest (last written)
+        // first, fills only the persist ids the chain left unset.
+        log::warn!("ppt: the edit history is broken; reading every edit in the stream");
+        let mut edits: Vec<Rec> = Records::new(stream).filter(|r| r.kind == rt::USER_EDIT).take(MAX_EDITS).collect();
+        edits.reverse();
+        for edit in edits {
+            if let Some(dir) =
+                edit.u32(12).filter(|&o| dirs_seen.insert(o)).and_then(|o| Rec::at(stream, o as usize)).filter(|r| r.kind == rt::PERSIST_DIRECTORY)
+            {
+                read_persist_directory(dir.data, &mut persist, &mut words);
+            }
         }
     }
     let lookup = |id: u32| persist.get(&id).and_then(|&o| Rec::at(stream, o));
@@ -150,7 +183,7 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     if lookup_kind(&persist, stream, rt::CRYPT_SESSION) {
         return Err(PptError::Encrypted);
     }
-    let mut doc = Doc { document, masters: vec![], slides: vec![], notes: vec![] };
+    let mut doc = Doc { document, masters: vec![], slides: vec![], notes: vec![], lost: vec![] };
     // Each object is listed once. PowerPoint never lists one twice, and a hostile file that lists a
     // big drawing many times would otherwise have it converted again for every listing (shapes ×
     // listings, from linear input).
@@ -172,7 +205,12 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
                 match lookup(pid) {
                     Some(rec) if !listed.insert(rec.offset) => log::warn!("ppt: persist id {pid} is listed again; skipped"),
                     Some(rec) => current = Some(Listed { rec, slide_id, outline: vec![] }),
-                    None => log::warn!("ppt: slide persist id {pid} has no object"),
+                    None => {
+                        log::warn!("ppt: slide persist id {pid} has no object");
+                        if list.instance == 0 {
+                            doc.lost.push(format!("slide {slide_id}"));
+                        }
+                    }
                 }
             } else if r.kind == rt::TEXT_HEADER
                 && let Some(l) = current.as_mut()
@@ -266,4 +304,68 @@ pub fn fonts(doc: &Doc) -> Vec<String> {
             String::from_utf16_lossy(&units)
         })
         .collect()
+}
+
+/// What a `HeadersFootersContainer` ([MS-PPT] §2.4.15.1, instance 3: slides) says the footer row
+/// shows: the date (today's in a format, or fixed text), the slide number and the footer text.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HeadersFooters {
+    /// `formatId`: 0–12, the date format.
+    pub format: u16,
+    pub date: bool,
+    /// The date is fixed text (`fHasUserDate`) rather than today's.
+    pub user_date: bool,
+    pub slide_number: bool,
+    pub footer: bool,
+    pub date_text: String,
+    pub footer_text: String,
+}
+
+/// The slides' headers and footers in `container` (a slide, or the document for every slide).
+pub fn headers_footers(container: &Rec) -> Option<HeadersFooters> {
+    let hf = container.children().find(|r| r.kind == rt::HEADERS_FOOTERS && r.instance == 3)?;
+    let atom = hf.child(rt::HEADERS_FOOTERS_ATOM)?;
+    let flags = atom.u16(2)?;
+    let text = |instance: u16| {
+        hf.children()
+            .find(|r| r.kind == rt::CSTRING && r.instance == instance)
+            .map(|r| String::from_utf16_lossy(&r.data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<u16>>()))
+            .unwrap_or_default()
+    };
+    Some(HeadersFooters {
+        format: atom.u16(0).unwrap_or(0),
+        date: flags & 0x01 != 0,
+        user_date: flags & 0x04 != 0,
+        slide_number: flags & 0x08 != 0,
+        footer: flags & 0x20 != 0,
+        date_text: text(0),
+        footer_text: text(2),
+    })
+}
+
+/// The PowerPoint 2000 paragraph formatting of the slides' outline text ([MS-PPT] §2.4.22.10,
+/// the document's `___PPT9` tag): by slide id and text type, one `StyleTextProp9Atom` for each of
+/// the slide's outline blocks of that type, in order.
+pub fn outline_numbering(document: &Rec) -> HashMap<(u32, u32), Vec<Vec<crate::text::Pf9>>> {
+    let mut out: HashMap<(u32, u32), Vec<Vec<crate::text::Pf9>>> = HashMap::new();
+    let tags = document.child(rt::LIST).and_then(|l| l.child(rt::PROG_TAGS));
+    let Some(tags) = tags else { return out };
+    let ppt9 = tags.children_of(rt::PROG_BINARY_TAG).find(|tag| {
+        tag.child(rt::CSTRING).is_some_and(|name| name.data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).eq("___PPT9".encode_utf16()))
+    });
+    let Some(data) = ppt9.and_then(|t| t.child(rt::BINARY_TAG_DATA)) else { return out };
+    // The tag's data is an atom whose body holds records.
+    for props in Records::new(data.data).filter(|r| r.kind == rt::OUTLINE_TEXT_PROPS9) {
+        let mut header = None;
+        for r in props.children() {
+            if r.kind == rt::OUTLINE_TEXT_PROPS_HEADER {
+                header = r.u32(0).zip(r.u32(4));
+            } else if r.kind == rt::STYLE_TEXT_PROP9
+                && let Some(key) = header.take()
+            {
+                out.entry(key).or_default().push(crate::text::read_style9(r.data));
+            }
+        }
+    }
+    out
 }

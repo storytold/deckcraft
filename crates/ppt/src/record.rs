@@ -100,6 +100,10 @@ impl<'a> Cursor<'a> {
     pub fn new(b: &'a [u8]) -> Self {
         Cursor { b, at: 0 }
     }
+    /// Bytes left to read.
+    pub fn remaining(&self) -> usize {
+        self.b.len().saturating_sub(self.at)
+    }
     pub fn u8(&mut self) -> Option<u8> {
         let v = *self.b.get(self.at)?;
         self.at += 1;

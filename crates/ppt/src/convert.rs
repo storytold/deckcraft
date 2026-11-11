@@ -57,6 +57,8 @@ struct Scope<'s, 'a> {
     styles: &'s StyleSheet,
     /// The slide list's outline text, for placeholders that point at it.
     outline: &'s [crate::record::Records<'a>],
+    /// Each outline block's numbering (`StyleTextProp9Atom` entries), by outline index.
+    numbering: &'s [Option<Vec<text::Pf9>>],
     master: bool,
     /// Where `hspMaster` shape ids are looked up: the slide's master, then a title master's main
     /// master.
@@ -71,6 +73,11 @@ struct Ctx<'a> {
     fonts: Vec<String>,
     blips: crate::blip::Store<'a>,
     media: HashMap<usize, Option<MediaId>>,
+    /// Pictures held in a shape's own property, by where their bytes start, so a master shape's
+    /// picture inherited by many slides is added once.
+    inline_media: HashMap<usize, Option<MediaId>>,
+    /// The slides' outline numbering, by slide id and text type ([`doc::outline_numbering`]).
+    numbering: HashMap<(u32, u32), Vec<Vec<text::Pf9>>>,
     defaults: Props<'a>,
     /// Master shapes by master slide id and shape id, for slide shapes that inherit from one
     /// (`hspMaster`). Keyed by master too, so a shape id repeated in another master can't replace
@@ -93,10 +100,23 @@ pub fn convert<'a>(d: &Doc<'a>, pictures: &'a [u8]) -> Presentation {
         fonts: doc::fonts(d),
         blips: crate::blip::Store::new(dgg, pictures),
         media: HashMap::new(),
+        inline_media: HashMap::new(),
+        numbering: doc::outline_numbering(&d.document),
         defaults: draw::default_props(dgg),
         master_props: HashMap::new(),
     };
     let environment = d.document.child(rt::ENVIRONMENT);
+    if let Some(hf) = doc::headers_footers(&d.document) {
+        cx.p.header_footer = deckcraft_model::HeaderFooter {
+            date: hf.date,
+            slide_number: hf.slide_number,
+            footer: hf.footer,
+            footer_text: hf.footer_text,
+            date_text: if hf.user_date { hf.date_text } else { String::new() },
+            date_format: format!("datetime{}", hf.format.min(12) + 1),
+            ..Default::default()
+        };
+    }
 
     // Main masters first, then title masters as layouts of theirs.
     let mut masters: HashMap<u32, MasterInfo> = HashMap::new();
@@ -161,7 +181,7 @@ impl<'a> Ctx<'a> {
         let drawing = draw::drawing(&m.rec);
         self.remember_master_props(m.slide_id, &drawing.shapes, 0);
         let ids = [Some(m.slide_id), None];
-        let scope = Scope { scheme, styles: &styles, outline: &m.outline, master: true, masters: ids };
+        let scope = Scope { scheme, styles: &styles, outline: &m.outline, numbering: &[], master: true, masters: ids };
         master.background = drawing.background.as_ref().and_then(|b| self.background(b, &scope));
         for raw in &drawing.shapes {
             if let Some(ph) = raw.placeholder.filter(|p| p.kind != 0) {
@@ -170,6 +190,33 @@ impl<'a> Ctx<'a> {
                     && let Some(s) = master.shapes.iter_mut().find(|s| s.ph_type().is_some_and(|t| same_family(t, kind)))
                 {
                     s.xfrm = Some(x);
+                    // The footer row sits in the same place on every layout, with the master's look:
+                    // its first paragraph's alignment and its first run's size and colour.
+                    if matches!(kind, PhType::Date | PhType::Footer | PhType::SlideNum) {
+                        let look = self.shape(raw, &scope, 0, TOP).and_then(|c| c.text).and_then(|t| t.paragraphs.into_iter().next());
+                        let style = |t: &mut TextBody| {
+                            if let Some(p) = &look {
+                                let mut level = t.list_style.level(0).cloned().unwrap_or_default();
+                                level.para.align = p.props.align.or(level.para.align);
+                                if let Some(run) = p.runs.first() {
+                                    level.run.size = run.props.size.or(level.run.size);
+                                    level.run.fill = run.props.fill.clone().or(level.run.fill.take());
+                                }
+                                t.list_style.set(0, level);
+                            }
+                        };
+                        if let Some(t) = s.text.as_mut() {
+                            style(t);
+                        }
+                        for l in &mut master.layouts {
+                            for ls in l.shapes.iter_mut().filter(|ls| ls.ph_type() == Some(kind)) {
+                                ls.xfrm = Some(x);
+                                if let Some(t) = ls.text.as_mut() {
+                                    style(t);
+                                }
+                            }
+                        }
+                    }
                 }
                 continue;
             }
@@ -194,7 +241,7 @@ impl<'a> Ctx<'a> {
         let drawing = draw::drawing(&m.rec);
         self.remember_master_props(m.slide_id, &drawing.shapes, 0);
         let ids = [Some(m.slide_id), parent.ids[0]];
-        let scope = Scope { scheme, styles: &parent.styles, outline: &m.outline, master: true, masters: ids };
+        let scope = Scope { scheme, styles: &parent.styles, outline: &m.outline, numbering: &[], master: true, masters: ids };
         let background = if atom.follow_master_background { None } else { drawing.background.as_ref().and_then(|b| self.background(b, &scope)) };
         let shapes: Vec<Shape> =
             drawing.shapes.iter().filter(|r| r.placeholder.is_none_or(|p| p.kind == 0)).filter_map(|r| self.shape(r, &scope, 0, TOP)).collect();
@@ -290,19 +337,73 @@ impl<'a> Ctx<'a> {
         })?;
         let id = SlideId(self.alloc()?);
         let drawing = draw::drawing(&s.rec);
-        let scope = Scope { scheme, styles: &styles, outline: &s.outline, master: false, masters: ids };
+        // The n-th outline block of a text type takes the n-th numbering entry for that type.
+        let mut seen: HashMap<u32, usize> = HashMap::new();
+        let numbering: Vec<Option<Vec<text::Pf9>>> = s
+            .outline
+            .iter()
+            .map(|block| {
+                let tt = block.clone().next().filter(|h| h.kind == rt::TEXT_HEADER).and_then(|h| h.u32(0))?;
+                let k = seen.entry(tt).or_insert(0);
+                let n = *k;
+                *k += 1;
+                self.numbering.get(&(s.slide_id, tt)).and_then(|v| v.get(n)).cloned()
+            })
+            .collect();
+        let scope = Scope { scheme, styles: &styles, outline: &s.outline, numbering: &numbering, master: false, masters: ids };
         let background = if atom.follow_master_background { None } else { drawing.background.as_ref().and_then(|b| self.background(b, &scope)) };
-        let shapes = drawing.shapes.iter().filter_map(|r| self.shape(r, &scope, 0, TOP)).collect();
+        let mut shapes: Vec<Shape> = drawing.shapes.iter().filter_map(|r| self.shape(r, &scope, 0, TOP)).collect();
+        // The slide's own headers and footers, else the document's for every slide.
+        if let Some(hf) = doc::headers_footers(&s.rec).or_else(|| doc::headers_footers(&d.document)) {
+            self.footers(&mut shapes, &hf);
+        }
         let hidden = s.rec.child(rt::SLIDE_SHOW_SLIDE_INFO).and_then(|i| i.u16(10)).is_some_and(|f| f & 0x4 != 0);
         let notes = notes_of.get(&s.slide_id).and_then(|&i| d.notes.get(i)).map(|n| self.notes(n, &styles, scheme)).unwrap_or_default();
         Some(Slide { id, layout, shapes, background, hidden, show_master_shapes: atom.follow_master_objects, notes, ..Default::default() })
+    }
+
+    /// The date, footer and slide number placeholders `hf` turns on, for those the slide doesn't
+    /// hold itself. They take their place and look from the layout and master.
+    fn footers(&mut self, shapes: &mut Vec<Shape>, hf: &doc::HeadersFooters) {
+        let field = |text: &str, field: String| TextBody {
+            paragraphs: vec![Paragraph {
+                runs: vec![Run { text: text.into(), props: Default::default(), kind: RunKind::Field { field } }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let wanted = [
+            (PhType::Date, hf.date, "Date Placeholder"),
+            (PhType::Footer, hf.footer && !hf.footer_text.is_empty(), "Footer Placeholder"),
+            (PhType::SlideNum, hf.slide_number, "Slide Number Placeholder"),
+        ];
+        for (kind, on, name) in wanted {
+            if !on || shapes.iter().any(|s| s.ph_type() == Some(kind)) {
+                continue;
+            }
+            let text = match kind {
+                PhType::SlideNum => field("‹#›", "slidenum".into()),
+                PhType::Date if hf.user_date => TextBody::from_text(&hf.date_text),
+                // formatId 0–12 are the thirteen date formats, in DrawingML's order.
+                PhType::Date => field("", format!("datetime{}", hf.format.min(12) + 1)),
+                _ => TextBody::from_text(&hf.footer_text),
+            };
+            let Some(id) = self.alloc() else { return };
+            shapes.push(Shape {
+                id: ShapeId(id),
+                name: name.into(),
+                ph: Some(Placeholder { kind, ..Default::default() }),
+                text: Some(text),
+                ..Default::default()
+            });
+        }
     }
 
     /// The text of a notes page's notes placeholder.
     fn notes(&mut self, n: &Listed<'a>, styles: &StyleSheet, scheme: Scheme) -> TextBody {
         let drawing = draw::drawing(&n.rec);
         // Notes masters aren't imported, so there are no master shapes to inherit from.
-        let scope = Scope { scheme, styles, outline: &n.outline, master: false, masters: [None; 2] };
+        let scope = Scope { scheme, styles, outline: &n.outline, numbering: &[], master: false, masters: [None; 2] };
         for raw in &drawing.shapes {
             let Some(block) = self.text_block(raw, &scope) else { continue };
             // The notes body placeholder; a slide number or header placeholder on the page isn't notes.
@@ -325,8 +426,8 @@ impl<'a> Ctx<'a> {
         Some(Background::Fill { fill })
     }
 
-    /// The shape's properties with what it inherits: its master shape's, then (for placeholders
-    /// and text boxes) no fill and no line, then the drawing defaults.
+    /// The shape's properties with what it inherits: its master shape's, then (for placeholders,
+    /// text boxes and picture frames) no fill and no line, then the drawing defaults.
     fn props_of(&self, raw: &RawShape<'a>, scope: &Scope, unfilled: bool) -> Props<'a> {
         let mut props = raw.props.clone();
         let inherited =
@@ -347,7 +448,10 @@ impl<'a> Ctx<'a> {
         }
         let ph = raw.placeholder.filter(|p| p.kind != 0);
         let text_box = raw.shape_type == 202;
-        let props = self.props_of(raw, scope, ph.is_some() || text_box);
+        // A picture frame (also an OLE object's frame) shows its picture with no fill or line of
+        // its own unless it says so; the drawing defaults' fill would cover a transparent picture.
+        let picture_frame = raw.shape_type == PICTURE_FRAME;
+        let props = self.props_of(raw, scope, ph.is_some() || text_box || picture_frame);
         let rot = props.fixed(prop::ROTATION).unwrap_or(0.0);
         let anchor = raw.anchor?;
         let mut s = Shape {
@@ -378,9 +482,7 @@ impl<'a> Ctx<'a> {
             s.kind = ShapeKind::Connector { start: None, end: None };
         }
         // A picture: a picture frame, or any shape showing a picture (an OLE object's preview).
-        if let Some(pib) = props.get(prop::PIB).filter(|&i| i > 0)
-            && let Some(media) = self.media(pib as usize)
-        {
+        if let Some(media) = self.picture(&props, prop::PIB) {
             let crop = |id| props.fixed(id).unwrap_or(0.0).clamp(-1.0, 1.0);
             s.kind = ShapeKind::Picture {
                 fill: PictureFill {
@@ -402,6 +504,22 @@ impl<'a> Ctx<'a> {
             s.text = Some(TextBody::default());
         }
         Some(s)
+    }
+
+    /// The picture a `pib` or `fillBlip` property names: a blip store entry (1-based), or a blip
+    /// held in the property's own complex bytes.
+    fn picture(&mut self, props: &Props<'a>, id: u16) -> Option<MediaId> {
+        let Some(bytes) = props.complex(id) else {
+            return props.get(id).filter(|&i| i > 0).and_then(|i| self.media(i as usize));
+        };
+        let key = bytes.as_ptr() as usize;
+        if let Some(m) = self.inline_media.get(&key) {
+            return *m;
+        }
+        let n = self.inline_media.len() + 1;
+        let id = self.blips.decode_inline(bytes).and_then(|pic| self.p.add_media(&format!("inline{n}.{}", pic.ext), pic.content_type, pic.data));
+        self.inline_media.insert(key, id);
+        id
     }
 
     fn media(&mut self, pib: usize) -> Option<MediaId> {
@@ -454,7 +572,7 @@ impl<'a> Ctx<'a> {
         let bg = self.color_ref(prop::FILL_BACK_COLOR, 0x00FF_FFFF, Some(prop::FILL_BACK_OPACITY), props, scope);
         Some(match props.get(prop::FILL_TYPE).unwrap_or(0) {
             // Texture (tiled) and picture (stretched).
-            t @ (2 | 3) => match props.get(prop::FILL_BLIP).and_then(|i| self.media(i as usize)) {
+            t @ (2 | 3) => match self.picture(props, prop::FILL_BLIP) {
                 Some(media) => {
                     let mode = if t == 2 {
                         PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 1.0, sy: 1.0, flip: String::new(), align: "tl".into() }
@@ -467,25 +585,14 @@ impl<'a> Ctx<'a> {
             },
             // Gradients.
             t @ 4..=8 => {
-                use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+                use deckcraft_model::style::{Gradient, GradientShape};
                 let focus = props.get(prop::FILL_FOCUS).map_or(0, |v| v as i32).clamp(-100, 100);
-                // Focus 0 runs from the fill colour to the back colour, ±100 the other way; in
-                // between, the fill colour sits at that point with the back colour at both ends.
-                let stop = |pos: f64, c: &ColorRef| GradientStop { pos, color: c.clone() };
-                let stops = match focus {
-                    0 => vec![stop(0.0, &fg), stop(1.0, &bg)],
-                    100 | -100 => vec![stop(0.0, &bg), stop(1.0, &fg)],
-                    f => {
-                        let mid = f64::from(f.abs()) / 100.0;
-                        vec![stop(0.0, &bg), stop(mid, &fg), stop(1.0, &bg)]
-                    }
-                };
+                let stops = gradient_stops(focus, &fg, &bg);
                 let shape = if matches!(t, 5 | 6) {
+                    // Position 0 is the centre (the focus rectangle), 1 the shape's edge.
                     GradientShape::Path { path: if t == 5 { "rect".into() } else { "shape".into() }, focus: [0.5, 0.5, 0.5, 0.5] }
                 } else {
-                    // OfficeArt angles turn counter-clockwise from a top-to-bottom gradient.
-                    let a = props.fixed(prop::FILL_ANGLE).unwrap_or(0.0);
-                    GradientShape::Linear { angle: (90.0 - a).rem_euclid(360.0), scaled: false }
+                    GradientShape::Linear { angle: linear_angle(props.fixed(prop::FILL_ANGLE).unwrap_or(0.0)), scaled: false }
                 };
                 Fill::Gradient(Gradient { stops, shape, flip: None, rotate_with_shape: true, tile: [0.0; 4] })
             }
@@ -580,7 +687,15 @@ impl<'a> Ctx<'a> {
         let tb = raw.text?;
         let own = text::read_block(tb.children())?;
         match own.outline_ref {
-            Some(i) if own.chars.is_empty() => scope.outline.get(i as usize).and_then(|r| text::read_block(r.clone())).or(Some(own)),
+            Some(i) if own.chars.is_empty() => scope
+                .outline
+                .get(i as usize)
+                .and_then(|r| text::read_block(r.clone()))
+                .map(|mut b| {
+                    b.outline_index = Some(i as usize);
+                    b
+                })
+                .or(Some(own)),
             _ => Some(own),
         }
     }
@@ -652,8 +767,22 @@ impl<'a> Ctx<'a> {
                 }
                 cf
             };
-            let first = self.run_props(&cf_at(start), &scope.scheme);
+            let first_cf = cf_at(start);
+            let first = self.run_props(&first_cf, &scope.scheme);
             let mut para = Paragraph { level, props: self.para_props(&pf, &scope.scheme, first.size.unwrap_or(18.0)), ..Default::default() };
+            // A bulleted paragraph whose PowerPoint 2000 formatting numbers it.
+            if matches!(para.props.bullet, Some(Bullet::Char { .. }))
+                && let Some((scheme, start_at)) = block
+                    .outline_index
+                    .and_then(|i| scope.numbering.get(i))
+                    .and_then(Option::as_ref)
+                    .zip(first_cf.pp9rt)
+                    .and_then(|(entries, i)| entries.get(usize::from(i)))
+                    .and_then(|e| e.auto_number)
+            {
+                para.props.bullet =
+                    Some(Bullet::AutoNum { scheme: text::auto_number_scheme(scheme).into(), start_at: u32::try_from(start_at).unwrap_or(1).max(1) });
+            }
             let mut i = start;
             while i < end {
                 let props = self.run_props(&cf_at(i), &scope.scheme);
@@ -802,6 +931,30 @@ fn text_shadow(scheme: &Scheme) -> Shadow {
     }
 }
 
+/// A shaded fill's stops ([MS-ODRAW] `fillFocus`: the position of the last colour, the back
+/// colour). Focus 0 starts at the back colour and ends at the fill colour, ±100 the other way; in
+/// between, the back colour sits at that point with the fill colour at both ends.
+fn gradient_stops(focus: i32, fg: &ColorRef, bg: &ColorRef) -> Vec<deckcraft_model::style::GradientStop> {
+    use deckcraft_model::style::GradientStop;
+    let stop = |pos: f64, c: &ColorRef| GradientStop { pos, color: c.clone() };
+    match focus {
+        0 => vec![stop(0.0, bg), stop(1.0, fg)],
+        100 | -100 => vec![stop(0.0, fg), stop(1.0, bg)],
+        f => vec![stop(0.0, fg), stop(f64::from(f.abs()) / 100.0, bg), stop(1.0, fg)],
+    }
+}
+
+/// The DrawingML angle (0° runs left to right, turning clockwise) of a linear fill's `fillAngle`,
+/// for stops from [`gradient_stops`]: the gradient starts on the left at -90°, the top at -180°,
+/// the right at -270°, turning clockwise as the angle falls. 0° starts at the top too: that is how
+/// LibreOffice reads it, and how it writes a top-to-bottom gradient.
+fn linear_angle(a: f64) -> f64 {
+    if a == 0.0 { 90.0 } else { (270.0 - a).rem_euclid(360.0) }
+}
+
+/// `msosptPictureFrame`.
+const PICTURE_FRAME: u16 = 75;
+
 fn no_fill_no_line<'a>() -> Props<'a> {
     let mut p = Props::default();
     p.set(prop::FILL_BOOLS, 0x0010_0000); // fFilled set to false
@@ -895,5 +1048,28 @@ fn layout_kind(geom: u32) -> LayoutType {
         17 => LayoutType::VerticalTitleAndText,
         18 => LayoutType::TitleAndVerticalText,
         _ => LayoutType::TitleAndContent,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// [MS-ODRAW] `fillFocus` is where the back colour sits; LibreOffice draws 0° from the top
+    /// (#1137 review: the linear gradient's colours were reversed, the radial one inside out).
+    #[test]
+    fn shaded_fills_put_the_back_colour_at_the_focus() {
+        let (fg, bg) = (ColorRef::rgb(Rgba::rgb(255, 0, 0)), ColorRef::rgb(Rgba::rgb(0, 0, 255)));
+        let at = |stops: &[deckcraft_model::style::GradientStop]| stops.iter().map(|s| (s.pos, s.color == fg)).collect::<Vec<_>>();
+        assert_eq!(at(&gradient_stops(0, &fg, &bg)), [(0.0, false), (1.0, true)]);
+        assert_eq!(at(&gradient_stops(100, &fg, &bg)), [(0.0, true), (1.0, false)]);
+        assert_eq!(at(&gradient_stops(-50, &fg, &bg)), [(0.0, true), (0.5, false), (1.0, true)]);
+        // 0° and -180° start at the top, -90° on the left, -270° on the right, -315° at the
+        // bottom right (DrawingML: 90° runs top to bottom, 0° left to right).
+        for (a, dm) in [(0.0, 90.0), (-90.0, 0.0), (-180.0, 90.0), (-270.0, 180.0), (-315.0, 225.0), (-45.0, 315.0)] {
+            assert_eq!(linear_angle(a), dm, "{a}");
+        }
     }
 }

@@ -88,6 +88,9 @@ pub struct Cf {
     pub color: Option<TextColor>,
     /// Superscript (positive) or subscript (negative) offset, percent of the size.
     pub position: Option<i16>,
+    /// `pp9rt`: the index of the paragraph's PowerPoint 2000 formatting (numbering) in the text's
+    /// `StyleTextProp9Atom`.
+    pub pp9rt: Option<u8>,
 }
 
 impl Cf {
@@ -95,7 +98,7 @@ impl Cf {
         macro_rules! over {
             ($($f:ident),*) => { $( if o.$f.is_some() { self.$f = o.$f; } )* };
         }
-        over!(bold, italic, underline, shadow, font, ea_font, symbol_font, size, color, position);
+        over!(bold, italic, underline, shadow, font, ea_font, symbol_font, size, color, position, pp9rt);
     }
 }
 
@@ -186,6 +189,10 @@ pub fn read_cf(c: &mut Cursor) -> Option<Cf> {
                 *slot = Some(s & (1 << b) != 0);
             }
         }
+        // fHasStyle (bits 10–13) says pp9rt, the same four bits of fontStyle, is given.
+        if m & 0x3C00 != 0 {
+            cf.pp9rt = Some(((s >> 10) & 0xF) as u8);
+        }
     }
     if bit(m, 16) {
         cf.font = Some(c.u16()?);
@@ -223,6 +230,97 @@ pub fn read_cf(c: &mut Cursor) -> Option<Cf> {
         c.u32()?; // pp11ext
     }
     Some(cf)
+}
+
+/// A paragraph's PowerPoint 2000 formatting (`TextPFException9`): its automatic numbering.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Pf9 {
+    /// `fBulletHasAutoNumber` with `bulletAutoNumberScheme`: the scheme and the first number.
+    pub auto_number: Option<(u16, i16)>,
+}
+
+/// The entries of a `StyleTextProp9Atom` ([MS-PPT] §2.9.33): each a `TextPFException9`, a
+/// `TextCFException9` and a `TextSIException`, indexed by the runs' `pp9rt`. Reading stops at an
+/// entry with a field this reader can't size, keeping the entries before it.
+pub fn read_style9(b: &[u8]) -> Vec<Pf9> {
+    let mut c = Cursor::new(b);
+    let mut out = vec![];
+    // pp9rt has four bits, so sixteen entries are all a run can name.
+    while out.len() < 16 && c.remaining() > 0 {
+        let Some(pf9) = read_pf9(&mut c) else { break };
+        out.push(pf9);
+        // TextCFException9: the extension fields of a character mask.
+        let Some(m) = c.u32() else { break };
+        if m & !((1 << 20) | (1 << 24) | (1 << 25) | (1 << 26)) != 0 {
+            break;
+        }
+        let ok = (!bit(m, 20) || c.u32().is_some())
+            && (!bit(m, 24) || c.u16().is_some())
+            && (!bit(m, 25) || c.u16().is_some())
+            && (!bit(m, 26) || c.u32().is_some());
+        // TextSIException: spelling, language, alternate language, bidi, pp10 extension, smart tags.
+        if !ok || read_si(&mut c).is_none() {
+            break;
+        }
+    }
+    out
+}
+
+fn read_pf9(c: &mut Cursor) -> Option<Pf9> {
+    let m = c.u32()?;
+    if bit(m, 23) {
+        c.i16()?; // bulletBlipRef
+    }
+    let has_auto = if bit(m, 25) { Some(c.u16()? != 0) } else { None };
+    let scheme = if bit(m, 24) { Some((c.u16()?, c.i16()?)) } else { None };
+    if bit(m, 26) {
+        c.u32()?; // pp10 extension
+    }
+    Some(Pf9 { auto_number: if has_auto == Some(true) { Some(scheme.unwrap_or((3, 1))) } else { None } })
+}
+
+fn read_si(c: &mut Cursor) -> Option<()> {
+    let m = c.u32()?;
+    if m & !0x027F != 0 {
+        return None;
+    }
+    for b in [0, 1, 2, 6] {
+        if bit(m, b) {
+            c.u16()?;
+        }
+    }
+    if bit(m, 5) {
+        c.u32()?; // pp10runid and reserved
+    }
+    if bit(m, 9) {
+        let n = c.u32()?;
+        for _ in 0..n {
+            c.u32()?;
+        }
+    }
+    Some(())
+}
+
+/// The DrawingML numbering scheme of a `TextAutoNumberSchemeEnum` value.
+pub fn auto_number_scheme(v: u16) -> &'static str {
+    match v {
+        0 => "alphaLcPeriod",
+        1 => "alphaUcPeriod",
+        2 => "arabicParenR",
+        4 => "romanLcParenBoth",
+        5 => "romanLcParenR",
+        6 => "romanLcPeriod",
+        7 => "romanUcPeriod",
+        8 => "alphaLcParenBoth",
+        9 => "alphaLcParenR",
+        10 => "alphaUcParenBoth",
+        11 => "alphaUcParenR",
+        12 => "arabicParenBoth",
+        13 => "arabicPlain",
+        14 => "romanUcParenBoth",
+        15 => "romanUcParenR",
+        _ => "arabicPeriod",
+    }
 }
 
 /// Text types (`TextHeaderAtom.textType`).
@@ -343,6 +441,8 @@ pub struct TextBlock {
     pub fields: Vec<(u32, FieldKind)>,
     /// An `OutlineTextRefAtom`: the text is the n-th outline block of the slide list entry.
     pub outline_ref: Option<u32>,
+    /// The slide list's outline block this text was read from.
+    pub outline_index: Option<usize>,
 }
 
 /// Read a text block from a run of records starting at its `TextHeaderAtom` (inside a client text
@@ -450,6 +550,24 @@ pub(crate) mod tests {
         v.extend_from_slice(&size.to_le_bytes());
         v.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFE]);
         v
+    }
+
+    /// The `StyleTextProp9Atom` entries as PowerPoint writes them: three, the second numbered "1."
+    /// from 1. Short or unknown data keeps the entries read before it.
+    #[test]
+    fn reads_numbering_entries() {
+        let mut b = vec![0u8; 12];
+        b.extend_from_slice(&[0, 0, 0, 3, 1, 0, 3, 0, 1, 0]);
+        b.extend_from_slice(&[0; 8]);
+        b.extend_from_slice(&[0; 12]);
+        let e = read_style9(&b);
+        assert_eq!(e.iter().map(|p| p.auto_number).collect::<Vec<_>>(), [None, Some((3, 1)), None]);
+        assert_eq!(read_style9(b.get(..20).unwrap()).len(), 1);
+        assert_eq!(read_style9(b.get(..22).unwrap()).len(), 2);
+        assert_eq!(read_style9(&[0xFF; 64]).len(), 1);
+        assert!(read_style9(&[]).is_empty());
+        assert_eq!(auto_number_scheme(3), "arabicPeriod");
+        assert_eq!(auto_number_scheme(0), "alphaLcPeriod");
     }
 
     #[test]
