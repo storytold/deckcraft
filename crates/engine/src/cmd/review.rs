@@ -1,4 +1,4 @@
-//! Review tab: comments, spelling, accessibility; Slide Show requests.
+//! Review tab: comments, spelling, accessibility, text contrast; Slide Show requests.
 
 use std::sync::Arc;
 
@@ -9,6 +9,10 @@ use super::{
     CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param, usize_param,
 };
 use crate::{Result, Session, Target, UiRequest};
+
+mod contrast;
+#[cfg(test)]
+mod contrast_tests;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -36,6 +40,15 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| neighbour(s, p, false)
         ),
         cmd!(query "review.accessibility", "Check Accessibility", ["Review", "Accessibility"], None, "{} → [{slide, shape, issue}]", has_doc, accessibility),
+        cmd!(
+            query "review.contrast",
+            "Text Contrast",
+            [],
+            None,
+            "{slide?: index (default the current slide), ids?: [shape id] (default every text shape on the slide; a group id takes its members), level?: AA|AAA (default AA), scale?: pixels per point 0.25..4 (default 1)} → [{slide, shape, para, run, text, color, sizePt, bold, required, ratio: {min, p5, median}, passShare, backdrop: solid|gradient|picture|pattern|shapeFill|mixed}] (one entry per text run: the slide is drawn without the shape's text, and each pixel under the run's glyph boxes, advance wide and ascent to descent, is compared with the run's colour drawn over it, by WCAG relative luminance; ratio holds the smallest, 5th-percentile and median contrast, passShare the share of pixels at or above required; required is 4.5, or 3 for large text (18 pt, or 14 pt bold), and 7 or 4.5 at AAA, judged on sizePt, the size drawn after autofit, and bold, a face of weight 700 or more or synthetic bold; backdrop names what lies behind the run: the shape's own fill, shapes drawn before it, layout and master graphics, then the slide background, or mixed when more than one shows; group members are included; tables, layout and master text, warped text, runs with no fill and colour-font glyphs are left out; gradient text is measured with its first colour; at most 64 text shapes and 5000 runs per call; scale is lowered to keep a drawing within 16 million pixels)",
+            has_slide,
+            contrast::contrast
+        ),
         cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}] (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; Hunspell dictionaries installed on the system, else a built-in list of common misspellings)", has_doc, spelling),
         cmd!(
             "review.spellingChange",
