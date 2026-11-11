@@ -2,8 +2,8 @@
 
 use serde_json::{Value, json};
 
+use crate::Session;
 use crate::tools::{Mods, PointerEvent, PointerKind};
-use crate::*;
 
 /// A blank slide with A, B, C (back to front) and G = group [D, H = group [E, F]] in front.
 fn deck() -> (Session, Vec<u32>) {

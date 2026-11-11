@@ -37,4 +37,5 @@ $FF $VID $TONE44 -c:v libx264 -pix_fmt yuv420p -g 5 -bf 2 -c:a aac -b:a 48k -sho
 $FF $VID -c:v libx264 -pix_fmt yuv420p -g 5 -bf 0 $META clip-h264.mov
 $FF $VID -c:v libx265 -pix_fmt yuv420p -x265-params log-level=error:keyint=5 -tag:v hvc1 $META clip-hevc.mp4
 $FF $VID $TONE -c:v libvpx-vp9 -pix_fmt yuv420p -g 5 -b:v 100k -c:a libopus -b:a 32k -shortest $META clip-vp9.webm
+$FF $VID $TONE44 -c:v libvpx -pix_fmt yuv420p -g 5 -b:v 100k -deadline realtime -c:a vorbis -strict -2 -ac 2 -b:a 48k -shortest $META clip-vp8.webm
 $FF -f rawvideo -pix_fmt rgb24 -s 64x64 -r 10 -i "$TMP_DIR/deckcraft-fixture-64x64.rgb" -c:v libsvtav1 -pix_fmt yuv420p -g 5 -svtav1-params loglevel=0 $META clip-av1.mkv

@@ -9,7 +9,7 @@ use deckcraft_model::{MediaId, ShapeId, ShapeKind};
 use image::{GrayImage, Rgba, RgbaImage};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, cmd, has_selection, str_param, targets};
 use crate::{Result, Session};
 
 /// The effects offered: `a14` element name and label.

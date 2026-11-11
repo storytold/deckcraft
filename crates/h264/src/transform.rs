@@ -91,11 +91,21 @@ fn clip_u8(v: i32) -> u8 {
     v.clamp(0, 255) as u8
 }
 
+/// A dequantised coefficient the inverse transforms are defined for: the dequantisation wraps
+/// by design (see [`huge_levels_dequantise_without_overflow_panics`]), so their butterflies
+/// clamp an r outside −2^15..2^15−1 to this range — where the spec leaves the output
+/// unspecified anyway (8.5.12.1, 8.5.13.1) — instead of overflowing the plain i32 additions.
+#[inline(always)]
+fn r_clamp(v: i32) -> i32 {
+    v.clamp(-(1 << 15), (1 << 15) - 1)
+}
+
 /// Inverse 4x4 transform of raster-order `d` and add to `dst` (8.5.12.2, 8.5.14).
 ///
 /// Rows first, then columns (the spec's order: the `>> 1` steps make it matter). The column
 /// pass and the reconstruction run across all columns at once so they vectorise.
 pub fn idct4_add(d: &[i32; 16], dst: &mut [u8], stride: usize) {
+    let d: [i32; 16] = std::array::from_fn(|i| r_clamp(d[i]));
     let mut t = [[0i32; 4]; 4];
     for (i, row) in t.iter_mut().enumerate() {
         let r = &d[i * 4..i * 4 + 4];
@@ -161,6 +171,7 @@ fn idct8_1d(d: [i32; 8]) -> [i32; 8] {
 /// Inverse 8x8 transform of raster-order `d` and add to `dst` (8.5.13.2): rows, then columns,
 /// the column pass and reconstruction across all columns at once (they vectorise).
 pub fn idct8_add(d: &[i32; 64], dst: &mut [u8], stride: usize) {
+    let d: [i32; 64] = std::array::from_fn(|i| r_clamp(d[i]));
     let mut t = [[0i32; 8]; 8];
     for (row, src) in t.iter_mut().zip(d.as_chunks::<8>().0) {
         *row = idct8_1d(*src);
@@ -303,5 +314,33 @@ mod tests {
         let _ = scale4(i32::MAX, 16 * 25, 0);
         let _ = scale8(i32::MIN, 16 * 25, 51);
         let _ = scale8(i32::MIN, 16 * 25, 0);
+    }
+
+    /// The same wrapping dequantisation hands the inverse transforms any i32 coefficient, and
+    /// their butterflies add in plain i32: `i32::MAX + i32::MAX` panicked a debug build. The
+    /// spec leaves the transforms' output unspecified when a dequantised value falls outside
+    /// −2^15..2^15−1 (8.5.12.1, 8.5.13.1), so those inputs are clamped to that range —
+    /// bit-exact for every stream inside it — instead of panicking.
+    #[test]
+    fn huge_coefficients_are_clamped_to_the_spec_r_range() {
+        assert_eq!(r_clamp(-32769), -32768);
+        assert_eq!(r_clamp(-32768), -32768);
+        assert_eq!(r_clamp(32767), 32767);
+        assert_eq!(r_clamp(32768), 32767);
+        let clamp = |v: i32| v.clamp(-(1 << 15), (1 << 15) - 1);
+        for d in [[i32::MAX; 16], [i32::MIN; 16], std::array::from_fn(|i| if i % 2 == 0 { i32::MIN } else { i32::MAX })] {
+            let clamped = std::array::from_fn(|i| clamp(d[i]));
+            let (mut a, mut b) = ([0u8; 64], [0u8; 64]);
+            idct4_add(&d, &mut a, 8);
+            idct4_add(&clamped, &mut b, 8);
+            assert_eq!(a, b, "idct4 of extremes equals idct4 of the spec range");
+        }
+        for d in [[i32::MIN; 64], [i32::MAX; 64]] {
+            let clamped = std::array::from_fn(|i| clamp(d[i]));
+            let (mut a, mut b) = ([0u8; 64], [0u8; 64]);
+            idct8_add(&d, &mut a, 8);
+            idct8_add(&clamped, &mut b, 8);
+            assert_eq!(a, b, "idct8 of extremes equals idct8 of the spec range");
+        }
     }
 }

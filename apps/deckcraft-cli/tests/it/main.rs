@@ -1,4 +1,6 @@
 mod cli;
+#[cfg(unix)]
+mod closed_stdout;
 mod convert;
 mod damaged;
 // Integration tests: unwrapping and panicking on failure is fine here, unlike in shipped code (AGENTS.md).

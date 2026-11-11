@@ -3,7 +3,7 @@
 
 use crate::error::{Result, ensure};
 use crate::picture::{FrameRef, RefPic};
-use crate::slice::{Mmco, SliceHeader, SliceType};
+use crate::slice::{Mmco, RefPicListMod, SliceHeader, SliceType};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +174,116 @@ impl Dpb {
         }
     }
 
+    /// Initial reference picture lists (8.2.4.2) as DPB entries.
+    fn initial_entry_lists<'a>(
+        sh: &SliceHeader,
+        cur_poc: i32,
+        short: &[&'a DpbEntry],
+        long: &[&'a DpbEntry],
+        pic_num: impl Fn(&DpbEntry) -> i32,
+    ) -> [Vec<&'a DpbEntry>; 2] {
+        let mut entry_lists: [Vec<&'a DpbEntry>; 2] = [Vec::new(), Vec::new()];
+        if sh.slice_type != SliceType::B {
+            let mut s = short.to_vec();
+            s.sort_by_key(|e| std::cmp::Reverse(pic_num(e)));
+            entry_lists[0] = s.into_iter().chain(long.iter().copied()).collect();
+        } else {
+            let mut before: Vec<&'a DpbEntry> = short.iter().copied().filter(|e| e.poc < cur_poc).collect();
+            let mut after: Vec<&'a DpbEntry> = short.iter().copied().filter(|e| e.poc > cur_poc).collect();
+            before.sort_by_key(|e| std::cmp::Reverse(e.poc));
+            after.sort_by_key(|e| e.poc);
+            entry_lists[0] = before.iter().chain(after.iter()).chain(long.iter()).copied().collect();
+            entry_lists[1] = after.iter().chain(before.iter()).chain(long.iter()).copied().collect();
+            if entry_lists[1].len() > 1 && entry_lists[0].len() == entry_lists[1].len() {
+                let same = entry_lists[0].iter().zip(entry_lists[1].iter()).all(|(a, b)| std::ptr::eq(*a, *b));
+                if same {
+                    entry_lists[1].swap(0, 1);
+                }
+            }
+        }
+        entry_lists
+    }
+
+    /// picNumLXNoWrap (8-34, 8-35) of a short-term modification from the predictor `pred`, and the
+    /// picNum it selects.
+    fn short_term_pic_nums(pred: i32, idc: u32, value: u32, curr_pic_num: i32, max_pic_num: i32) -> (i32, i32) {
+        let d = value as i32 + 1;
+        let no_wrap = if idc == 0 {
+            if pred - d < 0 { pred - d + max_pic_num } else { pred - d }
+        } else if pred + d >= max_pic_num {
+            pred + d - max_pic_num
+        } else {
+            pred + d
+        };
+        let pn = if no_wrap > curr_pic_num { no_wrap - max_pic_num } else { no_wrap };
+        (no_wrap, pn)
+    }
+
+    /// Puts `target` at `ref_idx` and shifts the rest of the list up, then drops the later entries
+    /// that repeat it (8.2.4.3.1, 8.2.4.3.2) and keeps the list `n` long.
+    fn insert_ref<'a>(list: &mut Vec<Option<&'a DpbEntry>>, ref_idx: usize, n: usize, target: &'a DpbEntry, is_long: bool) {
+        for c in (ref_idx + 1..=n).rev() {
+            list[c] = list[c - 1];
+        }
+        list[ref_idx] = Some(target);
+        let mut nidx = ref_idx + 1;
+        for c in ref_idx + 1..=n {
+            let keep = match list[c] {
+                None => true,
+                Some(e) => {
+                    if is_long {
+                        !(e.mark == RefMark::Long && e.long_term_frame_idx == target.long_term_frame_idx)
+                    } else {
+                        !(e.mark == RefMark::Short && std::ptr::eq(e, target))
+                    }
+                }
+            };
+            if keep {
+                list[nidx] = list[c];
+                nidx += 1;
+            }
+        }
+        list.truncate(n);
+    }
+
+    /// Reference picture list modification (8.2.4.3) of one list; `n` is num_ref_idx_active.
+    fn modify_ref_list<'a>(
+        list: &mut Vec<Option<&'a DpbEntry>>,
+        mods: &[RefPicListMod],
+        n: usize,
+        cur_fn: u32,
+        max_frame_num: u32,
+        short: &[&'a DpbEntry],
+        long: &[&'a DpbEntry],
+    ) -> Result<()> {
+        let max_pic_num = max_frame_num as i32;
+        let curr_pic_num = cur_fn as i32;
+        let mut pred = curr_pic_num;
+        let mut ref_idx = 0usize;
+        for m in mods {
+            ensure!(ref_idx < n, "too many ref_pic_list_modification entries");
+            list.push(None); // temporarily one longer
+            let (target, is_long): (Option<&DpbEntry>, bool) = match m.idc {
+                0 | 1 => {
+                    let (no_wrap, pn) = Self::short_term_pic_nums(pred, m.idc, m.value, curr_pic_num, max_pic_num);
+                    pred = no_wrap;
+                    (short.iter().copied().find(|e| Self::frame_num_wrap(e, cur_fn, max_frame_num) == pn), false)
+                }
+                2 => (long.iter().copied().find(|e| e.long_term_frame_idx == m.value), true),
+                _ => continue,
+            };
+            let Some(target) = target else {
+                // Missing picture: keep the list unchanged (error concealment).
+                list.pop();
+                ref_idx += 1;
+                continue;
+            };
+            Self::insert_ref(list, ref_idx, n, target, is_long);
+            ref_idx += 1;
+        }
+        Ok(())
+    }
+
     /// Initial reference picture lists (8.2.4.2) + modification (8.2.4.3) for a frame slice.
     pub fn build_ref_lists(&self, sh: &SliceHeader, cur_poc: i32, max_frame_num: u32) -> Result<[Vec<RefPic>; 2]> {
         let mut lists: [Vec<RefPic>; 2] = [Vec::new(), Vec::new()];
@@ -186,25 +296,7 @@ impl Dpb {
         let mut long: Vec<&DpbEntry> = self.entries.iter().filter(|e| e.mark == RefMark::Long).collect();
         long.sort_by_key(|e| e.long_term_frame_idx);
         let to_ref = |e: &&DpbEntry| RefPic { frame: e.frame.clone(), long_term: e.mark == RefMark::Long };
-        let mut entry_lists: [Vec<&DpbEntry>; 2] = [Vec::new(), Vec::new()];
-        if sh.slice_type != SliceType::B {
-            let mut s = short.clone();
-            s.sort_by_key(|e| std::cmp::Reverse(pic_num(e)));
-            entry_lists[0] = s.into_iter().chain(long.iter().copied()).collect();
-        } else {
-            let mut before: Vec<&DpbEntry> = short.iter().copied().filter(|e| e.poc < cur_poc).collect();
-            let mut after: Vec<&DpbEntry> = short.iter().copied().filter(|e| e.poc > cur_poc).collect();
-            before.sort_by_key(|e| std::cmp::Reverse(e.poc));
-            after.sort_by_key(|e| e.poc);
-            entry_lists[0] = before.iter().chain(after.iter()).chain(long.iter()).copied().collect();
-            entry_lists[1] = after.iter().chain(before.iter()).chain(long.iter()).copied().collect();
-            if entry_lists[1].len() > 1 && entry_lists[0].len() == entry_lists[1].len() {
-                let same = entry_lists[0].iter().zip(entry_lists[1].iter()).all(|(a, b)| std::ptr::eq(*a, *b));
-                if same {
-                    entry_lists[1].swap(0, 1);
-                }
-            }
-        }
+        let entry_lists = Self::initial_entry_lists(sh, cur_poc, &short, &long, pic_num);
         let nlists = if sh.slice_type == SliceType::B { 2 } else { 1 };
         for l in 0..nlists {
             let n = sh.num_ref_idx_active[l] as usize;
@@ -212,60 +304,7 @@ impl Dpb {
             list.truncate(n);
             list.resize(n, None);
             if !sh.ref_pic_list_mod[l].is_empty() {
-                let max_pic_num = max_frame_num as i32;
-                let curr_pic_num = cur_fn as i32;
-                let mut pred = curr_pic_num;
-                let mut ref_idx = 0usize;
-                for m in &sh.ref_pic_list_mod[l] {
-                    ensure!(ref_idx < n, "too many ref_pic_list_modification entries");
-                    list.push(None); // temporarily one longer
-                    let (target, is_long): (Option<&DpbEntry>, bool) = match m.idc {
-                        0 | 1 => {
-                            let d = m.value as i32 + 1;
-                            let no_wrap = if m.idc == 0 {
-                                if pred - d < 0 { pred - d + max_pic_num } else { pred - d }
-                            } else if pred + d >= max_pic_num {
-                                pred + d - max_pic_num
-                            } else {
-                                pred + d
-                            };
-                            pred = no_wrap;
-                            let pn = if no_wrap > curr_pic_num { no_wrap - max_pic_num } else { no_wrap };
-                            (short.iter().copied().find(|e| pic_num(e) == pn), false)
-                        }
-                        2 => (long.iter().copied().find(|e| e.long_term_frame_idx == m.value), true),
-                        _ => continue,
-                    };
-                    let Some(target) = target else {
-                        // Missing picture: keep the list unchanged (error concealment).
-                        list.pop();
-                        ref_idx += 1;
-                        continue;
-                    };
-                    for c in (ref_idx + 1..=n).rev() {
-                        list[c] = list[c - 1];
-                    }
-                    list[ref_idx] = Some(target);
-                    ref_idx += 1;
-                    let mut nidx = ref_idx;
-                    for c in ref_idx..=n {
-                        let keep = match list[c] {
-                            None => true,
-                            Some(e) => {
-                                if is_long {
-                                    !(e.mark == RefMark::Long && e.long_term_frame_idx == target.long_term_frame_idx)
-                                } else {
-                                    !(e.mark == RefMark::Short && std::ptr::eq(e, target))
-                                }
-                            }
-                        };
-                        if keep {
-                            list[nidx] = list[c];
-                            nidx += 1;
-                        }
-                    }
-                    list.truncate(n);
-                }
+                Self::modify_ref_list(&mut list, &sh.ref_pic_list_mod[l], n, cur_fn, max_frame_num, &short, &long)?;
             }
             // Fill missing entries (should not happen in conforming streams) with the first valid entry.
             let fallback = list.iter().flatten().next().copied().or_else(|| self.entries.last());
@@ -275,85 +314,77 @@ impl Dpb {
         Ok(lists)
     }
 
+    /// Marks as unused every entry in state `mark` that `hit` selects.
+    fn unmark_where(&mut self, mark: RefMark, hit: impl Fn(&DpbEntry) -> bool) {
+        for e in &mut self.entries {
+            if e.mark == mark && hit(e) {
+                e.mark = RefMark::Unused;
+            }
+        }
+    }
+
+    /// Makes every short-term entry that `hit` selects a long-term one with index `idx`.
+    fn mark_long_where(&mut self, hit: impl Fn(&DpbEntry) -> bool, idx: u32) {
+        for e in &mut self.entries {
+            if e.mark == RefMark::Short && hit(e) {
+                e.mark = RefMark::Long;
+                e.long_term_frame_idx = idx;
+            }
+        }
+    }
+
+    /// One memory management control operation; returns true for MMCO 5.
+    fn apply_mmco(&mut self, m: &Mmco, cur_frame_num: u32, max_frame_num: u32, cur_long: &mut Option<u32>) -> bool {
+        let mut had5 = false;
+        let curr_pic_num = cur_frame_num as i32;
+        match m.op {
+            1 => {
+                let pn = curr_pic_num - (m.difference_of_pic_nums_minus1 as i32 + 1);
+                self.unmark_where(RefMark::Short, |e| Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn);
+            }
+            2 => self.unmark_where(RefMark::Long, |e| e.long_term_frame_idx == m.long_term_pic_num),
+            3 => {
+                let pn = curr_pic_num - (m.difference_of_pic_nums_minus1 as i32 + 1);
+                self.unmark_where(RefMark::Long, |e| e.long_term_frame_idx == m.long_term_frame_idx);
+                self.mark_long_where(|e| Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn, m.long_term_frame_idx);
+            }
+            4 => {
+                let max = m.max_long_term_frame_idx_plus1;
+                self.unmark_where(RefMark::Long, |e| max == 0 || e.long_term_frame_idx > max - 1);
+                self.max_long_term_frame_idx = if max == 0 { None } else { Some(max - 1) };
+            }
+            5 => {
+                for e in &mut self.entries {
+                    e.mark = RefMark::Unused;
+                }
+                self.max_long_term_frame_idx = None;
+                had5 = true;
+            }
+            6 => {
+                // Only an index within the allowed range may be assigned (8.2.5.4.6).
+                let allowed = self.max_long_term_frame_idx.is_some_and(|max| m.long_term_frame_idx <= max);
+                if allowed {
+                    self.unmark_where(RefMark::Long, |e| e.long_term_frame_idx == m.long_term_frame_idx);
+                    *cur_long = Some(m.long_term_frame_idx);
+                }
+            }
+            _ => {}
+        }
+        had5
+    }
+
     /// Adaptive memory control (8.2.5.4). Returns true if MMCO 5 was executed.
     fn apply_mmcos(&mut self, mmcos: &[Mmco], cur_frame_num: u32, max_frame_num: u32, cur_long: &mut Option<u32>) -> bool {
         let mut had5 = false;
-        let curr_pic_num = cur_frame_num as i32;
         for m in mmcos {
-            match m.op {
-                1 => {
-                    let pn = curr_pic_num - (m.difference_of_pic_nums_minus1 as i32 + 1);
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Short && Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn {
-                            e.mark = RefMark::Unused;
-                        }
-                    }
-                }
-                2 => {
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_pic_num {
-                            e.mark = RefMark::Unused;
-                        }
-                    }
-                }
-                3 => {
-                    let pn = curr_pic_num - (m.difference_of_pic_nums_minus1 as i32 + 1);
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_frame_idx {
-                            e.mark = RefMark::Unused;
-                        }
-                    }
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Short && Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn {
-                            e.mark = RefMark::Long;
-                            e.long_term_frame_idx = m.long_term_frame_idx;
-                        }
-                    }
-                }
-                4 => {
-                    let max = m.max_long_term_frame_idx_plus1;
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Long && (max == 0 || e.long_term_frame_idx > max - 1) {
-                            e.mark = RefMark::Unused;
-                        }
-                    }
-                    self.max_long_term_frame_idx = if max == 0 { None } else { Some(max - 1) };
-                }
-                5 => {
-                    for e in &mut self.entries {
-                        e.mark = RefMark::Unused;
-                    }
-                    self.max_long_term_frame_idx = None;
-                    had5 = true;
-                }
-                6 => {
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_frame_idx {
-                            e.mark = RefMark::Unused;
-                        }
-                    }
-                    *cur_long = Some(m.long_term_frame_idx);
-                }
-                _ => {}
-            }
+            had5 |= self.apply_mmco(m, cur_frame_num, max_frame_num, cur_long);
         }
         self.prune();
         had5
     }
 
-    /// Reference marking for the just-decoded picture and insertion into the DPB with output bumping.
-    /// Returns pictures ready for output.
-    #[allow(clippy::too_many_arguments)]
-    pub fn store_picture(
-        &mut self,
-        sh: &SliceHeader,
-        frame: FrameRef,
-        poc: i32,
-        max_frame_num: u32,
-        max_num_ref_frames: usize,
-        meta: Arc<OutputMeta>,
-        out: &mut Vec<Output>,
-    ) {
+    /// Reference marking of the current picture (8.2.5); returns (mark, long-term idx, MMCO 5 executed).
+    fn mark_current(&mut self, sh: &SliceHeader, max_frame_num: u32, max_num_ref_frames: usize) -> (RefMark, u32, bool) {
         let mut mark = RefMark::Unused;
         let mut long_idx = 0;
         let mut had5 = false;
@@ -385,12 +416,12 @@ impl Dpb {
                 }
             }
         }
-        if had5 {
-            // All earlier pictures are output before the current one (C.4.4).
-            self.flush(out);
-        }
-        let frame_num = if had5 { 0 } else { sh.frame_num };
-        // Bumping until there is space (C.4.5.1 / C.4.5.2).
+        (mark, long_idx, had5)
+    }
+
+    /// Bumping until there is space (C.4.5.1 / C.4.5.2). Returns true when the (non-reference) current
+    /// picture has the smallest POC and is to be output directly instead of being stored.
+    fn bump_for_space(&mut self, mark: RefMark, poc: i32, out: &mut Vec<Output>) -> bool {
         if mark == RefMark::Unused {
             loop {
                 let waiting = self.entries.len();
@@ -400,8 +431,7 @@ impl Dpb {
                 // non-reference picture with the smallest POC is output directly
                 let min_poc = self.entries.iter().filter(|e| e.needed_for_output).map(|e| e.poc).min();
                 if min_poc.is_none_or(|m| poc < m) {
-                    out.push(Output { frame, poc, meta });
-                    return;
+                    return true;
                 }
                 if !self.bump(out) {
                     break;
@@ -410,9 +440,40 @@ impl Dpb {
         } else {
             while self.entries.len() >= self.capacity {
                 if !self.bump(out) {
+                    if let Some(pos) = self.entries.iter().position(|e| !e.needed_for_output) {
+                        self.entries.remove(pos);
+                    } else {
+                        self.entries.remove(0);
+                    }
                     break;
                 }
             }
+        }
+        false
+    }
+
+    /// Reference marking for the just-decoded picture and insertion into the DPB with output bumping.
+    /// Returns pictures ready for output.
+    #[allow(clippy::too_many_arguments)]
+    pub fn store_picture(
+        &mut self,
+        sh: &SliceHeader,
+        frame: FrameRef,
+        poc: i32,
+        max_frame_num: u32,
+        max_num_ref_frames: usize,
+        meta: Arc<OutputMeta>,
+        out: &mut Vec<Output>,
+    ) {
+        let (mark, long_idx, had5) = self.mark_current(sh, max_frame_num, max_num_ref_frames);
+        if had5 {
+            // All earlier pictures are output before the current one (C.4.4).
+            self.flush(out);
+        }
+        let frame_num = if had5 { 0 } else { sh.frame_num };
+        if self.bump_for_space(mark, poc, out) {
+            out.push(Output { frame, poc, meta });
+            return;
         }
         self.entries.push(DpbEntry {
             frame,

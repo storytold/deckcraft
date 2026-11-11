@@ -39,8 +39,9 @@ pub struct State {
     image: deckcraft_render::Image,
 }
 
+/// Derive a unique egui id for an eyedropper menu target name.
 fn key(name: &str) -> Id {
-    Id::new(name)
+    Id::unique(name)
 }
 
 /// The colour menu button whose menu is open (noted by `color_popup` every frame it is).

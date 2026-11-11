@@ -96,3 +96,54 @@ fn an_old_ole_object_shows_its_vml_preview() {
 fn an_ole_object_without_a_matching_vml_shape_has_no_preview() {
     assert_eq!(object_preview(&ole_deck("_x0000_s1")), None);
 }
+
+/// PowerPoint 2010 and later: `p:oleObj` with a fallback `p:pic` inside `mc:AlternateContent`, whose
+/// `spPr` can give the object a fill and an outline (old equation objects on coloured boxes).
+#[test]
+fn an_ole_objects_fallback_picture_gives_it_its_fill_and_outline() {
+    let pic = |spr: &str| {
+        format!(
+            r#"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="900" name="Object 3"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:v="urn:schemas-microsoft-com:vml" Requires="v"><p:oleObj name="Equation" r:id="rIdOle" imgW="1663700" imgH="228600" progId="Equation.3"><p:embed/></p:oleObj></mc:Choice><mc:Fallback><p:oleObj name="Equation" r:id="rIdOle" imgW="1663700" imgH="228600" progId="Equation.3"><p:embed/><p:pic><p:nvPicPr><p:cNvPr id="0" name="Object 3"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{spr}</p:spPr></p:pic></p:oleObj></mc:Fallback></mc:AlternateContent></a:graphicData></a:graphic></p:graphicFrame>"#
+        )
+    };
+    let deck = |frame: String| {
+        with_parts(&[("ppt/media/eq.png", png()), ("ppt/embeddings/oleObject1.bin", vec![0; 16])], move |name, s| {
+            if name == "ppt/slides/slide1.xml" {
+                s.replacen("</p:spTree>", &format!("{frame}</p:spTree>"), 1)
+            } else if name == "ppt/slides/_rels/slide1.xml.rels" {
+                s.replacen(
+                    "</Relationships>",
+                    r#"<Relationship Id="rIdImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/eq.png"/><Relationship Id="rIdOle" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="../embeddings/oleObject1.bin"/></Relationships>"#,
+                    1,
+                )
+            } else {
+                s
+            }
+        })
+    };
+    let object = |bytes: Vec<u8>| {
+        let p = deckcraft_pptx::import(&bytes).expect("import");
+        let s = p.slides[0].shapes.iter().find(|s| s.name == "Object 3").expect("object").clone();
+        assert!(matches!(&s.kind, ShapeKind::Opaque { preview: Some(_), label, .. } if label == "Equation.3"), "{:?}", s.kind);
+        s
+    };
+    let filled = object(deck(pic(
+        r#"<a:solidFill><a:srgbClr val="FF9900"/></a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln>"#,
+    )));
+    let orange = deckcraft_model::style::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0xFF, 0x99, 0)));
+    assert_eq!(filled.fill, Some(orange.clone()));
+    assert_eq!(filled.line.as_ref().and_then(|l| l.width), Some(1.0));
+    // Saved as its preview picture (its kept XML can't be written back), it keeps the fill.
+    let mut p = deckcraft_pptx::import(&deck(pic(r#"<a:solidFill><a:srgbClr val="FF9900"/></a:solidFill>"#))).expect("import");
+    for s in &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes {
+        if let ShapeKind::Opaque { xml, .. } = &mut s.kind {
+            xml.clear();
+        }
+    }
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("reimport");
+    let saved = back.slides[0].shapes.iter().find(|s| s.name == "Object 3").expect("object");
+    assert!(matches!(saved.kind, ShapeKind::Picture { .. }), "{:?}", saved.kind);
+    assert_eq!(saved.fill, Some(orange));
+    // Without a fill of its own the object stays unfilled.
+    assert_eq!(object(deck(pic(""))).fill, None);
+}

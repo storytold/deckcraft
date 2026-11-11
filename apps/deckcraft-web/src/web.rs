@@ -11,6 +11,8 @@ const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
 const CANVAS_ID: &str = "deckcraft_canvas";
 const LOADING_ID: &str = "deckcraft_loading";
 
+/// Start the browser shell: install logging, locate the canvas, launch the eframe runner,
+/// build the sample or blank deck, and replace the loading element when launch finishes.
 pub fn start() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     wasm_bindgen_futures::spawn_local(async {
@@ -22,8 +24,18 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        // Host modes (`craft-web-host`): `?host=parent`, a same-origin page framing DeckCraft,
+        // opens presentations in it and stores what it saves (`host`); `data-host="page"` on the
+        // canvas opts a page in that runs DeckCraft in its own document. The presenter popup is
+        // never the framed page.
+        let hosted = crate::presenter::token().is_none();
+        let bridge = if hosted { crate::host::Bridge::detect(&canvas) } else { None };
+        if hosted && bridge.is_none() && query_param("host").as_deref() == Some("parent") {
+            log::warn!("?host=parent needs a framing page on the same origin; saves download instead");
+        }
+        let app_bridge = bridge.clone();
         let mut options = eframe::WebOptions::default();
-        if query().contains("webgl")
+        if query_has("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
@@ -36,23 +48,49 @@ pub fn start() {
                     if let Some(rs) = &cc.wgpu_render_state {
                         log::info!("deckcraft-web {}: wgpu backend {:?}", env!("CARGO_PKG_VERSION"), rs.adapter.get_info().backend);
                     }
+                    deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
+                    if let Some(token) = crate::presenter::token() {
+                        let presenter = crate::presenter::Popup::new(token, cc.egui_ctx.clone()).map_err(std::io::Error::other)?;
+                        return Ok(Box::new(presenter) as Box<dyn eframe::App>);
+                    }
                     let inbox: Inbox = Inbox::default();
-                    let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
-                    let q = query();
-                    if !q.contains("blank") {
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone());
+                    if let Some(bridge) = &app_bridge {
+                        bridge.connect(&mut services, cc.egui_ctx.clone());
+                    }
+                    let mut app = SlideApp::new(Session::new(), services);
+                    // In host mode the parent sends the presentation to edit; no sample meanwhile.
+                    if app_bridge.is_some() {
+                        if let Err(e) = app.start_for_host() {
+                            log::error!("new presentation: {e}");
+                        }
+                    } else if !query_has("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                             log::error!("sample deck: {e}");
                         }
                     } else if let Err(e) = app.run("file.new", serde_json::json!({})) {
                         log::error!("new presentation: {e}");
                     }
-                    if q.contains("show") {
+                    if query_has("show") {
                         app.start_show(0, false);
                     }
-                    Ok(Box::new(WebShell { app, inbox }))
+                    if app_bridge.is_some()
+                        && let Some(author) = query_param("author")
+                    {
+                        crate::host::Bridge::set_author(&mut app, &author);
+                    }
+                    crate::api::install(&mut app, cc.egui_ctx.clone());
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
                 }),
             )
             .await;
+        // Ready only once the runner is up: starting can still fail after the app is made.
+        if let Some(bridge) = &bridge {
+            match &result {
+                Ok(()) => bridge.post_ready(),
+                Err(e) => bridge.post_failed(&format!("{e:?}")),
+            }
+        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -66,19 +104,49 @@ fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
 
+fn query_param(key: &str) -> Option<String> {
+    web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
+}
+
+/// Whether the URL has the flag `key` (`?show`, `&blank=1`). A whole parameter, never a substring:
+/// `?author=` is free text.
+fn query_has(key: &str) -> bool {
+    web_sys::UrlSearchParams::new_with_str(&query()).is_ok_and(|q| q.has(key))
+}
+
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)
 /// and feed them through the inbox.
 struct WebShell {
     app: SlideApp,
     inbox: Inbox,
+    /// The parent page that keeps the files (`?host=parent`).
+    bridge: Option<crate::host::Bridge>,
 }
 
 impl eframe::App for WebShell {
+    /// Delegate one eframe logic pass to the wrapped application, opening the files the parent
+    /// page sent first and telling it about unsaved changes after.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
-        for f in dropped {
-            // Capture the document and slide now. The bytes arrive later, after the user may
-            // have switched slides.
+        if let Some(bridge) = &self.bridge {
+            bridge.open_files(&mut self.app);
+        }
+        self.app.logic(ctx);
+        if let Some(bridge) = &self.bridge {
+            bridge.report_dirty(&self.app);
+        }
+        if self.app.show.is_none()
+            && let Some(host) = self.app.services.presenter.as_mut()
+        {
+            host.close();
+        }
+    }
+
+    /// Consume browser drops with fresh input, capture the identity before the asynchronous read,
+    /// and deliver the id, name, and bytes through the inbox.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // Browsers cannot read dropped files synchronously. Consume this pass's drops here, with
+        // fresh input, and capture the document/slide before the asynchronous read finishes.
+        for f in std::mem::take(&mut raw.dropped_files) {
             let id = self.app.begin_external_file("drop");
             let inbox = self.inbox.clone();
             let ctx = ctx.clone();
@@ -97,11 +165,7 @@ impl eframe::App for WebShell {
                 }
             });
         }
-        self.app.logic(ctx);
-    }
-
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.app.raw_input_hook(raw);
+        self.app.raw_input_hook(ctx, raw);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -113,7 +177,15 @@ impl eframe::App for WebShell {
 /// back to `open_async` (browser picker → inbox) and `download`.
 fn services(inbox: Inbox, ctx: egui::Context) -> Services {
     let open_inbox = inbox.clone();
+    let presenter = match crate::presenter::BrowserHost::new(ctx.clone()) {
+        Ok(host) => Some(Box::new(host) as Box<dyn deckcraft_ui_egui::presenter::Host>),
+        Err(error) => {
+            log::error!("Presenter window: {error}");
+            None
+        }
+    };
     Services {
+        presenter,
         open_async: Some(Box::new(move |purpose: &str, request: u64| {
             let inbox = open_inbox.clone();
             let ctx = ctx.clone();

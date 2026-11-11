@@ -420,20 +420,8 @@ impl TileDecoder<'_, '_> {
         let fh = &self.fs.fh;
         for ref_list in 0..1 + is_compound as usize {
             let ref_frame = cand_refs[ref_list];
-            let ym = self.b.y_mode;
-            let global =
-                (ym == GLOBALMV || ym == GLOBAL_GLOBALMV) && ref_frame > INTRA_FRAME as i8 && fh.gm_type[ref_frame as usize] as usize > TRANSLATION;
-            let global_valid = global && setup_shear(&fh.gm_params[ref_frame as usize]).0;
             let ref_idx: i32 = if self.b.use_intrabc { -1 } else { fh.ref_frame_idx[ref_frame as usize - LAST_FRAME] as i32 };
-            let use_warp = if w < 8 || h < 8 || fh.force_integer_mv {
-                0
-            } else if self.b.motion_mode as usize == LOCALWARP && self.b.local_valid {
-                1
-            } else if global && !self.is_scaled_ref(ref_idx) && global_valid {
-                2
-            } else {
-                0
-            };
+            let use_warp = self.warp_mode(ref_frame, ref_idx, w, h);
             let mv = [cand_mvs[ref_list].row as i32, cand_mvs[ref_list].col as i32];
             if use_warp != 0 {
                 let params = if use_warp == 1 { self.b.local_warp_params } else { fh.gm_params[ref_frame as usize] };
@@ -448,40 +436,7 @@ impl TileDecoder<'_, '_> {
             }
         }
         let ct = self.b.compound_type;
-        if ct == COMPOUND_WEDGE && plane == 0 {
-            let m = &wedge_masks()[self.b.mi_size][self.b.wedge_index][self.b.wedge_sign];
-            for i in 0..h {
-                for j in 0..w {
-                    self.mask[i * PRED_STRIDE + j] = m[i * w + j] as i32;
-                }
-            }
-        } else if ct == COMPOUND_INTRA {
-            let size_scale = MAX_SB_SIZE / h.max(w);
-            let im = self.b.interintra_mode;
-            for i in 0..h {
-                for j in 0..w {
-                    self.mask[i * PRED_STRIDE + j] = if im == II_V_PRED {
-                        II_WEIGHTS_1D[i * size_scale] as i32
-                    } else if im == II_H_PRED {
-                        II_WEIGHTS_1D[j * size_scale] as i32
-                    } else if im == II_SMOOTH_PRED {
-                        II_WEIGHTS_1D[i.min(j) * size_scale] as i32
-                    } else {
-                        32
-                    };
-                }
-            }
-        } else if ct == COMPOUND_DIFFWTD && plane == 0 {
-            for i in 0..h {
-                for j in 0..w {
-                    let k = i * PRED_STRIDE + j;
-                    let diff = (preds[0][k] - preds[1][k]).abs();
-                    let diff = round2(diff, (bd - 8) + rnd.2);
-                    let m = (38 + diff / 16).clamp(0, 64);
-                    self.mask[k] = if self.b.mask_type == 1 { 64 - m } else { m };
-                }
-            }
-        }
+        self.fill_blend_mask(plane, w, h, &preds, rnd.2);
         let (fwd, bck) = if ct == COMPOUND_DISTANCE { self.distance_weights(cand_refs) } else { (0, 0) };
         let max = (1i32 << bd) - 1;
         let is_inter_intra = self.b.is_inter && self.b.ref_frame[1] == INTRA_FRAME as i8;
@@ -518,6 +473,64 @@ impl TileDecoder<'_, '_> {
         self.mc_tmp = tmp;
         if self.b.motion_mode as usize == OBMC {
             self.overlapped_motion_compensation(plane, w, h);
+        }
+    }
+
+    /// Warp selection for one reference: 0 none, 1 local warp, 2 global warp.
+    fn warp_mode(&self, ref_frame: i8, ref_idx: i32, w: usize, h: usize) -> u8 {
+        let fh = &self.fs.fh;
+        let ym = self.b.y_mode;
+        let global =
+            (ym == GLOBALMV || ym == GLOBAL_GLOBALMV) && ref_frame > INTRA_FRAME as i8 && fh.gm_type[ref_frame as usize] as usize > TRANSLATION;
+        let global_valid = global && setup_shear(&fh.gm_params[ref_frame as usize]).0;
+        if w < 8 || h < 8 || fh.force_integer_mv {
+            0
+        } else if self.b.motion_mode as usize == LOCALWARP && self.b.local_valid {
+            1
+        } else if global && !self.is_scaled_ref(ref_idx) && global_valid {
+            2
+        } else {
+            0
+        }
+    }
+
+    /// Builds the blend mask (wedge, inter-intra or difference-weighted) for the current compound type.
+    fn fill_blend_mask(&mut self, plane: usize, w: usize, h: usize, preds: &[Vec<i32>; 2], round_post: u32) {
+        let bd = self.fs.bit_depth;
+        let ct = self.b.compound_type;
+        if ct == COMPOUND_WEDGE && plane == 0 {
+            let m = &wedge_masks()[self.b.mi_size][self.b.wedge_index][self.b.wedge_sign];
+            for i in 0..h {
+                for j in 0..w {
+                    self.mask[i * PRED_STRIDE + j] = m[i * w + j] as i32;
+                }
+            }
+        } else if ct == COMPOUND_INTRA {
+            let size_scale = MAX_SB_SIZE / h.max(w);
+            let im = self.b.interintra_mode;
+            for i in 0..h {
+                for j in 0..w {
+                    self.mask[i * PRED_STRIDE + j] = if im == II_V_PRED {
+                        II_WEIGHTS_1D[i * size_scale] as i32
+                    } else if im == II_H_PRED {
+                        II_WEIGHTS_1D[j * size_scale] as i32
+                    } else if im == II_SMOOTH_PRED {
+                        II_WEIGHTS_1D[i.min(j) * size_scale] as i32
+                    } else {
+                        32
+                    };
+                }
+            }
+        } else if ct == COMPOUND_DIFFWTD && plane == 0 {
+            for i in 0..h {
+                for j in 0..w {
+                    let k = i * PRED_STRIDE + j;
+                    let diff = (preds[0][k] - preds[1][k]).abs();
+                    let diff = round2(diff, (bd - 8) + round_post);
+                    let m = (38 + diff / 16).clamp(0, 64);
+                    self.mask[k] = if self.b.mask_type == 1 { 64 - m } else { m };
+                }
+            }
         }
     }
 

@@ -37,7 +37,8 @@ struct Cache {
     bad_order: VecDeque<usize>,
     bad_bytes: usize,
     /// GIFs by bytes address and adjustments (`None`: not animated); the bytes stay alive with them.
-    anims: HashMap<(usize, u64), (Arc<Vec<u8>>, Option<Arc<Anim>>)>,
+    /// Decoded animations by (bytes, adjustments), each with the clock of its last use.
+    anims: HashMap<(usize, u64), (Arc<Vec<u8>>, Option<Arc<Anim>>, u64)>,
 }
 
 /// Longest side, total decoded size and frame count kept for one animated GIF; the largest canvas
@@ -47,6 +48,7 @@ const GIF_SIDE: u32 = 1024;
 const GIF_BUDGET: usize = 64 << 20;
 const GIF_MAX_FRAMES: usize = 1000;
 const GIF_MAX_CANVAS: u64 = 4096 * 4096;
+const GIF_MAX_TOTAL_CANVAS_PIXELS: u64 = 256 * 1024 * 1024;
 const GIF_CACHE_BUDGET: usize = 192 << 20;
 
 /// The frames of an animated GIF and when each one ends, in seconds from the start of a loop.
@@ -394,13 +396,22 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     let k = (GIF_SIDE as f64 / w.max(h) as f64).min(1.0);
     let (nw, nh) = (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1));
     let size = nw as usize * nh as usize * 4;
+    let canvas_pixels = (w as u64) * (h as u64);
+    let mut total_canvas_pixels: u64 = 0;
     let (mut frames, mut ends, mut t) = (Vec::new(), Vec::new(), 0.0);
-    for f in dec.into_frames() {
-        let Ok(f) = f else { break };
+    let mut iter = dec.into_frames();
+    loop {
         if frames.len() >= GIF_MAX_FRAMES || (frames.len() + 1) * size > GIF_BUDGET {
             log::info!("animated GIF: keeping its first {} frames", frames.len());
             break;
         }
+        if total_canvas_pixels.saturating_add(canvas_pixels) > GIF_MAX_TOTAL_CANVAS_PIXELS {
+            log::info!("animated GIF: canvas pixel limit reached");
+            break;
+        }
+        let Some(f) = iter.next() else { break };
+        let Ok(f) = f else { break };
+        total_canvas_pixels = total_canvas_pixels.saturating_add(canvas_pixels);
         let (n, d) = f.delay().numer_denom_ms();
         let ms = if d == 0 { 0.0 } else { n as f64 / d as f64 };
         // Like browsers: frames of 10 ms or less show for 100 ms.
@@ -422,16 +433,33 @@ fn anim(bytes: &Arc<Vec<u8>>, adj: &PictureAdjust) -> Option<Arc<Anim>> {
         return None;
     }
     let key = (Arc::as_ptr(bytes) as usize, adjust_key(adj));
-    if let Some(a) = with(|c| c.anims.get(&key).map(|e| e.1.clone())) {
+    let hit = with(|c| {
+        c.clock += 1;
+        let clock = c.clock;
+        c.anims.get_mut(&key).map(|e| {
+            e.2 = clock;
+            e.1.clone()
+        })
+    });
+    if let Some(a) = hit {
         return a;
     }
     let a = decode_anim(bytes, adj).map(Arc::new);
     with(|c| {
-        let held: usize = c.anims.values().filter_map(|e| e.1.as_ref()).map(|a| a.bytes()).sum();
-        if held + a.as_ref().map_or(0, |a| a.bytes()) > GIF_CACHE_BUDGET || c.anims.len() >= 64 {
-            c.anims.clear();
+        // Make room by dropping the least recently used animations, not every one of them, so a
+        // slide whose animations overflow the cache does not decode all of them again each frame.
+        let new = a.as_ref().map_or(0, |a| a.bytes());
+        loop {
+            let held: usize = c.anims.values().filter_map(|e| e.1.as_ref()).map(|a| a.bytes()).sum();
+            if held + new <= GIF_CACHE_BUDGET && c.anims.len() < 64 {
+                break;
+            }
+            let Some(oldest) = c.anims.iter().min_by_key(|(_, e)| e.2).map(|(k, _)| *k) else { break };
+            c.anims.remove(&oldest);
         }
-        c.anims.insert(key, (bytes.clone(), a.clone()));
+        c.clock += 1;
+        let clock = c.clock;
+        c.anims.insert(key, (bytes.clone(), a.clone(), clock));
     });
     a
 }
@@ -523,6 +551,26 @@ mod tests {
         let mut out = std::io::Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Png).expect("encode");
         out.into_inner()
+    }
+
+    /// A two-frame GIF whose first pixel is `n`, so each one has its own bytes.
+    fn gif(n: u8) -> Arc<Vec<u8>> {
+        use image::codecs::gif::GifEncoder;
+        let frame = |c: u8| image::Frame::new(image::RgbaImage::from_pixel(2, 2, image::Rgba([n, c, 0, 255])));
+        let mut out = Vec::new();
+        GifEncoder::new(&mut out).encode_frames([frame(0), frame(255)]).expect("encode");
+        Arc::new(out)
+    }
+
+    #[test]
+    fn a_full_animation_cache_drops_the_oldest_entry_not_all_of_them() {
+        let adj = PictureAdjust::default();
+        let gifs: Vec<_> = (0..70).map(gif).collect();
+        for g in &gifs {
+            assert!(anim(g, &adj).is_some());
+        }
+        let (len, newest) = with(|c| (c.anims.len(), c.anims.contains_key(&(Arc::as_ptr(&gifs[69]) as usize, adjust_key(&adj)))));
+        assert!(newest && len >= 32, "{len} cached");
     }
 
     #[test]

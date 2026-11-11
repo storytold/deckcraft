@@ -608,62 +608,71 @@ impl Chart {
         if ser.is_empty() {
             return (!secondary && self.kind != ChartType::Combo).then_some((0.0, 0.0));
         }
-        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut ext = (f64::INFINITY, f64::NEG_INFINITY);
         let has_stacked_or_percent = ser.iter().any(|s| {
             let k = self.series_kind(s);
             k.stacked() || k.percent()
         });
-
-        let mut percent = false;
-        if has_stacked_or_percent {
-            let n = ser.iter().map(|s| s.values.len()).max().unwrap_or(0);
-            let budget = (ser.len() * n).min(10_000_000);
-            let n_clamped = if ser.is_empty() { 0 } else { n.min(budget / ser.len()) };
-
-            for i in 0..n_clamped {
-                let (mut p, mut m, mut stacked) = (0.0, 0.0, false);
-                for s in &ser {
-                    let k = self.series_kind(s);
-                    let Some(v) = s.values.get(i).copied().flatten().filter(|v| v.is_finite()) else { continue };
-                    if k.percent() {
-                        percent = true;
-                    } else if k.stacked() {
-                        stacked = true;
-                        if v >= 0.0 { p += v } else { m += v }
-                    } else {
-                        hi = hi.max(v);
-                        lo = lo.min(v);
-                    }
-                }
-                if stacked {
-                    hi = hi.max(p);
-                    lo = lo.min(m);
-                }
-            }
+        let percent = if has_stacked_or_percent {
+            self.fold_stacked(&ser, &mut ext)
         } else {
             for s in &ser {
                 for v in s.values.iter().flatten().copied().filter(|v| v.is_finite()) {
-                    hi = hi.max(v);
-                    lo = lo.min(v);
+                    widen(&mut ext, v);
                 }
             }
-        }
+            false
+        };
         if !percent {
-            for s in &ser {
-                if self.series_kind(s).stacked() {
-                    continue;
-                }
-                for y in s.trendline_ys(crate::trendline::series_is_scatter(self.series_kind(s))) {
-                    hi = hi.max(y);
-                    lo = lo.min(y);
-                }
-            }
+            self.fold_trendlines(&ser, &mut ext);
         }
         if percent {
-            lo = lo.min(0.0);
-            hi = hi.max(1.0);
+            ext.0 = ext.0.min(0.0);
+            ext.1 = ext.1.max(1.0);
         }
+        let (lo, hi) = ext;
         Some(if lo <= hi { (lo, hi) } else { (0.0, 0.0) })
+    }
+
+    /// Widens `ext` by the points of the stacked and 100 % series in `ser`; returns whether a
+    /// 100 % series is among them.
+    fn fold_stacked(&self, ser: &[&Series], ext: &mut (f64, f64)) -> bool {
+        let mut percent = false;
+        let n = ser.iter().map(|s| s.values.len()).max().unwrap_or(0);
+        let budget = (ser.len() * n).min(10_000_000);
+        let n_clamped = if ser.is_empty() { 0 } else { n.min(budget / ser.len()) };
+        for i in 0..n_clamped {
+            let (mut p, mut m, mut stacked) = (0.0, 0.0, false);
+            for s in ser {
+                let k = self.series_kind(s);
+                let Some(v) = s.values.get(i).copied().flatten().filter(|v| v.is_finite()) else { continue };
+                if k.percent() {
+                    percent = true;
+                } else if k.stacked() {
+                    stacked = true;
+                    if v >= 0.0 { p += v } else { m += v }
+                } else {
+                    widen(ext, v);
+                }
+            }
+            if stacked {
+                ext.1 = ext.1.max(p);
+                ext.0 = ext.0.min(m);
+            }
+        }
+        percent
+    }
+
+    /// Widens `ext` by the trendlines of the series in `ser` that are not stacked.
+    fn fold_trendlines(&self, ser: &[&Series], ext: &mut (f64, f64)) {
+        for s in ser {
+            if self.series_kind(s).stacked() {
+                continue;
+            }
+            for y in s.trendline_ys(crate::trendline::series_is_scatter(self.series_kind(s))) {
+                widen(ext, y);
+            }
+        }
     }
 
     /// A waterfall's bars as (from, to) on the value axis: each point floats from the running
@@ -749,17 +758,20 @@ impl Chart {
     }
 
     fn stacked_value_range(&self, n: usize) -> (f64, f64) {
-        let mut lo: f64 = 0.0;
-        let mut hi: f64 = 0.0;
-        for i in 0..n {
-            let (mut p, mut m) = (0.0, 0.0);
-            for s in &self.series {
-                let v = s.values.get(i).copied().flatten().unwrap_or(0.0);
-                if v >= 0.0 { p += v } else { m += v }
+        // Sums per category, from the values the series hold (an absent one adds nothing).
+        let (mut pos, mut neg) = (vec![0.0f64; n], vec![0.0f64; n]);
+        for s in &self.series {
+            for (i, v) in s.values.iter().enumerate().take(n) {
+                let v = v.unwrap_or(0.0);
+                if v >= 0.0 {
+                    pos[i] += v;
+                } else {
+                    neg[i] += v;
+                }
             }
-            hi = hi.max(p);
-            lo = lo.min(m);
         }
+        let hi = pos.iter().fold(0.0f64, |a, &p| a.max(p));
+        let lo = neg.iter().fold(0.0f64, |a, &m| a.min(m));
         (lo, hi)
     }
 
@@ -802,6 +814,7 @@ impl Chart {
 /// The (min, max, major unit) of an axis over the data range [lo, hi]: `fmin`/`fmax`/`major`
 /// where the chart fixes them; otherwise Office's automatic limits, rounded out to the smallest
 /// 1-2-5 unit giving at most `max_intervals` intervals:
+/// The data range [lo, hi] an axis covers, clamped to ±1e100; (0, 1) without finite values.
 ///
 /// - **Maximum:** `hi + (hi − lo)/20` (with `headroom`), rounded up to the unit.
 /// - **Minimum:** zero when every value is ≥ 0 and `lo` is below 5/6 of `hi`; otherwise
@@ -809,22 +822,14 @@ impl Chart {
 ///   near them.
 /// - All-negative values mirror this: the axis ends at zero when `hi` is above 5/6 of `lo`.
 ///   Mixed signs get headroom at both ends.
-pub fn axis_scale(
-    lo: f64,
-    hi: f64,
-    fmin: Option<f64>,
-    fmax: Option<f64>,
-    major: Option<f64>,
-    max_intervals: usize,
-    headroom: bool,
-) -> (f64, f64, f64) {
-    // Values past ±1e100 aren't axis values; clamping keeps the arithmetic finite.
-    let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
-    let (fmin, fmax) = (fin(fmin), fin(fmax));
-    let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) };
-    // Office's automatic limits ("How chart axis limits are determined", as Jon Peltier
-    // summarises it): 5 % of the data range past the data, and zero when the values don't
-    // sit within the top sixth of their largest magnitude. A single value is measured from zero.
+fn axis_data_range(lo: f64, hi: f64) -> (f64, f64) {
+    if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) }
+}
+
+/// Office's automatic (min, max) of the data range [lo, hi]. "How chart axis limits are determined",
+/// as Jon Peltier summarises it: 5 % of the data range past the data, and zero when the values don't
+/// sit within the top sixth of their largest magnitude. A single value is measured from zero.
+fn auto_limits(lo: f64, hi: f64, headroom: bool) -> (f64, f64) {
     let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
     let pad = if !headroom {
         0.0
@@ -835,21 +840,23 @@ pub fn axis_scale(
     };
     let auto_lo = if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) { 0.0 } else { lo - pad };
     let auto_hi = if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) { 0.0 } else { hi + pad };
-    let mut lo = fmin.unwrap_or(auto_lo);
-    let mut hi = fmax.unwrap_or(auto_hi);
-    let mag = lo.abs().max(hi.abs());
-    // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
-    let unit = if mag == 0.0 { 1.0 } else { mag };
-    if hi - lo <= 1e-12 * mag {
-        // A fixed limit on the far side of the data: the automatic end gives way.
-        match (fmin, fmax) {
-            (None, Some(_)) => lo = if hi > 0.0 { 0.0 } else { hi - hi.abs().max(unit) },
-            (Some(_), None) if lo < 0.0 => hi = 0.0,
-            _ => hi = lo + unit,
-        }
+    (auto_lo, auto_hi)
+}
+
+/// The ends of a span too small to show: with one fixed limit on the far side of the data, the
+/// automatic end gives way; otherwise the span is one `unit` wide.
+fn flat_span_ends(fmin: Option<f64>, fmax: Option<f64>, lo: f64, hi: f64, unit: f64) -> (f64, f64) {
+    match (fmin, fmax) {
+        (None, Some(_)) => (if hi > 0.0 { 0.0 } else { hi - hi.abs().max(unit) }, hi),
+        (Some(_), None) if lo < 0.0 => (lo, 0.0),
+        _ => (lo, lo + unit),
     }
-    let n = max_intervals.clamp(1, 50) as f64;
-    let step = match fin(major).filter(|m| *m > 0.0 && (hi - lo) / m <= 1000.0) {
+}
+
+/// The major step: `major` when it gives at most 1000 intervals, else the smallest 1-2-5 step
+/// that fits `n` intervals over [lo, hi].
+fn axis_step(major: Option<f64>, lo: f64, hi: f64, n: f64, unit: f64) -> f64 {
+    match major.filter(|m| *m > 0.0 && (hi - lo) / m <= 1000.0) {
         Some(m) => m,
         None => {
             let mut step = 10f64.powf(((hi - lo) / n).log10().floor());
@@ -865,7 +872,32 @@ pub fn axis_scale(
             }
             step
         }
-    };
+    }
+}
+
+pub fn axis_scale(
+    lo: f64,
+    hi: f64,
+    fmin: Option<f64>,
+    fmax: Option<f64>,
+    major: Option<f64>,
+    max_intervals: usize,
+    headroom: bool,
+) -> (f64, f64, f64) {
+    // Values past ±1e100 aren't axis values; clamping keeps the arithmetic finite.
+    let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
+    let (fmin, fmax) = (fin(fmin), fin(fmax));
+    let (lo, hi) = axis_data_range(lo, hi);
+    let (auto_lo, auto_hi) = auto_limits(lo, hi, headroom);
+    let (mut lo, mut hi) = (fmin.unwrap_or(auto_lo), fmax.unwrap_or(auto_hi));
+    let mag = lo.abs().max(hi.abs());
+    // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
+    let unit = if mag == 0.0 { 1.0 } else { mag };
+    if hi - lo <= 1e-12 * mag {
+        (lo, hi) = flat_span_ends(fmin, fmax, lo, hi, unit);
+    }
+    let n = max_intervals.clamp(1, 50) as f64;
+    let step = axis_step(fin(major), lo, hi, n, unit);
     let min = fmin.unwrap_or((lo / step + 1e-9).floor() * step);
     let max = fmax.unwrap_or((hi / step - 1e-9).ceil() * step).max(min + step);
     (min, max, step)
@@ -1241,7 +1273,14 @@ impl Chart {
         let mut bins: Vec<Bin> = (0..count).map(|i| Bin { lo: lo + width * i as f64, hi: lo + width * (i + 1) as f64, count: 0 }).collect();
         for x in v {
             // (lo, hi] bins, the first one also holding the minimum.
-            let i = (((x - lo) / width).ceil() as usize).saturating_sub(1).min(count - 1);
+            let mut i = (((x - lo) / width).ceil() as usize).saturating_sub(1).min(count - 1);
+            // The division can round across an edge: settle on the bin whose stored bounds hold x.
+            while i > 0 && x <= bins[i - 1].hi {
+                i -= 1;
+            }
+            while i + 1 < count && x > bins[i].hi {
+                i += 1;
+            }
             if let Some(b) = bins.get_mut(i) {
                 b.count += 1;
             }
@@ -1312,38 +1351,54 @@ impl Chart {
     /// The box chart's groups (distinct category labels in order of appearance; one unnamed
     /// group without categories) and, per series, each group's summary (None when it has no
     /// points).
+    ///
+    /// Each value is put in its group's bucket once (groups are found by name in a map), and the
+    /// series x groups result is held to [`MAX_BOX_CELLS`]: groups past it are left out.
     pub fn box_groups(&self) -> (Vec<String>, Vec<Vec<Option<BoxStats>>>) {
+        let max_groups = (MAX_BOX_CELLS / self.series.len().max(1)).max(1);
         let mut groups: Vec<String> = Vec::new();
+        let mut index: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         for c in &self.categories {
-            if !groups.contains(c) {
+            if !index.contains_key(c.as_str()) && groups.len() < max_groups {
+                index.insert(c, groups.len());
                 groups.push(c.clone());
             }
         }
         if groups.is_empty() {
             groups.push(String::new());
+            index.insert("", 0);
         }
+        // A value past the categories belongs to the unnamed group, when there is one.
+        let past_end = index.get("").copied();
         let stats = self
             .series
             .iter()
             .map(|s| {
-                groups
-                    .iter()
-                    .map(|g| {
-                        let pts: Vec<f64> = s
-                            .values
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| self.categories.get(*i).map_or(g.is_empty() || self.categories.is_empty(), |c| c == g))
-                            .filter_map(|(_, v)| *v)
-                            .filter(|v| v.is_finite())
-                            .collect();
-                        box_stats_by(pts, self.inclusive_quartiles)
-                    })
-                    .collect()
+                let mut buckets: Vec<Vec<f64>> = vec![Vec::new(); groups.len()];
+                for (i, v) in s.values.iter().enumerate() {
+                    let Some(v) = v.filter(|v| v.is_finite()) else { continue };
+                    let g = match self.categories.get(i) {
+                        Some(c) => index.get(c.as_str()).copied(),
+                        None => past_end,
+                    };
+                    if let Some(b) = g.and_then(|g| buckets.get_mut(g)) {
+                        b.push(v);
+                    }
+                }
+                buckets.into_iter().map(|pts| box_stats_by(pts, self.inclusive_quartiles)).collect()
             })
             .collect();
         (groups, stats)
     }
+}
+
+/// Most series x group summaries [`Chart::box_groups`] makes.
+pub const MAX_BOX_CELLS: usize = 1_000_000;
+
+/// Widens the (min, max) extent `ext` to include `v`.
+fn widen(ext: &mut (f64, f64), v: f64) {
+    ext.0 = ext.0.min(v);
+    ext.1 = ext.1.max(v);
 }
 
 /// Excel's QUARTILE.EXC position `p·(n+1)` (1-based) on sorted data, clamped to the ends.
@@ -1412,33 +1467,41 @@ impl Chart {
         let n = self.categories.len().max(s.values.len());
         let levels: Vec<&Vec<String>> = self.category_levels.iter().take(MAX_LEVELS).collect();
         // Each leaf's path from the top level down, blanks filled from the row above.
-        let mut last: Vec<String> = vec![String::new(); levels.len()];
-        let paths: Vec<Vec<String>> = (0..n)
+        // Labels are shared, not copied: an outer label given once stands for every leaf under it.
+        use std::rc::Rc;
+        let empty: Rc<str> = Rc::from("");
+        let mut last: Vec<Rc<str>> = vec![empty.clone(); levels.len()];
+        let paths: Vec<Vec<Rc<str>>> = (0..n)
             .map(|i| {
                 let mut path = Vec::with_capacity(levels.len() + 1);
                 for (d, lv) in levels.iter().enumerate().rev() {
                     let l = lv.get(i).map(|x| x.trim()).unwrap_or("");
                     if !l.is_empty() {
-                        last[d] = l.to_string();
+                        last[d] = Rc::from(l);
                         // A new outer label starts fresh inner groups.
                         for inner in last.iter_mut().take(d) {
-                            inner.clear();
+                            *inner = empty.clone();
                         }
                     }
                     path.push(last[d].clone());
                 }
-                path.push(self.categories.get(i).cloned().unwrap_or_default());
+                path.push(self.categories.get(i).map_or_else(|| empty.clone(), |c| Rc::from(c.as_str())));
                 path
             })
             .collect();
         let value = |i: usize| s.values.get(i).copied().flatten().filter(|v| v.is_finite()).unwrap_or(0.0).max(0.0);
-        fn build(rows: &[(usize, &[String])], value: &dyn Fn(usize) -> f64) -> Vec<TreeNode> {
+        fn build(rows: &[(usize, &[std::rc::Rc<str>])], value: &dyn Fn(usize) -> f64) -> Vec<TreeNode> {
             let mut out: Vec<TreeNode> = Vec::new();
             let mut i = 0;
             while i < rows.len() {
                 let (idx, path) = rows[i];
                 if path.len() <= 1 {
-                    out.push(TreeNode { name: path.first().cloned().unwrap_or_default(), value: value(idx), leaf: Some(idx), children: vec![] });
+                    out.push(TreeNode {
+                        name: path.first().map(|p| p.to_string()).unwrap_or_default(),
+                        value: value(idx),
+                        leaf: Some(idx),
+                        children: vec![],
+                    });
                     i += 1;
                     continue;
                 }
@@ -1447,14 +1510,14 @@ impl Chart {
                 while j < rows.len() && rows[j].1.len() > 1 && &rows[j].1[0] == head {
                     j += 1;
                 }
-                let sub: Vec<(usize, &[String])> = rows[i..j].iter().map(|(k, p)| (*k, &p[1..])).collect();
+                let sub: Vec<(usize, &[std::rc::Rc<str>])> = rows[i..j].iter().map(|(k, p)| (*k, &p[1..])).collect();
                 let children = build(&sub, value);
-                out.push(TreeNode { name: head.clone(), value: children.iter().map(|c| c.value).sum(), leaf: None, children });
+                out.push(TreeNode { name: head.to_string(), value: children.iter().map(|c| c.value).sum(), leaf: None, children });
                 i = j;
             }
             out
         }
-        let rows: Vec<(usize, &[String])> = paths.iter().enumerate().map(|(i, p)| (i, p.as_slice())).collect();
+        let rows: Vec<(usize, &[Rc<str>])> = paths.iter().enumerate().map(|(i, p)| (i, p.as_slice())).collect();
         build(&rows, &value)
     }
 }
@@ -1498,6 +1561,16 @@ mod chartex_tests {
         let mut c = obs(&[0.0, 1.0, 2.1]);
         c.bin_count = Some(7);
         assert_eq!(c.histogram_bins().len(), 7);
+    }
+
+    #[test]
+    fn histogram_value_on_a_bin_edge_counts_in_that_bin() {
+        let mut c = obs(&[0.0, 2.1, 3.0]);
+        c.bin_size = Some(0.3);
+        let bins = c.histogram_bins();
+        let own = bins.iter().find(|b| b.lo < 2.1 && 2.1 <= b.hi).expect("a bin holds 2.1");
+        assert_eq!(own.count, 1, "2.1 must be counted in ({}, {}]", own.lo, own.hi);
+        assert_eq!(bins.iter().map(|b| b.count).sum::<usize>(), 3);
     }
 
     #[test]
@@ -1553,6 +1626,40 @@ mod chartex_tests {
         // No levels: every category is a leaf.
         c.category_levels.clear();
         assert!(c.category_tree().iter().all(|n| n.leaf.is_some()));
+    }
+
+    #[test]
+    fn large_box_hierarchy_and_stacked_charts_take_linear_work() {
+        // 50,000 distinct categories in one series: grouped through a map, one pass.
+        let n = 50_000;
+        let mut c = Chart::sample(ChartType::BoxWhisker);
+        c.series.truncate(1);
+        c.categories = (0..n).map(|i| format!("g{i}")).collect();
+        c.series[0].values = (0..n).map(|i| Some(i as f64)).collect();
+        let (groups, stats) = c.box_groups();
+        assert_eq!((groups.len(), stats[0].len()), (n, n));
+        assert!(stats[0].iter().all(Option::is_some));
+        // 2,000 series cap the groups so the result stays within MAX_BOX_CELLS.
+        c.series = vec![c.series[0].clone(); 2000];
+        let (groups, stats) = c.box_groups();
+        assert_eq!(groups.len(), MAX_BOX_CELLS / 2000);
+        assert!(stats.iter().all(|s| s.len() == groups.len()));
+        // One long outer label over 50,000 leaves is shared, not copied per leaf.
+        let mut t = Chart::sample(ChartType::Treemap);
+        t.series.truncate(1);
+        t.categories = (0..n).map(|i| format!("c{i}")).collect();
+        t.series[0].values = (0..n).map(|_| Some(1.0)).collect();
+        let mut outer = vec![String::new(); n];
+        outer[0] = "o".repeat(1 << 16);
+        t.category_levels = vec![outer];
+        let tree = t.category_tree();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].children.len(), n);
+        // Stacked sums over many sparse series.
+        let mut st = Chart::sample(ChartType::StackedBar);
+        st.categories = (0..n).map(|i| i.to_string()).collect();
+        st.series = (0..2000).map(|k| Series { values: vec![Some(1.0); if k == 0 { n } else { 1 }], ..Default::default() }).collect();
+        assert!(st.value_range().1 >= 2000.0, "{:?}", st.value_range());
     }
 
     #[test]

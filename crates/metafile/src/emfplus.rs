@@ -50,6 +50,8 @@ const MAX_CHARS: usize = 32_768;
 const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
 /// Nesting depth of region nodes.
 const MAX_REGION_DEPTH: usize = 32;
+/// Region nodes and path points parsed together, including nodes in sibling branches.
+const MAX_REGION_WORK: usize = MAX_POINTS;
 
 const TA_RIGHT: u32 = 2;
 const TA_CENTER: u32 = 6;
@@ -93,7 +95,7 @@ impl Fill {
                 if w == 0.0 || h == 0.0 {
                     return [0, 0, 0, 0];
                 }
-                if *wrap == 4 && !(0.0..w).contains(&p.0) || *wrap == 4 && !(0.0..h).contains(&p.1) {
+                if *wrap == 4 && !((0.0..w).contains(&p.0) && (0.0..h).contains(&p.1)) {
                     return [0, 0, 0, 0];
                 }
                 let x = (p.0.rem_euclid(w) as usize).min(img.w - 1);
@@ -286,10 +288,20 @@ impl Plus {
         if !self.active {
             return None;
         }
+        match typ {
+            0x4008 => self.object(flags, r),
+            0x4009 | 0x4013 | 0x401A..=0x401C | 0x4036 => self.record_image_text_region(cv, typ, flags, r),
+            0x4025..=0x4035 => self.record_state(cv, typ, flags, r),
+            0x4010..=0x4012 | 0x4016..=0x4019 => self.record_curve(cv, typ, flags, r),
+            _ => self.record_shape(cv, typ, flags, r),
+        }
+    }
+
+    /// Rectangle, polygon, ellipse and path records.
+    fn record_shape(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
         let compressed = flags & 0x4000 != 0;
         let id = usize::from(flags & 0xFF);
         match typ {
-            0x4008 => self.object(flags, r),
             0x400A => {
                 let fill = self.brush_of(flags, r.u32(0)?)?;
                 let p = self.painter();
@@ -348,6 +360,15 @@ impl Plus {
                 self.painter().stroke(cv, &ops, pen);
                 Some(())
             }
+            _ => None,
+        }
+    }
+
+    /// Curve, bezier and arc records.
+    fn record_curve(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
+        let compressed = flags & 0x4000 != 0;
+        let id = usize::from(flags & 0xFF);
+        match typ {
             0x4019 => {
                 let pen = self.pen(id)?;
                 let pts = points(r, 4, r.u32(0)? as usize, compressed)?;
@@ -380,6 +401,29 @@ impl Plus {
                 self.painter().stroke(cv, &curve_ops(&pts, tension, false, offset, segments), pen);
                 Some(())
             }
+            0x4010 => {
+                let fill = self.brush_of(flags, r.u32(0)?)?;
+                let [start, sweep] = floats::<2>(r, 4)?;
+                let rect = *rects(r, 12, 1, compressed)?.first()?;
+                self.painter().fill(cv, &arc_ops(rect, start, sweep, true), &fill);
+                Some(())
+            }
+            0x4011 | 0x4012 => {
+                let pen = self.pen(id)?;
+                let [start, sweep] = floats::<2>(r, 0)?;
+                let rect = *rects(r, 8, 1, compressed)?.first()?;
+                self.painter().stroke(cv, &arc_ops(rect, start, sweep, typ == 0x4011), pen);
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    /// Clear, region fill, image and text records.
+    fn record_image_text_region(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
+        let compressed = flags & 0x4000 != 0;
+        let id = usize::from(flags & 0xFF);
+        match typ {
             // Clear: the whole picture in one colour, whatever the clip (a transparent clear
             // leaves nothing to draw).
             0x4009 => {
@@ -419,6 +463,14 @@ impl Plus {
             }
             0x401C => self.draw_string(cv, flags, r),
             0x4036 => self.draw_driver_string(cv, flags, r),
+            _ => None,
+        }
+    }
+
+    /// Save / restore, transform and clip records.
+    fn record_state(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
+        let id = usize::from(flags & 0xFF);
+        match typ {
             0x4025 | 0x4028 => r.u32(0).map(|i| self.push(i)),
             0x4027 => r.u32(24).map(|i| self.push(i)),
             0x4026 | 0x4029 => r.u32(0).map(|i| self.pop(i)),
@@ -468,20 +520,6 @@ impl Plus {
                         *p = (p.0 + ox, p.1 + oy);
                     }
                 }
-                Some(())
-            }
-            0x4010 => {
-                let fill = self.brush_of(flags, r.u32(0)?)?;
-                let [start, sweep] = floats::<2>(r, 4)?;
-                let rect = *rects(r, 12, 1, compressed)?.first()?;
-                self.painter().fill(cv, &arc_ops(rect, start, sweep, true), &fill);
-                Some(())
-            }
-            0x4011 | 0x4012 => {
-                let pen = self.pen(id)?;
-                let [start, sweep] = floats::<2>(r, 0)?;
-                let rect = *rects(r, 8, 1, compressed)?.first()?;
-                self.painter().stroke(cv, &arc_ops(rect, start, sweep, typ == 0x4011), pen);
                 Some(())
             }
             _ => None,
@@ -1070,12 +1108,14 @@ fn path(r: Bytes) -> Option<Vec<Op>> {
 /// A region object as a convex area in world units (non-convex parts become their bounding
 /// rectangle).
 fn region(r: Bytes) -> Option<Obj> {
-    region_node(r, 8, 0).map(|(a, _)| Obj::Region(a))
+    let mut work = 0;
+    region_node(r, 8, 0, &mut work).map(|(a, _)| Obj::Region(a))
 }
 
 /// One region node at `off`: its area and its length in bytes.
-fn region_node(r: Bytes, off: usize, depth: usize) -> Option<(Area, usize)> {
-    if depth > MAX_REGION_DEPTH {
+fn region_node(r: Bytes, off: usize, depth: usize, work: &mut usize) -> Option<(Area, usize)> {
+    *work = work.checked_add(1)?;
+    if depth > MAX_REGION_DEPTH || *work > MAX_REGION_WORK {
         return None;
     }
     match r.u32(off)? {
@@ -1085,14 +1125,23 @@ fn region_node(r: Bytes, off: usize, depth: usize) -> Option<(Area, usize)> {
         }
         0x1000_0001 => {
             let size = r.u32(off + 4)? as usize;
-            let area = path(r.tail(off + 8)?).map(|ops| area_of_ops(&ops)).unwrap_or_default();
+            if size < 12 {
+                return None;
+            }
+            let data = Bytes(r.slice(off + 8, size)?);
+            let points = (data.u32(4)? as usize).min(MAX_POINTS);
+            *work = work.checked_add(points)?;
+            if *work > MAX_REGION_WORK {
+                return None;
+            }
+            let area = area_of_ops(&path(data)?);
             Some((Some(area), 8usize.checked_add(size)?))
         }
         0x1000_0002 => Some((Some(Vec::new()), 4)),
         0x1000_0003 => Some((None, 4)),
         mode @ 0..=5 => {
-            let (a, la) = region_node(r, off + 4, depth + 1)?;
-            let (b, lb) = region_node(r, off.checked_add(4 + la)?, depth + 1)?;
+            let (a, la) = region_node(r, off + 4, depth + 1, work)?;
+            let (b, lb) = region_node(r, off.checked_add(4 + la)?, depth + 1, work)?;
             let out = match mode {
                 0 => b,
                 1 => area_intersect(a, b),

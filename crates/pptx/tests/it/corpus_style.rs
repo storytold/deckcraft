@@ -34,7 +34,7 @@ fn glow() -> Glow {
 }
 
 fn reflection() -> Reflection {
-    Reflection { blur: 2.0, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.75, dist: 6.0 }
+    Reflection { blur: 2.0, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.75, dist: 6.0, ..Default::default() }
 }
 
 fn gradient(angle: f64) -> Fill {
@@ -46,6 +46,7 @@ fn gradient(angle: f64) -> Fill {
         shape: GradientShape::Linear { angle, scaled: true },
         rotate_with_shape: true,
         tile: [0.0; 4],
+        flip: None,
     })
 }
 
@@ -116,6 +117,7 @@ fn style_deck() -> Presentation {
         shape: GradientShape::Path { path: "circle".into(), focus: [0.2, 0.2, 0.2, 0.2] },
         rotate_with_shape: false,
         tile: [0.0; 4],
+        flip: None,
     }));
 
     let mut patt = shape(&mut p, "Pattern", 200.0, 260.0, 120.0, 80.0);
@@ -189,9 +191,14 @@ fn style_kinds_round_trip() {
             .as_slice()
         )
     );
+    text_run_effects_survive(&p, &once, &twice);
+    theme_and_bevel_survive(&once, &twice);
+    connector_glue_survives(&p, &once, &twice);
+}
 
-    let got = run_of(&once);
-    let expect = run_of(&p);
+fn text_run_effects_survive(p: &Presentation, once: &Presentation, twice: &Presentation) {
+    let got = run_of(once);
+    let expect = run_of(p);
     assert_eq!(got.fill, expect.fill, "text gradient");
     assert_eq!(got.outline, expect.outline, "text outline");
     assert_eq!(got.shadow, expect.shadow, "text shadow");
@@ -199,17 +206,19 @@ fn style_kinds_round_trip() {
     assert_eq!(got.inner_shadow, expect.inner_shadow, "text inner shadow");
     assert_eq!(got.reflection, expect.reflection, "text reflection");
     assert_eq!(got.soft_edge, expect.soft_edge, "text soft edge");
-    assert_eq!(run_of(&twice), run_of(&once));
+    assert_eq!(run_of(twice), run_of(once));
     assert_eq!(
-        by_name(&twice, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props)),
-        by_name(&once, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props))
+        by_name(twice, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props)),
+        by_name(once, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props))
     );
 
-    assert_eq!(by_name(&once, "Path gradient").fill, by_name(&p, "Path gradient").fill);
-    assert_eq!(by_name(&once, "Pattern").fill, by_name(&p, "Pattern").fill);
-    assert_eq!(by_name(&twice, "Path gradient").fill, by_name(&once, "Path gradient").fill);
-    assert_eq!(by_name(&twice, "Pattern").fill, by_name(&once, "Pattern").fill);
+    assert_eq!(by_name(once, "Path gradient").fill, by_name(p, "Path gradient").fill);
+    assert_eq!(by_name(once, "Pattern").fill, by_name(p, "Pattern").fill);
+    assert_eq!(by_name(twice, "Path gradient").fill, by_name(once, "Path gradient").fill);
+    assert_eq!(by_name(twice, "Pattern").fill, by_name(once, "Pattern").fill);
+}
 
+fn theme_and_bevel_survive(once: &Presentation, twice: &Presentation) {
     let theme = &once.masters[0].theme.format.effects[0];
     assert_eq!(theme.glow, Some(glow()));
     assert_eq!(theme.reflection, Some(reflection()));
@@ -220,26 +229,85 @@ fn style_kinds_round_trip() {
     assert_eq!(theme2.bevel, theme.bevel);
     assert_eq!(theme2.raw3d, theme.raw3d);
 
-    let named = by_name(&once, "Bevel preset").effects.as_ref().expect("effects");
+    let named = by_name(once, "Bevel preset").effects.as_ref().expect("effects");
     assert_eq!(named.bevel.as_deref(), Some("relaxedInset"));
     assert!(named.raw3d.as_deref().unwrap_or("").contains("relaxedInset"));
-    assert_eq!(by_name(&twice, "Bevel preset").effects.as_ref().and_then(|e| e.bevel.as_deref()), Some("relaxedInset"));
+    assert_eq!(by_name(twice, "Bevel preset").effects.as_ref().and_then(|e| e.bevel.as_deref()), Some("relaxedInset"));
 
-    let bevel = by_name(&once, "Bevel").effects.as_ref().expect("effects");
+    let bevel = by_name(once, "Bevel").effects.as_ref().expect("effects");
     assert_eq!(bevel.bevel.as_deref(), Some("angle"));
     let raw = bevel.raw3d.as_deref().unwrap_or("");
     assert!(raw.contains("bevelT") && raw.contains("angle") && raw.contains("scene3d"), "{raw}");
-    assert_eq!(by_name(&twice, "Bevel").effects.as_ref().and_then(|e| e.raw3d.as_deref()), Some(raw));
+    assert_eq!(by_name(twice, "Bevel").effects.as_ref().and_then(|e| e.raw3d.as_deref()), Some(raw));
+}
 
-    let c = by_name(&once, "Connector");
-    assert!(
-        matches!(c.kind, ShapeKind::Connector { start: Some((s, 3)), end: Some((e, 1)) } if s == left_of(&p) && e == right_of(&p)),
-        "{:?}",
-        c.kind
-    );
-    assert_eq!(c.line, by_name(&p, "Connector").line);
-    assert_eq!(c.geom, by_name(&p, "Connector").geom);
-    assert_eq!(by_name(&twice, "Connector").kind, c.kind);
+#[test]
+fn text_and_group_3d_survive() {
+    let text_3d =
+        "<a:scene3d><a:camera prst=\"orthographicFront\"/><a:lightRig rig=\"threePt\" dir=\"t\"/></a:scene3d><a:sp3d extrusionH=\"12700\"/>";
+    let flat_tx = "<a:scene3d><a:camera prst=\"orthographicFront\"/><a:lightRig rig=\"threePt\" dir=\"t\"/></a:scene3d><a:flatTx z=\"0\"/>";
+    let mut p3 = defaults::new_presentation(None);
+    let mut sh = shape(&mut p3, "Text3D", 10.0, 10.0, 100.0, 40.0);
+    sh.text = Some(TextBody {
+        body: BodyProps { raw3d: Some(text_3d.into()), ..Default::default() },
+        paragraphs: vec![Paragraph::new("3D Text")],
+        ..Default::default()
+    });
+    let mut sh_flat = shape(&mut p3, "FlatTx3D", 10.0, 55.0, 100.0, 40.0);
+    sh_flat.text = Some(TextBody {
+        body: BodyProps { raw3d: Some(flat_tx.into()), ..Default::default() },
+        paragraphs: vec![Paragraph::new("Flat Text")],
+        ..Default::default()
+    });
+    let grp_3d = "<a:scene3d><a:camera prst=\"isometricTopUp\"/><a:lightRig rig=\"threePt\" dir=\"t\"/></a:scene3d>";
+    let mut grp = shape(&mut p3, "Group3D", 10.0, 60.0, 100.0, 80.0);
+    grp.effects = Some(Effects { raw3d: Some(grp_3d.into()), ..Default::default() });
+    grp.kind = ShapeKind::Group { children: vec![sh, sh_flat], child: Xfrm::new(10.0, 10.0, 100.0, 80.0) };
+    let layout = defaults::layout_of_kind(&p3, deckcraft_model::LayoutType::Blank).unwrap_or_default();
+    let mut s3 = defaults::new_slide(&mut p3, layout).expect("slide");
+    s3.shapes.push(grp);
+    p3.slides.push(Arc::new(s3));
+
+    let bytes = deckcraft_pptx::export(&p3).expect("export");
+    let slide_xml = {
+        use std::io::Read;
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
+        let mut s = String::new();
+        z.by_name("ppt/slides/slide2.xml").expect("slide2").read_to_string(&mut s).expect("utf8");
+        s
+    };
+    assert!(!slide_xml.contains("<a:effectLst/>"), "Group3D with only raw3d must not emit empty effectLst: {slide_xml}");
+    assert!(slide_xml.contains("<a:flatTx z=\"0\"/>"), "{slide_xml}");
+
+    let r3 = deckcraft_pptx::import(&bytes).expect("import");
+    let r3_twice = round(&r3);
+    let g3 = by_name(&r3, "Group3D");
+    let g3_raw = g3.effects.as_ref().and_then(|e| e.raw3d.as_deref()).unwrap_or("");
+    let t3_raw = g3.children()[0].text.as_ref().and_then(|t| t.body.raw3d.as_deref()).unwrap_or("");
+    let flat_raw = g3.children()[1].text.as_ref().and_then(|t| t.body.raw3d.as_deref()).unwrap_or("");
+    assert!(g3_raw.contains("isometricTopUp"), "{g3_raw}");
+    assert!(t3_raw.contains("orthographicFront") && t3_raw.contains("extrusionH=\"12700\""), "{t3_raw}");
+    assert!(flat_raw.contains("flatTx"), "{flat_raw}");
+    assert_eq!(by_name(&r3_twice, "Group3D").effects.as_ref().and_then(|e| e.raw3d.as_deref()), Some(g3_raw));
+    assert_eq!(by_name(&r3_twice, "Group3D").children()[0].text.as_ref().and_then(|t| t.body.raw3d.as_deref()), Some(t3_raw));
+    assert_eq!(by_name(&r3_twice, "Group3D").children()[1].text.as_ref().and_then(|t| t.body.raw3d.as_deref()), Some(flat_raw));
+
+    // BodyProps::inherit propagates parent raw3d only when child raw3d is None.
+    let parent_body = BodyProps { raw3d: Some(text_3d.into()), ..Default::default() };
+    let mut child_body = BodyProps::default();
+    child_body.inherit(&parent_body);
+    assert_eq!(child_body.raw3d.as_deref(), Some(text_3d));
+    let mut override_body = BodyProps { raw3d: Some(flat_tx.into()), ..Default::default() };
+    override_body.inherit(&parent_body);
+    assert_eq!(override_body.raw3d.as_deref(), Some(flat_tx));
+}
+
+fn connector_glue_survives(p: &Presentation, once: &Presentation, twice: &Presentation) {
+    let c = by_name(once, "Connector");
+    assert!(matches!(c.kind, ShapeKind::Connector { start: Some((s, 3)), end: Some((e, 1)) } if s == left_of(p) && e == right_of(p)), "{:?}", c.kind);
+    assert_eq!(c.line, by_name(p, "Connector").line);
+    assert_eq!(c.geom, by_name(p, "Connector").geom);
+    assert_eq!(by_name(twice, "Connector").kind, c.kind);
 }
 
 fn left_of(p: &Presentation) -> ShapeId {

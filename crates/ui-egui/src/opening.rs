@@ -10,6 +10,9 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 pub struct Opening {
     pub path: String,
     pub started_ms: f64,
+    /// Monotonic identity of this attempt. Cancelling and reopening the same path must not match
+    /// a click queued for the previous progress window's Cancel button.
+    pub(crate) generation: u64,
     rx: Receiver<Result<LoadedFile, String>>,
 }
 
@@ -17,6 +20,13 @@ impl Opening {
     /// The file name shown in the window.
     pub fn name(&self) -> String {
         std::path::Path::new(&self.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| self.path.clone())
+    }
+
+    /// A progress window for identity tests; the receiver never yields a file.
+    #[cfg(test)]
+    pub(crate) fn for_test(path: &str) -> Self {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        Opening { path: path.to_string(), started_ms: 0.0, generation: 0, rx }
     }
 }
 
@@ -44,7 +54,10 @@ impl SlideApp {
                 let _ = tx.send(r);
             });
             match spawned {
-                Ok(_) => self.opening = Some(Opening { path: path.to_string(), started_ms: crate::now_ms(), rx }),
+                Ok(_) => {
+                    self.opening_generation = self.opening_generation.wrapping_add(1).max(1);
+                    self.opening = Some(Opening { path: path.to_string(), started_ms: crate::now_ms(), generation: self.opening_generation, rx });
+                }
                 Err(_) => {
                     if let Err(e) = self.open_path(path) {
                         self.notify(e);
@@ -90,7 +103,7 @@ impl SlideApp {
         let name = o.name();
         let secs = ((crate::now_ms() - o.started_ms) / 1000.0).max(0.0);
         let mut cancel = false;
-        egui::Modal::new(egui::Id::new("deckcraft-opening")).show(ctx, |ui| {
+        egui::Modal::new(egui::Id::unique("deckcraft-opening")).show(ctx, |ui| {
             ui.set_width(320.0);
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(18.0));
@@ -178,13 +191,15 @@ mod tests {
         assert!(app.toast.as_ref().is_some_and(|t| t.text.contains("missing.pptx")), "the reason is shown");
     }
 
+    /// Opening a path displays progress; cancelling closes the progress window without opening the
+    /// deck.
     #[test]
     fn the_progress_window_shows_and_cancel_closes_it() {
         use egui_kittest::kittest::Queryable;
         let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
         // A read that never answers: the window stays until Cancel.
         let (_tx, rx) = std::sync::mpsc::channel();
-        app.opening = Some(Opening { path: "/decks/Big deck.pptx".into(), started_ms: crate::now_ms(), rx });
+        app.opening = Some(Opening { path: "/decks/Big deck.pptx".into(), started_ms: crate::now_ms(), generation: 1, rx });
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());

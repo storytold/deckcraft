@@ -116,7 +116,10 @@ fn line_breaks_preserve_actual_pdf_text_and_native_character_ranges() {
         let before = pres.clone();
         eprintln!("line-break source {text:?}; native faces {:?}", placed.layout.runs.iter().map(|r| r.face.family.as_str()).collect::<Vec<_>>());
         let bytes = export(&pres, &PdfOptions { dpi: 48.0, ..Default::default() }).unwrap();
-        assert_eq!(page_text(bytes), text.replace('\u{b}', ""));
+        // Shaping may compose this fixture’s decomposed e + acute into é.
+        let expected = text.replace('\u{b}', "");
+        let extracted = page_text(bytes);
+        assert!(extracted == expected || extracted == expected.replace("e\u{301}", "é"), "{extracted:?} != {expected:?}");
         assert_eq!(pres, before, "export keeps source model unchanged");
     }
 }

@@ -5,7 +5,7 @@
 use deckcraft_model::{MediaClip, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_param, cmd, edit_shapes, has_doc, targets};
 use crate::{EngineError, MediaStatus, Result, Session, UiRequest};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -179,7 +179,11 @@ fn gif_play(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use deckcraft_model::ShapeId;
+    use serde_json::json;
+
+    use crate::cmd::base64_encode;
+    use crate::{MediaStatus, Session, UiRequest};
 
     fn wav() -> Vec<u8> {
         let rate = 8000u32;
@@ -285,5 +289,17 @@ mod tests {
         let r = s.execute("insert.audio", &json!({"name": "song.wma", "data": base64_encode(&asf)})).expect("insert");
         assert_eq!(r["playable"], false);
         assert!(r["warning"].as_str().is_some_and(|w| w.contains("can't be played")), "{r}");
+    }
+
+    #[test]
+    fn a_vp8_webm_is_playable_and_warns_that_only_the_audio_plays() {
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        let clip = include_bytes!("../../../media/tests/fixtures/clip-vp8.webm");
+        let r = s.execute("insert.video", &json!({"name": "clip.webm", "data": base64_encode(clip)})).expect("insert");
+        assert_eq!(r["playable"], true, "the Vorbis track plays: {r}");
+        let w = r["warning"].as_str().expect("the VP8 track can't be shown");
+        assert!(w.contains("VP8") && w.contains("only the audio plays"), "{w}");
+        assert!(matches!(s.ui_requests.last(), Some(UiRequest::Message { .. })), "the warning reaches the status bar");
     }
 }

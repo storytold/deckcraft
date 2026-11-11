@@ -241,26 +241,28 @@ fn linreg(xs: &[f64], ys: &[f64], intercept: Option<f64>) -> Option<(f64, f64)> 
             sxx += x * x;
             sxy += x * (y - b);
         }
-        if sxx.abs() < 1e-18 {
+        if sxx <= 0.0 || !sxx.is_finite() {
             return None;
         }
         let m = sxy / sxx;
         return (m.is_finite() && b.is_finite()).then_some((b, m));
     }
     let n = xs.len() as f64;
-    let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+    let mx = xs.iter().sum::<f64>() / n;
+    let my = ys.iter().sum::<f64>() / n;
+    let (mut sxx, mut sxy) = (0.0, 0.0);
     for (x, y) in xs.iter().zip(ys) {
-        sx += x;
-        sy += y;
-        sxx += x * x;
-        sxy += x * y;
+        let dx = x - mx;
+        sxx += dx * dx;
+        sxy += dx * (y - my);
     }
-    let den = n * sxx - sx * sx;
-    if den.abs() < 1e-18 {
+    // Constant x with a large offset leaves rounding residue in `mx`, so compare against the
+    // rounding scale of the mean instead of zero.
+    if sxx <= 4.0 * n * (f64::EPSILON * mx.abs()).powi(2) || !sxx.is_finite() {
         return None;
     }
-    let m = (n * sxy - sx * sy) / den;
-    let b = (sy - m * sx) / n;
+    let m = sxy / sxx;
+    let b = my - m * mx;
     (m.is_finite() && b.is_finite()).then_some((b, m))
 }
 
@@ -335,16 +337,31 @@ fn fit_moving_avg(pairs: &[(f64, f64)], period: usize) -> Option<(Model, Vec<f64
 
 #[allow(clippy::needless_range_loop)]
 fn polyfit_with_intercept(xs: &[f64], ys: &[f64], order: usize, b0: f64) -> Option<Vec<f64>> {
+    // Fit `y - b0 = (x / sx) * q(u)` with `u = (x - xm) / su` and `q` of degree `order - 1`. The
+    // basis `(x / sx) * u^j` spans the same polynomials as `x^(j + 1)`, but keeps the pivots in
+    // `solve` independent of the units and the offset of x.
+    let n = xs.len() as f64;
+    let sx = xs.iter().fold(0.0_f64, |acc, x| acc.max(x.abs()));
+    if sx <= 0.0 || !sx.is_finite() {
+        return None;
+    }
+    let xm = xs.iter().sum::<f64>() / n;
+    let su = match xs.iter().fold(0.0_f64, |acc, x| acc.max((x - xm).abs())) {
+        s if s > 0.0 && s.is_finite() => s,
+        _ => 1.0,
+    };
     let m = order;
     let mut ata = vec![vec![0.0; m]; m];
     let mut atb = vec![0.0; m];
     for (x, y) in xs.iter().zip(ys) {
+        let v = x / sx;
+        let u = (x - xm) / su;
         let dy = y - b0;
         for i in 0..m {
-            let xi = x.powi((i + 1) as i32);
+            let xi = v * u.powi(i as i32);
             atb[i] += dy * xi;
             for j in i..m {
-                ata[i][j] += xi * x.powi((j + 1) as i32);
+                ata[i][j] += xi * v * u.powi(j as i32);
             }
         }
     }
@@ -353,10 +370,11 @@ fn polyfit_with_intercept(xs: &[f64], ys: &[f64], order: usize, b0: f64) -> Opti
             ata[i][j] = ata[j][i];
         }
     }
-    let solved = solve(ata, atb)?;
+    let centred: Vec<f64> = solve(ata, atb)?.iter().enumerate().map(|(k, c)| c / su.powi(k as i32)).collect();
+    let q = expand_shift(&centred, xm);
     let mut coeff = Vec::with_capacity(order + 1);
     coeff.push(b0);
-    coeff.extend(solved);
+    coeff.extend(q.iter().map(|c| c / sx));
     coeff.iter().all(|v| v.is_finite()).then_some(coeff)
 }
 
@@ -372,7 +390,13 @@ fn polyfit(xs: &[f64], ys: &[f64], order: usize, intercept: Option<f64>) -> Opti
         return polyfit_with_intercept(xs, ys, order, b0);
     }
     let xm = xs.iter().sum::<f64>() / n as f64;
-    let us: Vec<f64> = xs.iter().map(|x| x - xm).collect();
+    // Scale the centred x to unit range so the pivot threshold in `solve` does not depend on the
+    // units of x.
+    let s = xs.iter().fold(0.0_f64, |acc, x| acc.max((x - xm).abs()));
+    if s <= 0.0 || !s.is_finite() {
+        return None;
+    }
+    let us: Vec<f64> = xs.iter().map(|x| (x - xm) / s).collect();
     let m = order + 1;
     let mut ata = vec![vec![0.0; m]; m];
     let mut atb = vec![0.0; m];
@@ -391,7 +415,7 @@ fn polyfit(xs: &[f64], ys: &[f64], order: usize, intercept: Option<f64>) -> Opti
             ata[i][j] = ata[j][i];
         }
     }
-    let centred = solve(ata, atb)?;
+    let centred: Vec<f64> = solve(ata, atb)?.iter().enumerate().map(|(k, c)| c / s.powi(k as i32)).collect();
     let coeff = expand_shift(&centred, xm);
     coeff.iter().all(|v| v.is_finite()).then_some(coeff)
 }
@@ -478,7 +502,7 @@ fn num(v: f64) -> String {
     if a == 0.0 {
         return "0".to_string();
     }
-    if a >= 1.0e6 || a < 1.0e-3 {
+    if !(1.0e-3..1.0e6).contains(&a) {
         return format!("{v:.2e}").replace('+', "");
     }
     let digits = if a >= 100.0 {
@@ -559,6 +583,94 @@ mod tests {
 
     fn line(kind: TrendlineType) -> Trendline {
         Trendline { kind, ..Default::default() }
+    }
+
+    #[test]
+    fn linear_fits_tiny_x_values() {
+        let xs = [1e-10, 2e-10, 3e-10, 4e-10, 5e-10];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of tiny x values");
+        assert!((fit.y(3e-10).unwrap() - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn poly_fits_tiny_x_values() {
+        let xs = [1e-5, 2e-5, 3e-5, 4e-5, 5e-5];
+        let f = |x: f64| 1.0 + 2.0 * x + 3.0 * x * x;
+        let ys: Vec<f64> = xs.iter().map(|x| f(*x)).collect();
+        let fit = line(TrendlineType::Poly).fit(&xs, &ys).expect("poly fit of tiny x values");
+        assert!((fit.y(3e-5).unwrap() - f(3e-5)).abs() < 1e-9);
+        let big: Vec<f64> = xs.iter().map(|x| x * 1e5).collect();
+        let scaled = line(TrendlineType::Poly).fit(&big, &ys).expect("poly fit of scaled x values");
+        for x in xs {
+            assert!((fit.y(x).unwrap() - scaled.y(x * 1e5).unwrap()).abs() < 1e-9, "{x}");
+        }
+    }
+
+    #[test]
+    fn poly_with_intercept_fits_tiny_x_values() {
+        let xs = [1e-5, 2e-5, 3e-5, 4e-5, 5e-5];
+        let f = |x: f64| 1.0 + 2.0 * x + 3.0 * x * x;
+        let ys: Vec<f64> = xs.iter().map(|x| f(*x)).collect();
+        let mut poly = line(TrendlineType::Poly);
+        poly.intercept = Some(1.0);
+        let fit = poly.fit(&xs, &ys).expect("poly fit with intercept of tiny x values");
+        assert!((fit.y(3e-5).unwrap() - f(3e-5)).abs() < 1e-9);
+        let big: Vec<f64> = xs.iter().map(|x| x * 1e5).collect();
+        let scaled = poly.fit(&big, &ys).expect("poly fit with intercept of scaled x values");
+        for x in xs {
+            assert!((fit.y(x).unwrap() - scaled.y(x * 1e5).unwrap()).abs() < 1e-9, "{x}");
+        }
+    }
+
+    #[test]
+    fn poly_with_intercept_fits_offset_but_narrow_x_range() {
+        let xs = [45000.00, 45000.01, 45000.02, 45000.03, 45000.04];
+        let f = |x: f64| 1.0 + x * (1.0 + 100.0 * (x - 45000.02));
+        let ys: Vec<f64> = xs.iter().map(|x| f(*x)).collect();
+        let mut poly = line(TrendlineType::Poly);
+        poly.intercept = Some(1.0);
+        let fit = poly.fit(&xs, &ys).expect("poly fit with intercept of offset x values");
+        for x in xs {
+            assert!((fit.y(x).unwrap() - f(x)).abs() < 1e-2, "{x}");
+        }
+    }
+
+    #[test]
+    fn linear_fits_offset_but_narrow_x_range() {
+        let xs = [45000.00, 45000.01, 45000.02, 45000.03, 45000.04];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of offset x values");
+        assert!((fit.y(45000.02).unwrap() - 3.0).abs() < 1e-4);
+        let xs = [1e7, 1e7 + 1.0, 1e7 + 2.0, 1e7 + 3.0, 1e7 + 4.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of 1e7 offset");
+        assert!((fit.y(1e7 + 2.0).unwrap() - 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn linear_fixed_intercept_on_offset_narrow_x_range() {
+        let xs = [1e7, 1e7 + 1.0, 1e7 + 2.0, 1e7 + 3.0, 1e7 + 4.0];
+        let ys: Vec<f64> = xs.iter().map(|x| 2.0 * x).collect();
+        let mut forced = line(TrendlineType::Linear);
+        forced.intercept = Some(0.0);
+        let fit = forced.fit(&xs, &ys).expect("fixed-intercept fit");
+        assert!((fit.y(1e7 + 2.0).unwrap() / (2.0 * (1e7 + 2.0)) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn linear_fixed_intercept_rejects_overflowing_x() {
+        let xs = [1e160, 2e160, 3e160];
+        let ys = [1.0, 2.0, 3.0];
+        let mut forced = line(TrendlineType::Linear);
+        forced.intercept = Some(0.0);
+        assert!(forced.fit(&xs, &ys).is_none());
+    }
+
+    #[test]
+    fn linear_rejects_constant_x_with_large_offset() {
+        let xs = [45000.1; 5];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        assert!(line(TrendlineType::Linear).fit(&xs, &ys).is_none());
     }
 
     #[test]

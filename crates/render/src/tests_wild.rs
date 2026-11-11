@@ -1,10 +1,14 @@
 //! Render tests for shape, line, fill and effect cases checked against PowerPoint's own exports
 //! of synthetic "wild" slides (observed black-box; see `plan/powerpoint/tools/gen_wild.py`).
 
-use super::*;
+use super::{
+    BezPath, Fill, Image, Line, MAX_DASHES, PathEl, Point, Rect, RenderOpts, ShapeKind, dash_with_caps, head_size, images, limit_dash_count, paint,
+    render_slide, trim_ends,
+};
 use deckcraft_color::Rgba;
 use deckcraft_model::style::ColorRef;
 use deckcraft_model::{CustomPath, Geom, Presentation, Shape, ShapeId, Xfrm};
+use kurbo::Shape as _;
 
 fn deck_with(shapes: Vec<Shape>) -> Presentation {
     let mut p = Presentation::default();
@@ -160,6 +164,15 @@ fn trimming_a_path_leaves_its_ends_off_by_arc_length() {
     assert!(trim_ends(&p, 60.0, 50.0).elements().is_empty());
     let r = Rect::new(0.0, 0.0, 10.0, 10.0).to_path(0.1);
     assert_eq!(trim_ends(&r, 3.0, 3.0).elements().len(), r.elements().len());
+
+    // Zero-length leading segments trimmed correctly without quadratic copy.
+    let mut p0 = BezPath::new();
+    p0.move_to((0.0, 0.0));
+    p0.line_to((0.0, 0.0));
+    p0.line_to((0.0, 0.0));
+    p0.line_to((50.0, 0.0));
+    let t0 = trim_ends(&p0, 10.0, 0.0);
+    assert_eq!(t0.elements().first(), Some(&PathEl::MoveTo(Point::new(10.0, 0.0))));
 }
 
 fn radial(focus: [f64; 4]) -> Shape {
@@ -173,6 +186,7 @@ fn radial(focus: [f64; 4]) -> Shape {
             stops,
             shape: GradientShape::Path { path: "circle".into(), focus },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: no_line(),
         ..Default::default()
@@ -297,8 +311,13 @@ fn a_pictures_border_lies_outside_the_picture() {
 fn children_filled_with_the_group_fill_show_one_fill_across_the_group() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
     let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(RED) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::rgb(0, 0, 255)) }];
-    let grad =
-        Fill::Gradient(Gradient { tile: [0.0; 4], stops, shape: GradientShape::Linear { angle: 0.0, scaled: false }, rotate_with_shape: true });
+    let grad = Fill::Gradient(Gradient {
+        tile: [0.0; 4],
+        stops,
+        shape: GradientShape::Linear { angle: 0.0, scaled: false },
+        rotate_with_shape: true,
+        flip: None,
+    });
     let child = |id: u32, x: f64| Shape {
         id: ShapeId(id),
         xfrm: Some(Xfrm::new(x, 0.0, 90.0, 100.0)),
@@ -359,7 +378,13 @@ fn a_linear_gradient_spans_its_tile_rect() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
     // Tile rect the left half of the box: the ramp ends half way and stays black after.
     let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(WHITE) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::BLACK) }];
-    let g = Gradient { stops, shape: GradientShape::Linear { angle: 0.0, scaled: false }, rotate_with_shape: true, tile: [0.0, 0.0, 0.5, 0.0] };
+    let g = Gradient {
+        stops,
+        shape: GradientShape::Linear { angle: 0.0, scaled: false },
+        rotate_with_shape: true,
+        tile: [0.0, 0.0, 0.5, 0.0],
+        flip: None,
+    };
     let sh = Shape {
         id: ShapeId(20),
         xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 100.0)),
@@ -429,6 +454,198 @@ fn tiled_pictures_flip_align_and_skip_non_positive_scales() {
     assert!(close(img.pixel(115, 115), WHITE, 5) && close(img.pixel(300, 150), WHITE, 5));
 }
 
+#[allow(clippy::unwrap_used)]
+fn red_over_blue() -> Vec<u8> {
+    let img = image::RgbImage::from_fn(4, 8, |_, y| if y < 4 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) });
+    let mut out = std::io::Cursor::new(vec![]);
+    image::DynamicImage::ImageRgb8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+#[test]
+fn a_tile_keeps_its_size_in_a_group_with_scaled_child_coordinates() {
+    use deckcraft_model::style::{PictureFill, PictureMode};
+    // A group's child space scales its shapes' boxes, not the tile: the same tiles show whether
+    // the group's child space is 1600 times smaller (old decks write them so), 4 times larger,
+    // the slide's own or stretched unevenly (PowerPoint draws all of them alike, measured on its
+    // own export of a probe deck). Before, one tile covered hundreds of boxes and the fill was one
+    // flat texel, and an uneven group stretched the tile.
+    // Wide: 8x4 px = 6x3 pt, ten times = 60x30 pt tiles, red then blue across.
+    // Tall: 4x8 px = 3x6 pt, ten times = 30x60 pt tiles, red over blue down.
+    let blue = Rgba::rgb(0, 0, 255);
+    let scales = [(1.0, 1.0), (1600.0, 1600.0), (0.25, 0.25), (2.0, 0.5), (0.5, 2.0), (1800.0, 1.0), (1.0, 1800.0)];
+    for (kx, ky) in scales {
+        for tall in [false, true] {
+            let mut p = Presentation::default();
+            let png = if tall { red_over_blue() } else { half_red_half_blue() };
+            let media = p.add_media("t.png", "image/png", png).expect("media");
+            let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+            let member = Shape {
+                id: ShapeId(22),
+                xfrm: Some(Xfrm::new(0.0, 0.0, 240.0 / kx, 60.0 / ky)),
+                fill: Some(Fill::Picture(PictureFill { media, mode, ..Default::default() })),
+                line: no_line(),
+                ..Default::default()
+            };
+            let group = Shape {
+                id: ShapeId(21),
+                xfrm: Some(Xfrm::new(100.0, 100.0, 240.0, 60.0)),
+                kind: ShapeKind::Group { children: vec![member], child: Xfrm::new(0.0, 0.0, 240.0 / kx, 60.0 / ky) },
+                ..Default::default()
+            };
+            std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![group];
+            let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+            // Along the tile's long side: first half red, second blue, then red again.
+            let (a, b, c) = if tall { ((115, 115), (115, 145), (115, 175)) } else { ((115, 115), (145, 115), (175, 115)) };
+            let (pa, pb, pc) = (img.pixel(a.0, a.1), img.pixel(b.0, b.1), img.pixel(c.0, c.1));
+            assert!(
+                close(pa, RED, 30) && close(pb, blue, 30) && (tall || close(pc, RED, 30)) && (!tall || close(pc, WHITE, 5) || close(pc, RED, 30)),
+                "child space {kx} x {ky}, tall={tall}: {pa:?} {pb:?} {pc:?}"
+            );
+        }
+    }
+}
+
+/// A slide with `shape` (built for a box of `w` x `h` child units) in a group at (100, 100) that is
+/// 240 x 60 pt on the slide and scaled `kx` x `ky` against its child space, drawn at 1 px per point.
+fn in_a_scaled_group(kx: f64, ky: f64, p: Presentation, shape: impl FnOnce(f64, f64) -> Shape) -> Image {
+    let (w, h) = (240.0 / kx, 60.0 / ky);
+    let group = Shape {
+        id: ShapeId(21),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 240.0, 60.0)),
+        kind: ShapeKind::Group { children: vec![shape(w, h)], child: Xfrm::new(0.0, 0.0, w, h) },
+        ..Default::default()
+    };
+    let mut p = p;
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![group];
+    render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() })
+}
+
+#[test]
+fn a_tile_a_group_passes_to_its_members_keeps_its_size_inside_a_scaled_group() {
+    use deckcraft_model::style::{PictureFill, PictureMode};
+    // The group that owns the tiled fill sits inside another group whose child space is scaled: the
+    // members that take it (`grpFill`) get tiles of 60 x 30 pt, as with no outer group.
+    let blue = Rgba::rgb(0, 0, 255);
+    for (kx, ky) in [(1.0, 1.0), (0.25, 0.25), (1600.0, 1600.0), (2.0, 0.5)] {
+        let mut p = Presentation::default();
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+        let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+        let img = in_a_scaled_group(kx, ky, p, |w, h| {
+            let member =
+                Shape { id: ShapeId(23), xfrm: Some(Xfrm::new(0.0, 0.0, w, h)), fill: Some(Fill::Group), line: no_line(), ..Default::default() };
+            Shape {
+                id: ShapeId(22),
+                xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
+                fill: Some(Fill::Picture(PictureFill { media, mode, ..Default::default() })),
+                kind: ShapeKind::Group { children: vec![member], child: Xfrm::new(0.0, 0.0, w, h) },
+                ..Default::default()
+            }
+        });
+        let (a, b, c) = (img.pixel(115, 115), img.pixel(145, 115), img.pixel(175, 115));
+        assert!(close(a, RED, 30) && close(b, blue, 30) && close(c, RED, 30), "outer group {kx} x {ky}: {a:?} {b:?} {c:?}");
+    }
+}
+
+#[test]
+fn a_picture_shapes_own_tile_keeps_its_size_inside_a_scaled_group() {
+    use deckcraft_model::style::{PictureFill, PictureMode};
+    // A picture (`p:pic`) whose blip fill is a tile rather than a stretch.
+    let blue = Rgba::rgb(0, 0, 255);
+    for (kx, ky) in [(1.0, 1.0), (0.25, 0.25), (1600.0, 1600.0), (2.0, 0.5)] {
+        let mut p = Presentation::default();
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+        let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+        let img = in_a_scaled_group(kx, ky, p, |w, h| Shape {
+            id: ShapeId(22),
+            xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
+            kind: ShapeKind::Picture { fill: PictureFill { media, mode, ..Default::default() } },
+            line: no_line(),
+            ..Default::default()
+        });
+        let (a, b, c) = (img.pixel(115, 115), img.pixel(145, 115), img.pixel(175, 115));
+        assert!(close(a, RED, 30) && close(b, blue, 30) && close(c, RED, 30), "group {kx} x {ky}: {a:?} {b:?} {c:?}");
+    }
+}
+
+#[test]
+fn a_tiled_pictures_reflection_keeps_the_tile_size_inside_a_scaled_group() {
+    use deckcraft_model::style::{PictureFill, PictureMode, Reflection};
+    // The reflection mirrors the picture's pixels, so its tiles must be the face's, 60 x 30 pt,
+    // whatever the group's child scale: just below the box it shows the same colours.
+    let reflected = |kx: f64, ky: f64| {
+        let mut p = Presentation::default();
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+        let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+        let rf = Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0, ..Default::default() };
+        let img = in_a_scaled_group(kx, ky, p, |w, h| Shape {
+            id: ShapeId(22),
+            xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
+            kind: ShapeKind::Picture { fill: PictureFill { media, mode, ..Default::default() } },
+            line: no_line(),
+            effects: Some(deckcraft_model::Effects { reflection: Some(rf), ..Default::default() }),
+            ..Default::default()
+        });
+        [img.pixel(115, 163), img.pixel(145, 163), img.pixel(175, 163)]
+    };
+    let plain = reflected(1.0, 1.0);
+    assert!(plain[0][0] > plain[0][2] && plain[1][2] > plain[1][0] && plain[2][0] > plain[2][2], "red, blue, red in the reflection: {plain:?}");
+    for (kx, ky) in [(0.25, 0.25), (1600.0, 1600.0), (2.0, 0.5)] {
+        let got = reflected(kx, ky);
+        for (g, e) in got.iter().zip(&plain) {
+            assert!(close(*g, Rgba::rgb(e[0], e[1], e[2]), 40), "child scale {kx} x {ky}: {got:?} against {plain:?}");
+        }
+    }
+}
+
+#[test]
+fn an_upright_tile_in_a_turned_shape_keeps_its_size_in_points_at_any_zoom() {
+    use deckcraft_model::style::{PictureFill, PictureMode};
+    // `rotWithShape="0"` draws the tiles on the slide's axes, in device pixels: they were sized in
+    // pixels, so zooming (or a group's child scale) changed their size on the slide. PowerPoint's
+    // export of the same shapes shows 60x30 pt tiles at every zoom.
+    let draw = |scale: f64, group: f64| {
+        let mut p = Presentation::default();
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+        let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+        let fill = Fill::Picture(PictureFill { media, mode, upright: true, ..Default::default() });
+        let shape = Shape {
+            id: ShapeId(22),
+            xfrm: Some(Xfrm { rot: 20.0, ..Xfrm::new(0.0, 0.0, 240.0 / group, 120.0 / group) }),
+            fill: Some(fill),
+            line: no_line(),
+            ..Default::default()
+        };
+        let shape = if group == 1.0 {
+            Shape { xfrm: Some(Xfrm { rot: 20.0, ..Xfrm::new(100.0, 100.0, 240.0, 120.0) }), ..shape }
+        } else {
+            Shape {
+                id: ShapeId(21),
+                xfrm: Some(Xfrm::new(100.0, 100.0, 240.0, 120.0)),
+                kind: ShapeKind::Group { children: vec![shape], child: Xfrm::new(0.0, 0.0, 240.0 / group, 120.0 / group) },
+                ..Default::default()
+            }
+        };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![shape];
+        render_slide(&p, 0, &RenderOpts { scale, ..Default::default() })
+    };
+    for group in [1.0, 0.25] {
+        let (one, two) = (draw(1.0, group), draw(2.0, group));
+        let (mut same, mut total) = (0, 0);
+        for y in (120..220).step_by(7) {
+            for x in (120..320).step_by(9) {
+                let (a, b) = (one.pixel(x, y), two.pixel(2 * x, 2 * y));
+                if close(a, WHITE, 5) && close(b, WHITE, 5) {
+                    continue; // outside the turned rectangle
+                }
+                total += 1;
+                same += usize::from(close(a, Rgba::rgb(b[0], b[1], b[2]), 40));
+            }
+        }
+        assert!(total > 40 && same * 10 >= total * 9, "group scale {group}: {same} of {total} samples agree between zoom 1 and 2");
+    }
+}
+
 #[test]
 fn a_tiles_first_copy_sits_on_the_point_its_alignment_names() {
     let b = Rect::new(0.0, 0.0, 100.0, 50.0);
@@ -489,6 +706,7 @@ fn gradient_lines_and_their_heads_take_the_gradient() {
             shape: GradientShape::Linear { angle, scaled: false },
             rotate_with_shape: true,
             tile: [0.0; 4],
+            flip: None,
         })
     };
     // Left to right along a 20 pt line: red at its start, blue at its end, and the arrowhead at
@@ -643,6 +861,7 @@ fn a_gradient_not_rotating_with_its_shape_keeps_to_the_slide() {
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape,
             tile: [0.0; 4],
+            flip: None,
         };
         // 200 × 100 turned a quarter: it covers 150..250 across and 50..250 down.
         let sh = Shape {
@@ -716,7 +935,7 @@ fn a_picture_reflects_its_pixels() {
     let mut p = picture_deck(None);
     let s = std::sync::Arc::make_mut(&mut p.slides[0]);
     if let Some(sh) = s.shapes.first_mut() {
-        let rf = deckcraft_model::style::Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0 };
+        let rf = deckcraft_model::style::Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0, ..Default::default() };
         sh.effects = Some(deckcraft_model::Effects { reflection: Some(rf), ..Default::default() });
     }
     let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
@@ -771,4 +990,37 @@ fn a_tiny_dash_on_a_huge_shape_draws_without_running_out_of_memory() {
     p.line_to((4.0e6, 0.0));
     let pat = limit_dash_count(&p, vec![1.0, 1.0]);
     assert!((4.0e6 / (pat[0] + pat[1]) - MAX_DASHES).abs() < 1.0, "{pat:?}");
+    // A custom pattern of 1,000 dashes counts each of them: the limit is on dashes drawn.
+    let pat = limit_dash_count(&p, vec![1.0; 2000]);
+    let period: f64 = pat.iter().sum();
+    assert!((4.0e6 / period * 1000.0 - MAX_DASHES).abs() < 1.0, "{}", period);
+}
+
+/// A bar chart with 20,000 points, each with its own fill, and a sparse scatter of the same size:
+/// the per-point fills and the scatter's "has any x" are looked up, not searched per point.
+#[test]
+fn many_point_fills_and_sparse_scatter_x_render() {
+    use deckcraft_model::ShapeKind;
+    use deckcraft_model::chart::{Chart, ChartType};
+    use deckcraft_model::style::Fill;
+    let n = 20_000;
+    let chart = |kind: ChartType| {
+        let mut c = Chart::sample(kind);
+        c.series.truncate(1);
+        c.categories = (0..n).map(|i| i.to_string()).collect();
+        c.series[0].values = (0..n).map(|i| Some(i as f64)).collect();
+        c
+    };
+    let mut bars = chart(ChartType::Column);
+    bars.series[0].point_fills = (0..n).rev().map(|i| (i, Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0))))).collect();
+    let mut scatter = chart(ChartType::Scatter);
+    scatter.series[0].x_values = (0..n).map(|i| (i + 1 == n).then_some(1.0)).collect();
+    let shape = |id: u32, c: Chart| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(10.0, 10.0, 400.0, 300.0)),
+        kind: ShapeKind::Chart(Box::new(c)),
+        ..Default::default()
+    };
+    let img = render(vec![shape(2, bars), shape(3, scatter)]);
+    assert!(img.width > 0);
 }

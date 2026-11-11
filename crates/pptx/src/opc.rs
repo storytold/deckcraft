@@ -93,7 +93,8 @@ impl Package {
                 }
             }
             total = total.saturating_add(data.len() as u64);
-            parts.insert(name.to_ascii_lowercase(), (name, data));
+            // A name kept with `\` would reach code that splits paths on `/`.
+            parts.insert(norm(&name), (name.replace('\\', "/"), data));
         }
         Ok(Package { parts, ct_cache: std::sync::OnceLock::new() })
     }
@@ -170,6 +171,7 @@ fn rels_of(doc: &xml::Doc, part: &str) -> Rels {
         let external = r.attr("TargetMode").is_some_and(|m| m.eq_ignore_ascii_case("external"));
         let target_raw = target.to_string();
         let target = if external { target_raw.clone() } else { resolve(&base, target) };
+        out.by_id.entry(id.to_string()).or_insert(out.items.len());
         out.items.push(Rel {
             id: id.to_string(),
             kind: ty.rsplit('/').next().unwrap_or(ty).to_string(),
@@ -210,11 +212,13 @@ pub struct Rel {
 #[derive(Clone, Debug, Default)]
 pub struct Rels {
     pub items: Vec<Rel>,
+    /// Id → index of its first relationship in `items`.
+    by_id: HashMap<String, usize>,
 }
 
 impl Rels {
     pub fn get(&self, id: &str) -> Option<&Rel> {
-        self.items.iter().find(|r| r.id == id)
+        self.by_id.get(id).and_then(|&i| self.items.get(i))
     }
     pub fn target(&self, id: &str) -> Option<&str> {
         self.get(id).map(|r| r.target.as_str())
@@ -279,7 +283,11 @@ fn percent_decode(s: &str) -> String {
     while i < b.len() {
         let c = b.get(i).copied().unwrap_or(0);
         if c == b'%'
-            && let Some(h) = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok())
+            && let Some(h) = b
+                .get(i + 1..i + 3)
+                .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
         {
             out.push(h);
             i += 3;
@@ -293,7 +301,7 @@ fn percent_decode(s: &str) -> String {
 
 /// Resolve a relative target against a base directory into a part name.
 pub fn resolve(base: &str, target: &str) -> String {
-    let target = percent_decode(target.split('#').next().unwrap_or(""));
+    let target = percent_decode(target.split('#').next().unwrap_or("")).replace('\\', "/");
     let target = target.as_str();
     let mut segs: Vec<&str> = if target.starts_with('/') { vec![] } else { base.split('/').filter(|s| !s.is_empty()).collect() };
     for s in target.split('/') {
@@ -334,23 +342,29 @@ pub fn relative(from: &str, to: &str) -> String {
 #[derive(Default)]
 pub struct RelsOut {
     pub items: Vec<(String, String, String, bool)>,
+    /// (type, target, external) → id of the relationship [`RelsOut::add`] made for it.
+    added: HashMap<(String, String, bool), String>,
 }
 
 impl RelsOut {
     /// Add (or reuse) a relationship; `kind` is a full type URI or a suffix of the standard base.
     pub fn add(&mut self, kind: &str, target: &str, external: bool) -> String {
         let ty = if kind.starts_with("http") { kind.to_string() } else { format!("{RT_BASE}{kind}") };
-        if let Some((id, ..)) = self.items.iter().find(|(_, t, tg, e)| *t == ty && tg == target && *e == external) {
+        let key = (ty, target.to_string(), external);
+        if let Some(id) = self.added.get(&key) {
             return id.clone();
         }
         let id = format!("rId{}", self.items.len() + 1);
-        self.items.push((id.clone(), ty, target.to_string(), external));
+        self.items.push((id.clone(), key.0.clone(), key.1.clone(), external));
+        self.added.insert(key, id.clone());
         id
     }
     /// Always add a new relationship even if an identical one exists.
     pub fn add_new(&mut self, kind: &str, target: &str, external: bool) -> String {
         let ty = if kind.starts_with("http") { kind.to_string() } else { format!("{RT_BASE}{kind}") };
         let id = format!("rId{}", self.items.len() + 1);
+        // `add` reuses the first relationship for a target, whichever call made it.
+        self.added.entry((ty.clone(), target.to_string(), external)).or_insert_with(|| id.clone());
         self.items.push((id.clone(), ty, target.to_string(), external));
         id
     }
@@ -464,6 +478,12 @@ mod tests {
         assert_eq!(resolve("ppt/slides", "../media/a.png#frag"), "ppt/media/a.png");
     }
 
+    #[test]
+    fn resolve_percent_decode_requires_two_hex_digits() {
+        assert_eq!(resolve("ppt/slides", "../media/a%+5b.png"), "ppt/media/a%+5b.png");
+        assert_eq!(resolve("ppt/slides", "../media/a%20b.png"), "ppt/media/a b.png");
+    }
+
     fn zip_of(entries: &[(&str, usize)]) -> Vec<u8> {
         let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -490,11 +510,46 @@ mod tests {
     }
 
     #[test]
+    fn many_relationships_are_found_by_index_and_first_id_wins() {
+        let n = 50_000;
+        let mut x = String::from(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
+        for i in 0..n {
+            x.push_str(&format!(r#"<Relationship Id="rId{i}" Type="{RT_BASE}image" Target="../media/image{i}.png"/>"#));
+        }
+        x.push_str(&format!(r#"<Relationship Id="rId0" Type="{RT_BASE}image" Target="../media/dup.png"/></Relationships>"#));
+        let rels = rels_from_bytes(x.as_bytes(), "ppt/slides/slide1.xml");
+        assert_eq!(rels.target("rId0"), Some("ppt/media/image0.png"), "the first of a repeated id wins");
+        assert!((0..n).all(|i| rels.target(&format!("rId{i}")) == Some(&*format!("ppt/media/image{i}.png"))));
+
+        let mut out = RelsOut::default();
+        let ids: Vec<String> = (0..n).map(|i| out.add("hyperlink", &format!("https://example.com/{i}"), true)).collect();
+        assert_eq!(out.add("hyperlink", "https://example.com/7", true), ids[7], "an identical target reuses its id");
+        assert_eq!(out.add("hyperlink", "https://example.com/7", false), format!("rId{}", n + 1), "internal is distinct");
+        let fresh = out.add_new("image", "../media/a.png", false);
+        assert_ne!(out.add_new("image", "../media/a.png", false), fresh);
+        assert_eq!(out.add("image", "../media/a.png", false), fresh, "add reuses the first add_new made");
+    }
+
+    #[test]
+    fn backslash_zip_entry_names_are_found() {
+        let z = zip_of(&[("PPT\\Slides\\Slide1.xml", 3)]);
+        let p = Package::open(&z).unwrap();
+        assert!(p.get("ppt/slides/slide1.xml").is_some());
+        assert_eq!(p.original_name("ppt/slides/slide1.xml"), Some("PPT/Slides/Slide1.xml"));
+    }
+
+    #[test]
     fn xml_bytes_applies_the_xml_limit() {
         let z = zip_of(&[("small.xml", 10)]);
         let p = Package::open(&z).unwrap();
         assert_eq!(p.xml_bytes("small.xml").map(<[u8]>::len), Some(10));
         assert!(p.xml_bytes("missing.xml").is_none());
+    }
+
+    #[test]
+    fn resolve_backslash_target() {
+        assert_eq!(resolve("ppt/slides", "..\\media\\image1.png"), "ppt/media/image1.png");
+        assert_eq!(resolve("ppt/slides", "\\ppt\\media\\a.png"), "ppt/media/a.png");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use deckcraft_model::{ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, cmd, f64_or, has_selection, targets};
 use crate::{Result, Session};
 
 /// Larger pictures are refused rather than matted slowly (16 megapixels).
@@ -184,7 +184,12 @@ fn remove_background(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    use serde_json::json;
+
     use super::*;
+    use crate::Session;
+    use crate::cmd::base64_encode;
 
     /// A red disc on a white-to-grey gradient.
     fn disc() -> image::RgbaImage {

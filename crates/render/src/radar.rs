@@ -67,7 +67,14 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
                 Align::Right => q.x - w + base * 0.3,
                 _ => q.x - w / 2.0,
             };
-            label(ctx, rctx, m, name, Rect::new(x0, q.y - base * 0.7, x0 + w, q.y + base * 0.7), base, align, Anchor::Middle, text_col, false);
+            label(
+                ctx,
+                rctx,
+                m,
+                name,
+                Rect::new(x0, q.y - base * 0.7, x0 + w, q.y + base * 0.7),
+                crate::chart::LabelStyle { size: base, align, anchor: Anchor::Middle, col: text_col, bold: false },
+            );
         }
     }
     // Value labels up the first spoke.
@@ -83,11 +90,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
                 m,
                 &t,
                 Rect::new(q.x - w - base * 0.3, q.y - base * 0.6, q.x - base * 0.3, q.y + base * 0.6),
-                base * 0.9,
-                Align::Right,
-                Anchor::Middle,
-                text_col,
-                false,
+                crate::chart::LabelStyle { size: base * 0.9, align: Align::Right, anchor: Anchor::Middle, col: text_col, bold: false },
             );
         }
     }
@@ -130,11 +133,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
                         m,
                         &t,
                         Rect::new(q.x - 40.0, q.y - base * 1.4, q.x + 40.0, q.y - base * 0.2),
-                        base * 0.9,
-                        Align::Center,
-                        Anchor::Bottom,
-                        text_col,
-                        false,
+                        crate::chart::LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: text_col, bold: false },
                     );
                 }
             }

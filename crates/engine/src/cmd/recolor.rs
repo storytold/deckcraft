@@ -6,7 +6,7 @@ use deckcraft_model::style::{PictureAdjust, PictureMode};
 use deckcraft_model::{ColorRef, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, always, bad, bool_or, cmd, current_shapes, edit_shapes, has_selection, str_param, targets, text, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

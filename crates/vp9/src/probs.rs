@@ -142,22 +142,50 @@ macro_rules! add_nested {
             add_nested!(x, y, 2);
         }
     };
+    ($a:expr, $b:expr, 4) => {
+        for (x, y) in $a.iter_mut().zip($b.iter()) {
+            add_nested!(x, y, 3);
+        }
+    };
+    ($a:expr, $b:expr, 5) => {
+        for (x, y) in $a.iter_mut().zip($b.iter()) {
+            add_nested!(x, y, 4);
+        }
+    };
+    ($a:expr, $b:expr, 6) => {
+        for (x, y) in $a.iter_mut().zip($b.iter()) {
+            add_nested!(x, y, 5);
+        }
+    };
 }
 
 impl Counts {
     /// Accumulate the counts of another tile.
     pub fn add(&mut self, o: &Counts) {
+        self.add_mode_counts(o);
+        self.add_ref_counts(o);
+        self.add_mv_counts(o);
+        self.add_coef_counts(o);
+    }
+
+    fn add_mode_counts(&mut self, o: &Counts) {
         add_nested!(self.intra_mode, o.intra_mode, 2);
         add_nested!(self.uv_mode, o.uv_mode, 2);
         add_nested!(self.partition, o.partition, 2);
         add_nested!(self.interp_filter, o.interp_filter, 2);
         add_nested!(self.inter_mode, o.inter_mode, 2);
         add_nested!(self.tx, o.tx, 3);
+        add_nested!(self.skip, o.skip, 2);
+    }
+
+    fn add_ref_counts(&mut self, o: &Counts) {
         add_nested!(self.is_inter, o.is_inter, 2);
         add_nested!(self.comp_mode, o.comp_mode, 2);
         add_nested!(self.single_ref, o.single_ref, 3);
         add_nested!(self.comp_ref, o.comp_ref, 2);
-        add_nested!(self.skip, o.skip, 2);
+    }
+
+    fn add_mv_counts(&mut self, o: &Counts) {
         add_nested!(self.mv_joint, o.mv_joint, 1);
         add_nested!(self.mv_sign, o.mv_sign, 2);
         add_nested!(self.mv_class, o.mv_class, 2);
@@ -167,24 +195,11 @@ impl Counts {
         add_nested!(self.mv_bits, o.mv_bits, 3);
         add_nested!(self.mv_fr, o.mv_fr, 2);
         add_nested!(self.mv_hp, o.mv_hp, 2);
-        for (a, b) in self.token.iter_mut().zip(o.token.iter()) {
-            for (a, b) in a.iter_mut().zip(b.iter()) {
-                for (a, b) in a.iter_mut().zip(b.iter()) {
-                    for (a, b) in a.iter_mut().zip(b.iter()) {
-                        add_nested!(a, b, 2);
-                    }
-                }
-            }
-        }
-        for (a, b) in self.more_coefs.iter_mut().zip(o.more_coefs.iter()) {
-            for (a, b) in a.iter_mut().zip(b.iter()) {
-                for (a, b) in a.iter_mut().zip(b.iter()) {
-                    for (a, b) in a.iter_mut().zip(b.iter()) {
-                        add_nested!(a, b, 2);
-                    }
-                }
-            }
-        }
+    }
+
+    fn add_coef_counts(&mut self, o: &Counts) {
+        add_nested!(self.token, o.token, 6);
+        add_nested!(self.more_coefs, o.more_coefs, 6);
     }
 }
 
