@@ -27,16 +27,12 @@ deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
-# codecs (ported from FilmCraft, same owner and licence)
+# video codecs (ported from FilmCraft, same owner and licence)
 deckcraft-bitstream = { path = "crates/bitstream" }
 deckcraft-h264 = { path = "crates/h264" }
 deckcraft-hevc = { path = "crates/hevc" }
 deckcraft-vp9 = { path = "crates/vp9" }
 deckcraft-av1 = { path = "crates/av1" }
-deckcraft-isobmff = { path = "crates/isobmff" }
-deckcraft-matroska = { path = "crates/matroska" }
-deckcraft-ogg = { path = "crates/ogg" }
-deckcraft-opus = { path = "crates/opus" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
@@ -59,7 +55,10 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
-craft-media = { git = "https://github.com/storytold/craft-libs", rev = "1b34eba41e62138fc2438d2734523b302840b45d", version = "=0.1.0", default-features = false }
+# craft-media and craft-audio share types and stay on one rev. It is the head of craft-libs #810
+# (the Ogg fixes DeckCraft made to its own copy); move both to craft-libs main once that merges.
+craft-media = { git = "https://github.com/storytold/craft-libs", rev = "113f2360ed97315577b85e0811f2c549784e40c3", version = "=0.1.0", default-features = false }
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "113f2360ed97315577b85e0811f2c549784e40c3", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "1b34eba41e62138fc2438d2734523b302840b45d", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "1b34eba41e62138fc2438d2734523b302840b45d", features = ["egui"] }
