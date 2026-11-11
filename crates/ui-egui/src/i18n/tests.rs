@@ -158,3 +158,20 @@ fn embedded_catalogs_parse_cleanly() {
         assert!(LANGUAGES.contains(code), "{code} is embedded but not offered");
     }
 }
+
+#[test]
+fn cjk_language_flags_follow_script_and_code() {
+    let de = fixture_lang("de", DE);
+    let ko = fixture_lang("ko", "@id\tlanguage.name\t한국어\n\tHome\t홈\n");
+    let hans = fixture_lang("zh-hans", "@id\tlanguage.name\t简体中文\n");
+    let hant = fixture_lang("zh-hant", "@id\tlanguage.name\t繁體中文\n");
+    let ja = fixture_lang("ja", "@id\tlanguage.name\t日本語\n");
+
+    assert!(!Lang::EN.uses_cjk() && !de.uses_cjk());
+    assert!(ko.uses_cjk() && hans.uses_cjk() && hant.uses_cjk() && ja.uses_cjk());
+    assert!(ko.prefers_korean() && !ko.prefers_hans() && !ko.prefers_hant());
+    assert!(hans.prefers_hans() && !hans.prefers_hant() && !hans.prefers_korean());
+    assert!(hant.prefers_hant() && !hant.prefers_hans() && !hant.prefers_korean());
+    assert!(!ja.prefers_hans() && !ja.prefers_hant() && !ja.prefers_korean());
+    assert!(Lang::EN.catalog_text().is_empty());
+}

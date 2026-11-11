@@ -89,7 +89,9 @@ impl SlideApp {
             capture: capture::Capture::default(),
             styled: false,
             restyle: true,
+            fonts_lang: None,
             fonts_ready: false,
+            catalog_noted: None,
             last_time: 0.0,
             last_recovery: 0.0,
             quit_confirmed: false,
@@ -292,14 +294,14 @@ impl SlideApp {
         let ctx = ui.ctx().clone();
         self.ime_frame_viewport = Some(ctx.viewport_id());
         self.ime_pending = None;
+        // The language every label this pass draws is looked up in (Preferences › Language).
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         if !self.ui_setup(&ctx) {
             // This pass is discarded for the new fonts. The input events were already consumed
             // by egui, so keep them queued for the next frame instead of silently losing them.
             self.requeue_injected_synthetic();
             return;
         }
-        // The language every label this pass draws is looked up in (Preferences › Language).
-        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);

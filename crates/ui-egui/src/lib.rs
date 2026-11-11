@@ -313,7 +313,9 @@ pub struct SlideApp {
     capture: capture::Capture,
     styled: bool,
     restyle: bool,
+    fonts_lang: Option<i18n::Lang>,
     fonts_ready: bool,
+    catalog_noted: Option<i18n::Lang>,
     last_time: f64,
     /// When AutoRecover data was last written (monotonic seconds, not wall time).
     pub last_recovery: f64,

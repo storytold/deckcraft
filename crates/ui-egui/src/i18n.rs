@@ -100,6 +100,26 @@ impl Lang {
         self.i18n().name(self.lang)
     }
 
+    /// Check whether this language prefers Simplified Chinese fonts.
+    pub fn prefers_hans(self) -> bool {
+        self.code() == "zh-hans"
+    }
+
+    /// Check whether this language prefers Traditional Chinese fonts.
+    pub fn prefers_hant(self) -> bool {
+        self.code() == "zh-hant"
+    }
+
+    /// Check whether this language prefers Korean fonts.
+    pub fn prefers_korean(self) -> bool {
+        self.code() == "ko"
+    }
+
+    /// Is the interface written in CJK script, so it needs a CJK face?
+    pub fn uses_cjk(self) -> bool {
+        self.name().chars().any(|c| ('\u{2E80}'..='\u{9FFF}').contains(&c) || ('\u{AC00}'..='\u{D7AF}').contains(&c))
+    }
+
     /// A language by its exact code (any case): one of [`LANGUAGES`] whose catalogs are embedded.
     pub fn from_code(code: &str) -> Option<Lang> {
         let code = LANGUAGES.iter().find(|l| l.eq_ignore_ascii_case(code.trim()))?;
@@ -120,6 +140,17 @@ impl Lang {
     /// catalogs (English only in a build without craft-i18n).
     pub fn all() -> impl Iterator<Item = Lang> {
         LANGUAGES.iter().filter_map(|l| Lang::from_code(l))
+    }
+
+    /// The embedded catalog texts for this language (shared and DeckCraft's own).
+    pub fn catalog_text(self) -> Vec<&'static str> {
+        let code = self.code();
+        CRAFT_I18N
+            .iter()
+            .filter(|(c, ..)| c.eq_ignore_ascii_case(code))
+            .flat_map(|(_, shared, app)| [*shared, *app])
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 }
 
