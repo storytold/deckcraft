@@ -110,11 +110,91 @@ pub fn is_monospace_family(family: &str) -> bool {
         || s.split_whitespace().any(|w| w == "mono" || w == "terminal" || w == "monospace")
 }
 
+/// Helper to produce a resolved style name from a qualifier and a requested style.
+fn qualified_style(qualifier: &str, qualifier_italic: bool, requested_style: &str) -> String {
+    let target_it = style_italic(requested_style) || qualifier_italic;
+    let qual = qualifier.trim_end_matches(" Italic").trim_end_matches(" italic").trim_end_matches(" Oblique").trim_end_matches(" oblique");
+    if target_it {
+        if qual.is_empty() { "Italic".to_string() } else { format!("{qual} Italic") }
+    } else if qual.is_empty() {
+        "Regular".to_string()
+    } else {
+        qual.to_string()
+    }
+}
+
+/// Recognized weight/style qualifier suffix in a font family name.
+/// Returns (base_family, qualifier, weight, is_italic).
+pub fn split_family_style(family: &str) -> Option<(&str, &str, f32, bool)> {
+    let trimmed = family.trim();
+    const QUALIFIERS: &[(&str, f32, bool)] = &[
+        ("Extra Light Italic", 200.0, true),
+        ("ExtraLight Italic", 200.0, true),
+        ("Ultra Light Italic", 200.0, true),
+        ("UltraLight Italic", 200.0, true),
+        ("Extra Bold Italic", 800.0, true),
+        ("ExtraBold Italic", 800.0, true),
+        ("Ultra Bold Italic", 800.0, true),
+        ("UltraBold Italic", 800.0, true),
+        ("Semi Bold Italic", 600.0, true),
+        ("SemiBold Italic", 600.0, true),
+        ("Semibold Italic", 600.0, true),
+        ("Demi Bold Italic", 600.0, true),
+        ("DemiBold Italic", 600.0, true),
+        ("Demibold Italic", 600.0, true),
+        ("Thin Italic", 100.0, true),
+        ("Hairline Italic", 100.0, true),
+        ("Light Italic", 300.0, true),
+        ("Medium Italic", 500.0, true),
+        ("Black Italic", 900.0, true),
+        ("Heavy Italic", 900.0, true),
+        ("Extra Light", 200.0, false),
+        ("ExtraLight", 200.0, false),
+        ("Ultra Light", 200.0, false),
+        ("UltraLight", 200.0, false),
+        ("Extra Bold", 800.0, false),
+        ("ExtraBold", 800.0, false),
+        ("Ultra Bold", 800.0, false),
+        ("UltraBold", 800.0, false),
+        ("Semi Bold", 600.0, false),
+        ("SemiBold", 600.0, false),
+        ("Semibold", 600.0, false),
+        ("Demi Bold", 600.0, false),
+        ("DemiBold", 600.0, false),
+        ("Demibold", 600.0, false),
+        ("Thin", 100.0, false),
+        ("Hairline", 100.0, false),
+        ("Light", 300.0, false),
+        ("Medium", 500.0, false),
+        ("Black", 900.0, false),
+        ("Heavy", 900.0, false),
+    ];
+
+    for &(qualifier, weight, is_italic) in QUALIFIERS {
+        if trimmed.len() <= qualifier.len() {
+            continue;
+        }
+        let split_pos = trimmed.len() - qualifier.len();
+        let (Some(head), Some(tail)) = (trimmed.get(..split_pos), trimmed.get(split_pos..)) else {
+            continue;
+        };
+        if head.ends_with(' ') && tail.eq_ignore_ascii_case(qualifier) {
+            let base = head.trim_end();
+            if !base.is_empty() {
+                return Some((base, qualifier, weight, is_italic));
+            }
+        }
+    }
+    None
+}
+
 /// Families whose open substitutes ([`substitutes`]) keep their metrics, so text drawn with
 /// them breaks into the same lines.
 fn has_metric_twin(family: &str) -> bool {
+    let f = family.to_ascii_lowercase();
+    let base = split_family_style(&f).map(|(b, _, _, _)| b).unwrap_or(f.as_str());
     matches!(
-        family.to_ascii_lowercase().as_str(),
+        base,
         "calibri"
             | "calibri light"
             | "cambria"
@@ -160,7 +240,8 @@ fn office_twin(family: &str) -> Option<&'static str> {
 /// substitute ([`substitutes`]; Aptos as Inter).
 fn is_office_cloud_font(family: &str) -> bool {
     let f = family.to_ascii_lowercase();
-    f.starts_with("aptos") || ["bierstadt", "grandview", "seaford", "skeena", "tenorite"].iter().any(|c| f.starts_with(c))
+    let base = split_family_style(&f).map(|(b, _, _, _)| b).unwrap_or(f.as_str());
+    base.starts_with("aptos") || ["bierstadt", "grandview", "seaford", "skeena", "tenorite"].iter().any(|c| base.starts_with(c))
 }
 
 /// The family PowerPoint draws a document's Latin text in when the font it names isn't installed,
@@ -910,7 +991,7 @@ fn norm(s: &str) -> String {
 }
 
 /// Weight implied by a style name.
-fn style_weight(style: &str) -> f32 {
+pub fn style_weight(style: &str) -> f32 {
     let s = norm(style);
     const TABLE: &[(&str, f32)] = &[
         ("extralight", 200.0),
@@ -930,9 +1011,30 @@ fn style_weight(style: &str) -> f32 {
     TABLE.iter().find(|(k, _)| s.contains(k)).map(|(_, w)| *w).unwrap_or(400.0)
 }
 
-fn style_italic(style: &str) -> bool {
+/// Does the style name describe an italic or oblique face?
+pub fn style_italic(style: &str) -> bool {
     let s = norm(style);
     s.contains("italic") || s.contains("oblique") || s == "it"
+}
+
+/// Is the style weight bold (600 or higher)?
+pub fn style_is_bold(style: &str) -> bool {
+    style_weight(style) >= 600.0
+}
+
+/// Does the style name describe an italic or oblique face?
+pub fn style_is_italic(style: &str) -> bool {
+    style_italic(style)
+}
+
+/// Standard RIBBI style name derived from bold and italic flags.
+pub fn style_from_flags(bold: bool, italic: bool) -> &'static str {
+    match (bold, italic) {
+        (true, true) => "Bold Italic",
+        (true, false) => "Bold",
+        (false, true) => "Italic",
+        (false, false) => "Regular",
+    }
 }
 
 impl FontDb {
@@ -997,7 +1099,9 @@ impl FontDb {
 
     /// Family names available (loaded plus cataloged system fonts), sorted and deduplicated.
     pub fn families(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.read_faces().iter().map(|f| f.family.clone()).collect();
+        let faces = self.read_faces();
+        let mut v: Vec<String> = faces.iter().map(|f| f.family.clone()).collect();
+        v.extend(faces.iter().filter_map(|f| f.legacy.as_ref().map(|(lf, _)| lf.clone())));
         #[cfg(not(target_arch = "wasm32"))]
         v.extend(self.read_catalog().iter().map(|c| c.family.clone()));
         v.sort_by_key(|a| a.to_lowercase());
@@ -1007,17 +1111,29 @@ impl FontDb {
 
     /// Style names available for `family` (Regular first, then by weight).
     pub fn styles(&self, family: &str) -> Vec<String> {
-        let mut v: Vec<(bool, f32, String)> = self
-            .read_faces()
+        let faces = self.read_faces();
+        let mut v: Vec<(bool, f32, String)> = faces
             .iter()
-            .filter(|f| f.family.eq_ignore_ascii_case(family) && !f.style.contains('{'))
+            .filter(|f| {
+                (f.family.eq_ignore_ascii_case(family) || f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family)))
+                    && !f.style.contains('{')
+            })
             .map(|f| (f.italic, f.weight, f.style.clone()))
             .collect();
         #[cfg(not(target_arch = "wasm32"))]
         for c in self.read_catalog().iter() {
-            if c.family.eq_ignore_ascii_case(family) && !v.iter().any(|(_, _, s)| s.eq_ignore_ascii_case(&c.style)) {
+            if (c.family.eq_ignore_ascii_case(family) || c.style.eq_ignore_ascii_case(family))
+                && !v.iter().any(|(_, _, s)| s.eq_ignore_ascii_case(&c.style))
+            {
                 v.push((style_italic(&c.style), style_weight(&c.style), c.style.clone()));
             }
+        }
+        drop(faces);
+        if v.is_empty() {
+            return match split_family_style(family) {
+                Some((base, _, _, _)) => self.styles(base),
+                None => Vec::new(),
+            };
         }
         v.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
         v.dedup_by(|a, b| a.2 == b.2);
@@ -1173,16 +1289,35 @@ impl FontDb {
         if let Some(f) = self.try_family(family, style) {
             return f;
         }
-        for sub in substitutes(family) {
-            if let Some(f) = self.try_family(sub, style) {
+        let (base, target_style) = if let Some((base, qualifier, _, is_it)) = split_family_style(family) {
+            (Some(base), qualified_style(qualifier, is_it, style))
+        } else {
+            (None, style.to_string())
+        };
+
+        let mut subs: Vec<&str> = substitutes(family).to_vec();
+        if let Some(b) = base {
+            for s in substitutes(b) {
+                if !subs.contains(s) {
+                    subs.push(s);
+                }
+            }
+        }
+
+        // Try metric-compatible substitutes first: first with target_style, then with fallback style
+        for sub in &subs {
+            if let Some(f) = self.try_family(sub, &target_style).or_else(|| self.try_family(sub, style)) {
                 return f;
             }
         }
+
+        // Only after all substitutes fail, try generic system fallbacks
         for sub in [FALLBACK_FAMILY, "Helvetica Neue", "Arial", "Liberation Sans", "DejaVu Sans", "Segoe UI"] {
-            if let Some(f) = self.try_family(sub, style) {
+            if let Some(f) = self.try_family(sub, &target_style).or_else(|| self.try_family(sub, style)) {
                 return f;
             }
         }
+
         self.find(LAST_RESORT_FAMILY, "Regular")
             .or_else(|| self.find(FALLBACK_FAMILY, "Regular"))
             .or_else(|| self.read_faces().first().cloned())
@@ -1196,7 +1331,10 @@ impl FontDb {
     /// Monospaced families keep a monospaced substitute instead of falling back to Calibri.
     /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
-        if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
+        let has_twin = has_metric_twin(family);
+        let is_cloud = is_office_cloud_font(family);
+
+        if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_twin || is_cloud || self.has_family(family) {
             return self.face(family, style);
         }
         if let Some(twin) = office_twin(family) {
@@ -1204,6 +1342,10 @@ impl FontDb {
         }
         if is_monospace_family(family) {
             return self.face(family, style);
+        }
+        if let Some((_, qualifier, _, is_it)) = split_family_style(family) {
+            let s = qualified_style(qualifier, is_it, style);
+            return self.face(MISSING_FONT_FAMILY, &s);
         }
         self.face(MISSING_FONT_FAMILY, style)
     }
@@ -1221,7 +1363,23 @@ impl FontDb {
                 loaded.insert(key);
             }
         }
-        self.find(family, style)
+        if let Some(f) = self.find(family, style) {
+            return Some(f);
+        }
+        if let Some((base, qualifier, _, is_it)) = split_family_style(family) {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut loaded = self.loaded_families.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let base_key = base.to_lowercase();
+                if !loaded.contains(&base_key) {
+                    self.load_cataloged(base);
+                    loaded.insert(base_key);
+                }
+            }
+            let target_style = qualified_style(qualifier, is_it, style);
+            return self.find(base, &target_style);
+        }
+        None
     }
 
     /// Is `family` available (loaded, or installed on the system)?
@@ -1233,13 +1391,40 @@ impl FontDb {
         if self.read_catalog().iter().any(|c| c.family.eq_ignore_ascii_case(family)) {
             return true;
         }
+        let Some((base, qualifier, weight, is_it)) = split_family_style(family) else {
+            return false;
+        };
+        if self.has_family(base) {
+            let s = self.styles(base);
+            let q = qualifier.trim_end_matches(" Italic").trim_end_matches(" italic");
+            if s.iter().any(|st| {
+                st.eq_ignore_ascii_case(qualifier)
+                    || st.eq_ignore_ascii_case(q)
+                    || ((style_weight(st) - weight).abs() <= 100.0 && style_italic(st) == is_it)
+            }) {
+                return true;
+            }
+        }
         false
     }
 
     pub(crate) fn is_loaded(&self, family: &str) -> bool {
-        self.read_faces()
-            .iter()
-            .any(|f| f.family.eq_ignore_ascii_case(family) || f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family)))
+        let faces = self.read_faces();
+        if faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) || f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family))) {
+            return true;
+        }
+        if let Some((base, qualifier, weight, is_it)) = split_family_style(family) {
+            let q = qualifier.trim_end_matches(" Italic").trim_end_matches(" italic");
+            if faces.iter().any(|f| {
+                f.family.eq_ignore_ascii_case(base)
+                    && (f.style.eq_ignore_ascii_case(qualifier)
+                        || f.style.eq_ignore_ascii_case(q)
+                        || ((f.weight - weight).abs() <= 100.0 && f.italic == is_it))
+            }) {
+                return true;
+            }
+        }
+        false
     }
 
     /// A variable font's axes: (tag, name, min, default, max), empty for static fonts.
@@ -1300,10 +1485,11 @@ impl FontDb {
         let faces = self.read_faces();
         let mut cands: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(family)).collect();
         let ns = norm(style);
+        let n_fam = norm(family);
         if cands.is_empty() {
             // A Windows family name ("Segoe UI Semibold", "Arial Black"): its faces, matched by
             // their Windows style ("Regular", "Bold"…).
-            cands = faces.iter().filter(|f| f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family))).collect();
+            cands = faces.iter().filter(|f| f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family) || norm(lf) == n_fam)).collect();
             if let Some(f) = cands.iter().find(|f| f.legacy.as_ref().is_some_and(|(_, ls)| norm(ls) == ns)) {
                 return Some((*f).clone());
             }
@@ -1315,6 +1501,24 @@ impl FontDb {
             {
                 return Some((*f).clone());
             }
+        }
+        if cands.is_empty() {
+            let (base, qualifier, _, is_it) = split_family_style(family)?;
+            cands = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(base) || norm(&f.family) == norm(base)).collect();
+            let target_style = qualified_style(qualifier, is_it, style);
+            let target_ns = norm(&target_style);
+            if let Some(f) = cands.iter().find(|f| norm(&f.style) == target_ns) {
+                return Some((*f).clone());
+            }
+            let (tw, ti) = (style_weight(&target_style), style_italic(&target_style));
+            return cands
+                .iter()
+                .min_by(|a, b| {
+                    let sa = (a.weight - tw).abs() + if a.italic != ti { 1000.0 } else { 0.0 };
+                    let sb = (b.weight - tw).abs() + if b.italic != ti { 1000.0 } else { 0.0 };
+                    sa.total_cmp(&sb)
+                })
+                .map(|f| (*f).clone());
         }
         if cands.is_empty() {
             return None;

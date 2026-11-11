@@ -425,3 +425,64 @@ fn the_font_scan_skips_fifos_folders_and_link_loops() {
     assert!(fifo || n >= 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn split_family_style_parses_qualifiers() {
+    assert_eq!(split_family_style("Calibri Light"), Some(("Calibri", "Light", 300.0, false)));
+    assert_eq!(split_family_style("Calibri Light Italic"), Some(("Calibri", "Light Italic", 300.0, true)));
+    assert_eq!(split_family_style("Segoe UI Semibold"), Some(("Segoe UI", "SemiBold", 600.0, false)));
+    assert_eq!(split_family_style("Segoe UI SemiBold"), Some(("Segoe UI", "SemiBold", 600.0, false)));
+    assert_eq!(split_family_style("Montserrat ExtraBold"), Some(("Montserrat", "ExtraBold", 800.0, false)));
+    assert_eq!(split_family_style("Roboto Thin"), Some(("Roboto", "Thin", 100.0, false)));
+    assert_eq!(split_family_style("Roboto Thin Italic"), Some(("Roboto", "Thin Italic", 100.0, true)));
+    assert_eq!(split_family_style("Open Sans Extra Light"), Some(("Open Sans", "Extra Light", 200.0, false)));
+    assert_eq!(split_family_style("Open Sans ExtraLight"), Some(("Open Sans", "ExtraLight", 200.0, false)));
+    assert_eq!(split_family_style("Helvetica Neue Medium"), Some(("Helvetica Neue", "Medium", 500.0, false)));
+    assert_eq!(split_family_style("Arial Black"), Some(("Arial", "Black", 900.0, false)));
+    assert_eq!(split_family_style("Noto Sans Heavy"), Some(("Noto Sans", "Heavy", 900.0, false)));
+
+    // Non-qualifiers or single words without a base family should return None
+    assert_eq!(split_family_style("Times New Roman"), None);
+    assert_eq!(split_family_style("Calibri"), None);
+    assert_eq!(split_family_style("Arial"), None);
+    assert_eq!(split_family_style("Light"), None);
+    assert_eq!(split_family_style("Regular"), None);
+    assert_eq!(split_family_style("Bold"), None);
+    assert_eq!(split_family_style(""), None);
+
+    // Non-ASCII and CJK family names (must not panic on UTF-8 character boundaries)
+    assert_eq!(split_family_style("游ゴシック"), None);
+    assert_eq!(split_family_style("游ゴシック Light"), Some(("游ゴシック", "Light", 300.0, false)));
+    assert_eq!(split_family_style("Noto Sans CJK JP Medium"), Some(("Noto Sans CJK JP", "Medium", 500.0, false)));
+}
+
+#[test]
+fn extended_font_weights_resolution() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+
+    // Using fixture fonts
+    assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec()), 1);
+    assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+
+    // Compound family-weight name resolves to base family with that weight
+    assert!(db.has_family("DeckCraft Legacy Semibold"));
+    assert_eq!(db.face("DeckCraft Legacy Semibold", "Regular").weight, 600.0);
+    assert_eq!(db.face("DeckCraft Legacy", "Semibold").weight, 600.0);
+    assert_eq!(db.face("DeckCraft Legacy", "Regular").weight, 400.0);
+
+    // Variable font instance lookup if Montserrat or Inter is loaded
+    if db.is_loaded("Montserrat") {
+        assert!(db.has_family("Montserrat SemiBold"));
+        assert_eq!(db.face("Montserrat SemiBold", "Regular").weight, 600.0);
+        assert_eq!(db.face("Montserrat Light", "Regular").weight, 300.0);
+    }
+
+    // Global FontDb check for system fonts when available on the OS
+    let global = FontDb::global();
+    if global.has_family("Segoe UI") {
+        assert!(global.has_family("Segoe UI Semibold"));
+        assert_eq!(global.face("Segoe UI Semibold", "Regular").weight, 600.0);
+        assert_eq!(global.face("Segoe UI", "Semibold").weight, 600.0);
+    }
+}

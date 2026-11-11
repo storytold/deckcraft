@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family, style?: string}", has_text_or_shapes, font),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -120,7 +120,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font…",
             ["Home", "Font"],
             Some("Cmd+T"),
-            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
+            "{family?, style?: string, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog; `style` requires `family`",
             has_text_or_shapes,
             font_dialog
         ),
@@ -429,6 +429,33 @@ mod tests {
         assert!(props(&s).underline.is_none());
         s.execute("edit.deselect", &json!({})).unwrap();
         assert!(s.execute("format.fontDialog", &json!({"bold": true})).is_err());
+    }
+
+    #[test]
+    fn font_dialog_applies_style_qualifiers() {
+        let mut s = shape();
+        s.execute("format.fontDialog", &json!({"family": "Calibri", "style": "Light"})).unwrap();
+        assert_eq!(props(&s).font.as_deref(), Some("Calibri Light"));
+
+        s.execute("format.fontDialog", &json!({"family": "Segoe UI", "style": "Semibold"})).unwrap();
+        assert_eq!(props(&s).font.as_deref(), Some("Segoe UI Semibold"));
+
+        s.execute("format.fontDialog", &json!({"family": "Calibri", "style": "Regular"})).unwrap();
+        assert_eq!(props(&s).font.as_deref(), Some("Calibri"));
+
+        // style without family is rejected
+        assert!(s.execute("format.fontDialog", &json!({"style": "Bold"})).is_err());
+
+        // format.font handles Bold Italic and clears appropriately
+        s.execute("format.font", &json!({"family": "Calibri", "style": "Bold Italic"})).unwrap();
+        assert_eq!(props(&s).font.as_deref(), Some("Calibri"));
+        assert_eq!(props(&s).bold, Some(true));
+        assert_eq!(props(&s).italic, Some(true));
+
+        s.execute("format.font", &json!({"family": "Calibri", "style": "Light"})).unwrap();
+        assert_eq!(props(&s).font.as_deref(), Some("Calibri Light"));
+        assert_eq!(props(&s).bold, Some(false));
+        assert_eq!(props(&s).italic, Some(false));
     }
 
     fn para(s: &Session) -> ParaProps {
