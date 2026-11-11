@@ -480,6 +480,14 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
                 return None;
             }
             let (kind, target) = (rel.ty.clone(), rel.target.clone());
+            // A diagram's definition parts copied here count against the same presentation-wide budget.
+            if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&target)) {
+                let len = pkg.get(&target).map_or(0, |b| b.len());
+                if len > MAX_DIAGRAM_PART_BYTES || imp.diagram_xml_bytes.saturating_add(len) > MAX_DIAGRAM_XML_BYTES {
+                    return None;
+                }
+                imp.diagram_xml_bytes += len;
+            }
             let media = if rel.kind == "diagramData" { diagram_data(imp, &target) } else { imp.media_for(&target) };
             Some((id, kind, media?))
         })
@@ -566,6 +574,9 @@ const MAX_SMARTART_SHAPES: usize = 250_000;
 /// SmartArt definition XML (layout, style, colours) all diagrams of one presentation may copy.
 const MAX_DIAGRAM_XML_BYTES: usize = 32 << 20;
 
+/// The largest single diagram definition part copied.
+const MAX_DIAGRAM_PART_BYTES: usize = 4 << 20;
+
 fn count_shapes(shapes: &[Shape]) -> usize {
     shapes.iter().map(|s| 1 + count_shapes(s.children())).sum()
 }
@@ -590,7 +601,13 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
         return None;
     }
     // Counted once here, nested SmartArt included: a drawing that frames reuse counts every time it is read.
-    imp.smartart_shapes = before.saturating_add(count_shapes(&children));
+    let total = before.saturating_add(count_shapes(&children));
+    if total > MAX_SMARTART_SHAPES {
+        // Over the presentation's remaining budget: a placeholder, and nothing charged, nested SmartArt included.
+        imp.smartart_shapes = before;
+        return None;
+    }
+    imp.smartart_shapes = total;
     let children = smartart_text_rects(imp, &mut sub, tree, children, depth + 1);
     let mut g = frame.clone();
     let x = frame.xfrm.unwrap_or_default();
@@ -729,7 +746,7 @@ fn diagram_outline(imp: &mut Imp, part: &Part, rel_ids: &El, data: &El) -> Optio
         let rel = part.rels.get(rel_ids.attr(attr)?)?;
         let bytes = pkg.get(&rel.target)?;
         // Every diagram copies its definitions, so the copies share one presentation-wide budget.
-        if bytes.len() > 4 << 20 || spent.get().saturating_add(bytes.len()) > MAX_DIAGRAM_XML_BYTES {
+        if bytes.len() > MAX_DIAGRAM_PART_BYTES || spent.get().saturating_add(bytes.len()) > MAX_DIAGRAM_XML_BYTES {
             return None;
         }
         let xml = String::from_utf8(bytes.to_vec()).ok()?;
