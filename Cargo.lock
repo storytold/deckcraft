@@ -845,6 +845,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-audio"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=75895c0321d8cb6e175a42466cba050352b117c5#75895c0321d8cb6e175a42466cba050352b117c5"
+dependencies = [
+ "craft-media",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "craft-fonts-build"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
@@ -875,7 +884,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
+source = "git+https://github.com/storytold/craft-libs?rev=75895c0321d8cb6e175a42466cba050352b117c5#75895c0321d8cb6e175a42466cba050352b117c5"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1167,20 +1176,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deckcraft-isobmff"
-version = "0.18.1"
-dependencies = [
- "craft-media",
-]
-
-[[package]]
-name = "deckcraft-matroska"
-version = "0.18.1"
-dependencies = [
- "craft-media",
-]
-
-[[package]]
 name = "deckcraft-mcp"
 version = "0.18.1"
 dependencies = [
@@ -1194,13 +1189,11 @@ dependencies = [
 name = "deckcraft-media"
 version = "0.18.1"
 dependencies = [
+ "craft-audio",
+ "craft-media",
  "deckcraft-av1",
  "deckcraft-h264",
  "deckcraft-hevc",
- "deckcraft-isobmff",
- "deckcraft-matroska",
- "deckcraft-ogg",
- "deckcraft-opus",
  "deckcraft-vp9",
  "image",
  "log",
@@ -1228,14 +1221,6 @@ dependencies = [
  "thiserror 2.0.21",
  "unicode-segmentation",
 ]
-
-[[package]]
-name = "deckcraft-ogg"
-version = "0.18.1"
-
-[[package]]
-name = "deckcraft-opus"
-version = "0.18.1"
 
 [[package]]
 name = "deckcraft-pdf"
