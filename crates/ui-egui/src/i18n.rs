@@ -154,49 +154,59 @@ mod tests {
     #[test]
     fn test_translations() {
         set_current(Language::PtBr);
-        assert_eq!(tr("Cut"), "Recortar");
-        assert_eq!(tr("Copy"), "Copiar");
-        assert_eq!(tr("Paste"), "Colar");
-        assert_eq!(tr("Grid & Guides"), "Grade e Guias");
-        assert_eq!(tr("Format Shape"), "Formatar Forma");
-        assert_eq!(tr("Animation Pane"), "Painel de Animação");
-        assert_eq!(tr("Home"), "Página Inicial");
-        assert_eq!(tr("Insert"), "Inserir");
-        assert_eq!(tr("New\nSlide"), "Novo\nSlide");
-        assert_eq!(tr("Add\nAnimation"), "Adicionar\nAnimação");
-        assert_eq!(tr("Account"), "Conta");
-        assert_eq!(tr("Options"), "Opções");
-        assert_eq!(tr("Preset gradients"), "Gradientes predefinidos");
+        for (source, expected) in [
+            ("Cut", "Recortar"),
+            ("Copy", "Copiar"),
+            ("Paste", "Colar"),
+            ("Grid & Guides", "Grade e Guias"),
+            ("Format Shape", "Formatar Forma"),
+            ("Animation Pane", "Painel de Animação"),
+            ("Home", "Página Inicial"),
+            ("Insert", "Inserir"),
+            ("New\nSlide", "Novo\nSlide"),
+            ("Add\nAnimation", "Adicionar\nAnimação"),
+            ("Account", "Conta"),
+            ("Options", "Opções"),
+            ("Preset gradients", "Gradientes predefinidos"),
+            ("Inserted 1 slide", "Inserido 1 slide"),
+            ("Distribute Vertically", "Distribuir Verticalmente"),
+            ("File (Alt+F)", "Arquivo (Alt+F)"),
+            ("SmartArt Design", "Design do SmartArt"),
+            ("Zoom", "Zoom"),
+            ("Zoom…", "Zoom…"),
+            ("Zoom on", "Zoom ativado"),
+            ("Interface Language", "Idioma da Interface"),
+            ("Interface Language: System", "Idioma da interface: Sistema"),
+            ("Interface Language: Português (Brasil)", "Idioma da interface: Português (Brasil)"),
+            ("Interface Language: English", "Idioma da interface: Inglês"),
+            ("Save to the page", "Salvar na página"),
+            ("Click the preview to zoom.", "Clique na visualização para aplicar zoom."),
+            ("Choose a slide to show it, or press G to return.", "Escolha um slide para exibi-lo ou pressione G para voltar."),
+            ("The audience window has closed.", "A janela do público foi fechada."),
+            ("The audience window is not responding.", "A janela do público não está respondendo."),
+            ("Return to the audience window to resume the connection.", "Retorne à janela do público para retomar a conexão."),
+            ("Waiting for the audience window…", "Aguardando a janela do público…"),
+            ("(missing)", "(ausente)"),
+        ] {
+            assert_eq!(tr(source), expected);
+        }
+        set_current(Language::En);
+    }
+
+    #[test]
+    fn test_translation_formatting() {
+        set_current(Language::PtBr);
         assert_eq!(format("Slide {0} of {1}", &["1", "5"]), "Slide 1 de 5");
         assert_eq!(tr("Exported {path}").replace("{path}", "test.pdf"), "Exportado test.pdf");
         assert_eq!(tr("Saved {path}").replace("{path}", "test.deckcraft"), "Salvo em test.deckcraft");
         assert_eq!(format("Still opening {0}", &["deck.pptx"]), "Ainda abrindo deck.pptx");
         assert_eq!(format("Stopped opening {0}", &["deck.pptx"]), "Cancelada a abertura de deck.pptx");
-        assert_eq!(tr("Inserted 1 slide"), "Inserido 1 slide");
         assert_eq!(format("Inserted {} slides", &["3"]), "Inseridos 3 slides");
         assert_eq!(
             tr("Couldn't save AutoRecover information: {e}").replace("{e}", "disk full"),
             "Não foi possível salvar informações de AutoRecuperação: disk full"
         );
-        assert_eq!(tr("Distribute Vertically"), "Distribuir Verticalmente");
-        assert_eq!(tr("File (Alt+F)"), "Arquivo (Alt+F)");
-        assert_eq!(tr("SmartArt Design"), "Design do SmartArt");
-        assert_eq!(tr("Zoom"), "Zoom");
-        assert_eq!(tr("Zoom…"), "Zoom…");
-        assert_eq!(tr("Zoom on"), "Zoom ativado");
-        assert_eq!(tr("Interface Language"), "Idioma da Interface");
-        assert_eq!(tr("Interface Language: System"), "Idioma da interface: Sistema");
-        assert_eq!(tr("Interface Language: Português (Brasil)"), "Idioma da interface: Português (Brasil)");
-        assert_eq!(tr("Interface Language: English"), "Idioma da interface: Inglês");
-        assert_eq!(tr("Save to the page"), "Salvar na página");
-        assert_eq!(tr("Click the preview to zoom."), "Clique na visualização para aplicar zoom.");
-        assert_eq!(tr("Choose a slide to show it, or press G to return."), "Escolha um slide para exibi-lo ou pressione G para voltar.");
         assert_eq!(format("First {} slides", &["48"]), "Primeiros 48 slides");
-        assert_eq!(tr("The audience window has closed."), "A janela do público foi fechada.");
-        assert_eq!(tr("The audience window is not responding."), "A janela do público não está respondendo.");
-        assert_eq!(tr("Return to the audience window to resume the connection."), "Retorne à janela do público para retomar a conexão.");
-        assert_eq!(tr("Waiting for the audience window…"), "Aguardando a janela do público…");
-        assert_eq!(tr("(missing)"), "(ausente)");
         assert_eq!(format("{0} — this file can't be found", &["talk.pptx"]), "talk.pptx — este arquivo não foi encontrado");
         assert_eq!(format("No themes or templates match “{0}”.", &["xyz"]), "Nenhum tema ou modelo corresponde a “xyz”.");
         set_current(Language::En);

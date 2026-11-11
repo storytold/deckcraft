@@ -801,19 +801,19 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         if b(&mut child, if show.laser { "◉ on" } else { "◉" }).clicked() {
             show.set_laser(!show.laser);
         }
-        if b(&mut child, &crate::i18n::tr("Black")).clicked() {
+        if b(&mut child, crate::i18n::tr("Black")).clicked() {
             toggle_blank(show, Color32::BLACK);
         }
-        if b(&mut child, &crate::i18n::tr("White")).clicked() {
+        if b(&mut child, crate::i18n::tr("White")).clicked() {
             toggle_blank(show, Color32::WHITE);
         }
-        if b(&mut child, &crate::i18n::tr("All")).clicked() {
+        if b(&mut child, crate::i18n::tr("All")).clicked() {
             show.grid = !show.grid;
         }
-        if b(&mut child, &crate::i18n::tr(show.zoom_label())).clicked() {
+        if b(&mut child, crate::i18n::tr(show.zoom_label())).clicked() {
             show.zoom_key();
         }
-        if b(&mut child, &crate::i18n::tr("End")).clicked() {
+        if b(&mut child, crate::i18n::tr("End")).clicked() {
             out.keep = false;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(300));

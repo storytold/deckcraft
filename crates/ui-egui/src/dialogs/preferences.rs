@@ -21,12 +21,12 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     if let Some(scale) = before.get("uiScale").and_then(Value::as_f64) {
         app.ui.ui_scale = scale as f32;
     }
-    if let Some(code) = before.get("language").and_then(Value::as_str) {
-        if let Some(lang) = crate::i18n::Language::from_code(code) {
-            app.ui.interface_language = lang;
-            let active = lang.resolve(app.services.system_locale.as_deref());
-            crate::i18n::set_language(active);
-        }
+    if let Some(code) = before.get("language").and_then(Value::as_str)
+        && let Some(lang) = crate::i18n::Language::from_code(code)
+    {
+        app.ui.interface_language = lang;
+        let active = lang.resolve(app.services.system_locale.as_deref());
+        crate::i18n::set_language(active);
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;
