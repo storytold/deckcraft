@@ -1,6 +1,6 @@
 //! JSON-RPC 2.0 framing and the MCP lifecycle / tools / resources methods.
 
-use std::io::{BufRead, Write};
+use std::io::{self, BufRead, Write};
 
 use serde_json::{Value, json};
 
@@ -17,6 +17,8 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
 const RESOURCE_NOT_FOUND: i64 = -32002;
+/// Keep request frames in step with the connected backend's reply limit.
+const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 const INSTRUCTIONS: &str = "DeckCraft is a presentation app (a PowerPoint clone). Coordinates are points on the \
 current slide (y down; the default 16:9 slide is 960×540). Every action is a command: find ids and parameters with \
@@ -62,9 +64,16 @@ impl Server {
     /// Serve newline-delimited JSON-RPC until `input` closes. Logs go to stderr only (stdout is
     /// the protocol stream).
     pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-        for line in input.lines() {
-            let line = line?;
-            if let Some(reply) = self.handle_line(&line) {
+        let mut input = input;
+        while let Some(frame) = read_frame(&mut input)? {
+            let reply = match frame {
+                Frame::Complete(bytes) => match std::str::from_utf8(&bytes) {
+                    Ok(line) => self.handle_line(line),
+                    Err(_) => Some(error(Value::Null, PARSE_ERROR, "request frame is not valid UTF-8").to_string()),
+                },
+                Frame::TooLarge => Some(error(Value::Null, INVALID_REQUEST, "request frame exceeds 16 MiB").to_string()),
+            };
+            if let Some(reply) = reply {
                 output.write_all(reply.as_bytes())?;
                 output.write_all(b"\n")?;
                 output.flush()?;
@@ -169,6 +178,41 @@ impl Server {
                 Ok(json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}]}))
             }
             other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
+        }
+    }
+}
+
+enum Frame {
+    Complete(Vec<u8>),
+    TooLarge,
+}
+
+/// Read through one newline while retaining no more than the documented frame budget.
+fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Frame>> {
+    let mut bytes = Vec::new();
+    let mut too_large = false;
+    loop {
+        let available = input.fill_buf()?;
+        if available.is_empty() {
+            if bytes.is_empty() && !too_large {
+                return Ok(None);
+            }
+            return Ok(Some(if too_large { Frame::TooLarge } else { Frame::Complete(bytes) }));
+        }
+        let count = available.iter().position(|byte| *byte == b'\n').map_or(available.len(), |i| i + 1);
+        if !too_large {
+            let remaining = MAX_FRAME_BYTES.saturating_sub(bytes.len());
+            if count > remaining {
+                too_large = true;
+                bytes.clear();
+            } else {
+                bytes.extend_from_slice(&available[..count]);
+            }
+        }
+        let ended = available[count - 1] == b'\n';
+        input.consume(count);
+        if ended {
+            return Ok(Some(if too_large { Frame::TooLarge } else { Frame::Complete(bytes) }));
         }
     }
 }

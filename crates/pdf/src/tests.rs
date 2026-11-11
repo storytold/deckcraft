@@ -7,8 +7,8 @@ use deckcraft_render::RenderOpts;
 use kurbo::Rect;
 
 use super::{
-    MAX_RASTER_PIXELS, PAPERS, PageLayout, PdfError, PdfOptions, Presentation, export, glyph_text_ranges, handout_boxes, master_text_pieces,
-    master_texts, notes_frames, notes_slide_box, opaque, paper_size, raster_scale, straight,
+    MAX_RASTER_PIXELS, PAPERS, PageLayout, PdfError, PdfOptions, Presentation, export, fill_clear, glyph_text_ranges, handout_boxes,
+    master_text_pieces, master_texts, notes_frames, notes_slide_box, opaque, paper_size, raster_scale, straight,
 };
 use deckcraft_model::text::TextBody;
 
@@ -202,7 +202,8 @@ fn unsafe_url_links_are_not_exported() {
 /// memory. Its naming/shaping tables still parse, but its missing head table prevents PDF
 /// embedding. No font bytes or vendor assets are stored as test fixtures.
 fn font_without_head() -> Vec<u8> {
-    let mut bytes = FontDb::global().face("Ubuntu", "Regular").data().to_vec();
+    // The final bundled face is always Ubuntu Light; a system lookup may select a variable font.
+    let mut bytes = deckcraft_fonts::bundled().last().unwrap().to_vec();
     for (old, new) in [(b"Ubuntu".as_slice(), b"BadPDF".as_slice()), (b"\0U\0b\0u\0n\0t\0u".as_slice(), b"\0B\0a\0d\0P\0D\0F".as_slice())] {
         let mut offset = 0;
         while offset + old.len() <= bytes.len() {
@@ -268,8 +269,6 @@ fn unembeddable_font_returns_error_instead_of_a_pdf_missing_text() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
     use deckcraft_model::{Shape, ShapeId, Xfrm};
-    use hayro_syntax::content::ops::TypedInstruction;
-    use hayro_syntax::object::{Dict, Object, Stream};
 
     let text = "Café Ελληνικά Привет";
     let face = FontDb::global().face("Ubuntu", "Regular");
@@ -291,8 +290,17 @@ fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
     assert!(runs.iter().all(|run| run.face.family == "Ubuntu" && !run.glyphs.is_empty() && run.glyphs.iter().all(|glyph| glyph.0 != 0)));
 
     let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
-    let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
-    let page = &pdf.pages()[0];
+    assert_eq!(page_text(&bytes, 0), text);
+}
+
+/// The text of page `index`, read the way a PDF reader does: the content stream's text-showing
+/// operators decoded through the page font's ToUnicode map.
+fn page_text(bytes: &[u8], index: usize) -> String {
+    use hayro_syntax::content::ops::TypedInstruction;
+    use hayro_syntax::object::{Dict, Object, Stream};
+
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).unwrap();
+    let page = &pdf.pages()[index];
     let resources = page.raw().get::<Dict<'_>>(b"Resources").unwrap();
     let fonts = resources.get::<Dict<'_>>(b"Font").unwrap();
     assert_eq!(fonts.len(), 1);
@@ -343,7 +351,51 @@ fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
             _ => {}
         }
     }
-    assert_eq!(extracted, text);
+    extracted
+}
+
+fn ubuntu_runs(runs: Vec<deckcraft_model::text::Run>) -> TextBody {
+    let paragraph = deckcraft_model::text::Paragraph { runs, ..Default::default() };
+    let mut body = TextBody { paragraphs: vec![paragraph], ..Default::default() };
+    for run in &mut body.paragraphs[0].runs {
+        run.props.font = Some("Ubuntu".into());
+        run.props.size = Some(20.0);
+    }
+    body
+}
+
+fn deck_with_body(n: usize, body: TextBody) -> Presentation {
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+    let mut p = deck(n);
+    for slide in &mut p.slides {
+        Arc::make_mut(slide).shapes =
+            vec![Shape { id: ShapeId(9001), xfrm: Some(Xfrm::new(20.0, 20.0, 920.0, 100.0)), text: Some(body.clone()), ..Default::default() }];
+    }
+    p
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn slide_number_field_is_recovered_from_the_page_text_layer() {
+    use deckcraft_model::text::{Run, RunKind};
+    let mut field = Run::new("<#>");
+    field.kind = RunKind::Field { field: "slidenum".into() };
+    let p = deck_with_body(3, ubuntu_runs(vec![Run::new("Page "), field]));
+    let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
+    for (i, want) in ["Page 1", "Page 2", "Page 3"].into_iter().enumerate() {
+        assert_eq!(page_text(&bytes, i), want);
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn line_break_keeps_the_text_layer_aligned_with_the_layout() {
+    use deckcraft_model::text::{Run, RunKind};
+    let mut brk = Run::new("");
+    brk.kind = RunKind::Break;
+    let p = deck_with_body(1, ubuntu_runs(vec![Run::new("one"), brk, Run::new("two")]));
+    let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
+    assert_eq!(page_text(&bytes, 0), "onetwo");
 }
 
 /// Notes pages and handouts print on the chosen paper, landscape included, with every slide box
@@ -582,7 +634,20 @@ fn slides_share_one_backdrop_raster_and_keep_their_pixels() {
         deckcraft_render::SlidePart::Content,
         &RenderOpts { scale: scale(&p), threads: 4, ..Default::default() },
     );
-    let straight = expect.to_straight();
+    let mut straight = expect.to_straight();
+    // Fully transparent pixels carry the backdrop colour, not black (#1455).
+    let mut back = deckcraft_render::render_slide_part(
+        &p,
+        0,
+        deckcraft_render::SlidePart::Backdrop,
+        &RenderOpts { scale: scale(&p), threads: 4, ..Default::default() },
+    );
+    opaque(&mut back.pixels);
+    for (px, b) in straight.as_chunks_mut::<4>().0.iter_mut().zip(back.pixels.as_chunks::<4>().0) {
+        if px[3] == 0 {
+            px[..3].copy_from_slice(&b[..3]);
+        }
+    }
     let want_rgb: Vec<u8> = straight.as_chunks::<4>().0.iter().flat_map(|px| px[..3].iter().copied()).collect();
     let want_alpha: Vec<u8> = straight.as_chunks::<4>().0.iter().map(|px| px[3]).collect();
     assert_eq!(rgb, want_rgb, "content colors are straight, not premultiplied");
@@ -632,6 +697,15 @@ fn backdrop_and_content_pixels_convert_per_pixel() {
         }
         assert_eq!((o[3], s[3]), (255, p[3]));
     }
+}
+
+/// Fully transparent content pixels take the backdrop colour (not black) so a smoothing viewer
+/// draws no hairline at the edge of a picture; every other pixel is untouched (#1455).
+#[test]
+fn transparent_content_pixels_take_the_backdrop_colour() {
+    let mut front = vec![0, 0, 0, 0, 10, 20, 30, 255, 5, 5, 5, 1, 0, 0, 0, 0];
+    fill_clear(&mut front, &[255, 250, 240, 255].repeat(4));
+    assert_eq!(front, [255, 250, 240, 0, 10, 20, 30, 255, 5, 5, 5, 1, 255, 250, 240, 0]);
 }
 
 #[test]

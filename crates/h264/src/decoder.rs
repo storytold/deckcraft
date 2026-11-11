@@ -15,7 +15,7 @@ use crate::slicedec::{PicState, SliceDecoder};
 use crate::transform::LevelScale;
 use crate::{ColorInfo, Picture};
 use deckcraft_bitstream::{BitReader, annexb_nals, length_prefixed_nals, unescape_rbsp};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 /// One slice of a picture job.
@@ -90,6 +90,10 @@ pub struct Decoder {
     ls_cache: Vec<(Arc<Pps>, Arc<LevelScale>)>,
     /// Pictures leaving the DPB, converted once their decoding job has finished.
     out_queue: VecDeque<Output>,
+    /// Queued entries per frame id and their summed bytes, kept in step with `out_queue` so the
+    /// budget check does not rescan it.
+    queued_ids: HashMap<u32, u64>,
+    queued_bytes: u64,
     shared: Arc<Shared>,
     #[cfg(feature = "threads")]
     pool: Option<rayon::ThreadPool>,
@@ -175,6 +179,8 @@ impl Decoder {
             active_sps: None,
             ls_cache: Vec::new(),
             out_queue: VecDeque::new(),
+            queued_ids: HashMap::new(),
+            queued_bytes: 0,
             shared: Arc::new(Shared::default()),
             #[cfg(feature = "threads")]
             pool,
@@ -216,26 +222,37 @@ impl Decoder {
     pub fn configure_avcc(&mut self, avcc: &[u8]) -> Result<()> {
         ensure!(avcc.len() >= 7, "avcC too short");
         ensure!(avcc[0] == 1, "unsupported avcC version {}", avcc[0]);
-        self.nal_length_size = Some((avcc[4] & 3) as usize + 1);
         let mut pos = 5;
-        let read_sets = |pos: &mut usize, count: usize, d: &mut Decoder| -> Result<()> {
+        let mut sets = Vec::new();
+        let read_sets = |pos: &mut usize, count: usize, sets: &mut Vec<(usize, usize)>| -> Result<()> {
             for _ in 0..count {
                 ensure!(*pos + 2 <= avcc.len(), "avcC truncated");
                 let len = u16::from_be_bytes([avcc[*pos], avcc[*pos + 1]]) as usize;
                 *pos += 2;
                 ensure!(*pos + len <= avcc.len(), "avcC truncated");
-                d.handle_nal(&avcc[*pos..*pos + len], 0)?;
+                sets.push((*pos, len));
                 *pos += len;
             }
             Ok(())
         };
         let nsps = (avcc[pos] & 0x1f) as usize;
         pos += 1;
-        read_sets(&mut pos, nsps, self)?;
+        read_sets(&mut pos, nsps, &mut sets)?;
         ensure!(pos < avcc.len(), "avcC truncated");
         let npps = avcc[pos] as usize;
         pos += 1;
-        read_sets(&mut pos, npps, self)
+        read_sets(&mut pos, npps, &mut sets)?;
+        for (i, (start, len)) in sets.iter().enumerate() {
+            let nal = &avcc[*start..*start + *len];
+            let header = nal.first().copied().ok_or_else(|| Error::Invalid("empty avcC parameter set".into()))?;
+            let expected = if i < nsps { nal_type::SPS } else { nal_type::PPS };
+            ensure!(header & 0x1f == expected, "avcC parameter set has NAL type {}, expected {expected}", header & 0x1f);
+        }
+        for (start, len) in sets {
+            self.handle_nal(&avcc[start..start + len], 0)?;
+        }
+        self.nal_length_size = Some((avcc[4] & 3) as usize + 1);
+        Ok(())
     }
 
     /// Length of NAL length prefixes (from avcC), or None for Annex-B input.
@@ -272,7 +289,7 @@ impl Decoder {
             if !o.frame.is_published(o.frame.mb_h() - 1) && self.out_queue.len() <= max_queue {
                 break;
             }
-            let Some(o) = self.out_queue.pop_front() else { break };
+            let Some(o) = self.pop_out() else { break };
             pics.push(make_picture(&o));
         }
         Ok(pics)
@@ -284,7 +301,7 @@ impl Decoder {
         let mut outs = Vec::new();
         self.dpb.flush(&mut outs);
         self.emit(outs);
-        let pics = self.out_queue.drain(..).map(|o| make_picture(&o)).collect();
+        let pics = std::iter::from_fn(|| self.pop_out()).map(|o| make_picture(&o)).collect();
         while let Some(f) = self.in_flight.pop_front() {
             f.wait_complete();
         }
@@ -440,13 +457,24 @@ impl Decoder {
             chroma_planes: if chroma == 0 { 0 } else { 2 },
             bytes_per_sample: 1,
         };
-        let pictures = (sps.max_dpb_frames() + 1 + self.max_in_flight) as u64;
-        ensure!(
-            shape.fits(pictures, self.memory_budget),
-            "{}x{} pictures with {pictures} in the decoder exceed the memory budget",
-            sps.width(),
-            sps.height()
-        );
+        // Pictures already held count at their own size, not the incoming SPS's: after a
+        // resolution change, larger pictures of the old size can still be in the DPB or waiting
+        // for output (one decode call may carry many access units). A buffer shared with a DPB
+        // entry is counted once.
+        let pic = shape.bytes().unwrap_or(u64::MAX);
+        let held = |frames: &mut dyn Iterator<Item = &Arc<Frame>>| frames.fold(0u64, |n, f| n.saturating_add(f.bytes()));
+        // Queued bytes minus the queue entries that share a DPB frame (each distinct DPB frame once).
+        let mut ids: Vec<(u32, u64)> = self.dpb.entries.iter().map(|e| (e.frame.id, e.frame.bytes())).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let shared = ids.iter().fold(0u64, |n, (id, b)| n.saturating_add(self.queued_ids.get(id).copied().unwrap_or(0).saturating_mul(*b)));
+        let queued = self.queued_bytes.saturating_sub(shared);
+        let in_dpb = held(&mut self.dpb.entries.iter().map(|e| &e.frame));
+        let dpb = sps.max_dpb_frames().max(self.dpb.entries.len()) as u64;
+        // The DPB (the larger of its new slots and what it holds now), the picture being decoded,
+        // and what is in flight or queued.
+        let bytes = pic.saturating_mul(dpb).max(in_dpb).saturating_add(pic).saturating_add(pic.saturating_mul(self.max_in_flight as u64).max(queued));
+        ensure!(bytes <= self.memory_budget, "{}x{} pictures with {bytes} bytes in the decoder exceed the memory budget", sps.width(), sps.height());
         Ok(())
     }
 
@@ -551,22 +579,38 @@ impl Decoder {
     }
 
     fn emit(&mut self, outs: Vec<Output>) {
+        for o in &outs {
+            *self.queued_ids.entry(o.frame.id).or_insert(0) += 1;
+            self.queued_bytes = self.queued_bytes.saturating_add(o.frame.bytes());
+        }
         self.out_queue.extend(outs);
+    }
+
+    fn pop_out(&mut self) -> Option<Output> {
+        let o = self.out_queue.pop_front()?;
+        if let Some(n) = self.queued_ids.get_mut(&o.frame.id) {
+            *n -= 1;
+            if *n == 0 {
+                self.queued_ids.remove(&o.frame.id);
+            }
+        }
+        self.queued_bytes = self.queued_bytes.saturating_sub(o.frame.bytes());
+        Some(o)
     }
 }
 
 /// Decode all slices of one picture and publish its rows.
 fn run_job(frame: FrameRef, slices: Vec<SliceJob>, shared: &Shared, draft: bool) {
-    let reuse = shared.pool.lock().ok().and_then(|mut p| p.pop());
-    let mut pic = match reuse {
-        Some(mut p) if p.mb_w == frame.mb_w && p.mb_h == frame.mb_h() => {
-            p.reset(frame.clone());
-            p
-        }
-        _ => PicState::new(frame.clone()),
-    };
-    pic.skip_deblock = draft;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let reuse = shared.pool.lock().ok().and_then(|mut p| p.pop());
+        let mut pic = match reuse {
+            Some(mut p) if p.mb_w == frame.mb_w && p.mb_h == frame.mb_h() => {
+                p.reset(frame.clone());
+                p
+            }
+            _ => PicState::new(frame.clone()),
+        };
+        pic.skip_deblock = draft;
         let mut first_err = None;
         for s in &slices {
             if let Err(e) = decode_slice(s, &mut pic) {
@@ -574,10 +618,10 @@ fn run_job(frame: FrameRef, slices: Vec<SliceJob>, shared: &Shared, draft: bool)
             }
         }
         pic.flush_rows(true);
-        first_err
+        (pic, first_err)
     }));
-    let err = match result {
-        Ok(e) => e,
+    let (pic, err) = match result {
+        Ok((pic, err)) => (Some(pic), err),
         Err(_) => {
             // Make sure readers never block on this frame.
             let fallback = Planes::gray(frame.width, frame.height);
@@ -587,34 +631,35 @@ fn run_job(frame: FrameRef, slices: Vec<SliceJob>, shared: &Shared, draft: bool)
                     frame.publish(r, Frame::make_row(&fallback, r, &blank, &|_, _, _| u32::MAX));
                 }
             }
-            pic = PicState::new(frame.clone());
-            Some(Error::Invalid("internal error while decoding a picture".into()))
+            (None, Some(Error::Invalid("internal error while decoding a picture".into())))
         }
     };
     if let Ok(mut s) = shared.stats.lock() {
         s.pictures += 1;
         s.draft_pictures += draft as u64;
-        for st in &pic.mbs {
-            match st.kind {
-                MbKind::I4x4 => s.mb_i4x4 += 1,
-                MbKind::I8x8 => s.mb_i8x8 += 1,
-                MbKind::I16x16 => s.mb_i16x16 += 1,
-                MbKind::IPcm => s.mb_pcm += 1,
-                MbKind::PSkip => s.mb_p_skip += 1,
-                MbKind::BSkip => s.mb_b_skip += 1,
-                MbKind::BDirect16x16 => s.mb_b_direct16x16 += 1,
-                MbKind::Inter => s.mb_inter += 1,
-                MbKind::None => {}
-            }
-            if st.transform_8x8 && !st.kind.is_intra() {
-                s.mb_inter_8x8_transform += 1;
+        if let Some(pic) = &pic {
+            for st in &pic.mbs {
+                match st.kind {
+                    MbKind::I4x4 => s.mb_i4x4 += 1,
+                    MbKind::I8x8 => s.mb_i8x8 += 1,
+                    MbKind::I16x16 => s.mb_i16x16 += 1,
+                    MbKind::IPcm => s.mb_pcm += 1,
+                    MbKind::PSkip => s.mb_p_skip += 1,
+                    MbKind::BSkip => s.mb_b_skip += 1,
+                    MbKind::BDirect16x16 => s.mb_b_direct16x16 += 1,
+                    MbKind::Inter => s.mb_inter += 1,
+                    MbKind::None => {}
+                }
+                if st.transform_8x8 && !st.kind.is_intra() {
+                    s.mb_inter_8x8_transform += 1;
+                }
             }
         }
     }
     if let (Some(e), Ok(mut slot)) = (err, shared.error.lock()) {
         slot.get_or_insert(e);
     }
-    if let Ok(mut p) = shared.pool.lock()
+    if let (Some(pic), Ok(mut p)) = (pic, shared.pool.lock())
         && p.len() < 4
     {
         p.push(pic);

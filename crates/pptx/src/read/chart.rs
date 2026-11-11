@@ -360,7 +360,11 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
         Some(n) if n.attr("sourceLinked") != Some("1") => n.attr("formatCode").map(str::to_string),
         n => source_format(a).or_else(|| n.and_then(|n| n.attr("formatCode")).map(str::to_string)),
     };
-    let deleted = |a: &El| a.child("delete").and_then(|d| d.bool("val")) == Some(true);
+    // `c:tickLblPos val="none"` hides the labels just as `c:delete` does.
+    let deleted = |a: &El| a.child("delete").and_then(|d| d.bool("val")) == Some(true) || a.child_val("tickLblPos") == Some("none");
+    // A gridline whose `c:spPr/a:ln` has `a:noFill` is not drawn, though the element is there.
+    let grid =
+        |a: &El, k: &str| a.child(k).is_some_and(|g| !g.child("spPr").and_then(|p| p.child("ln")).is_some_and(|l| l.child("noFill").is_some()));
     if c.kind == ChartType::Combo && c.series.iter().any(|s| s.secondary_axis) {
         let primary_id = val_ax.and_then(|a| a.child_val("axId"));
         // The other vertical value axis is the secondary one.
@@ -375,8 +379,8 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
     }
     let cat_ax = pa.child("catAx").or_else(|| pa.child("dateAx")).or_else(|| pa.children_named("valAx").find(|a| !vertical(a)));
     if let Some(v) = val_ax {
-        c.gridlines = v.child("majorGridlines").is_some();
-        c.minor_gridlines = v.child("minorGridlines").is_some();
+        c.gridlines = grid(v, "majorGridlines");
+        c.minor_gridlines = grid(v, "minorGridlines");
         let sc = v.child("scaling");
         c.y_min = sc.and_then(|s| s.child_val("min")).and_then(|v| v.parse().ok()).filter(|v: &f64| v.is_finite());
         c.y_max = sc.and_then(|s| s.child_val("max")).and_then(|v| v.parse().ok()).filter(|v: &f64| v.is_finite());
@@ -767,6 +771,26 @@ mod tests {
             r#"<c:chartSpace {ns}><c:chart><c:plotArea><c:barChart><c:barDir val="col"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#
         );
         assert_eq!(read_chart_xml(xml.as_bytes()).unwrap().text_size, None, "no sizes: the renderer picks one");
+    }
+
+    #[test]
+    fn hidden_labels_and_unfilled_gridlines_are_read() {
+        let xml = |ax: &str| {
+            format!(
+                r#"<c:chartSpace xmlns:c="{NS_C}" xmlns:a="{NS_A}"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/></c:catAx><c:valAx><c:axId val="2"/>{ax}</c:valAx></c:plotArea></c:chart></c:chartSpace>"#
+            )
+        };
+        let no_fill = r#"<c:spPr><a:ln w="9525"><a:noFill/></a:ln></c:spPr>"#;
+        let c = read_chart_xml(xml(r#"<c:majorGridlines/><c:minorGridlines/><c:tickLblPos val="nextTo"/>"#).as_bytes()).unwrap();
+        assert!(c.gridlines && c.minor_gridlines && !c.y_hidden);
+        let c = read_chart_xml(
+            xml(&format!(
+                r#"<c:majorGridlines>{no_fill}</c:majorGridlines><c:minorGridlines>{no_fill}</c:minorGridlines><c:tickLblPos val="none"/>"#
+            ))
+            .as_bytes(),
+        )
+        .unwrap();
+        assert!(!c.gridlines && !c.minor_gridlines && c.y_hidden);
     }
 
     #[test]

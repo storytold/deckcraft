@@ -40,6 +40,15 @@ pub struct Imp<'a> {
     pub kept_sidecar_bytes: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Add-in tags parts, parsed once each, by normalized part name.
+    pub tags_by_part: HashMap<String, Arc<[(String, String)]>>,
+    /// Bytes of tags copied into the model so far (see [`MAX_TAG_BYTES`]).
+    pub tag_bytes: usize,
+    /// The tag budget ran out and the warning was given.
+    pub tags_capped: bool,
+    /// Whether a part has relationships of its own, by normalized part name: looked up once
+    /// however many embedded objects point at the part.
+    pub has_rels: HashMap<String, bool>,
 }
 
 impl Imp<'_> {
@@ -196,16 +205,64 @@ fn choice_has_model3d(el: &El, rels: &Rels) -> bool {
     rec(el, rels, 0)
 }
 
+/// Bytes of tags one import copies into the model, every tags part and reference together: a
+/// small compressed tags part listed by many shapes, or many times by one, must not grow without
+/// bound (#1164). The package budgets (`opc::MAX_XML_PART`, `MAX_TOTAL`, #1283) bound what is
+/// parsed; this bounds what is copied from it.
+pub const MAX_TAG_BYTES: usize = 64 << 20;
+/// What each copied pair costs besides its text, so empty pairs count too.
+const TAG_PAIR_COST: usize = std::mem::size_of::<(String, String)>();
+
 /// Add-in tags named by `holder`'s `p:custDataLst`: the name/value pairs of each tags part.
-pub fn tags(imp: &Imp, part: &Part, holder: &El) -> Vec<(String, String)> {
+/// Each part is parsed once per import and counted once per holder. Once [`MAX_TAG_BYTES`] is
+/// reached, no further tag parts are parsed or cached (#1164).
+pub fn tags(imp: &mut Imp, part: &Part, holder: &El) -> Vec<(String, String)> {
+    if imp.tags_capped {
+        return vec![];
+    }
     let Some(list) = holder.child("custDataLst") else { return vec![] };
     let mut out = Vec::new();
+    let mut seen = HashSet::new();
     for t in list.children_named("tags").take(100) {
-        let Some(doc) = t.attr("r:id").and_then(|id| part.rels.get(id)).and_then(|r| imp.pkg.xml(&r.target)) else { continue };
-        for tag in doc.root.children_named("tag").take(10_000) {
-            if let Some(name) = tag.attr("name") {
-                out.push((name.to_string(), tag.attr("val").unwrap_or("").to_string()));
+        if imp.tags_capped {
+            return out;
+        }
+        let Some(target) = t.attr("r:id").and_then(|id| part.rels.get(id)).map(|r| opc::norm(&r.target)) else { continue };
+        if !seen.insert(target.clone()) {
+            continue;
+        }
+        let parsed = match imp.tags_by_part.get(&target) {
+            Some(p) => p.clone(),
+            None => {
+                if imp.tags_capped {
+                    return out;
+                }
+                let p: Arc<[(String, String)]> = imp
+                    .pkg
+                    .xml(&target)
+                    .map(|doc| {
+                        doc.root
+                            .children_named("tag")
+                            .take(10_000)
+                            .filter_map(|tag| Some((tag.attr("name")?.to_string(), tag.attr("val").unwrap_or("").to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                imp.tags_by_part.insert(target, p.clone());
+                p
             }
+        };
+        for (name, val) in parsed.iter() {
+            let n = imp.tag_bytes.saturating_add(TAG_PAIR_COST + name.len() + val.len());
+            if n > MAX_TAG_BYTES {
+                if !imp.tags_capped {
+                    log::warn!("pptx: add-in tags over {MAX_TAG_BYTES} bytes; the rest are dropped");
+                    imp.tags_capped = true;
+                }
+                return out;
+            }
+            imp.tag_bytes = n;
+            out.push((name.clone(), val.clone()));
         }
     }
     out
@@ -389,6 +446,10 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
         kept_charts: HashMap::new(),
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
+        has_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -427,6 +488,10 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
         kept_charts: HashMap::new(),
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
+        has_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let slide_ids = register_slides(&mut imp, &docs, &slide_entries, &mut lost_slides);
@@ -441,7 +506,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     let layout_by_part = read_masters(&mut imp, &mut p, &master_paths, &docs);
     let file_slide_ids = read_slides(&mut imp, &mut p, &pres_part, &docs, &slide_ids, &layout_by_part);
     read_sections(&mut p, &pres_part, pres_el, &file_slide_ids);
-    p.tags = tags(&imp, &pres_part, pres_el);
+    p.tags = tags(&mut imp, &pres_part, pres_el);
     read_custom_shows(&mut p, &imp, &pres_part, pres_el);
     read_guides_and_show(&mut p, &imp, &pres_part);
     read_notes_master(&mut imp, &mut p, &pres_part);
@@ -603,52 +668,55 @@ fn read_slides(
     let pkg = imp.pkg;
     let fallback_layout = p.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
     let mut file_slide_ids: HashMap<u32, SlideId> = HashMap::new();
-    let mut notes_by_target: HashMap<String, TextBody> = HashMap::new();
+    // A notes or comments part belongs to one slide; one shared by many must not be read (and
+    // copied) once per slide that names it.
+    let mut owned_parts: HashSet<String> = HashSet::new();
     for (file_id, path, id) in slide_ids {
         let Some(doc) = docs.get(&opc::norm(path)) else { continue };
         let part = Part::new(pkg, path, doc);
         let layout = part.rels.first_of("slideLayout").and_then(|r| layout_by_part.get(&opc::norm(&r.target)).copied()).unwrap_or(fallback_layout);
         let mut slide = read_slide(imp, &part, doc, *id, layout);
-        if let Some(notes) = slide_notes(imp, &part, &mut notes_by_target) {
+        if let Some(notes) = slide_notes(imp, &part, &mut owned_parts) {
             slide.notes = notes;
         }
-        read_slide_comments(pkg, pres_part, &part, &mut slide);
+        read_slide_comments(pkg, pres_part, &part, &mut slide, &mut owned_parts);
         file_slide_ids.insert(*file_id, *id);
         p.slides.push(Arc::new(slide));
     }
     file_slide_ids
 }
 
-/// The slide's notes text, read once per notes part.
-fn slide_notes(imp: &mut Imp, part: &Part, cache: &mut HashMap<String, TextBody>) -> Option<TextBody> {
+/// The slide's notes text. A notes part is the notes of the first slide that names it.
+fn slide_notes(imp: &mut Imp, part: &Part, owned: &mut HashSet<String>) -> Option<TextBody> {
     let n = part.rels.first_of("notesSlide")?;
-    let key = opc::norm(&n.target);
-    if let Some(cached) = cache.get(&key) {
-        return Some(cached.clone());
+    if !owned.insert(opc::norm(&n.target)) {
+        log::warn!("pptx: notes part {} is named by more than one slide; kept on the first", n.target);
+        return None;
     }
     let pkg = imp.pkg;
     let nd = load(pkg, &n.target)?;
     let np = Part::new(pkg, &n.target, &nd);
-    let notes = read_notes(imp, &np, &nd.root);
-    cache.insert(key, notes.clone());
-    Some(notes)
+    Some(read_notes(imp, &np, &nd.root))
 }
 
 /// Comments. A modern part and the legacy part can describe the same threads (PowerPoint
 /// writes both): the modern one wins, its flattened legacy copy is skipped.
-fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide) {
-    let mut parts: Vec<(Doc, bool)> = vec![];
+/// Each comments part is read once, for the first slide that names it.
+fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide, owned: &mut HashSet<String>) {
+    let mut parts: Vec<(Doc, bool, bool)> = vec![];
     for c in part.rels.all_of("comments") {
+        // An already-owned part is not re-read, but its kind still decides modern precedence.
+        let fresh = owned.insert(opc::norm(&c.target));
         if let Some(cd) = pkg.xml(&c.target) {
             // The content type names the modern part; a package that types it only through a
             // Default entry instead of an Override is still modern when its root is p188.
             let modern = pkg.content_type(&c.target).as_deref() == Some(crate::write::CT_COMMENTS_MODERN) || cd.root.prefix() == "p188";
-            parts.push((cd, modern));
+            parts.push((cd, modern, fresh));
         }
     }
-    let has_modern = parts.iter().any(|(_, m)| *m);
-    for (cd, modern) in parts {
-        if has_modern && !modern {
+    let has_modern = parts.iter().any(|(_, m, _)| *m);
+    for (cd, modern, fresh) in parts {
+        if !fresh || (has_modern && !modern) {
             continue;
         }
         slide.comments.extend(read_comments(pkg, pres_part, &cd.root, modern));
@@ -1205,6 +1273,7 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
     }
     if let Some(t) = root.child("timing") {
         s.animations = timing::animations(imp, part, &ctx, t, &s.shapes);
+        timing::media_settings(t, &ctx, &mut s.shapes);
     }
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
         s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
@@ -1282,6 +1351,7 @@ fn read_show(sp: &El, shows: &HashMap<String, String>) -> ShowSettings {
         without_narration: sp.bool("showNarration") == Some(false),
         without_animation: sp.bool("showAnimation") == Some(false),
         use_timings: sp.bool("useTimings").unwrap_or(true),
+        show_media_controls: sp.find("showMediaCtrls").and_then(|e| e.bool("val")).unwrap_or(true),
         ..Default::default()
     };
     if sp.child("browse").is_some() {

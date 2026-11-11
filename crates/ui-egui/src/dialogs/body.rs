@@ -259,6 +259,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let nn = check(ui, d, "Show without narration", "nn", sh.without_narration);
     let na = check(ui, d, "Show without animation", "na", sh.without_animation);
     let ut = check(ui, d, "Use timings, if present", "ut", sh.use_timings);
+    let kc = check(ui, d, "Keep mouse cursor visible", "kc", app.ui.show_keep_cursor);
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
     let field = ui.label("Slides");
@@ -279,6 +280,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
         run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
+        run(app, "show.keepCursor", json!({"on": kc}));
     }
     ok || cancel
 }
@@ -337,7 +339,9 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 app.save();
-                let web = app.services.pick_save.is_none() && app.services.download.is_some();
+                // In the browser a save is a download: the presentation stays "unsaved". A page
+                // that keeps the files saves it for real, so a failed save keeps it open.
+                let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
                 if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
                     run(app, "file.close", json!({}));
                 }

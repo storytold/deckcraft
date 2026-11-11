@@ -1,6 +1,6 @@
 use super::{
     Arc, Caps, ColorRef, ColorTransform, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or,
-    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, json, ok, on_param, resolve, str_param,
+    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_param, resolve, str_param,
 };
 
 pub(super) fn bold(s: &mut Session, p: &Value) -> Result<Value> {
@@ -72,10 +72,18 @@ fn grow_shrink(s: &mut Session, up: bool) -> Result<Value> {
     let ctx_sizes = current_run(s).size.unwrap_or(18.0);
     let _ = st;
     let base = ctx_sizes;
-    format_run(s, &move |r| {
-        let cur = r.size.unwrap_or(base);
-        r.size = Some(step(cur, up));
-    })
+    // A layout/master level steps from its own effective size, not the first run's.
+    format_run_levels(
+        s,
+        &move |r| {
+            let cur = r.size.unwrap_or(base);
+            r.size = Some(step(cur, up));
+        },
+        &move |r, eff| {
+            let cur = r.size.or(eff.size).unwrap_or(18.0);
+            r.size = Some(step(cur, up));
+        },
+    )
 }
 
 pub(super) fn grow(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -227,6 +235,9 @@ pub(super) fn language_all(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn highlight(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color");
+    if c.is_none() && p.get("color").is_some_and(|v| !v.is_null()) {
+        return Err(bad("format.highlight", "`color` is not a valid colour"));
+    }
     format_run(s, &move |r| r.highlight = c.clone())
 }
 

@@ -4,6 +4,8 @@
 //! the same pair when it copies, and reads it back on paste: bold, italic and underline survive.
 //! Anything else in the markup is skipped. A hostile fragment is capped, never executed.
 
+use std::borrow::Cow;
+
 use deckcraft_model::text::{Paragraph, Run, RunProps, TextBody};
 
 const MAX_HTML: usize = 1 << 20;
@@ -14,25 +16,93 @@ const MAX_RUNS: usize = 10_000;
 pub fn body_to_html(body: &TextBody) -> String {
     let mut out = String::new();
     for (i, p) in body.paragraphs.iter().enumerate() {
-        if i > 0 {
-            out.push_str("<br>");
+        let prefix = if i > 0 { "<br><p>" } else { "<p>" };
+        if !push_if_fits(&mut out, prefix, 4) {
+            return plain_html(body);
         }
-        out.push_str("<p>");
         for r in &p.runs {
             let (open, close) = tags(&r.props);
-            out.push_str(&open);
+            if !push_if_fits(&mut out, &open, close.len() + 4) {
+                return plain_html(body);
+            }
             match &r.kind {
-                deckcraft_model::text::RunKind::Break => out.push_str("<br>"),
-                _ => push_escaped(&mut out, &r.text),
+                deckcraft_model::text::RunKind::Break => {
+                    if !push_if_fits(&mut out, "<br>", close.len() + 4) {
+                        return plain_html(body);
+                    }
+                }
+                _ => {
+                    if !push_escaped_bounded(&mut out, &r.text, close.len() + 4) {
+                        return plain_html(body);
+                    }
+                }
             }
             out.push_str(&close);
-            if out.len() > MAX_HTML {
-                break;
+        }
+        out.push_str("</p>");
+    }
+    out
+}
+
+/// The text without formatting, or "" (no HTML on the clipboard) when even that is too big: a
+/// cut-off prefix would paste as if it were the whole text.
+fn plain_html(body: &TextBody) -> String {
+    let mut out = String::new();
+    for (i, p) in body.paragraphs.iter().enumerate() {
+        let prefix = if i > 0 { "<br><p>" } else { "<p>" };
+        if !push_if_fits(&mut out, prefix, 4) {
+            return String::new();
+        }
+        for r in &p.runs {
+            let fits = if matches!(&r.kind, deckcraft_model::text::RunKind::Break) {
+                push_if_fits(&mut out, "<br>", 4)
+            } else {
+                push_escaped_bounded(&mut out, &r.text, 4)
+            };
+            if !fits {
+                return String::new();
             }
         }
         out.push_str("</p>");
     }
     out
+}
+
+fn push_if_fits(out: &mut String, value: &str, reserve: usize) -> bool {
+    if out.len().checked_add(value.len()).and_then(|n| n.checked_add(reserve)).is_none_or(|n| n > MAX_HTML) {
+        return false;
+    }
+    out.push_str(value);
+    true
+}
+
+fn push_escaped_bounded(out: &mut String, text: &str, reserve: usize) -> bool {
+    for c in text.chars() {
+        match c {
+            '&' => {
+                if !push_if_fits(out, "&amp;", reserve) {
+                    return false;
+                }
+            }
+            '<' => {
+                if !push_if_fits(out, "&lt;", reserve) {
+                    return false;
+                }
+            }
+            '>' => {
+                if !push_if_fits(out, "&gt;", reserve) {
+                    return false;
+                }
+            }
+            _ => {
+                if out.len().checked_add(c.len_utf8()).and_then(|n| n.checked_add(reserve)).is_none_or(|n| n > MAX_HTML) {
+                    return false;
+                }
+                out.push(c);
+            }
+        }
+    }
+    true
 }
 
 fn tags(props: &RunProps) -> (String, String) {
@@ -53,17 +123,6 @@ fn tags(props: &RunProps) -> (String, String) {
     (open, close)
 }
 
-fn push_escaped(out: &mut String, text: &str) {
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            _ => out.push(c),
-        }
-    }
-}
-
 /// The formatted text of an HTML fragment, or `None` when it has no text.
 ///
 /// Understands `<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<br>`, paragraphs, and a `style` that
@@ -77,7 +136,7 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
     let mut bold = 0i32;
     let mut italic = 0i32;
     let mut underline = 0i32;
-    let mut stack: Vec<(&'static str, i32, i32, i32)> = Vec::new();
+    let mut stack: Vec<(Cow<'static, str>, i32, i32, i32)> = Vec::new();
     let mut paragraphs: Vec<Paragraph> = vec![Paragraph::default()];
     let mut runs = 0usize;
     let mut skip = 0i32;
@@ -106,22 +165,26 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
                 continue;
             }
             if closing {
-                let kind = tag_kind(&name);
-                if !kind.is_empty() {
-                    let search_start = stack.len().saturating_sub(64);
-                    if let Some(offset) = stack[search_start..].iter().rposition(|e| e.0 == kind) {
-                        let pos = search_start + offset;
-                        let (_, db, di, du) = stack[pos];
-                        bold -= db;
-                        italic -= di;
-                        underline -= du;
-                        stack.truncate(pos);
-                    }
+                let kind = match tag_kind(&name) {
+                    "" => name.as_str(),
+                    kind => kind,
+                };
+                let search_start = stack.len().saturating_sub(64);
+                if let Some(offset) = stack[search_start..].iter().rposition(|e| e.0.as_ref() == kind) {
+                    let pos = search_start + offset;
+                    let (db, di, du) = (stack[pos].1, stack[pos].2, stack[pos].3);
+                    bold -= db;
+                    italic -= di;
+                    underline -= du;
+                    stack.truncate(pos);
                 }
                 if is_block(&name) {
                     new_para(&mut paragraphs);
                 }
                 continue;
+            }
+            if is_block(&name) {
+                new_para(&mut paragraphs);
             }
             if is_break(&name) {
                 new_para(&mut paragraphs);
@@ -133,7 +196,11 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
                 italic += di;
                 underline += du;
                 if !token.ends_with('/') && stack.len() < 128 {
-                    stack.push((tag_kind(&name), db, di, du));
+                    let kind = match tag_kind(&name) {
+                        "" => Cow::Owned(name.clone()),
+                        kind => Cow::Borrowed(kind),
+                    };
+                    stack.push((kind, db, di, du));
                 } else {
                     bold -= db;
                     italic -= di;
@@ -369,6 +436,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn style_on_other_tags_ends_at_their_close() {
+        type Prop = fn(&RunProps) -> bool;
+        let cases: [(&str, &str, Prop); 3] = [
+            ("a", "font-weight:bold", |p| p.bold == Some(true)),
+            ("td", "font-style:italic", |p| p.italic == Some(true)),
+            ("mark", "text-decoration:underline", |p| p.underline.is_some()),
+        ];
+        for (tag, style, prop) in cases {
+            let body = html_to_body(&format!("<p><{tag} style=\"{style}\">link</{tag}> plain</p>")).unwrap();
+            let runs = &body.paragraphs[0].runs;
+            assert_eq!(runs.len(), 2, "{tag}");
+            assert!(prop(&runs[0].props), "{tag}");
+            assert_eq!(runs[0].text, "link");
+            assert_eq!(runs[1].text, " plain");
+            assert!(runs[1].props.bold.is_none() && runs[1].props.italic.is_none() && runs[1].props.underline.is_none(), "{tag}");
+        }
+    }
+
+    #[test]
+    fn text_before_opening_block_tag_is_separate_paragraph() {
+        for tag in ["div", "p", "li", "h1"] {
+            let body = html_to_body(&format!("Hello<{tag}>world</{tag}>")).unwrap();
+            let texts: Vec<String> = body.paragraphs.iter().map(|p| p.runs.iter().map(|r| r.text.as_str()).collect()).collect();
+            assert_eq!(texts, ["Hello", "world"], "{tag}");
+        }
+    }
+
+    #[test]
     fn multibyte_after_ampersand_is_kept() {
         let text = "é".repeat(20);
         assert_eq!(decode_text(&format!("R&D {text}")), format!("R&D {text}"));
@@ -434,6 +529,16 @@ mod tests {
         let last = back.paragraphs[0].runs.last().unwrap();
         assert_eq!(last.props.italic, Some(true));
         assert!(last.props.underline.is_some());
+    }
+
+    #[test]
+    fn oversized_escaped_rich_text_puts_no_html_on_the_clipboard() {
+        let mut body = TextBody::from_text(&"&<🦀".repeat(100_000));
+        body.paragraphs[0].runs[0].props.bold = Some(true);
+        body.paragraphs.push(Paragraph::new("later paragraph"));
+
+        // Neither the formatted nor the plain HTML fits, and a truncated prefix would lose text.
+        assert!(body_to_html(&body).is_empty());
     }
 
     #[test]
