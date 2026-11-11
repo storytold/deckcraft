@@ -48,6 +48,15 @@ impl<'a> Store<'a> {
         self.budget = self.budget.saturating_sub(pic.data.len());
         Some(pic)
     }
+
+    /// A blip held in a shape's own property ([MS-ODRAW] §2.2.37: a complex `fillBlip` or `pib`
+    /// whose extra bytes are the blip record itself), decoded within the same budget.
+    pub fn decode_inline(&mut self, bytes: &[u8]) -> Option<Picture> {
+        let blip = Rec::at(bytes, 0).filter(|r| (0xF018..=0xF117).contains(&r.kind))?;
+        let pic = decode(&blip, self.budget)?;
+        self.budget = self.budget.saturating_sub(pic.data.len());
+        Some(pic)
+    }
 }
 
 fn fbse<'a>(r: &Rec<'a>, pictures: &'a [u8]) -> Option<Rec<'a>> {

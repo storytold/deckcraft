@@ -77,6 +77,11 @@ const SLIDE_ID: u32 = 256;
 const TITLE_MASTER_ID: u32 = 0x8000_0002;
 
 fn master() -> Vec<u8> {
+    master_with(&[])
+}
+
+/// The test master with `shapes` after its decoration.
+fn master_with(shapes: &[Vec<u8>]) -> Vec<u8> {
     // Background, text, shadow, title, fill, accent, hyperlink, followed hyperlink.
     let scheme: Vec<u8> = [0xFFFFFFu32, 0x000000, 0x808080, 0x000099, 0x00CC00, 0x0000FF, 0x00FF00, 0xFF0000]
         .iter()
@@ -99,7 +104,7 @@ fn master() -> Vec<u8> {
             atom(rt::COLOR_SCHEME, 1, &scheme),
             master_style(0, &pf_bytes(1, false), &cf_bytes(true, 0, 44, [0x11, 0x22, 0x33])),
             master_style(1, &pf_bytes(0, true), &cf_bytes(false, 0, 28, [0, 0, 0])),
-            drawing(Some(solid_background(0x0000_00FF)), &[decoration]),
+            drawing(Some(solid_background(0x0000_00FF)), &[&[decoration][..], shapes].concat()),
         ],
     )
 }
@@ -190,6 +195,20 @@ fn streams_of(token: u32, times: usize, slide: Vec<u8>, title_master: Option<Vec
 /// As [`streams_of`], with `outline` (text blocks: header, characters, styles) following the
 /// slide's persist atom in the slide list.
 fn streams_with_outline(token: u32, times: usize, slide: Vec<u8>, title_master: Option<Vec<u8>>, outline: &[Vec<u8>]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    streams_with_document(token, times, master(), slide, title_master, outline, &[])
+}
+
+/// As [`streams_with_outline`], with `master` as the main master and `extra` records at the end of
+/// the document container.
+fn streams_with_document(
+    token: u32,
+    times: usize,
+    master: Vec<u8>,
+    slide: Vec<u8>,
+    title_master: Option<Vec<u8>>,
+    outline: &[Vec<u8>],
+    extra: &[Vec<u8>],
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let pictures = atom(0xF01E, 0x6E0, &[&[0u8; 17][..], &png()].concat());
     let mut fbse = vec![0u8; 36];
     fbse[0] = 6;
@@ -224,21 +243,18 @@ fn streams_with_outline(token: u32, times: usize, slide: Vec<u8>, title_master: 
             ]),
         )
     };
-    let document = container(
-        rt::DOCUMENT,
-        0,
-        &[
-            atom(rt::DOCUMENT_ATOM, 0, &doc_atom),
-            container(rt::ENVIRONMENT, 0, &[container(rt::FONT_COLLECTION, 0, &[atom(rt::FONT_ENTITY, 0, &font), atom(rt::FONT_ENTITY, 1, &wing)])]),
-            container(rt::DRAWING_GROUP, 0, &[container(rt::DGG_CONTAINER, 0, &[bstore])]),
-            container(rt::SLIDE_LIST_WITH_TEXT, 1, &if title_master.is_some() { vec![persist(2), persist(5)] } else { vec![persist(2)] }),
-            container(rt::SLIDE_LIST_WITH_TEXT, 0, &[vec![persist(3); times], outline.to_vec()].concat()),
-            container(rt::SLIDE_LIST_WITH_TEXT, 2, &[persist(4)]),
-        ],
-    );
+    let parts = [
+        atom(rt::DOCUMENT_ATOM, 0, &doc_atom),
+        container(rt::ENVIRONMENT, 0, &[container(rt::FONT_COLLECTION, 0, &[atom(rt::FONT_ENTITY, 0, &font), atom(rt::FONT_ENTITY, 1, &wing)])]),
+        container(rt::DRAWING_GROUP, 0, &[container(rt::DGG_CONTAINER, 0, &[bstore])]),
+        container(rt::SLIDE_LIST_WITH_TEXT, 1, &if title_master.is_some() { vec![persist(2), persist(5)] } else { vec![persist(2)] }),
+        container(rt::SLIDE_LIST_WITH_TEXT, 0, &[vec![persist(3); times], outline.to_vec()].concat()),
+        container(rt::SLIDE_LIST_WITH_TEXT, 2, &[persist(4)]),
+    ];
+    let document = container(rt::DOCUMENT, 0, &[&parts[..], extra].concat());
     let mut stream = vec![];
     let mut offsets = vec![];
-    let parts: Vec<Vec<u8>> = [document, master(), slide, notes()].into_iter().chain(title_master).collect();
+    let parts: Vec<Vec<u8>> = [document, master, slide, notes()].into_iter().chain(title_master).collect();
     for part in &parts {
         offsets.push(stream.len() as u32);
         stream.extend_from_slice(part);
@@ -787,4 +803,134 @@ fn title_masters_and_slides_that_dont_follow_the_master() {
     assert_eq!(s.background, Some(Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0xFF, 0, 0))) }));
     assert!(!s.show_master_shapes);
     assert_eq!(s.shapes[0].fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0x11, 0x22, 0xCC)))), "the slide's own scheme");
+}
+
+fn open_streams((cu, doc, pics): (Vec<u8>, Vec<u8>, Vec<u8>)) -> Presentation {
+    crate::import(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)])).unwrap()
+}
+
+/// A picture frame that says nothing about its fill or line draws neither (#1137 review): the
+/// drawing defaults' fill would cover a picture's transparent parts, or an OLE chart's preview.
+#[test]
+fn a_picture_frame_has_no_fill_or_line_of_its_own() {
+    let p = crate::import(&file()).unwrap();
+    let picture = &p.slides[0].shapes[1];
+    assert!(matches!(picture.kind, ShapeKind::Picture { .. }));
+    assert_eq!(picture.fill, Some(Fill::None));
+    assert_eq!(picture.line.as_ref().map(|l| l.fill.clone()), Some(Some(Fill::None)));
+}
+
+/// A picture fill whose blip is held in the shape's own `fillBlip` property (complex, with fBid),
+/// as table cells with a picture have it (#1137 review), shows that picture.
+#[test]
+fn a_picture_held_in_the_fill_property_is_read() {
+    let blip = atom(0xF01E, 0x6E0, &[&[0u8; 17][..], &png()].concat());
+    let mut entries = vec![];
+    for (id, op) in [(prop::FILL_TYPE, 3u32), (0xC000 | prop::FILL_BLIP, blip.len() as u32), (prop::FILL_BOOLS, 0x0010_0010)] {
+        entries.extend_from_slice(&id.to_le_bytes());
+        entries.extend_from_slice(&op.to_le_bytes());
+    }
+    entries.extend_from_slice(&blip);
+    let cell = container(rt::SP_CONTAINER, 0, &[fsp(1, 2049, 0xA00), atom(rt::FOPT, 3, &entries), anchor(400, 500, 2000, 1200)]);
+    let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[cell])]);
+    let p = open_streams(streams_of(0xE391_C05F, 1, slide, None));
+    let Some(Fill::Picture(fill)) = &p.slides[0].shapes[0].fill else { panic!("{:?}", p.slides[0].shapes[0].fill) };
+    let media = p.media.iter().find(|m| m.id == fill.media).unwrap();
+    assert!(media.data.starts_with(b"\x89PNG"));
+}
+
+/// The headers and footers the document sets for its slides (#1137 review: the date, footer and
+/// slide number were missing) become the slide's footer placeholders, placed and styled as the
+/// master's are on every layout.
+#[test]
+fn headers_and_footers_become_footer_placeholders() {
+    let cstring = |instance: u16, s: &str| atom(rt::CSTRING, instance, &utf16(s));
+    // fHasDate | fHasUserDate | fHasSlideNumber | fHasFooter
+    let flags: u16 = 0x01 | 0x04 | 0x08 | 0x20;
+    let hf = container(
+        rt::HEADERS_FOOTERS,
+        3,
+        &[
+            atom(rt::HEADERS_FOOTERS_ATOM, 0, &[&0u16.to_le_bytes()[..], &flags.to_le_bytes()].concat()),
+            cstring(0, "26 May 2004"),
+            cstring(2, "Workshop"),
+        ],
+    );
+    // The master's slide number placeholder: bottom right, right-aligned 10 pt text.
+    let mut style = vec![];
+    style.extend_from_slice(&2u32.to_le_bytes());
+    style.extend_from_slice(&0u16.to_le_bytes());
+    style.extend_from_slice(&pf_bytes(2, false));
+    style.extend_from_slice(&2u32.to_le_bytes());
+    style.extend_from_slice(&cf_bytes(false, 0, 10, [1, 2, 3]));
+    let number = container(
+        rt::SP_CONTAINER,
+        0,
+        &[fsp(1, 1030, 0xA00), anchor(4000, 5000, 5700, 4300), placeholder(0x08), text_box(4, "*", &[atom(rt::STYLE_TEXT_PROP, 0, &style)])],
+    );
+    let p = open_streams(streams_with_document(0xE391_C05F, 1, master_with(&[number]), slide(), None, &[], &[hf]));
+    let shapes = &p.slides[0].shapes;
+    let of = |k: PhType| shapes.iter().find(|s| s.ph_type() == Some(k)).unwrap_or_else(|| panic!("no {k:?}"));
+    assert_eq!(of(PhType::Date).text.as_ref().unwrap().text(), "26 May 2004");
+    assert_eq!(of(PhType::Footer).text.as_ref().unwrap().text(), "Workshop");
+    let runs = &of(PhType::SlideNum).text.as_ref().unwrap().paragraphs[0].runs;
+    assert!(matches!(&runs[0].kind, RunKind::Field { field } if field == "slidenum"));
+    assert!(p.header_footer.slide_number && p.header_footer.footer && p.header_footer.date);
+    // Every layout's slide number sits where the master's does, with its look.
+    let master = &p.masters[0];
+    for l in &master.layouts {
+        if let Some(n) = l.shapes.iter().find(|s| s.ph_type() == Some(PhType::SlideNum)) {
+            let x = n.xfrm.unwrap();
+            assert_eq!((x.x, x.y), (5000.0 / 8.0, 4000.0 / 8.0), "{}", l.name);
+            let level = n.text.as_ref().unwrap().list_style.level(0).unwrap();
+            assert_eq!((level.para.align, level.run.size), (Some(Align::Right), Some(10.0)));
+        }
+    }
+}
+
+/// Numbered paragraphs (#1137 review: drawn with the bullet character) take their numbering from
+/// the document's `___PPT9` tag: the slide's outline block of that text type, and the entry the
+/// run's `pp9rt` names.
+#[test]
+fn outline_numbering_from_the_ppt9_tag() {
+    // Entry 0: nothing. Entry 1: numbered, "1." (scheme 3), from 4.
+    let mut prop9 = vec![0u8; 12];
+    prop9.extend_from_slice(&0x0300_0000u32.to_le_bytes());
+    prop9.extend_from_slice(&1u16.to_le_bytes());
+    prop9.extend_from_slice(&3u16.to_le_bytes());
+    prop9.extend_from_slice(&4i16.to_le_bytes());
+    prop9.extend_from_slice(&[0; 8]);
+    let tag_data = [atom(rt::OUTLINE_TEXT_PROPS_HEADER, 1, &le32(&[SLIDE_ID, 1])), atom(rt::STYLE_TEXT_PROP9, 0, &prop9)];
+    let tag = container(
+        rt::PROG_BINARY_TAG,
+        0,
+        &[atom(rt::CSTRING, 0, &utf16("___PPT9")), atom(rt::BINARY_TAG_DATA, 0, &container(rt::OUTLINE_TEXT_PROPS9, 0, &tag_data))],
+    );
+    let list = container(rt::LIST, 0, &[container(rt::PROG_TAGS, 0, &[tag])]);
+    // Two bulleted paragraphs: the second's run names entry 1 (pp9rt in fontStyle bits 10–13).
+    let pp9rt = |i: u16| [&0x0000_0400u32.to_le_bytes()[..], &(i << 10).to_le_bytes()].concat();
+    let mut style = vec![];
+    style.extend_from_slice(&8u32.to_le_bytes());
+    style.extend_from_slice(&0u16.to_le_bytes());
+    style.extend_from_slice(&pf_bytes(0, true));
+    for (n, i) in [(4u32, 0u16), (4, 1)] {
+        style.extend_from_slice(&n.to_le_bytes());
+        style.extend_from_slice(&pp9rt(i));
+    }
+    let outline = [atom(rt::TEXT_HEADER, 0, &1u32.to_le_bytes()), atom(rt::TEXT_CHARS, 0, &utf16("One\rTwo")), atom(rt::STYLE_TEXT_PROP, 0, &style)];
+    let body = container(
+        rt::SP_CONTAINER,
+        0,
+        &[
+            fsp(1, 2049, 0xA00),
+            anchor(1300, 500, 5260, 3000),
+            placeholder(0x0E),
+            container(rt::CLIENT_TEXTBOX, 0, &[atom(rt::OUTLINE_TEXT_REF, 0, &0u32.to_le_bytes())]),
+        ],
+    );
+    let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[body])]);
+    let p = open_streams(streams_with_document(0xE391_C05F, 1, master(), slide, None, &outline, &[list]));
+    let paras = &p.slides[0].shapes[0].text.as_ref().unwrap().paragraphs;
+    assert!(matches!(paras[0].props.bullet, Some(Bullet::Char { .. })), "{:?}", paras[0].props.bullet);
+    assert_eq!(paras[1].props.bullet, Some(Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 4 }));
 }
