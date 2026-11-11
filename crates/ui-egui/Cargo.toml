@@ -16,7 +16,7 @@ deckcraft-fonts = { workspace = true }
 deckcraft-text = { workspace = true }
 deckcraft-render = { workspace = true }
 deckcraft-anim = { workspace = true }
-deckcraft-engine = { workspace = true }
+deckcraft-engine = { workspace = true, features = ["video"] }
 deckcraft-media = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 egui_extras = { workspace = true }

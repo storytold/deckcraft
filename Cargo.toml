@@ -23,10 +23,10 @@ deckcraft-pdf = { path = "crates/pdf" }
 deckcraft-pptx = { path = "crates/pptx" }
 deckcraft-format = { path = "crates/format" }
 deckcraft-anim = { path = "crates/anim" }
-deckcraft-engine = { path = "crates/engine" }
-deckcraft-mcp = { path = "crates/mcp" }
+deckcraft-engine = { path = "crates/engine", default-features = false }
+deckcraft-mcp = { path = "crates/mcp", default-features = false }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
-deckcraft-media = { path = "crates/media" }
+deckcraft-media = { path = "crates/media", default-features = false }
 # codecs (ported from FilmCraft, same owner and licence)
 deckcraft-bitstream = { path = "crates/bitstream" }
 deckcraft-h264 = { path = "crates/h264" }
