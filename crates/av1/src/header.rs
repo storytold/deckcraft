@@ -360,6 +360,10 @@ pub struct RefInfo {
     pub lf_deltas: LoopFilterDeltas,
     pub seg_features: SegmentationFeatures,
     pub grain: FilmGrainParams,
+    /// The colour format the frame was decoded in (a later sequence header may change it).
+    pub subsampling_x: u8,
+    pub subsampling_y: u8,
+    pub mono_chrome: bool,
 }
 
 /// A parsed uncompressed frame header with its derived variables.
