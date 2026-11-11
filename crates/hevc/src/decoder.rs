@@ -404,10 +404,36 @@ impl Decoder {
             chroma_planes: if chroma == 0 { 0 } else { 2 },
             bytes_per_sample: 2,
         };
+        let frame_bytes = |f: &crate::picture::Frame| {
+            (f.width as u64)
+                .saturating_mul(f.height as u64)
+                .saturating_add((f.cwidth as u64).saturating_mul(f.cheight as u64).saturating_mul(2))
+                .saturating_mul(2)
+        };
+        // Output frames waiting to be returned stay allocated after they leave the DPB, at their
+        // own size: a resolution change in this call can leave pictures of the previous SPS.
+        let queued: u64 = self
+            .out_queue
+            .iter()
+            .filter(|o| !self.dpb.entries.iter().any(|e| Arc::ptr_eq(&e.frame, &o.frame)) && !self.in_flight.iter().any(|f| Arc::ptr_eq(f, &o.frame)))
+            .map(|o| frame_bytes(&o.frame))
+            .fold(0, u64::saturating_add);
+        // Frames the DPB holds now count at their own size too (an SPS change flushes them into the
+        // queue before the new pictures are made): the DPB part is the larger of its new slots and that.
+        let held: u64 = self.dpb.entries.iter().map(|e| frame_bytes(&e.frame)).fold(0, u64::saturating_add);
+        // A queued frame still being decoded is one of the in-flight pictures already reserved, so the
+        // queue and the in-flight reservation overlap: charge the larger, not both.
         let pictures = u64::from(sps.max_dec_pic_buffering) + 1 + self.max_in_flight as u64;
+        let slots = shape.store_bytes(u64::from(sps.max_dec_pic_buffering));
+        let flight = shape.store_bytes(self.max_in_flight as u64);
+        let total = shape
+            .store_bytes(1)
+            .zip(slots)
+            .zip(flight)
+            .map(|((one, slots), flight)| slots.max(held).saturating_add(one).saturating_add(flight).saturating_add(queued));
         ensure!(
-            shape.fits(pictures, self.memory_budget),
-            "{}x{} pictures with {pictures} in the decoder exceed the memory budget",
+            total.is_some_and(|b| b <= self.memory_budget),
+            "{}x{} pictures with {pictures} in the decoder and {queued} bytes queued exceed the memory budget",
             sps.width,
             sps.height
         );
