@@ -678,6 +678,7 @@ fn read_slides(
         let mut slide = read_slide(imp, &part, doc, *id, layout);
         if let Some(notes) = slide_notes(imp, &part, &mut owned_parts) {
             slide.notes = notes;
+            slide.has_notes_slide = true;
         }
         read_slide_comments(pkg, pres_part, &part, &mut slide, &mut owned_parts);
         file_slide_ids.insert(*file_id, *id);
