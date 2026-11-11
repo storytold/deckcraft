@@ -10,6 +10,7 @@ mod timing;
 pub(crate) use chart::{chart_from as chart_from_el, read_chart_xml};
 pub(crate) use chartex::{chartex_from, read_chartex_xml};
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -87,20 +88,22 @@ pub struct Part {
     pub ns: Vec<(String, String)>,
     /// Prefixes bound below the root only (on a wrapper such as `mc:Choice`), each to one namespace.
     pub inner_ns: Vec<(String, String)>,
+    /// Bytes of namespace declarations this part may still copy onto kept fragments.
+    ns_budget: Cell<usize>,
 }
 
 impl Part {
     pub fn new(pkg: &Package, name: &str, doc: &Doc) -> Self {
         let ns = doc.ns_decls();
-        Part { name: name.to_string(), rels: pkg.rels(name), inner_ns: inner_decls(&doc.root, &ns), ns }
+        Part { name: name.to_string(), rels: pkg.rels(name), inner_ns: inner_decls(&doc.root, &ns), ns, ns_budget: Cell::new(MAX_COPIED_NS_BYTES) }
     }
     /// Serialize an element with the namespace declarations it needs from the part root.
     pub fn keep(&self, el: &El) -> String {
-        keep_xml(el, &self.ns)
+        keep_with(el, &[&self.ns], Some(&self.ns_budget))
     }
     /// Like [`Part::keep`], also declaring prefixes that only an enclosing wrapper binds.
     pub fn keep_inner(&self, el: &El) -> String {
-        keep_with(el, &[&self.ns, &self.inner_ns])
+        keep_with(el, &[&self.ns, &self.inner_ns], Some(&self.ns_budget))
     }
 }
 
@@ -139,6 +142,10 @@ fn inner_decls(root: &El, ns: &[(String, String)]) -> Vec<(String, String)> {
 /// URIs of well under 100 bytes; a longer one is not copied, so one declaration cannot be
 /// multiplied by every fragment that uses its prefix.
 const MAX_NS_VALUE: usize = 2048;
+
+/// Namespace declaration bytes one part may copy onto all its kept fragments together; past it a
+/// fragment keeps its markup but is not given further declarations.
+const MAX_COPIED_NS_BYTES: usize = 8 << 20;
 
 /// Prefixes `el` and its descendants use in element and attribute names, and those listed in
 /// `mc:Ignorable` or `mc:MustUnderstand` (which must stay declared for the markup-compatibility rules to hold),
@@ -183,16 +190,24 @@ fn used_prefixes(el: &El) -> HashSet<&str> {
 
 /// Serialize `el`, declaring every prefix it uses that the source root declared.
 pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
-    keep_with(el, &[ns])
+    keep_with(el, &[ns], None)
 }
 
-fn keep_with(el: &El, decls: &[&[(String, String)]]) -> String {
+fn keep_with(el: &El, decls: &[&[(String, String)]], budget: Option<&Cell<usize>>) -> String {
     let used = used_prefixes(el);
     let mut have: HashSet<&str> = el.attrs.iter().map(|(a, _)| a.as_str()).collect();
     let mut extra = Vec::new();
     for (k, v) in decls.iter().flat_map(|d| d.iter()) {
         let p = k.strip_prefix("xmlns:").unwrap_or("");
-        if !p.is_empty() && used.contains(p) && v.len() <= MAX_NS_VALUE && have.insert(k) {
+        if !p.is_empty() && used.contains(p) && v.len() <= MAX_NS_VALUE && !have.contains(k.as_str()) {
+            let cost = k.len() + v.len();
+            if let Some(b) = budget {
+                if b.get() < cost {
+                    continue;
+                }
+                b.set(b.get() - cost);
+            }
+            have.insert(k);
             extra.push((k.clone(), v.clone()));
         }
     }
@@ -1547,5 +1562,23 @@ mod tests {
         let out = keep_xml(&el, &ns);
         assert!(out.contains(r#"xmlns:a="urn:a""#), "{out}");
         assert!(!out.contains("uuuu"), "the oversized declaration is not copied");
+    }
+
+    #[test]
+    fn copied_namespace_bytes_are_budgeted_per_part() {
+        let d = crate::xml::parse(br#"<a:x xmlns:a="urn:a"><a:y/></a:x>"#).unwrap();
+        let mut el = d.root.clone();
+        el.attrs.clear();
+        let part = Part {
+            name: String::new(),
+            rels: Default::default(),
+            ns: vec![("xmlns:a".to_string(), "urn:a".to_string())],
+            inner_ns: vec![],
+            ns_budget: Cell::new(15),
+        };
+        assert!(part.keep(&el).contains(r#"xmlns:a="urn:a""#), "within budget");
+        assert!(part.ns_budget.get() < 15);
+        let again = part.keep(&el);
+        assert!(!again.contains("xmlns:a"), "budget spent, no further declarations: {again}");
     }
 }
