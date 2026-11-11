@@ -194,6 +194,39 @@ consistency is open (#73, #56).
 | A screenshot comparison pass on the most-used tabs | 2–4 |
 | **Total** | **~26–46** |
 
+## Measured section rows
+
+Office 16.0.20527, 125% DPI, unmaximised window; widths are outer px. Each entry is the section's
+control-row count (1, 2 or 3; a 5 is a menu with nested rows) at the width where it changes.
+
+| Tab | Section | Rows by width |
+|---|---|---|
+| Home | Slides | 450: 1 → 1400: 3 |
+| Home | Font | 450: 1 → 1161: 3 → 1600: 2 |
+| Home | Paragraph | 450: 1 → 1300: 3 → 1900: 5 |
+| Home | Drawing | 450: 1 → 1600: 3 |
+| Home | Editing | 450: 1 → 1900: 3 |
+| Insert | Images | 450: 1 → 1400: 3 → 1900: 1 |
+| Insert | Illustrations | 450: 1 → 1161: 3 → 1900: 1 |
+| Insert | Text | 450: 1 → 1600: 3 |
+| Design | Themes | 450: 1 → 1024: 0 |
+| Design | Customize | 450: 3 → 1100: 1 |
+| Transitions | Timing | 450: 1 → 650: 2 |
+| Animations | Advanced Animation | 450: 1 → 650: 3 |
+| Animations | Timing | 450: 1 → 950: 3 |
+| Slide Show | Start Slide Show | 450: 1 → 750: 3 → 1400: 1 |
+| Slide Show | Set Up | 450: 1 → 1300: 3 → 1600: 1 |
+| Record | Record | 450: 1 → 750: 3 → 850: 1 |
+| Review | Proofing | 450: 1 → 1024: 2 → 1100: 1 |
+| Review | Activity | 450: 1 → 1024: 2 → 1100: 1 |
+| View | Presentation Views | 450: 1 → 850: 3 → 1300: 1 |
+| View | Master Views | 450: 1 → 950: 3 → 1400: 1 |
+| View | Color/Grayscale | 450: 1 → 1300: 3 |
+| View | Window | 450: 1 → 1200: 3 |
+
+The planner keeps a section's natural rows while it fits and collapses it to one row below the
+measured narrow breakpoint; two-row states beyond the implemented sections are not modelled yet.
+
 ## Revision history
 
 | Date | Change | Summary |
