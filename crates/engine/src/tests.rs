@@ -968,6 +968,48 @@ fn distribute_wide_middle_stays_in_selection_bounds() {
 }
 
 #[test]
+fn a_viewer_drag_moves_nothing_and_a_shared_drag_is_one_operation() {
+    let mut s = session();
+    s.set_tool(ToolKind::Shape { preset: "rect".into() });
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    s.pointer(ev(PointerKind::Down, 100.0, 100.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 200.0, 180.0)).unwrap();
+    let id = s.pointer(ev(PointerKind::Up, 200.0, 180.0)).unwrap()["id"].as_u64().unwrap();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+
+    // A viewer selects with a press and its drag changes nothing: every drag arm writes through
+    // `edit`, below the command gate, so the press must not start one at all.
+    s.set_read_only(true);
+    s.pointer(ev(PointerKind::Down, 150.0, 140.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 300.0, 260.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 300.0, 260.0)).unwrap();
+    let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
+    assert_eq!((v["box"]["x"].as_f64(), v["box"]["y"].as_f64()), (Some(100.0), Some(100.0)), "a viewer's drag moved the shape");
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(id as u32)], "the press still selected it");
+
+    // An editor in a shared session keeps the drag's own result locally and hands the room one
+    // operation with the final boxes, instead of leaving the move to this replica.
+    s.set_read_only(false);
+    s.set_collab_queue(true);
+    s.pointer(ev(PointerKind::Down, 150.0, 140.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 170.0, 150.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 170.0, 150.0)).unwrap();
+    let queued = s.take_pending_commands();
+    assert_eq!(queued.len(), 1, "one release, one operation: {queued:?}");
+    assert_eq!(queued[0].0, "shape.setBoundsMany");
+    assert_eq!(queued[0].1["items"][0]["id"], id);
+    assert_eq!(queued[0].1["items"][0]["x"], 120.0);
+    assert_eq!(queued[0].1["items"][0]["y"], 110.0);
+    // Single-user keeps the gesture's own interaction undo and submits nothing.
+    s.set_collab_queue(false);
+    s.pointer(ev(PointerKind::Down, 170.0, 150.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 190.0, 160.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 190.0, 160.0)).unwrap();
+    assert!(s.take_pending_commands().is_empty(), "a local drag is not an operation");
+}
+
+#[test]
 fn pointer_draw_move_resize() {
     let mut s = session();
     s.set_tool(ToolKind::Shape { preset: "rect".into() });

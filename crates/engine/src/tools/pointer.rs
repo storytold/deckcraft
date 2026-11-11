@@ -340,7 +340,8 @@ impl Session {
                     sel.text = None;
                     sel.cells = None;
                 })?;
-                self.tool.drag = Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt, enter_text: None });
+                self.tool.drag =
+                    Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt && !self.collab_queue, enter_text: None });
             }
             Some(Hit::Warp { id, index }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
@@ -406,7 +407,10 @@ impl Session {
                     sel.text = None;
                     sel.cells = None;
                 })?;
-                let duplicate = mods.alt && origs.len() == ids.len();
+                // Alt-drag duplicates the selection, which makes new objects: a shared session has
+                // no command for that copy yet, so the gesture stays a move there instead of
+                // leaving a shape only this replica has.
+                let duplicate = mods.alt && !self.collab_queue && origs.len() == ids.len();
                 self.tool.drag = Some(Drag::Move { ids, start: p, origs, moved: false, duplicate, enter_text });
                 // Format Painter applies on click.
                 if self.painter.is_some() && !toggle {
@@ -437,6 +441,17 @@ impl Session {
                 self.tool.drag = Some(Drag::Marquee { start: p, add });
                 self.tool.marquee = Some(Rect::from_points(p, p));
             }
+        }
+        // A viewer selects and places a caret, but never starts a gesture that writes: every drag
+        // arm in `drag` changes the document through `edit`, which sits below the command gate, so
+        // dropping the drag here is what keeps a viewer's pointer from moving a shape. The press
+        // has already made its selection, and a text selection or a marquee only moves the
+        // selection, so those two stay.
+        if self.read_only && !matches!(self.tool.drag, None | Some(Drag::TextSelect { .. } | Drag::Marquee { .. })) {
+            self.tool.drag = None;
+            self.tool.preview = None;
+            self.tool.marquee = None;
+            self.tool.guide_drag = None;
         }
         Ok(json!({"hit": serde_json::to_value(&hit).unwrap_or_default()}))
     }
@@ -585,6 +600,13 @@ impl Session {
                 out = self.paint_if_selection_changed(before, out)?;
                 self.commit();
             }
+            Some(Drag::Move { moved: true, ids, .. }) => {
+                // The shapes followed the pointer through `edit`; a shared session submits where
+                // the drag left them so the room orders the move instead of one replica keeping
+                // it to itself.
+                out = self.submit_drag_move(&ids)?;
+                self.commit();
+            }
             Some(_) => self.commit(),
             None => {}
         }
@@ -592,6 +614,28 @@ impl Session {
         self.commit();
         let _ = mods;
         Ok(out)
+    }
+
+    /// Hand a finished shape drag to the room as one operation carrying the final boxes, the same
+    /// final-value form `arrange.align`/`arrange.distribute` use, so every replica lands on the
+    /// boxes the drag left and the step has one undo image. Nothing is submitted for a single-user
+    /// session, where the gesture's own interaction undo is the whole story. A viewer never gets
+    /// here: its press does not start the drag (`down`).
+    fn submit_drag_move(&mut self, ids: &[ShapeId]) -> Result<Value> {
+        if !self.collab_queue || self.read_only {
+            return Ok(Value::Null);
+        }
+        let st = self.doc()?;
+        let mut items = Vec::new();
+        for id in ids {
+            let Some(sh) = st.shape(*id) else { continue };
+            let x = xfrm_of(&st.doc, &st.selection, sh);
+            items.push(json!({"id": id.0, "x": x.x, "y": x.y, "w": x.w, "h": x.h}));
+        }
+        if items.is_empty() {
+            return Ok(Value::Null);
+        }
+        self.execute("shape.setBoundsMany", &json!({"items": items}))
     }
 
     pub(super) fn is_picture(&self, id: ShapeId) -> bool {

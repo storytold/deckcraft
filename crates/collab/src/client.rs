@@ -314,7 +314,11 @@ impl ClientSession {
         if self.state != Link::Live {
             return None;
         }
-        if self.resync_wanted {
+        if self.resync_wanted && !self.resync_in_flight {
+            // One resync on the wire at a time. A gap reported while an answer is in flight stays
+            // `resync_wanted` and is asked for after this snapshot: a second request would put
+            // two snapshots in flight, and the later one could drop an operation the first one
+            // released as "covered" although the server never applied it.
             self.resync_wanted = false;
             self.resync_in_flight = true;
             return Some(ClientMsg::Resync { last_version: self.replica_version });
@@ -439,6 +443,10 @@ impl ClientSession {
                 // The resync is answered: operations may be sent again, against the head the
                 // snapshot installs (the queued ones take their `base_version` at send time).
                 self.resync_in_flight = false;
+                // A gap signalled while this answer was on its way is covered by it: the snapshot
+                // and the tail above the replica are the room's state up to the same head, so no
+                // second resync is owed for it.
+                self.resync_wanted = false;
                 self.version = self.version.max(snapshot.version);
                 // Operations the base or the tail already includes need no answer. A base at a
                 // later version replaces the replica; the tail above it is replayed by the host.
@@ -732,6 +740,36 @@ mod tests {
         let sent = c.next_outgoing().expect("the held edit goes after the snapshot");
         assert!(matches!(sent, ClientMsg::Op(ref op) if op.op_id == "o1" && op.base_version == 2), "{sent:?}");
         assert_eq!(c.queued(), 0);
+    }
+
+    #[test]
+    fn a_gap_during_an_outstanding_resync_never_puts_a_second_request_on_the_wire() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.submit(op("o0", 0)).expect("queue");
+        c.next_outgoing().expect("o0 goes out");
+        // A gap asks for the tail.
+        assert_eq!(c.on_msg(applied("o2", 2)), Effect::Rollback);
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+        // A second gap while that request is in flight must not send a second `Resync`: the first
+        // snapshot would release the queue, and the second one could then drop an operation the
+        // server never applied.
+        assert_eq!(c.on_msg(applied("o4", 4)), Effect::Rollback);
+        assert!(c.next_outgoing().is_none(), "one resync on the wire at a time");
+        c.submit(op("o1", 0)).expect("queue");
+        assert!(c.next_outgoing().is_none(), "nothing goes out while the answer is outstanding");
+        let snapshot = ServerMsg::Snapshot(SnapshotMsg {
+            version: 4,
+            snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@4".into() },
+            tail: vec![],
+            base: None,
+        });
+        c.on_msg(snapshot);
+        // The snapshot answers the gap it covers, so no second resync is owed, and the held edit
+        // goes out against the head it installed.
+        let sent = c.next_outgoing().expect("the held edit goes after the snapshot");
+        assert!(matches!(sent, ClientMsg::Op(ref op) if op.op_id == "o1" && op.base_version == 4), "{sent:?}");
+        assert_eq!(c.in_flight(), 1, "the edit is on the wire, not dropped as covered");
     }
 
     #[test]

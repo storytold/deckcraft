@@ -749,14 +749,29 @@ enum CommitFailure {
 /// Build the file from the room's authoritative state, then post it to the cabinet. The room lock
 /// is released before the callback, so one slow cabinet cannot stall the other participants.
 fn build_and_publish(shared: &Arc<Shared>, file_id: &str, expected: Option<&str>) -> Result<CommittedFile, CommitFailure> {
+    let hub = live_hub(shared, file_id)?;
+    build_and_publish_on(&hub, shared, file_id, expected)
+}
+
+/// The room the server serves under `file_id`, or `NotFound`.
+fn live_hub(shared: &Arc<Shared>, file_id: &str) -> Result<Arc<Mutex<Hub>>, CommitFailure> {
+    shared.hubs.lock().map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?.get(file_id).cloned().ok_or(CommitFailure::NotFound)
+}
+
+/// Whether `hub` is still the live room for `file_id`. `DELETE` closes a room before it leaves the
+/// map, so a socket that outlived its room must neither build nor publish the document that
+/// replaced it: the authorization and the commit are bound to one hub instance.
+fn still_live(shared: &Arc<Shared>, file_id: &str, hub: &Arc<Mutex<Hub>>) -> bool {
+    let in_map = shared.hubs.lock().ok().is_some_and(|hubs| hubs.get(file_id).is_some_and(|live| Arc::ptr_eq(live, hub)));
+    in_map && hub.lock().map(|hub| !hub.is_closed()).unwrap_or(false)
+}
+
+/// Build and publish against one hub instance (the one the caller was authorized against).
+fn build_and_publish_on(hub: &Arc<Mutex<Hub>>, shared: &Arc<Shared>, file_id: &str, expected: Option<&str>) -> Result<CommittedFile, CommitFailure> {
+    if !still_live(shared, file_id, hub) {
+        return Err(CommitFailure::NotFound);
+    }
     let (committed, expected_version) = {
-        let hub = shared
-            .hubs
-            .lock()
-            .map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?
-            .get(file_id)
-            .cloned()
-            .ok_or(CommitFailure::NotFound)?;
         let mut hub = hub.lock().map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?;
         let committed = hub.session_mut().commit_checked(expected).map_err(|error| match error {
             CommitError::Conflict { expected, current } => CommitFailure::Conflict(match current {
@@ -786,20 +801,20 @@ fn build_and_publish(shared: &Arc<Shared>, file_id: &str, expected: Option<&str>
     };
     let etag = published.as_ref().map(|published| published.etag.clone());
     if let Some(etag) = &etag {
-        let hub = shared
-            .hubs
-            .lock()
-            .map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?
-            .get(file_id)
-            .cloned()
-            .ok_or(CommitFailure::NotFound)?;
-        hub.lock().map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?.accept_file_version(etag.clone());
-        if let Some(store) = &shared.store
-            && let Err(e) = store.set_file_version(file_id, etag)
-        {
-            log::error!("file version not stored: {e}");
+        if still_live(shared, file_id, hub) {
+            hub.lock().map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?.accept_file_version(etag.clone());
+            if let Some(store) = &shared.store
+                && let Err(e) = store.set_file_version(file_id, etag)
+            {
+                log::error!("file version not stored: {e}");
+            }
+            shared.metrics.cabinet_commits.fetch_add(1, Ordering::Relaxed);
+        } else {
+            // The room was closed (and possibly re-created) while the cabinet took the file. The
+            // version belongs to the session the caller was authorized against; that session is
+            // gone, so nothing is adopted by whatever now serves the same file id.
+            log::warn!("commit {file_id}: the room closed before the cabinet's answer");
         }
-        shared.metrics.cabinet_commits.fetch_add(1, Ordering::Relaxed);
     }
     Ok(CommittedFile { name, sha256, committed, etag })
 }
@@ -826,7 +841,7 @@ fn commit_from_client(hub: &Arc<Mutex<Hub>>, peer: &str, expected: Option<&str>,
     if !allowed {
         return answer(hub, peer, ServerMsg::Rejected(rejected("commit", RejectCode::Forbidden, "a viewer cannot commit")));
     }
-    match build_and_publish(shared, &file_id, expected) {
+    match build_and_publish_on(hub, shared, &file_id, expected) {
         Ok(done) => answer(hub, peer, ServerMsg::CommitResult(commit_result(&done))),
         Err(CommitFailure::Conflict(message)) => answer(hub, peer, ServerMsg::Rejected(rejected("commit", RejectCode::Conflict, &message))),
         Err(CommitFailure::Build(message)) => answer(hub, peer, ServerMsg::Error(ServerError { code: "commit".into(), message, retryable: true })),
@@ -1156,6 +1171,46 @@ pub const PROTOCOL: u16 = PROTO_VERSION;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_commit_is_bound_to_the_hub_it_was_authorized_against() {
+        use deckcraft_collab::DocSession;
+        let config = Config::for_tests(b"secret", "service-token");
+        let shared = Arc::new(Shared {
+            config,
+            hubs: Mutex::new(HashMap::new()),
+            names: Mutex::new(HashMap::new()),
+            metrics: Metrics::default(),
+            store: None,
+            cabinet: None,
+        });
+        let deck = || {
+            let engine = deckcraft_engine::Session::with_new();
+            engine.doc().expect("document").doc.as_ref().clone()
+        };
+        let room = |file: &str| {
+            let session = DocSession::from_document(file, deck(), SessionConfig::default()).expect("session");
+            Arc::new(Mutex::new(Hub::new(session)))
+        };
+        let hub = room("file-h");
+        // A hub that is not the room in the map is refused before anything is built: this is an
+        // old socket whose session was deleted and re-created.
+        assert!(matches!(build_and_publish_on(&hub, &shared, "file-h", None), Err(CommitFailure::NotFound)));
+        shared.hubs.lock().expect("hubs").insert("file-h".into(), hub.clone());
+        assert!(build_and_publish_on(&hub, &shared, "file-h", None).is_ok(), "the live room builds and publishes");
+        // `DELETE` closes the room before it leaves the map; the socket that outlived it must not
+        // build or publish whatever now serves the same file id.
+        hub.lock().expect("hub").close();
+        assert!(matches!(build_and_publish_on(&hub, &shared, "file-h", None), Err(CommitFailure::NotFound)), "a closed room commits nothing");
+        let fresh = room("file-h");
+        shared.hubs.lock().expect("hubs").insert("file-h".into(), fresh.clone());
+        assert!(
+            matches!(build_and_publish_on(&hub, &shared, "file-h", None), Err(CommitFailure::NotFound)),
+            "a closed room cannot publish the document of the room that replaced it"
+        );
+        assert!(matches!(build_and_publish_on(&hub, &shared, "file-h", None), Err(CommitFailure::NotFound)));
+        assert!(build_and_publish_on(&fresh, &shared, "file-h", None).is_ok());
+    }
 
     #[test]
     fn a_token_must_match_the_audience_and_the_role_must_be_known() {

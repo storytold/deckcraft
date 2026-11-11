@@ -174,6 +174,14 @@ impl DocSession {
         self.version
     }
 
+    /// Continue the numbering a stored base left off at. A room reopened from its base has the
+    /// document but not the version, which lives in the store's `meta.json`: without this a base
+    /// taken at version 200 would answer version 0, and a client holding 200 would be refused as
+    /// behind while the journal tail — which starts above the base — was numbered again from 1.
+    pub fn set_version(&mut self, version: u64) {
+        self.version = version;
+    }
+
     /// Replace the session's tunables (server configuration: snapshot frequency, base size).
     pub fn set_config(&mut self, config: SessionConfig) {
         self.config = config;

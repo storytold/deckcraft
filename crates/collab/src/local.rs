@@ -800,6 +800,11 @@ pub fn normalize_with_painter(
     if cmd == "smartArt.picture" {
         return Ok(vec![smartart_picture(keys, p, slide_key, st, op_id, doc)?]);
     }
+    // A finished gesture (a shape drag) names the boxes it left: one final-value operation, so the
+    // room orders the result every replica draws instead of one replica keeping the move to itself.
+    if cmd == "shape.setBoundsMany" {
+        return drag_bounds(keys, p, slide, slide_key, op_id, doc);
+    }
     match cmd {
         "shape.move" => {
             let ids = shape_ids(p, st)?;
@@ -2166,6 +2171,57 @@ fn animation_index(p: &Value) -> Result<Option<usize>, LocalError> {
     }
 }
 
+/// A finished gesture (a shape drag) names the boxes it left, so the room orders the result every
+/// replica draws instead of one replica keeping the move to itself. The values are final: they are
+/// checked, never recomputed from a replica's own state.
+fn drag_bounds(
+    keys: &crate::KeyMap,
+    p: &Value,
+    slide: &Slide,
+    slide_key: Option<SlideKey>,
+    op_id: &str,
+    doc: &str,
+) -> Result<Vec<OpEnvelope>, LocalError> {
+    let items = p.get("items").and_then(Value::as_array).ok_or_else(|| LocalError::BadParams("shape.setBoundsMany needs `items`".into()))?;
+    if items.len() > 4096 {
+        return Err(LocalError::BadParams("too many boxes in one step".into()));
+    }
+    let mut boxes: Vec<ShapeBounds> = Vec::new();
+    for item in items {
+        let id = item
+            .get("id")
+            .and_then(Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| LocalError::BadParams("a box without an id".into()))?;
+        let shape = shape_key(keys, slide.id, ShapeId(id))?;
+        if boxes.iter().any(|b| b.shape == shape) {
+            return Err(LocalError::BadParams("a box names the same shape twice".into()));
+        }
+        let number = |name: &str| {
+            item.get(name)
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite())
+                .ok_or_else(|| LocalError::BadParams(format!("a box without a finite `{name}`")))
+        };
+        boxes.push(ShapeBounds { shape, x: number("x")?, y: number("y")?, w: number("w")?, h: number("h")? });
+    }
+    if boxes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let shapes = boxes.iter().map(|b| b.shape.clone()).collect();
+    let payload = Payload::ShapesSetBounds { items: boxes };
+    Ok(vec![OpEnvelope {
+        op_id: op_id.to_string(),
+        doc: doc.to_string(),
+        base_version: 0,
+        kind: class_of(&payload),
+        target: Target { slide: slide_key, shapes, ..Target::default() },
+        payload,
+        history: None,
+        preview: None,
+    }])
+}
+
 fn shape_ids(p: &Value, st: &DocState) -> Result<Vec<ShapeId>, LocalError> {
     if let Some(ids) = p.get("ids").and_then(Value::as_array) {
         return Ok(ids.iter().filter_map(Value::as_u64).map(|v| ShapeId(v as u32)).collect());
@@ -2454,6 +2510,41 @@ mod tests {
         assert_eq!(ops[0].payload, Payload::ShapeMove { x: 125.0, y: 95.0 });
         assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
         assert_eq!(ops[0].kind, OpKind::Command);
+    }
+
+    #[test]
+    fn a_finished_drag_normalises_to_one_operation_with_its_final_boxes() {
+        let (s, doc, slide, shapes) = deck();
+        let km = keys(s.doc().expect("doc").doc.as_ref());
+        // Two objects as a drag leaves them: the boxes are final, so nothing is recomputed here.
+        let p = json!({"items": [
+            {"id": shapes[0].0, "x": 140.0, "y": 120.0, "w": 100.0, "h": 50.0},
+            {"id": shapes[1].0, "x": 260.0, "y": 120.0, "w": 100.0, "h": 50.0},
+        ]});
+        let ops = normalize(&km, s.doc().expect("doc"), "shape.setBoundsMany", &p, "op", &doc).expect("normalise");
+        assert_eq!(ops.len(), 1, "a drag of two objects is one version and one undo step");
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        match &ops[0].payload {
+            Payload::ShapesSetBounds { items } => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].shape, km.shape_key(slide, shapes[0]).expect("key").clone());
+                assert_eq!((items[0].x, items[0].y, items[0].w, items[0].h), (140.0, 120.0, 100.0, 50.0));
+                assert_eq!((items[1].x, items[1].y), (260.0, 120.0));
+            }
+            other => panic!("{other:?}"),
+        }
+        // A box without an id, a repeated shape and an empty list: the first two are refused
+        // before anything is sent, the empty one sends nothing at all.
+        let bad = json!({"items": [{"x": 1.0, "y": 1.0, "w": 10.0, "h": 10.0}]});
+        assert!(normalize(&km, s.doc().expect("doc"), "shape.setBoundsMany", &bad, "op", &doc).is_err());
+        let twice = json!({"items": [
+            {"id": shapes[0].0, "x": 1.0, "y": 1.0, "w": 10.0, "h": 10.0},
+            {"id": shapes[0].0, "x": 2.0, "y": 2.0, "w": 10.0, "h": 10.0},
+        ]});
+        assert!(normalize(&km, s.doc().expect("doc"), "shape.setBoundsMany", &twice, "op", &doc).is_err());
+        let empty = json!({"items": []});
+        assert!(normalize(&km, s.doc().expect("doc"), "shape.setBoundsMany", &empty, "op", &doc).expect("no-op").is_empty());
     }
 
     #[test]

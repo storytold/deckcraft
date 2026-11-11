@@ -3,7 +3,9 @@
 //! Every accepted operation is appended before the next one is applied; a base is written
 //! atomically (temporary file + rename) every `snapshot_every` operations and the journal is
 //! rewritten to the tail after it. On start the latest base is loaded and the tail replayed
-//! through the same `DocSession::apply` path, so versions, dedup and undo history come back.
+//! through the same `DocSession::apply` path, so the version, the dedup window and the document
+//! come back. The per-actor undo history does not: the replay calls `apply_confirmed`, which
+//! records no history image, so an edit made before a restart cannot be undone after it.
 //!
 //! File ids are hashed for the directory name: the cabinet's id never becomes a path component.
 
@@ -69,6 +71,13 @@ impl Store {
         }
         let bytes = fs::read(&base).map_err(|e| format!("base: {e}"))?;
         let mut session = DocSession::open(file_id, &bytes).map_err(|e| format!("base: {e}"))?;
+        // The base carries the document, not its version: `meta.json` names the version the
+        // snapshot was taken at, and the room continues from it. Without this a room reopened
+        // from a base at version 200 would answer version 0, refuse clients that hold 200 as
+        // behind, and number the journal tail (which starts above the base) from 1 again.
+        if let Some(version) = stored.get("version").and_then(serde_json::Value::as_u64) {
+            session.set_version(version);
+        }
         if let Some(etag) = stored.get("fileEtag").and_then(|value| value.as_str()) {
             session.set_base_file_etag(etag);
         }
@@ -236,6 +245,37 @@ mod tests {
         let mut s = deckcraft_engine::Session::with_new();
         s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("shape");
         s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    #[test]
+    fn a_base_reopens_at_the_version_it_was_taken_at() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-version-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-v", deck(), SessionConfig::default()).expect("session");
+        // Two steps, then a base: the journal is trimmed to the tail above it, so the reopened
+        // room has no line to replay and its version can only come from `meta.json`.
+        for n in 1..=2u64 {
+            let op = OpEnvelope {
+                op_id: format!("slide-{n}"),
+                doc: "file-v".into(),
+                base_version: n - 1,
+                kind: deckcraft_collab_proto::OpKind::Structural,
+                target: Default::default(),
+                payload: deckcraft_collab_proto::Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+                history: None,
+                preview: None,
+            };
+            let applied = session.apply("alice", &op).expect("apply");
+            store.record("file-v", &mut session, &applied).expect("record");
+        }
+        assert_eq!(session.version(), 2);
+        store.snapshot("file-v", &mut session).expect("base at version 2");
+        let document = session.document().expect("doc").clone();
+        let restored = store.load("file-v").expect("load").expect("stored");
+        assert_eq!(restored.version(), 2, "a room reopened from its base keeps the version its clients hold");
+        assert_eq!(restored.document().expect("doc"), &document, "the base carries the document itself");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
