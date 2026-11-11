@@ -71,7 +71,8 @@ pub fn slides_to_rtf(p: &Presentation) -> String {
         }
         out.push_str("\\b0\\par\n");
         for sh in &s.shapes {
-            if sh.ph_type().is_some_and(|k| k.is_title()) {
+            // As in the text outline: footer, date and slide-number placeholders are not body text.
+            if sh.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind()) {
                 continue;
             }
             let Some(t) = &sh.text else { continue };
