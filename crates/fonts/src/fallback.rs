@@ -317,4 +317,21 @@ mod tests {
             assert!(c.windows(2).all(|w| w[0] <= w[1]));
         }
     }
+
+    /// With system fallback off, the automatic cascades (script families and symbol faces) load no
+    /// installed family: the result comes from what is already loaded.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cascades_load_no_installed_family_when_system_fallback_is_off() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        let base = db.face(crate::DEFAULT_FAMILY, "Regular");
+        let loaded = |db: &FontDb| [b"Arab", b"Hebr", b"Thai", b"Deva"].into_iter().flat_map(|s| os_families(*s)).filter(|f| db.is_loaded(f)).count();
+        let before = loaded(&db);
+        for c in ['\u{0628}', '\u{05D0}', '\u{0E01}', '\u{0905}', '\u{2211}', '\u{2603}'] {
+            let f = db.cascade(&[c], std::slice::from_ref(&base), "Regular");
+            assert!(!f.family.is_empty());
+        }
+        assert_eq!(loaded(&db), before, "no installed family was loaded");
+    }
 }
