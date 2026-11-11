@@ -899,10 +899,10 @@ fn place_fits_the_frame_scales_strokes_and_drops_far_paths() {
 
 #[test]
 fn place_counts_the_items_own_clip_region_before_keeping_it() {
-    // A path of 499,999 elements nearly fills the 500,000 budget; a second one whose new clip
+    // A path of 499,998 elements nearly fills the 500,000 budget; a second one whose new clip
     // region adds elements goes past it and is left out.
     let mut segs = vec![Seg::Move(0.0, 0.0)];
-    segs.extend((0..499_998).map(|i| Seg::Line(1.0 + (i % 50) as f32, 1.0)));
+    segs.extend((0..499_997).map(|i| Seg::Line(1.0 + (i % 50) as f32, 1.0)));
     let big = Item::Path { segs, fill: None, stroke: None, even_odd: false, region: None };
     let small = Item::Path {
         segs: vec![Seg::Move(0.0, 0.0), Seg::Line(1.0, 1.0)],

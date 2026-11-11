@@ -684,7 +684,7 @@ impl Canvas {
         // A pattern brush's pixels count against the byte budget like drawn items.
         if let Obj::Brush(Brush { pattern: Some(p), .. }) = &obj {
             let cost = p.px.len();
-            if self.used.saturating_add(cost) > MAX_BYTES {
+            if self.used.saturating_add(self.held).saturating_add(cost) > MAX_BYTES {
                 self.full = true;
                 return;
             }
