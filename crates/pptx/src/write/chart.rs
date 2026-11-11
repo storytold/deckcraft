@@ -647,7 +647,25 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         None => w.val("c:autoTitleDeleted", 1),
     }
     w.open0("c:plotArea");
-    w.empty0("c:layout");
+    w.open0("c:layout");
+    if let Some(layout) = c.manual_layout.filter(|layout| layout.is_valid()) {
+        w.open0("c:manualLayout");
+        w.val(
+            "c:layoutTarget",
+            match layout.target {
+                deckcraft_model::chart::ManualLayoutTarget::Inner => "inner",
+                deckcraft_model::chart::ManualLayoutTarget::Outer => "outer",
+            },
+        );
+        // The model stores absolute x/y positions and factor-based dimensions.
+        w.val("c:xMode", "edge");
+        w.val("c:yMode", "edge");
+        for (tag, value) in [("c:x", layout.x), ("c:y", layout.y), ("c:w", layout.width), ("c:h", layout.height)] {
+            w.val(tag, fmt_num(value));
+        }
+        w.close("c:manualLayout");
+    }
+    w.close("c:layout");
     let indexed: Vec<(usize, &Series)> = c.series.iter().enumerate().collect();
     let main = match c.kind {
         ChartType::Combo => c.series.first().and_then(|s| s.kind).unwrap_or(ChartType::Column),
@@ -1076,6 +1094,27 @@ mod tests {
         let xml = String::from_utf8(super::chart_xml(&c).0).unwrap();
         assert!(!xml.contains("<c:txPr>"), "{xml}");
         assert_eq!(crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap().text_color, None);
+    }
+
+    #[test]
+    fn manual_plot_layout_round_trips() {
+        let mut chart = Chart::sample(ChartType::Column);
+        chart.manual_layout = Some(deckcraft_model::chart::ManualLayout {
+            x: 0.12,
+            y: 0.18,
+            width: 0.72,
+            height: 0.68,
+            target: deckcraft_model::chart::ManualLayoutTarget::Inner,
+        });
+        let xml = super::chart_xml(&chart).0;
+        let text = String::from_utf8(xml.clone()).unwrap();
+        assert!(text.contains("<c:layoutTarget val=\"inner\"/>"));
+        assert_eq!(crate::read::chart::read_chart_xml(&xml).unwrap().manual_layout, chart.manual_layout);
+
+        if let Some(layout) = chart.manual_layout.as_mut() {
+            layout.width = f64::NAN;
+        }
+        assert!(!String::from_utf8(super::chart_xml(&chart).0).unwrap().contains("manualLayout"));
     }
 
     /// An imported chart's `c:txPr` colour survives an edit that rebuilds the part from the model
