@@ -250,13 +250,18 @@ fn axis_ticks((lo, hi, st): (f64, f64, f64)) -> impl Iterator<Item = f64> {
     (0..=n).map(move |k| lo + k as f64 * st)
 }
 
-/// Most category-by-series cells one chart draws; ordinary charts hold a few hundred.
-const MAX_CHART_CELLS: usize = 4_000_000;
+/// Most category-by-series cells one chart draws: Excel's 255 series x 32,000 points per series
+/// (8,160,000); ordinary charts hold a few hundred.
+const MAX_CHART_CELLS: usize = 255 * 32_000;
 
 /// Whether the independent category and series lists make the drawing loops multiply past the budget.
 fn over_cell_budget(c: &Chart) -> bool {
     let ncat = c.categories.len().max(c.series.iter().map(|s| s.values.len()).max().unwrap_or(0));
-    ncat.saturating_mul(c.series.len().max(1)) > MAX_CHART_CELLS
+    cells_over_budget(ncat, c.series.len())
+}
+
+fn cells_over_budget(categories: usize, series: usize) -> bool {
+    categories.saturating_mul(series.max(1)) > MAX_CHART_CELLS
 }
 
 pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
@@ -1439,10 +1444,12 @@ mod tests {
 
     #[test]
     fn category_by_series_cells_are_budgeted() {
-        let mut c = Chart::sample(ChartType::Column);
-        assert!(!over_cell_budget(&c));
-        c.categories = vec![String::new(); MAX_CHART_CELLS / c.series.len() + 1];
-        assert!(over_cell_budget(&c));
+        assert!(!over_cell_budget(&Chart::sample(ChartType::Column)));
+        // Excel's maximum chart (255 series x 32,000 points) is within the budget; one more point is not.
+        assert_eq!(MAX_CHART_CELLS, 8_160_000);
+        assert!(!cells_over_budget(32_000, 255));
+        assert!(cells_over_budget(32_001, 255));
+        assert!(cells_over_budget(usize::MAX, 2));
     }
 
     #[test]
