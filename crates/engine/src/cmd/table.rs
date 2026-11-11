@@ -400,7 +400,7 @@ fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool)
 
 /// `dst` takes `src`'s formatting (fill, borders, margins, anchor, text direction and the text
 /// properties of its first paragraph, kept on the end mark of an empty paragraph) and keeps its
-/// own spans and merge cover.
+/// own spans and merge cover. Hyperlinks are not copied.
 fn copy_cell_format(dst: &mut Cell, src: &Cell) {
     dst.fill.clone_from(&src.fill);
     dst.borders.clone_from(&src.borders);
@@ -415,13 +415,17 @@ fn copy_cell_format(dst: &mut Cell, src: &Cell) {
         let mut end_props = p0.runs.first().map_or_else(|| p0.end_props.clone(), |r| r.props.clone());
         end_props.link = None;
         end_props.hover = None;
-        deckcraft_model::text::Paragraph { level: p0.level, props: p0.props.clone(), runs: vec![], def_props: p0.def_props.clone(), end_props }
+        let mut def_props = p0.def_props.clone();
+        def_props.link = None;
+        def_props.hover = None;
+        deckcraft_model::text::Paragraph { level: p0.level, props: p0.props.clone(), runs: vec![], def_props, end_props }
     });
-    dst.text = deckcraft_model::text::TextBody {
-        body: src.text.body.clone(),
-        list_style: src.text.list_style.clone(),
-        paragraphs: vec![para.unwrap_or_default()],
-    };
+    let mut list_style = src.text.list_style.clone();
+    for l in list_style.levels.iter_mut().flatten() {
+        l.run.link = None;
+        l.run.hover = None;
+    }
+    dst.text = deckcraft_model::text::TextBody { body: src.text.body.clone(), list_style, paragraphs: vec![para.unwrap_or_default()] };
 }
 
 fn merge(s: &mut Session, p: &Value) -> Result<Value> {
