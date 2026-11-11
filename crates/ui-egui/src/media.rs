@@ -826,4 +826,25 @@ mod tests {
         assert_eq!((a.rect.x, a.rect.y, a.rect.w, a.rect.h), (100.0, 50.0, 20.0, 20.0));
         assert_eq!((b.rect.x, b.rect.y, b.rect.w, b.rect.h), (120.0, 50.0, 20.0, 20.0));
     }
+
+    /// Past `MAX_VIDEO_FEEDS` live decoders a video shape plays without a picture, and gets a
+    /// decoder again on its next play once one has been freed.
+    #[test]
+    fn video_decoders_are_capped_and_retried_when_one_frees_up() {
+        let mut doc = Presentation::default();
+        let media = doc.add_media("clip.mp4", "video/mp4", include_bytes!("../../media/tests/fixtures/clip-h264.mp4").to_vec()).expect("media");
+        let clip = MediaClip { media, volume: 0.0, video: true, ..Default::default() };
+        let mut host = MediaHost::new(None);
+        let live = |h: &MediaHost| h.videos.values().filter(|v| v.feed.is_some()).count();
+        for n in 0..=MAX_VIDEO_FEEDS as u32 {
+            host.play(1, &doc, ShapeId(5000 + n), &clip, None, Owner::Editor);
+        }
+        assert_eq!(live(&host), MAX_VIDEO_FEEDS);
+        let extra = ShapeId(5000 + MAX_VIDEO_FEEDS as u32);
+        assert!(host.videos.get(&extra).is_some_and(|v| v.feed.is_none()), "the shape past the cap has no picture");
+        host.stop(ShapeId(5000));
+        host.play(1, &doc, extra, &clip, None, Owner::Editor);
+        assert!(host.videos.get(&extra).is_some_and(|v| v.feed.is_some()), "a freed decoder is taken on the next play");
+        assert_eq!(live(&host), MAX_VIDEO_FEEDS);
+    }
 }
