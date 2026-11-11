@@ -322,6 +322,16 @@ impl Table {
         let n = self.cols.len();
         n <= MAX_CELLS && self.rows.len() <= (MAX_CELLS / n.max(1)).max(1) && self.rows.iter().all(|r| r.cells.len() == n)
     }
+    /// What [`Table::normalize`] would leave of this table, cloning only the rows and cells that
+    /// survive (an oversized table is not copied whole first).
+    pub fn normalized(&self) -> Table {
+        let n = self.cols.len().min(MAX_CELLS);
+        let keep = (MAX_CELLS / n.max(1)).max(1);
+        let rows = self.rows.iter().take(keep).map(|r| Row { height: r.height, cells: r.cells.iter().take(n).cloned().collect() }).collect();
+        let mut t = Table { cols: self.cols[..n].to_vec(), rows, background: self.background.clone(), style: self.style.clone(), ..*self };
+        t.normalize();
+        t
+    }
     /// Make every row have exactly `cols.len()` cells (repair after loading). A grid over
     /// [`MAX_CELLS`] loses its last rows (and columns) first, so a file naming many rows and many
     /// columns but few cells cannot make this allocate their product.
@@ -575,6 +585,11 @@ mod tests {
         let mut t = Table { cols: vec![1.0; MAX_CELLS + 5], rows: vec![Row::default(); 3], ..Default::default() };
         t.normalize();
         assert_eq!((t.cols.len(), t.rows.len()), (MAX_CELLS, 1));
+        // `normalized` leaves what `normalize` does.
+        let wide = Table { cols: vec![10.0; 1000], rows: vec![Row { height: 1.0, cells: vec![Cell::new("x"); 1500] }; 150], ..Default::default() };
+        let mut n = wide.clone();
+        n.normalize();
+        assert_eq!(wide.normalized(), n);
         // A normal table is untouched.
         let mut t = Table::new(4, 4, 400.0, 30.0);
         t.normalize();

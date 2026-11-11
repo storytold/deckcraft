@@ -439,9 +439,7 @@ pub fn xfrm_of(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shap
         let t = if t.is_normalized() {
             t
         } else {
-            let mut n = t.clone();
-            n.normalize();
-            normalized = n;
+            normalized = t.normalized();
             &normalized
         };
         let drawn: f64 = table_drawn_heights(doc, sel, t).iter().sum();
