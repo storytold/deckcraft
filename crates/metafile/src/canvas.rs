@@ -371,7 +371,7 @@ impl Canvas {
         self.surface = clip::normalize(rect);
     }
 
-    /// True once the item cap is hit; the readers stop there and keep what they have.
+    /// Bytes retained outside the canvas that share its budget (see [`Canvas::hold`]).
     #[cfg(test)]
     pub(crate) fn held(&self) -> usize {
         self.held
@@ -382,6 +382,7 @@ impl Canvas {
         self.used
     }
 
+    /// True once the item cap is hit; the readers stop there and keep what they have.
     pub fn full(&self) -> bool {
         self.full
     }
