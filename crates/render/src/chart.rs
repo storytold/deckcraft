@@ -607,9 +607,13 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
             .map(|(i, s)| {
                 let k = c.series_kind(s);
                 let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
-                if matches!(k, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine) {
+                if matches!(k, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine | ChartType::Radar) {
                     let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
-                    (s.name.clone(), Paint::Line(series_line(rctx, c, i, s), lw, k == ChartType::LineMarkers), None)
+                    (
+                        s.name.clone(),
+                        Paint::Line(series_line(rctx, c, i, s), lw, k == ChartType::LineMarkers || (k == ChartType::Radar && s.marker.is_some())),
+                        None,
+                    )
                 } else if line {
                     (s.name.clone(), Paint::Color(series_line(rctx, c, i, s)), None)
                 } else if k.is_bar_like() {
