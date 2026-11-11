@@ -28,7 +28,7 @@ use std::sync::Arc;
 use crate::bytes::Bytes;
 use crate::canvas::Raw;
 use crate::canvas::{BS_NULL, BS_SOLID, Brush, Canvas, LogFont, PS_NULL, Pen, RawTile, Xform, hatch_tile, mul};
-use crate::cliprect::{clip_polygon, convex, flatten, ops_bbox, pts_bbox, rect_poly};
+use crate::cliprect::{MAX_AREA_CLIP_WORK, clip_polygon_within, convex, flatten, ops_bbox, pts_bbox, rect_poly};
 use crate::dib::Rgba;
 use crate::geom::{Op, P};
 use crate::text::{ETO_CLIPPED, Font};
@@ -1170,7 +1170,13 @@ fn area_of_ops(ops: &[Op]) -> Vec<P> {
 fn area_intersect(a: Area, b: Area) -> Area {
     match (a, b) {
         (None, x) | (x, None) => x,
-        (Some(a), Some(b)) if a.len() >= 3 && b.len() >= 3 => Some(convex(&clip_polygon(&a, &b)).unwrap_or_default()),
+        (Some(a), Some(b)) if a.len() >= 3 && b.len() >= 3 => {
+            // Out of work: keep the area so far rather than call the region empty.
+            match clip_polygon_within(&a, &b, &mut { MAX_AREA_CLIP_WORK }) {
+                Some(p) => Some(convex(&p).unwrap_or_default()),
+                None => Some(a),
+            }
+        }
         _ => Some(Vec::new()),
     }
 }

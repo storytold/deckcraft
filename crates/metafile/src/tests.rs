@@ -2071,8 +2071,7 @@ fn emfplus_wrap_line_linear_performance() {
 fn clip_polygon_work_bound() {
     let poly: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
     let clip: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
-    let clipped = crate::cliprect::clip_polygon(&poly, &clip);
-    assert!(clipped.is_empty(), "excessive polygon clip product rejected");
+    assert!(crate::cliprect::clip_polygon_within(&poly, &clip, &mut 1_000_000).is_none(), "excessive polygon clip product rejected");
 }
 
 #[test]
@@ -2082,7 +2081,7 @@ fn clip_polygon_charges_actual_work_not_projected_growth() {
     let gon = |cx: f64| -> Vec<(f64, f64)> {
         (0..1000).map(|i| (i as f64 / 1000.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (cx + 100.0 * c, 100.0 * s)).collect()
     };
-    let clipped = crate::cliprect::clip_polygon(&gon(0.0), &gon(30.0));
+    let clipped = crate::cliprect::clip_polygon_within(&gon(0.0), &gon(30.0), &mut 4_000_000).unwrap();
     assert!(clipped.len() > 100, "the intersection is kept: {}", clipped.len());
 }
 
@@ -2133,4 +2132,26 @@ fn growing_fill_clips_share_one_budget() {
     // 400 of them pass the estimate (400 x 4 x 512 is under a million) but cost about 52 million.
     assert!(crate::cliprect::clip_raw(raw(400), &clip).is_empty(), "the growing work is charged");
     assert_eq!(crate::cliprect::clip_raw(raw(2), &clip).len(), 1, "a couple of them are still clipped");
+}
+
+#[test]
+fn stroke_work_is_charged_and_outside_items_are_cheap() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    // A stroke-only zigzag of 4,000 segments across the edge: 4,000 x 512 tests, over the allowance.
+    let mut ops = vec![Op::M((0.0, 95.0))];
+    ops.extend((1..4000).map(|i| Op::L((i as f64 * 0.05, if i % 2 == 0 { 95.0 } else { 300.0 }))));
+    let raw = Raw::Path { ops, fill: None, stroke: Some(([0, 0, 0, 255], 1.0)), even_odd: false, region: None };
+    assert!(crate::cliprect::clip_raw(raw, &clip).is_empty(), "stroke work is bounded");
+}
+
+#[test]
+fn region_intersection_over_budget_keeps_the_previous_area() {
+    let gon = |cx: f64| -> Vec<(f64, f64)> {
+        (0..1000).map(|i| (i as f64 / 1000.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (cx + 100.0 * c, 100.0 * s)).collect()
+    };
+    assert!(crate::cliprect::clip_polygon_within(&gon(0.0), &gon(30.0), &mut 10).is_none());
+    assert!(crate::cliprect::clip_polygon_within(&gon(0.0), &gon(30.0), &mut crate::cliprect::MAX_AREA_CLIP_WORK.clone()).is_some());
 }
