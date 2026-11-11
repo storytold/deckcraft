@@ -18,6 +18,33 @@ pub(super) fn scale_shapes(shapes: &mut [Shape], sx: f64, sy: f64, k: f64, ox: f
                 }
             });
         }
+        if let deckcraft_model::ShapeKind::Table(table) = &mut sh.kind {
+            for col in &mut table.cols {
+                *col *= sx;
+            }
+            for row in &mut table.rows {
+                row.height *= sy;
+                for cell in &mut row.cells {
+                    if k != 1.0 {
+                        let margins = cell.margins.unwrap_or([7.2, 7.2, 3.6, 3.6]);
+                        cell.margins = Some(margins.map(|margin| margin * k));
+                    }
+                    for paragraph in &mut cell.text.paragraphs {
+                        if let Some(size) = paragraph.def_props.size.as_mut() {
+                            *size = (*size * k).max(1.0);
+                        }
+                        for run in &mut paragraph.runs {
+                            if let Some(size) = run.props.size.as_mut() {
+                                *size = (*size * k).max(1.0);
+                            } else if paragraph.def_props.size.is_none() && k != 1.0 {
+                                // Table cells without explicit sizes use the 18 pt model default.
+                                run.props.size = Some((18.0 * k).max(1.0));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -56,11 +83,12 @@ pub(super) fn slide_size(s: &mut Session, p: &Value) -> Result<Value> {
         };
         // Masters and layouts stretch to the new size; slides scale by mode.
         let (msx, msy) = (size.width / old.width.max(1.0), size.height / old.height.max(1.0));
+        let mk = msx.min(msy);
         for m in &mut doc.masters {
             let m = Arc::make_mut(m);
-            scale_shapes(&mut m.shapes, msx, msy, 1.0, 0.0, 0.0);
+            scale_shapes(&mut m.shapes, msx, msy, mk, 0.0, 0.0);
             for l in &mut m.layouts {
-                scale_shapes(&mut l.shapes, msx, msy, 1.0, 0.0, 0.0);
+                scale_shapes(&mut l.shapes, msx, msy, mk, 0.0, 0.0);
             }
         }
         for sl in &mut doc.slides {
@@ -335,5 +363,110 @@ mod header_footer_date_tests {
         let got = dates(&s);
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].1.as_deref(), Some("datetime11"));
+    }
+}
+
+#[cfg(test)]
+mod table_scale_tests {
+    use std::sync::Arc;
+
+    use deckcraft_model::{Shape, ShapeKind, Table};
+    use serde_json::json;
+
+    use crate::Session;
+
+    fn session_with_table() -> Session {
+        let mut s = Session::with_new();
+        s.edit(|doc, _| {
+            let id = doc.alloc_id().ok_or_else(|| super::bad("test", "no id"))?;
+            let mut table = Table::new(2, 2, 768.0, 40.0);
+            if let Some(cell) = table.cell_mut(0, 0) {
+                cell.grid_span = 2;
+                cell.text = deckcraft_model::text::TextBody::from_text("Cell");
+                if let Some(run) = cell.text.paragraphs.first_mut().and_then(|paragraph| paragraph.runs.first_mut()) {
+                    run.props.size = Some(18.0);
+                }
+            }
+            if let Some(cell) = table.cell_mut(0, 1) {
+                cell.h_merge = true;
+            }
+            if let Some(cell) = table.cell_mut(1, 0) {
+                cell.margins = Some([8.0, 6.0, 4.0, 2.0]);
+                cell.text = deckcraft_model::text::TextBody::from_text("Default size");
+            }
+            let slide = doc.slides.get_mut(0).ok_or_else(|| super::bad("test", "no slide"))?;
+            Arc::make_mut(slide).shapes.push(Shape {
+                id: deckcraft_model::ShapeId(id),
+                xfrm: Some(deckcraft_model::Xfrm::new(96.0, 180.0, 768.0, 80.0)),
+                kind: ShapeKind::Table(table),
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+        s
+    }
+
+    fn table(s: &Session) -> &Table {
+        s.doc().unwrap().doc.slides[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.kind {
+                ShapeKind::Table(table) => Some(table),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn ensure_fit_scales_table_grid_cells_and_survives_undo_and_reopen() {
+        let mut s = session_with_table();
+        s.execute("design.slideSize", &json!({"w": 480, "h": 270, "scale": "ensureFit"})).unwrap();
+
+        let t = table(&s);
+        assert_eq!(t.width(), 384.0);
+        assert_eq!(t.height(), 40.0);
+        assert_eq!(t.cols, [192.0, 192.0]);
+        assert_eq!(t.rows.iter().map(|row| row.height).collect::<Vec<_>>(), [20.0, 20.0]);
+        assert_eq!(t.cell(0, 0).map(|cell| (cell.grid_span, cell.h_merge)), Some((2, false)));
+        assert_eq!(t.cell(0, 1).map(|cell| cell.h_merge), Some(true));
+        assert_eq!(t.cell(0, 0).and_then(|cell| cell.text.paragraphs.first()?.runs.first()?.props.size), Some(9.0));
+        assert_eq!(t.cell(1, 0).and_then(|cell| cell.text.paragraphs.first()?.runs.first()?.props.size), Some(9.0));
+        assert_eq!(t.cell(0, 0).and_then(|cell| cell.margins), Some([3.6, 3.6, 1.8, 1.8]));
+        assert_eq!(t.cell(1, 0).and_then(|cell| cell.margins), Some([4.0, 3.0, 2.0, 1.0]));
+
+        let saved = deckcraft_format::save(&s.doc().unwrap().doc).unwrap();
+        let reopened = deckcraft_format::load(&saved).unwrap();
+        let restored = reopened.slides[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.kind {
+                ShapeKind::Table(table) => Some(table),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(restored.width(), 384.0);
+        assert_eq!(restored.height(), 40.0);
+        assert_eq!(restored.cell(0, 1).map(|cell| cell.h_merge), Some(true));
+
+        s.execute("edit.undo", &json!({})).unwrap();
+        let t = table(&s);
+        assert_eq!(t.width(), 768.0);
+        assert_eq!(t.height(), 80.0);
+        assert_eq!(t.cell(0, 0).and_then(|cell| cell.text.paragraphs.first()?.runs.first()?.props.size), Some(18.0));
+        assert_eq!(t.cell(0, 0).and_then(|cell| cell.margins), None);
+    }
+
+    #[test]
+    fn maximize_scales_table_grid_with_the_shape_transform() {
+        let mut s = session_with_table();
+        s.execute("design.slideSize", &json!({"w": 480, "h": 400, "scale": "maximize"})).unwrap();
+        let t = table(&s);
+        let factor = 400.0 / 540.0;
+        assert!((t.width() - 768.0 * factor).abs() < 1e-9);
+        assert!((t.height() - 80.0 * factor).abs() < 1e-9);
+        assert!(
+            (t.cell(0, 0).and_then(|cell| cell.text.paragraphs.first()?.runs.first()?.props.size).unwrap_or_default() - 18.0 * factor).abs() < 1e-9
+        );
     }
 }
