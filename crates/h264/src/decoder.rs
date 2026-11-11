@@ -15,7 +15,7 @@ use crate::slicedec::{PicState, SliceDecoder};
 use crate::transform::LevelScale;
 use crate::{ColorInfo, Picture};
 use deckcraft_bitstream::{BitReader, annexb_nals, length_prefixed_nals, unescape_rbsp};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 /// One slice of a picture job.
@@ -90,6 +90,10 @@ pub struct Decoder {
     ls_cache: Vec<(Arc<Pps>, Arc<LevelScale>)>,
     /// Pictures leaving the DPB, converted once their decoding job has finished.
     out_queue: VecDeque<Output>,
+    /// Queued entries per frame id and their summed bytes, kept in step with `out_queue` so the
+    /// budget check does not rescan it.
+    queued_ids: HashMap<u32, u64>,
+    queued_bytes: u64,
     shared: Arc<Shared>,
     #[cfg(feature = "threads")]
     pool: Option<rayon::ThreadPool>,
@@ -175,6 +179,8 @@ impl Decoder {
             active_sps: None,
             ls_cache: Vec::new(),
             out_queue: VecDeque::new(),
+            queued_ids: HashMap::new(),
+            queued_bytes: 0,
             shared: Arc::new(Shared::default()),
             #[cfg(feature = "threads")]
             pool,
@@ -283,7 +289,7 @@ impl Decoder {
             if !o.frame.is_published(o.frame.mb_h() - 1) && self.out_queue.len() <= max_queue {
                 break;
             }
-            let Some(o) = self.out_queue.pop_front() else { break };
+            let Some(o) = self.pop_out() else { break };
             pics.push(make_picture(&o));
         }
         Ok(pics)
@@ -295,7 +301,7 @@ impl Decoder {
         let mut outs = Vec::new();
         self.dpb.flush(&mut outs);
         self.emit(outs);
-        let pics = self.out_queue.drain(..).map(|o| make_picture(&o)).collect();
+        let pics = std::iter::from_fn(|| self.pop_out()).map(|o| make_picture(&o)).collect();
         while let Some(f) = self.in_flight.pop_front() {
             f.wait_complete();
         }
@@ -451,13 +457,24 @@ impl Decoder {
             chroma_planes: if chroma == 0 { 0 } else { 2 },
             bytes_per_sample: 1,
         };
-        let pictures = (sps.max_dpb_frames() + 1 + self.max_in_flight) as u64;
-        ensure!(
-            shape.fits(pictures, self.memory_budget),
-            "{}x{} pictures with {pictures} in the decoder exceed the memory budget",
-            sps.width(),
-            sps.height()
-        );
+        // Pictures already held count at their own size, not the incoming SPS's: after a
+        // resolution change, larger pictures of the old size can still be in the DPB or waiting
+        // for output (one decode call may carry many access units). A buffer shared with a DPB
+        // entry is counted once.
+        let pic = shape.bytes().unwrap_or(u64::MAX);
+        let held = |frames: &mut dyn Iterator<Item = &Arc<Frame>>| frames.fold(0u64, |n, f| n.saturating_add(f.bytes()));
+        // Queued bytes minus the queue entries that share a DPB frame (each distinct DPB frame once).
+        let mut ids: Vec<(u32, u64)> = self.dpb.entries.iter().map(|e| (e.frame.id, e.frame.bytes())).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let shared = ids.iter().fold(0u64, |n, (id, b)| n.saturating_add(self.queued_ids.get(id).copied().unwrap_or(0).saturating_mul(*b)));
+        let queued = self.queued_bytes.saturating_sub(shared);
+        let in_dpb = held(&mut self.dpb.entries.iter().map(|e| &e.frame));
+        let dpb = sps.max_dpb_frames().max(self.dpb.entries.len()) as u64;
+        // The DPB (the larger of its new slots and what it holds now), the picture being decoded,
+        // and what is in flight or queued.
+        let bytes = pic.saturating_mul(dpb).max(in_dpb).saturating_add(pic).saturating_add(pic.saturating_mul(self.max_in_flight as u64).max(queued));
+        ensure!(bytes <= self.memory_budget, "{}x{} pictures with {bytes} bytes in the decoder exceed the memory budget", sps.width(), sps.height());
         Ok(())
     }
 
@@ -562,7 +579,23 @@ impl Decoder {
     }
 
     fn emit(&mut self, outs: Vec<Output>) {
+        for o in &outs {
+            *self.queued_ids.entry(o.frame.id).or_insert(0) += 1;
+            self.queued_bytes = self.queued_bytes.saturating_add(o.frame.bytes());
+        }
         self.out_queue.extend(outs);
+    }
+
+    fn pop_out(&mut self) -> Option<Output> {
+        let o = self.out_queue.pop_front()?;
+        if let Some(n) = self.queued_ids.get_mut(&o.frame.id) {
+            *n -= 1;
+            if *n == 0 {
+                self.queued_ids.remove(&o.frame.id);
+            }
+        }
+        self.queued_bytes = self.queued_bytes.saturating_sub(o.frame.bytes());
+        Some(o)
     }
 }
 

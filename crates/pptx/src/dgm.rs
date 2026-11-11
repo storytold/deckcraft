@@ -412,7 +412,7 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
     w.finish()
 }
 
-/// The outline of a data part: the `parOf` tree under the document point, depth first.
+/// The outline of a data part: the `parOf` tree under the document point, depth first, or the data points in `ptLst` order when no `parOf` connections exist.
 pub fn outline(data: &El) -> Vec<DiagramNode> {
     outline_ids(data).into_iter().map(|(_, n)| n).collect()
 }
@@ -443,11 +443,13 @@ pub fn node_pictures(data: &El) -> Vec<(usize, String, Option<[f64; 4]>)> {
     out
 }
 
+/// Extracts diagram outline `(modelId, DiagramNode)` pairs in tree order from a `dgm:dataModel` element.
 fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
     let Some(pts) = data.child("ptLst") else { return vec![] };
     let mut texts: HashMap<&str, String> = HashMap::new();
     let mut assistants: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut titles: HashMap<&str, String> = HashMap::new();
+    let mut pt_order: Vec<&str> = Vec::new();
     let mut doc: Option<&str> = None;
     for pt in pts.children_named("pt").take(MAX_NODES * 4) {
         let Some(id) = pt.attr("modelId") else { continue };
@@ -456,6 +458,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
             ty @ ("node" | "asst") => {
                 let t = pt.child("t").map(paragraphs).unwrap_or_default();
                 texts.insert(id, t);
+                pt_order.push(id);
                 if ty == "asst" {
                     assistants.insert(id);
                 }
@@ -473,7 +476,6 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
             _ => {}
         }
     }
-    let Some(doc) = doc else { return vec![] };
     let mut kids: HashMap<&str, Vec<(i64, &str)>> = HashMap::new();
     if let Some(cx) = data.child("cxnLst") {
         for c in cx.children_named("cxn").take(MAX_NODES * 4) {
@@ -492,7 +494,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
     let mut out = vec![];
     let mut seen = std::collections::HashSet::new();
     // Depth first, iteratively; a node reached twice (a cycle in a hostile file) is skipped.
-    let mut stack: Vec<(&str, u8)> = kids.get(doc).map(|v| v.iter().rev().map(|(_, id)| (*id, 0u8)).collect()).unwrap_or_default();
+    let mut stack: Vec<(&str, u8)> = doc.and_then(|d| kids.get(d)).map(|v| v.iter().rev().map(|(_, id)| (*id, 0u8)).collect()).unwrap_or_default();
     while let Some((id, level)) = stack.pop() {
         if out.len() >= MAX_NODES || !seen.insert(id) {
             continue;
@@ -510,6 +512,23 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
         ));
         if let Some(v) = kids.get(id) {
             stack.extend(v.iter().rev().map(|(_, c)| (*c, level.saturating_add(1))));
+        }
+    }
+    if out.is_empty() && kids.is_empty() {
+        for id in pt_order {
+            if out.len() >= MAX_NODES || !seen.insert(id) {
+                continue;
+            }
+            out.push((
+                id.to_string(),
+                DiagramNode {
+                    text: texts.get(id).cloned().unwrap_or_default(),
+                    level: 0,
+                    picture: None,
+                    assistant: assistants.contains(id),
+                    title: titles.get(id).cloned().unwrap_or_default(),
+                },
+            ));
         }
     }
     out
@@ -899,5 +918,14 @@ mod tests {
         assert_eq!(colors_for(&cs_id("accent4")), "accent4");
         assert_eq!(colors_for(&cs_id("")), "");
         assert_eq!(style_for(&qs_id("outline")), "outline");
+
+        let unconnected = br#"<dgm:dataModel xmlns:dgm="d"><dgm:ptLst><dgm:pt modelId="0" type="doc"/><dgm:pt modelId="1" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Alpha</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="2" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Beta</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst><dgm:cxnLst/></dgm:dataModel>"#;
+        let unconnected_doc = crate::xml::parse(unconnected).unwrap();
+        assert_eq!(outline(&unconnected_doc.root), nodes(&[("Alpha", 0), ("Beta", 0)]));
+
+        // When parOf connections exist but no root (type="doc") reaches them, do not flatten the hierarchy to level 0.
+        let unrooted_hierarchy = br#"<dgm:dataModel xmlns:dgm="d"><dgm:ptLst><dgm:pt modelId="1" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Parent</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="2" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Child</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst><dgm:cxnLst><dgm:cxn srcId="1" destId="2"/></dgm:cxnLst></dgm:dataModel>"#;
+        let unrooted_doc = crate::xml::parse(unrooted_hierarchy).unwrap();
+        assert!(outline(&unrooted_doc.root).is_empty());
     }
 }
