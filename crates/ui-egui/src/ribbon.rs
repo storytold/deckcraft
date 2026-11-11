@@ -146,11 +146,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let w = ui.fonts_mut(|f| f.layout_no_wrap(file_text.to_string(), theme::font(13.0), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &file_text));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, file_text));
             if resp.hovered() {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, &file_text, theme::font(13.0), t.text);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, file_text, theme::font(13.0), t.text);
             if resp.on_hover_text(file_hover).clicked() {
                 app.open_backstage(crate::backstage::Page::Home);
             }
