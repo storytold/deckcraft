@@ -326,7 +326,9 @@ impl SliceHeader {
 
     /// entry_point_offset list (tiles / wavefront substreams).
     fn parse_entry_points(&mut self, r: &mut BitReader, pps: &Pps, sps: &Sps) -> Result<()> {
-        self.entry_points.clear();
+        // A fresh list, not `clear()`: a dependent segment starts as a copy of its independent
+        // segment's header, and clearing would keep that copy's allocation for every segment.
+        self.entry_points = Vec::new();
         if pps.tiles_enabled || pps.entropy_coding_sync {
             let n = r.read_ue()?;
             ensure!(n <= sps.pic_width_in_ctbs() * sps.pic_height_in_ctbs(), "num_entry_point_offsets out of range");

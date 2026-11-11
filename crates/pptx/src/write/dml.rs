@@ -100,7 +100,7 @@ pub fn fill(w: &mut W, x: &mut Exp, o: &mut Out, f: &Fill) {
 pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
     // An image that lives outside the package is a linked picture: `a:blip` names it through
     // `r:link`; `r:embed` may only reference a part inside the package.
-    let linked = x.p.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+    let linked = x.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     let adj = &pf.adjust;
@@ -449,7 +449,7 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         return;
     };
     w.open(tag, attrs);
-    let name = x.p.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
+    let name = x.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
     w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
     w.close(tag);
 }
@@ -459,6 +459,21 @@ fn sound_label(name: &str) -> String {
     let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let label: String = file.chars().filter(|c| c.is_ascii() && !c.is_control() && *c != '"' && *c != '<' && *c != '>').take(80).collect();
     if label.is_empty() { "sound.wav".into() } else { label }
+}
+
+/// Validate an unmodelled 3-D fragment (`a:scene3d`, `a:sp3d`, `a:flatTx`) before writing raw XML.
+pub fn valid_raw3d<'a>(raw: &'a str, allowed: &[&str]) -> Option<&'a str> {
+    if raw.is_empty() || raw.len() > 64 * 1024 {
+        return None;
+    }
+    let wrap = format!("<r xmlns:a=\"{}\">{raw}</r>", crate::opc::NS_A);
+    let doc = crate::xml::parse(wrap.as_bytes()).ok()?;
+    let els: Vec<_> = doc.root.elements().collect();
+    (!els.is_empty()
+        && els.len() <= allowed.len()
+        && doc.root.children.len() == els.len()
+        && els.iter().all(|e| e.prefix() == "a" && allowed.contains(&e.local()) && !crate::read::has_rel_refs(e)))
+    .then_some(raw)
 }
 
 pub fn body_pr(w: &mut W, b: &BodyProps) {
@@ -481,7 +496,8 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
         .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
-    if warp.is_none() && b.autofit.is_none() {
+    let raw3d = b.raw3d.as_deref().and_then(|s| valid_raw3d(s, &["scene3d", "sp3d", "flatTx"]));
+    if warp.is_none() && b.autofit.is_none() && raw3d.is_none() {
         w.empty("a:bodyPr", a);
         return;
     }
@@ -514,6 +530,9 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
             w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
+    }
+    if let Some(raw) = raw3d {
+        w.raw(raw);
     }
     w.close("a:bodyPr");
 }
@@ -601,7 +620,7 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         Some(Bullet::Picture { media }) => match x.media_rel(o, *media, "image") {
             Some(rid) => {
                 w.open0("a:buBlip");
-                let a = if x.p.media(*media).is_some_and(|m| m.data.is_empty() && m.link.is_some()) {
+                let a = if x.media(*media).is_some_and(|m| m.data.is_empty() && m.link.is_some()) {
                     A::new().a("r:link", &rid)
                 } else {
                     A::new().a("r:embed", &rid)
@@ -762,17 +781,27 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
 }
 
 fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
+    // The run's properties are the same for every piece and line break: serialize them once.
+    let mut rpr_xml: Option<String> = None;
+    let mut put_rpr = |w: &mut W| match &rpr_xml {
+        Some(xml) => w.s.push_str(xml),
+        None => {
+            let start = w.s.len();
+            rpr(w, x, o, "a:rPr", props);
+            rpr_xml = Some(w.s[start..].to_string());
+        }
+    };
     for (i, piece) in text.split(['\n', '\u{b}']).enumerate() {
         if i > 0 {
             w.open0("a:br");
-            rpr(w, x, o, "a:rPr", props);
+            put_rpr(w);
             w.close("a:br");
         }
         if piece.is_empty() && i > 0 {
             continue;
         }
         w.open0("a:r");
-        rpr(w, x, o, "a:rPr", props);
+        put_rpr(w);
         w.elt("a:t", piece);
         w.close("a:r");
     }

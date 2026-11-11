@@ -990,4 +990,37 @@ fn a_tiny_dash_on_a_huge_shape_draws_without_running_out_of_memory() {
     p.line_to((4.0e6, 0.0));
     let pat = limit_dash_count(&p, vec![1.0, 1.0]);
     assert!((4.0e6 / (pat[0] + pat[1]) - MAX_DASHES).abs() < 1.0, "{pat:?}");
+    // A custom pattern of 1,000 dashes counts each of them: the limit is on dashes drawn.
+    let pat = limit_dash_count(&p, vec![1.0; 2000]);
+    let period: f64 = pat.iter().sum();
+    assert!((4.0e6 / period * 1000.0 - MAX_DASHES).abs() < 1.0, "{}", period);
+}
+
+/// A bar chart with 20,000 points, each with its own fill, and a sparse scatter of the same size:
+/// the per-point fills and the scatter's "has any x" are looked up, not searched per point.
+#[test]
+fn many_point_fills_and_sparse_scatter_x_render() {
+    use deckcraft_model::ShapeKind;
+    use deckcraft_model::chart::{Chart, ChartType};
+    use deckcraft_model::style::Fill;
+    let n = 20_000;
+    let chart = |kind: ChartType| {
+        let mut c = Chart::sample(kind);
+        c.series.truncate(1);
+        c.categories = (0..n).map(|i| i.to_string()).collect();
+        c.series[0].values = (0..n).map(|i| Some(i as f64)).collect();
+        c
+    };
+    let mut bars = chart(ChartType::Column);
+    bars.series[0].point_fills = (0..n).rev().map(|i| (i, Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0))))).collect();
+    let mut scatter = chart(ChartType::Scatter);
+    scatter.series[0].x_values = (0..n).map(|i| (i + 1 == n).then_some(1.0)).collect();
+    let shape = |id: u32, c: Chart| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(10.0, 10.0, 400.0, 300.0)),
+        kind: ShapeKind::Chart(Box::new(c)),
+        ..Default::default()
+    };
+    let img = render(vec![shape(2, bars), shape(3, scatter)]);
+    assert!(img.width > 0);
 }
