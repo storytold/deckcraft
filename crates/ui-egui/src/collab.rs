@@ -1723,7 +1723,7 @@ mod tests {
     #[test]
     fn a_viewer_save_never_reaches_the_cabinet() {
         let (mut app, from_ui, _to_ui) = live(Role::Viewer);
-        let _ = app.save();
+        assert!(app.save().is_err(), "a viewer's Save is refused locally");
         app.collab.pump(&mut app.session, 1_060);
         assert!(commits(&from_ui).is_empty(), "a viewer may not commit");
         assert!(app.session.active().expect("doc").is_dirty(), "the edits are left as they were");

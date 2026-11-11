@@ -125,7 +125,7 @@ fn a_host_save_that_fails_leaves_the_presentation_unsaved() {
     let (mut app, _) = host_app(true);
     app.open_from_host(Some("deck.pptx"), &pptx(1));
     edit(&mut app);
-    let _ = app.save();
+    assert!(app.save().is_err(), "a failed host save is reported to the caller");
     assert!(app.session.active().unwrap().is_dirty());
     assert!(app.status.as_ref().is_some_and(|(m, _)| m.contains("Couldn't save deck.pptx")));
 }
