@@ -378,6 +378,54 @@ fn title_bar_export_opens_the_export_dialog() {
     assert_eq!(harness.state().dialog.as_ref().map(|d| d.id.as_str()), Some("export"));
 }
 
+/// A browser's Copy Image puts the picture on the clipboard with text that only names it: the
+/// address (and the alt text), and an `<img>` fragment as HTML. Ctrl+V pastes the picture, as
+/// PowerPoint does, instead of a text box with the link. Without a picture the link pastes as text.
+#[test]
+fn ctrl_v_pastes_the_picture_a_browser_copied_not_its_link() {
+    let url = "https://github.com/storytold/deckcraft/raw/main/assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png";
+    let caption = format!("{url}\nDeckCraft icon: a presentation screen with a bar chart on an orange tile");
+    for (text, html, with_picture, pictures_after) in [
+        (caption.clone(), Some(format!("<img src=\"{url}\" alt=\"DeckCraft icon\">")), true, 1),
+        (url.to_string(), None, true, 1),
+        // Firefox's text/x-moz-url is UTF-16; read as UTF-8 it carries NULs.
+        (url.chars().flat_map(|c| [c, '\0']).collect(), None, true, 1),
+        (url.to_string(), None, false, 0),
+        ("See https://example.com for the photos".to_string(), None, true, 0),
+    ] {
+        let session = Session::with_new();
+        let png = {
+            let d = session.active().unwrap();
+            deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+        };
+        let services = Services {
+            clipboard_image: Some(Box::new(move || with_picture.then(|| png.clone()))),
+            clipboard_html: Some(Box::new(move || html.clone())),
+            ..Default::default()
+        };
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, services),
+        );
+        harness.run_steps(2);
+        let shapes_before = harness.state().session.active().unwrap().doc.slides[0].shapes.len();
+        harness.event(egui::Event::Paste(text.clone()));
+        harness.run_steps(2);
+        let d = harness.state().session.active().unwrap();
+        let shapes = &d.doc.slides[0].shapes;
+        let pictures = shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count();
+        assert_eq!(pictures, pictures_after, "{text:?}");
+        assert_eq!(shapes.len(), shapes_before + 1, "one shape, picture or text, for {text:?}");
+        if pictures_after == 0 {
+            let pasted = shapes.last().and_then(|s| s.text.as_ref()).map(deckcraft_model::TextBody::text);
+            assert_eq!(pasted.as_deref(), Some(text.as_str()), "the text survives");
+        }
+    }
+}
+
 /// #53: Ctrl+V did nothing for an image-only clipboard: egui-winit sends no Paste event for it and
 /// swallows the key press, so only the V release reaches the app.
 #[test]
@@ -1173,6 +1221,56 @@ fn step_app(services: Services) -> egui_kittest::Harness<'static, SlideApp> {
     );
     h.run_steps(2);
     h
+}
+
+/// #1855: text pasted into the focused speaker-notes field lands at its caret. While a stock
+/// field has the focus, `SlideApp::keyboard` leaves the batch to it and nothing in the app drops
+/// `Paste`, whether it arrives alone or inside the ⌘V batch egui-winit sends (V down, Paste, V up).
+#[test]
+fn paste_reaches_the_focused_notes_field() {
+    let mut h = step_app(Services::default());
+    let id = egui::Id::unique("notes_edit");
+    h.ctx.memory_mut(|m| m.request_focus(id));
+    h.run_steps(2);
+    assert!(h.ctx.memory(|m| m.has_focus(id)), "the notes field has the focus");
+    h.event(egui::Event::Text("ab".into()));
+    h.run_steps(2);
+    h.event(egui::Event::Paste("PASTED".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().notes_buf.2.text, "abPASTED", "a bare Paste event");
+    let v = |pressed| egui::Event::Key { key: egui::Key::V, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+    h.input_mut().events.extend([v(true), egui::Event::Paste("TWO".into()), v(false)]);
+    h.run_steps(2);
+    assert_eq!(h.state().notes_buf.2.text, "abPASTEDTWO", "the ⌘V batch");
+    // Leaving the field commits the notes to the slide.
+    h.ctx.memory_mut(|m| m.surrender_focus(id));
+    h.run_steps(3);
+    assert_eq!(h.state().session.active().unwrap().doc.slides[0].notes_text(), "abPASTEDTWO");
+}
+
+/// #1956: the ribbon's drop-downs are announced by their purpose, not by their value or an
+/// internal key. Animations › Start with a shape that has no animation was "astart"; Home's Font
+/// and Font size boxes were "font" and "size" while nothing told them a font or size.
+#[test]
+fn ribbon_dropdowns_are_named_by_purpose_even_when_empty() {
+    use egui::accesskit::Role;
+    let mut h = step_app(Services::default());
+    // A fresh shape, selected but not edited and without an animation.
+    h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [100.0, 100.0, 200.0, 100.0]})).unwrap();
+    h.state_mut().run("text.exit", json!({})).unwrap();
+    h.state_mut().ui.tab = "Animations".into();
+    h.run_steps(2);
+    let start = h.get_by_role_and_label(Role::ComboBox, "Start");
+    assert_eq!(start.value(), None, "no animation, no start value");
+    assert!(h.query_by_label("astart").is_none(), "the internal key is not a name");
+
+    h.state_mut().ui.tab = "Home".into();
+    h.state_mut().run("edit.select", json!({"ids": []})).unwrap();
+    h.run_steps(2);
+    for (name, key) in [("Font", "font"), ("Font size", "size")] {
+        assert!(h.query_by_role_and_label(Role::ComboBox, name).is_some(), "{name} is named while empty");
+        assert!(h.query_by_role_and_label(Role::ComboBox, key).is_none(), "{key} is not announced");
+    }
 }
 
 /// Copy of a bold selection offers HTML; paste of Pages-like HTML keeps the bold.
@@ -2360,4 +2458,48 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     // the slide would not advance.
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
+}
+
+/// #1431: a comment card's reply row was wider than the pane, so the Comments pane grew every
+/// frame until it stuck at its widest and dragging its edge did nothing.
+#[test]
+fn comments_pane_keeps_its_width_and_resizes() {
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    h.run_steps(3);
+    h.state_mut().run("comment.add", json!({"text": "Check the figures on this slide"})).unwrap();
+    h.state_mut().run("comment.add", json!({"text": "Resolved one"})).unwrap();
+    h.state_mut().run("comment.resolve", json!({"index": 1, "resolved": true})).unwrap();
+    h.state_mut().run("view.pane", json!({"pane": "comments"})).unwrap();
+    h.run_steps(30);
+    let width = h.state().ui.pane_width;
+    assert!(width < 320.0, "the pane keeps its default width, not {width}");
+    // The cards stay compact: the second one starts near the top, not below a stretched first.
+    let second = h.get_by_label("Resolved one").rect();
+    assert!(second.top() < 450.0, "the second comment sits near the top, at {second:?}");
+
+    // Drag the pane's left edge: right narrows it, left widens it.
+    let drag = |h: &mut egui_kittest::Harness<'_, SlideApp>, dx: f32| {
+        let start = egui::pos2(1200.0 - h.state().ui.pane_width - 1.0, 500.0);
+        let end = start + egui::vec2(dx, 0.0);
+        h.event(egui::Event::PointerMoved(start));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+        for i in 1..=6 {
+            h.event(egui::Event::PointerMoved(start + (end - start) * (i as f32 / 6.0)));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+        h.run_steps(10);
+        h.state().ui.pane_width
+    };
+    let narrow = drag(&mut h, 50.0);
+    assert!(narrow < width - 40.0, "dragging right narrows the pane: {width} -> {narrow}");
+    let wide = drag(&mut h, -150.0);
+    assert!(wide > narrow + 140.0, "dragging left widens the pane: {narrow} -> {wide}");
 }

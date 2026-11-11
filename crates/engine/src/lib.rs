@@ -454,17 +454,30 @@ pub struct MediaStatus {
 }
 
 /// Clipboard contents copied within the app.
+/// The theme a copy drew with. The colours and the map stay apart, as in
+/// `deckcraft_model::resolve::Ctx::color`: the map renames only `tx1`, `bg1`, `tx2` and `bg2`, and
+/// a direct `dk1` keeps the theme's colour.
+#[derive(Clone, Debug)]
+pub struct SourceTheme {
+    /// The theme's own colours, no colour map applied.
+    pub colors: deckcraft_color::ColorScheme,
+    pub color_map: Vec<(String, String)>,
+    pub fonts: deckcraft_model::theme::FontScheme,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
+    /// The copied placeholders as they were, by id. `shapes` holds a slide's placeholders as
+    /// regular shapes; a paste in Slide Master view takes these, which stay placeholders.
+    pub placeholders: Vec<Shape>,
     pub slides: Vec<Slide>,
     /// Media the copied shapes/slides reference.
     pub media: Vec<deckcraft_model::MediaItem>,
     pub text: Option<deckcraft_model::TextBody>,
     pub plain: String,
-    /// The copied shapes' theme colours (colour map applied) and fonts, for Paste Special ›
-    /// Keep Source Formatting.
-    pub source_theme: Option<(deckcraft_color::ColorScheme, deckcraft_model::theme::FontScheme)>,
+    /// The theme the shapes were copied under, for Paste Special › Keep Source Formatting.
+    pub source_theme: Option<SourceTheme>,
     /// How many times the shapes were pasted (each paste offsets further).
     pub pastes: u32,
 }
@@ -811,10 +824,32 @@ fn clamp_selection(st: &mut DocState) {
 /// Default for [`History::byte_limit`].
 pub const UNDO_BYTE_BUDGET: usize = 256 << 20;
 
+/// A rough size of a text body in memory: its paragraphs and runs, at their inline struct sizes.
+fn text_cost(t: &deckcraft_model::text::TextBody) -> usize {
+    use deckcraft_model::text::{Paragraph, Run};
+    let (para, run) = (std::mem::size_of::<Paragraph>(), std::mem::size_of::<Run>());
+    t.paragraphs.iter().map(|p| para + p.runs.iter().map(|r| run + r.text.len()).sum::<usize>()).sum()
+}
+
+/// A rough size of comments in memory, replies included.
+fn comments_cost(cs: &[deckcraft_model::Comment], depth: usize) -> usize {
+    let kids = |c: &deckcraft_model::Comment| if depth < 64 { comments_cost(&c.replies, depth + 1) } else { 0 };
+    cs.iter().map(|c| 256 + c.author.len() + c.initials.len() + c.text.len() + c.date.len() + kids(c)).sum()
+}
+
+/// A rough size of a slide's own data besides its shapes: notes, comments, tags and kept XML,
+/// all copied with the slide when an edit changes it.
+fn slide_extra_cost(s: &deckcraft_model::Slide) -> usize {
+    text_cost(&s.notes)
+        + comments_cost(&s.comments, 0)
+        + s.name.len()
+        + s.tags.iter().map(|(k, v)| 48 + k.len() + v.len()).sum::<usize>()
+        + s.raw_ext.as_ref().map_or(0, String::len)
+}
+
 /// A rough size of a shape in memory: the struct, its text and kept XML, its children.
 fn shape_cost(sh: &deckcraft_model::Shape, depth: usize) -> usize {
-    let text: usize =
-        sh.text.as_ref().map_or(0, |t| t.paragraphs.iter().map(|p| 96 + p.runs.iter().map(|r| 128 + r.text.len()).sum::<usize>()).sum());
+    let text: usize = sh.text.as_ref().map_or(0, text_cost);
     let kids: usize = if depth < 64 { sh.children().iter().map(|c| shape_cost(c, depth + 1)).sum() } else { 0 };
     768 + text + sh.raw_ext.as_ref().map_or(0, String::len) + kids
 }
@@ -832,7 +867,7 @@ pub fn undo_cost(doc: &Presentation, newer: &Presentation) -> usize {
     let media: HashSet<*const Vec<u8>> = newer.media.iter().map(|m| Arc::as_ptr(&m.data)).collect();
     let mut n = 64 * doc.slides.len();
     for s in doc.slides.iter().filter(|s| !slides.contains(&Arc::as_ptr(s))) {
-        n += 512 + shapes_cost(&s.shapes);
+        n += 512 + shapes_cost(&s.shapes) + slide_extra_cost(s);
     }
     for m in doc.masters.iter().filter(|m| !masters.contains(&Arc::as_ptr(m))) {
         n += 4096 + shapes_cost(&m.shapes) + m.layouts.iter().map(|l| 512 + shapes_cost(&l.shapes)).sum::<usize>();

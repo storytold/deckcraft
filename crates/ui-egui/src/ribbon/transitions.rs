@@ -12,11 +12,14 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
     let cur = app.session.active().and_then(|d| d.current_slide().and_then(|s| s.transition.clone()));
     let kind = cur.as_ref().map(|t| t.kind.clone()).unwrap_or_else(|| "none".into());
     group(ui, |ui| {
-        if big_button(ui, Icon::Preview, "Preview", true).clicked() {
-            let from = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
-            app.start_show(from, true);
-            if let Some(s) = app.show.as_mut() {
-                s.preview_only = true;
+        let playing = app.show.as_ref().is_some_and(|s| s.preview_only);
+        let (resp, _) = widgets::big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
+        if resp.on_hover_text("Play this slide's transition").clicked() {
+            let to = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
+            app.start_show(to, true);
+            let now = ui.input(|i| i.time);
+            if let (Some(s), Some(d)) = (app.show.as_mut(), app.session.active()) {
+                s.start_transition_preview(&d.doc, now);
             }
         }
     });
