@@ -2104,3 +2104,12 @@ fn full_canvas_does_not_sample_gradient_tiles() {
     cv.shade_shape(&crate::geom::rect(0.0, 0.0, 10.0, 10.0), &|_| panic!("sampled a full canvas"));
     assert_eq!(cv.items.len(), 2);
 }
+
+#[test]
+fn canvas_budget_counts_bytes_held_elsewhere() {
+    let mut cv = Canvas::new();
+    cv.hold(MAX_BYTES - 100);
+    cv.bitmap([0.0, 0.0, 1.0, 1.0], Rgba { w: 1, h: 1, bottom_up: false, px: vec![0u8; 200] });
+    assert!(cv.full());
+    assert!(cv.items.is_empty());
+}

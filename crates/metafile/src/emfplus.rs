@@ -289,7 +289,12 @@ impl Plus {
             return None;
         }
         match typ {
-            0x4008 => self.object(flags, r, cv.used()),
+            0x4008 => {
+                let done = self.object(flags, r, cv.used());
+                // The retained objects share the canvas's byte budget.
+                cv.hold(self.object_bytes);
+                done
+            }
             0x4009 | 0x4013 | 0x401A..=0x401C | 0x4036 => self.record_image_text_region(cv, typ, flags, r),
             0x4025..=0x4035 => self.record_state(cv, typ, flags, r),
             0x4010..=0x4012 | 0x4016..=0x4019 => self.record_curve(cv, typ, flags, r),

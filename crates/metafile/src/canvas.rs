@@ -313,6 +313,8 @@ pub(crate) struct Canvas {
     saved: Vec<Saved>,
     /// Bytes held by the items so far (path ops and pixels), capped at [`MAX_BYTES`].
     used: usize,
+    /// Bytes retained outside the canvas (EMF+ objects) that count against the same cap.
+    held: usize,
     objects: Vec<Option<Obj>>,
     pen: Pen,
     brush: Brush,
@@ -345,6 +347,7 @@ impl Canvas {
             viewport_set: false,
             saved: Vec::new(),
             used: 0,
+            held: 0,
             objects: Vec::new(),
             pen: Pen { style: 0, width: 0.0, color: [0, 0, 0, 255] },
             brush: Brush::new(BS_SOLID, [255, 255, 255, 255]),
@@ -390,6 +393,12 @@ impl Canvas {
         }
     }
 
+    /// Records the bytes another part of the player retains, so the items and they stay within
+    /// [`MAX_BYTES`] together.
+    pub fn hold(&mut self, bytes: usize) {
+        self.held = bytes;
+    }
+
     fn push_raw(&mut self, mut raw: Raw) {
         if self.clip.as_ref().is_some_and(Vec::is_empty) {
             return;
@@ -407,7 +416,7 @@ impl Canvas {
             Raw::Bitmap { img, .. } => img.px.len(),
             Raw::Text { text: t, .. } => t.text.len() + t.dx.len() * 4 + t.font.family.len() + 128,
         } + region_cost;
-        if self.items.len() >= MAX_ITEMS || self.used.saturating_add(cost) > MAX_BYTES {
+        if self.items.len() >= MAX_ITEMS || self.used.saturating_add(self.held).saturating_add(cost) > MAX_BYTES {
             self.full = true;
         } else {
             self.used += cost;
