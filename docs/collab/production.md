@@ -341,22 +341,40 @@ remain the external contract with the cabinet for a browser page.
 
 ## Restart and persistence
 
-With `COLLAB_STORE_DIR` set, a room is a native base (`base.deckcraft`, written atomically) plus
-an append-only `journal.jsonl`. An accepted operation is applied in memory and broadcast first,
-then appended and flushed; a base is taken every `COLLAB_SNAPSHOT_EVERY` operations (default 200)
-and the journal is trimmed to the tail after it. On start the latest base is loaded and the tail
-replayed through the same `apply` path, so the document, the version and the dedup window come
-back. **The per-actor undo history does not**: the replay calls `apply_confirmed`, which records
+With `COLLAB_STORE_DIR` set, a room is a native base (`base-<version>.deckcraft`, written
+atomically) plus an append-only `journal.jsonl`. An accepted operation is applied in memory and
+broadcast first, then appended and flushed; a base is taken every `COLLAB_SNAPSHOT_EVERY`
+operations (default 200), when `DELETE /v1/sessions/{id}` closes the room, and when the journal
+grows past 64 MiB; the journal is trimmed to the tail after it. On start the newest base is loaded
+and the tail replayed through the same `apply` path, so the document and the version come back.
+
+The base's version is **part of its file name**, so the bytes and the version they were taken at
+are one unit. The base is renamed into place first, then `meta.json` is written (through a
+temporary file and a rename), then the journal is trimmed: a crash between those steps reopens at
+the base's own version with the tail above it replayed, never at a version whose steps the base
+does not hold. `meta.json` names the file id and the cabinet etag and is not needed for the
+version; a missing or unreadable one no longer stops the room from reopening. A store written
+before the version moved into the file name still loads from `base.deckcraft` with the version in
+its metadata.
+
+The dedup window is **not** persisted beyond the replayed tail: the replay remembers the ids of
+the journal lines above the base, and an id folded into a base is forgotten. A restart after
+compaction therefore does not answer a retried operation id from its original result; such a retry
+would be applied again. The client does not normally send one — an operation unacknowledged at a
+disconnect goes back to the queue, a snapshot that carries a base clears that queue and releases
+the in-flight operations below the base, and a tail-only catch-up is deduped from the journal it
+replays — but across a compaction boundary this is a documented limit, not a guarantee.
+
+**The per-actor undo history does not**: the replay calls `apply_confirmed`, which records
 no before/after image, so a step taken before a restart cannot be undone after it (`undo` answers
-`undo-conflict`/`invalid` instead of restoring it). The version itself is not in the base: it is
-read from `meta.json`, so a base taken at version 200 reopens at 200 and the journal tail above it
-keeps its numbers.
+`undo-conflict`/`invalid` instead of restoring it).
 
 The append is not part of the acknowledgement: **if it fails, the error is logged and the room
 keeps serving**. The accepted edit exists in memory and on every replica but not in the journal,
 so a restart loses it. Treat a `journal …` error in the log as a durability incident: the next
-base still captures the in-memory document, so a snapshot after the failure makes the
-acknowledged tail durable again, and only a restart before one loses it.
+base (the next boundary, or the snapshot a `DELETE` takes) still captures the in-memory document,
+so a snapshot after the failure makes the acknowledged tail durable again, and only a restart
+before one loses it.
 
 ### Recovering a damaged store
 
@@ -367,12 +385,19 @@ journal line that cannot be parsed makes that load fail with `500`. Recover in t
 1. Keep the store directory — it is the only copy of the accepted tail. The room directory is
    the SHA-256 of the cabinet's file id (`meta.json` names the file), so record that name in the
    incident.
-2. Stop the room, and if the process still runs, force a snapshot (the next `COLLAB_SNAPSHOT_EVERY`
-   boundary does it): the base captures the in-memory document and the failure stops costing data.
+2. Close the room with `DELETE /v1/sessions/{id}`. It takes a snapshot before the hub leaves the
+   map, so the base then holds the live document at the current version and the journal is
+   trimmed to an empty tail. Do not wait for the next `COLLAB_SNAPSHOT_EVERY` boundary: a room
+   that is gone never reaches one.
 3. Move the directory out of the store, e.g. `mv <store>/<sha256> <store>/<sha256>.damaged`, so the
    next create finds no stored room instead of failing again.
-4. Create the session again with the cabinet's last committed bytes in `initialBytes`. The new
-   room starts from that version without the damaged room's in-memory tail.
+4. Recover from the base in the quarantined directory when it is newer than the cabinet's copy:
+   copy the newest `base-<version>.deckcraft` and `meta.json` into a fresh `<store>/<sha256>`
+   directory and leave the damaged `journal.jsonl` behind. After a close the base is the whole
+   document, so an empty tail loses nothing. Only when there is no usable base — a store that
+   never took a snapshot, or one damaged before the close — create the session again with the
+   cabinet's last committed bytes in `initialBytes`: that starts from the cabinet's version
+   without the damaged room's tail, and steps above the cabinet's copy are lost.
 5. Keep the `.damaged` directory for inspection; the journal is the evidence of what was lost.
 
 The room directory is the SHA-256 of the cabinet's file id, and `meta.json` names the file; a

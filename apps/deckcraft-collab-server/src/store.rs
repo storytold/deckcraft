@@ -3,9 +3,16 @@
 //! Every accepted operation is appended before the next one is applied; a base is written
 //! atomically (temporary file + rename) every `snapshot_every` operations and the journal is
 //! rewritten to the tail after it. On start the latest base is loaded and the tail replayed
-//! through the same `DocSession::apply` path, so the version, the dedup window and the document
-//! come back. The per-actor undo history does not: the replay calls `apply_confirmed`, which
-//! records no history image, so an edit made before a restart cannot be undone after it.
+//! through the same `DocSession::apply` path, so the document, the version and the dedup window
+//! of that tail come back. The per-actor undo history does not: the replay calls
+//! `apply_confirmed`, which records no history image, so an edit made before a restart cannot be
+//! undone after it. Nor does the dedup window of the operations folded into the base: only the
+//! replayed tail is remembered (see `docs/collab/production.md`, "Restart and persistence").
+//!
+//! The version a base was taken at is **part of its file name** (`base-<version>.deckcraft`), so
+//! the bytes and their version are recovered as one unit: a crash between the base and its
+//! metadata cannot leave a `meta.json` naming a version the base does not hold, which would make
+//! `load` skip the journal entries that carry exactly those edits.
 //!
 //! File ids are hashed for the directory name: the cabinet's id never becomes a path component.
 
@@ -18,7 +25,11 @@ use deckcraft_collab_proto::{Applied, encode_server};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const BASE: &str = "base.deckcraft";
+const BASE_PREFIX: &str = "base-";
+const BASE_SUFFIX: &str = ".deckcraft";
+/// The base name a store written before the version moved into the file name still uses. Read as
+/// a fallback; its version can only come from `meta.json`.
+const LEGACY_BASE: &str = "base.deckcraft";
 const JOURNAL: &str = "journal.jsonl";
 const META: &str = "meta.json";
 const MEDIA: &str = "media";
@@ -60,25 +71,26 @@ impl Store {
         if !dir.exists() {
             return Ok(None);
         }
-        let base = dir.join(BASE);
-        if !base.exists() {
-            return Ok(None);
-        }
-        let meta = fs::read(dir.join(META)).map_err(|e| format!("meta: {e}"))?;
-        let stored: serde_json::Value = serde_json::from_slice(&meta).map_err(|e| format!("meta: {e}"))?;
-        if stored.get("fileId").and_then(|v| v.as_str()) != Some(file_id) {
+        // `meta.json` names the file and the cabinet etag; the version comes from the base's own
+        // name. A missing or unreadable metadata file is therefore not fatal: the directory is
+        // already the hash of the file id, and the base still says where the document is.
+        let stored = fs::read(dir.join(META)).ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        if let Some(name) = stored.as_ref().and_then(|meta| meta.get("fileId")).and_then(|v| v.as_str())
+            && name != file_id
+        {
             return Err("the stored room belongs to another file".into());
         }
+        let Some((base, version)) = self.latest_base(&dir, stored.as_ref())? else {
+            return Ok(None);
+        };
         let bytes = fs::read(&base).map_err(|e| format!("base: {e}"))?;
         let mut session = DocSession::open(file_id, &bytes).map_err(|e| format!("base: {e}"))?;
-        // The base carries the document, not its version: `meta.json` names the version the
-        // snapshot was taken at, and the room continues from it. Without this a room reopened
-        // from a base at version 200 would answer version 0, refuse clients that hold 200 as
-        // behind, and number the journal tail (which starts above the base) from 1 again.
-        if let Some(version) = stored.get("version").and_then(serde_json::Value::as_u64) {
-            session.set_version(version);
-        }
-        if let Some(etag) = stored.get("fileEtag").and_then(|value| value.as_str()) {
+        // The base carries the document, not its version, so the room continues from the version
+        // the base was taken at. Without this a room reopened from a base at version 200 would
+        // answer version 0, refuse clients that hold 200 as behind, and number the journal tail
+        // (which starts above the base) from 1 again.
+        session.set_version(version);
+        if let Some(etag) = stored.as_ref().and_then(|meta| meta.get("fileEtag")).and_then(|value| value.as_str()) {
             session.set_base_file_etag(etag);
         }
         let journal = dir.join(JOURNAL);
@@ -114,24 +126,77 @@ impl Store {
     }
 
     /// Write the base for `session` and drop the journal up to its version.
+    ///
+    /// The order is the crash-safety argument: the base bytes (whose **name** carries their
+    /// version) land first, then the metadata, then the journal is trimmed. A crash at any point
+    /// leaves the newest whole base and a journal that still holds everything above it, and
+    /// `load` derives the version from that base rather than from `meta.json` — so an
+    /// acknowledged operation cannot be skipped.
     pub fn snapshot(&self, file_id: &str, session: &mut DocSession) -> Result<(), String> {
         let dir = self.room_dir(file_id);
         fs::create_dir_all(&dir).map_err(|e| format!("store: {e}"))?;
         let state = session.take_snapshot().map_err(|e| format!("snapshot: {e}"))?.clone();
-        let mut meta = serde_json::json!({"fileId": file_id, "version": state.version});
-        if let Some(etag) = session.base_file_etag() {
-            meta["fileEtag"] = serde_json::Value::String(etag.to_string());
-        }
-        fs::write(dir.join(META), meta.to_string()).map_err(|e| format!("meta: {e}"))?;
-        let tmp = dir.join("base.deckcraft.tmp");
+        let base = dir.join(format!("{BASE_PREFIX}{}{BASE_SUFFIX}", state.version));
+        let tmp = dir.join(format!("{BASE_PREFIX}{}.tmp", state.version));
         {
             let mut f = fs::File::create(&tmp).map_err(|e| format!("base: {e}"))?;
             f.write_all(&state.bytes).map_err(|e| format!("base: {e}"))?;
             f.sync_all().map_err(|e| format!("base: {e}"))?;
         }
-        fs::rename(&tmp, dir.join(BASE)).map_err(|e| format!("base: {e}"))?;
+        fs::rename(&tmp, &base).map_err(|e| format!("base: {e}"))?;
+        let mut meta = serde_json::json!({"fileId": file_id, "version": state.version});
+        if let Some(etag) = session.base_file_etag() {
+            meta["fileEtag"] = serde_json::Value::String(etag.to_string());
+        }
+        write_atomic(&dir.join(META), meta.to_string().as_bytes())?;
         self.trim_journal(&dir, state.version);
+        self.prune_bases(&dir, state.version);
         Ok(())
+    }
+
+    /// The base to reopen from and the version it was taken at: the newest `base-<version>` file,
+    /// else the legacy `base.deckcraft` with the version from its metadata.
+    fn latest_base(&self, dir: &Path, meta: Option<&serde_json::Value>) -> Result<Option<(PathBuf, u64)>, String> {
+        let mut newest: Option<(PathBuf, u64)> = None;
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                let Some(rest) = name.strip_prefix(BASE_PREFIX) else { continue };
+                let Some(digits) = rest.strip_suffix(BASE_SUFFIX) else { continue };
+                let Ok(version) = digits.parse::<u64>() else { continue };
+                if newest.as_ref().is_none_or(|(_, found)| version > *found) {
+                    newest = Some((entry.path(), version));
+                }
+            }
+        }
+        if newest.is_some() {
+            return Ok(newest);
+        }
+        let legacy = dir.join(LEGACY_BASE);
+        if !legacy.exists() {
+            return Ok(None);
+        }
+        let version = meta
+            .and_then(|meta| meta.get("version"))
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| "meta: the version of the stored base is missing".to_string())?;
+        Ok(Some((legacy, version)))
+    }
+
+    /// Drop bases older than `version`: the newest one holds the whole document, and a stale base
+    /// beside it is only a way to reopen at the wrong version.
+    fn prune_bases(&self, dir: &Path, version: u64) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(rest) = name.strip_prefix(BASE_PREFIX) else { continue };
+            let Some(digits) = rest.strip_suffix(BASE_SUFFIX) else { continue };
+            if digits.parse::<u64>().is_ok_and(|found| found != version) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// Record the file version the cabinet accepted after a commit, so a restart still compares
@@ -146,9 +211,7 @@ impl Store {
             .unwrap_or_else(|| serde_json::json!({"fileId": file_id}));
         meta["fileId"] = serde_json::Value::String(file_id.to_string());
         meta["fileEtag"] = serde_json::Value::String(etag.to_string());
-        let tmp = dir.join("meta.json.tmp");
-        fs::write(&tmp, meta.to_string()).map_err(|e| format!("meta: {e}"))?;
-        fs::rename(&tmp, &path).map_err(|e| format!("meta: {e}"))
+        write_atomic(&path, meta.to_string().as_bytes())
     }
 
     /// Append one accepted operation, then take a base when the version reaches the boundary.
@@ -228,6 +291,18 @@ impl Store {
     }
 }
 
+/// Replace `path` with `bytes` in one step: a temporary file flushed to disk, then a rename. A
+/// reader (or a restart after a crash) sees either the old file or the new one, never a torn one.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = fs::File::create(&tmp).map_err(|e| format!("{}: {e}", path.display()))?;
+        f.write_all(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        f.sync_all().map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Encode one applied operation for a log line without exposing slide content.
 pub fn journal_summary(applied: &Applied) -> String {
     encode_server(&deckcraft_collab_proto::ServerMsg::Applied(applied.clone())).unwrap_or_else(|_| "{}".into())
@@ -275,6 +350,48 @@ mod tests {
         let restored = store.load("file-v").expect("load").expect("stored");
         assert_eq!(restored.version(), 2, "a room reopened from its base keeps the version its clients hold");
         assert_eq!(restored.document().expect("doc"), &document, "the base carries the document itself");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_newer_meta_beside_an_older_base_keeps_the_acknowledged_tail() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-crash-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-c", deck(), SessionConfig::default()).expect("session");
+        let insert = |n: u64| OpEnvelope {
+            op_id: format!("slide-{n}"),
+            doc: "file-c".into(),
+            base_version: n - 1,
+            kind: deckcraft_collab_proto::OpKind::Structural,
+            target: Default::default(),
+            payload: deckcraft_collab_proto::Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+            history: None,
+            preview: None,
+        };
+        // A base at version 1, then a second accepted step that is only in the journal.
+        let applied = session.apply("alice", &insert(1)).expect("apply");
+        store.record("file-c", &mut session, &applied).expect("record");
+        store.snapshot("file-c", &mut session).expect("base at version 1");
+        let applied = session.apply("alice", &insert(2)).expect("apply");
+        store.record("file-c", &mut session, &applied).expect("record");
+
+        // The state a crash between the old `meta.json` write and the base rename left behind:
+        // the metadata names the newer version while the base on disk is still the older one. The
+        // version comes from the base's own name now, so the tail above it is replayed and the
+        // acknowledged step is not skipped.
+        let room = store.room_dir("file-c");
+        fs::write(room.join(META), serde_json::json!({"fileId": "file-c", "version": 2}).to_string()).expect("meta");
+        let restored = store.load("file-c").expect("load").expect("stored");
+        assert_eq!(restored.version(), 2);
+        assert_eq!(restored.document().expect("doc").slides.len(), 3, "the acknowledged step was skipped");
+
+        // Metadata that does not parse no longer stops the room from reopening either: the
+        // version and the bytes come from the base name, and the directory is the file's hash.
+        fs::write(room.join(META), b"{ torn").expect("torn meta");
+        let restored = store.load("file-c").expect("load").expect("stored");
+        assert_eq!(restored.version(), 2);
+        assert_eq!(restored.document().expect("doc").slides.len(), 3);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -222,7 +222,17 @@ impl Session {
 
     /// Handle a pointer press and start the applicable tool interaction.
     fn down(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
-        if let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone() {
+        // A viewer selects, places a caret and marquees, but never starts a gesture that writes.
+        // Several arms below return before the gate at the end of this function (a freeform's next
+        // vertex, a shape/text/ink tool, the eraser, an Edit Points vertex or handle), and every
+        // one of them reaches `edit` — below the command gate — so a writing drag already running
+        // is dropped here and those arms are not taken at all.
+        if self.read_only {
+            self.drop_writing_drag();
+        }
+        if !self.read_only
+            && let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone()
+        {
             // Next click of a freeform: close on the start point, else add a vertex.
             if points.len() > 2 && points.first().is_some_and(|s| (*s - p).hypot() <= tol * 2.0) {
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });
@@ -233,33 +243,35 @@ impl Session {
             self.tool.drag = Some(Drag::Freeform { mode, points, pressed: true });
             return Ok(Value::Null);
         }
-        match self.tool.kind.clone() {
-            ToolKind::Shape { preset } if is_freeform_tool(&preset) => {
-                self.tool.drag = Some(Drag::Freeform { mode: preset.clone(), points: vec![p], pressed: true });
-                self.tool.path_preview = vec![p];
-                self.tool.path_smooth = preset == "curve";
-                self.tool.path_closing = false;
-                return Ok(Value::Null);
-            }
-            ToolKind::Shape { preset } if preset == TABLE_ERASER => {
-                // Click a border to merge the cells on either side; elsewhere does nothing.
-                return Ok(self.execute("table.eraseLine", &json!({"at": [p.x, p.y], "tol": tol.max(4.0)})).unwrap_or(Value::Null));
-            }
-            ToolKind::Shape { .. } | ToolKind::TextBox => {
-                self.tool.drag = Some(Drag::Create { start: p });
-                self.tool.preview = Some(Xfrm::new(p.x, p.y, 0.0, 0.0));
-                return Ok(Value::Null);
-            }
-            ToolKind::Ink { mode, .. } => {
-                if mode == "eraser" {
-                    return self.erase_at(p, tol);
+        if !self.read_only {
+            match self.tool.kind.clone() {
+                ToolKind::Shape { preset } if is_freeform_tool(&preset) => {
+                    self.tool.drag = Some(Drag::Freeform { mode: preset.clone(), points: vec![p], pressed: true });
+                    self.tool.path_preview = vec![p];
+                    self.tool.path_smooth = preset == "curve";
+                    self.tool.path_closing = false;
+                    return Ok(Value::Null);
                 }
-                let sample = self.ink_sample(p);
-                self.tool.drag = Some(Drag::Ink { points: vec![sample] });
-                self.tool.ink_preview = vec![sample];
-                return Ok(Value::Null);
+                ToolKind::Shape { preset } if preset == TABLE_ERASER => {
+                    // Click a border to merge the cells on either side; elsewhere does nothing.
+                    return Ok(self.execute("table.eraseLine", &json!({"at": [p.x, p.y], "tol": tol.max(4.0)})).unwrap_or(Value::Null));
+                }
+                ToolKind::Shape { .. } | ToolKind::TextBox => {
+                    self.tool.drag = Some(Drag::Create { start: p });
+                    self.tool.preview = Some(Xfrm::new(p.x, p.y, 0.0, 0.0));
+                    return Ok(Value::Null);
+                }
+                ToolKind::Ink { mode, .. } => {
+                    if mode == "eraser" {
+                        return self.erase_at(p, tol);
+                    }
+                    let sample = self.ink_sample(p);
+                    self.tool.drag = Some(Drag::Ink { points: vec![sample] });
+                    self.tool.ink_preview = vec![sample];
+                    return Ok(Value::Null);
+                }
+                ToolKind::Select => {}
             }
-            ToolKind::Select => {}
         }
         // Clicking inside the text being edited moves the caret / starts a text selection.
         let before = self.text_selection();
@@ -271,7 +283,9 @@ impl Session {
         let hit = self.hit_test(p, tol);
         // Edit Points: drag a vertex, Ctrl-click one to delete it or the outline to add one;
         // a click anywhere else leaves Edit Points.
-        if let Some(eid) = self.doc().ok().and_then(|st| self.tool.editing_points(st)) {
+        if !self.read_only
+            && let Some(eid) = self.doc().ok().and_then(|st| self.tool.editing_points(st))
+        {
             if let Some(Hit::Vertex { id, path, index }) = hit {
                 if mods.cmd {
                     return self.execute("shape.deletePoint", &json!({"id": id, "path": path, "index": index}));
@@ -447,13 +461,26 @@ impl Session {
         // dropping the drag here is what keeps a viewer's pointer from moving a shape. The press
         // has already made its selection, and a text selection or a marquee only moves the
         // selection, so those two stay.
-        if self.read_only && !matches!(self.tool.drag, None | Some(Drag::TextSelect { .. } | Drag::Marquee { .. })) {
-            self.tool.drag = None;
-            self.tool.preview = None;
-            self.tool.marquee = None;
-            self.tool.guide_drag = None;
+        if self.read_only {
+            self.drop_writing_drag();
         }
         Ok(json!({"hit": serde_json::to_value(&hit).unwrap_or_default()}))
+    }
+
+    /// Drop a drag that writes the document, keeping the two that only move the selection (a text
+    /// selection and a marquee). A viewer's press must never leave a writing gesture armed,
+    /// whichever path started it: a tool chosen before the role changed, a freeform or ink stroke
+    /// already in progress, or one of the early returns in `down`.
+    fn drop_writing_drag(&mut self) {
+        if matches!(self.tool.drag, None | Some(Drag::TextSelect { .. } | Drag::Marquee { .. })) {
+            return;
+        }
+        self.tool.drag = None;
+        self.tool.preview = None;
+        self.tool.marquee = None;
+        self.tool.guide_drag = None;
+        self.tool.ink_preview.clear();
+        self.tool.path_preview.clear();
     }
 
     /// Handle a pointer release and finalize the active tool interaction.

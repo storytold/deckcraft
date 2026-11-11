@@ -968,6 +968,30 @@ fn distribute_wide_middle_stays_in_selection_bounds() {
 }
 
 #[test]
+fn a_viewer_tool_press_writes_nothing() {
+    let mut s = session();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let shapes_before = s.doc().unwrap().shapes().len();
+    s.set_read_only(true);
+    // Ink is the path the gate at the end of `down` never saw: the press arms a stroke and `up`
+    // writes it through `edit`, below the command gate.
+    s.set_tool(ToolKind::Ink { mode: "pen".into(), color: deckcraft_color::Rgba::rgb(0, 0, 0), width: 2.0 });
+    s.pointer(ev(PointerKind::Down, 100.0, 100.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 200.0, 150.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 200.0, 150.0)).unwrap();
+    assert_eq!(s.doc().unwrap().shapes().len(), shapes_before, "a viewer's ink stroke changed the slide");
+    assert!(!s.doc().unwrap().shapes().iter().any(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Ink { .. })), "a viewer drew ink");
+    // A shape tool is the same early return: the create drag must not start either.
+    s.set_tool(ToolKind::Shape { preset: "rect".into() });
+    s.pointer(ev(PointerKind::Down, 300.0, 300.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 400.0, 380.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 400.0, 380.0)).unwrap();
+    assert_eq!(s.doc().unwrap().shapes().len(), shapes_before, "a viewer's shape tool made a shape");
+}
+
+#[test]
 fn a_viewer_drag_moves_nothing_and_a_shared_drag_is_one_operation() {
     let mut s = session();
     s.set_tool(ToolKind::Shape { preset: "rect".into() });

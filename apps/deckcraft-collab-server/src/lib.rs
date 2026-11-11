@@ -672,6 +672,15 @@ fn close_session(id: &str, shared: &Arc<Shared>, request: &Request) -> std::io::
             // store directory and append to one journal from two in-memory rooms.
             if let Ok(mut hub) = hub.lock() {
                 hub.close();
+                // The live document is captured before the room leaves the process. The journal
+                // alone is not a save: without a base at the head, a store whose journal is
+                // damaged afterwards can only be reopened from the cabinet's older bytes, and
+                // every accepted step since the last base is gone.
+                if let Some(store) = &shared.store
+                    && let Err(e) = store.snapshot(id, hub.session_mut())
+                {
+                    log::warn!("close {id}: the room could not be snapshotted: {e}");
+                }
             }
             Ok(Response::json(200, json!({"closed": true})))
         }

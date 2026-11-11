@@ -100,6 +100,11 @@ pub struct ClientSession {
     /// snapshot that answers the resync would cover it as "already included" although the server
     /// never applied it.
     resync_in_flight: bool,
+    /// The version the host rewound its replica to while a `Resync` was on the wire. That request
+    /// was asked from the version the replica held before the rewind, so the snapshot that answers
+    /// it starts above the rewound version and does not carry the steps the replica now misses.
+    /// It is kept until a snapshot actually covers the rewound version.
+    rewind_pending: Option<u64>,
     last_error: Option<String>,
     /// A base the server is sending as a chain of chunks (RFC §4.5.1): the prefix assembled so
     /// far and the index the client is missing.
@@ -200,6 +205,7 @@ impl ClientSession {
             max_queued: 256,
             resync_wanted: false,
             resync_in_flight: false,
+            rewind_pending: None,
             last_error: None,
             base_download: None,
             base_request: None,
@@ -443,6 +449,17 @@ impl ClientSession {
                 // The resync is answered: operations may be sent again, against the head the
                 // snapshot installs (the queued ones take their `base_version` at send time).
                 self.resync_in_flight = false;
+                if let Some(rewound) = self.rewind_pending.take()
+                    && !snapshot_covers(&snapshot, rewound)
+                {
+                    // The host put its replica back to `rewound` while this request was on the
+                    // wire, so the answer was asked from a higher version: its base is older than
+                    // the replica and its tail starts above it. Applying it would leave a hole
+                    // between them and advance the replica past the steps it is missing, so the
+                    // replica stays where it is and the tail is asked for again from there.
+                    self.resync_wanted = true;
+                    return Effect::Rollback;
+                }
                 // A gap signalled while this answer was on its way is covered by it: the snapshot
                 // and the tail above the replica are the room's state up to the same head, so no
                 // second resync is owed for it.
@@ -535,6 +552,7 @@ impl ClientSession {
         }
         self.resync_wanted = false;
         self.resync_in_flight = false;
+        self.rewind_pending = None;
         self.base_request = None;
         // A commit that was sent has no answer to resend: the user is told it did not finish and
         // presses Save again. One that never left stays queued for the next connection.
@@ -627,17 +645,41 @@ impl ClientSession {
     /// Put the state machine back to the version the replica actually holds and ask for the tail
     /// from there. Used when a local preview is abandoned: the steps the room accepted above this
     /// version are replayed from the tail instead of being skipped as "already seen".
+    ///
+    /// A resync already on the wire was asked from a version above this one, so its answer will
+    /// not carry the steps in between: the rewound version is remembered and that answer is
+    /// refused (see the `Snapshot` arm) instead of being applied and clearing the request.
     pub fn rewind_replica(&mut self, version: u64) {
         self.version = version;
         self.replica_version = version;
+        if self.resync_in_flight {
+            self.rewind_pending = Some(version);
+        }
         self.resync_wanted = true;
+    }
+}
+
+/// Whether `snapshot` carries every step above `version`: either its base replaces the replica at
+/// or above that version, or its tail starts at the next one (an empty tail covers a head at or
+/// below it).
+fn snapshot_covers(snapshot: &SnapshotMsg, version: u64) -> bool {
+    if let Some(base) = &snapshot.base
+        && base.version >= version
+    {
+        return true;
+    }
+    match snapshot.tail.first() {
+        Some(first) => first.version <= version.saturating_add(1),
+        None => snapshot.version <= version,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deckcraft_collab_proto::{Applied, Capabilities, Delta, Hint, Limits, OpKind, Payload, Rejected, SnapshotMsg, SnapshotRef, Target, Welcome};
+    use deckcraft_collab_proto::{
+        Applied, BaseSnapshot, Capabilities, Delta, Hint, Limits, OpKind, Payload, Rejected, SnapshotKeys, SnapshotMsg, SnapshotRef, Target, Welcome,
+    };
 
     fn op(id: &str, base: u64) -> OpEnvelope {
         OpEnvelope {
@@ -715,6 +757,66 @@ mod tests {
         assert_eq!(c.queued(), 1, "the operation is not lost");
         assert_eq!(c.version(), 0, "the client does not guess the new version");
         assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+    }
+
+    #[test]
+    fn a_rewind_during_an_outstanding_resync_keeps_asking_from_the_rewound_version() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        for n in 1..=4u64 {
+            assert_eq!(c.on_msg(applied(&format!("o{n}"), n)), Effect::Settled);
+        }
+        // A gap asks for the tail from the version the replica holds.
+        assert_eq!(c.on_msg(applied("o6", 6)), Effect::Rollback);
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 4 })));
+        // The host puts its replica back to 2 while that request is on the wire, so the answer
+        // starts at 5 and cannot carry steps 3 and 4.
+        c.rewind_replica(2);
+        let above = ServerMsg::Snapshot(SnapshotMsg {
+            version: 6,
+            snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@6".into() },
+            tail: vec![
+                Applied { op_id: "o5".into(), version: 5, actor_id: "a".into(), command: None, delta: Delta::default() },
+                Applied { op_id: "o6".into(), version: 6, actor_id: "a".into(), command: None, delta: Delta::default() },
+            ],
+            base: None,
+        });
+        assert_eq!(c.on_msg(above), Effect::Rollback);
+        assert_eq!(c.version(), 2, "the replica stays at the version it was rewound to");
+        assert_eq!(c.replica_version, 2, "the snapshot must not advance the replica past the rewind");
+        let again = c.next_outgoing().expect("the tail is asked for again from the rewound version");
+        assert!(matches!(again, ClientMsg::Resync { last_version: 2 }), "{again:?}");
+        // The answer to that request starts at 3, so it covers the rewind and reaches the head.
+        let covering = ServerMsg::Snapshot(SnapshotMsg {
+            version: 6,
+            snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@6".into() },
+            tail: (3..=6)
+                .map(|n| Applied { op_id: format!("o{n}"), version: n, actor_id: "a".into(), command: None, delta: Delta::default() })
+                .collect(),
+            base: None,
+        });
+        assert_eq!(c.on_msg(covering), Effect::Rollback);
+        assert_eq!(c.version(), 6);
+        assert!(c.next_outgoing().is_none(), "no further resync is owed");
+    }
+
+    #[test]
+    fn a_base_at_or_above_the_rewound_version_answers_the_rewind() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        assert_eq!(c.on_msg(applied("o1", 1)), Effect::Settled);
+        assert_eq!(c.on_msg(applied("o3", 3)), Effect::Rollback, "a gap asks for the tail");
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 1 })));
+        c.rewind_replica(1);
+        // A base at 3 replaces the replica outright: nothing between 1 and 3 is missing.
+        let snapshot = ServerMsg::Snapshot(SnapshotMsg {
+            version: 3,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@3".into() },
+            tail: vec![],
+            base: Some(BaseSnapshot { version: 3, bytes_base64: None, keys: SnapshotKeys::default(), chunks: None }),
+        });
+        assert_eq!(c.on_msg(snapshot), Effect::Rollback);
+        assert_eq!(c.version(), 3, "a base above the rewind covers it");
     }
 
     #[test]
