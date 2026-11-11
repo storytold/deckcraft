@@ -11,6 +11,14 @@ use crate::geom::{Op, P};
 /// Line segments per Bézier when a crossing shape is flattened.
 const CURVE_STEPS: usize = 16;
 
+/// Point-against-edge tests one clipped item may cost (all its subpaths together); an item over
+/// it is dropped, as a single polygon over it already was.
+const MAX_CLIP_WORK: usize = 1_000_000;
+
+/// The same allowance for intersecting two clip regions, a budget of its own: two convex
+/// 1,000-gons cost about 1.5 million tests once the cut polygon has grown.
+pub(crate) const MAX_AREA_CLIP_WORK: usize = 4 * MAX_CLIP_WORK;
+
 /// The bounding box `[l, t, r, b]` of the points in `ops` (control points included).
 pub(crate) fn ops_bbox(ops: &[Op]) -> Option<[f64; 4]> {
     let mut b: Option<[f64; 4]> = None;
@@ -98,16 +106,18 @@ fn is_rect(clip: &[P]) -> bool {
     pts_bbox(clip).is_some_and(|b| clip.len() == 4 && clip.iter().all(|p| (p.0 == b[0] || p.0 == b[2]) && (p.1 == b[1] || p.1 == b[3])))
 }
 
-/// Sutherland–Hodgman: `poly` cut by convex `clip`.
-pub(crate) fn clip_polygon(poly: &[P], clip: &[P]) -> Vec<P> {
-    if poly.len().saturating_mul(clip.len()) > 1_000_000 {
-        return Vec::new();
-    }
+/// Sutherland–Hodgman: `poly` cut by convex `clip`, charging each point visited against each clip
+/// edge to `budget`: the polygon
+/// can gain a vertex at every edge, so its cost isn't known from its input size alone. `None`
+/// once the budget is spent.
+pub(crate) fn clip_polygon_within(poly: &[P], clip: &[P], budget: &mut usize) -> Option<Vec<P>> {
     let mut poly = poly.to_vec();
     for i in 0..clip.len() {
-        if poly.len().saturating_mul(clip.len() - i) > 1_000_000 {
-            return Vec::new();
+        // The work actually done: this edge visits the polygon as it now stands.
+        if poly.len() > *budget {
+            return None;
         }
+        *budget -= poly.len();
         let (a, b) = (clip[i], clip[(i + 1) % clip.len()]);
         let keep = |p: P| cross(a, b, p) >= 0.0;
         let cut = |p: P, q: P| {
@@ -133,7 +143,7 @@ pub(crate) fn clip_polygon(poly: &[P], clip: &[P]) -> Vec<P> {
             break;
         }
     }
-    poly
+    Some(poly)
 }
 
 fn disjoint(b: [f64; 4], c: [f64; 4]) -> bool {
@@ -158,15 +168,17 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
                 return Vec::new();
             }
             let subs = flatten(&ops);
+            // One allowance for the fill and the stroke together; the item goes once it is spent.
+            let mut budget = MAX_CLIP_WORK;
             let mut out = Vec::new();
             if fill.is_some() {
-                let f = clip_fill(&subs, clip);
+                let Some(f) = clip_fill(&subs, clip, &mut budget) else { return Vec::new() };
                 if !f.is_empty() {
                     out.push(Raw::Path { ops: f, fill, stroke: None, even_odd, region: region.clone() });
                 }
             }
             if stroke.is_some() {
-                let s = clip_stroke(&subs, clip);
+                let Some(s) = clip_stroke(&subs, clip, &mut budget) else { return Vec::new() };
                 if !s.is_empty() {
                     out.push(Raw::Path { ops: s, fill: None, stroke, even_odd, region });
                 }
@@ -181,7 +193,8 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
             if disjoint(b, cb) {
                 return Vec::new();
             }
-            let f = clip_fill(&flatten(&ops), clip);
+            let subs = flatten(&ops);
+            let f = clip_fill(&subs, clip, &mut { MAX_CLIP_WORK }).unwrap_or_default();
             if f.is_empty() { Vec::new() } else { vec![Raw::Pattern { ops: f, even_odd, tile, region }] }
         }
         Raw::Bitmap { rect, img, region } => crop(rect, img, clip).map(|(rect, img)| vec![Raw::Bitmap { rect, img, region }]).unwrap_or_default(),
@@ -230,20 +243,23 @@ pub(crate) fn flatten(ops: &[Op]) -> Vec<(Vec<P>, bool)> {
     subs
 }
 
-fn clip_fill(subs: &[(Vec<P>, bool)], clip: &[P]) -> Vec<Op> {
+/// The clipped fill of every subpath, its clipping work charged to `budget` with that of the
+/// stroke: `None` (the whole item goes) once it is spent.
+fn clip_fill(subs: &[(Vec<P>, bool)], clip: &[P], budget: &mut usize) -> Option<Vec<Op>> {
     let mut ops = Vec::new();
     for (pts, _) in subs {
-        let poly = clip_polygon(pts, clip);
+        let poly = clip_polygon_within(pts, clip, budget)?;
         if poly.len() >= 3 {
             ops.push(Op::M(poly[0]));
             ops.extend(poly[1..].iter().map(|p| Op::L(*p)));
             ops.push(Op::Z);
         }
     }
-    ops
+    Some(ops)
 }
 
-fn clip_stroke(subs: &[(Vec<P>, bool)], clip: &[P]) -> Vec<Op> {
+/// The clipped outline of every subpath; `None` once `budget` is spent.
+fn clip_stroke(subs: &[(Vec<P>, bool)], clip: &[P], budget: &mut usize) -> Option<Vec<Op>> {
     let mut ops = Vec::new();
     for (pts, closed) in subs {
         let mut pts = pts.clone();
@@ -252,7 +268,7 @@ fn clip_stroke(subs: &[(Vec<P>, bool)], clip: &[P]) -> Vec<Op> {
         }
         let mut last: Option<P> = None;
         for w in pts.windows(2) {
-            let Some((a, b)) = segment(w[0], w[1], clip) else {
+            let Some((a, b)) = segment(w[0], w[1], clip, budget)? else {
                 last = None;
                 continue;
             };
@@ -263,21 +279,23 @@ fn clip_stroke(subs: &[(Vec<P>, bool)], clip: &[P]) -> Vec<Op> {
             last = Some(b);
         }
     }
-    ops
+    Some(ops)
 }
 
-/// Cyrus–Beck: the part of segment `a`–`b` inside convex `clip`.
-fn segment(a: P, b: P, clip: &[P]) -> Option<(P, P)> {
+/// Cyrus–Beck: the part of segment `a`–`b` inside convex `clip`, one unit of `budget` per clip edge
+/// visited; the outer `None` is a spent budget.
+fn segment(a: P, b: P, clip: &[P], budget: &mut usize) -> Option<Option<(P, P)>> {
     let d = (b.0 - a.0, b.1 - a.1);
     let (mut t0, mut t1) = (0.0f64, 1.0f64);
     for i in 0..clip.len() {
+        *budget = budget.checked_sub(1)?;
         let (e0, e1) = (clip[i], clip[(i + 1) % clip.len()]);
         // Inside is cross(e0, e1, p) >= 0, linear in t along the segment.
         let f0 = cross(e0, e1, a);
         let df = (e1.0 - e0.0) * d.1 - (e1.1 - e0.1) * d.0;
         if df == 0.0 {
             if f0 < 0.0 {
-                return None;
+                return Some(None);
             }
         } else {
             let t = -f0 / df;
@@ -288,7 +306,7 @@ fn segment(a: P, b: P, clip: &[P]) -> Option<(P, P)> {
             }
         }
     }
-    (t0 <= t1).then_some(((a.0 + d.0 * t0, a.1 + d.1 * t0), (a.0 + d.0 * t1, a.1 + d.1 * t1)))
+    Some((t0 <= t1).then_some(((a.0 + d.0 * t0, a.1 + d.1 * t0), (a.0 + d.0 * t1, a.1 + d.1 * t1))))
 }
 
 /// Crops a bitmap drawn into `rect` = `[x, y, w, h]` (device, positive extents) to the clip
