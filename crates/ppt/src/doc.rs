@@ -86,6 +86,8 @@ pub struct Doc<'a> {
     pub masters: Vec<Listed<'a>>,
     pub slides: Vec<Listed<'a>>,
     pub notes: Vec<Listed<'a>>,
+    /// Slides the slide list names but whose objects couldn't be found: what a damaged file lost.
+    pub lost: Vec<String>,
 }
 
 /// Read the structure from the `Current User` and `PowerPoint Document` streams.
@@ -123,6 +125,9 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     // read to the end of the stream, once per edit (MAX_EDITS × the stream).
     let mut words = stream.len() / 4;
     let mut at = edit_at;
+    // The chain ends at an edit whose previous offset is 0. Ending anywhere else (a loop, an
+    // offset that isn't an edit, too many edits) means older edits were cut off.
+    let mut broken = true;
     for _ in 0..MAX_EDITS {
         if !seen.insert(at) {
             break;
@@ -141,8 +146,26 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
             read_persist_directory(dir.data, &mut persist, &mut words);
         }
         match edit.u32(8) {
-            Some(0) | None => break,
+            Some(0) => {
+                broken = false;
+                break;
+            }
+            None => break,
             Some(prev) => at = prev as usize,
+        }
+    }
+    if broken {
+        // Recover what the cut-off edits held: every edit in the stream, newest (last written)
+        // first, fills only the persist ids the chain left unset.
+        log::warn!("ppt: the edit history is broken; reading every edit in the stream");
+        let mut edits: Vec<Rec> = Records::new(stream).filter(|r| r.kind == rt::USER_EDIT).take(MAX_EDITS).collect();
+        edits.reverse();
+        for edit in edits {
+            if let Some(dir) =
+                edit.u32(12).filter(|&o| dirs_seen.insert(o)).and_then(|o| Rec::at(stream, o as usize)).filter(|r| r.kind == rt::PERSIST_DIRECTORY)
+            {
+                read_persist_directory(dir.data, &mut persist, &mut words);
+            }
         }
     }
     let lookup = |id: u32| persist.get(&id).and_then(|&o| Rec::at(stream, o));
@@ -150,7 +173,7 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     if lookup_kind(&persist, stream, rt::CRYPT_SESSION) {
         return Err(PptError::Encrypted);
     }
-    let mut doc = Doc { document, masters: vec![], slides: vec![], notes: vec![] };
+    let mut doc = Doc { document, masters: vec![], slides: vec![], notes: vec![], lost: vec![] };
     // Each object is listed once. PowerPoint never lists one twice, and a hostile file that lists a
     // big drawing many times would otherwise have it converted again for every listing (shapes ×
     // listings, from linear input).
@@ -172,7 +195,12 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
                 match lookup(pid) {
                     Some(rec) if !listed.insert(rec.offset) => log::warn!("ppt: persist id {pid} is listed again; skipped"),
                     Some(rec) => current = Some(Listed { rec, slide_id, outline: vec![] }),
-                    None => log::warn!("ppt: slide persist id {pid} has no object"),
+                    None => {
+                        log::warn!("ppt: slide persist id {pid} has no object");
+                        if list.instance == 0 {
+                            doc.lost.push(format!("slide {slide_id}"));
+                        }
+                    }
                 }
             } else if r.kind == rt::TEXT_HEADER
                 && let Some(l) = current.as_mut()

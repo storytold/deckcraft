@@ -658,6 +658,51 @@ fn a_later_edit_replaces_a_slide() {
     assert_eq!(p.masters.len(), 1);
 }
 
+/// An edit whose "previous edit" points back at itself cuts the older edits off the chain, and
+/// with them the document, master and notes (#1137 review: such a file opened as an empty deck).
+/// Every edit in the stream is read instead, the newest still winning.
+#[test]
+fn a_broken_edit_chain_is_recovered_from_every_edit() {
+    let (_, mut stream, pics) = streams(0xE391_C05F);
+    let title = container(rt::SP_CONTAINER, 0, &[fsp(1, 2049, 0xA00), anchor(400, 500, 5260, 1200), placeholder(0x0D), text_box(0, "Edited", &[])]);
+    let slide_at = stream.len() as u32;
+    stream.extend_from_slice(&container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[title])]));
+    let dir_at = stream.len() as u32;
+    stream.extend_from_slice(&atom(rt::PERSIST_DIRECTORY, 0, &le32(&[3 | (1 << 20), slide_at])));
+    let edit_at = stream.len() as u32;
+    let mut edit = le32(&[0, 0x0300_03F4, edit_at, dir_at, 1, 5]);
+    edit.extend_from_slice(&[0; 4]);
+    stream.extend_from_slice(&atom(rt::USER_EDIT, 0, &edit));
+    let cu = atom(rt::CURRENT_USER, 0, &le32(&[0x14, 0xE391_C05F, edit_at, 0, 0]));
+    let (p, lost) =
+        crate::import_checked(&crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &stream), ("Pictures", &pics)])).unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(p.slides[0].shapes[0].text.as_ref().unwrap().paragraphs[0].runs[0].text, "Edited");
+    assert_eq!(p.masters.len(), 1);
+    assert!(lost.is_empty(), "{lost:?}");
+}
+
+/// A slide the list names but whose object is gone is reported as lost, so the app and the CLI
+/// say so instead of opening a deck that silently misses it.
+#[test]
+fn a_slide_without_its_object_is_reported_lost() {
+    let (cu, mut stream, pics) = streams(0xE391_C05F);
+    // The persist directory (ids 1–4: document, master, slide, notes) ends just before the
+    // 36-byte edit; point the slide's entry past the end of the stream.
+    let slide_entry = stream.len() - 36 - 8;
+    stream[slide_entry..slide_entry + 4].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+    let bytes = crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &stream), ("Pictures", &pics)]);
+    let (p, lost) = crate::import_checked(&bytes).unwrap();
+    assert!(p.slides.is_empty());
+    assert_eq!(lost, vec![format!("slide {SLIDE_ID}")]);
+
+    let mut s = deckcraft_engine::Session::new();
+    let data = deckcraft_engine::cmd::base64_encode(&bytes);
+    let r = s.execute("file.openBytes", &serde_json::json!({"name": "Damaged.ppt", "data": data})).unwrap();
+    assert_eq!(r["lostSlides"].as_array().map(Vec::len), Some(1));
+    assert!(s.doc().unwrap().title().ends_with("(Repaired)"));
+}
+
 /// Two more signs of an encrypted file besides the Current User token: an edit record long enough
 /// to hold `encryptSessionPersistIdRef`, and a `CryptSession` object in the persist directory.
 #[test]
