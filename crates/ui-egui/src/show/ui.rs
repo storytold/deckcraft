@@ -134,6 +134,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let painter = ui.painter_at(full);
     painter.rect_filled(full, CornerRadius::ZERO, Color32::BLACK);
     draw_slide(app, ui, &mut show, &f, &painter);
+    draw_captions(app, &show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
     draw_extras(&mut show, &f, &painter, &mut out);
@@ -683,6 +684,17 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
     }
 }
 
+/// Live captions sit above the slide and its media controls, and below the pen, the bars and a
+/// blank screen.
+fn draw_captions(app: &SlideApp, show: &Show, f: &Fr, painter: &egui::Painter) {
+    let settings = &app.session.prefs.subtitles;
+    let Some(text) = crate::subtitles::caption_line(settings.on, show.ended, show.grid, show.blank.is_some(), app.subtitles.caption.as_deref())
+    else {
+        return;
+    };
+    crate::subtitles::draw(painter, f.full, f.srect, settings, Some(text), &app.subtitles.caption_cache);
+}
+
 fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, pointing: bool) {
     let Fr { ctx, doc, now, full, srect, .. } = *f;
     if let Some(c) = show.blank {
@@ -857,6 +869,9 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             host.close();
         }
         app.media.stop_owned(crate::media::Owner::Show);
+        // The caption belongs to this show: end the stream and take the text away with it.
+        app.subtitles.stop();
+        app.subtitles.caption = None;
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }

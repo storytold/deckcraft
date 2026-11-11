@@ -1,11 +1,11 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-07 · **Last updated:** 2026-11-07 · **Change:** minor (live subtitles from a local Whisper model, #1811; previous: minor, deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
 [animation-parity.md](animation-parity.md); display hardware in
-[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **68%** (measured), **~60%
+[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **67%** (measured), **~60%
 ready** (estimated), **10–16 h** to parity.
 
 ## Running the show
@@ -32,7 +32,7 @@ ready** (estimated), **10–16 h** to parity.
 | Zoom into part of a slide during the show | yes | yes: Z, then click the slide (or the presenter slide); 2×, Esc or another click leaves it. Ctrl+wheel (Cmd+wheel on a Mac) over the slide zooms in and out around the pointer, four notches per doubling, up to 4× (#1286) | The presenter keeps the whole slide and draws a frame on the zoomed part. The wheel zooms in the audience window only; no panning while zoomed |
 | Pen and highlighter ink | yes | pen only (Cmd+P pen, Cmd+A arrow, E erases all ink) | No highlighter, per-stroke eraser, ink colours, or keep/discard annotations prompt |
 | Laser pointer | yes | yes in the show | Cmd/Ctrl+L and the on-screen button draw the show's laser colour and leave no ink. The presenter window does not move that dot |
-| Subtitles and live captions | yes (cloud speech) | no | AI dimension |
+| Subtitles and live captions | yes (cloud speech) | yes, offline: the Whisper model runs on this machine, the microphone and language come from the user's settings, and the caption draws over the slide or in the letterbox in one of PowerPoint's four positions | Model is user-downloaded (153.5 MB, Apache-2.0; [captions.md](captions.md)); one model (whisper-tiny), so accuracy is below PowerPoint's cloud service; the subtitle language is recorded but translation is not implemented yet; captions appear in the audience window, not in Presenter View |
 | Custom shows | yes | yes: Show plays that list in order and does not change Set Up; Set Up Slide Show can keep one for Play from Start | Hidden slides in the list are skipped; deleting a slide removes its ID from every custom show |
 | Set Up Show: loop until Esc, kiosk (browsed at a kiosk), show without animation/narration, pen colour, slides range | yes | yes, most options | Keep mouse cursor visible (DeckCraft's own, #1445) stops the show hiding a still pointer after 2.5 s, for decks with clickable choices; it is a user preference (`ui.json`, `showKeepCursor`), since PPTX has no place for it |
 | Use rehearsed timings | yes | yes | |
@@ -79,6 +79,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Live subtitles (#1811): Slide Show ▸ Captions & Subtitles, a local Whisper model the user downloads, captions in four positions |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |

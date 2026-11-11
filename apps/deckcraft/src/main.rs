@@ -23,6 +23,7 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+mod models;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
@@ -124,6 +125,7 @@ fn services(native_wayland: bool) -> Services {
                 ),
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
+                "model" => d.add_filter("Speech model files", &["safetensors", "json"]),
                 _ => d
                     .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
                     .add_filter("DeckCraft", &["deckcraft"])
@@ -142,6 +144,8 @@ fn services(native_wayland: bool) -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        // Live subtitles: the user-initiated HTTPS download of the Whisper model.
+        download_model: Some(std::sync::Arc::new(models::download)),
         ..Default::default()
     }
 }

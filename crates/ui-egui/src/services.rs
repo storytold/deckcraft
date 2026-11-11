@@ -11,6 +11,11 @@ pub type OpenAsyncFn = Box<dyn FnMut(&str, u64)>;
 
 pub type DownloadFn = Box<dyn FnMut(&str, &[u8])>;
 
+/// Download a model's files into a directory, reporting `(done, total)` bytes. The desktop app
+/// supplies an HTTPS implementation (ureq); the browser has none and the dialog says so.
+pub type ModelDownloadFn =
+    std::sync::Arc<dyn Fn(&deckcraft_asr::ModelManifest, &std::path::Path, &mut dyn FnMut(u64, u64)) -> Result<(), String> + Send + Sync>;
+
 /// [`Services::host_save`]: `(file name, bytes, save_as)`. An error means the page didn't get
 /// the file, and the save failed.
 pub type HostSaveFn = Box<dyn FnMut(&str, &[u8], bool) -> Result<(), String>>;
@@ -73,4 +78,6 @@ pub struct Services {
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
     pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
+    /// Model download for live subtitles (native hosts only; see [`ModelDownloadFn`]).
+    pub download_model: Option<ModelDownloadFn>,
 }

@@ -50,6 +50,11 @@ pub struct Tokens {
     pub control_hover: Color32,
     pub control_pressed: Color32,
     pub shadow: Color32,
+    /// A caution that is not an error (a model on the CPU, an unavailable accelerator): readable
+    /// on the card in both modes (>= 4.5:1).
+    pub warning: Color32,
+    /// A failure message: readable on the card in both modes (>= 4.5:1).
+    pub error: Color32,
 }
 
 impl Tokens {
@@ -83,6 +88,8 @@ impl Tokens {
             control_hover: Color32::from_rgb(0xC8, 0xC8, 0xC8),
             control_pressed: Color32::from_rgb(0xBC, 0xBC, 0xBC),
             shadow: Color32::from_black_alpha(28),
+            warning: Color32::from_rgb(0x8A, 0x4B, 0x00),
+            error: Color32::from_rgb(0xB3, 0x26, 0x1E),
         }
     }
     pub fn dark() -> Self {
@@ -115,6 +122,8 @@ impl Tokens {
             control_hover: Color32::from_rgb(0x40, 0x40, 0x40),
             control_pressed: Color32::from_rgb(0x4C, 0x4C, 0x4C),
             shadow: Color32::from_black_alpha(90),
+            warning: Color32::from_rgb(0xF0, 0xA0, 0x4B),
+            error: Color32::from_rgb(0xFF, 0x8A, 0x80),
         }
     }
     pub fn for_brightness(b: Brightness) -> Self {

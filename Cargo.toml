@@ -23,6 +23,8 @@ deckcraft-pdf = { path = "crates/pdf" }
 deckcraft-pptx = { path = "crates/pptx" }
 deckcraft-format = { path = "crates/format" }
 deckcraft-anim = { path = "crates/anim" }
+deckcraft-asr = { path = "crates/asr" }
+deckcraft-asr-candle = { path = "crates/asr-candle" }
 deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
@@ -49,6 +51,13 @@ rayon = "1"
 unicode-bidi = "0.3"
 unicode-segmentation = "1"
 unicode-linebreak = "0.1"
+sha2 = "0.10"
+# Native speech-to-text: candle (MIT OR Apache-2.0) runs Whisper weights the user downloads.
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+cpal = "0.16"
 # Base features are wasm-safe (`std` only). The non-wasm `clock` feature is requested
 # per-crate for targets that read the local clock (see crates/text).
 chrono = { version = "0.4", default-features = false, features = ["std"] }

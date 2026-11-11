@@ -361,6 +361,8 @@ pub struct Prefs {
     /// The unit the rulers, the Format pane and the size dialogs show (Preferences); the deck
     /// itself always stores points.
     pub units: deckcraft_geom::Unit,
+    /// Slide Show ▸ Captions & Subtitles: per user, not part of the presentation.
+    pub subtitles: deckcraft_asr::SubtitleSettings,
 }
 
 impl Default for Prefs {
@@ -385,6 +387,7 @@ impl Default for Prefs {
             undo_limit: 500,
             recovery_minutes: 1.0,
             units: deckcraft_geom::Unit::Inches,
+            subtitles: deckcraft_asr::SubtitleSettings::default(),
         }
     }
 }
@@ -405,6 +408,7 @@ impl Prefs {
         if self.author.chars().count() > 256 {
             self.author = self.author.chars().take(256).collect();
         }
+        self.subtitles = self.subtitles.sanitized();
         self
     }
 }
@@ -504,6 +508,8 @@ pub struct Session {
     pub recovery_dir: Option<std::path::PathBuf>,
     /// Media playback state, written by the UI host every frame (empty without a host).
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
+    /// Live-subtitle provider state, written by the UI host (idle without one).
+    pub subtitle_status: deckcraft_asr::ProviderStatus,
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
@@ -545,6 +551,7 @@ impl Session {
             depth: 0,
             recovery_dir: None,
             media_status: Default::default(),
+            subtitle_status: deckcraft_asr::ProviderStatus::idle(),
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,

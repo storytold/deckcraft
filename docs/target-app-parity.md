@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-07 · **Last updated:** 2026-11-07 · **Change:** minor (live subtitles recorded in the AI features row; slide-show area score 67%, matching the checklist) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -73,7 +73,7 @@ The weights are what those users actually depend on, written down so the total c
 | Platforms | 5% | ~80% | 5–10 | [ROADMAP.md](../ROADMAP.md) | Ahead in reach: macOS, Windows x64/x86/arm64, Linux (5 formats), FreeBSD and the web, all from one release workflow. Held back by the Windows GPU crashes and the Windows image-paste gap (#1414; Linux not re-checked) |
 | Localization | 5% | ~8% | 55–90 + native review | [localization-parity.md](localization-parity.md) | English only; no string catalog. PowerPoint for Mac ships 26 languages. Bidi and Arabic shaping in slide text exist |
 | Ecosystem (templates, add-ins) | 3% | ~25% | 10–20 | [gaps.md](gaps.md) | 8 original themes and 6 original starter decks; PowerPoint's large template gallery remains; no add-ins or VBA (out of scope by policy) |
-| AI features | 2% | ~10% | 20–40 (owner decision on models) | [gaps.md](gaps.md) | No Designer, Copilot, Speaker Coach, live subtitles or Translate (all Microsoft cloud services). Agents drive every command over MCP instead |
+| AI features | 2% | ~10% | 20–40 (owner decision on models) | [gaps.md](gaps.md) | No Designer, Copilot, Speaker Coach or Translate (all Microsoft cloud services); live captions run offline with a local Whisper model ([slideshow-parity.md](slideshow-parity.md)), and translating them is not implemented yet. Agents drive every command over MCP instead |
 | **Total** | 100% | **~55%** (Σ weight × ready = 55.3) | **~365–650** | | |
 | Automation (✱, not weighted) | | ahead | 0 | [mcp.md](mcp.md), [control-protocol.md](control-protocol.md) | Every command is scriptable from the CLI, a JSON control channel and MCP, headless or against the running app; PowerPoint for Mac has AppleScript and VBA only |
 
@@ -194,7 +194,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
 | Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects | [animation-parity.md](animation-parity.md) |
-| Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
+| Slide show and presenter view | 8 | 67% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
 | Undo and clipboard | 3 | 100% | ~75% | 3–5 | Image paste on Windows (#1414) | [ui-parity.md](ui-parity.md) |

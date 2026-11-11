@@ -53,6 +53,10 @@ pub const TABLE: &[(&str, Class)] = &[
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),
     ("anim", Class::Layer(2)),
+    // Live subtitles: the pure protocol, audio preprocessing, caption geometry and model
+    // manifest (L2, wasm-safe), and the native Whisper backend over candle (L6).
+    ("asr", Class::Layer(2)),
+    ("asr-candle", Class::Layer(6)),
     ("format", Class::Layer(2)),
     ("render", Class::Layer(3)),
     ("pptx", Class::Layer(3)),
@@ -73,7 +77,10 @@ pub const TABLE: &[(&str, Class)] = &[
 pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
+    // The caption protocol and layout are used by the native backend and by the UI.
+    &["asr", "asr-candle", "ui-egui"],
+];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));

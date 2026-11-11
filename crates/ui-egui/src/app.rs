@@ -7,7 +7,8 @@ use super::updates_ui;
 use super::{
     AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
     PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, dialogs, doc_window,
-    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
+    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, subtitles, textures, theme, thumbs, toast,
+    uifonts,
 };
 
 mod clipboard;
@@ -52,6 +53,7 @@ impl SlideApp {
             dialog: None,
             thesaurus_query: String::new(),
             show: None,
+            subtitles: subtitles::Subtitles::default(),
             anim_preview: None,
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
@@ -300,6 +302,9 @@ impl SlideApp {
         }
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
+        // Before the font pass: a caption that arrives this frame is then noted (and its fallback
+        // faces installed) before the show draws it.
+        self.sync_subtitles(&ctx);
         self.note_ui_text(&ctx);
         self.media.sync_video_textures(&ctx);
         canvas::trackpad_twist(self, &ctx);
