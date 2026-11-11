@@ -16,6 +16,8 @@ pub struct GlyphRun {
     /// Slant because the family has no italic face.
     pub fake_italic: bool,
     pub outline: Option<(Rgba, f64)>,
+    /// The outline's dash and gap lengths in multiples of its width; empty = solid.
+    pub outline_dash: Vec<f64>,
     /// Paragraph and character range this run covers (for hyperlinks, selection colours).
     pub para: usize,
     pub chars: (usize, usize),

@@ -281,7 +281,14 @@ pub(crate) fn format_body(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     if ids.is_empty() {
         return Err(bad("format", "select a shape"));
     }
+    let cell = st.selection.text.as_ref().filter(|t| !t.notes).and_then(|t| t.cell);
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+        if let (ShapeKind::Table(table), Some((row, col))) = (&mut sh.kind, cell)
+            && let Some(cell) = table.cell_mut(row, col)
+        {
+            f(&mut cell.text.body);
+            return Ok(());
+        }
         f(&mut sh.text.get_or_insert_with(TextBody::default).body);
         Ok(())
     })?;
