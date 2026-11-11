@@ -551,6 +551,19 @@ fn album_target(s: &Session, p: &Value) -> Result<(u32, Vec<u64>)> {
     Err(bad("insert.photoAlbumEdit", "this slide is not part of a photo album"))
 }
 
+/// Whether a slide holds anything besides album items: shapes, notes, comments, a background, a
+/// transition, animations, a colour map or tags.
+fn has_slide_content(s: &deckcraft_model::Slide) -> bool {
+    !s.shapes.is_empty()
+        || !s.notes.text().trim().is_empty()
+        || !s.comments.is_empty()
+        || s.background.is_some()
+        || s.transition.is_some()
+        || !s.animations.is_empty()
+        || s.color_map.is_some()
+        || !s.tags.is_empty()
+}
+
 fn pic_count(slide: &deckcraft_model::Slide) -> usize {
     slide.shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).count()
 }
@@ -623,10 +636,8 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
                     break 'slides;
                 }
                 items.push(json!({"text": text.trim()}));
-            } else if items.len() >= ALBUM_MAX_ITEMS
-                && (!slide.shapes.is_empty() || !slide.notes.text().trim().is_empty() || !slide.comments.is_empty())
-            {
-                // Past the item limit, a slide with other content (a drawing, notes, comments) would be deleted by a replace.
+            } else if items.len() >= ALBUM_MAX_ITEMS && has_slide_content(slide) {
+                // Past the item limit, a slide with other content would be deleted by a replace.
                 omitted = true;
                 break 'slides;
             }
@@ -837,5 +848,15 @@ mod seed_tests {
         doc.slides.push(Arc::new(extra));
         let e = s.execute("insert.photoAlbumEdit", &json!({"pictures": [{"text": "x"}], "layout": "1"})).unwrap_err().to_string();
         assert!(e.contains("delete the rest"), "{e}");
+    }
+
+    /// A shapeless slide with a background, transition, colour map or tags counts as content; a plain empty one does not.
+    #[test]
+    fn slide_level_settings_count_as_slide_content() {
+        use deckcraft_model::Slide;
+        assert!(!has_slide_content(&Slide::default()));
+        assert!(has_slide_content(&Slide { tags: vec![("k".into(), "v".into())], ..Default::default() }));
+        assert!(has_slide_content(&Slide { color_map: Some(vec![("bg1".into(), "lt1".into())]), ..Default::default() }));
+        assert!(has_slide_content(&Slide { transition: Some(Default::default()), ..Default::default() }));
     }
 }
