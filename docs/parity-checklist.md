@@ -2,7 +2,7 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-03 · Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
+> **Last updated:** 2026-11-04 · Screen recording and the recording show (row changes: Media 67% → 75%, Slide show 68% → 71%). Previously (2026-11-03): Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
 >
 > **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
 >
@@ -15,7 +15,7 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 24 | 12 | 56% |
+| P2 | 54 | 19 | 25 | 10 | 58% |
 
 | Area | Parity |
 |---|---|
@@ -32,10 +32,10 @@ The summary between `<!-- SUMMARY -->
 | Charts | 65% |
 | SmartArt | 50% |
 | Pictures | 60% |
-| Media | 67% |
+| Media | 75% |
 | Transitions | 100% |
 | Animations | 85% |
-| Slide show | 68% |
+| Slide show | 71% |
 | Review | 70% |
 | Draw | 50% |
 | Undo & clipboard | 100% |
@@ -199,7 +199,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Media | Insert video | P1 | D |
 | Media | Audio/video playback in the show (WMA/WMV not decodable yet) | P0 | P |
 | Media | Trim, fade in/out, volume, loop, play across slides | P2 | D |
-| Media | Record audio / screen recording | P2 | M |
+| Media | Screen recording (display, window or region, pointer; no microphone or system audio). Recording a standalone audio narration is still open | P2 | D |
 | Media | Icons, 3-D models, stock content | P2 | M |
 | Media | Embedded objects (OLE): insert; foreign objects kept on round trip | P2 | P |
 | Transitions | Transition gallery (fade, push, wipe, split, cover, uncover, zoom, morph…) | P0 | D |
@@ -223,7 +223,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Slide show | Rehearse timings | P2 | D |
 | Slide show | Custom shows | P2 | D |
 | Slide show | Set up show (loop, kiosk, without animation) | P1 | D |
-| Slide show | Record slide show (narration) | P2 | M |
+| Slide show | Record slide show (narration) | P2 | P |
 | Slide show | Multi-monitor presenting | P1 | M |
 | Review | Comments (add, reply, resolve, delete) | P1 | D |
 | Review | Accessibility checker | P2 | D |
@@ -244,6 +244,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Screen recording moves M → D (display, window or region into an H.264/MP4 video clip with the pointer; no system audio, and a standalone audio recording is still open) and Record slide show M → P (timings, narration, pen ink and a laser trace keep; camera capture while recording stays open), which move Media 67% → 75% and Slide show 68% → 71% |
 | 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
 | 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |

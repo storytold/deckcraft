@@ -5,14 +5,14 @@ use super::{Color32, Presentation, Show, ShowAction};
 /// Read the current viewport's show keys before its widgets can consume them. Both the
 /// audience window and Presenter View use this path, including animation steps and end-of-show.
 /// `presenter` is true for Presenter View, where G opens that window's own grid (#1130).
-pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool) -> bool {
+pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool, actions: &mut Vec<ShowAction>) -> bool {
     let keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
             .filter_map(|e| if let egui::Event::Key { key, pressed: true, modifiers, .. } = e { Some((*key, *modifiers)) } else { None })
             .collect()
     });
-    let (keep, consumed) = handle_keys(show, doc, now, keys, presenter);
+    let (keep, consumed) = handle_keys(show, doc, now, keys, presenter, actions);
     for (key, modifiers) in consumed {
         ctx.input_mut(|i| i.consume_key(modifiers, key));
         ctx.request_repaint_of(egui::ViewportId::ROOT);
@@ -26,10 +26,11 @@ pub(super) fn handle_keys(
     now: f64,
     keys: Vec<(egui::Key, egui::Modifiers)>,
     presenter: bool,
+    actions: &mut Vec<ShowAction>,
 ) -> (bool, Vec<(egui::Key, egui::Modifiers)>) {
     let mut consumed = vec![];
     let mut keep = true;
-    let mut actions = vec![];
+    let mut own = vec![];
     for (k, m) in keys {
         let handled = if grid_open(show, presenter) && !matches!(k, egui::Key::Escape | egui::Key::Minus) {
             // See All Slides takes no other keys until a slide is chosen.
@@ -40,7 +41,7 @@ pub(super) fn handle_keys(
                 false
             }
         } else {
-            navigation_key(show, doc, k, m, presenter, &mut keep, &mut actions) || tool_key(show, k, m, now, presenter)
+            navigation_key(show, doc, k, m, presenter, &mut keep, &mut own) || tool_key(show, k, m, now, presenter)
         };
         if !handled {
             continue;
@@ -49,11 +50,8 @@ pub(super) fn handle_keys(
         // by an embedded presenter viewport.
         consumed.push((k, m));
     }
-    for action in actions {
-        if !show.apply(action, doc, now) {
-            keep = false;
-        }
-    }
+    // The caller applies them: `advance` runs the microphone handoff before each slide change.
+    actions.append(&mut own);
     (keep, consumed)
 }
 
@@ -145,7 +143,15 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         A if m.command => show.arrow(),
         B | Period => toggle_blank(show, Color32::BLACK),
         W | Comma => toggle_blank(show, Color32::WHITE),
-        E => show.strokes.clear(),
+        E => {
+            show.strokes.clear();
+            // Erase clears the ink on screen. A take's laser samples are already recorded data and
+            // are saved from `laser_live` when the take finishes, so erasing keeps them while the
+            // take exists at all (running, paused or stopped), not only while it captures.
+            if !show.take_captured() {
+                show.laser_live.clear();
+            }
+        }
         G if plain(m) => show.open_grid(presenter),
         Z if plain(m) => show.zoom_key(),
         T if plain(m) => show.timer.toggle(now),

@@ -19,6 +19,7 @@ deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
 deckcraft-media = { workspace = true }
+deckcraft-screen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 i_overlay = { workspace = true }
@@ -26,6 +27,8 @@ thiserror = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
 chrono = { workspace = true }
+# Random, owner-only screen-recording files in the temporary folder.
+tempfile = { workspace = true }
 
 [dev-dependencies]
 deckcraft-anim = { workspace = true }

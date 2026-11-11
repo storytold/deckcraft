@@ -25,8 +25,8 @@ pub use chart::chart_type;
 use chart::{chart, chart_data, chart_options, chart_type_cmd};
 use links::{action_button, hyperlink, shape_action};
 pub use picture::content_type;
-pub(crate) use picture::media_bytes;
 use picture::{audio, picture, video};
+pub(crate) use picture::{detect_name, media_bytes};
 use text_fields::{date_time, slide_number, symbol, word_art};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -57,7 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Picture from File…",
             ["Insert", "Images", "Pictures"],
             None,
-            "{path? | data: base64, name?, rect?: [x,y,w,h]}",
+            "{path? | data: base64, name?, typeName?, rect?: [x,y,w,h]}",
             has_slide,
             picture
         ),
@@ -66,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Photo Album…",
             ["Insert", "Images"],
             None,
-            "{pictures?: [{path?|data: base64, name?, rot?: deg, brightness?: -1..1, contrast?: -1..1} | {text}], layout?: fit|1|2|4|1title|2title|4title, frame?: none|rect|rounded|simple, captions?: bool, grayscale?: bool, theme?: name} — omit pictures to open the dialog",
+            "{pictures?: [{path?|data: base64, name?, typeName?, rot?: deg, brightness?: -1..1, contrast?: -1..1} | {text}], layout?: fit|1|2|4|1title|2title|4title, frame?: none|rect|rounded|simple, captions?: bool, grayscale?: bool, theme?: name} — omit pictures to open the dialog. `typeName` names the source file for inline `data` (an SVG whose tag is past the sniffing window needs it)",
             has_doc,
             photo_album
         ),
@@ -89,8 +89,24 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             chart
         ),
-        cmd!("insert.audio", "Audio from File…", ["Insert", "Media", "Audio"], None, "{path? | data: base64, name?, rect?}", has_slide, audio),
-        cmd!("insert.video", "Video from File…", ["Insert", "Media", "Video"], None, "{path? | data: base64, name?, rect?}", has_slide, video),
+        cmd!(
+            "insert.audio",
+            "Audio from File…",
+            ["Insert", "Media", "Audio"],
+            None,
+            "{path? | data: base64, name?, typeName?, rect?}",
+            has_slide,
+            audio
+        ),
+        cmd!(
+            "insert.video",
+            "Video from File…",
+            ["Insert", "Media", "Video"],
+            None,
+            "{path? | data: base64, name?, typeName?, rect?}",
+            has_slide,
+            video
+        ),
         cmd!("insert.wordArt", "WordArt", ["Insert", "Text"], None, "{text?, style?: 0..}", has_slide, word_art),
         cmd!("insert.slideNumber", "Slide Number", ["Insert", "Text"], None, "{}", has_slide, slide_number),
         cmd!(

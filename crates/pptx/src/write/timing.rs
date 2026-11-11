@@ -1,7 +1,7 @@
 //! Transitions and the animation timing tree.
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeId, ShapeKind};
+use deckcraft_model::{MediaClip, Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdMap;
 use super::{Exp, Out};
@@ -538,7 +538,79 @@ fn group<'a>(effects: Vec<Eff<'a>>) -> Groups<'a> {
     clicks
 }
 
-fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactive: bool) {
+/// The autoplay and narration clips that need an automatic-start behaviour: no media "play"
+/// animation starts them before the first click, so nothing else starts them in PowerPoint.
+fn automatic_media(shapes: &[Shape], idmap: &IdMap, main: &[Eff], depth: usize) -> Vec<u32> {
+    if depth > 64 {
+        return vec![];
+    }
+    // Effects before the first click start with the slide; an On Click play waits for the click
+    // and so leaves the automatic start in place.
+    let click_at = main.iter().position(|e| e.start == AnimStart::OnClick).unwrap_or(main.len());
+    let mut out = vec![];
+    for s in shapes {
+        if let ShapeKind::Media(m) = &s.kind
+            && (m.autoplay || m.narration)
+            && let Some(spid) = idmap.get(s.id)
+            // Only a media "play" starts the clip; a "pause" or "stop" effect writes another
+            // command, so the automatic start is still needed.
+            && !main[..click_at].iter().any(|e| e.spid == spid && matches!(e.a.class, AnimClass::Media) && e.a.effect == "play")
+        {
+            out.push(spid);
+        }
+        out.extend(automatic_media(s.children(), idmap, main, depth + 1));
+    }
+    out
+}
+
+/// One main-sequence paragraph per automatic clip: a `playFrom(0.0)` behaviour starting at delay 0.
+/// The behaviour carries no `grpId`, which marks it as a playback trigger rather than an effect the
+/// Animation Pane lists (and keeps a round trip from turning it into an animation of its own).
+fn automatic_media_pars(w: &mut W, ids: &mut Ids, spids: &[u32]) {
+    for spid in spids {
+        w.open0("p:par");
+        w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold"));
+        w.open0("p:stCondLst");
+        w.empty("p:cond", A::new().a("delay", 0));
+        w.close("p:stCondLst");
+        w.open0("p:childTnLst");
+        w.open0("p:par");
+        w.open(
+            "p:cTn",
+            A::new()
+                .a("id", ids.next())
+                .a("presetID", 1)
+                .a("presetClass", "mediacall")
+                .a("presetSubtype", 0)
+                .a("fill", "hold")
+                .a("nodeType", "afterEffect"),
+        );
+        w.open0("p:stCondLst");
+        w.empty("p:cond", A::new().a("delay", 0));
+        w.close("p:stCondLst");
+        w.open0("p:childTnLst");
+        w.open("p:cmd", A::new().a("type", "call").a("cmd", "playFrom(0.0)"));
+        w.open0("p:cBhvr");
+        w.open("p:cTn", A::new().a("id", ids.next()).a("dur", 1).a("fill", "hold"));
+        w.close("p:cTn");
+        w.open0("p:tgtEl");
+        w.empty("p:spTgt", A::new().a("spid", *spid));
+        w.close("p:tgtEl");
+        w.close("p:cBhvr");
+        w.close("p:cmd");
+        w.close("p:childTnLst");
+        w.close("p:cTn");
+        w.close("p:par");
+        w.close("p:childTnLst");
+        w.close("p:cTn");
+        w.close("p:par");
+    }
+}
+
+/// Write the click groups. `triggers` are the automatic-start behaviours for a first group that
+/// starts with the slide (With Previous / After Previous on its first effect): they are written
+/// before its effects, so they have run when its begin event fires.
+fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactive: bool, triggers: &[u32]) {
     for (ci, (auto, afters)) in clicks.iter().enumerate() {
         w.open0("p:par");
         w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold"));
@@ -555,6 +627,9 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
         }
         w.close("p:stCondLst");
         w.open0("p:childTnLst");
+        if ci == 0 {
+            automatic_media_pars(w, ids, triggers);
+        }
         let mut t = 0u32;
         for g in afters {
             w.open0("p:par");
@@ -590,6 +665,79 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
         out.entry(s.id).or_insert(s);
         shape_index(s.children(), depth + 1, out);
     }
+}
+
+/// `p:video` / `p:audio` children of `p:timing`: they carry the playback behaviour (start on
+/// click or automatically, volume, loop, hide while stopped, full screen) that the picture's
+/// `a:videoFile` only names. PowerPoint reads the start condition from `p:cTn/p:stCondLst`.
+fn media_node(w: &mut W, ids: &mut Ids, spid: u32, m: &MediaClip) {
+    let tag = if m.video { "p:video" } else { "p:audio" };
+    let mut outer = A::new();
+    if m.full_screen && m.video {
+        outer = outer.a("fullScrn", "1");
+    }
+    if m.narration && !m.video {
+        // PresentationML's own flag, on the audio clip: without it PowerPoint keeps playing a
+        // narration clip when "Play Narrations" is off. A video is never a narration.
+        outer = outer.a("isNarration", "1");
+    }
+    w.open(tag, outer);
+    let volume = if m.volume.is_finite() { m.volume.clamp(0.0, 1.0) } else { 1.0 };
+    let mut node = A::new().a("vol", (volume * 100_000.0).round() as u32);
+    if volume <= 0.0 {
+        node = node.a("mute", "1");
+    }
+    if m.hide_while_not_playing {
+        node = node.a("showWhenStopped", "0");
+    }
+    w.open("p:cMediaNode", node);
+    let mut tn = A::new().a("id", ids.next()).a("fill", "hold").a("display", "0");
+    if m.loop_play {
+        tn = tn.a("repeatCount", "indefinite");
+    }
+    w.open("p:cTn", tn);
+    w.open0("p:stCondLst");
+    // `indefinite` waits for a click on the shape; a number starts on the slide's own clock.
+    // Narration plays with the slide even when it isn't marked autoplay (Record Slide Show).
+    let starts_alone = m.autoplay || m.narration;
+    w.empty("p:cond", A::new().a("delay", if starts_alone { "0" } else { "indefinite" }));
+    w.close("p:stCondLst");
+    w.open0("p:endCondLst");
+    w.open("p:cond", A::new().a("evt", "onStopAudio").a("delay", "0"));
+    w.open0("p:tgtEl");
+    w.empty0("p:sldTgt");
+    w.close("p:tgtEl");
+    w.close("p:cond");
+    w.close("p:endCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(tag);
+}
+
+/// Write the media behaviour nodes (nested media shapes included); returns how many were written.
+fn media_nodes(w: &mut W, ids: &mut Ids, shapes: &[Shape], idmap: &IdMap, depth: usize) -> usize {
+    if depth > 64 {
+        return 0;
+    }
+    let mut n = 0;
+    for s in shapes {
+        if let ShapeKind::Media(m) = &s.kind
+            && let Some(spid) = idmap.get(s.id)
+        {
+            media_node(w, ids, spid, m);
+            n += 1;
+        }
+        n += media_nodes(w, ids, s.children(), idmap, depth + 1);
+    }
+    n
+}
+
+/// Does any shape (nested ones included) carry audio or video?
+pub fn has_media(shapes: &[Shape], depth: usize) -> bool {
+    depth <= 64 && shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_)) || has_media(s.children(), depth + 1))
 }
 
 /// Write `p:timing` for a slide's animations.
@@ -686,7 +834,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    if main.is_empty() && triggered.is_empty() && !has_media(shapes, 0) {
         return;
     }
     let mut ids = Ids(0);
@@ -695,12 +843,23 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.open0("p:par");
     w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "indefinite").a("restart", "never").a("nodeType", "tmRoot"));
     w.open0("p:childTnLst");
-    if !main.is_empty() {
+    // PowerPoint reads a clip's automatic start from a main-sequence `playFrom(0.0)`, not from the
+    // media node's delay: emit one for every autoplay or narration clip that has no media "play"
+    // animation of its own, before any click group so it starts with the slide.
+    let auto_media = automatic_media(shapes, idmap, &main, 0);
+    if !main.is_empty() || !auto_media.is_empty() {
         let clicks = group(main);
+        // A first group that starts with the slide (With Previous or After Previous on its first
+        // effect) begins from the mainSeq's begin event, which fires before a paragraph written
+        // ahead of it has run: PowerPoint would then wait for a click. The triggers go inside that
+        // group instead. An On Click first group waits for its click anyway, so they stay first.
+        let first_is_automatic = clicks.first().is_some_and(|(auto, _)| *auto);
+        let (early, inside): (&[u32], &[u32]) = if first_is_automatic { (&[], &auto_media) } else { (&auto_media, &[]) };
         w.open("p:seq", A::new().a("concurrent", 1).a("nextAc", "seek"));
         w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "indefinite").a("nodeType", "mainSeq"));
         w.open0("p:childTnLst");
-        click_pars(w, x, &mut ids, &clicks, false);
+        automatic_media_pars(w, &mut ids, early);
+        click_pars(w, x, &mut ids, &clicks, false, inside);
         w.close("p:childTnLst");
         w.close("p:cTn");
         w.open0("p:prevCondLst");
@@ -719,6 +878,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
+    // Media behaviour after the sequence, so the main sequence keeps `id="2"` (PowerPoint's own
+    // numbering) whatever the media nodes need.
+    media_nodes(w, &mut ids, shapes, idmap, 0);
     for (trig, effs) in triggered {
         // The first step starts with the button's click. Later On Click effects must remain
         // separate steps; With/After Previous effects still belong to their preceding step.
@@ -749,7 +911,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.empty("p:rtn", A::new().a("val", "all"));
         w.close("p:endSync");
         w.open0("p:childTnLst");
-        click_pars(w, x, &mut ids, &clicks, true);
+        click_pars(w, x, &mut ids, &clicks, true, &[]);
         w.close("p:childTnLst");
         w.close("p:cTn");
         w.open0("p:nextCondLst");

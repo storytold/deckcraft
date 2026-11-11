@@ -71,6 +71,10 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Microphone for Record Slide Show (cpal on desktop). Without one, timings and ink are still kept.
+    pub mic: Option<Box<dyn deckcraft_media::MicIn>>,
+    /// Screen capture device (scap on desktop); without one screen recording is unavailable.
+    pub screen_in: Option<Box<dyn deckcraft_screen::ScreenIn>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
     pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
 }

@@ -173,7 +173,7 @@ fn sound(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => super::insert::media_bytes(p, "transition.sound")?,
     };
-    let ct = super::insert::content_type(&name, &bytes);
+    let ct = super::insert::content_type(&super::insert::detect_name(p, &name), &bytes);
     let bytes = Arc::new(bytes);
     let audible = deckcraft_media::probe(&bytes).is_ok_and(|i| i.audio.is_some());
     let bytes = Arc::try_unwrap(bytes).unwrap_or_else(|a| (*a).clone());

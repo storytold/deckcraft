@@ -58,4 +58,4 @@ jobs:
       require-craft-fonts: true
       packages: >-
         libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev
-        libgl1-mesa-dev
+        libgl1-mesa-dev libpipewire-0.3-dev libdbus-1-dev

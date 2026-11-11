@@ -25,6 +25,7 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+mod screen;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -142,6 +143,9 @@ fn services(native_wayland: bool) -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        mic: std::env::var_os("DECKCRAFT_NO_AUDIO").is_none().then(|| Box::new(audio::CpalIn::default()) as Box<dyn deckcraft_media::MicIn>),
+        // Screen capture (`DECKCRAFT_NO_SCREEN` disables it): scap on desktop, a stub elsewhere.
+        screen_in: screen::host(),
         ..Default::default()
     }
 }

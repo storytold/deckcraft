@@ -5339,6 +5339,26 @@ fn wordart_adjust_handle_drags_and_undoes() {
     assert!(body.warp_adj.is_empty(), "undo restores the default adjusts");
 }
 
+/// An inline `picture` is read, so it also decides the type: a `path` beside it names bytes nobody
+/// reads and must not turn an SVG into an unknown file.
+#[test]
+fn a_shape_picture_fill_is_typed_from_the_bytes_it_reads() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    // The tag sits past the 512 bytes the sniffer scans, so only the name can say `svg`.
+    let svg =
+        format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
+    s.execute("shape.fill", &json!({"picture": cmd::base64_encode(svg.as_bytes()), "name": "drawing.svg", "path": "C:/old/photo.png"}))
+        .expect("a picture fill from inline bytes");
+    let fill = match s.doc().unwrap().selected_shapes()[0].fill.clone() {
+        Some(deckcraft_model::Fill::Picture(pf)) => pf,
+        other => panic!("{other:?}"),
+    };
+    let m = s.doc().unwrap().doc.media(fill.media).expect("the media");
+    assert_eq!(m.content_type, "image/svg+xml", "the inline bytes decide the type, not the path");
+}
+
 #[test]
 fn shape_picture_fill_options_tile_offset_and_round_trip() {
     use deckcraft_model::style::PictureMode;

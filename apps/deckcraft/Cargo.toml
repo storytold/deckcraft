@@ -14,6 +14,7 @@ workspace = true
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 deckcraft-media = { workspace = true }
+deckcraft-screen = { workspace = true }
 # `clipboard` is the OS clipboard (Ctrl+C/X/V with other apps). Without it egui simulates one inside
 # the app; the egui 0.37 migration (#1350) dropped it from this list.
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "clipboard", "links", "wayland", "x11"] }
@@ -32,6 +33,15 @@ rfd = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# scap 0.0.8 calls the five-argument `WCSettings::new`; windows-capture 1.5 changed it.
+windows-capture = "=1.4.0"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+# Native screen capture (MIT): ScreenCaptureKit on macOS, Graphics Capture on Windows, PipeWire
+# on Linux. FreeBSD and wasm get the NoScreen stub.
+scap = "0.0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Finder double-click, Open With, Dock drops and `open -a DeckCraft deck.pptx` arrive as a

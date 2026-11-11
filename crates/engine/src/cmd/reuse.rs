@@ -180,7 +180,9 @@ pub fn specs() -> Vec<CommandSpec> {
 
 fn reuse_list(_s: &mut Session, p: &Value) -> Result<Value> {
     let (name, bytes) = super::insert::media_bytes(p, "slide.reuseList")?;
-    let src = super::file::open_presentation(&name, &bytes)?;
+    // The parser needs the source's own extension (`outline.md` for Markdown), which a display
+    // `name` replaces; the answer keeps the display name.
+    let src = super::file::open_presentation(&super::insert::detect_name(p, &name), &bytes)?;
     let slides: Vec<Value> =
         src.slides.iter().enumerate().map(|(index, sl)| json!({"index": index, "title": sl.title(), "hidden": sl.hidden})).collect();
     Ok(json!({"name": name, "slides": slides}))
@@ -377,7 +379,8 @@ fn import_table_styles(cmd: &str, doc: &mut Presentation, src: &Presentation, us
 
 fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, bytes) = super::insert::media_bytes(p, "slide.reuse")?;
-    let src = super::file::open_presentation(&name, &bytes)?;
+    // As `reuse_list`: the source name decides the format, the display name is what we answer.
+    let src = super::file::open_presentation(&super::insert::detect_name(p, &name), &bytes)?;
     let n = src.slides.len();
     let picked: Vec<usize> = match p.get("slides") {
         Some(Value::Array(a)) => {

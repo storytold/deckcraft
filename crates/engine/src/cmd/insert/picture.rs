@@ -11,10 +11,31 @@ pub(crate) fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>)> {
     }
     if let Some(path) = str_param(p, "path") {
         let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
-        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "media".into());
+        let name = str_param(p, "name")
+            .filter(|n| !n.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "media".into()));
         return Ok((name, bytes));
     }
     Err(bad(cmd, "missing `path` or `data`"))
+}
+
+/// The name a content type is detected from: `typeName` when the caller knows the source file's
+/// name (the photo album forwards a path's bytes inline), else the source path's own file name, or
+/// the display name when the bytes came inline. A display name may have been replaced
+/// (`name: "Narration"`), so it must not decide whether a Matroska file is audio or video.
+pub(crate) fn detect_name(p: &Value, name: &str) -> String {
+    if let Some(source) = str_param(p, "typeName").filter(|n| !n.is_empty()) {
+        return source.to_string();
+    }
+    // `media_bytes` prefers `data` when both are given, so the display name describes those bytes;
+    // only a path that supplied the bytes has an extension to go on.
+    if p.get("data").and_then(Value::as_str).is_some() {
+        return name.to_string();
+    }
+    str_param(p, "path")
+        .and_then(|path| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| name.to_string())
 }
 
 pub fn content_type(name: &str, bytes: &[u8]) -> &'static str {
@@ -88,7 +109,10 @@ fn fitted(s: &Session, bytes: &[u8]) -> (f64, f64) {
 
 pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, bytes) = media_bytes(p, "insert.picture")?;
-    let ct = content_type(&name, &bytes);
+    // The type comes from the name the bytes came from (a path's file name, else the display
+    // name), the same rule `insert.video`/`insert.audio` use: `{"path": "drawing.svg", "name":
+    // "Drawing"}` is an SVG even when the sniffer cannot see the tag in the first bytes.
+    let ct = content_type(&detect_name(p, &name), &bytes);
     if !ct.starts_with("image/") {
         return Err(bad("insert.picture", format!("{name} is not a picture")));
     }
@@ -161,7 +185,7 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
 fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
     let cmd = if video { "insert.video" } else { "insert.audio" };
     let (name, bytes) = media_bytes(p, cmd)?;
-    let ct = content_type(&name, &bytes);
+    let ct = content_type(&detect_name(p, &name), &bytes);
     let bytes = std::sync::Arc::new(bytes);
     let info = deckcraft_media::probe(&bytes);
     let has_video = info.as_ref().is_ok_and(|i| i.video.is_some());
@@ -243,4 +267,26 @@ pub(super) fn audio(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn video(s: &mut Session, p: &Value) -> Result<Value> {
     media(s, p, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture opened from a path takes its type from the file name: the display name need not
+    /// carry the extension, and the sniffer cannot see an `<svg` tag past its first bytes.
+    #[test]
+    fn a_picture_from_a_path_is_typed_by_the_file_names_extension() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("drawing.svg");
+        // The tag sits past the 512 bytes the sniffer scans, so only the file name can say `svg`.
+        let svg =
+            format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
+        std::fs::write(&path, svg.as_bytes()).unwrap();
+        let mut s = Session::with_new();
+        let v = s
+            .execute("insert.picture", &json!({"path": path.to_string_lossy(), "name": "Drawing"}))
+            .expect("an svg named only by its path is a picture");
+        assert!(v.get("id").is_some(), "{v}");
+    }
 }

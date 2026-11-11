@@ -23,6 +23,7 @@ pub mod links;
 pub mod media_refs;
 pub mod recovery;
 pub mod sample;
+pub mod screen;
 pub mod sounds;
 pub mod spell;
 pub mod templates;
@@ -57,11 +58,22 @@ pub enum EngineError {
     Other(String),
     #[error("internal error in `{0}` (the presentation was kept as it was): {1}")]
     Internal(String, String),
+    /// A screen-capture failure, with the short code clients already read (`busy`,
+    /// `noDevice`, …) kept beside the message instead of being flattened into [`Other`].
+    #[error("{message}")]
+    Screen { code: &'static str, message: String },
 }
 
 impl From<deckcraft_model::ModelError> for EngineError {
     fn from(e: deckcraft_model::ModelError) -> Self {
         EngineError::Other(e.to_string())
+    }
+}
+
+impl From<deckcraft_screen::ScreenError> for EngineError {
+    fn from(e: deckcraft_screen::ScreenError) -> Self {
+        let code = e.code();
+        EngineError::Screen { code, message: e.to_string() }
     }
 }
 
@@ -425,6 +437,9 @@ pub enum UiRequest {
     },
     StartShow {
         from: usize,
+        /// Record timings and pen ink, rather than only playing the show.
+        #[serde(default)]
+        record: bool,
     },
     Message {
         text: String,
@@ -504,6 +519,11 @@ pub struct Session {
     pub recovery_dir: Option<std::path::PathBuf>,
     /// Media playback state, written by the UI host every frame (empty without a host).
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
+    /// Screen capture host and the recording in progress (see [`screen`]).
+    pub screen: screen::ScreenState,
+    /// The last screen take that ended could not be inserted (its file was kept, and the message
+    /// says where). The UI reads this before closing over a failed insert.
+    pub screen_insert_failed: bool,
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
@@ -517,6 +537,10 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// Commands come from the DeckCraft window's own controls, not from an automation client
+    /// (MCP, the CLI, or a control-channel request). Commands that capture or expose the user's
+    /// screen check it; the app sets it, the transport clears it while it runs a remote call.
+    ui_caller: bool,
 }
 
 impl Default for Session {
@@ -545,12 +569,67 @@ impl Session {
             depth: 0,
             recovery_dir: None,
             media_status: Default::default(),
+            screen: Default::default(),
+            screen_insert_failed: false,
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            ui_caller: false,
+        }
+    }
+
+    /// Install the host's screen-capture device (the app does this once at start-up). Without one,
+    /// screen recording reports itself unavailable.
+    pub fn set_screen_host(&mut self, host: Option<Box<dyn deckcraft_screen::ScreenIn>>) {
+        self.screen.set_host(host);
+    }
+
+    /// Whether commands come from the DeckCraft window (`true`) or an automation client. The app
+    /// sets this once; screen capture commands that start a take or expose window titles require
+    /// it, so an MCP or control-channel caller cannot record the user's screen or read titles.
+    pub fn set_ui_caller(&mut self, ui: bool) {
+        self.ui_caller = ui;
+    }
+
+    pub fn ui_caller(&self) -> bool {
+        self.ui_caller
+    }
+
+    /// Let a running screen recording take the frames the host has captured. The UI calls this
+    /// once a frame with its clock (`now`, in seconds). A capture failure — or a `stop`, which only
+    /// asks the encoder to write the file — ends the take: the finished file is inserted on the
+    /// current slide on the tick that receives it (an empty take is dropped) and one message for
+    /// the status bar says why the recording stopped.
+    pub fn screen_tick(&mut self, now: f64) {
+        let reason = self.screen.tick(now);
+        if let Some((stopped, why)) = self.screen.take_ended_with_reason() {
+            let why = if why.is_empty() { reason.unwrap_or_default() } else { why };
+            // The error texts carry no closing period; the status bar reads complete sentences.
+            let why = if why.is_empty() {
+                String::new()
+            } else if why.ends_with(['.', '!', '?']) {
+                format!("{why} ")
+            } else {
+                format!("{why}. ")
+            };
+            let text = match cmd::screen::insert_take(self, &stopped) {
+                Ok(_) => {
+                    self.screen_insert_failed = false;
+                    format!("{why}The screen recording was inserted on this slide.")
+                }
+                Err(e) => {
+                    self.screen_insert_failed = true;
+                    // The take is kept, so say where: the recorder's window shows this message
+                    // when the status bar is not drawn (a slide show).
+                    format!("{why}The screen recording couldn't be inserted: {e}. The take is kept at {}.", stopped.path.display())
+                }
+            };
+            self.ui_requests.push(UiRequest::Message { text });
+        } else if let Some(text) = reason {
+            self.ui_requests.push(UiRequest::Message { text });
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);

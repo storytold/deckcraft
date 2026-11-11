@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeKind, TextBody, find_shape, find_shape_mut};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, TextBody, find_shape, find_shape_mut};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -65,15 +65,38 @@ struct At {
     trigger: Option<u32>,
     group: usize,
     offset: u32,
+    /// A click effect appears earlier in the tree: everything after it waits for a click.
+    clicked: bool,
 }
 
-fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, depth: usize) {
+fn collect<'a>(e: &'a El, at: At, groups: &mut usize, seen_click: &mut bool, out: &mut Vec<Found<'a>>, depth: usize) {
     if depth > 64 || out.len() > 10_000 {
         return;
     }
     for c in e.elements() {
+        // A click effect makes everything after it wait for that click, whatever branch it sits
+        // in: remember it for the siblings and for everything below them.
+        if click_effect(c) {
+            *seen_click = true;
+        }
+        let at = At { clicked: at.clicked || *seen_click, ..at };
         if c.is("cTn") && c.has_attr("presetClass") {
-            out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset });
+            // A media `afterEffect` with no `grpId`, outside every interactive sequence, before
+            // any click effect, whose own start delay is numeric: that is the writer's
+            // automatic-start trigger for an autoplay clip, not an effect the Animation Pane
+            // lists. It sits before the first group or, when that group starts with the slide
+            // (With Previous / After Previous), as its first child. Anything else (a click effect,
+            // an effect inside an interactive sequence, or one after a click) is authored and
+            // stays an animation, even when it carries no `grpId`.
+            let own_trigger = c.attr("presetClass") == Some("mediacall")
+                && !c.has_attr("grpId")
+                && !at.clicked
+                && at.trigger.is_none()
+                && c.attr("nodeType") == Some("afterEffect")
+                && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim).is_some_and(|d| d != "indefinite");
+            if !own_trigger {
+                out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset });
+            }
             continue;
         }
         let mut at = at;
@@ -94,8 +117,14 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
                 at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
             }
         }
-        collect(c, at, groups, out, depth + 1);
+        collect(c, at, groups, seen_click, out, depth + 1);
     }
+}
+
+/// Whether `e` is, or directly wraps, a click effect's time node.
+fn click_effect(e: &El) -> bool {
+    let is_click = |x: &El| x.is("cTn") && x.attr("nodeType") == Some("clickEffect");
+    is_click(e) || e.child("cTn").is_some_and(is_click)
 }
 
 /// How long an effect holds back an After Previous one, as the show timeline counts it.
@@ -197,6 +226,46 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
     best
 }
 
+/// A slide-start media node (`p:audio` / `p:video` outside a click sequence). Its volume, mute
+/// and playback options come from [`media_settings`].
+pub struct MediaCue {
+    pub shape: ShapeId,
+    pub video: bool,
+    pub interactive: bool,
+    /// PresentationML's own narration flag (`p:audio/@isNarration`): PowerPoint marks narration
+    /// clips with it, whatever the shape is called.
+    pub narration: bool,
+}
+
+fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
+    if depth > 64 || out.len() >= 64 {
+        return;
+    }
+    // A click effect (DeckCraft's own writer puts On Click media "play" here) and an interactive
+    // sequence both wait for a click, so a `playFrom` inside either is not an automatic start.
+    let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
+    if e.is("audio") || e.is("video") {
+        if let Some(node) = e.child("cMediaNode")
+            && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
+            && let Some(shape) = ctx.lookup(spid)
+        {
+            out.push(MediaCue { shape, video: e.is("video"), interactive, narration: e.bool("isNarration") == Some(true) });
+        }
+        return;
+    }
+    for c in e.elements() {
+        walk_media(c, interactive, ctx, out, depth + 1);
+    }
+}
+
+/// Media nodes in the timing tree. Nodes without `presetClass` are not animations.
+pub fn media_cues(ctx: &IdCtx, timing: &El) -> Vec<MediaCue> {
+    let Some(tn) = timing.child("tnLst") else { return vec![] };
+    let mut out = Vec::new();
+    walk_media(tn, false, ctx, &mut out, 0);
+    out
+}
+
 /// Does every behaviour time node (`p:cBhvr/p:cTn`) under the effect node `c` carry `autoRev`?
 fn behaviour_auto_reverses(c: &El) -> bool {
     let mut behaviours = vec![];
@@ -211,9 +280,13 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     for tag in ["video", "audio"] {
         timing.find_all(tag, &mut nodes);
     }
+    // One walk of the timing tree decides the automatic start of every media shape, instead of
+    // one walk per shape.
+    let autoplay = autoplay_map(timing);
     for node in nodes.into_iter().take(10_000) {
         let Some(cm) = node.child("cMediaNode") else { continue };
-        let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
+        let Some(spid) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")) else { continue };
+        let Some(id) = ctx.lookup(spid) else { continue };
         let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
         if let Some(v) = cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
             clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
@@ -230,7 +303,72 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
         }
+        clip.autoplay = starts_alone(&autoplay, spid, cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")));
     }
+}
+/// Whether the timing starts `spid` on its own, without a click.
+///
+/// PowerPoint writes an automatic start as a `playFrom` behaviour in the main sequence, and a
+/// click-to-play clip's behaviour inside an interactive sequence. The media node's own start delay
+/// is no guide: PowerPoint leaves it `indefinite` for automatic starts too. A file without any
+/// such behaviour (DeckCraft writes the delay alone) falls back to that numeric delay.
+fn starts_alone(autoplay: &std::collections::HashMap<u32, bool>, spid: u32, delay: Option<&str>) -> bool {
+    match autoplay.get(&spid) {
+        Some(main) => *main,
+        None => delay.is_some_and(|d| d.trim() != "indefinite"),
+    }
+}
+
+/// Every shape a `playFrom` behaviour starts, mapped to whether it starts without a click. A
+/// shape with several behaviours is automatic if any of them is: an automatic start wins over a
+/// click one, whichever the file lists first.
+///
+/// `interactive` is set inside an interactive sequence, `clicked` once a click effect precedes the
+/// behaviour in the same click group: PowerPoint's first group holds both the automatic start
+/// (before any click effect) and everything the click sets off, so the order in the group decides.
+fn autoplay_map(timing: &El) -> std::collections::HashMap<u32, bool> {
+    let mut out = std::collections::HashMap::new();
+    walk_autoplay(timing, false, false, 0, &mut out);
+    out
+}
+
+fn walk_autoplay(e: &El, interactive: bool, clicked: bool, depth: usize, out: &mut std::collections::HashMap<u32, bool>) {
+    if depth > 64 {
+        return;
+    }
+    // An interactive sequence and a click effect both wait for a click.
+    let interactive = interactive || (e.is("cTn") && matches!(e.attr("nodeType"), Some("interactiveSeq" | "clickEffect")));
+    let clicked = clicked || (e.is("cTn") && e.attr("nodeType") == Some("clickEffect"));
+    if e.is("cmd")
+        && e.attr("cmd").is_some_and(|c| c.trim().to_ascii_lowercase().starts_with("playfrom"))
+        && let Some(spid) = e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid"))
+    {
+        let auto = !(interactive || clicked);
+        out.entry(spid).and_modify(|v| *v |= auto).or_insert(auto);
+    }
+    let mut clicked_so_far = clicked;
+    for c in e.elements() {
+        // A new click group starts its own sequence: the click that opened the previous group does
+        // not trigger this one.
+        let new_group = c.is("cTn") && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim) == Some("indefinite");
+        let child_clicked = if new_group { false } else { clicked_so_far };
+        walk_autoplay(c, interactive, child_clicked, depth + 1, out);
+        // Siblings in one click group play in order: once a click effect has run, every later
+        // effect in that group waits for it. A group's clicks stay inside the group.
+        if new_group {
+            clicked_so_far = clicked;
+        } else if click_effect_inside(c, 0) {
+            clicked_so_far = true;
+        }
+    }
+}
+
+/// Whether this subtree holds a click effect (bounded).
+fn click_effect_inside(e: &El, depth: usize) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    (e.is("cTn") && e.attr("nodeType") == Some("clickEffect")) || e.elements().any(|c| click_effect_inside(c, depth + 1))
 }
 
 /// Flatten the timing tree into the Animation Pane list.
@@ -238,7 +376,8 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
-    collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
+    let mut seen_click = false;
+    collect(tn, At { trigger: None, group: 0, offset: 0, clicked: false }, &mut 0, &mut seen_click, &mut found, 0);
     // Paragraph builds (`bldP build="p"`) by (spid, grpId).
     let by_para: Vec<(u32, String)> = timing
         .child("bldLst")

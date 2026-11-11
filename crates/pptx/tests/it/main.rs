@@ -23,6 +23,7 @@ mod parent_delays;
 mod placeholders;
 mod roundtrip;
 mod sample;
+mod screen_recording;
 mod smartart;
 mod sniff;
 mod table_styles;

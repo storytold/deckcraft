@@ -27,11 +27,36 @@ impl SlideApp {
         Ok(Some(from))
     }
 
+    /// Stop the microphone, if the host gave us one. Recording ends through here so a
+    /// half-captured clip is dropped rather than left running.
+    pub(crate) fn stop_mic(&mut self) {
+        if let Some(mic) = self.services.mic.as_mut() {
+            mic.stop();
+        }
+    }
+
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
+        // A show being replaced loses its take: save it if it captured one, then stop the
+        // microphone it started — the new instance knows nothing about that stream, so its
+        // samples would otherwise land on the next show's first slide.
+        if let Some(show) = self.show.take() {
+            let started = show.mic_started();
+            if show.take_captured() {
+                let now = show.command_now();
+                match (self.last_ctx.clone(), self.session.active().map(|d| d.doc.clone())) {
+                    (Some(ctx), Some(doc)) => self.end_show(&ctx, show, &doc, now),
+                    // No window to draw into, or no document to insert into: say the take went.
+                    _ => self.set_status("The recording was not saved: the window or presentation it was made for is gone"),
+                }
+            }
+            if started {
+                self.stop_mic();
+            }
+        }
         let presenter = self.ui.presenter_view && !reading && self.second_display();
         if let Some(d) = self.session.active() {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
@@ -145,6 +170,28 @@ impl SlideApp {
         Ok(json!({"playing": true, "slide": slide, "duration": duration, "from": from_secs}))
     }
 
+    /// Run the frame's microphone bookkeeping now: a `record.*` command that pauses or stops a
+    /// take between frames must not leave the microphone recording into the next slide.
+    pub(crate) fn sync_record_state(&mut self) {
+        let Some(mut show) = self.show.take() else { return };
+        show::ui::sync_mic(self, &mut show);
+        self.show = Some(show);
+    }
+
+    /// End the show now, through the path its last visible frame uses: close the presenter window,
+    /// stop show-owned media, leave fullscreen and save a take. A hidden show a command ended calls
+    /// this too, so its recording data is never dropped.
+    pub(crate) fn end_show(&mut self, ctx: &egui::Context, mut show: show::Show, doc: &std::sync::Arc<deckcraft_model::Presentation>, now: f64) {
+        if let Some(host) = self.services.presenter.as_mut() {
+            host.close();
+        }
+        self.media.stop_owned(media::Owner::Show);
+        if !show.reading {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
+        show.save_take(self, doc, now);
+    }
+
     /// Keep a hidden show playing from logic alone. `run_logic` does not refresh
     /// `InputState::time`, so the show anchors its last visible time to this monotonic instant
     /// and advances from there. A forced hidden paint draws the current state but does not
@@ -169,10 +216,15 @@ impl SlideApp {
         }
         let input_time = ctx.input(|i| i.time);
         let show_time = show.hidden_logic_time(input_time, now);
+        // Commands run between passes: a hidden show still needs a current clock for them.
+        show.last_now = show_time;
         let keep = show.advance_hidden(&doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
         if !keep {
-            self.show = None;
+            let Some(show) = self.show.take() else { return };
+            let last = show.state.slide;
+            self.end_show(ctx, show, &doc, show_time);
+            let _ = self.run("slide.go", json!({"index": last}));
             return;
         }
         if time_driven {

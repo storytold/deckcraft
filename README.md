@@ -113,8 +113,12 @@ cd deckcraft
 cargo run --release -p deckcraft-cli -- render --sample --all --scale 1 out/
 ```
 
-On Linux, the build also needs the ALSA headers for slide-show sound: `alsa-lib-devel` on Fedora,
-`libasound2-dev` on Debian and Ubuntu, `alsa-lib` on Arch. Without them it stops at `alsa-sys`.
+On Linux, the build also needs the ALSA headers for slide-show sound and the PipeWire and D-Bus
+headers for screen recording (`scap` links `pipewire-sys`, `libspa-sys` and `libdbus-sys`):
+`alsa-lib-devel pipewire-devel dbus-devel clang-devel` on Fedora, `libasound2-dev
+libpipewire-0.3-dev libdbus-1-dev libclang-dev` on Debian and Ubuntu, `alsa-lib pipewire dbus
+clang` on Arch. Without them the build stops at `alsa-sys`, `pipewire-sys` or `libdbus-sys`; the
+PipeWire bindings run `bindgen`, which needs `libclang` (`LIBCLANG_PATH` if it is not found).
 
 Fonts come from [craft-fonts](https://github.com/storytold/craft-fonts): clone it next to this repo
 (`../craft-fonts`) and local builds pick it up automatically; without it DeckCraft uses your system

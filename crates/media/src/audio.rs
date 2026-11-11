@@ -88,6 +88,49 @@ pub fn decode(bytes: &Bytes) -> Result<Pcm> {
     }
 }
 
+/// The most samples [`wav_mono`] writes at 48 kHz: ten minutes. Narration is resampled to this rate
+/// before it is written, so this is the largest WAV a take produces.
+pub const MAX_WAV_SAMPLES: usize = 48_000 * 60 * 10;
+
+/// The most samples [`wav_mono`] writes at `rate`: ten minutes. A higher device rate must not
+/// shorten the take (the old fixed 48 kHz cap cut a 96 kHz take at five minutes).
+fn max_wav_samples(rate: u32) -> usize {
+    (rate as usize).saturating_mul(60 * 10)
+}
+
+/// 16-bit mono PCM WAV. Samples outside −1..1 are clamped; non-finite samples are silence.
+/// At most ten minutes ([`max_wav_samples`]) are written.
+pub fn wav_mono(rate: u32, samples: &[f32]) -> std::result::Result<Vec<u8>, String> {
+    if !(8_000..=192_000).contains(&rate) {
+        return Err(format!("sample rate {rate} is out of range"));
+    }
+    let n = samples.len().min(max_wav_samples(rate));
+    let data_len = n.checked_mul(2).ok_or_else(|| "audio is too long".to_string())?;
+    let riff = 36usize.checked_add(data_len).ok_or_else(|| "audio is too long".to_string())?;
+    if riff > u32::MAX as usize {
+        return Err("audio is too long".into());
+    }
+    let mut b = Vec::with_capacity(44 + data_len);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(riff as u32).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&rate.to_le_bytes());
+    b.extend_from_slice(&rate.saturating_mul(2).to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(data_len as u32).to_le_bytes());
+    for s in samples.iter().take(n) {
+        let x = if s.is_finite() { s.clamp(-1.0, 1.0) } else { 0.0 };
+        let q = (x * 32767.0).round() as i16;
+        b.extend_from_slice(&q.to_le_bytes());
+    }
+    Ok(b)
+}
+
 /// Ogg Opus with our decoder; `None` when the file holds no Opus stream.
 fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
     let src: &[u8] = bytes;
@@ -305,6 +348,16 @@ pub fn resample(pcm: &Pcm, rate: u32) -> Pcm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wav_cap_is_ten_minutes_at_the_recording_rate() {
+        assert_eq!(max_wav_samples(48_000), MAX_WAV_SAMPLES);
+        assert_eq!(max_wav_samples(8_000), 4_800_000);
+        // A 96 kHz device reaches ten minutes only at 57.6M samples; the fixed 48 kHz cap stopped
+        // at half that.
+        assert_eq!(max_wav_samples(96_000), 57_600_000);
+        assert_eq!(max_wav_samples(192_000), 115_200_000);
+    }
 
     #[test]
     fn resample_keeps_duration_and_shape() {

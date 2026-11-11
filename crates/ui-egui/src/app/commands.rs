@@ -181,8 +181,45 @@ impl SlideApp {
                 }
             }
             "show.end" => {
-                self.show = None;
-                self.media.stop_owned(media::Owner::Show);
+                // A take ends through the show's own finish path, and it ends *now*: a control
+                // client can save or export in the very next request, and the file must already
+                // contain the recording.
+                let Some(show) = self.show.take() else {
+                    self.stop_mic();
+                    self.media.stop_owned(media::Owner::Show);
+                    return Ok(json!({"state": "idle"}));
+                };
+                let last = show.state.slide;
+                let now = show.command_now();
+                let doc = self.session.active().map(|d| d.doc.clone());
+                match (self.last_ctx.clone(), doc) {
+                    (Some(ctx), Some(doc)) => self.end_show(&ctx, show, &doc, now),
+                    _ => {
+                        // No pass has run yet (a headless client): nothing was captured either.
+                        self.stop_mic();
+                        self.media.stop_owned(media::Owner::Show);
+                    }
+                }
+                let _ = self.run("slide.go", json!({"index": last}));
+                return Ok(json!({"state": "ended", "slide": last}));
+            }
+            "record.start" | "record.toggle" | "record.pause" | "record.resume" | "record.stop" | "record.reset" | "record.undo" => {
+                // The commands act on the Record view, not on an ordinary slide show: without the
+                // view there is no shell state to start, stop or reset.
+                let Some(show) = self.show.as_mut().filter(|s| s.record) else { return Err("the Record view is not open".into()) };
+                let now = show.command_now();
+                let status = show.record_command(id, now)?;
+                // Pause, resume, stop and start change what the microphone should be doing; do it
+                // here so a hidden show (no frame to run `sync_mic`) is covered.
+                self.sync_record_state();
+                let Some(show) = self.show.as_ref() else { return Err("the Record view is not open".into()) };
+                let rec = &show.record_view;
+                return Ok(json!({
+                    "status": status,
+                    "captured": rec.captured,
+                    "elapsed": rec.elapsed(now),
+                    "slide": show.state.slide,
+                }));
             }
             "animation.preview" => {
                 if p.get("on").and_then(Value::as_bool) == Some(false) {

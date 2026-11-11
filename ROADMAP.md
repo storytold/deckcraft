@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (screen recording from the Record tab: a display, window or region captured by the `screen` crate, encoded with our H.264 encoder and MP4 muxer and inserted as a video clip; parity scores unchanged; previous: trivial, Ogg Opus recovery includes trailing packets without granules in its reported duration) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -307,6 +308,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | Draw: pen pressure scales ink width when the pointer reports it (a mouse or a missing reading stays at the pen width; a stroke saved as a flat 0.5 still draws at the pen width). Tilt is not read |
 | 2026-10-13 | Saving a presentation keeps the embedded workbook behind an unchanged chart, and the chart part's relationships (#335). Editing the chart drops that workbook instead of writing numbers that no longer match it |
 | 2026-10-13 | A presentation whose object ids are used up refuses to grow instead of handing out duplicate ids (#407) |
+| 2026-11-04 | Laser pointer in an ordinary show: hold Ctrl (or the on-screen button) for a dot in the colour chosen in Set Up Slide Show (red, green or blue; written to PPTX). Clear Timing and Clear Narration on the current slide or all slides. Record Slide Show (`show.record`) keeps a recording badge, slide timings, each slide's microphone narration (embedded, played in the show with Play Narrations, and written to PPTX) and pen ink, and replays a recorded laser trace |
+| 2026-11-04 | Screen recording (#1815): a display, window or region (64×64 up, with the pointer) from the Record tab; the take is encoded with our H.264 encoder and MP4 muxer into a temporary file and inserted as a normal video clip with a poster and click-to-play timing, so it undoes like any insert (its PPTX round trip is still being verified in #1820). A capture that disappears keeps the frames it recorded; a display past level 5.1 is recorded downscaled so PowerPoint plays it |
 | 2026-10-13 | macOS: a Finder double-click, Open With, a drop on the Dock icon and `open -a DeckCraft deck.pptx` open the file (#138, #347). `Info.plist` now declares the documents DeckCraft opens (`.deckcraft`, `.pptx`, `.potx`, `.ppsx`, the same set as the Windows installer and the Linux desktop file, kept equal by a test), and the `kAEOpenDocuments` Apple event is handled through the pinned `fmv-macos-events` crate as in GridCraft; the `-psn_` argument older macOS adds on a Finder launch is ignored. PowerPoint stays the default until the user picks DeckCraft |
 | 2026-10-13 | Slide transitions like PowerPoint: every transition and option measured frame by frame against PowerPoint's video export and retuned (curves, directions, soft edges, 3-D perspective, contents moving over backgrounds); PowerPoint's own XML elements and defaults read and written (diagonal Wipe, Zoom, Shape In/Out, Glitter Hexagons, Shred In/Out, Page Curl Single); `deckcraft-cli render-transition` renders frames headless |
 | 2026-10-13 | Wild text cases measured against PowerPoint (102 synthetic slides): bidi by run language, East Asian vertical text upright, mongolianVert/wordArtVert/wordArtVertRtl, underline styles and strikethrough at the font's metrics, centre/right/decimal tabs, East Asian, Thai, Hindi, Arabic and Hebrew numbering, small caps, all-caps "ß", transparent text, soft hyphens, kinsoku, rtlCol and just/dist anchoring, emoji presentation, fallback faces that no longer move the baseline |
@@ -340,7 +343,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Progress log: the laser pointer, Clear Timing / Clear Narration, and the recording show (timings, narration, pen ink, laser trace) with screen recording from the Record tab |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
+| 2026-11-03 | minor | Progress log: screen recording (#1815) — display, window or region capture from the Record tab, an H.264/MP4 recorder in the new `screen` crate, and the take inserted as a video clip |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-03 | trivial | Progress log: web `?host=parent` bridge to a framing page; scores unchanged |

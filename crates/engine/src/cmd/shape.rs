@@ -279,8 +279,10 @@ fn requested_fill(s: &mut Session, p: &Value) -> Result<Option<Option<Fill>>> {
         }))));
     }
     if p.get("picture").is_some() {
-        let (name, bytes) = super::insert::media_bytes(&with_param(p, "data", p.get("picture").cloned().unwrap_or_default()), "shape.fill")?;
-        let ct = super::insert::content_type(&name, &bytes);
+        // One request for both helpers: the type follows the parameters that supplied the bytes.
+        let pic = with_param(p, "data", p.get("picture").cloned().unwrap_or_default());
+        let (name, bytes) = super::insert::media_bytes(&pic, "shape.fill")?;
+        let ct = super::insert::content_type(&super::insert::detect_name(&pic, &name), &bytes);
         let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("shape.fill", NO_ID_SPACE)))?;
         return Ok(Some(Some(Fill::Picture(PictureFill { media, ..Default::default() }))));
     }

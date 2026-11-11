@@ -326,7 +326,7 @@ pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
         None
     } else {
         let (name, bytes) = crate::cmd::insert::media_bytes(p, CMD)?;
-        let ct = crate::cmd::insert::content_type(&name, &bytes);
+        let ct = crate::cmd::insert::content_type(&crate::cmd::insert::detect_name(p, &name), &bytes);
         target_group(s, p, CMD)?;
         Some(s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad(CMD, NO_ID_SPACE)))?)
     };

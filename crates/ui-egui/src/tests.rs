@@ -1833,6 +1833,65 @@ fn ui_screenshot_round_trips_through_the_callable_slot() {
     assert_eq!(harness.state().capture.reserved_bytes(), 0, "the reservation is released after the reply");
 }
 
+/// egui keeps the modifiers of the last `ModifiersChanged`, so every synthetic pointer request
+/// states them: a later click without `ctrl` must not inherit the previous request's Ctrl, which
+/// would leave the show's laser on.
+#[test]
+fn a_pointer_request_always_states_the_current_modifiers() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let ctx = egui::Context::default();
+    let move_with = |app: &mut SlideApp, p: serde_json::Value| {
+        let (req, _reply) = ControlRequest::new("ui.move", p);
+        let _ = control::handle(app, &ctx, &req);
+        std::mem::take(&mut app.synthetic)
+    };
+    let first = move_with(&mut app, json!({"x": 10.0, "y": 20.0, "ctrl": true}));
+    assert!(matches!(first.first(), Some(egui::Event::ModifiersChanged(m)) if m.ctrl), "the request's Ctrl is stated before the move: {first:?}");
+    let second = move_with(&mut app, json!({"x": 10.0, "y": 20.0}));
+    assert!(
+        matches!(second.first(), Some(egui::Event::ModifiersChanged(m)) if !m.ctrl && !m.shift && !m.alt),
+        "a request without modifier fields clears them: {second:?}"
+    );
+}
+
+/// `show.end` closes a show at once, unless a take is running: then it asks the next frame to run
+/// the same finish path the show's own end uses, which saves the take.
+#[test]
+fn ending_a_show_with_a_take_goes_through_the_finish_path() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    app.session.execute("slide.new", &json!({})).unwrap();
+    app.start_show(0, false);
+    app.run("show.end", json!({})).expect("end");
+    assert!(app.show.is_none(), "no take: the show closes at once");
+    app.start_show(0, false);
+    {
+        let show = app.show.as_mut().unwrap();
+        show.record = true;
+        show.record_view.captured = true;
+    }
+    app.run("show.end", json!({})).expect("end");
+    assert!(app.show.is_none(), "a captured take ends the show at once, through finish");
+}
+
+/// A control pointer request leads with its `ModifiersChanged`; that event is injected with the
+/// first pointer event only, so a drag still reaches the canvas one pass per step.
+#[test]
+fn a_pointer_request_injects_its_modifiers_with_its_first_pointer_event() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let ctx = egui::Context::default();
+    let pos = egui::pos2(10.0, 10.0);
+    app.queue_input(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+    app.queue_input(egui::Event::PointerMoved(pos));
+    app.queue_input(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::COMMAND });
+    app.queue_input(egui::Event::PointerMoved(egui::pos2(20.0, 10.0)));
+    let mut raw = egui::RawInput::default();
+    app.raw_input_hook(&ctx, &mut raw);
+    assert_eq!(raw.events.len(), 2, "the modifiers and the first pointer event: {:?}", raw.events);
+    assert!(matches!(raw.events[0], egui::Event::ModifiersChanged(_)));
+    assert!(matches!(raw.events[1], egui::Event::PointerMoved(_)));
+    assert_eq!(app.synthetic_queued_len(), 2, "the rest of the drag waits for the next pass");
+}
+
 /// A hidden/logic-only iteration drains control requests and autosave/screenshot queues; it does
 /// not need a painted frame for those side effects.
 #[test]

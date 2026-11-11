@@ -1,4 +1,4 @@
-use super::picture::{content_type, media_bytes};
+use super::picture::{content_type, detect_name, media_bytes};
 use super::{NO_ID_SPACE, Result, Session, ShapeKind, Value, bad, base64_encode, json};
 
 const ALBUM_MAX_ITEMS: usize = 48;
@@ -27,7 +27,10 @@ enum AlbumFrame {
 }
 
 struct AlbumPic {
+    /// The name the user sees (the caption and the shape's description).
     name: String,
+    /// The source file's name, which alone can type bytes that came inline from a path.
+    type_name: String,
     bytes: Vec<u8>,
     px_w: f64,
     px_h: f64,
@@ -285,7 +288,11 @@ fn album_items(p: &Value) -> Result<Vec<AlbumItem>> {
             return Err(bad("insert.photoAlbum", "the album is larger than 64 MB"));
         }
         total = next;
-        let ct = content_type(&name, &bytes);
+        // The type comes from the name the bytes came from; the display name stays as the user
+        // gave it. The `insert.picture` that places the item gets inline `data` (no path), so the
+        // source name travels with it as `typeName`.
+        let type_name = detect_name(item, &name);
+        let ct = content_type(&type_name, &bytes);
         if !ct.starts_with("image/") {
             return Err(bad("insert.photoAlbum", format!("{name} is not a picture")));
         }
@@ -295,6 +302,7 @@ fn album_items(p: &Value) -> Result<Vec<AlbumItem>> {
         let (px_w, px_h) = image_px(&bytes);
         items.push(AlbumItem::Picture(AlbumPic {
             name,
+            type_name,
             bytes,
             px_w,
             px_h,
@@ -617,8 +625,15 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
             } else {
                 media.map(|m| m.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "picture".into())
             };
+            // The dialog only carries display names back, so the seed says what the bytes are: an
+            // SVG whose tag lies past the sniffer's first bytes needs its source name, and the
+            // stored content type is the only record of it.
+            let type_name = media
+                .map(|m| if m.content_type == "image/svg+xml" { "picture.svg".to_string() } else { m.name.clone() })
+                .unwrap_or_else(|| "picture".to_string());
             items.push(json!({
                 "name": name,
+                "typeName": type_name,
                 "data": media.map(|m| base64_encode(&m.data)).unwrap_or_default(),
                 "rot": sh.xfrm.map(|x| x.rot).unwrap_or(0.0),
                 "brightness": fill.adjust.brightness,
@@ -694,7 +709,8 @@ fn insert_album(s: &mut Session, items: Vec<AlbumItem>, opts: &AlbumOpts, at: Op
                 let (title, placed) = place_pictures(width, height, layout, &pics, captions);
                 for (pic, cell) in pics.iter().zip(placed) {
                     let data = base64_encode(&pic.bytes);
-                    let inserted = s.execute("insert.picture", &json!({"name": pic.name, "data": data, "rect": cell.pic}))?;
+                    let inserted =
+                        s.execute("insert.picture", &json!({"name": pic.name, "typeName": pic.type_name, "data": data, "rect": cell.pic}))?;
                     let Some(id) = inserted.get("id").and_then(Value::as_u64) else {
                         return Err(bad("insert.photoAlbum", "the picture was not inserted"));
                     };
@@ -721,4 +737,50 @@ fn insert_album(s: &mut Session, items: Vec<AlbumItem>, opts: &AlbumOpts, at: Op
     }
     s.execute("slide.go", &json!({"index": first}))?;
     Ok(json!({"slides": slides, "first": first, "pictures": pictures, "album": album_id}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A photo picked from a path keeps its file name for the type: the album's own check, and the
+    /// `insert.picture` that places it (which gets inline data, so the name is all it has).
+    #[test]
+    fn a_photo_album_picture_from_a_path_is_typed_by_its_file_name() {
+        let mut s = Session::with_new();
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("drawing.svg");
+        // The tag sits past the 512 bytes the sniffer scans, so only the file name can say `svg`.
+        let svg =
+            format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
+        std::fs::write(&path, svg.as_bytes()).unwrap();
+        let r = s
+            .execute(
+                "insert.photoAlbum",
+                &json!({"pictures": [{"path": path.to_string_lossy(), "name": "Drawing"}], "layout": "1", "captions": true}),
+            )
+            .expect("an svg named only by its path is a photo");
+        assert_eq!(r["slides"], 1, "{r}");
+        // The caption comes from the display name the user gave, not the path's file name.
+        let texts: Vec<String> =
+            s.doc().unwrap().doc.slides.iter().flat_map(|sl| sl.shapes.iter()).filter_map(|sh| sh.text.as_ref().map(|t| t.text())).collect();
+        assert!(texts.iter().any(|t| t == "Drawing"), "the caption keeps the display name: {texts:?}");
+
+        // Reopening the album hands the dialog's items back: `items_from_slides` must seed the
+        // source type, or the SVG is refused the second time round.
+        let _ = s.execute("insert.photoAlbumEdit", &json!({})).expect("the edit asks its dialog for the items");
+        let params = s
+            .ui_requests
+            .iter()
+            .find_map(|r| match r {
+                crate::UiRequest::Dialog { id, params } if id == "photoAlbum" => Some(params.clone()),
+                _ => None,
+            })
+            .expect("the edit dialog carries the album's items");
+        let items = params.get("items").cloned().unwrap_or(Value::Null);
+        let first = items.get(0).cloned().unwrap_or(Value::Null);
+        assert!(first.get("typeName").and_then(Value::as_str).is_some_and(|t| t.ends_with(".svg")), "the seed says what the bytes are: {params}");
+        let edited = s.execute("insert.photoAlbumEdit", &json!({"pictures": items, "layout": "1"})).expect("the reopened album re-inserts its svg");
+        assert_eq!(edited["slides"], 1, "{edited}");
+    }
 }
