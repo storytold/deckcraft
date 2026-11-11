@@ -328,8 +328,9 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     crate::panes::flush_alt_text(app);
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
     // A take is unsaved work too: the prompt must offer save, discard and cancel for it even when
-    // no document is dirty.
-    let recording = app.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) || app.record.is_recording();
+    // no document is dirty. That covers an active rehearsal's buffered timings as well as a
+    // capturing or stopped Record take.
+    let recording = app.show.as_ref().is_some_and(|s| s.has_unsaved_take()) || app.record.is_recording();
     if names.is_empty() && !recording {
         app.quit_confirmed = true;
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

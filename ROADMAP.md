@@ -348,6 +348,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-03 | trivial | Progress log: Record ▸ Edit Clear Recording and Reset to Cameo (#1817, #1818). Scores and milestone names unchanged |
+| 2026-11-03 | trivial | Progress log: Record ▸ Preview plays the recorded timings and narration; writes nothing and keeps the editor's slide (#1812). Scores and milestone names unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-03 | trivial | Progress log: web `?host=parent` bridge to a framing page; scores unchanged |

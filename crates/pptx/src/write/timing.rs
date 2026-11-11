@@ -592,9 +592,14 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
     }
 }
 
-/// A slide-start media node: `spid`, volume in thousandths of a percent, delay, narration, video,
-/// and the video-only settings the timing node carries (loop, hide while not playing, full screen).
-type MediaNode = (u32, u32, u32, bool, bool, bool, bool, bool);
+/// A slide-start media node: `spid`, volume in thousandths of a percent, delay, and the flags
+/// the timing node carries (narration, video, and the video-only loop / hide / full-screen).
+struct MediaNode {
+    spid: u32,
+    vol: u32,
+    delay_ms: u32,
+    flags: NodeFlags,
+}
 
 /// Slide-start media: narration, autoplay audio and autoplay video.
 fn autoplay_media(shapes: &[Shape], idmap: &IdMap) -> Vec<MediaNode> {
@@ -610,16 +615,18 @@ fn autoplay_media(shapes: &[Shape], idmap: &IdMap) -> Vec<MediaNode> {
                     if let Some(spid) = idmap.get(s.id) {
                         let vol =
                             if m.volume.is_finite() { (m.volume.clamp(0.0, 1.0) * 100_000.0).round().clamp(0.0, 100_000.0) as u32 } else { 100_000 };
-                        out.push((
+                        out.push(MediaNode {
                             spid,
                             vol,
-                            m.start_delay_ms.unwrap_or(0),
-                            m.narration,
-                            m.video,
-                            m.loop_play,
-                            m.hide_while_not_playing,
-                            m.full_screen,
-                        ));
+                            delay_ms: m.start_delay_ms.unwrap_or(0),
+                            flags: NodeFlags {
+                                narration: m.narration,
+                                video: m.video,
+                                loop_play: m.loop_play,
+                                hide_when_stopped: m.hide_while_not_playing,
+                                full_screen: m.full_screen,
+                            },
+                        });
                     }
                 }
                 ShapeKind::Group { children, .. } => walk(children, idmap, out, depth + 1),
@@ -839,8 +846,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
-    for (spid, vol, delay_ms, narration, video, loop_play, hide_when_stopped, full_screen) in audio {
-        audio_node(w, &mut ids, spid, vol, delay_ms, NodeFlags { narration, video, loop_play, hide_when_stopped, full_screen });
+    for n in audio {
+        audio_node(w, &mut ids, n.spid, n.vol, n.delay_ms, n.flags);
     }
     w.close("p:childTnLst");
     w.close("p:cTn");

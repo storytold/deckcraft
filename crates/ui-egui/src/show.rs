@@ -462,6 +462,16 @@ impl Show {
         self.rehearse || (self.record && self.capturing)
     }
 
+    /// A take that quitting must not silently drop: an active rehearsal's buffered timings, or a
+    /// Record take that is capturing or stopped with the recording still in the show. Never a
+    /// preview, which saves nothing.
+    pub(crate) fn has_unsaved_take(&self) -> bool {
+        if self.recording_preview {
+            return false;
+        }
+        self.rehearse || (self.record && (self.capturing || self.record_view.captured))
+    }
+
     /// Whether the Record view's chrome is on screen. Unlike [`Self::keeps_recording`] this holds
     /// while the take is idle, so its buttons never reach the show as a click on the slide.
     fn record_chrome(&self) -> bool {

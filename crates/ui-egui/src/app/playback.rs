@@ -84,7 +84,10 @@ impl SlideApp {
             }
             self.show = Some(show);
         }
-        if self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) {
+        // A rehearsal holds buffered timings worth keeping too: ending it through the same take
+        // path writes them before the new show replaces it. A recording preview saves nothing,
+        // so it still ends without writing.
+        if self.show.as_ref().is_some_and(|s| s.has_unsaved_take()) {
             self.end_show_now();
         }
         // The show and Record ▸ Audio share one microphone. A finished take is inserted on the

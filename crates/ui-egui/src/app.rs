@@ -253,9 +253,10 @@ impl SlideApp {
             // A description still in the Alt Text pane's draft is unsaved work: write it before the
             // question below decides whether the document is dirty.
             panes::flush_alt_text(self);
-            // A paused or stopped take still holds the whole recording in the show, so closing
-            // must ask for that too, not only while it is capturing.
-            let recording = self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) || self.record.is_recording();
+            // A paused or stopped take still holds the whole recording in the show, as does an
+            // active rehearsal's buffered timings, so closing must ask for that too, not only
+            // while a take is capturing.
+            let recording = self.show.as_ref().is_some_and(|s| s.has_unsaved_take()) || self.record.is_recording();
             let dirty = self.session.documents().iter().any(|d| d.is_dirty());
             if self.quit_confirmed {
                 // The user said yes: the take is still saved, then the show goes. A Record ▸ Audio
