@@ -623,8 +623,10 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
                     break 'slides;
                 }
                 items.push(json!({"text": text.trim()}));
-            } else if items.len() >= ALBUM_MAX_ITEMS && !slide.shapes.is_empty() {
-                // Past the item limit, a slide with other content (a drawing) would be deleted by a replace.
+            } else if items.len() >= ALBUM_MAX_ITEMS
+                && (!slide.shapes.is_empty() || !slide.notes.text().trim().is_empty() || !slide.comments.is_empty())
+            {
+                // Past the item limit, a slide with other content (a drawing, notes, comments) would be deleted by a replace.
                 omitted = true;
                 break 'slides;
             }
@@ -814,6 +816,24 @@ mod seed_tests {
         let mut extra = doc.slides.last().unwrap().as_ref().clone();
         extra.id = deckcraft_model::SlideId(doc.alloc_id().unwrap());
         extra.shapes = vec![Shape { id: ShapeId(90_000), ..Default::default() }];
+        doc.slides.push(Arc::new(extra));
+        let e = s.execute("insert.photoAlbumEdit", &json!({"pictures": [{"text": "x"}], "layout": "1"})).unwrap_err().to_string();
+        assert!(e.contains("delete the rest"), "{e}");
+    }
+
+    /// Notes or comments on a shapeless slide past the limit are content a replace would delete.
+    #[test]
+    fn editing_an_album_with_a_notes_only_slide_past_the_limit_is_refused() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let texts: Vec<Value> = (0..ALBUM_MAX_ITEMS).map(|i| json!({"text": format!("t{i}")})).collect();
+        s.execute("insert.photoAlbum", &json!({"pictures": texts, "layout": "1"})).unwrap();
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let mut extra = doc.slides.last().unwrap().as_ref().clone();
+        extra.id = deckcraft_model::SlideId(doc.alloc_id().unwrap());
+        extra.shapes.clear();
+        extra.notes = deckcraft_model::text::TextBody::from_text("speaker notes");
         doc.slides.push(Arc::new(extra));
         let e = s.execute("insert.photoAlbumEdit", &json!({"pictures": [{"text": "x"}], "layout": "1"})).unwrap_err().to_string();
         assert!(e.contains("delete the rest"), "{e}");
