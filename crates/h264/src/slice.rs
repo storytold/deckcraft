@@ -619,4 +619,16 @@ mod poc_tests {
             }
         }
     }
+
+    /// An MMCO5 reference picture can leave `prev_ref_lsb` far below zero; the next type 0
+    /// picture's MSB comparison (`lsb - prev_lsb`) must not overflow.
+    #[test]
+    fn poc_type0_tolerates_negative_prev_ref_lsb() {
+        let sps = sps(0);
+        let sh = header(1, 5, 0, [0, 0], 1);
+        let mut state = PocState { prev_ref_msb: i32::MAX, prev_ref_lsb: i32::MIN, ..PocState::default() };
+        let poc = state.compute(&sh, &sps);
+        let _ = poc.frame();
+        state.update(&sh, &poc);
+    }
 }
