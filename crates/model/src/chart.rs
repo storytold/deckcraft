@@ -491,6 +491,17 @@ impl Default for Chart {
 }
 
 impl Chart {
+    /// The text sizes in points this chart's axis labels and legend, and its title, are drawn at
+    /// in a `w` × `h` frame: the file's own (PowerPoint draws chart text at them, not scaled to the
+    /// chart), else a size that suits the frame, in whole points as PowerPoint for Mac draws chart
+    /// text (a 16.36 pt size shows at 16 pt). A .pptx is written with these sizes, so PowerPoint
+    /// shows the chart as DeckCraft does.
+    pub fn text_sizes(&self, w: f64, h: f64) -> (f64, f64) {
+        let auto = h.min(w) / 22.0;
+        let base = self.text_size.unwrap_or(if auto.is_finite() { auto.clamp(7.0, 18.0).round() } else { 10.0 });
+        (base, self.title_size.unwrap_or((base * 1.4).round()))
+    }
+
     fn sample_treemap_sunburst(kind: ChartType) -> Self {
         let mut c = Chart {
             kind,

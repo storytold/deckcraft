@@ -180,6 +180,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-26 | Slide reorder: dragging one of several selected slides in the thumbnail pane or the Slide Sorter moves the whole selection, as one run in deck order and one undo step; the slides stay selected and join the section they land in. `slide.move {ids, to}` does the same from the control channel and MCP; dragging an unselected slide still moves only that slide |
 | 2026-10-26 | A space, digit or punctuation after a symbol-font character (`a:sym`, e.g. a Wingdings arrow typed in a run) draws in the run's own font, as PowerPoint does; it stayed in the symbol font, whose space is about four times as wide (synthetic probe) |
 | 2026-10-29 | Review ▸ Accessibility checks text runs in every paragraph and nested group descendants for low contrast, reporting each affected shape once; the all-black control stays clear |
+| 2026-10-26 | A chart written to .pptx carries the text sizes DeckCraft draws it at (in the `c:txPr` that also carries its text colour, and in the title's and axis titles' rich text), so PowerPoint shows a DeckCraft-made chart as DeckCraft does instead of at its 10 pt / 18 pt defaults; automatic chart text sizes are whole points, as PowerPoint for Mac draws chart text (synthetic probe) |
 | 2026-10-25 | Windows installer: the Start menu shortcut takes the icon embedded in `deckcraft.exe` instead of an MSI `<Icon>`, so a taskbar pin keeps its icon after an update (#1114); a pin that already lost it has to be unpinned and pinned again once |
 | 2026-10-29 | Picture Format: the Picture Styles row shows as many styles as leave room for the groups after it, and its arrow opens all 24. With every style in the row, Crop and Size sat past the ribbon's edge in any window narrower than about 2500 px, so Crop could not be seen without scrolling the ribbon (#1232). In the default 1440 px window Crop, Height and Width are now in view, and from 1600 px the whole tab fits |
 | 2026-10-24 | AutoFormat as you type: a paragraph that starts with `*`, `-`, `--`, `>`, `<>`, `1.`, `1)`, `I.`, `i.`, `A.`, `a.` or `a)` and a space or tab becomes a bulleted or numbered list in that style; Backspace right after puts the typed text back, and Tools ▸ AutoCorrect and `text.autocorrect {lists}` turn it off |
@@ -376,6 +377,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-16 | trivial | Progress log: PNG export with a transparent background (#784) |
 | 2026-10-16 | trivial | Progress log: a `.ppsx` from the system starts the slide show (#862) |
 | 2026-10-26 | trivial | Progress log: spaces after symbol-font characters |
+| 2026-10-26 | trivial | Progress log: written charts carry their text sizes |
 | 2026-10-24 | trivial | Progress log: picture and embedded object fills |
 | 2026-10-22 | trivial | Progress log: table text takes the master's other-text style |
 | 2026-10-16 | trivial | Progress log: responsive mouse-wheel navigation on the fitted canvas |
