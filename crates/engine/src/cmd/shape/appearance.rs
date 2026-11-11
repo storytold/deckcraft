@@ -74,7 +74,7 @@ pub(super) fn change(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// `{stops: [[pos 0–1, color], …], kind?: linear|radial|rectangular|path, angle?: deg (linear),
 /// focus?: [l, t, r, b] fractions (radial/rectangular/path: where the first stop sits),
-/// rotateWithShape?}`. The renderer keeps only linear and radial gradients upright when
+/// scaled?: bool (linear), tile?: [l, t, r, b] fractions, rotateWithShape?}`. The renderer keeps only linear and radial gradients upright when
 /// `rotateWithShape` is false; rectangular and path gradients turn with the shape.
 pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     let stops: Vec<GradientStop> = v
@@ -97,6 +97,14 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
             Some([f(0)?, f(1)?, f(2)?, f(3)?])
         })
         .unwrap_or([0.5, 0.5, 0.5, 0.5]);
+    let tile = v
+        .get("tile")
+        .and_then(Value::as_array)
+        .and_then(|a| {
+            let f = |i: usize| a.get(i).and_then(Value::as_f64).filter(|x| x.is_finite());
+            Some([f(0)?, f(1)?, f(2)?, f(3)?])
+        })
+        .unwrap_or([0.0; 4]);
     let mut stops = stops;
     stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
     let path = |p: &str| GradientShape::Path { path: p.into(), focus };
@@ -106,11 +114,11 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
         Some("path" | "shape") => path("shape"),
         _ => GradientShape::Linear {
             angle: v.get("angle").and_then(Value::as_f64).filter(|a| a.is_finite()).unwrap_or(90.0).rem_euclid(360.0),
-            scaled: false,
+            scaled: v.get("scaled").and_then(Value::as_bool).unwrap_or(false),
         },
     };
     Some(Gradient {
-        tile: [0.0; 4],
+        tile,
         stops,
         shape,
         rotate_with_shape: v.get("rotateWithShape").and_then(Value::as_bool).unwrap_or(true),
