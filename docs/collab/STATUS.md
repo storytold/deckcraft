@@ -8,15 +8,26 @@ carries an optional `preview` local id that the server never stores, so a client
 exactly as before. On top of `1b057cbf` are two review-pass commits — `5b6fcfcd` (code) and
 `9b43c611` (docs) — then the STATUS sync `fd1ee71a`, then four commits: `d56272e6`, `082b7c7b` and
 `2bbe723f` (code, the second review) and `4a64e764` (docs, the second review's triage and the
-restart limits), and then `9ad80547` (code, tests and docs: the fourth review's triage).
-**`9ad80547` is the delivered head — `git ls-remote fork refs/heads/collab/pr15` and `gh pr view
-2012 --json headRefOid` both name it.** The triage of `5852391245` is therefore
-delivered, not local: `4a64e764` is its parent and the commit adds 7 files, +498/−116. On top of it
-locally, not pushed, are `f6239baf` (the docs-only STATUS sync), `891187f5` (code and tests: the
-fifth review's triage, §Fifth CodeRabbit review) and this docs commit (the triage table, the
-session log, `production.md`'s close-failure contract). `7f93069e` — the connector-glue commit the earlier notes
+restart limits), then `9ad80547` (code, tests and docs: the fourth review's triage), then
+`f6239baf` (the docs-only STATUS sync), `891187f5` (code and tests: the fifth review's triage,
+§Fifth CodeRabbit review) and `38a20a9c` (docs: the triage table, the session log,
+`production.md`'s close-failure contract).
+**`38a20a9c` is the delivered head — and this branch's local HEAD, with a clean tree.
+`git ls-remote fork refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` both name it.**
+The push delivered `891187f5` and `38a20a9c` (the four workflow runs on the new head were created
+2026-11-11T11:31:32Z), so nothing is un-pushed: the fifth review's triage is delivered too — a room
+whose snapshot fails stays live and answers `500` instead of closing, a snapshot that does not
+cover a rewind is refused and not installed, and a move dropped by a role change is cancelled
+exactly. The triage of `5852391245` was already delivered in `9ad80547`: `4a64e764` is its parent
+and the commit adds 7 files, +498/−116. `7f93069e` — the connector-glue commit the earlier notes
 named — is a dangling commit with the same subject as `2bbe723f` and is **not** in the branch. The
-CodeRabbit findings of #2012 (11 Major + 7 Minor) are triaged and fixed, with that table in §PR
+gate on `38a20a9c` has not run: the four workflow runs (CI, House rules, Nix, SonarCloud) were
+created 2026-11-11T11:31:32Z and are all `completed / action_required`, the only check run is
+CodeRabbit `completed / skipped`, the combined status is empty and `mergeStateStatus` is
+`UNSTABLE`. Three PRs for this one feature are open in `storytold/deckcraft` — #2012
+(`38a20a9c`), #1998 (`6e9d10e7`, `CLEAN`) and #1975 (`be706a11`, `UNSTABLE`) — and closing the
+superseded two is the maintainer's decision, not an agent's.
+The CodeRabbit findings of #2012 (11 Major + 7 Minor) are triaged and fixed, with that table in §PR
 publication. The second review's commits close the second review (§Second CodeRabbit review): a
 shape drag now goes through the room, a client commit
 is bound to the hub it was authorized against, a base reopens at its own version, one resync is on
@@ -99,21 +110,26 @@ description is [`pr10.md`](pr10.md).
 ## PR publication (2026-11-11)
 
 **[PR #2012](https://github.com/storytold/deckcraft/pull/2012)** is open from
-`copoka/deckcraft:collab/pr15` (head `9ad80547`) into `storytold/deckcraft:main` and is **ready**
+`copoka/deckcraft:collab/pr15` (head `38a20a9c`) into `storytold/deckcraft:main` and is **ready**
 (not a draft); its body is [`pr10.md`](pr10.md). GitHub reports `MERGEABLE` / `UNSTABLE` at
-`9ad80547` with an empty `reviewDecision`; the PR carries 112 commits, 99 files, +40 739/−562
-(the counts come from the PR API's `commits` field; `gh pr view --json commits` pages at 100, which
-is where the earlier 100-commit figure came from). The
+`38a20a9c` with an empty `reviewDecision`; the PR carries 115 commits, 100 files, +41 185/−567
+(the counts are the PR API's `commits`/`changed_files`/`additions`/`deletions`; `gh pr view --json
+commits` pages at 100, which is why an earlier figure differed). The
 fork head **is** the PR head: `git ls-remote fork refs/heads/collab/pr15` →
-`9ad805473e64863d18ca1785d797c6a22c7587c0` and `gh pr view 2012 --json headRefOid` → the same, so
-the second review's commits, the STATUS sync and the fourth review's triage are all delivered.
-Only `f6239baf` (docs) and `891187f5` (the fifth review's triage) sit on top locally, not pushed.
+`38a20a9c21346054c5e973a989b04f894b5a2a42` and `gh pr view 2012 --json headRefOid` → the same, and
+it is this branch's local HEAD. Everything the branch holds is delivered: the second review's
+commits, the fourth review's triage, the STATUS sync, the fifth review's triage (`891187f5`) and
+its docs commit (`38a20a9c`).
 
-The **gate on that head is still not green**: the four workflow runs (CI, House rules, Nix,
-SonarCloud) are `completed / action_required`, created 2026-11-11T01:24:39Z — they wait for a
-maintainer's approval. CodeRabbit's last completed check run is `completed / success` on
-`4a64e764`; its run on `9ad80547` was submitted as review `5855491108` at 07:49:58Z (see §Fifth
-CodeRabbit review). Its five submitted reviews are
+The **gate on that head is still not green, and nothing on it ran**: the four workflow runs (CI,
+House rules, Nix, SonarCloud) on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
+`completed / action_required` — they wait for a maintainer's approval and executed no job. The
+combined status for `38a20a9c` is empty (`state: pending`, no statuses) and the only check run is
+CodeRabbit's, `completed / skipped` (started 11:33:45Z), so the rollup carries no other signal;
+GitHub's verdict is `mergeStateStatus: UNSTABLE` for exactly that reason. CodeRabbit's
+last completed check run is `completed / success` on `4a64e764`; its run on `9ad80547` was
+submitted as review `5855491108` at 07:49:58Z (see §Fifth CodeRabbit review). Its five submitted
+reviews are
 all on record: `5845265345` (16:15Z, on `1b057cbf`, 11 Major + 7 Minor — fixed in `5b6fcfcd` +
 `9b43c611`), `5846427839` (17:33Z, on `9b43c611a`, five actionable comments — triaged and closed
 in `d56272e6`, §Second CodeRabbit review), `5848775355` (20:22Z, on `fd1ee71a`), which
@@ -124,10 +140,18 @@ and one Minor — triaged in §Fifth CodeRabbit review).
 
 Merging is a human step. Closing the superseded PRs is a human decision as well.
 
-[PR #1998](https://github.com/storytold/deckcraft/pull/1998) still points at
-`copoka/deckcraft:collab/pr11` (head `6e9d10e7`) and is superseded by #2012.
-[PR #1975](https://github.com/storytold/deckcraft/pull/1975) points at the pre-rebase
-`collab/pr10` head. Both stay open — **closing them is a human decision**.
+**Three pull requests for one feature are open in `storytold/deckcraft`** (checked 2026-11-11):
+
+| PR | Branch | Head | GitHub state |
+|---|---|---|---|
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `38a20a9c` | `MERGEABLE` / `UNSTABLE` (its gate has not run) |
+| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `6e9d10e7` | `MERGEABLE` / `CLEAN` |
+| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `be706a11` | `MERGEABLE` / `UNSTABLE` |
+
+#2012 is the top of the stack and supersedes the other two: #1998 carries the earlier
+`collab/pr11` head and #1975 the earlier `collab/pr10` head, both already contained in #2012's
+history. The overlap is resolved by the maintainer, not by this project — **the agent does not
+close them**; a person decides which pull request survives.
 
 ### CodeRabbit triage on #2012 (`1b057cbf`, 11 Major + 7 Minor)
 
@@ -1126,7 +1150,7 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `9ad80547` = the fork head = the PR head), rebased onto `origin/main`; the first review pass, the STATUS sync, the second review's three code commits and the fourth review's triage are pushed; the head's four CI runs are `action_required` (awaiting approval); the second review's five findings are closed, the third review found nothing in code, and the fourth review's four Major and one Minor are triaged and delivered in `9ad80547` (four fixed, one docs correction); CodeRabbit's fifth review started 07:32:03Z on `9ad80547` and had not submitted | [`pr10.md`](pr10.md); merge is a human decision |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, head `38a20a9c` = the fork head = the PR head = the local branch head), rebased onto `origin/main`; every review pass, the STATUS sync and the fourth and fifth reviews' triage are delivered; the head's four workflow runs are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), its only check run is CodeRabbit `skipped`, the combined status is empty and GitHub reads `UNSTABLE`; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
 
 Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
 pass pushed as `9b43c611a`, on
@@ -1158,7 +1182,8 @@ against the un-fixed code first and failed there: `a_viewer_drag_moves_nothing_a
 `a_gap_during_an_outstanding_resync_never_puts_a_second_request_on_the_wire`,
 `a_base_reopens_at_the_version_it_was_taken_at`,
 `a_commit_is_bound_to_the_hub_it_was_authorized_against`. Those three code commits and the
-`4a64e764` docs commit sit under the delivered head `9ad80547` (fork and PR head).
+`4a64e764` docs commit sit under the delivered head `9ad80547` (fork and PR head), which is in
+turn under `891187f5` and `38a20a9c`.
 
 Re-run on 2026-11-11 after the fourth review pass (this session, on `4a64e764`, before the
 commit): `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets -- -D warnings`
@@ -1389,8 +1414,11 @@ was not touched, and PR #1975 is unchanged.
 9. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
     (§ Rebase onto origin/main), so the fork branches no longer fast-forward and the publish was a
     `--force-with-lease`; that push is done. Nothing was pushed to `storytold/deckcraft`. The fork
-    head and the PR head are `9ad80547`; the fourth review's triage is delivered in it. On top of
-    it the local branch has one docs-only commit (this sync), not pushed.
+    head and the PR head are `38a20a9c`, and it is the local branch head as well: the fourth
+    review's triage is delivered in `9ad80547`, the fifth's in `891187f5`, and `38a20a9c` is the
+    docs commit on top. Nothing is pending a push. The gate still needs a maintainer's approval (see
+    §PR publication), and three PRs for one feature stay open until a person closes the superseded
+    two.
 
 ## How to run locally
 
@@ -1432,20 +1460,19 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `9ad80547` =
-   fork head = PR head, `MERGEABLE`/`UNSTABLE`, 112 commits, 99 files, +40 739/−562); the first
-   review pass, the STATUS sync, the second review's three code commits and the fourth review's
-   triage are pushed. The gate on
-   that head is **not green**: CI, House rules,
-   Nix and SonarCloud wait in `action_required` (created 2026-11-11T01:24:39Z) for a maintainer's
-   approval. CodeRabbit's second review is closed, the third (`fd1ee71a`) found nothing in code,
-   and the fourth (`5852391245`, on `4a64e764`) is triaged and delivered in `9ad80547`: four
-   findings fixed, one docs correction. The fifth (`5855491108`, submitted 07:49:58Z on
-   `9ad80547`) is triaged in §Fifth CodeRabbit review: all five findings fixed in `891187f5`,
-   which is local — the next step for a person is `git push fork collab/pr15` (a fast-forward of
-   three commits over the delivered head: `f6239baf`, `891187f5` and its docs commit). Closing
-   #1998/#1975 (superseded) and merging are human steps. Do not touch CI and do not mention
-   agents.
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (head `38a20a9c` =
+   fork head = PR head = local branch head, `MERGEABLE`/`UNSTABLE`, 115 commits, 100 files,
+   +41 185/−567); every review pass and the STATUS sync are delivered. The gate on that head is
+   **not green and has not run**: CI, House rules, Nix and SonarCloud are `action_required`
+   (created 2026-11-11T11:31:32Z) and wait for a maintainer's approval, the only check run is
+   CodeRabbit `skipped`, and the combined status is empty — which is why GitHub reads `UNSTABLE`.
+   CodeRabbit's second review is closed, the third (`fd1ee71a`) found nothing in code, the fourth
+   (`5852391245`, on `4a64e764`) is delivered in `9ad80547`, and the fifth (`5855491108`,
+   submitted 07:49:58Z on `9ad80547`) is delivered in `891187f5` with its docs in `38a20a9c`; the
+   next step for a person is the maintainer's approval of the runs, then review and merge.
+   #1998 (`6e9d10e7`, `CLEAN`) and #1975 (`be706a11`, `UNSTABLE`) are superseded by #2012 and stay
+   open until a person closes them — **do not close them from an agent session**. Do not touch CI
+   and do not mention agents.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
@@ -1485,6 +1512,29 @@ token from the cabinet.
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-11 — STATUS moved to the delivered head `38a20a9c`; the gate has not run
+
+- **What was wrong.** The header, §PR publication, the acceptance matrix and the next-session
+  notes still called `9ad80547` the delivered head and kept `f6239baf`/`891187f5` "local, not
+  pushed". The push had happened: `git ls-remote fork refs/heads/collab/pr15`, `gh pr view 2012
+  --json headRefOid` and the local branch all name `38a20a9c`, and the tree is clean.
+- **Delivered.** `891187f5` — code and tests: a room whose snapshot fails stays live and answers
+  `500` instead of closing, a snapshot that does not cover a rewind is refused and not installed,
+  and a move dropped by a role change is cancelled exactly — and `38a20a9c` — docs: the fifth
+  review's triage table, the session log and `production.md`'s close-failure contract. The fourth
+  review's triage stays delivered in `9ad80547`.
+- **CI on `38a20a9c`.** The four workflow runs (CI, House rules, Nix, SonarCloud) were created
+  2026-11-11T11:31:32Z and are all `completed / action_required`: none executed, they wait for a
+  maintainer's approval. The only check run is CodeRabbit `completed / skipped` (11:33:45Z), the
+  combined status is empty (`state: pending`, no statuses), so the rollup is that one `skipping`
+  and nothing else — hence `mergeStateStatus: UNSTABLE` (`mergeable: MERGEABLE`).
+- **Three PRs, one feature.** #2012 (`38a20a9c`, `UNSTABLE`), #1998 (`6e9d10e7`, `CLEAN`) and
+  #1975 (`be706a11`, `UNSTABLE`) are all open, #2012 at the top of the stack. Closing the two
+  superseded ones is the maintainer's decision; an agent session does not close them.
+- **Commit.** One docs-only commit on `collab/pr15` on top of `38a20a9c`; not pushed, so the fork
+  and the PR still point at `38a20a9c`. No code changed, no gate was rerun, the fork was not
+  touched.
 
 ### 2026-11-11 — the fifth CodeRabbit review of #2012 (`5855491108`), triaged
 
