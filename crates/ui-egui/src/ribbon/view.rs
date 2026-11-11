@@ -1,36 +1,73 @@
-use super::{Icon, SlideApp, Target, Ui, big_button, big_button_ex, group, json, rows, run, theme};
+use super::{Icon, SlideApp, Target, Ui, big_button, big_button_ex, group, json, rows, run, small_button, theme, vec2};
 
 pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
     use crate::ViewMode;
-    group(ui, |ui| {
-        for (icon, label, id, mode) in [
-            (Icon::ViewNormal, "Normal", "view.normal", Some(ViewMode::Normal)),
-            (Icon::ViewOutline, "Outline\nView", "view.outline", Some(ViewMode::Outline)),
-            (Icon::ViewSorter, "Slide\nSorter", "view.sorter", Some(ViewMode::Sorter)),
-            (Icon::ViewNotesPage, "Notes\nPage", "view.notesPage", Some(ViewMode::NotesPage)),
-            (Icon::ViewReading, "Reading\nView", "view.reading", None),
-        ] {
-            let sel = mode.is_some_and(|m| app.ui.view == m);
-            if big_button_ex(ui, icon, label, true, false, sel).0.clicked() {
-                let _ = app.run(id, json!({}));
+    group(ui, "Presentation Views", |ui| {
+        let views = [
+            (Icon::ViewNormal, "Normal", "Normal", "view.normal", Some(ViewMode::Normal)),
+            (Icon::ViewOutline, "Outline\nView", "Outline View", "view.outline", Some(ViewMode::Outline)),
+            (Icon::ViewSorter, "Slide\nSorter", "Slide Sorter", "view.sorter", Some(ViewMode::Sorter)),
+            (Icon::ViewNotesPage, "Notes\nPage", "Notes Page", "view.notesPage", Some(ViewMode::NotesPage)),
+            (Icon::ViewReading, "Reading\nView", "Reading View", "view.reading", None),
+        ];
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            // Measured three rows between 680 and 1040 points: two, two and one view.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                for row in [&views[0..2], &views[2..4], &views[4..5]] {
+                    ui.horizontal(|ui| {
+                        for (icon, _big, small_label, id, mode) in row {
+                            let sel = mode.is_some_and(|m| app.ui.view == m);
+                            if small_button(ui, *icon, small_label, true, sel).clicked() {
+                                let _ = app.run(id, json!({}));
+                            }
+                        }
+                    });
+                }
+            });
+        } else {
+            for (icon, label, _small, id, mode) in views {
+                let sel = mode.is_some_and(|m| app.ui.view == m);
+                if big_button_ex(ui, icon, label, true, false, sel).0.clicked() {
+                    let _ = app.run(id, json!({}));
+                }
             }
         }
     });
-    group(ui, |ui| {
-        let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
-        if big_button_ex(ui, Icon::SlideMaster, "Slide\nMaster", true, false, in_master).0.clicked() {
-            let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
-        }
-        let in_handout = app.session.active().is_some_and(|d| d.selection.target == Target::Handout);
-        if big_button_ex(ui, Icon::HandoutMaster, "Handout\nMaster", true, false, in_handout).0.clicked() {
-            let _ = app.run(if in_handout { "view.closeMaster" } else { "view.handoutMaster" }, json!({}));
-        }
-        let in_notes = app.session.active().is_some_and(|d| d.selection.target == Target::NotesMaster);
-        if big_button_ex(ui, Icon::NotesMaster, "Notes\nMaster", true, false, in_notes).0.clicked() {
-            let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
+    group(ui, "Master Views", |ui| {
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            // Measured three rows between 760 and 1120 points: one master per row.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
+                if small_button(ui, Icon::SlideMaster, "Slide Master", true, in_master).clicked() {
+                    let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
+                }
+                let in_handout = app.session.active().is_some_and(|d| d.selection.target == Target::Handout);
+                if small_button(ui, Icon::HandoutMaster, "Handout Master", true, in_handout).clicked() {
+                    let _ = app.run(if in_handout { "view.closeMaster" } else { "view.handoutMaster" }, json!({}));
+                }
+                let in_notes = app.session.active().is_some_and(|d| d.selection.target == Target::NotesMaster);
+                if small_button(ui, Icon::NotesMaster, "Notes Master", true, in_notes).clicked() {
+                    let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
+                }
+            });
+        } else {
+            let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
+            if big_button_ex(ui, Icon::SlideMaster, "Slide\nMaster", true, false, in_master).0.clicked() {
+                let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
+            }
+            let in_handout = app.session.active().is_some_and(|d| d.selection.target == Target::Handout);
+            if big_button_ex(ui, Icon::HandoutMaster, "Handout\nMaster", true, false, in_handout).0.clicked() {
+                let _ = app.run(if in_handout { "view.closeMaster" } else { "view.handoutMaster" }, json!({}));
+            }
+            let in_notes = app.session.active().is_some_and(|d| d.selection.target == Target::NotesMaster);
+            if big_button_ex(ui, Icon::NotesMaster, "Notes\nMaster", true, false, in_notes).0.clicked() {
+                let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
+            }
         }
     });
-    group(ui, |ui| {
+    group(ui, "Show", |ui| {
         rows(ui, |ui| {
             let mut r = app.ui.ruler;
             if ui.checkbox(&mut r, "Ruler").changed() {
@@ -53,7 +90,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             app.ui.notes = !n;
         }
     });
-    group(ui, |ui| {
+    group(ui, "Zoom", |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, "Zoom", true, true, false);
         if main.on_hover_text("Zoom").clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
@@ -76,7 +113,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             app.ui.zoom = None;
         }
     });
-    group(ui, |ui| {
+    group(ui, "Window", |ui| {
         let has = app.session.active().is_some();
         let on = app.doc_window.is_some();
         let resp = big_button_ex(ui, Icon::NewWindow, "New\nWindow", has, false, on).0;
@@ -84,7 +121,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             let _ = app.run("view.newWindow", json!({}));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Color/Grayscale", |ui| {
         let gs = app.ui.grayscale;
         if big_button_ex(ui, Icon::Grayscale, "Grayscale", true, false, gs).0.clicked() {
             app.ui.grayscale = !gs;

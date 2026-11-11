@@ -11,7 +11,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
         None => (None, 0, String::new(), String::new(), String::new()),
     };
     let at = row.min(n.saturating_sub(1));
-    group(ui, |ui| {
+    group(ui, "Create Graphic", |ui| {
         if big_button(ui, Icon::SmartArt, "Text\nPane", gid.is_some()).on_hover_text("Type and organise the diagram's text").clicked() {
             run(app, "view.pane", json!({"pane": "smartart", "toggle": true}));
         }
@@ -48,7 +48,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "app.smartArtPictureDialog", json!({"id": gid, "index": at}));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Layouts", |ui| {
         let (main, arrow) = small_button_ex(ui, Icon::Layout, "Layouts", gid.is_some(), false, true);
         let outline = sel.as_ref().map(|(_, d)| d.nodes.clone());
         if let Some(arrow) = arrow {
@@ -68,7 +68,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
             });
         }
     });
-    group(ui, |ui| {
+    group(ui, "SmartArt Styles", |ui| {
         let (main, arrow) = small_button_ex(ui, Icon::ChangeChartType, "Change Colors", gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {

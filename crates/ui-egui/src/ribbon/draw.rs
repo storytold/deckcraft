@@ -5,7 +5,7 @@ use super::{Icon, SlideApp, Ui, big_button, big_button_ex, group, json, run};
 pub(super) fn draw(app: &mut SlideApp, ui: &mut Ui) {
     use deckcraft_engine::ToolKind;
     let cur = app.session.tool.kind.clone();
-    group(ui, |ui| {
+    group(ui, "Drawing Tools", |ui| {
         let sel = matches!(cur, ToolKind::Select);
         if big_button_ex(ui, Icon::LassoSelect, "Select", true, false, sel).0.clicked() {
             app.session.set_tool(ToolKind::Select);
@@ -15,7 +15,7 @@ pub(super) fn draw(app: &mut SlideApp, ui: &mut Ui) {
             app.session.set_tool(ToolKind::Ink { mode: "eraser".into(), color: deckcraft_color::Rgba::BLACK, width: 2.0 });
         }
     });
-    group(ui, |ui| {
+    group(ui, "Pens", |ui| {
         let pens: [(Icon, &str, &str, deckcraft_color::Rgba, f64); 5] = [
             (Icon::Pen, "Black Pen", "pen", deckcraft_color::Rgba::rgb(20, 20, 20), 1.5),
             (Icon::Pen, "Red Pen", "pen", deckcraft_color::Rgba::rgb(0xD8, 0x3F, 0x3F), 1.5),
@@ -30,7 +30,7 @@ pub(super) fn draw(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    group(ui, |ui| {
+    group(ui, "Convert", |ui| {
         let has_ink = app.session.doc().is_ok_and(|d| d.shapes().iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Ink { .. })));
         let r = big_button(ui, Icon::InkToShape, "Ink to\nShape", has_ink);
         if r.on_hover_text("Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes").clicked() {

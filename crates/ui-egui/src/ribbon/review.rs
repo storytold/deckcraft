@@ -1,4 +1,4 @@
-use super::{Icon, SlideApp, Ui, Value, big, big_button, big_button_ex, enabled, group, json, rows, run, small_button, tip};
+use super::{Icon, SlideApp, Ui, Value, big, big_button, big_button_ex, enabled, group, json, rows, run, small, small_button, tip, vec2};
 
 fn comment_nav(app: &mut SlideApp, ui: &mut Ui, forward: bool) {
     let (icon, label, id) = if forward { (Icon::NextComment, "Next", "comment.next") } else { (Icon::PrevComment, "Previous", "comment.prev") };
@@ -18,32 +18,65 @@ fn comment_nav(app: &mut SlideApp, ui: &mut Ui, forward: bool) {
 }
 
 pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
-        big(app, ui, Icon::Spelling, "Spelling", "app.dialog", json!({"id": "spelling"}));
-        big(app, ui, Icon::Thesaurus, "Thesaurus", "review.thesaurusPane", json!({}));
+    group(ui, "Proofing", |ui| {
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            // Measured two rows between 819 and 880 points: one proofing command per row.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                small(app, ui, Icon::Spelling, "Spelling", "app.dialog", json!({"id": "spelling"}));
+                small(app, ui, Icon::Thesaurus, "Thesaurus", "review.thesaurusPane", json!({}));
+            });
+        } else {
+            big(app, ui, Icon::Spelling, "Spelling", "app.dialog", json!({"id": "spelling"}));
+            big(app, ui, Icon::Thesaurus, "Thesaurus", "review.thesaurusPane", json!({}));
+        }
     });
-    group(ui, |ui| {
+    group(ui, "Accessibility", |ui| {
         big(app, ui, Icon::Accessibility, "Check\nAccessibility", "app.dialog", json!({"id": "accessibility"}));
     });
-    group(ui, |ui| {
+    group(ui, "Language", |ui| {
         let r = big_button(ui, Icon::Translate, "Translate", false);
         let _ = r.on_hover_text("Translation needs a language model (not bundled)");
         big(app, ui, Icon::Language, "Language", "app.dialog", json!({"id": "language"}));
     });
-    group(ui, |ui| {
-        big(app, ui, Icon::Compare, "Compare", "app.compareDialog", json!({}));
-        let comparing = enabled(app, "review.endCompare");
-        if big_button(ui, Icon::Check, "Accept\nAll", comparing).clicked() {
-            run(app, "review.accept", json!({"all": true}));
-        }
-        if big_button(ui, Icon::Close, "End\nReview", comparing).clicked() {
-            run(app, "review.endCompare", json!({}));
-            if app.ui.pane.as_deref() == Some("revisions") {
-                app.ui.pane = None;
+    group(ui, "Compare", |ui| {
+        // PowerPoint calls this measured section Activity; DeckCraft's activity tracking is
+        // Compare/Accept/End Review. It uses the same two-row band as Proofing.
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                ui.horizontal(|ui| {
+                    small(app, ui, Icon::Compare, "Compare", "app.compareDialog", json!({}));
+                    let comparing = enabled(app, "review.endCompare");
+                    if small_button(ui, Icon::Check, "Accept All", comparing, false).clicked() {
+                        run(app, "review.accept", json!({"all": true}));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let comparing = enabled(app, "review.endCompare");
+                    if small_button(ui, Icon::Close, "End Review", comparing, false).clicked() {
+                        run(app, "review.endCompare", json!({}));
+                        if app.ui.pane.as_deref() == Some("revisions") {
+                            app.ui.pane = None;
+                        }
+                    }
+                });
+            });
+        } else {
+            big(app, ui, Icon::Compare, "Compare", "app.compareDialog", json!({}));
+            let comparing = enabled(app, "review.endCompare");
+            if big_button(ui, Icon::Check, "Accept\nAll", comparing).clicked() {
+                run(app, "review.accept", json!({"all": true}));
+            }
+            if big_button(ui, Icon::Close, "End\nReview", comparing).clicked() {
+                run(app, "review.endCompare", json!({}));
+                if app.ui.pane.as_deref() == Some("revisions") {
+                    app.ui.pane = None;
+                }
             }
         }
     });
-    group(ui, |ui| {
+    group(ui, "Comments", |ui| {
         big(app, ui, Icon::NewComment, "New\nComment", "app.dialog", json!({"id": "comment"}));
         rows(ui, |ui| {
             comment_nav(app, ui, false);

@@ -3,7 +3,7 @@ use super::home::layout_menu;
 use super::view::zoom_menu;
 use super::{
     Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, big_button_ex, enabled, group, json, menu_item, pos2,
-    run, tip, vec2,
+    run, small, small_button, tip, vec2,
 };
 
 /// Photo Album is a split button: the main click starts a new album, the arrow edits one.
@@ -29,8 +29,50 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
 
 // ---------- Insert ----------
 
+/// Shapes as a one-line cell for the stacked Illustrations form.
+fn small_shapes(app: &mut SlideApp, ui: &mut Ui) {
+    let r = small_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"), false);
+    egui::Popup::menu(&r).show(|ui| {
+        if let Some(p) = shapes_gallery(ui) {
+            app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
+        }
+    });
+}
+
+fn small_icons(app: &mut SlideApp, ui: &mut Ui) {
+    let r = small_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"), false);
+    egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
+}
+
+fn small_chart(app: &mut SlideApp, ui: &mut Ui) {
+    let r = small_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"), false);
+    egui::Popup::menu(&r).show(|ui| {
+        for k in chart_menu_types() {
+            if k.is_none() {
+                ui.separator();
+            }
+            if let Some(k) = k
+                && ui.button(k.label()).clicked()
+            {
+                run(app, "insert.chart", json!({"type": format!("{k:?}")}));
+            }
+        }
+    });
+}
+
+fn small_wordart(app: &mut SlideApp, ui: &mut Ui) {
+    let r = small_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"), false);
+    egui::Popup::menu(&r).show(|ui| {
+        for i in 0..6 {
+            if ui.button(format!("WordArt style {}", i + 1)).clicked() {
+                run(app, "insert.wordArt", json!({"style": i}));
+            }
+        }
+    });
+}
+
 pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Slides", |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
         if main.clicked() {
             run(app, "slide.new", json!({}));
@@ -39,7 +81,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             egui::Popup::menu(&a).width(420.0).show(|ui| layout_menu(app, ui, "slide.new"));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Tables", |ui| {
         let r = big_button(ui, Icon::Table, "Table", enabled(app, "insert.table"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some((rr, cc)) = table_grid_picker(ui) {
@@ -57,37 +99,65 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
-        big(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
-        photo_album_button(app, ui);
-        let r = big_button(ui, Icon::Screenshot, "Screenshot", false);
-        let _ = r.on_hover_text("Screenshot (not available yet)");
+    group(ui, "Images", |ui| {
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            // Measured three rows between 1120 and 1520 points, then back to one row.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                small(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
+                small(app, ui, Icon::Picture, "Photo Album", "insert.photoAlbum", json!({}));
+                let r = small_button(ui, Icon::Screenshot, "Screenshot", false, false);
+                let _ = r.on_hover_text("Screenshot (not available yet)");
+            });
+        } else {
+            big(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
+            photo_album_button(app, ui);
+            let r = big_button(ui, Icon::Screenshot, "Screenshot", false);
+            let _ = r.on_hover_text("Screenshot (not available yet)");
+        }
     });
-    group(ui, |ui| {
-        let r = big_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"));
-        egui::Popup::menu(&r).show(|ui| {
-            if let Some(p) = shapes_gallery(ui) {
-                app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
-            }
-        });
-        let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
-        egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
-        big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
-        let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
-        egui::Popup::menu(&r).show(|ui| {
-            for k in chart_menu_types() {
-                if k.is_none() {
-                    ui.separator();
+    group(ui, "Illustrations", |ui| {
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            // Measured three rows between 929 and 1520 points, then back to one row.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+                ui.horizontal(|ui| {
+                    small_shapes(app, ui);
+                    small_icons(app, ui);
+                });
+                ui.horizontal(|ui| {
+                    small(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
+                });
+                ui.horizontal(|ui| {
+                    small_chart(app, ui);
+                });
+            });
+        } else {
+            let r = big_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"));
+            egui::Popup::menu(&r).show(|ui| {
+                if let Some(p) = shapes_gallery(ui) {
+                    app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
                 }
-                if let Some(k) = k
-                    && ui.button(k.label()).clicked()
-                {
-                    run(app, "insert.chart", json!({"type": format!("{k:?}")}));
+            });
+            let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
+            egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
+            big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
+            let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
+            egui::Popup::menu(&r).show(|ui| {
+                for k in chart_menu_types() {
+                    if k.is_none() {
+                        ui.separator();
+                    }
+                    if let Some(k) = k
+                        && ui.button(k.label()).clicked()
+                    {
+                        run(app, "insert.chart", json!({"type": format!("{k:?}")}));
+                    }
                 }
-            }
-        });
+            });
+        }
     });
-    group(ui, |ui| {
+    group(ui, "Links", |ui| {
         let r = big_button(ui, Icon::Zoom, "Zoom", enabled(app, "insert.zoom"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(300.0).show(|ui| zoom_menu(app, ui));
         big(app, ui, Icon::Link, "Link", "app.dialog", json!({"id": "hyperlink"}));
@@ -105,28 +175,46 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Comments", |ui| {
         big(app, ui, Icon::Comment, "Comment", "app.dialog", json!({"id": "comment"}));
     });
-    group(ui, |ui| {
-        big(app, ui, Icon::TextBox, "Text\nBox", "insert.textBox", json!({}));
-        big(app, ui, Icon::HeaderFooter, "Header &\nFooter", "app.dialog", json!({"id": "headerFooter"}));
-        let r = big_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"));
-        egui::Popup::menu(&r).show(|ui| {
-            for i in 0..6 {
-                if ui.button(format!("WordArt style {}", i + 1)).clicked() {
-                    run(app, "insert.wordArt", json!({"style": i}));
+    group(ui, "Text", |ui| {
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            // Measured three rows from 1280 points.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+                ui.horizontal(|ui| {
+                    small(app, ui, Icon::TextBox, "Text Box", "insert.textBox", json!({}));
+                    small(app, ui, Icon::HeaderFooter, "Header & Footer", "app.dialog", json!({"id": "headerFooter"}));
+                });
+                ui.horizontal(|ui| {
+                    small_wordart(app, ui);
+                    small(app, ui, Icon::DateTime, "Date & Time", "insert.dateTime", json!({}));
+                });
+                ui.horizontal(|ui| {
+                    small(app, ui, Icon::SlideNumber, "Slide Number", "insert.slideNumber", json!({}));
+                });
+            });
+        } else {
+            big(app, ui, Icon::TextBox, "Text\nBox", "insert.textBox", json!({}));
+            big(app, ui, Icon::HeaderFooter, "Header &\nFooter", "app.dialog", json!({"id": "headerFooter"}));
+            let r = big_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"));
+            egui::Popup::menu(&r).show(|ui| {
+                for i in 0..6 {
+                    if ui.button(format!("WordArt style {}", i + 1)).clicked() {
+                        run(app, "insert.wordArt", json!({"style": i}));
+                    }
                 }
-            }
-        });
-        big(app, ui, Icon::DateTime, "Date &\nTime", "insert.dateTime", json!({}));
-        big(app, ui, Icon::SlideNumber, "Slide\nNumber", "insert.slideNumber", json!({}));
+            });
+            big(app, ui, Icon::DateTime, "Date &\nTime", "insert.dateTime", json!({}));
+            big(app, ui, Icon::SlideNumber, "Slide\nNumber", "insert.slideNumber", json!({}));
+        }
     });
-    group(ui, |ui| {
+    group(ui, "Symbols", |ui| {
         big(app, ui, Icon::Equation, "Equation", "app.dialog", json!({"id": "equation"}));
         big(app, ui, Icon::Symbol, "Symbol", "app.dialog", json!({"id": "symbol"}));
     });
-    group(ui, |ui| {
+    group(ui, "Media", |ui| {
         big(app, ui, Icon::Video, "Video", "app.insertVideoDialog", json!({}));
         big(app, ui, Icon::Audio, "Audio", "app.insertAudioDialog", json!({}));
     });

@@ -1,11 +1,79 @@
 use super::{
     Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
-    pos2, rows, run, theme, vec2, widgets,
+    pos2, rows, run, small, small_button, theme, vec2, widgets,
 };
 
 // ---------- Animations ----------
 
 /// Render animation preview, gallery, add/effect options, trigger, timing, and playback controls.
+/// Add Animation, opening the same effect menu in either row form.
+fn add_animation_button(app: &mut SlideApp, ui: &mut Ui, has_sel: bool, big: bool) {
+    let r = if big {
+        big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel)
+    } else {
+        small_button(ui, Icon::AddAnimation, "Add Animation", has_sel, false)
+    };
+    let max_h = (r.ctx.viewport_rect().height() - 160.0).max(120.0);
+    egui::Popup::menu(&r).width(260.0).show(|ui| {
+        egui::ScrollArea::vertical().id_salt("add_animation").max_height(max_h).show(ui, |ui| {
+            for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 != AnimClass::Media) {
+                if ui
+                    .button(format!(
+                        "{} — {}",
+                        a.1,
+                        match a.2 {
+                            AnimClass::Entrance => "Entrance",
+                            AnimClass::Emphasis => "Emphasis",
+                            AnimClass::Exit => "Exit",
+                            _ => "Motion",
+                        }
+                    ))
+                    .clicked()
+                {
+                    run(app, "animation.add", json!({"effect": a.0, "class": a.2.xml()}));
+                }
+            }
+        });
+    });
+}
+
+fn trigger_button(app: &mut SlideApp, ui: &mut Ui, cur: Option<&deckcraft_model::Animation>, big: bool) {
+    let r =
+        if big { big_button(ui, Icon::Trigger, "Trigger", cur.is_some()) } else { small_button(ui, Icon::Trigger, "Trigger", cur.is_some(), false) };
+    egui::Popup::menu(&r).show(|ui| {
+        if ui.button("On Click of… (none)").clicked() {
+            run(app, "animation.timing", json!({"trigger": null}));
+        }
+        let shapes: Vec<(u32, String)> =
+            app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
+        for (id, name) in shapes {
+            if ui.button(format!("On Click of {name}")).clicked() {
+                run(app, "animation.timing", json!({"trigger": id}));
+            }
+        }
+    });
+}
+
+fn painter_button(app: &mut SlideApp, ui: &mut Ui, big: bool) {
+    let on = app.session.anim_painter.is_some();
+    let en = enabled(app, "animation.painter");
+    let r = if big {
+        big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on).0
+    } else {
+        small_button(ui, Icon::AnimationPainter, "Animation Painter", en, on)
+    };
+    let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
+    if r.double_clicked() {
+        run(app, "animation.painter", json!({"sticky": true}));
+    } else if r.clicked() {
+        if on {
+            app.session.anim_painter = None;
+        } else {
+            run(app, "animation.painter", json!({}));
+        }
+    }
+}
+
 pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
     let cur: Option<deckcraft_model::Animation> = app.session.active().and_then(|d| {
@@ -13,14 +81,14 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let id = d.selection.shapes.first()?;
         s.animations.iter().find(|a| a.shape == *id).cloned()
     });
-    group(ui, |ui| {
+    group(ui, "Preview", |ui| {
         let playing = app.anim_preview_active();
         let (resp, _) = big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
         if resp.on_hover_text("Play this slide's animations on the canvas").clicked() {
             run(app, "animation.preview", json!({}));
         }
     });
-    group(ui, |ui| {
+    group(ui, "Animation", |ui| {
         let quick: Vec<_> = deckcraft_model::anim::ANIMATIONS
             .iter()
             .filter(|a| {
@@ -101,61 +169,52 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
-        let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
-        // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
-        // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
-        let max_h = (r.ctx.viewport_rect().height() - 160.0).max(120.0);
-        egui::Popup::menu(&r).width(260.0).show(|ui| {
-            egui::ScrollArea::vertical().id_salt("add_animation").max_height(max_h).show(ui, |ui| {
-                for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 != AnimClass::Media) {
-                    if ui
-                        .button(format!(
-                            "{} — {}",
-                            a.1,
-                            match a.2 {
-                                AnimClass::Entrance => "Entrance",
-                                AnimClass::Emphasis => "Emphasis",
-                                AnimClass::Exit => "Exit",
-                                _ => "Motion",
-                            }
-                        ))
-                        .clicked()
-                    {
-                        run(app, "animation.add", json!({"effect": a.0, "class": a.2.xml()}));
-                    }
-                }
+    group(ui, "Advanced Animation", |ui| {
+        if crate::ribbon_fit::group_level(ui.ctx()) == crate::ribbon_fit::STACKED {
+            // Measured three rows from 520 points: add/pane, trigger, painter.
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                ui.horizontal(|ui| {
+                    add_animation_button(app, ui, has_sel, false);
+                    small(app, ui, Icon::AnimationPane, "Animation Pane", "view.pane", json!({"pane": "animation"}));
+                });
+                ui.horizontal(|ui| {
+                    trigger_button(app, ui, cur.as_ref(), false);
+                });
+                ui.horizontal(|ui| {
+                    painter_button(app, ui, false);
+                });
             });
-        });
-        big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
-        let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
-        egui::Popup::menu(&r).show(|ui| {
-            if ui.button("On Click of… (none)").clicked() {
-                run(app, "animation.timing", json!({"trigger": null}));
-            }
-            let shapes: Vec<(u32, String)> =
-                app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
-            for (id, name) in shapes {
-                if ui.button(format!("On Click of {name}")).clicked() {
-                    run(app, "animation.timing", json!({"trigger": id}));
-                }
-            }
-        });
-        let on = app.session.anim_painter.is_some();
-        let en = enabled(app, "animation.painter");
-        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
-        let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
-        if r.double_clicked() {
-            run(app, "animation.painter", json!({"sticky": true}));
-        } else if r.clicked() {
-            if on {
-                app.session.anim_painter = None;
-            } else {
-                run(app, "animation.painter", json!({}));
-            }
+        } else {
+            let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
+            let max_h = (r.ctx.viewport_rect().height() - 160.0).max(120.0);
+            egui::Popup::menu(&r).width(260.0).show(|ui| {
+                egui::ScrollArea::vertical().id_salt("add_animation").max_height(max_h).show(ui, |ui| {
+                    for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 != AnimClass::Media) {
+                        if ui
+                            .button(format!(
+                                "{} — {}",
+                                a.1,
+                                match a.2 {
+                                    AnimClass::Entrance => "Entrance",
+                                    AnimClass::Emphasis => "Emphasis",
+                                    AnimClass::Exit => "Exit",
+                                    _ => "Motion",
+                                }
+                            ))
+                            .clicked()
+                        {
+                            run(app, "animation.add", json!({"effect": a.0, "class": a.2.xml()}));
+                        }
+                    }
+                });
+            });
+            big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
+            trigger_button(app, ui, cur.as_ref(), true);
+            painter_button(app, ui, true);
         }
     });
-    group(ui, |ui| {
+    group(ui, "Timing", |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Start:");

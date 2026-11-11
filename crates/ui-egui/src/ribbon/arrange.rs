@@ -70,7 +70,7 @@ fn align_to_slide(choice: Option<&(Vec<ShapeId>, bool)>, selection: &[ShapeId]) 
 
 /// Render ordering, align, group/ungroup, and rotate controls for the current selection.
 pub(super) fn arrange_group(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Arrange", |ui| {
         let sel = enabled(app, "arrange.bringForward");
         let (m, a) = big_button_ex(ui, Icon::BringForward, "Bring\nForward", sel, true, false);
         if m.clicked() {
@@ -129,7 +129,7 @@ pub(super) fn size_group(app: &mut SlideApp, ui: &mut Ui) {
         .session
         .active()
         .and_then(|d| d.selection.shapes.first().and_then(|id| d.shape(*id).map(|s| deckcraft_engine::cmd::xfrm_of(&d.doc, &d.selection, s))));
-    group(ui, |ui| {
+    group(ui, "Size", |ui| {
         rows(ui, |ui| {
             let Some(x) = bx else {
                 ui.label("Height:");

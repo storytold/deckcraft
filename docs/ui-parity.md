@@ -1,5 +1,6 @@
 # UI parity with PowerPoint
 
+> **Last reviewed:** 2026-11-10 · **Last updated:** 2026-11-10 · **Change:** minor (ribbon card is three bands — tabs, commands, group names — at every width; sections fold to one-row drop-downs when their layout does not fit, as PowerPoint does at 1024; the group-name band never disappears, while sections change row counts independently at measured widths; group names verified against the reference build) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -147,6 +148,36 @@ Alt+Shift+arrows in text are handled elsewhere (#78, #93).
 
 ## Visual fidelity
 
+### Ribbon card bands
+
+The ribbon card is drawn in three bands: the tab strip, the command row, and a group-name row
+under the commands. The group-name band is unconditional: at every window width the card keeps
+all three bands, narrow windows scroll the groups horizontally and keep their names, and only the
+ribbon-collapse toggle (double-click a tab) hides the commands and names together. The reference
+for the layout is the unconditional three-band card; the width behaviour was measured from a 480
+px window to a maximized 1938 px window at a 1024x768 client reference on a 125% display, where
+the name row never disappears, while sections change their control rows independently at measured widths (1↔3, and 3→2 wide; see the measured section rows below). DeckCraft mirrors
+this: `RIBBON_LABEL_H` is part of the card at every width, and every group paints its reference
+group name centred below its commands in the dim text token at 11 pt (100%), sized at least as
+wide as the name so long names never cross the separators. Separators run from the top of the
+commands through the name band.
+
+The card also folds sections as it narrows, as PowerPoint does. Each section has its designed
+layout and a one-row drop-down layout: the group's icon in the command band, its name and a
+chevron in the name band, and the whole section in a popup on click. The planner measures each
+section's width at both layouts on earlier frames and folds sections from the right until the row
+fits, so the sections a reader reaches first keep their layout longest. At 819x614 pt (a
+1024x768 client on a 125% display) Clipboard keeps its three rows and every other Home section is
+one drop-down, matching the measured reference; at 1228x768 pt Clipboard, Slides, Font, Paragraph
+and Images expand.
+
+Home's Font and Paragraph sections follow the measured three-row to wide two-row change: their
+natural layout is three control rows, and from 1280 pt (1600 px at 125%) for Font and from 1520 pt
+(1900 px) for Paragraph the same controls are rearranged into two rows. The label band and
+separator span both forms, and a folded section's drop-down still holds the three-row layout.
+Every group keeps its name in the band in both layouts, and a row that is still too wide after
+every section has folded scrolls with the edge chevrons, as before.
+
 Colours, spacing, ribbon card and tab geometry follow the observations in
 `plan/powerpoint/01-observed-ui.md`; the ribbon and menu icons are original (~240, drawn in code)
 and must not imitate Microsoft's. Insert › Icons places Lucide stroke icons (ISC, release 1.56.0)
@@ -169,10 +200,78 @@ consistency is open (#73, #56).
 | A screenshot comparison pass on the most-used tabs | 2–4 |
 | **Total** | **~26–46** |
 
+## Row forms not modelled
+
+These measured row changes have no renderer, for the reasons given (not layout work left undone):
+
+- Set Up, View › Color/Grayscale and View › Window have fewer than three commands, so they cannot fill
+  a three-row form; they keep one row.
+- Design › Themes is measured 1 → 0 rows at 1024 px; the ribbon has no zero-row form (DeckCraft keeps
+  the Themes gallery).
+- Camera, Power BI, Forms, Monitors, Captions, Ink and Draw Undo do not exist in DeckCraft (feature
+  gaps), so their measured groups are absent.
+
+## Measured section rows
+
+Office 16.0.20527, 125% DPI, unmaximised window; widths are outer px. Each entry is the section's
+control-row count (1, 2 or 3; a 5 is a menu with nested rows) at the width where it changes.
+
+| Tab | Section | Rows by width |
+|---|---|---|
+| Home | Slides | 450: 1 → 1400: 3 |
+| Home | Font | 450: 1 → 1161: 3 → 1600: 2 |
+| Home | Paragraph | 450: 1 → 1300: 3 → 1900: 5 |
+| Home | Drawing | 450: 1 → 1600: 3 |
+| Home | Editing | 450: 1 → 1900: 3 |
+| Insert | Images | 450: 1 → 1400: 3 → 1900: 1 |
+| Insert | Illustrations | 450: 1 → 1161: 3 → 1900: 1 |
+| Insert | Text | 450: 1 → 1600: 3 |
+| Design | Themes | 450: 1 → 1024: 0 |
+| Design | Customize | 450: 3 → 1100: 1 |
+| Transitions | Timing | 450: 1 → 650: 2 |
+| Animations | Advanced Animation | 450: 1 → 650: 3 |
+| Animations | Timing | 450: 1 → 950: 3 |
+| Slide Show | Start Slide Show | 450: 1 → 750: 3 → 1400: 1 |
+| Slide Show | Set Up | 450: 1 → 1300: 3 → 1600: 1 |
+| Record | Record | 450: 1 → 750: 3 → 850: 1 |
+| Review | Proofing | 450: 1 → 1024: 2 → 1100: 1 |
+| Review | Activity | 450: 1 → 1024: 2 → 1100: 1 |
+| View | Presentation Views | 450: 1 → 850: 3 → 1300: 1 |
+| View | Master Views | 450: 1 → 950: 3 → 1400: 1 |
+| View | Color/Grayscale | 450: 1 → 1300: 3 |
+| View | Window | 450: 1 → 1200: 3 |
+
+The planner keeps a section's measured row form at that width, folds sections from the right when
+the row still does not fit, and collapses a section to its one-row drop-down only when its measured
+form is one row. A measured multi-row form is never folded to make room: the card scrolls instead,
+so the row count the reference shows is preserved. Thresholds are the client/content width in
+logical points (measured px / 1.25).
+
+Modelled: Home Slides (compact below 1120, its three-row stack above), Font (compact below 928.8,
+three rows to 1280, two rows above), Paragraph (compact below 1040, three rows to 1520, two rows
+above), Drawing (compact below 1280, three rows above) and Editing (compact below 1520, three rows
+above); Insert Images (three rows 1120–1520), Illustrations (three rows 928.8–1520) and Text
+(three rows from 1280); Design Customize (three rows 520–880); Transitions Timing (two rows from
+520); Animations Advanced Animation (three rows from 520) and Timing (compact below 760, its three
+rows above); Slide Show Start Slide Show (three rows 600–1120); Record Record (three rows
+600–680); Review Proofing and Activity (DeckCraft's Compare section; two rows 819–880); View
+Presentation Views (three rows 680–1040) and Master Views (three rows 760–1120).
+
+Explicitly impossible in DeckCraft's sections: Slide Show › Set Up has two commands (Set Up Slide
+Show, Hide Slide), so the measured three rows at 1300 px cannot be filled; View › Color/Grayscale
+has two commands (Grayscale, Dark Mode); View › Window has one (New Window). Design › Themes is
+measured as 1 → 0 at 1024 px, but DeckCraft's Themes gallery stays a section at every width. Draw ›
+Undo is measured as two rows but DeckCraft has no Undo section (undo lives in the title bar). Insert
+Camera/Power BI/Forms, Slide Show Monitors/Captions and Review Ink do not exist in DeckCraft.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-10 | minor | Measured row forms across the ribbon: two-row Transitions Timing, Review Proofing/Activity, and Home Paragraph; three-row stacks for Home Slides/Drawing/Editing, Insert Images/Illustrations/Text, Design Customize, Animations Advanced Animation/Timing, Slide Show Start, Record, Review, View Presentation/Master Views. Measured multi-row forms are never folded; the row scrolls instead. Set Up, Color/Grayscale and Window cannot fill three rows |
+| 2026-11-10 | minor | Home's Font and Paragraph use the measured three-row form below 1280 pt and 1520 pt (window width at 125% DPI: 1600 px and 1900 px) and rearrange the same controls into two rows above those widths; the label band and compact popup are unchanged |
+| 2026-11-10 | minor | Adaptive ribbon sections: each group has its designed layout and a one-row drop-down (icon, name and chevron in the label band, contents in a popup). At 819x614 pt Clipboard keeps three rows and every other Home group folds; at 1228x768 pt Clipboard, Slides and Font expand. Labels stay in the band in both layouts; a still-too-wide row scrolls as before |
+| 2026-11-10 | minor | Ribbon card is three bands at every width: tabs, commands and reference group names centred under each group, each group at least as wide as its name. The name row is unconditional (480 px to maximized); narrow windows scroll groups and keep names; section control rows change independently at measured widths (see Measured section rows, PR #2008) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |

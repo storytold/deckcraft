@@ -14,12 +14,12 @@ fn master_checks(app: &SlideApp) -> (bool, bool, bool) {
 }
 
 pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Edit Master", |ui| {
         big(app, ui, Icon::NewSlide, "Insert\nLayout", "master.insertLayout", json!({}));
         big(app, ui, Icon::DeleteSlide, "Delete", "master.deleteLayout", json!({}));
         big(app, ui, Icon::Layout, "Rename", "app.dialog", json!({"id": "renameLayout"}));
     });
-    group(ui, |ui| {
+    group(ui, "Master Layout", |ui| {
         rows(ui, |ui| {
             let (preserve, title, footers) = master_checks(app);
             let mut on = preserve;
@@ -36,7 +36,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Insert Placeholder", |ui| {
         let r = big_button(ui, Icon::Table, "Insert\nPlaceholder", true);
         egui::Popup::menu(&r).show(|ui| {
             for (l, k) in
@@ -48,7 +48,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Edit Theme", |ui| {
         let r = big_button(ui, Icon::Themes, "Themes", true);
         egui::Popup::menu(&r).show(|ui| {
             for th in deckcraft_model::theme::builtin_themes() {
@@ -63,7 +63,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
         });
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
-    group(ui, |ui| {
+    group(ui, "Close", |ui| {
         if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
@@ -71,7 +71,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 pub(super) fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Placeholders", |ui| {
         use deckcraft_model::PhType;
         let shown = |app: &SlideApp, k: PhType| {
             app.session.active().and_then(|d| d.doc.notes_master.as_ref()).is_some_and(|m| m.shapes.iter().any(|s| s.ph_type() == Some(k)))
@@ -90,10 +90,10 @@ pub(super) fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
             });
         }
     });
-    group(ui, |ui| {
+    group(ui, "Background", |ui| {
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
-    group(ui, |ui| {
+    group(ui, "Close", |ui| {
         if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
@@ -101,7 +101,7 @@ pub(super) fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 pub(super) fn handout_master(app: &mut SlideApp, ui: &mut Ui) {
-    group(ui, |ui| {
+    group(ui, "Page Setup", |ui| {
         let r = big_button(ui, Icon::Layout, &format!("Slides Per\nPage: {}", app.ui.handout_per_page), true);
         egui::Popup::menu(&r).show(|ui| {
             for n in [1u8, 2, 3, 4, 6, 9] {
@@ -111,7 +111,7 @@ pub(super) fn handout_master(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Placeholders", |ui| {
         let shown = |app: &SlideApp, k: deckcraft_model::PhType| {
             app.session.active().and_then(|d| d.doc.handout_master.as_ref()).is_some_and(|m| m.shapes.iter().any(|s| s.ph_type() == Some(k)))
         };
@@ -130,10 +130,10 @@ pub(super) fn handout_master(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    group(ui, |ui| {
+    group(ui, "Background", |ui| {
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
-    group(ui, |ui| {
+    group(ui, "Close", |ui| {
         if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }

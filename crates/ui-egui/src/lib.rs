@@ -28,6 +28,7 @@ pub mod menus;
 pub mod opening;
 pub mod presenter;
 pub mod ribbon;
+mod ribbon_fit;
 pub mod settings;
 pub mod show;
 pub mod sorter;
