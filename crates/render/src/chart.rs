@@ -97,6 +97,13 @@ fn bar_paint(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::ch
     paint_of(ctx, s.fill.as_ref(), series_color(ctx, c, si))
 }
 
+/// Colour of pie slice `i`: its `<c:dPt>` solid fill, else the palette's. Slices and legend keys share it.
+fn pie_slice_color(ctx: &Ctx, c: &Chart, s: Option<&deckcraft_model::chart::Series>, i: usize) -> Rgba {
+    s.and_then(|s| s.point_fills.iter().find(|(k, _)| *k == i))
+        .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(ctx.color(cc, None)) } else { None })
+        .unwrap_or_else(|| series_color(ctx, c, i))
+}
+
 fn polyline(pts: &[Point]) -> BezPath {
     let mut p = BezPath::new();
     for (k, q) in pts.iter().enumerate() {
@@ -583,7 +590,7 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
         // A map draws its own colour scale.
         vec![]
     } else if pie {
-        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), Paint::Color(series_color(rctx, c, i)), None)).collect()
+        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), Paint::Color(pie_slice_color(rctx, c, c.series.first(), i)), None)).collect()
     } else {
         c.series
             .iter()
@@ -1128,12 +1135,7 @@ fn draw_pie(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
         p.extend(arc.append_iter(0.1));
         p.close_path();
         ctx.set_transform(m);
-        let col = s
-            .point_fills
-            .iter()
-            .find(|(k, _)| *k == i)
-            .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(rctx.color(cc, None)) } else { None })
-            .unwrap_or_else(|| series_color(rctx, c, i));
+        let col = pie_slice_color(rctx, c, Some(s), i);
         ctx.set_paint(color(col, 1.0));
         ctx.fill_path(&p);
         ctx.set_paint(color(Rgba::WHITE, 1.0));
