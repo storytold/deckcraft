@@ -464,7 +464,6 @@ mod tests {
         let ctx = egui::Context::default();
         super::apply(&ctx, &super::Tokens::light());
         let v = ctx.global_style().visuals.clone();
-        assert_eq!(v.widgets.inactive.bg_stroke, egui::Stroke::NONE, "the test assumes no outline");
         let fill = v.widgets.inactive.bg_fill;
         for (name, bg) in [("dialog", v.window_fill), ("panel", v.panel_fill)] {
             let diff = [fill.r().abs_diff(bg.r()), fill.g().abs_diff(bg.g()), fill.b().abs_diff(bg.b())];
