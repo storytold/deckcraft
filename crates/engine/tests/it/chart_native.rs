@@ -127,3 +127,97 @@ fn editing_chart_after_native_reopen_does_not_export_a_stale_workbook() {
     assert_eq!(chart(&back).series[0].values[0], Some(99.0));
     assert!(chart(&back).kept.parts.is_empty(), "stale source workbook must not be attached to edited chart data");
 }
+
+#[test]
+fn chart_data_renames_automatic_title_but_keeps_explicit_title() {
+    for (auto_title, expected_title) in [(true, "Renamed"), (false, "My title")] {
+        let mut s = open(&source(), "chart.pptx");
+        let id = {
+            let doc = s.doc_mut().expect("doc");
+            let p = Arc::make_mut(&mut doc.doc);
+            let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+            c.series.truncate(1);
+            c.series[0].name = "Original".into();
+            c.title = Some(if auto_title { "Original" } else { "My title" }.into());
+            c.auto_title = Some(auto_title);
+            c.raw = None;
+            p.slides[0].shapes[0].id
+        };
+        s.execute("selection.select", &json!({"id":id})).expect("select chart");
+        s.execute("chart.data", &json!({"series":[{"name":"Renamed","values":[3,4]}]})).expect("rename series");
+        assert_eq!(chart(&s.doc().expect("doc").doc).title.as_deref(), Some(expected_title));
+        assert_eq!(chart(&s.doc().expect("doc").doc).auto_title, Some(auto_title));
+        let back = deckcraft_pptx::import(&save(&mut s, "pptx")).expect("reopen PPTX");
+        assert_eq!(chart(&back).title.as_deref(), Some(expected_title));
+        assert_eq!(chart(&back).auto_title, Some(auto_title));
+    }
+}
+
+#[test]
+fn old_native_auto_title_migration_survives_series_rename_and_user_title() {
+    let mut p = deckcraft_pptx::import(&source()).expect("source");
+    let explicit_id = ShapeId(p.alloc_id().expect("id"));
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    let mut explicit = slide.shapes[0].clone();
+    explicit.id = explicit_id;
+    for (shape, automatic, title) in [(&mut slide.shapes[0], true, "Original"), (&mut explicit, false, "User title")] {
+        let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+        chart.series.truncate(1);
+        chart.series[0].name = "Original".into();
+        chart.title = Some(title.into());
+        chart.auto_title = None;
+        chart.raw = Some(format!(
+            r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:autoTitleDeleted val="{}"/><c:plotArea><c:barChart><c:ser><c:tx><c:v>Original</c:v></c:tx></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#,
+            if automatic { 0 } else { 1 }
+        ));
+    }
+    slide.shapes.push(explicit);
+
+    let old_native = deckcraft_format::save(&p).expect("old native save");
+    assert_eq!(chart(&deckcraft_format::load(&old_native).expect("old native load")).auto_title, None);
+    let mut s = open(&old_native, "old-chart.deckcraft");
+    let doc = &s.doc().expect("doc").doc;
+    assert_eq!(chart(doc).auto_title, Some(true));
+    assert_eq!(chart(doc).title.as_deref(), Some("Original"));
+    let explicit_chart = match &doc.slides[0].shapes[1].kind {
+        ShapeKind::Chart(c) => c,
+        _ => panic!("chart"),
+    };
+    assert_eq!(explicit_chart.auto_title, Some(false));
+    assert_eq!(explicit_chart.title.as_deref(), Some("User title"));
+
+    s.execute("selection.select", &json!({"id": doc.slides[0].shapes[0].id.0})).expect("select automatic chart");
+    s.execute("chart.data", &json!({"series":[{"name":"Renamed","values":[3,4]}]})).expect("rename series");
+    assert_eq!(chart(&s.doc().expect("doc").doc).title.as_deref(), Some("Renamed"));
+    s.execute("selection.select", &json!({"id": explicit_id.0})).expect("select explicit chart");
+    s.execute("chart.data", &json!({"series":[{"name":"Renamed","values":[3,4]}]})).expect("rename series");
+    let doc = &s.doc().expect("doc").doc;
+    let explicit_chart = match &doc.slides[0].shapes[1].kind {
+        ShapeKind::Chart(c) => c,
+        _ => panic!("chart"),
+    };
+    assert_eq!(explicit_chart.title.as_deref(), Some("User title"));
+}
+
+#[test]
+fn automatic_title_state_survives_multi_series_edits() {
+    let mut s = open(&source(), "chart.pptx");
+    let id = {
+        let doc = s.doc_mut().expect("doc");
+        let p = Arc::make_mut(&mut doc.doc);
+        let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+        c.series.truncate(1);
+        c.series[0].name = "Original".into();
+        c.title = Some("Original".into());
+        c.auto_title = Some(true);
+        c.raw = None;
+        p.slides[0].shapes[0].id
+    };
+    s.execute("selection.select", &json!({"id":id})).expect("select chart");
+    s.execute("chart.data", &json!({"series":[{"name":"One","values":[3]},{"name":"Two","values":[4]}]})).expect("add series");
+    assert_eq!(chart(&s.doc().expect("doc").doc).title, None);
+    assert_eq!(chart(&s.doc().expect("doc").doc).auto_title, Some(true));
+    s.execute("chart.data", &json!({"series":[{"name":"Back to one","values":[5]}]})).expect("return to one series");
+    assert_eq!(chart(&s.doc().expect("doc").doc).title.as_deref(), Some("Back to one"));
+    assert_eq!(chart(&s.doc().expect("doc").doc).auto_title, Some(true));
+}

@@ -368,6 +368,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | One-series automatic chart titles remain linked after data edits; temporary multi-series edits preserve automatic state, and older native files recover it across slides, masters, layouts and notes/handout masters. PowerPoint COM confirmed linked titles follow series renames while explicit titles stay fixed. Broader chart data and element gaps remain |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

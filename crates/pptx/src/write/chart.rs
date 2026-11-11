@@ -639,12 +639,13 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.val("c:roundedCorners", 0);
     w.val("c:style", c.style.clamp(1, 48));
     w.open0("c:chart");
-    match &c.title {
-        Some(t) => {
+    match (&c.title, c.auto_title == Some(true)) {
+        (_, true) => w.val("c:autoTitleDeleted", 0),
+        (Some(t), false) => {
             title(&mut w, t, c);
             w.val("c:autoTitleDeleted", 0);
         }
-        None => w.val("c:autoTitleDeleted", 1),
+        (None, false) => w.val("c:autoTitleDeleted", 1),
     }
     w.open0("c:plotArea");
     w.empty0("c:layout");
@@ -1076,6 +1077,22 @@ mod tests {
         let xml = String::from_utf8(super::chart_xml(&c).0).unwrap();
         assert!(!xml.contains("<c:txPr>"), "{xml}");
         assert_eq!(crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap().text_color, None);
+    }
+
+    #[test]
+    fn automatic_title_stays_linked_to_series_name() {
+        let mut c = Chart::sample(ChartType::Column);
+        c.series.truncate(1);
+        c.series[0].name = "Sales".into();
+        c.title = Some("Sales".into());
+        c.auto_title = Some(true);
+        let xml = super::chart_xml(&c).0;
+        let xml = String::from_utf8(xml).unwrap();
+        assert!(xml.contains("<c:autoTitleDeleted val=\"0\"/>"), "{xml}");
+        assert!(!xml.contains("<c:title>"), "{xml}");
+        let back = crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap();
+        assert_eq!(back.auto_title, Some(true));
+        assert_eq!(back.title, c.title);
     }
 
     /// An imported chart's `c:txPr` colour survives an edit that rebuilds the part from the model
