@@ -19,8 +19,8 @@ const DEG: f64 = 60_000.0;
 /// further spaces are left out.
 const MAX_SPACES: usize = 16;
 
-/// Guide-name bytes the cached spaces after the first may hold between them: every space copies
-/// the names, which the XML limits bound only once.
+/// Guide-name bytes all cached spaces may hold between them; the first space counts towards it but is always kept.
+/// Every space copies the names, which the XML limits bound only once.
 const MAX_SPACE_NAME_BYTES: usize = 4 << 20;
 
 /// Guide variables for one shape.
@@ -165,6 +165,7 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
     let Some(pl) = cg.child("pathLst") else { return out };
     let mut spaces: HashMap<(u64, u64), Guides> = HashMap::new();
     let mut name_bytes = 0usize;
+    let mut budget_full = false;
     // The cap on cached spaces saves guide evaluation: a geometry without guides has none to save.
     let guided = ["avLst", "gdLst"].iter().any(|n| cg.child(n).is_some_and(|l| l.elements().next().is_some()));
     for p in pl.children_named("path").take(1000) {
@@ -175,7 +176,7 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
         // The guide lists are evaluated once per coordinate space, not once per path.
         let key = (gw.to_bits(), gh.to_bits());
         if !spaces.contains_key(&key) {
-            if guided && spaces.len() >= MAX_SPACES {
+            if guided && (budget_full || spaces.len() >= MAX_SPACES) {
                 continue;
             }
             let mut g = Guides::new(gw, gh);
@@ -184,6 +185,8 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
             // The first space is always kept; later ones only while the cache stays within budget.
             let bytes = g.name_bytes();
             if guided && !spaces.is_empty() && name_bytes.saturating_add(bytes) > MAX_SPACE_NAME_BYTES {
+                // Every space holds the same names, so no later space fits either.
+                budget_full = true;
                 continue;
             }
             name_bytes = name_bytes.saturating_add(bytes);
