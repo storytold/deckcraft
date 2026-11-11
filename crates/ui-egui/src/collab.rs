@@ -23,6 +23,23 @@ use crate::theme::{self, Tokens};
 /// The task pane the participants list lives in.
 pub const PANE: &str = "collab";
 
+/// The shortest gap between two presence messages: a caret that moves faster must not flood the
+/// room (RFC §5: at most 10 Hz).
+const PRESENCE_MIN_GAP_MS: u64 = 50;
+
+/// How often an unchanged presence is repeated. A room keeps a participant only while their last
+/// message is younger than the presence TTL (30 s, `deckcraft_collab::DEFAULT_TTL_MS`), and the
+/// server forwards a presence message to the others without echoing it back. Change-only presence
+/// therefore made an idle participant vanish from every peer after 30 s, and hid anyone who joined
+/// before this client from it forever. A third of the TTL leaves room for two lost messages.
+const PRESENCE_HEARTBEAT_MS: u64 = 10_000;
+
+/// Whether this frame sends presence: an edited one, at most every [`PRESENCE_MIN_GAP_MS`]; an
+/// unchanged one once a heartbeat is due.
+fn presence_due(changed: bool, since_last_ms: u64) -> bool {
+    if changed { since_last_ms >= PRESENCE_MIN_GAP_MS } else { since_last_ms >= PRESENCE_HEARTBEAT_MS }
+}
+
 /// How the connection looks to the user.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncStatus {
@@ -411,16 +428,19 @@ impl CollabUi {
 
     fn tick_presence(&mut self, session: &deckcraft_engine::Session, now_ms: u64) {
         let Some(st) = session.active() else { return };
+        // `local_presence` is built from the key map the server issued, so before the first
+        // snapshot arrives there is nothing to announce.
         let Some(presence) = self.local_presence(st) else { return };
         let changed = self.sent_presence.as_ref() != Some(&presence);
-        if changed && now_ms.saturating_sub(self.sent_presence_ms) >= 50 {
-            self.sent_presence = Some(presence.clone());
-            self.sent_presence_ms = now_ms;
-            if let Some(transport) = &mut self.transport
-                && transport.is_open()
-            {
-                let _ = transport.send(ClientMsg::Presence(presence));
-            }
+        if !presence_due(changed, now_ms.saturating_sub(self.sent_presence_ms)) {
+            return;
+        }
+        self.sent_presence = Some(presence.clone());
+        self.sent_presence_ms = now_ms;
+        if let Some(transport) = &mut self.transport
+            && transport.is_open()
+        {
+            let _ = transport.send(ClientMsg::Presence(presence));
         }
     }
 
@@ -994,6 +1014,17 @@ mod tests {
         }
     }
 
+    /// How many presence messages the UI sent since the last call.
+    fn presence_frames(rx: &std::sync::mpsc::Receiver<ClientMsg>) -> usize {
+        let mut count = 0;
+        while let Ok(message) = rx.try_recv() {
+            if matches!(message, ClientMsg::Presence(_)) {
+                count += 1;
+            }
+        }
+        count
+    }
+
     fn deck() -> (Session, Presentation) {
         let mut s = Session::with_new();
         let title = s.doc().expect("doc").doc.slides[0].id;
@@ -1126,6 +1157,32 @@ mod tests {
         assert!(!ui.tick(30_000), "still inside the 30 s window");
         assert!(ui.tick(32_000), "expired after it");
         assert!(ui.participants().is_empty());
+    }
+
+    /// The room keeps a participant only while their last message is younger than its presence
+    /// TTL, and it does not echo a presence message to its author. A presence sent only when it
+    /// changed therefore left an idle editor out of every peer's list after 30 s, and a client
+    /// that joined later never learned about anyone at all: the cabinet showed one participant.
+    #[test]
+    fn an_unchanged_presence_is_repeated_before_the_room_forgets_it() {
+        use deckcraft_collab::PipeTransport;
+
+        let (mut s, doc) = deck();
+        let mut ui = CollabUi::new("test");
+        ui.enable();
+        ui.welcome("alice@example.com", Role::Editor, 1);
+        ui.sync_keys(1, 1, &doc);
+        let (transport, from_ui, _to_ui) = PipeTransport::pair();
+        ui.transport = Some(Box::new(transport));
+
+        ui.pump(&mut s, 1_000);
+        assert_eq!(presence_frames(&from_ui), 1, "the first frame says where this participant is");
+        ui.pump(&mut s, 1_100);
+        assert_eq!(presence_frames(&from_ui), 0, "an unchanged presence waits for the heartbeat");
+        ui.pump(&mut s, 1_000 + 10_000);
+        assert_eq!(presence_frames(&from_ui), 1, "an idle participant is repeated inside the 30 s TTL");
+        ui.pump(&mut s, 11_100);
+        assert_eq!(presence_frames(&from_ui), 0, "the heartbeat is one message, not a flood");
     }
 
     #[test]
