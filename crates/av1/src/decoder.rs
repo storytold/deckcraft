@@ -118,6 +118,8 @@ enum Output {
         grain: FilmGrainParams,
         apply_film_grain: bool,
         pts: i64,
+        /// What copying the picture out costs, in the reference's own format.
+        bytes: u64,
     },
 }
 
@@ -132,7 +134,7 @@ impl Output {
     fn take(self) -> Result<Picture> {
         match self {
             Output::Decoded(s) => s.wait().map(|p| Arc::try_unwrap(p).unwrap_or_else(|p| (*p).clone())),
-            Output::Existing { slot, seq, width, height, grain, apply_film_grain, pts } => {
+            Output::Existing { slot, seq, width, height, grain, apply_film_grain, pts, .. } => {
                 let rf = slot.wait()?;
                 Ok(output_picture(&seq, &rf, width, height, &grain, apply_film_grain, pts))
             }
@@ -379,8 +381,8 @@ impl Decoder {
         // Output policy (7.18.1 note): with scalability, show one frame per temporal unit, the
         // highest spatial layer present.
         let scalable = self.seq.as_ref().is_some_and(|s| s.op_idc != 0);
-        if !scalable {
-            self.out.extend(out.into_iter().map(|(o, _, _)| o));
+        let kept: Vec<Output> = if !scalable {
+            out.into_iter().map(|(o, _, _)| o).collect()
         } else {
             let mut last: Option<(usize, u32)> = None;
             let mut sel: Vec<Output> = Vec::new();
@@ -400,8 +402,27 @@ impl Decoder {
                     }
                 }
             }
-            self.out.extend(sel);
+            sel
+        };
+        // Every repeat is copied out whole, so the repeats this call keeps (after the layer
+        // selection) must not queue more than half the decoder budget; the first one over it and
+        // everything after is dropped.
+        let mut r = r;
+        let mut repeat_bytes = 0u64;
+        let mut ok = Vec::with_capacity(kept.len());
+        for o in kept {
+            if let Output::Existing { bytes, .. } = &o {
+                repeat_bytes = repeat_bytes.saturating_add(*bytes);
+                if repeat_bytes > self.memory_budget / 2 {
+                    if r.is_ok() {
+                        r = Err(Error::Invalid("repeated frame outputs exceed the decoder memory budget"));
+                    }
+                    break;
+                }
+            }
+            ok.push(o);
         }
+        self.out.extend(ok);
         r
     }
 
@@ -503,6 +524,15 @@ impl Decoder {
             let idx = fh.frame_to_show_map_idx;
             let slot = self.ref_frames[idx].clone().ok_or(Error::Invalid("show_existing_frame of an empty slot"))?;
             let info = self.refs[idx].clone();
+            // Sized in the reference's own format: a new sequence header may differ from it.
+            let shape = deckcraft_bitstream::budget::PictureShape {
+                width: u64::from(info.upscaled_width),
+                height: u64::from(info.frame_height),
+                shift_x: u32::from(info.subsampling_x),
+                shift_y: u32::from(info.subsampling_y),
+                chroma_planes: if info.mono_chrome { 0 } else { 2 },
+                bytes_per_sample: 2,
+            };
             let o = Output::Existing {
                 slot: slot.clone(),
                 seq: seq.clone(),
@@ -511,6 +541,7 @@ impl Decoder {
                 grain: fh.film_grain.clone(),
                 apply_film_grain: self.apply_film_grain,
                 pts: self.pts,
+                bytes: shape.bytes().unwrap_or(u64::MAX),
             };
             if fh.frame_type == KEY_FRAME as u8 {
                 // reference frame loading process (7.21) then refresh every slot (7.20)
@@ -629,6 +660,9 @@ impl Decoder {
                 ri.lf_deltas = fh.lf.deltas;
                 ri.seg_features = fh.seg.features;
                 ri.grain = fh.film_grain.clone();
+                ri.subsampling_x = job.seq.color.subsampling_x;
+                ri.subsampling_y = job.seq.color.subsampling_y;
+                ri.mono_chrome = job.seq.color.mono_chrome;
                 self.ref_frames[i] = Some(job.slot.clone());
             }
         }
@@ -777,6 +811,14 @@ fn decode_frame(job: &FrameJob, pool: &Pool, stats: &mut DecodeStats) -> Result<
     Ok((rf, pic))
 }
 
+/// Bytes all parallel tile states may hold of whole-frame CDEF and restoration metadata; past it
+/// the tiles decode one after another on the frame's own metadata.
+const TILE_METADATA_BUDGET: usize = 256 << 20;
+
+fn tile_metadata_fits(tiles: usize, per_tile: usize) -> bool {
+    tiles.checked_mul(per_tile).is_some_and(|n| n <= TILE_METADATA_BUDGET)
+}
+
 /// Decode the tiles of a frame (tile number, data), in parallel when several; returns the final
 /// CDFs of tile context_update_tile_id.
 fn decode_tiles(pool: &Pool, fs: &mut FrameState, cdfs: &Cdfs, tiles: &[(usize, Vec<u8>)]) -> Result<Option<Box<Cdfs>>> {
@@ -790,7 +832,7 @@ fn decode_tiles(pool: &Pool, fs: &mut FrameState, cdfs: &Cdfs, tiles: &[(usize, 
     };
     // Intra block copy reads the current frame through the tile's own buffer: keep whole-frame
     // buffers (tiles one after another) for it.
-    if tiles.len() > 1 && pool.is_parallel() && !fs.fh.allow_intrabc {
+    if tiles.len() > 1 && pool.is_parallel() && !fs.fh.allow_intrabc && tile_metadata_fits(tiles.len(), fs.tile_metadata_bytes()) {
         let mut states: Vec<TileState> = tiles
             .iter()
             .map(|(num, _)| {
@@ -1075,6 +1117,14 @@ mod guard_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    #[test]
+    fn tile_metadata_copies_are_budgeted() {
+        assert!(tile_metadata_fits(64, 1 << 20));
+        assert!(!tile_metadata_fits(4096, 1 << 20));
+        assert!(!tile_metadata_fits(usize::MAX, 2));
+    }
+
     use deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET;
 
     fn color(mono: bool) -> crate::header::ColorConfig {
