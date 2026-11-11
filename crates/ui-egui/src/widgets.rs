@@ -338,7 +338,9 @@ pub fn group(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
         let r = ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
             ui.set_min_width(name_w);
-            add(ui)
+            crate::ribbon_fit::set_group_level(ui.ctx(), level);
+            add(ui);
+            crate::ribbon_fit::set_group_level(ui.ctx(), crate::ribbon_fit::FULL);
         });
         if !label.is_empty() {
             let text = ui.painter().text(pos2(r.response.rect.center().x, label_y), Align2::CENTER_CENTER, label, theme::font(11.0), t.text_dim);

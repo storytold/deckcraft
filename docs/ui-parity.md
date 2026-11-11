@@ -230,15 +230,34 @@ control-row count (1, 2 or 3; a 5 is a menu with nested rows) at the width where
 | View | Color/Grayscale | 450: 1 → 1300: 3 |
 | View | Window | 450: 1 → 1200: 3 |
 
-The planner keeps a section's natural rows while it fits and collapses it to one row below the
-measured narrow breakpoint. Home's wide two-row forms are modelled for Font (from 1280 logical
-points, 1600 px at 125%) and Paragraph (from 1520 points, 1900 px); other tabs' two-row states are
-not modelled yet.
+The planner keeps a section's measured row form at that width, folds sections from the right when
+the row still does not fit, and collapses a section to its one-row drop-down only when its measured
+form is one row. A measured multi-row form is never folded to make room: the card scrolls instead,
+so the row count the reference shows is preserved. Thresholds are the client/content width in
+logical points (measured px / 1.25).
+
+Modelled: Home Slides (compact below 1120, its three-row stack above), Font (compact below 928.8,
+three rows to 1280, two rows above), Paragraph (compact below 1040, three rows to 1520, two rows
+above), Drawing (compact below 1280, three rows above) and Editing (compact below 1520, three rows
+above); Insert Images (three rows 1120–1520), Illustrations (three rows 928.8–1520) and Text
+(three rows from 1280); Design Customize (three rows 520–880); Transitions Timing (two rows from
+520); Animations Advanced Animation (three rows from 520) and Timing (compact below 760, its three
+rows above); Slide Show Start Slide Show (three rows 600–1120); Record Record (three rows
+600–680); Review Proofing and Activity (DeckCraft's Compare section; two rows 819–880); View
+Presentation Views (three rows 680–1040) and Master Views (three rows 760–1120).
+
+Explicitly impossible in DeckCraft's sections: Slide Show › Set Up has two commands (Set Up Slide
+Show, Hide Slide), so the measured three rows at 1300 px cannot be filled; View › Color/Grayscale
+has two commands (Grayscale, Dark Mode); View › Window has one (New Window). Design › Themes is
+measured as 1 → 0 at 1024 px, but DeckCraft's Themes gallery stays a section at every width. Draw ›
+Undo is measured as two rows but DeckCraft has no Undo section (undo lives in the title bar). Insert
+Camera/Power BI/Forms, Slide Show Monitors/Captions and Review Ink do not exist in DeckCraft.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-10 | minor | Measured row forms across the ribbon: two-row Transitions Timing, Review Proofing/Activity, and Home Paragraph; three-row stacks for Home Slides/Drawing/Editing, Insert Images/Illustrations/Text, Design Customize, Animations Advanced Animation/Timing, Slide Show Start, Record, Review, View Presentation/Master Views. Measured multi-row forms are never folded; the row scrolls instead. Set Up, Color/Grayscale and Window cannot fill three rows |
 | 2026-11-10 | minor | Home's Font and Paragraph use the measured three-row form below 1280 pt and 1520 pt (window width at 125% DPI: 1600 px and 1900 px) and rearrange the same controls into two rows above those widths; the label band and compact popup are unchanged |
 | 2026-11-10 | minor | Adaptive ribbon sections: each group has its designed layout and a one-row drop-down (icon, name and chevron in the label band, contents in a popup). At 819x614 pt Clipboard keeps three rows and every other Home group folds; at 1228x768 pt Clipboard, Slides and Font expand. Labels stay in the band in both layouts; a still-too-wide row scrolls as before |
 | 2026-11-10 | minor | Ribbon card is three bands at every width: tabs, commands and reference group names centred under each group, each group at least as wide as its name. The name row is unconditional (480 px to maximized); narrow windows scroll groups and keep names; section control rows change independently at measured widths (see Measured section rows, PR #2008) |
