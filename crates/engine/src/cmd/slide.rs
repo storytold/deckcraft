@@ -408,8 +408,9 @@ fn select_slides(s: &mut Session, p: &Value) -> Result<Value> {
     };
     s.select(|doc, sel| {
         if add {
+            let mut have: std::collections::HashSet<_> = sel.slides.iter().copied().collect();
             for i in &ids {
-                if !sel.slides.contains(i) {
+                if have.insert(*i) {
                     sel.slides.push(*i);
                 }
             }
