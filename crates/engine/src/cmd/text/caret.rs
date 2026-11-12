@@ -1,6 +1,6 @@
 use super::autocorrect::undo_auto_list;
 use super::editing::{inherited_aligns, insert_text, promote_rtl_if_needed};
-use super::ime::{composition_range, model_pos, walk_backward, walk_forward};
+use super::ime::surrounding_delete;
 use super::layout::{ctx_for, fit_text_box, layout_for, pos_param};
 use super::{
     DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text, id_param,
@@ -98,23 +98,13 @@ pub(super) fn delete_surrounding(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let t = st.selection.text.clone().ok_or_else(|| bad("text.deleteSurrounding", "not editing text"))?;
     let body = body_of(st, &t).ok_or_else(|| bad("text.deleteSurrounding", "the text being edited is gone"))?;
-    let comp = composition_range(body, st.composition.as_ref());
     // The ranges are in the same logical coordinates `ime_surrounding` publishes: one byte for a
-    // paragraph separator and for a soft line break. A range may therefore cross paragraphs.
-    let ordered = {
-        let a = model_pos(body, t.anchor).ok_or_else(|| bad("text.deleteSurrounding", "the selection is not in the text"))?;
-        let b = model_pos(body, t.caret).ok_or_else(|| bad("text.deleteSurrounding", "the selection is not in the text"))?;
-        if a <= b { (a, b) } else { (b, a) }
-    };
-    // The selection (or the input method's pre-edit) stays exactly where it is. Only whole
-    // scalars fully inside the requested before/after ranges around it are removed.
-    let (start, end) = match comp {
-        Some((pi, cs, ce)) => ((pi, cs), (pi, ce)),
-        None => ordered,
-    };
-    let (from, before_chars, _) = walk_backward(body, comp, start, before, bytes);
-    let (to, after_chars, _) = walk_forward(body, comp, end, after, bytes);
-    let deleted = before_chars + after_chars;
+    // paragraph separator and for a soft line break, so a range may cross paragraphs. The walk is
+    // the one the collaboration normaliser uses too, so a shared session sends exactly the range
+    // this command would have removed (RFC §10.1).
+    let d = surrounding_delete(body, st.composition.as_ref(), &t, before, after, bytes)
+        .ok_or_else(|| bad("text.deleteSurrounding", "the selection is not in the text"))?;
+    let deleted = d.deleted();
     if deleted == 0 {
         return Ok(json!({"deleted": 0}));
     }
@@ -125,24 +115,24 @@ pub(super) fn delete_surrounding(s: &mut Session, p: &Value) -> Result<Value> {
     edit_text(s, |body, t| {
         // Delete the after-range first, so the positions of the earlier range stay valid; then
         // the text before the selection.
-        if after_chars > 0 {
-            ed::delete(body, end, to);
+        if d.after > 0 {
+            ed::delete(body, d.end, d.to);
         }
-        if before_chars > 0 {
-            ed::delete(body, from, start);
+        if d.before > 0 {
+            ed::delete(body, d.from, d.start);
         }
-        t.anchor = remap_after_delete(t.anchor, start, from, before_chars);
-        t.caret = remap_after_delete(t.caret, start, from, before_chars);
+        t.anchor = remap_after_delete(t.anchor, d.start, d.from, d.before);
+        t.caret = remap_after_delete(t.caret, d.start, d.from, d.before);
         t.line_end = None;
     })?;
     if composing {
         if let Some(c) = s.doc_mut()?.composition.as_mut() {
-            c.start = if before_chars == 0 {
-                start
-            } else if from.0 == start.0 {
-                (start.0, start.1 - before_chars)
+            c.start = if d.before == 0 {
+                d.start
+            } else if d.from.0 == d.start.0 {
+                (d.start.0, d.start.1 - d.before)
             } else {
-                from
+                d.from
             };
         }
     } else {

@@ -735,23 +735,30 @@ impl Session {
         // in a shared session, and what they type reaches the room as one whole-body operation when
         // the composition settles (RFC §10.1). Where the room has no operation to carry the text,
         // the command is refused here — before the first write, with a reason and without moving
-        // the version — rather than changing text nobody else will ever see.
-        let ime = matches!(id, "text.compose" | "text.commit" | "text.deleteSurrounding");
-        if self.collab_queue && record && self.depth == 0 && ime {
+        // the version — rather than changing text nobody else will ever see. A deletion around a
+        // composition is part of that pre-edit; outside one it removes a range of the body, which
+        // is exactly what `text.delete` carries, so it is queued as the range the engine's own walk
+        // resolves — and refused here only when one operation cannot carry it.
+        let input_method = matches!(id, "text.compose" | "text.commit" | "text.deleteSurrounding");
+        if self.collab_queue && record && self.depth == 0 && input_method {
+            // Both kinds of input-method edit address a slide's text: a master, a layout or a
+            // handout has no place in the room's operations.
             let on_slides = self.active().filter(|d| d.selection.target == Target::Slides);
-            let refused = match (id, on_slides) {
-                (_, None) => Some("an input method's text is only shared on slides"),
-                // Inside a composition the deletion is part of the pre-edit and its settle carries
-                // the body; on its own there is no operation for it.
-                ("text.deleteSurrounding", Some(st)) if st.composition.is_none() => {
-                    Some("an input method's deletion outside a composition is not shared")
-                }
-                _ => None,
+            let Some(st) = on_slides else {
+                return Err(EngineError::Disabled(id.into(), "an input method's text is only shared on slides".into()));
             };
-            if let Some(why) = refused {
-                return Err(EngineError::Disabled(id.into(), why.into()));
+            if id == "text.deleteSurrounding" && st.composition.is_none() {
+                match cmd::text::shared_surrounding_delete(st, params) {
+                    cmd::text::SharedImeDelete::Range => {}
+                    cmd::text::SharedImeDelete::Nothing => return Ok(json!({"deleted": 0})),
+                    cmd::text::SharedImeDelete::Refused(why) => return Err(EngineError::Disabled(id.into(), why.into())),
+                }
             }
         }
+        // A composition is the one input-method edit that never leaves the replica on its own: the
+        // settle queues it as one whole body.
+        let composing = self.active().is_some_and(|d| d.composition.is_some());
+        let ime = matches!(id, "text.compose" | "text.commit") || (id == "text.deleteSurrounding" && composing);
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         // This has to happen before the command is queued for a room: an operation normalised
         // against a document that does not yet hold the composing text would carry a text its

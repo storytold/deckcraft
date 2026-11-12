@@ -957,6 +957,44 @@ pub fn normalize_with_painter(
                 Payload::TextDelete { from: from as u32, to: to as u32, cell },
             )])
         }
+        // An input method's deletion outside a composition: the engine's own walk says which
+        // characters around the selection it removes, and a shared session sends exactly that
+        // range as one `text.delete` (RFC §10.1). The engine refuses the cases one operation
+        // cannot carry before it queues the command; the checks here are the same rule applied to
+        // the replica's state, so a state the engine could not see is refused before anything is
+        // sent rather than turned into a different edit.
+        "text.deleteSurrounding" => {
+            let count = |name: &str| p.get(name).and_then(Value::as_u64).map_or(0, |v| usize::try_from(v).unwrap_or(usize::MAX));
+            let bytes = p.get("bytes").and_then(Value::as_bool).unwrap_or(false);
+            let ts = st
+                .selection
+                .text
+                .as_ref()
+                .ok_or_else(|| LocalError::BadParams("an input method's deletion outside a composition needs a text selection".into()))?;
+            let (body, cell) = if ts.notes { (Some(&slide.notes), None) } else { selected_body(&slide.shapes, ts)? };
+            let body = body.ok_or_else(|| LocalError::BadParams("the text being edited is gone".into()))?;
+            let d = deckcraft_engine::cmd::text::surrounding_delete(body, st.composition.as_ref(), ts, count("before"), count("after"), bytes)
+                .ok_or_else(|| LocalError::BadParams("the selection is not in the text being edited".into()))?;
+            let Some((from, to)) = d.span() else {
+                if d.deleted() == 0 {
+                    return Ok(Vec::new());
+                }
+                return Err(LocalError::BadParams(
+                    "an input method's deletion outside a composition removes text on both sides of a selection and is not shared".into(),
+                ));
+            };
+            let (from, to) = (position_offset(Some(body), from), position_offset(Some(body), to));
+            if to <= from {
+                return Ok(Vec::new());
+            }
+            if ts.notes {
+                return Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::NotesDelete { from: from as u32, to: to as u32 })]);
+            }
+            Ok(vec![make(
+                Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
+                Payload::TextDelete { from: from as u32, to: to as u32, cell },
+            )])
+        }
         "slide.notes" => {
             // The notes pane edits a whole slide body: the operation carries the complete body.
             let (key, value) = notes_body(keys, st, p)?;
@@ -2994,6 +3032,63 @@ mod tests {
         // `text.set` without an explicit `cell` takes it from the caret.
         let ops = normalize(&km, st, "text.set", &json!({"text": "new"}), "op", &doc_id).expect("set");
         assert_eq!(ops[0].payload, Payload::TextSet { text: "new".into(), cell: Some((0, 0)) });
+    }
+
+    /// RFC §10.1 — an input method's deletion outside a composition removes one contiguous range of
+    /// the body, so it normalises to the same `text.delete` an ordinary deletion does, with the
+    /// offsets the engine's own walk resolves: in a shape's body, in a table cell and in the
+    /// slide's notes. Two ranges around a non-empty selection have no operation, and nothing to
+    /// remove is no operation at all.
+    #[test]
+    fn an_input_methods_deletion_normalises_to_the_range_it_removes() {
+        let (mut s, doc_id, _slide, shapes) = deck();
+        s.apply_remote("text.set", &json!({"id": shapes[0].0, "text": "Alpha Beta"})).expect("text");
+        let caret_at = |s: &mut Session, anchor: (usize, usize), caret: (usize, usize)| {
+            let t = s.doc_mut().expect("doc").selection.text.as_mut().expect("caret");
+            t.anchor = anchor;
+            t.caret = caret;
+        };
+        s.doc_mut().expect("doc").selection.text =
+            Some(TextSel { shape: shapes[0], anchor: (0, 10), caret: (0, 10), cell: None, notes: false, line_end: None });
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(&km, st, "text.deleteSurrounding", &json!({"before": 4, "after": 0}), "op", &doc_id).expect("word");
+        assert_eq!(ops.len(), 1, "one operation, whatever the input method asked");
+        assert_eq!(ops[0].payload, Payload::TextDelete { from: 6, to: 10, cell: None });
+
+        // A selection with text on both sides is two ranges: no operation carries it.
+        caret_at(&mut s, (0, 7), (0, 9));
+        let st = s.doc().expect("doc");
+        let err = normalize(&km, st, "text.deleteSurrounding", &json!({"before": 1, "after": 1}), "op", &doc_id).unwrap_err();
+        assert!(matches!(&err, LocalError::BadParams(why) if why.contains("both sides of a selection")), "{err:?}");
+
+        // A collapsed caret removes one range on either side of it, and nothing removes nothing.
+        caret_at(&mut s, (0, 5), (0, 5));
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "text.deleteSurrounding", &json!({"before": 1, "after": 1}), "op", &doc_id).expect("both sides of a caret");
+        assert_eq!(ops[0].payload, Payload::TextDelete { from: 4, to: 6, cell: None }, "one range either side of a caret");
+        let ops = normalize(&km, st, "text.deleteSurrounding", &json!({"before": 0, "after": 0}), "op", &doc_id).expect("nothing");
+        assert!(ops.is_empty(), "nothing to remove is no operation");
+
+        // A table cell is one body: the address is the cell, as with `text.delete`.
+        let (mut s2, doc2, _slide2, table) = table_deck();
+        caret(&mut s2, table, (0, 2), Some((0, 0)));
+        let st = s2.doc().expect("doc");
+        let km2 = keys(st.doc.as_ref());
+        let ops = normalize(&km2, st, "text.deleteSurrounding", &json!({"before": 1, "after": 0}), "op", &doc2).expect("cell");
+        assert_eq!(ops[0].payload, Payload::TextDelete { from: 1, to: 2, cell: Some((0, 0)) });
+
+        // The notes pane is the slide's own body, addressed by the slide.
+        let (mut s3, doc3, _slide3, _) = table_deck();
+        s3.doc_mut().expect("doc").selection.text =
+            Some(TextSel { shape: ShapeId(0), anchor: (0, 0), caret: (0, 0), cell: None, notes: true, line_end: None });
+        s3.compose_text("Notes", None).expect("compose");
+        s3.commit_text("Notes").expect("commit");
+        let st = s3.doc().expect("doc");
+        let km3 = keys(st.doc.as_ref());
+        let ops = normalize(&km3, st, "text.deleteSurrounding", &json!({"before": 3, "after": 0}), "op", &doc3).expect("notes");
+        assert_eq!(ops[0].payload, Payload::NotesDelete { from: 2, to: 5 });
+        assert_eq!(ops[0].target.shape, None, "notes belong to the slide, not to a shape");
     }
 
     #[test]

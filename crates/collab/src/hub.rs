@@ -848,6 +848,100 @@ mod tests {
         assert_eq!(a.version(), 2);
     }
 
+    /// RFC §10.1: outside a composition an input method's deletion is an ordinary deletion of the
+    /// body, so it leaves as one `text.delete` — the neighbour gets exactly the characters the
+    /// engine's walk removed — and one undo step puts them back on both replicas.
+    #[test]
+    fn an_input_methods_deletion_outside_a_composition_reaches_the_neighbour_as_one_delete() {
+        let mut hub = text_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = text_session();
+        let mut sb = text_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+
+        let shape = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
+        let body_text =
+            |s: &Session| s.doc().expect("doc").doc.slides[0].shapes[0].text.as_ref().map(deckcraft_model::text::TextBody::text).unwrap_or_default();
+        sa.set_collab_queue(true);
+        sa.execute("text.edit", &json!({"id": shape})).expect("edit");
+        // The caret at the end of "Beta": the input method asks for the word before it.
+        sa.execute("text.select", &json!({"anchor": [1, 4], "caret": [1, 4]})).expect("caret");
+        assert_eq!(sa.delete_surrounding(4, 0, false).expect("delete")["queued"], true);
+        let queued = sa.take_pending_commands();
+        assert_eq!(queued.len(), 1, "{queued:?}");
+        assert_eq!(queued[0].0, "text.deleteSurrounding");
+        assert_eq!(body_text(&sa), "Alpha\nBeta", "the author's own text waits for the room");
+        assert_eq!(a.submit(&mut sa, &queued[0].0, &queued[0].1, "a-1").expect("submit"), 1);
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+        assert_eq!(body_text(&sa), "Alpha\n");
+        assert_eq!(body_text(&sb), "Alpha\n", "the neighbour got exactly the removed range");
+        assert_eq!(hub.version(), 1);
+
+        // One undo step, the same body image `text.delete` keeps, puts the word back on both.
+        a.undo().expect("undo");
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+        assert_eq!(body_text(&sa), "Alpha\nBeta");
+        assert_eq!(body_text(&sb), "Alpha\nBeta");
+        assert_eq!(a.version(), 2);
+    }
+
+    /// RFC §10.1: a composition over an input method's deletion starts from the body the deletion
+    /// left, so its settle carries that whole body — the removed text does not come back, and the
+    /// composed text lands on both replicas with one undo step of its own.
+    #[test]
+    fn a_composition_over_an_input_methods_deletion_keeps_the_body() {
+        let mut hub = text_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = text_session();
+        let mut sb = text_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+
+        let shape = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
+        let body_text =
+            |s: &Session| s.doc().expect("doc").doc.slides[0].shapes[0].text.as_ref().map(deckcraft_model::text::TextBody::text).unwrap_or_default();
+        sa.set_collab_queue(true);
+        sa.execute("text.edit", &json!({"id": shape})).expect("edit");
+        sa.execute("text.select", &json!({"anchor": [1, 4], "caret": [1, 4]})).expect("caret");
+        sa.delete_surrounding(4, 0, false).expect("delete");
+        let queued = sa.take_pending_commands();
+        a.submit(&mut sa, &queued[0].0, &queued[0].1, "a-1").expect("submit");
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+        assert_eq!((body_text(&sa), body_text(&sb)), ("Alpha\n".into(), "Alpha\n".into()));
+
+        // The composition starts on the deleted body and its settle carries all of it.
+        sa.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 0]})).expect("caret");
+        sa.compose_text("한", None).expect("compose");
+        assert_eq!(body_text(&sa), "Alpha\n한", "the author sees the pre-edit over the deletion");
+        assert_eq!(body_text(&sb), "Alpha\n");
+        sa.commit_text("한").expect("commit");
+        let queued = sa.take_pending_commands();
+        assert_eq!(queued.len(), 1, "{queued:?}");
+        assert_eq!(queued[0].0, "shape.setField");
+        a.submit(&mut sa, &queued[0].0, &queued[0].1, "a-2").expect("submit");
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+        assert_eq!(body_text(&sa), "Alpha\n한");
+        assert_eq!(body_text(&sb), "Alpha\n한", "the settle carries the body the deletion left");
+
+        // The composition is its own undo step: the deletion still stands.
+        a.undo().expect("undo");
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+        assert_eq!(body_text(&sa), "Alpha\n");
+        assert_eq!(body_text(&sb), "Alpha\n");
+        assert_eq!(a.version(), 3);
+    }
+
     /// One replica with three blank slides: the first carries the two shapes of [`deck_session`].
     fn three_slide_session() -> Session {
         let mut s = deck_session();

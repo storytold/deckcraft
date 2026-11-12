@@ -2446,22 +2446,46 @@ fn a_shared_composition_in_a_cell_and_in_the_notes_queues_that_body() {
     assert_eq!(queued[0].1["body"]["paragraphs"][0]["runs"][0]["text"], "メモ");
 }
 
-/// RFC §10.1 — a shared session refuses, before the first write and with a reason, the one input
-/// method command that has no operation of its own. Inside a composition that same deletion is part
-/// of the pre-edit and leaves with its settle.
+/// RFC §10.1 — outside a composition the input method's deletion is an ordinary deletion of the
+/// body: it removes one range, so a shared session queues it as that range (the collaboration
+/// layer sends it as one `text.delete`, whose undo image is the body before it). A selection with
+/// text on both sides is two ranges — no operation carries it — and is still refused before the
+/// first write, with a reason, without an undo step and without queueing anything. Inside a
+/// composition the same deletion belongs to the pre-edit and leaves with its settle.
 #[test]
-fn a_shared_input_method_deletion_outside_a_composition_is_refused_with_a_reason() {
+fn a_shared_input_method_deletion_outside_a_composition_queues_its_range_and_refuses_two() {
     let mut s = session();
     let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
     s.execute("text.edit", &json!({"id": title})).unwrap();
-    s.execute("text.insert", &json!({"text": "abc"})).unwrap();
+    s.execute("text.insert", &json!({"text": "abcdef"})).unwrap();
     s.set_collab_queue(true);
     let (revision, undo) = (s.doc().unwrap().revision, s.doc().unwrap().history.undo.len());
-    let err = s.delete_surrounding(1, 0, false).unwrap_err();
-    assert!(err.to_string().contains("is not shared"), "the refusal says why: {err}");
-    assert_eq!(s.doc().unwrap().revision, revision, "the refused command wrote nothing");
-    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "and left no undo step");
-    assert!(s.take_pending_commands().is_empty(), "and queued nothing");
+
+    // The word before the caret is one contiguous range: it is queued, not written here.
+    assert_eq!(s.delete_surrounding(3, 0, false).unwrap()["queued"], true);
+    let queued = s.take_pending_commands();
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert_eq!(queued[0].0, "text.deleteSurrounding");
+    assert_eq!(queued[0].1, json!({"before": 3, "after": 0, "bytes": false}));
+    assert_eq!(s.doc().unwrap().revision, revision, "the author's text is the room's to change");
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "and no undo step was taken here");
+
+    // Text on both sides of a non-empty selection is two ranges: refused, nothing queued.
+    s.execute("text.select", &json!({"anchor": [0, 1], "caret": [0, 3]})).unwrap();
+    let revision = s.doc().unwrap().revision;
+    let err = s.delete_surrounding(1, 1, false).unwrap_err();
+    assert!(err.to_string().contains("both sides of a selection"), "the refusal says why: {err}");
+    assert!(s.take_pending_commands().is_empty(), "the ambiguous deletion queued nothing");
+    assert_eq!(s.doc().unwrap().revision, revision, "and wrote nothing");
+
+    // Nothing to delete is the same answer a single-user session gives: no operation, no queue.
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 0]})).unwrap();
+    assert_eq!(s.delete_surrounding(0, 0, false).unwrap()["deleted"], 0);
+    assert!(s.take_pending_commands().is_empty(), "there is nothing to share");
+
+    // Inside a composition the same deletion is part of the pre-edit: it runs here and leaves with
+    // the settle, never as an operation of its own.
+    s.execute("text.select", &json!({"anchor": [0, 2], "caret": [0, 2]})).unwrap();
     s.compose_text("か", None).unwrap();
     assert!(s.delete_surrounding(1, 0, false).is_ok(), "inside the composition it belongs to the pre-edit");
     assert!(s.take_pending_commands().is_empty(), "and leaves with the settle");
