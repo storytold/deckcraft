@@ -765,19 +765,21 @@ mod tests {
     const GOLD_SIZES: [(f64, f64); 3] = [(120.0, 80.0), (300.0, 50.0), (64.0, 64.0)];
 
     /// FNV-1a over each outline's path elements, for every adjust set and size. Coordinates are
-    /// printed to 3 decimal places so last-bit libm differences between platforms do not change it.
+    /// rounded to whole thousandths as integers, so the sign of a zero residue (`-1e-17` prints as
+    /// `-0.000` but `+0.0` as `0.000`) and last-bit libm differences between platforms cannot change it.
     fn outline_digest(name: &str) -> u64 {
         use std::fmt::Write;
+        let q = |v: f64| (v * 1000.0).round() as i64;
         let mut text = String::new();
         for adj in GOLD_ADJ {
             for (w, h) in GOLD_SIZES {
                 let g = build(name, w, h, adj).unwrap_or_else(|| panic!("{name} builds no outline"));
                 for el in g.outline().elements() {
                     let _ = match *el {
-                        PathEl::MoveTo(p) => write!(text, "M{:.3},{:.3}", p.x, p.y),
-                        PathEl::LineTo(p) => write!(text, "L{:.3},{:.3}", p.x, p.y),
-                        PathEl::QuadTo(a, p) => write!(text, "Q{:.3},{:.3},{:.3},{:.3}", a.x, a.y, p.x, p.y),
-                        PathEl::CurveTo(a, b, p) => write!(text, "C{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}", a.x, a.y, b.x, b.y, p.x, p.y),
+                        PathEl::MoveTo(p) => write!(text, "M{},{}", q(p.x), q(p.y)),
+                        PathEl::LineTo(p) => write!(text, "L{},{}", q(p.x), q(p.y)),
+                        PathEl::QuadTo(a, p) => write!(text, "Q{},{},{},{}", q(a.x), q(a.y), q(p.x), q(p.y)),
+                        PathEl::CurveTo(a, b, p) => write!(text, "C{},{},{},{},{},{}", q(a.x), q(a.y), q(b.x), q(b.y), q(p.x), q(p.y)),
                         PathEl::ClosePath => write!(text, "Z"),
                     };
                 }
@@ -790,44 +792,44 @@ mod tests {
     /// Digests of every name's outlines as the string dispatch on `main` (fc35ad67) built them, so
     /// this refactor is proven output-identical: any changed outline fails here.
     const GOLDEN: [(&str, u64); 38] = [
-        ("lineInv", 0xfaffc13f44a93375),
-        ("nonIsoscelesTrapezoid", 0xb50af577fa048fe7),
-        ("pieWedge", 0x00895c33a77ec585),
-        ("leftRightArrowCallout", 0xd0463d85d78bc271),
-        ("upDownArrowCallout", 0x7f43aa4d5dbbcef7),
-        ("quadArrowCallout", 0x28601e0d2ed615a7),
-        ("circularArrow", 0x2dddaea620df13d1),
-        ("leftCircularArrow", 0x65ff0bf526b9a076),
-        ("leftRightCircularArrow", 0x986c81c2a50ea9b9),
-        ("curvedRightArrow", 0xb0a5dc797a9f4d7e),
-        ("curvedLeftArrow", 0x83fbcb519025edc5),
-        ("curvedUpArrow", 0x04beb7a91bee8639),
-        ("curvedDownArrow", 0x722b0ba43cf669f1),
-        ("swooshArrow", 0xf6712de3201f217a),
-        ("callout1", 0x069eafd1a6d4007f),
-        ("callout2", 0xd65e3684f4a492da),
-        ("callout3", 0x4613c383ae932b3d),
-        ("accentCallout1", 0xde0690bc860224b1),
-        ("accentCallout2", 0x8d59ee7686ec555e),
-        ("accentCallout3", 0x819cfef7c7112557),
-        ("borderCallout2", 0xd65e3684f4a492da),
-        ("borderCallout3", 0x4613c383ae932b3d),
-        ("accentBorderCallout1", 0xde0690bc860224b1),
-        ("accentBorderCallout2", 0x8d59ee7686ec555e),
-        ("accentBorderCallout3", 0x819cfef7c7112557),
-        ("ellipseRibbon", 0x81723469e4feea75),
-        ("ellipseRibbon2", 0x2b3d31c91db846f8),
-        ("leftRightRibbon", 0x17dfed97cabced8b),
-        ("flowChartOfflineStorage", 0xb4314c28244ae4b9),
-        ("gear6", 0xa86ad08361c706bb),
-        ("gear9", 0x990b036fda62a753),
-        ("funnel", 0x28bac03b8ceb3965),
-        ("cornerTabs", 0x0830876c5934b9a5),
-        ("squareTabs", 0x1f78f490021e9705),
-        ("plaqueTabs", 0xf1937a13710d7fb5),
-        ("chartX", 0xbe7b481be55defe5),
-        ("chartStar", 0x3a7d02b57c488b5f),
-        ("chartPlus", 0x876a6f5f949e2b4d),
+        ("lineInv", 0xc104fef5bde7b6b5),
+        ("nonIsoscelesTrapezoid", 0x92d849856a8154df),
+        ("pieWedge", 0xebc029ec8eef2beb),
+        ("leftRightArrowCallout", 0x03a2c0141b9f97c3),
+        ("upDownArrowCallout", 0xa8100fae3a38ab87),
+        ("quadArrowCallout", 0x439586794d9d7fad),
+        ("circularArrow", 0x66cd981029bed7c9),
+        ("leftCircularArrow", 0x06b19f2dc84ec89e),
+        ("leftRightCircularArrow", 0x8e1aeb28f256cf67),
+        ("curvedRightArrow", 0xf96dcfbfb827600b),
+        ("curvedLeftArrow", 0xecfd4b21b75d4aa1),
+        ("curvedUpArrow", 0x10e380986ecbfe6d),
+        ("curvedDownArrow", 0x349f26ffe220cc3d),
+        ("swooshArrow", 0x8faba202ab8d4513),
+        ("callout1", 0x81e44333a7c03955),
+        ("callout2", 0x96bddbf7fc6406e4),
+        ("callout3", 0x0a47039d206d70ea),
+        ("accentCallout1", 0x0c0122a2c6df5231),
+        ("accentCallout2", 0xa6783a754025feba),
+        ("accentCallout3", 0x4dd20823a8e86da2),
+        ("borderCallout2", 0x96bddbf7fc6406e4),
+        ("borderCallout3", 0x0a47039d206d70ea),
+        ("accentBorderCallout1", 0x0c0122a2c6df5231),
+        ("accentBorderCallout2", 0xa6783a754025feba),
+        ("accentBorderCallout3", 0x4dd20823a8e86da2),
+        ("ellipseRibbon", 0x22a2dcac6760afbf),
+        ("ellipseRibbon2", 0x9a9c15405ce479dc),
+        ("leftRightRibbon", 0x92473c2bbafb0d2f),
+        ("flowChartOfflineStorage", 0xfa44d7fc31d792b3),
+        ("gear6", 0x0d48eab24b683929),
+        ("gear9", 0x2ed4774b9850db1f),
+        ("funnel", 0x44ac92e12138e18d),
+        ("cornerTabs", 0x00358f20c78dd8dd),
+        ("squareTabs", 0x57e3fb8fd4433bfd),
+        ("plaqueTabs", 0x9de9bb90f759b2b5),
+        ("chartX", 0x33c8e67d6b3b3fdd),
+        ("chartStar", 0x0f9a70cff79a5d6d),
+        ("chartPlus", 0x5204b81fd4727575),
     ];
 
     /// Every name builds the same outline as before the `Name` enum, and unknown names build nothing.
