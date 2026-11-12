@@ -297,6 +297,105 @@ fn a_session_accepts_two_editors_and_refuses_a_viewer() {
     handle.shutdown();
 }
 
+/// A room whose peer map keeps a dead socket refuses the next tab with `full`: the third tab of
+/// an acceptance run (the viewer) is exactly the one that arrives after two tabs were closed.
+fn participant_count(addr: std::net::SocketAddr, id: &str) -> usize {
+    let (status, info) = http(addr, "GET", &format!("/v1/sessions/{id}"), None, "");
+    assert_eq!(status, 200, "{info}");
+    serde_json::from_str::<serde_json::Value>(&info).expect("json")["participants"].as_u64().unwrap_or(999) as usize
+}
+
+fn wait_for_participants(addr: std::net::SocketAddr, id: &str, want: usize) -> usize {
+    for _ in 0..60 {
+        let count = participant_count(addr, id);
+        if count == want {
+            return count;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    participant_count(addr, id)
+}
+
+fn room_with_one_seat() -> (Handle, std::net::SocketAddr) {
+    let mut config = Config::for_tests(SECRET, "service-token");
+    config.max_participants = 1;
+    let handle = serve_ephemeral(config).expect("server");
+    let addr = handle.addr;
+    let body = serde_json::json!({"fileId": "file-seat", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+        .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    (handle, addr)
+}
+
+#[test]
+fn a_connection_that_ends_with_a_refusal_does_not_keep_its_seat() {
+    let (handle, addr) = room_with_one_seat();
+    let mut editor = join(addr, "file-seat", "alice", "editor");
+    assert_eq!(participant_count(addr, "file-seat"), 1);
+    // A second hello is refused and the room ends the connection. The peer must leave the map on
+    // that path too: the room is full of one seat otherwise, and the next tab sees `full`, which
+    // the application shows as `error` with a single participant.
+    let hello = ClientMsg::Hello(Hello {
+        v: PROTO_VERSION,
+        app: "deckcraft".into(),
+        doc: "file-seat".into(),
+        jwt: token("alice", "editor", "file-seat"),
+        client: ClientInfo { name: "alice".into(), ver: "1".into() },
+        last_version: Some(0),
+    });
+    editor.send(tungstenite::Message::Text(encode_client(&hello).expect("encode").into())).expect("send");
+    match read(&mut editor) {
+        ServerMsg::Error(error) => assert_eq!(error.code, "invalid"),
+        other => panic!("expected the refusal, got {other:?}"),
+    }
+    drop(editor);
+    assert_eq!(wait_for_participants(addr, "file-seat", 0), 0, "the refused connection left the room");
+    let _viewer = join(addr, "file-seat", "victor", "viewer");
+    assert_eq!(participant_count(addr, "file-seat"), 1, "the next tab is admitted instead of `full`");
+    handle.shutdown();
+}
+
+#[test]
+fn a_connection_killed_without_a_close_frame_does_not_keep_its_seat() {
+    let (handle, addr) = room_with_one_seat();
+    let mut editor = join(addr, "file-seat", "alice", "editor");
+    assert_eq!(participant_count(addr, "file-seat"), 1);
+    // A tab that dies: the TCP socket goes away with no `close` frame, which the room sees as a
+    // reset — an error exit, not a clean end of the loop.
+    match editor.get_mut() {
+        MaybeTlsStream::Plain(stream) => {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+        _ => panic!("the test link is plain TCP"),
+    }
+    drop(editor);
+    assert_eq!(wait_for_participants(addr, "file-seat", 0), 0, "a killed tab leaves the room");
+    let _viewer = join(addr, "file-seat", "victor", "viewer");
+    assert_eq!(participant_count(addr, "file-seat"), 1);
+    handle.shutdown();
+}
+
+#[test]
+fn a_silent_connection_is_dropped_after_the_deadline() {
+    // The socket is half-open (no FIN, no reset): only the ping and the deadline notice it. A
+    // browser answers a protocol ping without the application's help, so silence means the peer
+    // is gone.
+    let mut config = Config::for_tests(SECRET, "service-token");
+    config.peer_ping_secs = 1;
+    config.peer_dead_secs = 2;
+    let handle = serve_ephemeral(config).expect("server");
+    let addr = handle.addr;
+    let body = serde_json::json!({"fileId": "file-silent", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+        .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let _editor = join(addr, "file-silent", "alice", "editor");
+    assert_eq!(participant_count(addr, "file-silent"), 1);
+    assert_eq!(wait_for_participants(addr, "file-silent", 0), 0, "the silent peer was dropped");
+    handle.shutdown();
+}
+
 #[test]
 fn a_repeated_operation_is_not_journalled_twice() {
     let dir = std::env::temp_dir().join(format!("deckcraft-collab-dedup-journal-{}", std::process::id()));

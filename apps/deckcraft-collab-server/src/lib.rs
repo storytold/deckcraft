@@ -98,6 +98,15 @@ pub struct Config {
     pub max_base_chunks: usize,
     /// Where a commit becomes a cabinet file version. `None` keeps commits inside the process.
     pub cabinet: Option<cabinet::CabinetConfig>,
+    /// Silence after which a connection is asked with a protocol ping (`COLLAB_PEER_PING_SECS`,
+    /// default 30, `0` = never). Browsers and tungstenite answer a ping without the application's
+    /// help, so a peer that stops answering is a socket whose peer is gone.
+    pub peer_ping_secs: u64,
+    /// Silence after which a connection is closed even if it answered nothing
+    /// (`COLLAB_PEER_DEAD_SECS`, default 60, `0` = never). Without it a killed tab or a lost
+    /// network keeps its slot in the room until something is written to it, and the room's
+    /// participant count — the one `max_participants` compares against — stays inflated.
+    pub peer_dead_secs: u64,
     /// Origins a browser page may call this server from (`DECKCRAFT_CORS_ORIGINS`, comma
     /// separated). Empty means no CORS at all: no `Access-Control-*` header and no `Vary`, as
     /// before the media channel got a browser link. An entry is an exact origin
@@ -121,6 +130,8 @@ impl Config {
             max_base_chunk: 1 << 20,
             max_base_chunks: 1024,
             cabinet: None,
+            peer_ping_secs: 0,
+            peer_dead_secs: 0,
             cors_origins: Vec::new(),
         }
     }
@@ -1113,10 +1124,35 @@ fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) 
         }
     }
     ws.get_mut().set_read_timeout(Some(Duration::from_millis(50))).map_err(std::io::Error::other)?;
+    // The peer is in the room's map from here on, and it must leave it on **every** exit path:
+    // a closed socket, a protocol reset, a refused frame, a failing write. A peer that stays in the
+    // map counts as a participant for `max_participants` and in the cabinet's list, so a leaked one
+    // refuses the next tab with `error{code:"full"}` — which is exactly how a room that lost a tab
+    // stops letting a viewer in.
+    let outcome = peer_loop(ws, shared, &hub, &peer);
+    if let Ok(mut hub) = hub.lock() {
+        hub.remove_peer(&peer);
+    }
+    outcome
+}
+
+/// Move frames for one joined peer until the socket ends. Its only exit is a `Result`: the caller
+/// takes the peer out of the room afterwards, whether the loop ended cleanly or not.
+fn peer_loop(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>, hub: &Arc<Mutex<Hub>>, peer: &str) -> std::io::Result<()> {
+    // A browser that closes a tab, a laptop that loses its network and a process that is killed all
+    // leave a socket the server never heard a `close` on. TCP does not tell us until something is
+    // written, so a silent peer is asked with a protocol ping and dropped when it does not answer:
+    // browsers and tungstenite answer a ping without the application's help.
+    let ping_after = Duration::from_secs(shared.config.peer_ping_secs);
+    let dead_after = Duration::from_secs(shared.config.peer_dead_secs);
+    let mut last_seen = Instant::now();
+    let mut pinged: Option<Instant> = None;
     let mut ops = VecDeque::new();
     loop {
         match ws.read() {
             Ok(tungstenite::Message::Text(text)) => {
+                last_seen = Instant::now();
+                pinged = None;
                 shared.metrics.messages.fetch_add(1, Ordering::Relaxed);
                 shared.metrics.bytes_in.fetch_add(text.len() as u64, Ordering::Relaxed);
                 if text.len() > shared.config.max_message_bytes {
@@ -1135,11 +1171,11 @@ fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) 
                         } else {
                             ops.push_back(now);
                             if let Ok(msg) = decode_client(text.as_str()) {
-                                handle_client_message(&hub, &peer, msg, shared)?;
+                                handle_client_message(hub, peer, msg, shared)?;
                             }
                         }
                     }
-                    Ok(msg) => handle_client_message(&hub, &peer, msg, shared)?,
+                    Ok(msg) => handle_client_message(hub, peer, msg, shared)?,
                     Err(e) => {
                         let error = ServerError { code: "invalid".into(), message: format!("bad frame: {e}"), retryable: false };
                         send_msg(ws, &ServerMsg::Error(error), shared)?;
@@ -1147,18 +1183,41 @@ fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) 
                 }
             }
             Ok(tungstenite::Message::Ping(payload)) => {
+                last_seen = Instant::now();
+                pinged = None;
                 ws.send(tungstenite::Message::Pong(payload)).map_err(std::io::Error::other)?;
             }
+            Ok(tungstenite::Message::Pong(_)) => {
+                last_seen = Instant::now();
+                pinged = None;
+            }
             Ok(tungstenite::Message::Close(_)) => break,
-            Ok(_) => {}
-            Err(WsError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+            Ok(_) => {
+                // A binary frame is not part of this protocol but it *is* a sign of life.
+                last_seen = Instant::now();
+                pinged = None;
+            }
+            Err(WsError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                // The 50 ms read tick: the only place a silent peer can be noticed. A peer that
+                // closed without a `close` frame (a killed tab, a reset) surfaces here as silence.
+                if dead_after > Duration::ZERO && last_seen.elapsed() >= dead_after {
+                    return Ok(());
+                }
+                if ping_after > Duration::ZERO && last_seen.elapsed() >= ping_after && pinged.is_none() {
+                    if let Err(e) = ws.send(tungstenite::Message::Ping(Vec::new().into())) {
+                        log::debug!("ws peer {peer}: ping failed: {e}");
+                        return Ok(());
+                    }
+                    pinged = Some(Instant::now());
+                }
+            }
+            // `ResetWithoutClosingHandshake` is what a socket that lost its peer without a `close`
+            // frame reports: a disconnect, not a fault of this room.
             Err(WsError::ConnectionClosed | WsError::AlreadyClosed) => break,
+            Err(WsError::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake)) => break,
             Err(e) => return Err(std::io::Error::other(e)),
         }
-        drain(&hub, &peer, ws, shared)?;
-    }
-    if let Ok(mut hub) = hub.lock() {
-        hub.remove_peer(&peer);
+        drain(hub, peer, ws, shared)?;
     }
     Ok(())
 }

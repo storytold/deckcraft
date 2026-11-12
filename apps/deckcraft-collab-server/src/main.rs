@@ -9,6 +9,9 @@
 //! - `COLLAB_AUDIENCE` — token audience, default `office-sync`;
 //! - `COLLAB_MAX_PARTICIPANTS` (16), `COLLAB_MAX_MESSAGE_BYTES` (262144),
 //!   `COLLAB_MAX_OPS_PER_SEC` (50);
+//! - `COLLAB_PEER_PING_SECS` (30) and `COLLAB_PEER_DEAD_SECS` (60) — a silent connection is asked
+//!   with a protocol ping and closed when it stops answering (`0` disables either step); a killed
+//!   tab must not keep its slot against `COLLAB_MAX_PARTICIPANTS`;
 //! - `COLLAB_STORE_DIR` — persist rooms here (native base + journal); absent = memory only;
 //! - `COLLAB_SNAPSHOT_EVERY` — operations between base snapshots (200);
 //! - `COLLAB_CABINET_URL` — the cabinet's commit endpoint (`{sessionId}` is substituted); when
@@ -77,6 +80,8 @@ fn main() -> ExitCode {
         max_base_inline: number("COLLAB_MAX_BASE_INLINE", 8 << 20),
         max_base_chunk: number("COLLAB_MAX_BASE_CHUNK", 1 << 20),
         max_base_chunks: number("COLLAB_MAX_BASE_CHUNKS", 1024),
+        peer_ping_secs: number("COLLAB_PEER_PING_SECS", 30) as u64,
+        peer_dead_secs: number("COLLAB_PEER_DEAD_SECS", 60) as u64,
         cabinet,
         cors_origins: deckcraft_collab_server::parse_cors_origins(&std::env::var("DECKCRAFT_CORS_ORIGINS").unwrap_or_default()),
     };
