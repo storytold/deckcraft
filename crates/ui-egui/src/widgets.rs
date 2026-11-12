@@ -424,7 +424,13 @@ fn compact_group(ui: &mut Ui, label: &str, position: usize, add: impl FnOnce(&mu
     if shown {
         egui::Popup::menu(&resp).open_bool(&mut shown).close_behavior(egui::PopupCloseBehavior::IgnoreClicks).show(|ui| {
             ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
-            ui.horizontal_top(|ui| {
+            // Popups sit above the window, outside the ribbon's scrolled row, so a wide folded
+            // group would run past a narrow window with no way to reach its last controls. The
+            // ribbon's edge chevrons scroll the card, not popups. Cap the drop-down at the
+            // window width and fold its row into more rows inside it.
+            let cap = (ui.ctx().content_rect().width() - 16.0).max(80.0);
+            ui.set_max_width(cap);
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
                 add(ui);
             });
@@ -1143,5 +1149,27 @@ mod tests {
             assert!(pf.contains(&format!("group(ui, \"{name}\"")), "picture_format.rs names its {name} group");
         }
         assert_eq!(pf.matches("group(ui, \"Picture Styles\"").count(), 1, "one group is named Picture Styles");
+    }
+
+    /// A folded group's drop-down stays inside a narrow window: a wide group (eight small buttons)
+    /// folds its row into more rows, so the last control is below the first instead of past the
+    /// window edge with no scroll of its own.
+    #[test]
+    fn a_folded_group_drop_down_keeps_its_last_control_on_screen() {
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 300.0)).build_ui(|ui| {
+            theme::install_fonts(ui.ctx());
+            group(ui, "Wide", |ui| {
+                for i in 0..8 {
+                    let _ = small_button(ui, Icon::Paste, &format!("B{i}"), true, false);
+                }
+            });
+        });
+        harness.run_steps(6);
+        harness.get_by_role_and_label(Role::Button, "Wide").click();
+        harness.run_steps(3);
+        let first = harness.get_by_label("B0").rect();
+        let last = harness.get_by_label("B7").rect();
+        assert!(last.max.x <= 400.0 + 1.0, "the drop-down's last control is on screen: {last:?}");
+        assert!(last.min.y > first.min.y + 4.0, "the row folds so the last control is below the first: {first:?} vs {last:?}");
     }
 }

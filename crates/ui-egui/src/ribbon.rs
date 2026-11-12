@@ -210,7 +210,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let scroll =
             area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).auto_shrink([false, false]).show(&mut sui, |ui| {
                 ui.set_min_height(RIBBON_CARD_H);
-                crate::ribbon_fit::begin(ui.ctx(), &tab, scroll_rect.width() - 2.0 * edge);
+                // The gutters sit outside `scroll_rect`, which is the row's visible width: the plan
+                // folds exactly the groups that do not fit what is shown.
+                crate::ribbon_fit::begin(ui.ctx(), &tab, scroll_rect.width());
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
                     match tab.as_str() {

@@ -168,12 +168,13 @@ struct Measured {
     signature: String,
     widths: HashMap<(String, usize, String, u8), f32>,
     order: HashMap<String, Vec<String>>,
-    /// Each tab's settled plan and the width it was made for. Re-planning every frame would fight
-    /// a gallery whose tile count depends on the space the plan leaves (`spare_room`): folding a
-    /// group lets the gallery grow, which can fold the group again, and so on. The plan is made
-    /// once from the widths measured before anything folded, and remade when the row resizes or
-    /// its groups change.
-    plans: HashMap<(String, u32), Vec<u8>>,
+    /// Each tab's settled plan, the width it was made for, and the preferred levels it assumed.
+    /// Re-planning every frame would fight a gallery whose tile count depends on the space the
+    /// plan leaves (`spare_room`): folding a group lets the gallery grow, which can fold the group
+    /// again, and so on. The plan is made once from the widths measured before anything folded,
+    /// and remade when the row resizes, its groups change, or a measured breakpoint moves a
+    /// section's preferred row form.
+    plans: HashMap<(String, u32), (Vec<u8>, Vec<u8>)>,
 }
 
 fn frame_id() -> Id {
@@ -217,16 +218,20 @@ pub fn begin(ctx: &Context, tab: &str, avail: f32) {
             .collect();
         let preferred: Vec<u8> = titles.iter().map(|t| preferred(tab, t, width)).collect();
         let stored = m.plans.get(&(tab.to_string(), width_key(avail))).cloned();
-        // A stored plan still needs the widths of the forms it chose; a new row form at this width
-        // is planned once it has been measured at least once elsewhere.
-        let settled = stored.filter(|levels| {
-            levels.len() == groups.len() && groups.iter().zip(levels).all(|(g, level)| g.widths.get(*level as usize).is_some_and(Option::is_some))
+        // A stored plan still needs the widths of the forms it chose, and it assumed the preferred
+        // row forms of that width: after a breakpoint crossing moves a preference (same width key)
+        // the stored levels are stale, so plan again. A new row form at this width is planned once
+        // it has been measured at least once elsewhere.
+        let settled = stored.filter(|(levels, planned)| {
+            planned == &preferred
+                && levels.len() == groups.len()
+                && groups.iter().zip(levels).all(|(g, level)| g.widths.get(*level as usize).is_some_and(Option::is_some))
         });
         (titles, groups, preferred, settled)
     });
     let fulls_known = groups.iter().all(|g| g.widths[FULL as usize].is_some());
     let levels = match settled {
-        Some(levels) => levels,
+        Some((levels, _)) => levels,
         _ if fulls_known => {
             let levels = plan(&groups, avail, &preferred);
             // Only keep a plan whose chosen forms have all been measured; until then a form that
@@ -234,7 +239,9 @@ pub fn begin(ctx: &Context, tab: &str, avail: f32) {
             let complete = groups.iter().zip(&levels).all(|(g, level)| g.widths.get(*level as usize).is_some_and(Option::is_some));
             if complete && !levels.is_empty() {
                 ctx.data_mut(|d| {
-                    d.get_temp_mut_or_default::<Measured>(measured_id()).plans.insert((tab.to_string(), width_key(avail)), levels.clone());
+                    d.get_temp_mut_or_default::<Measured>(measured_id())
+                        .plans
+                        .insert((tab.to_string(), width_key(avail)), (levels.clone(), preferred));
                 });
             }
             levels
@@ -253,9 +260,14 @@ pub fn position(ctx: &Context) -> usize {
     ctx.data(|d| d.get_temp::<Frame>(frame_id()).map(|f| f.drawn.len())).unwrap_or(0)
 }
 
-/// The level the next group, `title`, draws at this frame.
+/// The level the next group, `title`, draws at this frame. Outside the ribbon row (before
+/// `begin` or after `end`) a group draws as designed: a stale plan for a same-titled group
+/// must not leak into an unrelated row.
 pub fn level(ctx: &Context, title: &str) -> u8 {
     ctx.data(|d| {
+        if !d.get_temp::<bool>(active_id()).unwrap_or(false) {
+            return None;
+        }
         let f = d.get_temp::<Frame>(frame_id())?;
         let i = f.drawn.len();
         // Planned for another group here (one was added or removed): draw it as designed.
@@ -285,8 +297,10 @@ pub fn record(ctx: &Context, title: &str, level: u8, width: f32, compact_estimat
         m.widths.insert((tab.clone(), i, title.to_string(), level), width);
         // Drawn as designed (either row form): until it is drawn compact, its compact width is the
         // planned estimate from its name, so the next plan can choose it before it has ever folded.
+        // The estimate is the button's own width, not the full row: capping it at the full width
+        // would understate the fold for a group narrower than its button.
         if level != COMPACT {
-            m.widths.entry((tab, i, title.to_string(), COMPACT)).or_insert(compact_estimate.min(width).max(1.0));
+            m.widths.entry((tab, i, title.to_string(), COMPACT)).or_insert(compact_estimate.max(1.0));
         }
     });
 }
@@ -435,6 +449,58 @@ mod tests {
         let odd = [GroupWidths { title: "X".into(), widths: [Some(f32::NAN), None, None] }];
         let _ = plan(&odd, 100.0, &[FULL]);
         let _ = plan(&odd, f32::NAN, &[FULL]);
+    }
+
+    /// The compact estimate is the button's own width, even when the full row is narrower: a
+    /// group of one narrow control must not look cheaper to fold than its button really is.
+    /// `record` inserts the estimate until the group actually folds, so drive it directly: with
+    /// the old `min(width)` cap the stored estimate would be the 40 pt full width.
+    #[test]
+    fn the_compact_estimate_is_not_capped_at_the_full_width() {
+        let ctx = egui::Context::default();
+        ctx.data_mut(|d| {
+            d.insert_temp(active_id(), true);
+            d.insert_temp(frame_id(), Frame { tab: "T".into(), titles: vec!["Narrow".into()], levels: vec![FULL], drawn: Vec::new() });
+        });
+        // Narrow full row, real compact button floor: record what `group` would record.
+        record(&ctx, "Narrow", FULL, 40.0, 65.0);
+        let (full, compact) = ctx.data(|d| {
+            let m = d.get_temp::<Measured>(measured_id()).unwrap_or_default();
+            let key = |level: u8| m.widths.get(&("T".to_string(), 0, "Narrow".to_string(), level)).copied().unwrap_or(0.0);
+            (key(FULL), key(COMPACT))
+        });
+        assert_eq!(full, 40.0, "the full width is recorded as drawn");
+        assert_eq!(compact, 65.0, "the estimate keeps the button width, not the capped full width");
+    }
+
+    /// A measured compact width below the estimate floor survives: `plan` folds against the real
+    /// button width, not the capped guess.
+    #[test]
+    fn plan_counts_a_narrow_groups_real_compact_width() {
+        // Full row 40 pt, real compact button 65 pt: folding costs 25 pt more, not zero.
+        let gs = [g("Narrow", 40.0, None, Some(65.0)), g("Wide", 300.0, None, Some(70.0))];
+        // 340 pt of compact still fits in 340, but planning from FULL must fold Wide first:
+        // with the old min() cap the narrow group's compact was stored as 40, hiding the cost.
+        let narrow_compact = gs[0].widths[COMPACT as usize].unwrap();
+        assert!(narrow_compact > 40.0, "the stored compact width exceeds the full row: {narrow_compact}");
+        assert_eq!(plan(&gs, 330.0, &[FULL, FULL]), vec![FULL, COMPACT]);
+    }
+
+    /// Outside the ribbon row a same-titled group draws as designed: after `end`, `level` must
+    /// not hand out the row's compact plan to an unrelated row.
+    #[test]
+    fn level_outside_the_active_row_falls_back_to_full() {
+        let ctx = egui::Context::default();
+        ctx.data_mut(|d| {
+            d.insert_temp(active_id(), true);
+            d.insert_temp(
+                frame_id(),
+                Frame { tab: "Home".into(), titles: vec!["Clipboard".into()], levels: vec![COMPACT], drawn: Vec::new() },
+            );
+        });
+        assert_eq!(level(&ctx, "Clipboard"), COMPACT, "the row's own group uses the plan");
+        ctx.data_mut(|d| d.insert_temp(active_id(), false));
+        assert_eq!(level(&ctx, "Clipboard"), FULL, "after end the same title draws as designed");
     }
 }
 
@@ -721,6 +787,48 @@ mod ui_tests {
         assert_eq!(control_rows(&tab("View", 960.0, 768.0), &window), 1, "Window is one row at 1200 px");
     }
 
+    /// A cached plan is reused only while the preferred row forms it assumed still hold. `begin`
+    /// keys the stored plan by the fit width but validates it against `preferred` at the content
+    /// width, so a plan cached at one preference must not be replayed after the preference moves.
+    /// Without the check the same plan bytes would satisfy the width-key cache both times.
+    #[test]
+    fn a_stored_plan_is_dropped_when_a_preferred_level_moves() {
+        let ctx = egui::Context::default();
+        let key = ("Insert".to_string(), width_key(700.0));
+        // A plan cached under COMPACT-era preferences must not validate once Images stacks.
+        ctx.data_mut(|d| {
+            let m = d.get_temp_mut_or_default::<Measured>(measured_id());
+            m.order.insert("Insert".into(), vec!["Images".into()]);
+            m.widths.insert(("Insert".into(), 0, "Images".into(), FULL), 300.0);
+            m.widths.insert(("Insert".into(), 0, "Images".into(), STACKED), 120.0);
+            m.widths.insert(("Insert".into(), 0, "Images".into(), COMPACT), 65.0);
+            m.plans.insert(key.clone(), (vec![COMPACT], vec![COMPACT]));
+        });
+        // Stored COMPACT preference at the current stacked width is stale: replan from measured
+        // widths instead of replaying the cached COMPACT level.
+        let (titles, groups, preferred, settled) = ctx.data_mut(|d| {
+            let m = d.get_temp_mut_or_default::<Measured>(measured_id());
+            let titles = m.order.get("Insert").cloned().unwrap_or_default();
+            let groups: Vec<GroupWidths> = titles
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    let key = |level| m.widths.get(&("Insert".to_string(), i, t.clone(), level)).copied();
+                    GroupWidths { title: t.clone(), widths: [key(FULL), key(STACKED), key(COMPACT)] }
+                })
+                .collect();
+            let preferred: Vec<u8> = titles.iter().map(|t| preferred("Insert", t, 1120.0)).collect();
+            let stored = m.plans.get(&key).cloned();
+            let settled = stored.filter(|(levels, planned)| {
+                planned == &preferred
+                    && levels.len() == groups.len()
+                    && groups.iter().zip(levels).all(|(g, level)| g.widths.get(*level as usize).is_some_and(Option::is_some))
+            });
+            (titles, groups, preferred, settled)
+        });
+        assert_eq!(preferred, vec![STACKED], "at 1400 px Images prefers its stacked form");
+        assert!(settled.is_none(), "the COMPACT-era cached plan does not validate: {titles:?} {groups:?}");
+    }
     /// Writes one PNG per measured transition width when `DECKCRAFT_RIBBON_SNAPSHOTS` names a
     /// directory: the visual check of every row form at the width where PowerPoint changes it.
     /// Off unless the variable is set, so the suite stays headless.

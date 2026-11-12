@@ -3,7 +3,7 @@ use super::home::layout_menu;
 use super::view::zoom_menu;
 use super::{
     Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, big_button_ex, enabled, group, json, menu_item, pos2,
-    run, small, small_button, tip, vec2,
+    run, small, small_button, small_button_ex, tip, vec2,
 };
 
 /// Photo Album is a split button: the main click starts a new album, the arrow edits one.
@@ -27,6 +27,26 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
+/// The stacked Images row keeps both halves of the Photo Album split button: the main click
+fn stacked_photo_album(app: &mut SlideApp, ui: &mut Ui) {
+    let en = enabled(app, "insert.photoAlbum");
+    let (main, arrow) = small_button_ex(ui, Icon::Picture, "Photo Album", en, false, true);
+    let _ = main.clone().on_hover_text(tip("insert.photoAlbum", "Photo Album…"));
+    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album…"));
+    if let Some(a) = &arrow {
+        let _ = a.clone().on_hover_text("Photo Album options");
+        a.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album options"));
+    }
+    if main.clicked() {
+        run(app, "insert.photoAlbum", json!({}));
+    }
+    if let Some(a) = arrow {
+        egui::Popup::menu(&a).show(|ui| {
+            menu_item(app, ui, Icon::Picture, "New Photo Album…", "insert.photoAlbum", json!({}));
+            menu_item(app, ui, Icon::Picture, "Edit Photo Album…", "insert.photoAlbumEdit", json!({}));
+        });
+    }
+}
 // ---------- Insert ----------
 
 /// Shapes as a one-line cell for the stacked Illustrations form.
@@ -105,7 +125,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
                 small(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
-                small(app, ui, Icon::Picture, "Photo Album", "insert.photoAlbum", json!({}));
+                stacked_photo_album(app, ui);
                 let r = small_button(ui, Icon::Screenshot, "Screenshot", false, false);
                 let _ = r.on_hover_text("Screenshot (not available yet)");
             });
