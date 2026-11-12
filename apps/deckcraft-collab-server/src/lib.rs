@@ -1215,6 +1215,13 @@ fn drain(hub: &Arc<Mutex<Hub>>, peer: &str, ws: &mut tungstenite::WebSocket<TcpS
 }
 
 fn send_msg(ws: &mut tungstenite::WebSocket<TcpStream>, msg: &ServerMsg, shared: &Arc<Shared>) -> std::io::Result<()> {
+    // A refusal is an answer, not an accepted step: `ops_total` counts what arrived, so a room
+    // that refuses every structural step would otherwise look like a room that takes them and
+    // does nothing. Counting here sees exactly what the clients were told, on every path (an
+    // operation, a commit, a base a compaction replaced).
+    if matches!(msg, ServerMsg::Rejected(_)) {
+        shared.metrics.rejected.fetch_add(1, Ordering::Relaxed);
+    }
     let text = encode_server(msg).map_err(std::io::Error::other)?;
     shared.metrics.bytes_out.fetch_add(text.len() as u64, Ordering::Relaxed);
     ws.send(tungstenite::Message::Text(text.into())).map_err(std::io::Error::other)

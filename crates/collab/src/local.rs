@@ -608,6 +608,15 @@ impl CollabDoc {
             self.install_base(session, ready);
             installed_base = true;
         }
+        // A base replaces the replica, and the state machine drops the edits that never reached
+        // the room with it (they were planned against a document that is gone). Say so once,
+        // instead of losing a click quietly — the same wording the deferred commands get when a
+        // resync makes them meaningless.
+        let dropped = self.client.take_dropped_edits();
+        if dropped > 0 {
+            self.last_apply_error =
+                Some(format!("the document was rebuilt from the room; {dropped} queued edit{} were not sent", if dropped == 1 { "" } else { "s" }));
+        }
         match echo {
             ServerMsg::Welcome(welcome) => {
                 if welcome.version > self.version {

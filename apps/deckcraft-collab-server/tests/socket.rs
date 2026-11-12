@@ -288,11 +288,71 @@ fn a_session_accepts_two_editors_and_refuses_a_viewer() {
     let (status, metrics) = http(addr, "GET", "/metrics", None, "");
     assert_eq!(status, 200);
     assert!(metrics.contains("deckcraft_collab_ops_total 2"), "both operations reached the hub: {metrics}");
+    assert!(metrics.contains("deckcraft_collab_rejected_total 1"), "the viewer's operation was refused, not applied: {metrics}");
     assert!(metrics.contains("deckcraft_collab_rooms 1"), "{metrics}");
 
     // Session control fails closed without the service token.
     let (status, _) = http(addr, "GET", "/v1/sessions/file-1", None, "");
     assert_eq!(status, 200, "read-only session info is public to the service network");
+    handle.shutdown();
+}
+
+#[test]
+fn a_refused_structural_step_is_counted_as_rejected_not_as_an_applied_one() {
+    let handle = start();
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-j", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut b = join(addr, &id, "bob", "editor");
+    let insert = |op_id: &str, base: u64| {
+        ClientMsg::Op(OpEnvelope {
+            op_id: op_id.to_string(),
+            doc: id.clone(),
+            base_version: base,
+            kind: OpKind::Structural,
+            target: Default::default(),
+            payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+            history: None,
+            preview: None,
+        })
+    };
+    a.send(tungstenite::Message::Text(encode_client(&insert("alice-1", 0)).expect("encode").into())).expect("send");
+    assert!(matches!(read(&mut a), ServerMsg::Applied(applied) if applied.version == 1));
+    assert!(matches!(read(&mut b), ServerMsg::Applied(applied) if applied.version == 1));
+
+    // Bob's copy is still at 0: the room refuses his structural step as a retryable `stale` and
+    // changes nothing, so `rejected_total` — not `ops_total` — is what says so.
+    b.send(tungstenite::Message::Text(encode_client(&insert("bob-1", 0)).expect("encode").into())).expect("send");
+    match read(&mut b) {
+        ServerMsg::Rejected(rejected) => {
+            assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Stale);
+            assert!(rejected.retryable, "the client resyncs and sends the step again");
+        }
+        other => panic!("expected a stale refusal, got {other:?}"),
+    }
+    // The resync answers the room's head; the retried step lands at the head it now holds.
+    b.send(tungstenite::Message::Text(encode_client(&ClientMsg::Resync { last_version: 0 }).expect("encode").into())).expect("send");
+    match read(&mut b) {
+        ServerMsg::Snapshot(snapshot) => assert_eq!(snapshot.version, 1),
+        other => panic!("expected a snapshot, got {other:?}"),
+    }
+    b.send(tungstenite::Message::Text(encode_client(&insert("bob-2", 1)).expect("encode").into())).expect("send");
+    assert!(matches!(read(&mut b), ServerMsg::Applied(applied) if applied.version == 2));
+
+    let (status, metrics) = http(addr, "GET", "/metrics", None, "");
+    assert_eq!(status, 200);
+    assert!(metrics.contains("deckcraft_collab_ops_total 3"), "every operation reached the room: {metrics}");
+    assert!(metrics.contains("deckcraft_collab_rejected_total 1"), "exactly one was refused: {metrics}");
+    assert!(metrics.contains("deckcraft_collab_resyncs_total 1"), "{metrics}");
+    let (status, info) = http(addr, "GET", &format!("/v1/sessions/{id}"), None, "");
+    assert_eq!(status, 200);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&info).expect("json")["version"], 2, "both steps that were not refused moved the room");
     handle.shutdown();
 }
 

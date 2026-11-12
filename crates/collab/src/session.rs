@@ -553,7 +553,15 @@ impl DocSession {
     /// client reopen the file from the cabinet.
     pub fn resync(&mut self, last_version: u64) -> SnapshotMsg {
         let head = self.version;
-        if self.tail_covers(last_version) {
+        // A replica that holds a version this room never had cannot be caught up by the journal:
+        // its tail starts above a head the replica does not share. That happens when the room is
+        // re-created after its store was lost or quarantined, or when it is restored from an older
+        // base while a participant kept its version. The room is the authority, so the answer is
+        // its **own whole document** as a base: the replica is replaced instead of being advanced
+        // past a head it never saw, and the next structural operation carries the room's head
+        // rather than a stale `baseVersion` (RFC §4.5.3, "a version gap is a snapshot").
+        let ahead = last_version > head;
+        if !ahead && self.tail_covers(last_version) {
             return SnapshotMsg {
                 version: head,
                 snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: format!("tail@{}", last_version.min(head)) },
@@ -562,12 +570,13 @@ impl DocSession {
             };
         }
         // The journal cannot rebuild this client's state: a base is needed, and the tail must
-        // still reach the head. Otherwise take a fresh base at the head (compaction).
-        let usable = self.snapshot.as_ref().is_some_and(|snapshot| self.tail_covers(snapshot.version));
+        // still reach the head. Otherwise take a fresh base at the head (compaction). A client
+        // above the head can only use a base taken **at** the head: an older one starts below it.
+        let usable = self.snapshot.as_ref().is_some_and(|snapshot| if ahead { snapshot.version == head } else { self.tail_covers(snapshot.version) });
         if !usable {
             let _ = self.take_snapshot();
         }
-        if !self.snapshot.as_ref().is_some_and(|snapshot| self.tail_covers(snapshot.version)) {
+        if !self.snapshot.as_ref().is_some_and(|snapshot| if ahead { snapshot.version == head } else { self.tail_covers(snapshot.version) }) {
             // The base could not be written; the tail-only answer is all this session has.
             return SnapshotMsg {
                 version: head,
@@ -1562,6 +1571,35 @@ mod tests {
         assert_eq!(caught.tail[0].version, 5);
         assert!(caught.base.is_none(), "a covered client needs no base");
         assert!(s.resync(5).tail.is_empty(), "up to date");
+    }
+
+    #[test]
+    fn resync_answers_a_base_to_a_replica_above_the_head() {
+        // The room came back behind its client (re-created, or restored from an older base): the
+        // tail starts above a head the replica never saw, so the only answer that repairs it is
+        // the room's own document as a base, at the room's head and with nothing above it.
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 2, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        for i in 0..4 {
+            s.apply("a", &move_op(&slide, &shape, 200.0 + i as f64 * 10.0, i, &format!("op-{i}"))).expect("apply");
+        }
+        let document = s.document().expect("doc").clone();
+        let ahead = s.resync(9);
+        assert_eq!(ahead.version, 4, "the answer is the room's head, not the replica's version");
+        assert!(ahead.tail.is_empty(), "nothing sits above the head");
+        assert_eq!(ahead.snapshot.mode, SnapshotMode::Base, "the replica is replaced, not advanced");
+        let base = ahead.base.expect("a base replaces the replica");
+        assert_eq!(base.version, 4, "the base is the head itself, never an older one");
+        assert!(base.bytes_base64.is_some());
+        assert!(!base.keys.shapes.is_empty(), "the base carries the session key map");
+
+        // A replica at or below the head keeps the journal answer: the rule did not change for it.
+        s.apply("a", &move_op(&slide, &shape, 500.0, 4, "op-4")).expect("apply");
+        let behind = s.resync(4);
+        assert_eq!(behind.tail.len(), 1, "the step above the client's version");
+        assert!(behind.base.is_none());
+        assert!(s.resync(5).tail.is_empty(), "up to date");
+        assert_ne!(s.document().expect("doc"), &document, "the applied step moved the room's document, no resync did");
     }
 
     #[test]

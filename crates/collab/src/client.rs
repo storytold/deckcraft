@@ -102,6 +102,10 @@ pub struct ClientSession {
     /// snapshot that answers the resync would cover it as "already included" although the server
     /// never applied it.
     resync_in_flight: bool,
+    /// Edits a snapshot made meaningless: a base replaces the replica, so the operations that
+    /// waited in the queue were planned against a document that is gone. The host reports them
+    /// once, through [`Self::take_dropped_edits`].
+    dropped_edits: usize,
     /// The version the host rewound its replica to while a `Resync` was on the wire. That request
     /// was asked from the version the replica held before the rewind, so the snapshot that answers
     /// it starts above the rewound version and does not carry the steps the replica now misses.
@@ -229,6 +233,7 @@ impl ClientSession {
             max_queued: 256,
             resync_wanted: false,
             resync_in_flight: false,
+            dropped_edits: 0,
             rewind_pending: None,
             last_error: None,
             base_download: None,
@@ -420,9 +425,18 @@ impl ClientSession {
                 self.lease = welcome.lease;
                 // A gap between our version and the server's means a resync, not a guess. The
                 // local document is still at `self.version`, so that is the version the resync
-                // must ask the tail from: adopting the server head here would ask for a tail
-                // after the head and leave the replica behind while claiming to be current.
-                if welcome.version > self.version {
+                // asks the tail from: adopting the server head here would ask for a tail after
+                // the head and leave the replica behind while claiming to be current.
+                //
+                // A room that answers *below* this replica is the case the other way round: it
+                // was re-created (its store was gone, or it was restored from an older base)
+                // while this client kept its version. Its tail starts above a head this replica
+                // never saw, so the room's own document is the only truth and the answer must be
+                // its base; asking for the tail would keep the stale `baseVersion` on every
+                // operation and cost one `resync` per attempt. The request below is sent as
+                // `last_version = replica_version`, above the room's head, and the room answers
+                // a base for exactly that case.
+                if welcome.version != self.version {
                     self.resync_wanted = true;
                 } else {
                     self.version = self.version.max(welcome.version);
@@ -510,7 +524,15 @@ impl ClientSession {
                 // and the tail above the replica are the room's state up to the same head, so no
                 // second resync is owed for it.
                 self.resync_wanted = false;
-                self.version = self.version.max(snapshot.version);
+                // A base **replaces** the replica, so the version this client holds becomes the
+                // snapshot's: a room that came back behind this client (re-created, restored from
+                // an older base) answers with its own whole document, and the replica is now
+                // exactly that document at the snapshot's head. Keeping the higher version here
+                // would send every later structural step with a `baseVersion` above the room's
+                // head — refused as stale forever, one resync per attempt. A tail-only answer
+                // only moves the version forward: it is replayed onto the replica as it is.
+                let replaced = snapshot.base.is_some();
+                self.version = if replaced { snapshot.version } else { self.version.max(snapshot.version) };
                 // Operations the base or the tail already includes need no answer. A base at a
                 // later version replaces the replica; the tail above it is replayed by the host.
                 let floor = snapshot.base.as_ref().map(|base| base.version).unwrap_or(self.version);
@@ -523,7 +545,9 @@ impl ClientSession {
                 if snapshot.snapshot.mode == SnapshotMode::Base {
                     // The replica is replaced from the server's base; edits that never reached the
                     // server are not rebased onto it, so they are dropped rather than applied at a
-                    // offset the base does not have.
+                    // offset the base does not have. The host reports them (a click that never
+                    // left is worth a word, not silence).
+                    self.dropped_edits = self.dropped_edits.saturating_add(self.queued.len());
                     self.queued.clear();
                 }
                 // A base above the inline limit that the server offers as one HTTP request is
@@ -568,8 +592,10 @@ impl ClientSession {
                         self.base_request = None;
                         self.pending_snapshot = None;
                         self.missed_while_rebuilding = false;
-                        // The host applies this snapshot (base and tail) as it arrives.
-                        self.replica_version = self.replica_version.max(snapshot.version);
+                        // The host applies this snapshot (base and tail) as it arrives. A base is
+                        // the whole replica, so its version is the snapshot's even when this client
+                        // held a higher one from a room that no longer exists.
+                        self.replica_version = if replaced { snapshot.version } else { self.replica_version.max(snapshot.version) };
                     }
                 }
                 Effect::Rollback
@@ -734,6 +760,12 @@ impl ClientSession {
     /// flag, so one refusal is reported once.
     pub fn take_refused_snapshot(&mut self) -> bool {
         std::mem::take(&mut self.snapshot_refused)
+    }
+
+    /// How many queued edits the last snapshot dropped because its base replaced the replica.
+    /// Reading it clears the count, so one rebuild is reported once.
+    pub fn take_dropped_edits(&mut self) -> usize {
+        std::mem::take(&mut self.dropped_edits)
     }
 
     /// Whether a chained base is being assembled right now (the status bar says "rebuilding").
@@ -1115,6 +1147,59 @@ mod tests {
         assert_eq!(c.on_msg(snapshot), Effect::Rollback);
         assert_eq!(c.version(), 9, "after the base and its tail the client is at the head");
         assert_eq!(c.queued(), 0, "an edit from the old replica is not applied onto the base");
+    }
+
+    #[test]
+    fn a_room_that_came_back_behind_the_client_rebuilds_the_replica_from_its_base() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        for version in 1..=9 {
+            c.on_msg(applied(&format!("o{version}"), version));
+        }
+        assert_eq!(c.version(), 9);
+
+        // The room was re-created (its store was gone): this replica is above the head it answers.
+        c.disconnected();
+        let _ = c.connect("jwt", ClientInfo { name: "t".into(), ver: "1".into() });
+        c.on_msg(welcome(3, Role::Editor));
+        assert_eq!(c.version(), 9, "the replica is not rewound before the room's document arrives");
+        assert!(
+            matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 9 })),
+            "the request names the version this replica holds, so the room knows it is above its head"
+        );
+
+        // The room answers with its own document as a base at its head; the replica is that now.
+        let snapshot = ServerMsg::Snapshot(SnapshotMsg {
+            version: 3,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@3".into() },
+            tail: vec![],
+            base: Some(BaseSnapshot { version: 3, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default(), chunks: None, http: None }),
+        });
+        assert_eq!(c.on_msg(snapshot), Effect::Rollback);
+        assert_eq!(c.version(), 3, "a base replaces the replica, so the version may move back");
+        c.submit(structural("after", 0)).expect("queue");
+        assert!(
+            matches!(c.next_outgoing(), Some(ClientMsg::Op(ref op)) if op.base_version == 3),
+            "the next structural step carries the room's head, not the stale version"
+        );
+    }
+
+    #[test]
+    fn a_base_that_replaces_the_replica_reports_the_edits_it_dropped() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(9, Role::Editor));
+        c.submit(op("q1", 0)).expect("queue");
+        c.submit(op("q2", 0)).expect("queue");
+        assert_eq!(c.queued(), 2);
+        let snapshot = ServerMsg::Snapshot(SnapshotMsg {
+            version: 9,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@9".into() },
+            tail: vec![],
+            base: Some(BaseSnapshot { version: 9, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default(), chunks: None, http: None }),
+        });
+        c.on_msg(snapshot);
+        assert_eq!(c.take_dropped_edits(), 2, "the host reports the two edits it never sent");
+        assert_eq!(c.take_dropped_edits(), 0, "and reports them once");
     }
 
     #[test]
