@@ -1714,6 +1714,31 @@ fn tab_moves_between_cells_skipping_merged_ones() {
 }
 
 #[test]
+fn format_paragraph_align_names_match_format_align() {
+    use deckcraft_model::text::Align;
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    let para = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes[0].text.as_ref().unwrap().paragraphs[0].props.align;
+    for (name, want) in [
+        ("justLow", Align::JustLow),
+        ("justifyLow", Align::JustLow),
+        ("thaiDist", Align::ThaiDistributed),
+        ("ctr", Align::Center),
+        ("centre", Align::Center),
+        ("r", Align::Right),
+        ("just", Align::Justify),
+        ("dist", Align::Distributed),
+        ("distributed", Align::Distributed),
+        ("left", Align::Left),
+    ] {
+        s.execute("format.paragraph", &json!({"align": name})).unwrap();
+        assert_eq!(para(&s), Some(want), "{name}");
+    }
+    assert!(s.execute("format.paragraph", &json!({"align": "bogus"})).is_err());
+}
+
+#[test]
 fn right_to_left_paragraphs() {
     let mut s = session();
     let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
@@ -3720,6 +3745,25 @@ fn undo_history_is_capped_by_memory_as_well_as_steps() {
     assert_eq!(s.doc().unwrap().history.undo.len(), 120);
 }
 
+/// A slide's notes count toward the undo budget: small edits to a slide with large notes keep a
+/// copy of those notes per step, and must not slip past the budget as if the slide were empty.
+#[test]
+fn undo_history_counts_slide_notes() {
+    let mut s = Session::with_new();
+    let notes = "n".repeat(1 << 20);
+    s.edit(|doc, _| {
+        std::sync::Arc::make_mut(&mut doc.slides[0]).notes = deckcraft_model::text::TextBody::from_text(&notes);
+        Ok(())
+    })
+    .unwrap();
+    s.doc_mut().unwrap().history = History { limit: 500, byte_limit: 8 << 20, ..Default::default() };
+    for i in 0..40 {
+        s.execute("slide.rename", &json!({"name": format!("v{i}"), "index": 0})).unwrap();
+    }
+    let n = s.doc().unwrap().history.undo.len();
+    assert!((1..=8).contains(&n), "{n} steps of 1 MB notes kept under an 8 MB budget");
+}
+
 #[test]
 fn picture_styles_replace_each_other_in_one_step() {
     const PNG: &[u8] = &[
@@ -5408,6 +5452,38 @@ fn pen_pressure_is_kept_and_a_mouse_draws_at_full_width() {
     assert_eq!(got, vec![vec![0.2, 1.0, 0.4], vec![1.0, 1.0]]);
 }
 
+#[test]
+fn a_long_ink_stroke_is_extended_in_place_and_capped() {
+    let mut s = session();
+    s.set_tool(tools::ToolKind::Ink { mode: "pen".into(), color: deckcraft_model::Rgba::rgb(20, 20, 20), width: 4.0 });
+    let ev = |kind, x: f64| tools::PointerEvent { kind, x, y: 80.0, mods: Mods::default(), tol: 3.0, pressure: Some(0.5) };
+    s.pointer(ev(PointerKind::Down, 0.0)).unwrap();
+    let n = tools::MAX_GESTURE_POINTS + 5_000;
+    for i in 1..n {
+        s.pointer(ev(PointerKind::Drag, (i % 500) as f64)).unwrap();
+    }
+    assert_eq!(s.tool.ink_preview.len(), tools::MAX_GESTURE_POINTS);
+    s.pointer(ev(PointerKind::Up, 0.0)).unwrap();
+    let kept: usize = ink_pressures(&s).iter().map(Vec::len).sum();
+    assert!((2..=tools::MAX_GESTURE_POINTS).contains(&kept), "{kept}");
+}
+
+#[test]
+fn double_clicking_a_capped_freeform_keeps_its_vertices() {
+    let mut s = session();
+    let ev = |kind, x: f64, y: f64| tools::PointerEvent { kind, x, y, mods: Default::default(), tol: 3.0, pressure: None };
+    s.set_tool(tools::ToolKind::Shape { preset: "freeform".into() });
+    s.pointer(ev(tools::PointerKind::Down, 100.0, 100.0)).unwrap();
+    // Densely clicked vertices, each within the double-click tolerance of the last.
+    for i in 0..tools::MAX_GESTURE_POINTS + 10 {
+        s.pointer(ev(tools::PointerKind::Down, 300.0 + i as f64 * 0.001, 100.0)).unwrap();
+    }
+    s.pointer(ev(tools::PointerKind::DoubleClick, 300.0, 100.0)).unwrap();
+    let st = s.doc().unwrap();
+    let deckcraft_model::Geom::Custom { paths } = &st.shapes().last().unwrap().geom else { panic!("no freeform") };
+    assert_eq!(paths[0].d.matches(" L ").count(), tools::MAX_GESTURE_POINTS - 1);
+}
+
 fn ink_pressures(s: &Session) -> Vec<Vec<f32>> {
     let st = s.doc().unwrap();
     let Some(sh) = st.shapes().iter().rev().find(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Ink { .. })) else {
@@ -6845,6 +6921,70 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
 
+/// #2059: Decrease Font Size (Ctrl+[, Cmd+Shift+,) steps down one size at a time from any size:
+/// PowerPoint's list up to 96, then 8 points at a time above it, as Increase Font Size steps up.
+/// A size above 66 used to shrink straight to 66.
+#[test]
+fn shrinking_a_large_font_steps_down_one_size_at_a_time() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 420.0, 160.0], "text": "Big"})).unwrap();
+    let id = deckcraft_model::ShapeId(u32::try_from(r["id"].as_u64().unwrap()).unwrap());
+    let size = |s: &Session| s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.size;
+    s.execute("format.size", &json!({"size": 120})).unwrap();
+    let mut down = vec![];
+    for _ in 0..9 {
+        s.execute("format.shrink", &json!({})).unwrap();
+        down.push(size(&s).unwrap());
+    }
+    assert_eq!(down, [112.0, 104.0, 96.0, 88.0, 80.0, 72.0, 66.0, 60.0, 54.0]);
+    let mut up = vec![];
+    for _ in 0..7 {
+        s.execute("format.grow", &json!({})).unwrap();
+        up.push(size(&s).unwrap());
+    }
+    assert_eq!(up, [60.0, 66.0, 72.0, 80.0, 88.0, 96.0, 104.0]);
+    // A size between list steps goes to the next one down, and one past the top steps 8 at most.
+    s.execute("format.size", &json!({"size": 99})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!(size(&s), Some(96.0));
+    s.execute("format.size", &json!({"size": 150})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!(size(&s), Some(142.0));
+}
+
+/// A shape named many times in one edit is edited once and not copied per mention.
+#[test]
+fn repeated_target_ids_edit_the_shape_once() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "x".repeat(100_000)})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let edited = s.execute("shape.fill", &json!({"ids": vec![id; 50_000], "color": "#ff0000"})).unwrap();
+    assert_eq!(edited, json!(1));
+    let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
+    assert_eq!(v["shape"]["fill"]["color"]["base"]["rgb"], json!({"a": 255, "b": 0, "g": 0, "r": 255}));
+}
+
+#[test]
+fn many_distinct_fonts_are_listed_once_each_without_a_quadratic_scan() {
+    // 30,000 runs in 15,000 families, each written twice in different case.
+    let mut p = deckcraft_model::Presentation::default();
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    let mut body = deckcraft_model::text::TextBody::from_text("x");
+    let run = body.paragraphs[0].runs[0].clone();
+    body.paragraphs[0].runs = (0..30_000)
+        .map(|i| {
+            let mut r = run.clone();
+            let name = format!("Qqq Font {}", i / 2);
+            r.props.font = Some(if i % 2 == 0 { name } else { name.to_uppercase() });
+            r
+        })
+        .collect();
+    slide.shapes[0].text = Some(body);
+    let used = crate::fonts::used_fonts(&p);
+    assert_eq!(used.iter().filter(|f| f.starts_with("Qqq Font ")).count(), 15_000);
+    assert_eq!(crate::fonts::missing_fonts(&p).iter().filter(|f| f.to_ascii_lowercase().starts_with("qqq font ")).count(), 15_000);
+}
+
 #[test]
 fn slide_master_view_rejects_invalid_indices() {
     let mut s = Session::with_new();
@@ -7028,4 +7168,19 @@ fn outline_export_skips_footer_date_and_slide_number() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(rtf.contains("Agenda") && rtf.contains("First point"), "{rtf:?}");
     assert!(!rtf.contains("Company Confidential") && !rtf.contains("1 May 2026"), "{rtf:?}");
+}
+
+#[test]
+fn shape_adjust_and_quick_style_reject_invalid_index() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 100, 200, 100]})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(id).unwrap().clone();
+    for bad in [json!(-1), json!(1.5)] {
+        assert!(s.execute("shape.adjust", &json!({"index": bad, "value": 0.4})).is_err(), "adjust accepted {bad}");
+        assert!(s.execute("shape.quickStyle", &json!({"index": bad})).is_err(), "quickStyle accepted {bad}");
+    }
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, before.geom);
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
+    s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
 }

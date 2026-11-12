@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::{
     CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, color_param, color_value, edit_geometry, edit_shapes, f64_param, has_selection,
-    has_slide, id_param, ok, str_param, targets, usize_param, with_param, xfrm_of,
+    has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param, with_param, xfrm_of,
 };
 use crate::{Result, Session};
 
@@ -374,6 +374,25 @@ fn visible(s: &mut Session, p: &Value) -> Result<Value> {
 /// (a child can still be unlocked on its own afterwards), as PowerPoint does.
 fn lock(s: &mut Session, p: &Value) -> Result<Value> {
     let v = bool_param(p, "locked");
+    // A targeted shape inside another targeted group is reached through the group: editing it again
+    // would toggle it back.
+    let mut ids = super::targets(s, p)?;
+    if ids.len() > 1 {
+        let doc = s.doc()?;
+        // Walk each distinct group once, however often `ids` repeats it.
+        let mut once = std::collections::HashSet::new();
+        ids.retain(|id| once.insert(*id));
+        let mut inside = std::collections::HashSet::new();
+        for id in &ids {
+            if let Some(g) = doc.shape(*id) {
+                deckcraft_model::walk(g.children(), &mut |c, _| {
+                    inside.insert(c.id);
+                });
+            }
+        }
+        ids.retain(|id| !inside.contains(id));
+    }
+    let p = &json!({"ids": ids, "locked": p.get("locked")});
     edit_shapes(s, p, "shape.lock", |sh| {
         let to = v.unwrap_or(!sh.locked);
         set_locked(sh, to, 0);
