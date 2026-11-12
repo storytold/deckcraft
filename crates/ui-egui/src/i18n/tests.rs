@@ -142,6 +142,63 @@ fn preferences_cancel_restores_the_language() {
     assert_eq!(h.state().ui.language, AUTO);
 }
 
+/// Cancel in Preferences also restores a saved language code that this build doesn't offer.
+#[test]
+fn preferences_cancel_restores_an_unoffered_language() {
+    use_fixture("de", DE);
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    app.ui = UiState { language: "fr".into(), ..Default::default() }.sanitized();
+    assert_eq!(app.ui.language, "fr");
+    let mut h = harness(app);
+    h.state_mut().run("app.preferences", json!({})).unwrap();
+    h.run_steps(3);
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().ui.language, "fr");
+}
+
+#[test]
+fn translated_origin_combo_and_tabs_clear_tooltip_follow_active_language() {
+    use_fixture(
+        "de",
+        "@id\tlanguage.name\tDeutsch\n\tTop Left Corner\tObere linke Ecke\n\tCenter\tMitte\n\tClear\tLöschen\n\tClear the tab at {pos}\"\tTabstopp bei {pos}\" löschen\n",
+    );
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let id = app.run("shape.insert", json!({"preset": "rect", "rect": [100, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    app.run("edit.select", json!({"ids": [id]})).unwrap();
+    app.run("app.language", json!({"language": "de"})).unwrap();
+    app.ui.pane = Some("format".into());
+    app.ui.format_tab = "size".into();
+    let mut h = harness(app);
+    h.ctx.global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+    h.run_steps(3);
+    assert_eq!(
+        h.get_by_role_and_label(Role::ComboBox, "From").value().as_deref(),
+        Some("Obere linke Ecke"),
+        "origin combo caption uses translated label"
+    );
+    h.get_by_role_and_label(Role::ComboBox, "From").click();
+    h.run_steps(2);
+    h.get_by_label("Mitte").click();
+    h.run_steps(2);
+    assert_eq!(
+        h.get_by_role_and_label(Role::ComboBox, "From").value().as_deref(),
+        Some("Mitte"),
+        "selected origin caption switches to translated Center"
+    );
+
+    let mut d = crate::dialogs::Dialog::new("tabs");
+    d.params = json!({"tabs": [{"pos": 36.0, "align": "l"}], "defaultTab": 72.0});
+    h.state_mut().dialog = Some(d);
+    h.run_steps(3);
+    h.get_by_label("Löschen").hover();
+    h.run_steps(3);
+    assert!(h.query_by_label("Tabstopp bei 0.50\" löschen").is_some(), "tabs Clear tooltip uses translated template");
+}
+
 /// The catalogs `build.rs` embedded parse without a problem, and every embedded locale is offered.
 /// Skipped in a build without craft-i18n (`CRAFT_I18N_DIR`), which is English only.
 #[test]

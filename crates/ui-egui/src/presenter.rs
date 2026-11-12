@@ -52,6 +52,9 @@ pub struct Snapshot {
     /// All slides is open in the presenter window (#1866); the audience keeps the current slide.
     pub grid: bool,
     pub zoom_armed: bool,
+    /// Resolved active interface language code (e.g. `"en"`, `"de"`).
+    #[serde(default)]
+    pub language: String,
     pub current: Option<Preview>,
     pub next: Option<Preview>,
     /// The All slides thumbnails, in slide order, while `grid` is on. `None` in a sent delta
@@ -134,6 +137,8 @@ pub trait Host {
 pub struct View {
     fonts: crate::uifonts::UiFonts,
     styled: bool,
+    fonts_lang: Option<crate::i18n::Lang>,
+    catalog_noted: Option<crate::i18n::Lang>,
     current: Option<egui::TextureHandle>,
     next: Option<egui::TextureHandle>,
     previous_current: Option<Preview>,
@@ -142,18 +147,36 @@ pub struct View {
     grid: Vec<Option<egui::TextureHandle>>,
 }
 impl View {
-    /// Install the same interface and dynamic fallback fonts as SlideApp before layout.
+    /// Install the same interface and dynamic fallback fonts as SlideApp before layout, and apply
+    /// the resolved active interface language (`language`, or keep the current one when empty).
     /// Font definitions take effect on the next pass; never forward input on a discarded pass.
-    pub fn prepare(&mut self, ctx: &egui::Context, notes: &str) -> bool {
+    pub fn prepare(&mut self, ctx: &egui::Context, notes: &str, language: &str) -> bool {
+        let lang = if language.trim().is_empty() { crate::i18n::current() } else { crate::i18n::Lang::from_pref(language) };
+        crate::i18n::set_current(lang);
         if !self.styled {
+            self.fonts_lang = Some(lang);
             crate::theme::install_fonts_with(ctx, &self.fonts.faces);
             crate::theme::apply(ctx, &crate::theme::Tokens::dark());
             self.styled = true;
             ctx.request_discard("install presenter interface fonts before layout");
             return false;
         }
+        if self.fonts_lang != Some(lang) {
+            self.fonts_lang = Some(lang);
+            self.fonts.reset_coverage();
+            self.catalog_noted = None;
+            crate::theme::install_fonts_with(ctx, &self.fonts.faces);
+            ctx.request_discard("install presenter interface fonts for language change");
+            return false;
+        }
         if ctx.will_discard() {
             return false;
+        }
+        if self.catalog_noted != Some(lang) {
+            for text in lang.catalog_text() {
+                self.fonts.note(ctx, text);
+            }
+            self.catalog_noted = Some(lang);
         }
         self.fonts.note(ctx, notes);
         if self.fonts.apply(ctx) {
@@ -164,7 +187,7 @@ impl View {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) -> Vec<Command> {
-        if !self.prepare(ui.ctx(), &snapshot.notes) {
+        if !self.prepare(ui.ctx(), &snapshot.notes, &snapshot.language) {
             return Vec::new();
         }
         let mut commands = Vec::new();
@@ -351,6 +374,7 @@ mod tests {
             blank: None,
             grid: false,
             zoom_armed: false,
+            language: String::new(),
             current: Some(Preview { width: 1, height: 1, rgba: vec![255; 4] }),
             next: Some(Preview { width: 1, height: 1, rgba: vec![0; 4] }),
             slides: None,
@@ -452,7 +476,7 @@ mod tests {
         let mut layouts = 0;
         for _ in 0..4 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                if !view.prepare(ui.ctx(), &data.notes) {
+                if !view.prepare(ui.ctx(), &data.notes, &data.language) {
                     installing += 1;
                     assert!(view.ui(ui, &data).is_empty(), "no commands during a discarded font-install pass");
                     return;
@@ -488,6 +512,7 @@ mod tests {
             blank: None,
             grid: false,
             zoom_armed: false,
+            language: String::new(),
             current: None,
             next: None,
             slides: None,
@@ -543,5 +568,30 @@ mod tests {
         for (width, height, rgba) in [(usize::MAX, 1, vec![]), (0, 1, vec![]), (1, 1, vec![0; 3]), (641, 1, vec![0; 2564])] {
             assert!(Preview { width, height, rgba }.image().is_none());
         }
+    }
+
+    #[test]
+    fn popup_applies_and_updates_language_from_snapshot() {
+        use egui_kittest::kittest::Queryable;
+        crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n\tEnd Show\tPräsentation beenden\n");
+        let mut snapshot = snapshot();
+        snapshot.current = None;
+        snapshot.next = None;
+        snapshot.language = "de".into();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
+            |ui, (view, snapshot): &mut (View, Snapshot)| {
+                let _ = view.ui(ui, snapshot);
+            },
+            (View::default(), snapshot),
+        );
+        h.run_steps(3);
+        assert!(h.query_by_label("Präsentation beenden").is_some());
+        assert!(h.query_by_label("End Show").is_none());
+
+        h.state_mut().1.language = "en".into();
+        h.run_steps(3);
+        assert!(h.query_by_label("End Show").is_some());
+        assert!(h.query_by_label("Präsentation beenden").is_none());
+        crate::i18n::set_current(crate::i18n::Lang::EN);
     }
 }

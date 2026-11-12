@@ -273,7 +273,8 @@ impl eframe::App for Popup {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let snapshot = self.snapshot.borrow();
         let notes = snapshot.as_ref().map_or("", |snapshot| snapshot.notes.as_str());
-        if !self.view.prepare(ui.ctx(), notes) {
+        let language = snapshot.as_ref().map_or("", |snapshot| snapshot.language.as_str());
+        if !self.view.prepare(ui.ctx(), notes, language) {
             return;
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));

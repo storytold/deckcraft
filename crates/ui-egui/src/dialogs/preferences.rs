@@ -22,7 +22,7 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
         app.ui.ui_scale = scale as f32;
     }
     if let Some(language) = before.get("language").and_then(Value::as_str) {
-        let _ = app.run("app.language", json!({ "language": language }));
+        app.ui.language = language.to_string();
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;

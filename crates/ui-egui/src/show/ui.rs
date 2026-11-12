@@ -181,6 +181,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 blank: show.blank_name().map(str::to_owned),
                 grid: show.presenter_grid,
                 zoom_armed: show.zoom_arm,
+                language: crate::i18n::Lang::from_pref(&app.ui.language).code().to_owned(),
                 // The grid replaces both previews in the popup; leaving them out keeps one message small.
                 current: show.remote_preview.clone().filter(|_| !show.presenter_grid),
                 next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next && !show.presenter_grid).map(|(_, image)| image.clone()),
