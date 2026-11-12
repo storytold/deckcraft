@@ -1097,7 +1097,8 @@ mod tests {
         let doc = session.active().unwrap().doc.clone();
         let ids: Vec<u32> = doc.slides[0].shapes.iter().map(|s| s.id.0).collect();
         session.execute("arrange.group", &serde_json::json!({"ids": ids})).expect("group");
-        session.execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [0.0, 0.0, 200.0, 200.0]})).expect("a shape above the group");
+        session.execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [0.0, 0.0, 200.0, 200.0]}))
+            .expect("a shape above the group");
         let services = crate::Services { camera_in: Some(Box::new(FakeCamera::default().sized(64, 48))), ..crate::Services::default() };
         let mut app = SlideApp::new(session, services);
         app.camera.set_preview(true);
