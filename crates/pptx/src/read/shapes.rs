@@ -395,6 +395,12 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
+        if let Some(sc) = pr.child("scene3d") {
+            let raw = part.keep_inner(sc);
+            if !raw.is_empty() && raw.len() <= 64 * 1024 {
+                s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
+            }
+        }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
@@ -428,11 +434,8 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             return s;
         }
         if let Some(c) = gd.child("chart")
-            && let Some(rel) = part.rels.get(c.attr("r:id").unwrap_or(""))
-            && let Some(bytes) = imp.pkg.xml_bytes(&rel.target)
-            && let Some(mut chart) = if uri.ends_with("/chartex") { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }
+            && let Some(chart) = super::chart::frame_chart(imp, part, c.attr("r:id").unwrap_or(""), uri)
         {
-            chart.kept = super::chart::capture_kept(imp, &rel.target);
             s.kind = ShapeKind::Chart(Box::new(chart));
             return s;
         }
