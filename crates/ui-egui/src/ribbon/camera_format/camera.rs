@@ -56,6 +56,7 @@ fn preview_menu(app: &mut SlideApp, ui: &mut Ui) {
         for device in devices {
             let selected = picked.as_deref() == Some(device.id.as_str()) || (picked.is_none() && device.default);
             let label = ui.add_enabled(usable, egui::Button::new(&device.name).selected(selected).frame(false));
+            label.widget_info(|| egui::WidgetInfo::selected(egui::Role::MenuItem, usable, selected, &device.name));
             if label.clicked() {
                 run(app, "cameo.preview", json!({"on": true, "device": device.id}));
                 ui.close();
@@ -63,9 +64,9 @@ fn preview_menu(app: &mut SlideApp, ui: &mut Ui) {
         }
     }
     ui.separator();
+    // Refresh redraws the open menu with the new list: closing would hide the result.
     if ui.button("Refresh Camera List").clicked() {
         app.camera_preview.refresh_devices();
-        ui.close();
     }
 }
 

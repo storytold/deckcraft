@@ -1088,16 +1088,24 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
         commands.push(json!({"id": "show.setup", "params": {"useTimings": true}}));
     }
     let mut failed: Vec<String> = Vec::new();
+    let mut batch_refused = false;
     if !commands.is_empty() {
-        match app.run("edit.batch", json!({"commands": commands})) {
-            Ok(v) => {
-                failed = v
-                    .get("failed")
-                    .and_then(|f| f.as_array())
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-                    .unwrap_or_default()
+        if commands.len() > 10_000 {
+            // `edit.batch` refuses an oversized batch before running it: nothing below ran,
+            // so the take is not partially saved — say the whole save failed instead.
+            batch_refused = true;
+            failed.push("the take is larger than the 10,000-command batch limit".to_string());
+        } else {
+            match app.run("edit.batch", json!({"commands": commands})) {
+                Ok(v) => {
+                    failed = v
+                        .get("failed")
+                        .and_then(|f| f.as_array())
+                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .unwrap_or_default()
+                }
+                Err(e) => failed.push(e),
             }
-            Err(e) => failed.push(e),
         }
     }
     if show.record {
@@ -1112,9 +1120,12 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
                 MAX_NARRATION_BYTES as f64 / 1_000_000.0
             ))
         };
-        // A part that would not save is omitted work too, and it is named first.
+        // A part that would not save is omitted work too, and it is named first. A refused
+        // batch ran nothing, so the status must not read as a partial save either.
         let parts = if failed.is_empty() {
             None
+        } else if batch_refused {
+            Some(format!("the recording could not be saved ({})", failed[0]))
         } else {
             Some(format!("{} part{} of the take could not be saved ({})", failed.len(), if failed.len() == 1 { "" } else { "s" }, failed[0]))
         };

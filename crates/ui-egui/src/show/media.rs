@@ -72,13 +72,19 @@ pub(super) fn run_pending_media(app: &mut SlideApp, show: &mut Show, doc_uid: u6
     });
 }
 
+/// Drop a clip's pending automatic start: the presenter took it over by hand, so the deadline
+/// must not fire the clip back up (or resume a manual pause) later.
+pub(super) fn cancel_pending_media(show: &mut Show, id: ShapeId) {
+    show.pending_media.retain(|(pending, _)| *pending != id);
+}
+
 /// Carry out the media effects the show's steps set off: Play starts from the beginning unless
 /// the clip is already playing, Pause toggles, Stop stops.
 pub(super) fn run_media_cues(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation) {
     for (id, effect) in std::mem::take(&mut show.media_cues) {
         let Some(clip) = crate::media::find_clip(doc, id, Some(show.state.slide)) else { continue };
         // The presenter took over the clip: a start scheduled for it must not fire later.
-        show.pending_media.retain(|(pending, _)| *pending != id);
+        cancel_pending_media(show, id);
         match effect.as_str() {
             "pause" => app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show),
             "stop" => app.media.stop(id),
@@ -409,5 +415,29 @@ mod tests {
         let mut show = Show::new(&doc, 0, false, false);
         show_media(&mut app, &mut show, uid, &doc, 10.0);
         assert!(show.pending_media.is_empty());
+    }
+    /// A presenter who starts and pauses a delayed clip owns it: the pending automatic start
+    /// must not resume it at the deadline (thread `show/media.rs:70`).
+    #[test]
+    fn a_manually_paused_clip_stays_paused_past_its_deadline() {
+        let mut app = app_with_delayed_clip(Some(2_000));
+        let doc = app.session.active().unwrap().doc.clone();
+        let uid = app.session.active().unwrap().uid;
+        let mut show = Show::new(&doc, 0, false, false);
+        show_media(&mut app, &mut show, uid, &doc, 10.0);
+        assert_eq!(show.pending_media.len(), 1, "the delayed start is scheduled");
+        let id = show.pending_media[0].0;
+        // The presenter takes over before the deadline: start, then pause.
+        app.media.play(uid, &doc, id, &clip_of(&doc, id), None, crate::media::Owner::Show);
+        super::cancel_pending_media(&mut show, id);
+        app.media.toggle(uid, &doc, id, &clip_of(&doc, id), crate::media::Owner::Show);
+        assert!(show.pending_media.is_empty(), "the manual take owns the clip now");
+        // Past the deadline the automatic start must not fire the clip back up.
+        run_pending_media(&mut app, &mut show, uid, &doc, 13.0);
+        assert!(!app.media.is_playing(id), "manual pause holds past the deadline");
+    }
+
+    fn clip_of(doc: &Presentation, id: deckcraft_model::ShapeId) -> MediaClip {
+        crate::media::find_clip(doc, id, Some(0)).expect("the delayed clip")
     }
 }

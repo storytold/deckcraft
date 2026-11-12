@@ -129,7 +129,9 @@ impl CpalIn {
         let dead = self.dead.clone();
         let full = self.dropped.clone();
         let err = move |e: cpal::StreamError| {
-            dead.store(true, Ordering::Relaxed);
+            if matches!(e, cpal::StreamError::DeviceNotAvailable) {
+                dead.store(true, Ordering::Relaxed);
+            }
             keep_stream_error(&slot, &e);
         };
         let stream = match cfg.sample_format() {
@@ -283,7 +285,15 @@ impl MicIn for CpalIn {
             *lock.lock().unwrap_or_else(PoisonError::into_inner) = true;
             cv.notify_all();
         }
-        if let Some(handle) = self.worker.take() {
+        // The worker may still be opening the device (enumeration or a permission prompt):
+        // joining unconditionally would block the UI. Once the handshake reported, the worker
+        // is past `open()` and the join returns promptly; before that, detach and let the stop
+        // flag end it when `open()` returns.
+        let starting = self.startup.as_ref().is_some_and(|rx| matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        if starting {
+            self.startup = None;
+            let _ = self.worker.take();
+        } else if let Some(handle) = self.worker.take() {
             let _ = handle.join();
         }
         self.report();
@@ -387,5 +397,58 @@ mod tests {
         .join();
         assert!(slot.is_poisoned());
         assert_eq!(take_stream_error(&slot).as_deref(), Some("lost"));
+    }
+
+    /// `stop()` while the worker is still opening the device must not block the UI: the stop
+    /// signal is set and the half-started worker is detached instead of joined.
+    #[test]
+    fn stop_while_startup_is_pending_does_not_block() {
+        use std::time::{Duration, Instant};
+        let mut mic = CpalIn::default();
+        // A handshake that never reports: the worker is still inside `open()`.
+        let (_tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        let stop = std::sync::Arc::new((Mutex::new(false), Condvar::new()));
+        mic.startup = Some(rx);
+        mic.stop = Some(stop.clone());
+        // A parked thread stands in for the worker stuck in `open()`: a join would hang.
+        let parked = std::thread::Builder::new()
+            .name("deckcraft-mic-test".into())
+            .spawn(|| {
+                std::thread::sleep(Duration::from_secs(30));
+            })
+            .expect("test worker");
+        mic.worker = Some(parked);
+        let start = Instant::now();
+        mic.stop();
+        assert!(start.elapsed() < Duration::from_secs(5), "stop returned without joining startup");
+        assert!(mic.worker.is_none(), "the starting worker is detached");
+        assert!(mic.startup.is_none(), "the pending handshake is dropped with the worker");
+        assert!(*stop.0.lock().unwrap_or_else(PoisonError::into_inner), "the stop flag is set");
+    }
+
+    /// A startup handshake that already reported means the worker is past `open()`: `stop()`
+    /// still joins it promptly instead of leaking the thread.
+    #[test]
+    fn stop_after_startup_reported_joins_the_worker() {
+        let mut mic = CpalIn::default();
+        // `Ok` already waiting: the worker finished `open()` and only waits for the stop flag.
+        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        tx.send(Ok(())).expect("handshake");
+        let stop = std::sync::Arc::new((Mutex::new(false), Condvar::new()));
+        mic.startup = Some(rx);
+        mic.stop = Some(stop);
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        mic.worker = Some(
+            std::thread::Builder::new()
+                .name("deckcraft-mic-test".into())
+                .spawn(move || {
+                    flag.store(true, Ordering::Relaxed);
+                })
+                .expect("test worker"),
+        );
+        mic.stop();
+        assert!(done.load(Ordering::Relaxed), "the worker ran to completion");
+        assert!(mic.worker.is_none(), "the joined worker is cleared");
     }
 }

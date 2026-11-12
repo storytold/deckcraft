@@ -4,7 +4,7 @@
 
 use egui::{Color32, CornerRadius, Stroke, Ui, vec2};
 
-use super::{InkState, Layout, RecordView};
+use super::{Layout, RecordView};
 
 /// The camera bubble. Until a camera backend supplies frames this is a clearly empty placeholder:
 /// a dashed ring and a camera glyph, never a fabricated live picture.
@@ -26,10 +26,4 @@ pub(super) fn bubble(ui: &Ui, rec: &RecordView, layout: &Layout) {
     let lens = egui::Rect::from_center_size(body.center(), egui::vec2(r * 0.8, r * 0.8));
     painter.circle_filled(lens.center(), r * 0.4, Color32::from_gray(60));
     painter.text(rect.center() + vec2(0.0, r * 1.25), egui::Align2::CENTER_CENTER, "Camera", crate::theme::font(10.0), Color32::from_gray(160));
-}
-
-/// The ink overlay is the show's own pen (`show.strokes`), so the shell only keeps the selection.
-#[allow(dead_code)]
-fn _ink_state_used(ink: &InkState) -> bool {
-    ink.active
 }

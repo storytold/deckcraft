@@ -1,7 +1,7 @@
 use super::keys::{handle_keys, keyboard};
 use super::media::{
-    Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, run_pending_media, shapes_under_pointer,
-    show_media,
+    Pick, Under, cancel_pending_media, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, run_pending_media,
+    shapes_under_pointer, show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
@@ -331,6 +331,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
     if let Some(id) = gif_click {
         let _ = app.run("media.gifPlay", json!({"id": id}));
     } else if let Some((id, clip)) = media_click {
+        cancel_pending_media(show, id);
         app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show);
     } else if clicked && let Some(Pick::Text(l)) = under.as_ref().and_then(|u| u.pick.clone()) {
         let last = show.last_viewed;
@@ -816,9 +817,20 @@ fn draw_media_controls(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr,
             };
             let pos = app.media.status(id).map(|s| s.position).unwrap_or(0.0);
             match action {
-                Some(crate::media::BarAction::Toggle) => app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show),
-                Some(crate::media::BarAction::Seek(t)) => app.media.seek(doc_uid, doc, id, &clip, t, crate::media::Owner::Show),
-                Some(crate::media::BarAction::Nudge(dt)) => app.media.seek(doc_uid, doc, id, &clip, (pos + dt).max(0.0), crate::media::Owner::Show),
+                // The presenter took over the clip: its pending automatic start is cancelled,
+                // or it would fire (and resume a pause) at the deadline.
+                Some(crate::media::BarAction::Toggle) => {
+                    cancel_pending_media(show, id);
+                    app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show);
+                }
+                Some(crate::media::BarAction::Seek(t)) => {
+                    cancel_pending_media(show, id);
+                    app.media.seek(doc_uid, doc, id, &clip, t, crate::media::Owner::Show);
+                }
+                Some(crate::media::BarAction::Nudge(dt)) => {
+                    cancel_pending_media(show, id);
+                    app.media.seek(doc_uid, doc, id, &clip, (pos + dt).max(0.0), crate::media::Owner::Show);
+                }
                 None => {}
             }
         }

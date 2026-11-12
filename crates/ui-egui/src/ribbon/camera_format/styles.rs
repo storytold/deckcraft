@@ -57,7 +57,7 @@ fn style_gallery(ui: &mut Ui, current: &str, enabled: bool) -> Option<&'static s
         if sel {
             painter.rect_stroke(rect.expand(1.0), CornerRadius::same(4), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
         }
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, st.label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, sel, st.label));
         if resp.on_hover_text(st.label).clicked() && enabled {
             picked = Some(st.id);
         }

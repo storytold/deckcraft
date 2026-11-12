@@ -15,7 +15,7 @@ use crate::{HistoryEntry, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("edit.batch", "Batch Edit", [], None, "{commands: [{id, params?}], label?} — runs the commands as one undo step", has_doc, batch),
+        cmd!("edit.batch", "Batch Edit", [], None, "{commands: [{id, params?}]} — runs the commands as one undo step", has_doc, batch),
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
         cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
@@ -770,7 +770,7 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let mut ran = 0usize;
     let mut failed: Vec<String> = Vec::new();
     for c in commands {
-        let Some(id) = c.get("id").and_then(Value::as_str).or_else(|| c.get("command").and_then(Value::as_str)) else {
+        let Some(id) = c.get("id").and_then(Value::as_str) else {
             return Err(bad("edit.batch", "each command needs an `id`"));
         };
         let params = c.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Object(Default::default()));
@@ -793,4 +793,36 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     Ok(json!({"ran": ran, "failed": failed}))
+}
+
+#[cfg(test)]
+mod batch_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// A batch over the limit runs nothing: the caller sees the refusal, not a partial take.
+    #[test]
+    fn a_batch_over_the_limit_runs_no_command() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let before = s.doc().unwrap().revision;
+        let slides = s.doc().unwrap().doc.slides.len();
+        let commands: Vec<serde_json::Value> = (0..10_001).map(|_| json!({"id": "slide.new", "params": {"layout": "blank"}})).collect();
+        let err = s.execute("edit.batch", &json!({"commands": commands})).unwrap_err();
+        assert!(err.to_string().contains("10,000"), "{err}");
+        assert_eq!(s.doc().unwrap().revision, before, "nothing ran before the refusal");
+        assert_eq!(s.doc().unwrap().doc.slides.len(), slides, "no slide was added");
+    }
+
+    /// Every entry needs an `id`: the old `command` alias is not read.
+    #[test]
+    fn a_batch_entry_needs_an_id_not_a_command_alias() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let err = s.execute("edit.batch", &json!({"commands": [{"command": "slide.new", "params": {"layout": "blank"}}]})).unwrap_err();
+        assert!(err.to_string().contains("each command needs an `id`"), "{err}");
+    }
 }

@@ -35,7 +35,9 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) {
     let painter = ui.painter().clone();
     // Camera preview icon: a filled camera body when the preview is up.
     let cp = layout.camera_preview;
-    let cp_resp = ui.interact(cp, ui.scope_id().with("record_camera_preview"), Sense::click());
+    // The Record view has no camera surface yet: hovering explains that instead of offering a
+    // click that toggles state nothing draws.
+    let cp_resp = ui.interact(cp, ui.scope_id().with("record_camera_preview"), Sense::hover());
     let cp_bg = if cp_resp.hovered() { Color32::from_gray(58) } else { Color32::from_gray(38) };
     painter.rect_filled(cp, CornerRadius::same(5), cp_bg);
     let body = cp.shrink(6.0);
@@ -45,8 +47,6 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) {
         CornerRadius::ZERO,
         if rec.camera_preview { Color32::from_rgb(90, 170, 230) } else { Color32::from_gray(190) },
     );
-    // The Record view has no camera surface yet: the icon says so instead of toggling state
-    // nothing draws.
     cp_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, false, "Camera preview"));
     cp_resp.on_hover_text("The Record view's camera preview arrives with the camera section");
 
