@@ -1099,6 +1099,17 @@ impl FontDb {
         let _ = on;
     }
 
+    /// Whether automatic system-font lookups (fallback by character, symbol and script families)
+    /// may touch installed fonts. Lookups of a family the document or host names are not gated.
+    pub(crate) fn system_fallback_enabled(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).enabled
+        }
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// Process-wide database: the bundled fonts, then the installed system fonts, cataloged the
     /// first time a lookup by family name needs them (or ahead of time by
     /// [`FontDb::scan_in_background`]).
@@ -1389,9 +1400,8 @@ impl FontDb {
     fn instance(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         let open = style.find('{')?;
         let base = self.find(family, style[..open].trim())?;
-        if base.skrifa().is_none_or(|f| f.axes().is_empty()) {
-            return Some(base);
-        }
+        let Some(font) = base.skrifa().filter(|f| !f.axes().is_empty()) else { return Some(base) };
+        let axis_tags: Vec<[u8; 4]> = font.axes().iter().map(|a| a.tag().to_be_bytes()).collect();
         let mut coords = base.coords.clone();
         for kv in style[open + 1..].trim_end_matches('}').split(',') {
             let (k, v) = kv.split_once(':')?;
@@ -1401,6 +1411,11 @@ impl FontDb {
                 return None;
             }
             let tag = [k[0], k[1], k[2], k[3]];
+            // A tag the font has no axis for changes nothing; keeping it would grow the list with
+            // every distinct tag in the style text.
+            if !axis_tags.contains(&tag) {
+                continue;
+            }
             match coords.iter_mut().find(|(t, _)| *t == tag) {
                 Some(c) => c.1 = v,
                 None => coords.push((tag, v)),
@@ -1412,7 +1427,7 @@ impl FontDb {
         Some(f)
     }
 
-    fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+    pub(crate) fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         if style.contains('{') {
             {
                 let faces = self.read_faces();
@@ -1598,7 +1613,8 @@ impl FontDb {
         };
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
+            let cataloged: Vec<String> =
+                if self.system_fallback_enabled() { self.read_catalog().iter().map(|e| e.family.clone()).collect() } else { Vec::new() };
             for fam in SYSTEM_FALLBACKS.iter().filter(|f| f.contains("Symbol")) {
                 if !self.is_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
                     self.load_cataloged(fam);

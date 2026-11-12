@@ -173,7 +173,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 // The theme's heading and body fonts come first (when a theme is there), then the
                 // installed families, each once with its sizes and widths under it.
                 let head = if app.session.active().is_some_and(|d| !d.doc.masters.is_empty()) { 2.min(fams.len()) } else { 0 };
-                dropdown(ui, "font", &font, 150.0, en, |ui| {
+                dropdown(ui, "Font", &font, 150.0, en, |ui| {
                     for (k, f) in fams.iter().take(head).enumerate() {
                         let label = if k == 0 { format!("{f} (Headings)") } else { format!("{f} (Body)") };
                         if ui.button(egui::RichText::new(label)).clicked() {
@@ -214,8 +214,8 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     }
                 });
                 let size_text = size.map(|s| widgets::fmt_num(s, "")).unwrap_or_default();
-                dropdown(ui, "size", &size_text, 52.0, en, |ui| {
-                    for s in deckcraft_engine::cmd::format::SIZES.iter().chain([72.0, 80.0, 88.0, 96.0].iter()) {
+                dropdown(ui, "Font size", &size_text, 52.0, en, |ui| {
+                    for s in deckcraft_engine::cmd::format::SIZES.iter() {
                         if ui.button(widgets::fmt_num(*s, "")).clicked() {
                             run(app, "format.size", json!({"size": s}));
                             ui.close();

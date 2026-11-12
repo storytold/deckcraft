@@ -330,7 +330,9 @@ pub fn rows<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 }
 
 /// A text dropdown field (font name, size): shows `current`, opens a popup with `add_items`.
-pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool, add_items: impl FnOnce(&mut Ui)) -> Response {
+/// `label` is what assistive technology calls it ("Font", "Start"); `current` is exposed as its
+/// value, so an empty box is still announced by its purpose and never by an internal key (#1956).
+pub fn dropdown(ui: &mut Ui, label: &str, current: &str, width: f32, enabled: bool, add_items: impl FnOnce(&mut Ui)) -> Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     let painter = ui.painter_at(rect);
@@ -350,8 +352,10 @@ pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool,
         if enabled { t.text } else { t.text_faint },
     );
     chevron(&painter, pos2(rect.max.x - 9.0, rect.center().y), 3.0, t.text_dim);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, if current.is_empty() { id } else { current }));
-    let _ = id;
+    resp.widget_info(|| egui::WidgetInfo {
+        current_text_value: (!current.is_empty()).then(|| current.to_string()),
+        ..egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, label)
+    });
     egui::Popup::menu(&resp).width(width.max(140.0)).show(|ui| {
         // A long name ("Bricolage Grotesque 72pt SemiCondensed") widens the list instead of wrapping
         // onto several lines.
@@ -745,19 +749,26 @@ mod tests {
     }
 
     /// The custom ribbon dropdown is a real combo box in the accessibility tree, named by its
-    /// current value (0.37's strict unnamed-input check would otherwise reject it).
+    /// purpose with the shown text as its value. An empty one (no selection to read a font or
+    /// size from) keeps its name rather than falling back to an internal key (#1956).
     #[test]
-    fn the_dropdown_has_a_combo_box_role_and_a_name() {
+    fn the_dropdown_is_named_by_its_purpose_and_carries_its_value() {
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 200.0)).build_ui(|ui| {
             theme::install_fonts(ui.ctx());
-            dropdown(ui, "font-size", "18 pt", 120.0, true, |ui| {
+            dropdown(ui, "Font size", "18 pt", 120.0, true, |ui| {
                 ui.label("12 pt");
                 ui.label("18 pt");
             });
+            dropdown(ui, "Start", "", 112.0, false, |_| {});
         });
         harness.run();
-        let combo = harness.get_by_role_and_label(Role::ComboBox, "18 pt");
+        let combo = harness.get_by_role_and_label(Role::ComboBox, "Font size");
+        assert_eq!(combo.value().as_deref(), Some("18 pt"));
         assert!(combo.rect().width() > 100.0);
+        assert!(harness.query_by_role_and_label(Role::ComboBox, "18 pt").is_none(), "the value is not its name");
+        let empty = harness.get_by_role_and_label(Role::ComboBox, "Start");
+        assert_eq!(empty.value(), None, "nothing shown, no value");
+        assert!(harness.query_by_label("astart").is_none() && harness.query_by_label("start").is_none(), "no internal key is announced");
     }
 
     /// #32: clicking the "More Colors" hex field closed the colour menu before anything could be

@@ -480,3 +480,11 @@ fn designs_of_a_family_are_grouped_under_it() {
     let total: usize = groups.iter().map(|g| if g.designs.is_empty() { 1 } else { g.designs.len() + usize::from(g.selectable) }).sum();
     assert_eq!(total, list.len());
 }
+
+#[test]
+fn disabling_system_fallback_gates_automatic_family_loads() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert!(cfg!(target_arch = "wasm32") || db.system_fallback_enabled());
+    db.set_system_fallback(false);
+    assert!(!db.system_fallback_enabled());
+}
