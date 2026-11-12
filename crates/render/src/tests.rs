@@ -2164,6 +2164,60 @@ fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_
 }
 
 #[test]
+fn a_picture_in_a_placeholder_shows_the_layout_placeholders_fill_behind_transparent_pixels() {
+    // #2068: a slide picture with an empty `p:spPr` in a layout picture placeholder that sets a
+    // fill shows that fill behind its clear pixels. Its own fill (none included) and its own
+    // style still decide when it has them. The left half of the image is clear.
+    let png = {
+        let img = image::RgbaImage::from_fn(8, 4, |x, _| if x < 4 { image::Rgba([0, 0, 0, 0]) } else { image::Rgba([20, 20, 160, 255]) });
+        let mut out = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let orange = Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 153, 0)));
+    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 11, ..Default::default() });
+    let style = ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1);
+    // (layout fill, picture's own fill, picture's own style, the clear half shows orange)
+    let cases = [
+        (Some(orange.clone()), None, None, true),
+        (None, None, None, false),
+        (Some(orange.clone()), Some(Fill::None), None, false),
+        (Some(orange.clone()), None, Some(style), false),
+    ];
+    for (i, (layout_fill, own_fill, own_style, shows)) in cases.into_iter().enumerate() {
+        let mut p = Presentation::default();
+        let media = p.add_media("half.png", "image/png", png.clone()).expect("media");
+        let lid = p.slides[0].layout;
+        let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+        let layout = m.layouts.iter_mut().find(|l| l.id == lid).expect("layout");
+        layout.shapes.push(Shape {
+            id: ShapeId(2),
+            ph: ph(),
+            xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)),
+            fill: layout_fill,
+            ..Default::default()
+        });
+        let pic = Shape {
+            id: ShapeId(3),
+            ph: ph(),
+            kind: ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+            fill: own_fill,
+            style: own_style,
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![pic];
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let (clear, opaque) = (img.pixel(200, 200), img.pixel(400, 200));
+        assert!(opaque[2] > 140 && opaque[0] < 40, "case {i}: the picture's own pixels: {opaque:?}");
+        if shows {
+            assert_eq!(clear[..3], [255, 153, 0], "case {i}: the layout's fill behind the clear half");
+        } else {
+            assert!(clear[..3].iter().all(|v| *v > 240), "case {i}: the slide shows through: {clear:?}");
+        }
+    }
+}
+
+#[test]
 fn a_picture_casts_its_shadow_from_its_pixels() {
     // PowerPoint shades only where a picture paints: a logo on a transparent background casts the
     // logo's shadow, not its frame's. Here the left half of the image is transparent.
