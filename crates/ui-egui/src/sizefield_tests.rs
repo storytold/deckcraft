@@ -58,6 +58,19 @@ fn a_typed_size_is_applied_on_enter() {
     assert_eq!(run_size(&h), Some(37.0), "the size typed in the field is applied");
 }
 
+/// Tab moves on and keeps what was typed, as Enter does.
+#[test]
+fn a_typed_size_is_applied_when_tab_moves_on() {
+    let mut h = harness();
+    size_field(&h, "40").click();
+    h.run_steps(2);
+    size_field(&h, "40").type_text("29");
+    h.run_steps(2);
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert_eq!(run_size(&h), Some(29.0), "the size typed in the field is applied on Tab");
+}
+
 #[test]
 fn text_that_is_not_a_size_changes_nothing_and_says_so() {
     let mut h = harness();
