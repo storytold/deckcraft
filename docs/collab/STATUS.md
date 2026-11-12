@@ -20,7 +20,10 @@ frame loop ended *cleanly*, so the seats of refused frames, failing writes, rese
 accumulated until `max_participants` refused the next tab with `the room is full`; the loop now has
 one exit through a `Result`, the caller removes the peer on both paths, a reset without a close is
 a disconnect, and a peer silent for `COLLAB_PEER_PING_SECS` is pinged and dropped after
-`COLLAB_PEER_DEAD_SECS`. This STATUS commit sits on top of `c5c8f0cb` and is unpushed as well.
+`COLLAB_PEER_DEAD_SECS`. Docs commits sit on top of `c5c8f0cb` — `95327b5f` (this sync) and
+`b384d343` (§A connection that ended does not keep its seat) — and they are unpushed as well, so
+**`git log --oneline ceeada59..HEAD` is the authoritative list of what a push would carry**, and
+nothing on this branch was pushed from an agent session.
 The paragraphs below are the history of this branch as each head was delivered; every one of them
 names the commit it describes, and the preview slice follows.
 
@@ -1512,7 +1515,7 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, delivered head `5a105c61` = docs on code `aaecc6db` = the fork head = the PR head = the local branch head at 2026-11-12T03:13:50Z), rebased onto `origin/main` and merged with it; every review pass, the STATUS sync, the presence heartbeat and the op_id slice are delivered; no workflow run exists on `5a105c61`/`aaecc6db`, and the four runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), so approval is the human step; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, delivered head `5a105c61` = docs on code `aaecc6db` = the fork head = the PR head = the local branch head at 2026-11-12T03:13:50Z), rebased onto `origin/main` and merged with it; every review pass, the STATUS sync, the presence heartbeat and the op_id slice are delivered; no workflow run exists on `5a105c61`/`aaecc6db`, and the four runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), so approval is the human step; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` (the delivered head has moved since that reading — the header names the current one, `ceeada59`) | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
 
 Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
 pass pushed as `9b43c611a`, on
@@ -1845,9 +1848,9 @@ token from the cabinet.
    replacing base reports the edits it dropped, `rejected_total` counts real refusals),
    `3b8ebaff` (a repeated `opId` answers the stored step and is not journalled twice),
    `4e86a6e1` (docs for that incident, its fix and the production run) and `c5c8f0cb` (a room
-   forgets the seats of connections that ended and drops a peer that went silent). This STATUS
-   commit is the fifth and is unpushed too, so **the push is the next step for a person**, then
-   the maintainer's approval of the workflow runs, then review and merge.
+   forgets the seats of connections that ended and drops a peer that went silent). The docs commits
+   above it are unpushed too, so **the push is the next step for a person**, then the maintainer's
+   approval of the workflow runs, then review and merge.
    **No workflow run has executed on the delivered head or on the four commits above it**: the four
    runs created on `ceeada59` at 13:27:39Z (CI, House rules, Nix, SonarCloud) are `completed /
    action_required` with a `0s` duration, and the runs for the earlier heads waited for the same
