@@ -646,18 +646,14 @@ mod ui_tests {
         // Images and Designer are one narrow control each: their compact buttons exceed the full
         // row, so the planner leaves them full while everything else folds.
         assert_eq!(levels(&h, &HOME), vec![COMPACT, COMPACT, COMPACT, COMPACT, FULL, COMPACT, COMPACT, FULL]);
-        // Designer stays full (its button is wider than its row), so it is already on the
-        // card when the row fits; scroll only while the chevron is present.
+        // Designer stays full (its button is wider than its row). Scroll right until the cue
+        // disappears; its Design Ideas control is then on screen.
         for _ in 0..8 {
             let Some(cue) = h.query_by_label("Scroll ribbon right") else { break };
             cue.click();
             h.run_steps(1);
         }
-        let scrolled = h.query_by_label("Scroll ribbon left").is_some();
-        assert!(
-            h.query_by_role_and_label(Role::Button, "Designer").is_some() || scrolled,
-            "the last section is reachable: on screen or via the scrolled row"
-        );
+        assert!(h.query_by_label("Design Ideas").is_some(), "the last section is reachable after scrolling");
     }
 
     /// PowerPoint's Home narrows Font and Paragraph to three rows and widens each to two at the
