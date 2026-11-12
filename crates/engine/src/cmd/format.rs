@@ -398,6 +398,16 @@ mod tests {
     }
 
     #[test]
+    fn font_dialog_shows_a_system_colour_as_it_draws() {
+        let mut s = shape();
+        s.execute("format.fontDialog", &json!({"color": {"system": "windowText", "last": "#FFFFFF"}})).unwrap();
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({})).unwrap();
+        let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+        assert_eq!(params["color"], "#000000");
+    }
+
+    #[test]
     fn font_dialog_with_no_fields_asks_the_ui_to_open() {
         let mut s = shape();
         s.execute("format.italic", &json!({"on": true})).unwrap();
