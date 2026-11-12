@@ -55,8 +55,9 @@ pub struct Show {
     step_end: f64,
     trans: Option<Transition>,
     tex: Option<(Key, TextureHandle)>,
-    /// The shapes stacked above the playing videos, drawn over the video frames (#1005).
-    overlay: Option<(Key, Vec<ShapeId>, TextureHandle)>,
+    /// The shapes stacked above the live frames, drawn over them (#1005, Cameos): one cached
+    /// overlay per skip list, so painting another frame does not replace a different slice.
+    overlay: Vec<(Key, Vec<ShapeId>, TextureHandle)>,
     /// The Presenter View's above-Cameo overlay: document identity, slide, size, skip list, step,
     /// GIF frames, trigger plays, and the texture.
     presenter_over: Option<(usize, usize, (u32, u32), Vec<ShapeId>, usize, u64, Vec<(ShapeId, usize)>, TextureHandle)>,
@@ -235,7 +236,7 @@ impl Show {
             step_end: 0.0,
             trans: None,
             tex: None,
-            overlay: None,
+            overlay: vec![],
             presenter_over: None,
             next_tex: None,
             next_job: None,
