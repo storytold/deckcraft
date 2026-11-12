@@ -14,7 +14,6 @@ repository = "https://github.com/storytold/deckcraft"
 # internal
 deckcraft-geom = { path = "crates/geom" }
 deckcraft-color = { path = "crates/color" }
-deckcraft-metafile = { path = "crates/metafile" }
 deckcraft-model = { path = "crates/model" }
 deckcraft-fonts = { path = "crates/fonts" }
 deckcraft-text = { path = "crates/text" }
@@ -58,6 +57,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # craft-media and craft-audio share types and stay on one rev.
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "75895c0321d8cb6e175a42466cba050352b117c5", version = "=0.1.0", default-features = false }
 craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "75895c0321d8cb6e175a42466cba050352b117c5", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
+# WMF, EMF and EMF+ reader.
+craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "8079878ae2b166c1ea8229e40eff7e08c916e532", version = "=0.1.0" }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "6e03f65bf45181db77ba6229716e6624db9eb25b", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "6e03f65bf45181db77ba6229716e6624db9eb25b", features = ["egui"] }

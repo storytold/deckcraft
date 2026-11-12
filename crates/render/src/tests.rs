@@ -1963,6 +1963,19 @@ fn mf_ink(img: &image::RgbaImage) -> Option<(u32, u32, u32, u32)> {
 }
 
 #[test]
+fn metafile_dashed_pen_leaves_gaps() {
+    // CREATEPENINDIRECT PS_DASH | PS_ENDCAP_FLAT, 40 units (4 px) wide, black, then a line across
+    // the picture at y = 72 px: 12 px dashes with 4 px gaps.
+    let mut pen = i16s(&[0x0201, 40, 0]);
+    pen.extend(0u32.to_le_bytes());
+    let recs = vec![(0x02FA, pen), (0x012D, i16s(&[0])), (0x0214, i16s(&[720, 100])), (0x0213, i16s(&[720, 2780]))];
+    let img = crate::metafile::rasterize(&wmf_with(2880, 1440, &recs), 288).expect("raster");
+    let ink: Vec<bool> = (20..260).map(|x| img.get_pixel(x, 72)[3] > 128).collect();
+    assert!(ink.iter().filter(|b| **b).count() > 120, "dashes are drawn");
+    assert!(ink.iter().filter(|b| !**b).count() > 30, "with gaps between them");
+}
+
+#[test]
 fn metafile_text_ink_lands_at_its_reference_point() {
     // 2 × 1 inch (144 × 72 pt) drawn 288 px wide: 2 px per point. A 36-point "HH", top-left
     // aligned at (72, 18) pt.

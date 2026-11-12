@@ -890,6 +890,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-metafile"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=8079878ae2b166c1ea8229e40eff7e08c916e532#8079878ae2b166c1ea8229e40eff7e08c916e532"
+dependencies = [
+ "encoding_rs",
+ "image",
+ "kurbo",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "craft-pdf"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
@@ -1202,15 +1213,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deckcraft-metafile"
-version = "0.18.1"
-dependencies = [
- "image",
- "kurbo",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "deckcraft-model"
 version = "0.18.1"
 dependencies = [
@@ -1260,11 +1262,11 @@ dependencies = [
 name = "deckcraft-render"
 version = "0.18.1"
 dependencies = [
+ "craft-metafile",
  "deckcraft-anim",
  "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-geom",
- "deckcraft-metafile",
  "deckcraft-model",
  "deckcraft-text",
  "image",
