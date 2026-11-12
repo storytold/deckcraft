@@ -778,10 +778,12 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
         let Some(id) = c.get("id").and_then(Value::as_str) else {
             return Err(bad("edit.batch", "each command needs an `id`"));
         };
-        // Closing the document mid-batch would pull the document out from under the later
-        // entries (and the outer rollback could not restore it): report it and carry on.
-        if id == "file.close" {
-            failed.push("file.close: a batch cannot close the document".to_string());
+        // Closing, opening or switching the document mid-batch would pull the document out
+        // from under the later entries (the outer rollback cannot restore a closed document,
+        // and later entries would run against whatever document became active): report such
+        // entries and carry on with the still-open document.
+        if matches!(id, "file.close" | "file.new" | "file.open" | "file.openBytes" | "file.adopt" | "file.recovery.open" | "file.revert") {
+            failed.push(format!("{id}: a batch cannot change the open document"));
             continue;
         }
         // The engine rolls a failed command back only at depth 0; an inner one is put back here,
@@ -850,17 +852,20 @@ mod batch_tests {
         assert_eq!(s.doc().unwrap().doc.slides.len(), slides, "nothing ran before the refusal");
     }
 
-    /// `file.close` cannot run inside a batch: it is reported and the later entries still run
-    /// against the still-open document.
+    /// Document-changing entries cannot run inside a batch: they are reported and the later
+    /// entries still run against the still-open document.
     #[test]
-    fn file_close_is_reported_not_run() {
-        let mut s = Session::with_new();
-        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
-        let v = s.execute("edit.batch", &json!({"commands": [{"id": "file.close"}, {"id": "slide.new", "params": {"layout": "blank"}}]})).unwrap();
-        let failed = v.get("failed").and_then(|f| f.as_array()).cloned().unwrap_or_default();
-        assert_eq!(failed.len(), 1, "{v}");
-        assert!(failed[0].as_str().is_some_and(|m| m.contains("file.close")), "{v}");
-        assert_eq!(v.get("ran").and_then(|r| r.as_u64()), Some(1), "{v}");
-        assert!(s.doc().is_ok(), "the document is still open");
+    fn document_changing_entries_are_reported_not_run() {
+        for id in ["file.close", "file.new", "file.open", "file.openBytes", "file.adopt", "file.recovery.open", "file.revert"] {
+            let mut s = Session::with_new();
+            s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+            let uid = s.doc().unwrap().uid;
+            let v = s.execute("edit.batch", &json!({"commands": [{"id": id}, {"id": "slide.new", "params": {"layout": "blank"}}]})).unwrap();
+            let failed = v.get("failed").and_then(|f| f.as_array()).cloned().unwrap_or_default();
+            assert_eq!(failed.len(), 1, "{id}: {v}");
+            assert!(failed[0].as_str().is_some_and(|m| m.contains(id)), "{id}: {v}");
+            assert_eq!(v.get("ran").and_then(|r| r.as_u64()), Some(1), "{id}: {v}");
+            assert_eq!(s.doc().unwrap().uid, uid, "{id}: the document is still open");
+        }
     }
 }

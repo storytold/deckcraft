@@ -142,7 +142,7 @@ fn open_capture_into(
     }
     let config: cpal::StreamConfig = cfg.clone().into();
     let cap = max_samples_for(cfg.sample_rate().0);
-    // The realtime error callback belongs to the attempt that opened it: a stale worker's
+    let rate_slot = buf.clone();
     // stream errors must not fail the take that replaced it.
     let is_current = move || live.load(Ordering::Relaxed) == generation;
     let err = move |e: cpal::StreamError| {
@@ -194,6 +194,10 @@ fn open_capture_into(
         other => return Err(format!("unsupported microphone format {other:?}")),
     }
     .map_err(|e| e.to_string())?;
+    // The rate must be visible before callbacks can publish samples: a callback plus a UI
+    // tick between `play()` and the assignment would hand `take()` samples with rate 0,
+    // which `Recorder::tick` discards and the take loses its beginning.
+    rate_slot.lock().unwrap_or_else(PoisonError::into_inner).rate = rate;
     stream.play().map_err(|e| e.to_string())?;
     Ok((stream, rate))
 }
@@ -266,15 +270,12 @@ impl MicIn for CpalIn {
                 // still opening must not hand its stream to the take that replaced it.
                 let opened = open_capture(&this);
                 match opened {
-                    Ok((stream, rate)) => {
+                    Ok((stream, _rate)) => {
                         // A take that started after this worker was detached owns the buffer
-                        // now: a late success must not overwrite its rate or feed it samples.
+                        // now: a late success must not feed it samples. (The rate is already
+                        // published by `open_capture_into` before `play()`.)
                         if !this.is_current() {
                             drop(stream);
-                            return;
-                        }
-                        this.buf.lock().unwrap_or_else(PoisonError::into_inner).rate = rate;
-                        if tx.send(Ok(())).is_err() {
                             return;
                         }
                         let (lock, cv) = &*worker_stop;
