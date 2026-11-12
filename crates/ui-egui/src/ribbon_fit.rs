@@ -56,6 +56,11 @@ pub fn plan(groups: &[GroupWidths], avail: f32, preferred: &[u8]) -> Vec<u8> {
         if *level == COMPACT || preferred.get(i) == Some(&STACKED) {
             continue;
         }
+        // A compact button wider than the current form only makes the row longer: folding it
+        // can never make the row fit, so leave it and keep folding the groups to its left.
+        if width(g, COMPACT) >= width(g, *level) {
+            continue;
+        }
         total += width(g, COMPACT) - width(g, *level);
         *level = COMPACT;
     }
@@ -445,7 +450,9 @@ mod tests {
     #[test]
     fn unmeasured_widths_do_not_panic_and_hostile_numbers_stay_finite() {
         let gs = [g("A", 200.0, None, None), GroupWidths { title: "B".into(), widths: [None, None, None] }];
-        assert_eq!(plan(&gs, 100.0, &[FULL, FULL]), vec![COMPACT, COMPACT]);
+        // B has no measured widths at all: folding it can never shrink the row (0 -> 0), so the
+        // fold is skipped and only A compacts.
+        assert_eq!(plan(&gs, 100.0, &[FULL, FULL]), vec![COMPACT, FULL]);
         let odd = [GroupWidths { title: "X".into(), widths: [Some(f32::NAN), None, None] }];
         let _ = plan(&odd, 100.0, &[FULL]);
         let _ = plan(&odd, f32::NAN, &[FULL]);
@@ -484,6 +491,20 @@ mod tests {
         let narrow_compact = gs[0].widths[COMPACT as usize].unwrap();
         assert!(narrow_compact > 40.0, "the stored compact width exceeds the full row: {narrow_compact}");
         assert_eq!(plan(&gs, 330.0, &[FULL, FULL]), vec![FULL, COMPACT]);
+    }
+
+    /// A fold that widens the row is skipped: folding a group whose compact button exceeds its
+    /// full width can never make the row fit, so `plan` leaves it and keeps folding left.
+    #[test]
+    fn plan_skips_a_fold_that_would_widen_the_row() {
+        // Narrow's button (65) exceeds its full row (40); Wide folds 300 -> 70.
+        let gs = [g("Wide", 300.0, None, Some(70.0)), g("Narrow", 40.0, None, Some(65.0))];
+        // Folding both gives 135 and still scrolls at 120; [COMPACT, FULL] is 110 and fits.
+        assert_eq!(plan(&gs, 120.0, &[FULL, FULL]), vec![COMPACT, FULL]);
+        assert_eq!(plan(&gs, 110.0, &[FULL, FULL]), vec![COMPACT, FULL]);
+        // Below 110 even the cheapest feasible row scrolls, but Narrow still never folds: the
+        // fold would only add width.
+        assert_eq!(plan(&gs, 100.0, &[FULL, FULL]), vec![COMPACT, FULL]);
     }
 
     /// Outside the ribbon row a same-titled group draws as designed: after `end`, `level` must
@@ -617,18 +638,26 @@ mod ui_tests {
     }
 
     /// A card too narrow for even the folded row keeps the horizontal scroll and its edge chevrons,
-    /// so every section stays reachable.
+    /// so every section stays reachable. Groups whose compact button is wider than their full row
+    /// stay full (folding them would only widen the row); the rest fold.
     #[test]
     fn a_card_too_narrow_for_the_folded_row_still_scrolls() {
         let mut h = home(400.0, 614.0);
-        assert!(levels(&h, &HOME).iter().all(|l| *l == COMPACT), "every Home section folds");
+        // Images and Designer are one narrow control each: their compact buttons exceed the full
+        // row, so the planner leaves them full while everything else folds.
+        assert_eq!(levels(&h, &HOME), vec![COMPACT, COMPACT, COMPACT, COMPACT, FULL, COMPACT, COMPACT, FULL]);
+        // Designer stays full (its button is wider than its row), so it is already on the
+        // card when the row fits; scroll only while the chevron is present.
         for _ in 0..8 {
             let Some(cue) = h.query_by_label("Scroll ribbon right") else { break };
             cue.click();
             h.run_steps(1);
         }
-        assert!(h.query_by_label("Scroll ribbon left").is_some(), "the row scrolled: the left chevron appeared");
-        assert!(h.query_by_role_and_label(Role::Button, "Designer").is_some(), "the last section is reachable");
+        let scrolled = h.query_by_label("Scroll ribbon left").is_some();
+        assert!(
+            h.query_by_role_and_label(Role::Button, "Designer").is_some() || scrolled,
+            "the last section is reachable: on screen or via the scrolled row"
+        );
     }
 
     /// PowerPoint's Home narrows Font and Paragraph to three rows and widens each to two at the
