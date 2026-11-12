@@ -281,7 +281,9 @@ fn open_track(bytes: &[u8]) -> Result<(Demux, Track, Box<dyn Codec>)> {
                 CodecConfig::Avc(a) => Box::new(H264::new(a.to_bytes())?),
                 CodecConfig::Hevc(c) => Box::new(Hevc::new(c.to_bytes())?),
                 CodecConfig::Vp9(_) => Box::new(Vp9 { dec: craft_video::vp9::decode::Decoder::new() }),
-                CodecConfig::Av1(c) => Box::new(Av1 { dec: craft_video::av1::decode::Decoder::new(), config_obus: c.config_obus.clone(), primed: false }),
+                CodecConfig::Av1(c) => {
+                    Box::new(Av1 { dec: craft_video::av1::decode::Decoder::new(), config_obus: c.config_obus.clone(), primed: false })
+                }
                 other => return Err(MediaError::Unsupported(format!("{} video", codec_name(other)))),
             };
             let (w, h) = entry.video.as_ref().map(|v| (v.width as u32, v.height as u32)).unwrap_or((t.width, t.height));
