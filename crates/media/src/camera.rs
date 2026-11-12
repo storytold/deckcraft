@@ -333,6 +333,13 @@ impl CameoRecorder {
     /// samples or the byte budget, keeping what is written, so an over-long slide keeps a
     /// truncated clip and the rest is written by the next pass.
     fn fill_to(&mut self, want: u64, budget: u64) -> crate::Result<()> {
+        // A byte-capped clip already holds everything it may: the refused picture became the
+        // encoder's reference, so encoding the same frame again would write all-skipped
+        // samples the decoder renders from the last muxed picture — frames past the cap
+        // showing the wrong picture. `seal` finalizes capped clips on the `Done` path below.
+        if self.capped == Some(CameoCap::Bytes) {
+            return Ok(());
+        }
         if self.written >= want {
             if self.written >= self.target
                 && let Some(next) = self.next_image.take()
@@ -632,6 +639,33 @@ mod tests {
         let budget = small.bytes() + one.saturating_sub(1);
         assert!(!small.push_rgba_capped(&noisy, budget).expect("checked push"), "the oversized sample is refused");
         assert!(small.bytes() <= budget, "the refused sample wrote nothing: {}", small.bytes());
+    }
+
+    /// Once the byte cap refuses a sample, later passes write nothing more: the refused picture
+    /// is the encoder's reference, so re-encoding the same frame would slip all-skipped samples
+    /// past the cap that the decoder renders from the wrong picture.
+    #[test]
+    fn no_samples_are_written_after_the_byte_cap() {
+        let mut rec = CameoRecorder::new((64, 64), 15, 30, 0).expect("recorder").with_max_bytes(8 << 10);
+        let mut now = 0u64;
+        for i in 0..1_000u64 {
+            now = i * 67;
+            rec.push(&frame(i, 64, 64, (i % 251) as u8), now).expect("push");
+            rec.tick(MAX_SAMPLES_PER_CALL).expect("tick");
+            if rec.capped() {
+                break;
+            }
+        }
+        assert_eq!(rec.cap(), Some(CameoCap::Bytes), "the byte budget ended the clip");
+        let held = rec.track.bytes();
+        let frames = rec.frames();
+        // Later passes, and the close itself, must not encode the held frame again.
+        rec.tick(MAX_SAMPLES_PER_CALL).expect("tick after the cap");
+        assert_eq!(rec.track.bytes(), held, "no sample slipped past the cap");
+        assert_eq!(rec.frames(), frames, "the frame count is frozen at the cap");
+        let clip = rec.finish(now).expect("the capped clip finalizes");
+        assert_eq!(clip.frames, frames, "the close wrote nothing after the cap");
+        assert!(clip.mp4.len() <= MAX_CLIP_BYTES);
     }
 
     /// A clip the byte budget stopped can never write another sample: sealing it returns the clip
