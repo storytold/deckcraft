@@ -1158,7 +1158,11 @@ mod tests {
     #[test]
     fn a_folded_group_drop_down_keeps_its_last_control_on_screen() {
         let src = include_str!("widgets.rs");
-        assert!(src.contains("ui.set_max_width(cap)"), "the folded drop-down caps at the window width");
-        assert!(src.contains("ui.horizontal_wrapped"), "the folded drop-down wraps its row");
+        // Scope to the production function: the test body's own strings must not satisfy this.
+        let body =
+            src.split("fn compact_group(").nth(1).expect("production compact_group").split("\n    #[test]").next().expect("end of production code");
+        assert!(!body.contains("a_folded_group_drop_down"), "the scope excludes the test");
+        assert!(body.contains("ui.set_max_width(cap)"), "the folded drop-down caps at the window width");
+        assert!(body.contains("ui.horizontal_wrapped"), "the folded drop-down wraps its row");
     }
 }
