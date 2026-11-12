@@ -427,7 +427,9 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             Value::Object(o)
         }
         ColorBase::Preset { name } => json!(name),
-        ColorBase::System { name, last } => json!(format!("#{}", deckcraft_color::system_color(name, *last).hex())),
+        ColorBase::System { name, last } => {
+            json!(format!("#{}", deckcraft_color::apply(deckcraft_color::system_color(name, *last), &c.mods).hex()))
+        }
     }
 }
 

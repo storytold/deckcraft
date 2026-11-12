@@ -405,6 +405,18 @@ mod tests {
         s.execute("format.fontDialog", &json!({})).unwrap();
         let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
         assert_eq!(params["color"], "#000000");
+
+        // A lightened windowText draws grey; the dialog shows that grey, not black.
+        s.execute("format.fontDialog", &json!({"color": {"system": "windowText", "last": "#FFFFFF", "lumMod": 65000, "lumOff": 35000}})).unwrap();
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({})).unwrap();
+        let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+        let grey = deckcraft_color::apply(
+            deckcraft_color::Rgba::BLACK,
+            &[deckcraft_color::ColorTransform::LumMod(65000), deckcraft_color::ColorTransform::LumOff(35000)],
+        );
+        assert_ne!(grey, deckcraft_color::Rgba::BLACK);
+        assert_eq!(params["color"], format!("#{}", grey.hex()));
     }
 
     #[test]
