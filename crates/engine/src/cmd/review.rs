@@ -1894,7 +1894,12 @@ mod tests {
     #[test]
     fn used_media_sees_every_reference_a_clear_must_respect() {
         fn add(doc: &mut deckcraft_model::Presentation, name: &str) -> deckcraft_model::MediaId {
-            doc.add_media(name, "image/png", vec![0u8; 8]).expect("media")
+            // `add_media` deduplicates identical bytes, so every item needs its own content:
+            // sharing one buffer would collapse the picture and its artistic original into a
+            // single id and the test would pass even when the original is never collected.
+            let mut bytes = vec![0u8; 8];
+            bytes.extend_from_slice(name.as_bytes());
+            doc.add_media(name, "image/png", bytes).expect("media")
         }
         fn fill(media: deckcraft_model::MediaId) -> deckcraft_model::style::Fill {
             deckcraft_model::style::Fill::Picture(deckcraft_model::style::PictureFill { media, ..Default::default() })
@@ -1942,6 +1947,7 @@ mod tests {
         slide.shapes.push(picture_shape);
         slide.notes.paragraphs.push(note);
 
+        assert_ne!(background_picture, background_original, "the background picture and its artistic original are distinct media");
         let used = used_media(&doc);
         assert!(used.contains(&cell_fill), "a table cell's picture fill");
         assert!(used.contains(&cell_border), "a table cell's picture border");

@@ -343,6 +343,16 @@ pub fn resample(pcm: &Pcm, rate: u32) -> Pcm {
     Pcm { rate, channels: pcm.channels, samples: out }
 }
 
+/// Interleaved `f32` samples resampled (linear) to `rate` without cloning the take: the
+/// narration save path holds a slice of the recorded buffer, so the `Pcm`-taking [`resample`]
+/// would copy it first. `from` is the take's own rate, `channels` its layout.
+pub fn resample_samples(from: u32, channels: u16, samples: &[f32], rate: u32) -> Pcm {
+    if from == rate || from == 0 || rate == 0 {
+        return Pcm { rate, channels, samples: samples.to_vec() };
+    }
+    resample(&Pcm { rate: from, channels, samples: samples.to_vec() }, rate)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +374,19 @@ mod tests {
         assert_eq!(r.frames(), 200);
         assert!((r.duration() - 1.0).abs() < 1e-9);
         assert!((r.at(101, 0) - 0.505).abs() < 1e-3);
+    }
+    /// The narration save path converts a slice of the recorded buffer: the borrowing entry
+    /// point must resample exactly like [`resample`] without the caller cloning the take first.
+    #[test]
+    fn resample_samples_matches_resample_without_an_owned_pcm() {
+        let owned = Pcm { rate: 100, channels: 1, samples: (0..100).map(|i| i as f32 / 100.0).collect() };
+        let borrowed = resample_samples(100, 1, &owned.samples, 200);
+        let expected = resample(&owned, 200);
+        assert_eq!(borrowed.rate, expected.rate);
+        assert_eq!(borrowed.channels, expected.channels);
+        assert_eq!(borrowed.samples, expected.samples);
+        let same = resample_samples(100, 1, &owned.samples, 100);
+        assert_eq!(same.samples, owned.samples, "a matching rate keeps the samples");
     }
 
     #[test]
