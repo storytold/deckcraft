@@ -247,6 +247,7 @@ fn chart_builds(timing: &El) -> std::collections::HashMap<(u32, u32), ChartBuild
                 group,
                 kind: b.attr("bld").and_then(ChartBuildKind::from_xml),
                 animate_background: b.bool("animBg"),
+                ui_expand: g.bool("uiExpand"),
             });
         }
     }

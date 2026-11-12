@@ -371,6 +371,8 @@ pub struct ChartBuild {
     pub group: u32,
     pub kind: Option<ChartBuildKind>,
     pub animate_background: Option<bool>,
+    /// Animation Pane expanded state of the build (`p:bldGraphic uiExpand`).
+    pub ui_expand: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

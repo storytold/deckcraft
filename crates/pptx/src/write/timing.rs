@@ -800,7 +800,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             w.empty("p:bldP", A::new().a("spid", spid).a("grpId", grp).o("build", build_p.then_some("p")).t("animBg", !build_p));
         }
         for (spid, build) in chart_bld {
-            w.open("p:bldGraphic", A::new().a("spid", spid).a("grpId", build.group));
+            w.open("p:bldGraphic", A::new().a("spid", spid).a("grpId", build.group).o("uiExpand", build.ui_expand.map(u8::from)));
             w.open0("p:bldSub");
             w.empty("a:bldChart", A::new().o("bld", build.kind.map(|k| k.xml())).o("animBg", build.animate_background.map(u8::from)));
             w.close("p:bldSub");
