@@ -2161,6 +2161,43 @@ fn group_child_scale_does_not_scale_line_widths() {
     }
 }
 
+/// #2067: a legend entry with its own text colour, size and weight (`c:legendEntry/c:txPr`) draws
+/// its name so; the other entries keep the legend's.
+#[test]
+fn a_legend_entry_draws_its_own_text_colour_and_size() {
+    let draw = |entry: Option<deckcraft_model::chart::LegendEntry>| {
+        let mut c = Chart::sample(ChartType::Line);
+        c.title = None;
+        c.legend = Some("r".into());
+        c.text_size = Some(10.0);
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(128, 128, 128)));
+        c.legend_entries = entry.into_iter().collect();
+        let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 480.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let green = |img: &Image| {
+        (0..480u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[1] > 150 && p[0] < 80 && p[2] < 80
+            })
+            .count()
+    };
+    let entry = |size: Option<f64>| deckcraft_model::chart::LegendEntry {
+        idx: 0,
+        size,
+        bold: Some(true),
+        color: Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 200, 0))),
+    };
+    let none = green(&draw(None));
+    let own = green(&draw(Some(entry(None))));
+    let big = green(&draw(Some(entry(Some(20.0)))));
+    assert_eq!(none, 0, "no green in a chart without the entry");
+    assert!(own > 40, "the first entry's name is drawn in its own colour ({own})");
+    assert!(big > own * 2, "and at its own size ({own} at 10 pt, {big} at 20 pt)");
+}
+
 #[test]
 fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_pixels() {
     // PowerPoint draws a picture's own fill behind its transparent pixels (and an old equation
@@ -2193,6 +2230,60 @@ fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_
             assert_eq!(img.pixel(200, 200)[..3], [0, 160, 60], "the tinted fill behind the clear half ({object})");
         } else {
             assert!(clear[..3].iter().all(|v| *v > 240), "no fill: the slide shows through: {clear:?}");
+        }
+    }
+}
+
+#[test]
+fn a_picture_in_a_placeholder_shows_the_layout_placeholders_fill_behind_transparent_pixels() {
+    // #2068: a slide picture with an empty `p:spPr` in a layout picture placeholder that sets a
+    // fill shows that fill behind its clear pixels. Its own fill (none included) and its own
+    // style still decide when it has them. The left half of the image is clear.
+    let png = {
+        let img = image::RgbaImage::from_fn(8, 4, |x, _| if x < 4 { image::Rgba([0, 0, 0, 0]) } else { image::Rgba([20, 20, 160, 255]) });
+        let mut out = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let orange = Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 153, 0)));
+    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 11, ..Default::default() });
+    let style = ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1);
+    // (layout fill, picture's own fill, picture's own style, the clear half shows orange)
+    let cases = [
+        (Some(orange.clone()), None, None, true),
+        (None, None, None, false),
+        (Some(orange.clone()), Some(Fill::None), None, false),
+        (Some(orange.clone()), None, Some(style), false),
+    ];
+    for (i, (layout_fill, own_fill, own_style, shows)) in cases.into_iter().enumerate() {
+        let mut p = Presentation::default();
+        let media = p.add_media("half.png", "image/png", png.clone()).expect("media");
+        let lid = p.slides[0].layout;
+        let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+        let layout = m.layouts.iter_mut().find(|l| l.id == lid).expect("layout");
+        layout.shapes.push(Shape {
+            id: ShapeId(2),
+            ph: ph(),
+            xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)),
+            fill: layout_fill,
+            ..Default::default()
+        });
+        let pic = Shape {
+            id: ShapeId(3),
+            ph: ph(),
+            kind: ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+            fill: own_fill,
+            style: own_style,
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![pic];
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let (clear, opaque) = (img.pixel(200, 200), img.pixel(400, 200));
+        assert!(opaque[2] > 140 && opaque[0] < 40, "case {i}: the picture's own pixels: {opaque:?}");
+        if shows {
+            assert_eq!(clear[..3], [255, 153, 0], "case {i}: the layout's fill behind the clear half");
+        } else {
+            assert!(clear[..3].iter().all(|v| *v > 240), "case {i}: the slide shows through: {clear:?}");
         }
     }
 }

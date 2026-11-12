@@ -784,8 +784,15 @@ impl Renderer {
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
                 // The picture's own fill shows behind its transparent pixels, as in PowerPoint (an
-                // emphasis tint recolours it, as it does any shape's fill).
-                if s.fill.as_ref().is_some_and(|f| !f.is_none())
+                // emphasis tint recolours it, as it does any shape's fill). A picture that sets
+                // neither a fill nor a style shows the fill its layout or master placeholder sets
+                // (#2068). A style fill alone, its own or inherited, stays undrawn.
+                let explicit = |sh: &deckcraft_model::Shape| sh.fill.as_ref().is_some_and(|f| !f.is_none());
+                let inherited = || {
+                    let (lp, mp) = resolve::parents(rctx, s);
+                    [lp, mp].into_iter().flatten().find(|p| p.fill.is_some() || p.style.is_some()).is_some_and(explicit)
+                };
+                if (explicit(s) || (s.fill.is_none() && s.style.is_none() && inherited()))
                     && let Some(fl) = &fill
                 {
                     self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);

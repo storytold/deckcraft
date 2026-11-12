@@ -7221,6 +7221,37 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
 
+/// #2059: Decrease Font Size (Ctrl+[, Cmd+Shift+,) steps down one size at a time from any size:
+/// PowerPoint's list up to 96, then 8 points at a time above it, as Increase Font Size steps up.
+/// A size above 66 used to shrink straight to 66.
+#[test]
+fn shrinking_a_large_font_steps_down_one_size_at_a_time() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 420.0, 160.0], "text": "Big"})).unwrap();
+    let id = deckcraft_model::ShapeId(u32::try_from(r["id"].as_u64().unwrap()).unwrap());
+    let size = |s: &Session| s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.size;
+    s.execute("format.size", &json!({"size": 120})).unwrap();
+    let mut down = vec![];
+    for _ in 0..9 {
+        s.execute("format.shrink", &json!({})).unwrap();
+        down.push(size(&s).unwrap());
+    }
+    assert_eq!(down, [112.0, 104.0, 96.0, 88.0, 80.0, 72.0, 66.0, 60.0, 54.0]);
+    let mut up = vec![];
+    for _ in 0..7 {
+        s.execute("format.grow", &json!({})).unwrap();
+        up.push(size(&s).unwrap());
+    }
+    assert_eq!(up, [60.0, 66.0, 72.0, 80.0, 88.0, 96.0, 104.0]);
+    // A size between list steps goes to the next one down, and one past the top steps 8 at most.
+    s.execute("format.size", &json!({"size": 99})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!(size(&s), Some(96.0));
+    s.execute("format.size", &json!({"size": 150})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!(size(&s), Some(142.0));
+}
+
 /// A shape named many times in one edit is edited once and not copied per mention.
 #[test]
 fn repeated_target_ids_edit_the_shape_once() {

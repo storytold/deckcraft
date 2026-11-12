@@ -146,6 +146,8 @@ pub fn plan(cmd: &str, p: &Value, c: &mut Chart) -> Result<Value> {
             };
             if let Some(t) = &text_color {
                 c.text_color = t.clone();
+                // A legend entry's own colour would otherwise keep overriding the chart-wide one.
+                c.legend_entries.iter_mut().for_each(|e| e.color = None);
             }
             apply_bin_options(c, bin_count, bin_size);
             apply_subtotals_and_bars(c, p, subtotals.as_deref());
