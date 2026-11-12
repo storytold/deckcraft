@@ -2158,6 +2158,53 @@ compose command, so the room never receives `한`.
 
 ## Session log
 
+### 2026-11-12 — the viewer tab that could not get in: a leaked peer map, and a room restarted mid-run
+
+- **What was asked.** The WebKit run of the M95 acceptance on file 42 (static
+  `0.18.1-collab.f1d1cd6a53b0`) showed the viewer tab as `Участников: 1 | error` while owner and
+  editor were `synced`, though the viewer had opened in Chromium in M93. Check whether the viewer's
+  ticket path differs, whether `resync`/`welcome` breaks with three participants, whether the room
+  refuses anything the UI shows as `error`; reproduce in Chromium and WebKit on file 42; fix it in
+  the client or the room, add a test, and report a cabinet-side defect instead of fixing the
+  cabinet from here.
+- **The ticket path does not differ by role.** `Service.Open`
+  (`internal/application/craft/service.go:611`) derives `role` from `EditorInfo`/`canEdit` —
+  `viewer` unless the actor owns the file or holds `write` — calls `createRoom` for every role,
+  signs the token afterwards, and the room's `role_of` accepts all three. A viewer's handshake on
+  production answers `welcome role=viewer v58`, its resync brings the base at 58 (7440 B with the
+  key map), and its write is `rejected{forbidden, "a viewer cannot change the document"}`. Three
+  participants are exactly what `resync`/`welcome`/presence handle; nothing there is
+  role-specific.
+- **Two causes were found.** (1) The WebKit run overlapped a room restart: the room's journal shows
+  `Stopping craft-sync-deckcraft.service` at 19:02:01 while the run started at 19:00:33 and checked
+  the viewer at ~19:02–19:03, the console holds four `WebSocket … failed: Error sending data:
+  Broken pipe`, and a socket to a room that is gone gets
+  `error{code:"not-found", message:"no such session"}` — the app shows `error`, one participant,
+  and retries. (2) The room's peer map **leaked**: `participants` read 14 with
+  `connections_active 0`, closing fresh sockets with no `close` frame left the count unchanged, and
+  the map is what `max_participants` compares against — so the next tab got
+  `error{code:"full", message:"the room is full"}`. That is a real defect of the room, and the tab
+  that arrives after two writers is the viewer.
+- **Fixed in the room (`c5c8f0cb`).** `peer_loop` has one exit through a `Result`; the caller
+  removes the peer on both paths; `ResetWithoutClosingHandshake` is a disconnect; a silent peer is
+  pinged after `COLLAB_PEER_PING_SECS` (30) and dropped after `COLLAB_PEER_DEAD_SECS` (60). Three
+  socket tests: a refusal end, a killed socket, a silent one — the first fails without the fix
+  (reverting the removal on the build host leaves the count at 1 and the next join `full`). Gate on
+  `c5c8f0cb`: fmt and clippy clean, `collab` 308 + 2 + 8 + 20 + 5 + 6, `collab-server` 23.
+- **Production before/after, both engines.** With owner and editor open and fourteen seats leaked
+  by joining and dropping the socket with no `close` frame: before, the pad stayed at 16 and the
+  viewer's bar was `… | error` with fifteen `error{code:"full"}` on its socket (Chromium 1243 and
+  WebKit 2368); after, the pad returns to 2 and the viewer's bar is `… | Участников: 3 | synced`
+  in both. The room now sits at `participants 0` after every tab closes.
+- **Cabinet-side, not fixed here** (§A connection that ended does not keep its seat): a tab whose
+  room has ended cannot recover by itself — `web/src/modules/disk/views/CraftEditorView.vue` stores
+  `status`/`participants` from `session-state` and does nothing on `status === 'error'`, and the
+  host contract has no app→host reopen request; a `status === 'error'` → new ticket (or a "reopen"
+  button) is that flow's change. Also recorded there: the commit version tag is the file's mtime in
+  seconds, so two commits in one second can leave a `file_versions` row naming other bytes.
+- **Not run.** No change to the cabinet, no push, no CI change. The browser runs used saved SSO
+  states for the three e2e accounts; the static was not rebuilt (nothing on the client changed).
+
 ### 2026-11-12 — STATUS moved to the delivered head `ceeada59`; four commits wait for a push
 
 - **What was asked.** Reconcile this file with the facts of PR #2012: which commit GitHub and the
