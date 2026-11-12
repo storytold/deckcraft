@@ -45,6 +45,9 @@ pub struct Hub {
     peers: BTreeMap<String, Peer>,
     out: HashMap<String, VecDeque<ServerMsg>>,
     last_applied: Option<deckcraft_collab_proto::Applied>,
+    /// Whether [`Hub::last_applied`] was a **new** step rather than the stored answer to a repeat
+    /// of an `opId` (ADR 0003). Only a new step is journalled.
+    last_applied_fresh: bool,
     /// Bytes of the last base a `resync` sent, for the server's counters.
     last_base_transfer: Option<u64>,
     /// Bytes of the last base chunk handed out, for the server's counters.
@@ -61,6 +64,7 @@ impl Hub {
             peers: BTreeMap::new(),
             out: HashMap::new(),
             last_applied: None,
+            last_applied_fresh: false,
             last_base_transfer: None,
             last_base_chunk: None,
             closed: false,
@@ -216,9 +220,11 @@ impl Hub {
                     );
                     return Ok(());
                 }
+                let fresh = !self.session.already_applied(&op.op_id);
                 match self.session.apply(actor, &op) {
                     Ok(applied) => {
                         self.last_applied = Some(applied.clone());
+                        self.last_applied_fresh = fresh;
                         self.broadcast(ServerMsg::Applied(applied))
                     }
                     Err(rejected) => self.send(peer, ServerMsg::Rejected(rejected)),
@@ -346,6 +352,8 @@ impl Hub {
         match self.session.apply(actor, &op) {
             Ok(applied) => {
                 self.last_applied = Some(applied.clone());
+                // An undo/redo builds a fresh id at the head, so it is always a new step.
+                self.last_applied_fresh = true;
                 self.broadcast(ServerMsg::Applied(applied))
             }
             Err(rejected) => self.send(peer, ServerMsg::Rejected(rejected)),
@@ -353,9 +361,12 @@ impl Hub {
         Ok(())
     }
 
-    /// The last operation this room accepted, for the journal. Taking it clears the slot.
-    pub fn take_last_applied(&mut self) -> Option<deckcraft_collab_proto::Applied> {
-        self.last_applied.take()
+    /// The last operation this room accepted, for the journal. Taking it clears the slot; the
+    /// answer is `(applied, fresh)`, where `fresh` is false for the stored answer to a repeat of
+    /// an `opId` — a repeat moves no version and must not be appended to the journal again.
+    pub fn take_last_applied(&mut self) -> Option<(deckcraft_collab_proto::Applied, bool)> {
+        let fresh = std::mem::take(&mut self.last_applied_fresh);
+        self.last_applied.take().map(|applied| (applied, fresh))
     }
 
     /// The size of the last base a `resync` sent (inline bytes; `0` for a cursor without bytes).

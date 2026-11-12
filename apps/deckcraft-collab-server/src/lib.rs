@@ -1174,8 +1174,14 @@ fn handle_client_message(hub: &Arc<Mutex<Hub>>, peer: &str, msg: ClientMsg, shar
         drop(hub);
         return Err(std::io::Error::other(format!("{}: {}", e.code, e.message)));
     }
-    if let Some(applied) = hub.take_last_applied()
+    if let Some((applied, fresh)) = hub.take_last_applied()
         && let Some(store) = &shared.store
+        // Only a *new* step is journalled. A repeat of an `opId` answers the stored `Applied` and
+        // changes nothing (ADR 0003): appending it again would fill the journal with duplicate
+        // lines of an old version — a store whose replay still lands in the right place, but whose
+        // file grows with every resend and whose versions stop being a sequence (the production
+        // store of 2026-11-12 held 302 lines for a room at version 92).
+        && fresh
     {
         let file_id = hub.file_id().to_string();
         if let Err(e) = store.record(&file_id, hub.session_mut(), &applied) {

@@ -298,6 +298,46 @@ fn a_session_accepts_two_editors_and_refuses_a_viewer() {
 }
 
 #[test]
+fn a_repeated_operation_is_not_journalled_twice() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-collab-dedup-journal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut config = Config::for_tests(SECRET, "service-token");
+    config.store_dir = Some(dir.clone());
+    let handle = serve_ephemeral(config).expect("server");
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-d", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+    let mut editor = join(addr, &id, "alice", "editor");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "once".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Default::default(),
+        payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+        history: None,
+        preview: None,
+    });
+    editor.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send");
+    assert!(matches!(read(&mut editor), ServerMsg::Applied(applied) if applied.version == 1));
+    // The resend the client makes after a lost answer: the stored answer comes back and the room
+    // changes nothing — and the journal must not grow a second line for the same version.
+    editor.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send");
+    assert!(matches!(read(&mut editor), ServerMsg::Applied(applied) if applied.version == 1));
+
+    let store = deckcraft_collab_server::store::Store::new(&dir, 200).expect("store");
+    let journal = store.journal_bytes(&id).expect("journal");
+    let lines: Vec<&str> = std::str::from_utf8(&journal).expect("utf-8").lines().filter(|line| !line.trim().is_empty()).collect();
+    assert_eq!(lines.len(), 1, "one accepted step, one journal line: {journal:?}");
+    handle.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_refused_structural_step_is_counted_as_rejected_not_as_an_applied_one() {
     let handle = start();
     let addr = handle.addr;

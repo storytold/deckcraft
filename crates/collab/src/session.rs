@@ -176,6 +176,12 @@ impl DocSession {
         self.version
     }
 
+    /// Whether this room already answered this `opId` (the dedup window of ADR 0003). The server
+    /// asks before it journals: a repeat answers the stored `Applied` and is not a new step.
+    pub fn already_applied(&self, op_id: &str) -> bool {
+        self.applied.contains_key(op_id)
+    }
+
     /// Continue the numbering a stored base left off at. A room reopened from its base has the
     /// document but not the version, which lives in the store's `meta.json`: without this a base
     /// taken at version 200 would answer version 0, and a client holding 200 would be refused as
