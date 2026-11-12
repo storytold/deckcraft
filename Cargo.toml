@@ -27,12 +27,6 @@ deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
-# video codecs (ported from FilmCraft, same owner and licence)
-deckcraft-bitstream = { path = "crates/bitstream" }
-deckcraft-h264 = { path = "crates/h264" }
-deckcraft-hevc = { path = "crates/hevc" }
-deckcraft-vp9 = { path = "crates/vp9" }
-deckcraft-av1 = { path = "crates/av1" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
@@ -55,9 +49,11 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
-# craft-media and craft-audio share types and stay on one rev.
-craft-media = { git = "https://github.com/storytold/craft-libs", rev = "75895c0321d8cb6e175a42466cba050352b117c5", version = "=0.1.0", default-features = false }
-craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "75895c0321d8cb6e175a42466cba050352b117c5", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
+# craft-media, craft-audio and craft-video share types and stay on one rev.
+craft-media = { git = "https://github.com/storytold/craft-libs", rev = "8079878ae2b166c1ea8229e40eff7e08c916e532", version = "=0.1.0", default-features = false }
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "8079878ae2b166c1ea8229e40eff7e08c916e532", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
+# H.264, HEVC, VP9 and AV1 decoders.
+craft-video = { git = "https://github.com/storytold/craft-libs", rev = "8079878ae2b166c1ea8229e40eff7e08c916e532", version = "=0.1.0", default-features = false, features = ["h264-decode", "hevc-decode", "vp9-decode", "av1-decode", "threads"] }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "6e03f65bf45181db77ba6229716e6624db9eb25b", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "6e03f65bf45181db77ba6229716e6624db9eb25b", features = ["egui"] }
