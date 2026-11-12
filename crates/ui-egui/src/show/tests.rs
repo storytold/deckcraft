@@ -101,6 +101,33 @@ fn a_shape_between_two_cameos_lands_between_their_frames() {
     assert!(!full.contains(&middle), "the middle shape paints over the frames");
 }
 
+/// A playing video stacked above an overlapping Cameo keeps its frame: the merged paint orders
+/// live layers by top-level stack position, so the video's slice leaves the Cameo's slice below
+/// it instead of painting the Cameo over the video.
+#[test]
+fn a_video_above_a_cameo_keeps_stack_order() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).expect("Cameo");
+    let cameo = crate::camera::cameo_ids(&session.active().unwrap().doc, 0);
+    assert_eq!(cameo.len(), 1);
+    let above = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let above = ShapeId(above["id"].as_u64().unwrap() as u32);
+    // The inserted rect is the top-level video: the merged stack paints the Cameo first, then
+    // the video, so the topmost frame stays visible.
+    let mut doc = (*session.active().unwrap().doc).clone();
+    let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+    slide.shapes.iter_mut().find(|s| s.id == above).expect("the top rect").kind =
+        deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, ..Default::default() });
+    // Bottom-up: the Cameo's slice leaves the video out (it paints in a later layer).
+    let cameo_slice = below_live(&doc, 0, &[cameo[0]]);
+    assert!(cameo_slice.contains(&cameo[0]), "the Cameo is left to the camera layer");
+    assert!(!cameo_slice.contains(&above), "the video above is not part of the Cameo's slice");
+    // With both frames live the topmost frame is painted last, so its own slice is empty —
+    // nothing paints above it (this is the pre-existing `below_live` contract, also used by
+    // the `#1005` video test above).
+    assert!(below_live(&doc, 0, &[cameo[0], above]).is_empty(), "nothing is above the topmost frame");
+}
+
 /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
 /// never gave way to the idle hide, so a still pointer stayed on the playing video.
 #[test]

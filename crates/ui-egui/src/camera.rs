@@ -38,8 +38,9 @@ pub struct CameraHost {
     texture: Option<(u64, TextureHandle)>,
     /// The Cameo Preview toggle in the Camera Format tab.
     preview: bool,
-    /// The running show's identity, so a new show recomputes whether it has a cameo.
-    show_instance: Option<u64>,
+    /// The running show's identity and current slide, so a new show — or an explicit jump to a
+    /// hidden slide — recomputes whether it has a cameo.
+    show_instance: Option<(u64, usize)>,
     /// The running show contains at least one cameo, so the camera is live on it.
     show_wants: bool,
     /// The last value of `preview || show_wants` a start/stop acted on.
@@ -99,8 +100,8 @@ impl CameraHost {
     }
 
     /// The show whose camera need is already known; the logic pass compares this to the live
-    /// show's identity before cloning the presentation.
-    pub(crate) fn show_instance(&self) -> Option<u64> {
+    /// show's identity and slide before cloning the presentation.
+    pub(crate) fn show_instance(&self) -> Option<(u64, usize)> {
         self.show_instance
     }
 
@@ -178,14 +179,19 @@ impl CameraHost {
         }
     }
 
-    /// Tell the preview which show is running. A show that contains a cameo wants the camera even
-    /// when the editor's preview toggle is off, as in PowerPoint's slide show.
-    pub fn set_show(&mut self, instance: Option<u64>, doc: Option<&Presentation>) {
+    /// Tell the preview which show is running and which slide it shows. Only that slide's Cameos
+    /// count: normal navigation skips hidden slides, but an explicit jump can land on one, and a
+    /// Cameo only there must not start the camera. A show that contains a cameo wants the camera
+    /// even when the editor's preview toggle is off, as in PowerPoint's slide show.
+    pub fn set_show(&mut self, instance: Option<(u64, usize)>, doc: Option<&Presentation>) {
         if self.show_instance == instance {
             return;
         }
         self.show_instance = instance;
-        self.show_wants = instance.is_some() && doc.is_some_and(deck_has_cameo);
+        self.show_wants = match (instance, doc) {
+            (Some((_, slide)), Some(doc)) => doc.slides.get(slide).is_some_and(|s| !s.hidden && !cameo_boxes(&s.shapes).is_empty()),
+            _ => false,
+        };
         self.refresh_want();
     }
 
@@ -345,14 +351,6 @@ fn color_image(frame: &CameraFrame) -> Option<ColorImage> {
     }
     let pixels = frame.rgba[..bytes].as_chunks::<4>().0.iter().map(|c| Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3])).collect();
     Some(ColorImage::new([width, height], pixels))
-}
-
-/// Whether `doc` has a cameo the show would paint: hidden slides are skipped (normal navigation
-/// passes over them, so their Cameos never reach the screen), and hidden Cameos and Cameos
-/// inside hidden groups are skipped, matching `cameo_boxes`. A show of only hidden Cameos never
-/// starts the camera (no indicator, no permission prompt, no live image drawn).
-fn deck_has_cameo(doc: &Presentation) -> bool {
-    doc.slides.iter().filter(|slide| !slide.hidden).any(|slide| !cameo_boxes(&slide.shapes).is_empty())
 }
 
 /// Paint the live frame in every cameo of editor slide `slide`, in slide coordinates through `xf`.
@@ -747,13 +745,15 @@ impl SlideApp {
     }
 }
 
-/// Start (or keep) the camera session the current show needs, if `instance` names a new show.
-pub(crate) fn wants_show_camera(app: &mut SlideApp, instance: Option<u64>) {
-    if app.camera.show_instance() == instance {
+/// Start (or keep) the camera session the current show needs, if `current` names a new show or
+/// slide. The slide matters: an explicit jump can land on a hidden slide whose Cameo must not
+/// start the camera.
+pub(crate) fn wants_show_camera(app: &mut SlideApp, current: Option<(u64, usize)>) {
+    if app.camera.show_instance() == current {
         return;
     }
     let doc = app.session.active().map(|d| d.doc.clone());
-    app.camera.set_show(instance, doc.as_deref());
+    app.camera.set_show(current, doc.as_deref());
 }
 
 #[cfg(test)]
@@ -935,7 +935,7 @@ mod tests {
         let doc = session.active().expect("document").doc.clone();
         let fake = FakeCamera::default();
         let mut host = CameraHost::new(Some(Box::new(fake.clone())));
-        host.set_show(Some(1), Some(doc.as_ref()));
+        host.set_show(Some((1, 0)), Some(doc.as_ref()));
         assert_eq!(fake.starts(), 1);
         assert!(!host.preview_on());
         host.set_show(None, None);
@@ -948,7 +948,7 @@ mod tests {
         let doc = session.active().expect("document").doc.clone();
         let fake = FakeCamera::default();
         let mut host = CameraHost::new(Some(Box::new(fake.clone())));
-        host.set_show(Some(1), Some(doc.as_ref()));
+        host.set_show(Some((1, 0)), Some(doc.as_ref()));
         assert_eq!(fake.starts(), 0);
         assert_eq!(host.status(), &CameraStatus::Off);
     }
@@ -962,12 +962,35 @@ mod tests {
         session.execute("slide.hide", &serde_json::json!({})).expect("hide the only slide");
         let doc = session.active().expect("document").doc.clone();
         assert!(doc.slides[0].hidden, "the slide is hidden");
-        assert!(!deck_has_cameo(&doc), "a hidden slide's Cameo is not show demand");
         let fake = FakeCamera::default();
         let mut host = CameraHost::new(Some(Box::new(fake.clone())));
-        host.set_show(Some(1), Some(doc.as_ref()));
+        host.set_show(Some((1, 0)), Some(doc.as_ref()));
         assert_eq!(fake.starts(), 0, "the camera stays closed on a hidden slide's Cameo");
         assert_eq!(host.status(), &CameraStatus::Off);
+    }
+
+    #[test]
+    fn jumping_to_a_hidden_slide_does_not_open_the_camera() {
+        // An explicit jump can land on a hidden slide; only that slide's Cameos count, so the
+        // camera stays closed there and opens again when the show returns to a shown slide.
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &serde_json::json!({})).expect("second slide");
+        session.execute("slide.go", &serde_json::json!({"index": 1})).expect("go to the second slide");
+        session.execute("insert.cameo", &serde_json::json!({})).expect("cameo on the shown slide");
+        session.execute("slide.go", &serde_json::json!({"index": 0})).expect("back to the first slide");
+        session.execute("insert.cameo", &serde_json::json!({})).expect("cameo on the hidden slide");
+        session.execute("slide.hide", &serde_json::json!({"index": 0})).expect("hide the first slide");
+        let doc = session.active().expect("document").doc.clone();
+        assert!(doc.slides[0].hidden && !doc.slides[1].hidden, "only the first slide is hidden");
+        let fake = FakeCamera::default();
+        let mut host = CameraHost::new(Some(Box::new(fake.clone())));
+        host.set_show(Some((1, 1)), Some(doc.as_ref()));
+        assert_eq!(fake.starts(), 1, "the shown slide's Cameo opens the camera");
+        host.set_show(Some((1, 0)), Some(doc.as_ref()));
+        assert_eq!(fake.stops(), 1, "jumping to the hidden slide closes it again");
+        assert_eq!(host.status(), &CameraStatus::Off);
+        host.set_show(Some((1, 1)), Some(doc.as_ref()));
+        assert_eq!(fake.starts(), 2, "returning to the shown slide reopens it");
     }
 
     #[test]
@@ -1010,6 +1033,40 @@ mod tests {
         assert_eq!(animated(Point::new(51.0, 50.0), centre, &none), Point::new(51.0, 50.0));
     }
 
+    /// A horizontally flipped Cameo with a rotation animation spins the same way as the slide
+    /// renderer: the animation applies first in shape-local space, then the shape's own flips
+    /// and rotation (`parent * translate(offset) * shape * around` in `renderer.rs`).
+    #[test]
+    fn a_flipped_cameo_spins_with_the_slide_renderer() {
+        use deckcraft_geom::Affine;
+        let mut x = Xfrm::new(10.0, 20.0, 100.0, 60.0);
+        x.flip_h = true;
+        let st = ShapeState { rotate: 90.0, ..Default::default() };
+        // Shape-local point one unit right of the shape's centre.
+        let local = Point::new(51.0, 30.0);
+        let centre = Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+        // The live frame: animation first (shape-local), then the Cameo's own transform.
+        let frame = x.affine() * animated(local, centre, &st);
+        // The slide renderer: `translate(offset) * shape * around`, with no offset here.
+        let c = Point::new(x.w / 2.0, x.h / 2.0);
+        let a = st.rotate.to_radians();
+        let around = Affine::translate(c.to_vec2()) * Affine::rotate(a) * Affine::translate(-c.to_vec2());
+        let slide = x.affine() * around * local;
+        assert!(
+            (frame.x - slide.x).abs() < 1e-9 && (frame.y - slide.y).abs() < 1e-9,
+            "frame ({}, {}) vs slide ({}, {})",
+            frame.x,
+            frame.y,
+            slide.x,
+            slide.y
+        );
+        // And the flip really matters: without mirroring, the spin would go the other way.
+        let mut plain = x;
+        plain.flip_h = false;
+        let unflipped = plain.affine() * animated(local, centre, &st);
+        assert!((frame.x - unflipped.x).abs() > 1.0, "the flip must change the spun position");
+    }
+
     /// The Cameo's box appears once in the ids the show's overlay is built from, so shapes stacked
     /// above it are drawn over the live frame.
     #[test]
@@ -1037,7 +1094,6 @@ mod tests {
         let doc = session.active().expect("document").doc.clone();
         assert!(cameo_boxes(&doc.slides[0].shapes).is_empty(), "a hidden Cameo paints no frame");
         assert!(cameo_ids(&doc, 0).is_empty());
-        assert!(!deck_has_cameo(&doc), "a hidden Cameo must not start the camera");
         // A Cameo inside a hidden group stays hidden too: the renderer draws nothing below a
         // hidden shape, so the overlay must not paint a frame there either.
         let mut grouped = (*doc.slides[0].shapes.iter().find(|s| s.id == id).expect("the Cameo")).clone();
@@ -1089,6 +1145,9 @@ mod tests {
 
     /// A Cameo nested in a group keeps the editor's stack order too: a shape above the group is
     /// repainted over the live frame (the overlay covers grouped Cameos, not only top-level ones).
+    /// A shape stacked above the Cameo *inside the same group* is a known limitation: the group
+    /// paints as one skipped unit (same as the show's `below_live`), so the frame covers that
+    /// sibling — matching how the renderer would treat the group's own layer.
     #[test]
     fn a_grouped_cameo_keeps_shapes_above_it_over_the_preview() {
         let mut session = deckcraft_engine::Session::with_new();
@@ -1113,45 +1172,42 @@ mod tests {
         assert!(h.state().camera.over.is_some(), "a shape above the grouped Cameo gets an overlay");
     }
 
-    /// Starting (or ending) a text edit above a Cameo refreshes the camera overlay: the overlay
-    /// keys on the edited shape, so stale text cannot double under the live edit.
+    /// Starting (or ending) a text edit above a Cameo refreshes the camera overlay in the same
+    /// session: toggling the edit changes the cache key, so stale text cannot double under the
+    /// live edit.
     #[test]
     fn editing_above_a_cameo_refreshes_the_preview_overlay() {
         use deckcraft_engine::TextSel;
-        fn harness_with(edit: bool) -> egui_kittest::Harness<'static, SlideApp> {
-            let mut session = deckcraft_engine::Session::with_new();
-            session.execute("insert.cameo", &serde_json::json!({})).expect("cameo");
-            let above = session
-                .execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [0.0, 0.0, 200.0, 200.0]}))
-                .expect("a shape above the Cameo");
-            let above = deckcraft_model::ShapeId(above["id"].as_u64().unwrap() as u32);
-            session.execute("text.set", &serde_json::json!({"id": above.0, "text": "over the Cameo"})).expect("text above the Cameo");
-            if edit {
-                session.active_mut().expect("document").selection.text = Some(TextSel { shape: above, ..Default::default() });
-            }
-            let services = crate::Services { camera_in: Some(Box::new(FakeCamera::default().sized(64, 48))), ..crate::Services::default() };
-            let mut app = SlideApp::new(session, services);
-            app.camera.set_preview(true);
-            let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
-                |ui, app: &mut SlideApp| {
-                    app.logic(ui.ctx());
-                    app.ui(ui);
-                },
-                app,
-            );
-            h.run_steps(5);
-            h
-        }
-        let plain = harness_with(false);
-        let editing = harness_with(true);
-        // The overlay exists in both passes; what matters is that the cache key carries the edit.
-        assert!(plain.state().camera.over.is_some(), "a shape above the Cameo gets an overlay");
-        assert!(editing.state().camera.over.is_some(), "editing above the Cameo keeps an overlay");
-        assert_ne!(
-            plain.state().camera.over.as_ref().map(|o| o.5),
-            editing.state().camera.over.as_ref().map(|o| o.5),
-            "the edit changes the overlay key"
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("insert.cameo", &serde_json::json!({})).expect("cameo");
+        let above = session
+            .execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [0.0, 0.0, 200.0, 200.0]}))
+            .expect("a shape above the Cameo");
+        let above = deckcraft_model::ShapeId(above["id"].as_u64().unwrap() as u32);
+        session.execute("text.set", &serde_json::json!({"id": above.0, "text": "over the Cameo"})).expect("text above the Cameo");
+        let services = crate::Services { camera_in: Some(Box::new(FakeCamera::default().sized(64, 48))), ..crate::Services::default() };
+        let mut app = SlideApp::new(session, services);
+        app.camera.set_preview(true);
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
         );
+        h.run_steps(5);
+        assert!(h.state().camera.over.is_some(), "a shape above the Cameo gets an overlay");
+        let plain_key = h.state().camera.over.as_ref().map(|o| o.5);
+        // Start editing the shape above the Cameo: the overlay must refresh for the edit.
+        h.state_mut().session.active_mut().expect("document").selection.text = Some(TextSel { shape: above, ..Default::default() });
+        h.run_steps(5);
+        assert!(h.state().camera.over.is_some(), "editing above the Cameo keeps an overlay");
+        let editing_key = h.state().camera.over.as_ref().map(|o| o.5);
+        assert_ne!(plain_key, editing_key, "starting the edit changes the overlay key");
+        // End the edit again: the overlay refreshes back.
+        h.state_mut().session.active_mut().expect("document").selection.text = None;
+        h.run_steps(5);
+        assert_eq!(h.state().camera.over.as_ref().map(|o| o.5), plain_key, "ending the edit restores the overlay key");
     }
 
     /// A Cameo with Camera Shape `geom`, and its box, from the command that inserts one.

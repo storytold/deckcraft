@@ -80,8 +80,11 @@ impl SlideApp {
     /// for the canvas/show to draw, and follow the running show's cameo need. Texture upload stays
     /// out of the paint pass so the canvas and the show never disagree within one frame.
     pub(super) fn tick_camera(&mut self, ctx: &egui::Context) {
-        let instance = self.show.as_ref().map(|show| show.instance);
-        crate::camera::wants_show_camera(self, instance);
+        // The show recomputes camera demand when its identity or its current slide changes:
+        // normal navigation skips hidden slides, but an explicit jump can land on one, and its
+        // Cameo must not start the camera.
+        let current = self.show.as_ref().map(|show| (show.instance, show.state.slide));
+        crate::camera::wants_show_camera(self, current);
         if let Some(message) = self.camera.tick(ctx) {
             self.notify(message);
         }

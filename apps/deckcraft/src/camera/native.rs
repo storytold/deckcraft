@@ -49,6 +49,24 @@ impl SystemCamera {
         self.commands = Some(commands.clone());
         Ok(commands)
     }
+
+    /// [`start`], but the replacement worker runs `serve` instead of the platform loop: tests
+    /// drain commands without touching a camera (on desktop, opening one during `cargo test`
+    /// could trip the macOS permission sheet).
+    #[cfg(test)]
+    fn start_with(&mut self, request: &CameraRequest, serve: fn(Receiver<Command>)) -> Result<CameraSession, CameraError> {
+        let commands = self.ensure_worker()?;
+        match send_start(&commands, request) {
+            Ok(session) => Ok(session),
+            Err(()) => {
+                self.commands = None;
+                let (commands, receiver) = mpsc::channel();
+                serve(receiver);
+                self.commands = Some(commands.clone());
+                send_start(&commands, request).map_err(|_| CameraError::Backend("the camera worker stopped".into()))
+            }
+        }
+    }
 }
 
 /// Hand one `Start` to the worker and take the session's event channel. Fails only when the
@@ -461,16 +479,27 @@ mod tests {
         camera.commands = Some(commands);
     }
 
+    /// A command drain that never touches the platform camera: the retry worker only answers
+    /// commands, so the test stays off the macOS permission sheet.
+    fn drain(receiver: Receiver<Command>) {
+        thread::spawn(move || {
+            while let Ok(command) = receiver.recv() {
+                if matches!(command, Command::Quit | Command::Stop) {
+                    return;
+                }
+            }
+        });
+    }
+
     #[test]
     fn start_with_a_dead_sender_respawns_its_worker() {
-        // `start` itself drops a dead sender and retries: one call recovers from an exited
-        // worker without opening the platform camera (the new `run` loop only blocks on commands
-        // until a `Start` arrives; the session's event channel is dropped unread).
+        // `start_with` drops a dead sender and retries with a drain: one call recovers from an
+        // exited worker without opening the platform camera (no devices enumerated, no `open`).
         let mut camera = SystemCamera::default();
         let (dead, receiver) = mpsc::channel::<Command>();
         drop(receiver);
         camera.commands = Some(dead);
-        let session = camera.start(&CameraRequest::default()).expect("the retry spawns a new worker");
+        let session = camera.start_with(&CameraRequest::default(), drain).expect("the retry spawns a new worker");
         drop(session);
         camera.stop();
     }
