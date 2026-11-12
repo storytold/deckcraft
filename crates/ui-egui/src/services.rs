@@ -11,6 +11,10 @@ pub type OpenAsyncFn = Box<dyn FnMut(&str, u64)>;
 
 pub type DownloadFn = Box<dyn FnMut(&str, &[u8])>;
 
+/// [`Services::host_save`]: `(file name, bytes, save_as)`. An error means the page didn't get
+/// the file, and the save failed.
+pub type HostSaveFn = Box<dyn FnMut(&str, &[u8], bool) -> Result<(), String>>;
+
 /// A file the host finished reading for the request `id` from [`SlideApp::begin_external_file`].
 #[derive(Clone, Debug)]
 pub struct InboxFile {
@@ -49,6 +53,15 @@ pub struct Services {
     pub open_async: Option<OpenAsyncFn>,
     /// Hand bytes to the user as a named file (browser download).
     pub download: Option<DownloadFn>,
+    /// Web, framed by a page that keeps the files (`?host=parent`): Save and Save As hand the
+    /// presentation to that page instead of downloading it, with whether it is a new file
+    /// ([`HostSaveFn`]). Save writes a presentation the page sent back under its own name and
+    /// format, as the desktop app writes back to the file it opened; a presentation the page
+    /// never sent (an untitled one, a repaired copy) goes as a new `.deckcraft` file, as Save
+    /// suggests on the desktop. Save As (.pptx or .deckcraft) is always a new file. Either way the
+    /// presentation is then that file, and the next Save goes to it. Exports and Print still go
+    /// through `download`, which the host also points at the page: they are copies.
+    pub host_save: Option<HostSaveFn>,
     pub inbox: Option<Inbox>,
     /// Image on the system clipboard (PNG bytes), when the host can read one.
     pub clipboard_image: Option<Box<dyn FnMut() -> Option<Vec<u8>>>>,
@@ -65,4 +78,6 @@ pub struct Services {
     pub shared_clipboard_dir: Option<std::path::PathBuf>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// How many displays are connected, when the host can tell: Presenter View needs a second.
+    pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
 }

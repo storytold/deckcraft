@@ -328,3 +328,30 @@ fn an_unchanged_chartex_keeps_its_embedded_workbook() {
     assert!(saved.iter().all(|(n, _)| n != "ppt/charts/_rels/chart1.xml.rels"), "the fallback chart has no workbook");
     assert!(!text_of(&saved, "ppt/charts/chart1.xml").contains("externalData"));
 }
+
+/// A chart past the presentation's point budget is not modelled, but a save writes the original
+/// chart part and its workbook back instead of dropping both.
+#[test]
+fn a_chart_past_the_point_budget_is_saved_whole() {
+    let src = with_workbook(&chart_pptx());
+    let p = deckcraft_pptx::import_with_chart_budget(&src, 0).expect("import");
+    let chart = p
+        .slides
+        .iter()
+        .flat_map(|s| s.shapes.iter())
+        .find_map(|s| match &s.kind {
+            ShapeKind::Chart(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("the chart stays a chart");
+    assert!(chart.verbatim && chart.series.is_empty());
+    let saved = parts(&deckcraft_pptx::export(&p).expect("export"));
+    let workbook = saved.iter().find(|(n, _)| n == "ppt/embeddings/kept1.xlsx").map(|(_, d)| d.as_slice());
+    assert_eq!(workbook, Some(WORKBOOK));
+    let xml = saved
+        .iter()
+        .find(|(n, _)| n.starts_with("ppt/charts/chart") && n.ends_with(".xml"))
+        .map(|(_, d)| String::from_utf8_lossy(d).into_owned())
+        .expect("chart xml");
+    assert!(xml.contains("externalData") && xml.contains("c:pie"), "{xml}");
+}
