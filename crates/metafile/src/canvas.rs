@@ -313,6 +313,8 @@ pub(crate) struct Canvas {
     saved: Vec<Saved>,
     /// Bytes held by the items so far (path ops and pixels), capped at [`MAX_BYTES`].
     used: usize,
+    /// Bytes retained outside the canvas (EMF+ objects) that count against the same cap.
+    held: usize,
     objects: Vec<Option<Obj>>,
     pen: Pen,
     brush: Brush,
@@ -345,6 +347,7 @@ impl Canvas {
             viewport_set: false,
             saved: Vec::new(),
             used: 0,
+            held: 0,
             objects: Vec::new(),
             pen: Pen { style: 0, width: 0.0, color: [0, 0, 0, 255] },
             brush: Brush::new(BS_SOLID, [255, 255, 255, 255]),
@@ -368,6 +371,17 @@ impl Canvas {
         self.surface = clip::normalize(rect);
     }
 
+    /// Bytes retained outside the canvas that share its budget (see [`Canvas::hold`]).
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> usize {
+        self.held
+    }
+
+    /// Bytes the canvas has retained so far.
+    pub fn used(&self) -> usize {
+        self.used
+    }
+
     /// True once the item cap is hit; the readers stop there and keep what they have.
     pub fn full(&self) -> bool {
         self.full
@@ -383,6 +397,12 @@ impl Canvas {
                 self.plus_clip = Some(c);
             }
         }
+    }
+
+    /// Records the bytes another part of the player retains, so the items and they stay within
+    /// [`MAX_BYTES`] together.
+    pub fn hold(&mut self, bytes: usize) {
+        self.held = bytes;
     }
 
     fn push_raw(&mut self, mut raw: Raw) {
@@ -402,7 +422,7 @@ impl Canvas {
             Raw::Bitmap { img, .. } => img.px.len(),
             Raw::Text { text: t, .. } => t.text.len() + t.dx.len() * 4 + t.font.family.len() + 128,
         } + region_cost;
-        if self.items.len() >= MAX_ITEMS || self.used.saturating_add(cost) > MAX_BYTES {
+        if self.items.len() >= MAX_ITEMS || self.used.saturating_add(self.held).saturating_add(cost) > MAX_BYTES {
             self.full = true;
         } else {
             self.used += cost;
@@ -551,6 +571,10 @@ impl Canvas {
     /// of at most [`SHADE_RES`] cells on the longer side, laid out so that its one repeat covers
     /// the shape.
     pub fn shade_shape(&mut self, ops: &[Op], shade: &dyn Fn(P) -> [u8; 4]) {
+        // A full canvas or an empty clip keeps nothing more, so do not sample a tile for it.
+        if self.full || self.clip.as_ref().is_some_and(Vec::is_empty) {
+            return;
+        }
         let dev: Vec<Op> = ops.iter().map(|o| self.map_op(*o)).collect();
         let Some([l, t, r, b]) = crate::cliprect::ops_bbox(&dev) else { return };
         let side = (r - l).max(b - t);
@@ -666,7 +690,7 @@ impl Canvas {
         // A pattern brush's pixels count against the byte budget like drawn items.
         if let Obj::Brush(Brush { pattern: Some(p), .. }) = &obj {
             let cost = p.px.len();
-            if self.used.saturating_add(cost) > MAX_BYTES {
+            if self.used.saturating_add(self.held).saturating_add(cost) > MAX_BYTES {
                 self.full = true;
                 return;
             }

@@ -87,7 +87,7 @@ fn only_a_painted_fill_or_outline_stands_apart() {
 
 /// The text input that is not the ribbon's Font Size.
 fn dialog_field<'a>(h: &'a Harness<'_, SlideApp>) -> egui_kittest::Node<'a> {
-    h.query_all_by_role(Role::TextInput).find(|n| n.accesskit_node().label().as_deref() != Some("Font Size")).expect("the dialog's field")
+    h.query_all_by_role(Role::TextInput).find(|n| n.accesskit_node().label().as_deref() != Some("Font size")).expect("the dialog's field")
 }
 
 #[test]

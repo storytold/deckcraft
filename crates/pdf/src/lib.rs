@@ -301,18 +301,14 @@ pub fn master_text_pieces(pres: &Presentation, m: &deckcraft_model::Master, pape
     let (kx, ky) = (paper.0 / pres.notes_size.width.max(1.0), paper.1 / pres.notes_size.height.max(1.0));
     let mut out = vec![];
     for pt in deckcraft_render::place_master_texts(pres, m, n) {
+        let mut para_chars: HashMap<usize, Vec<char>> = HashMap::new();
         for run in &pt.layout.runs {
             let Some(g) = run.glyphs.first() else { continue };
-            let text: String = pt
-                .body
-                .paragraphs
-                .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
-                .unwrap_or_default()
-                .chars()
-                .skip(run.chars.0)
-                .take(run.chars.1.saturating_sub(run.chars.0))
-                .collect();
+            let chars = para_chars.entry(run.para).or_insert_with(|| {
+                pt.body.paragraphs.get(run.para).map(|p| p.runs.iter().flat_map(|r| r.content().chars()).collect()).unwrap_or_default()
+            });
+            let (a, b) = (run.chars.0.min(chars.len()), run.chars.1.min(chars.len()));
+            let text: String = chars.get(a..b.max(a)).unwrap_or_default().iter().collect();
             if text.trim().is_empty() {
                 continue;
             }
@@ -498,6 +494,9 @@ impl Backdrops {
 /// Most pixels one slide raster may have; it is RGBA, and the backdrop and the content are two rasters.
 const MAX_RASTER_PIXELS: f64 = 64_000_000.0;
 
+/// Most ruled note lines one handout area gets (a letter page holds about 30).
+const MAX_NOTE_LINES: usize = 500;
+
 /// Render scale for a slide of `slide` units drawn `box_width` points wide at `dpi`, with the total pixel count capped.
 fn raster_scale(box_width: f64, slide: (f64, f64), dpi: f64) -> f64 {
     let scale = (box_width / 72.0 * dpi.clamp(36.0, 600.0)) / slide.0;
@@ -522,7 +521,8 @@ impl Exporter<'_> {
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
         let scale = raster_scale(b.width(), (sw, sh), self.opts.dpi);
-        let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
+        // One clock reading for the raster and the text layer, so a date field cannot differ between them.
+        let ropts = RenderOpts { scale, threads: 4, now: deckcraft_text::datetime::DateTime::now_local(), ..Default::default() };
         // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
         // on every slide that shares its layout, so the writer stores it once, and the slide's own
         // shapes draw over it (#845).
@@ -563,7 +563,7 @@ impl Exporter<'_> {
         }
         if self.opts.text_layer {
             let view = Affine::translate((b.x0, b.y0)) * Affine::scale(k);
-            for pt in deckcraft_render::place_slide(pres, i).texts {
+            for pt in deckcraft_render::place_slide_with(pres, i, &ropts).texts {
                 self.text_layer(s, &pt, view, false)?;
             }
             let _ = sh;
@@ -573,20 +573,17 @@ impl Exporter<'_> {
 
     /// Invisible glyphs exactly over the rasterised text.
     fn text_layer(&mut self, s: &mut Surface, pt: &PlacedText, view: Affine, visible: bool) -> Result<()> {
+        // Each paragraph's characters, gathered once: a long paragraph wraps into many runs.
+        let mut para_chars: HashMap<usize, Vec<char>> = HashMap::new();
         for run in &pt.layout.runs {
             if run.glyphs.is_empty() || run.size <= 0.0 {
                 continue;
             }
-            let text: String = pt
-                .body
-                .paragraphs
-                .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
-                .unwrap_or_default()
-                .chars()
-                .skip(run.chars.0)
-                .take(run.chars.1.saturating_sub(run.chars.0))
-                .collect();
+            let chars = para_chars.entry(run.para).or_insert_with(|| {
+                pt.body.paragraphs.get(run.para).map(|p| p.runs.iter().flat_map(|r| r.content().chars()).collect()).unwrap_or_default()
+            });
+            let (a, b) = (run.chars.0.min(chars.len()), run.chars.1.min(chars.len()));
+            let text: String = chars.get(a..b.max(a)).unwrap_or_default().iter().collect();
             if text.trim().is_empty() {
                 continue;
             }
@@ -666,19 +663,28 @@ impl Exporter<'_> {
         let lh = size * 1.3;
         let mut y = area.y0 + size;
         s.set_fill(Some(grey(0x20, 1.0)));
+        let space = width(" ");
         'outer: for para in text.split('\n') {
+            // The line's width is kept as words are added, not measured again for each word.
             let mut line = String::new();
+            let mut line_w = 0.0;
             for word in para.split(' ') {
-                let cand = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
-                if width(&cand) > area.width() && !line.is_empty() {
+                let word_w = width(word);
+                let cand_w = if line.is_empty() { word_w } else { line_w + space + word_w };
+                if cand_w > area.width() && !line.is_empty() {
                     if y > area.y1 {
                         break 'outer;
                     }
                     s.draw_text(Point::from_xy(area.x0 as f32, y as f32), font.clone(), size as f32, &line, false, TextDirection::Auto);
                     y += lh;
                     line = word.to_string();
+                    line_w = word_w;
                 } else {
-                    line = cand;
+                    if !line.is_empty() {
+                        line.push(' ');
+                    }
+                    line.push_str(word);
+                    line_w = cand_w;
                 }
             }
             if y > area.y1 {
@@ -695,20 +701,26 @@ impl Exporter<'_> {
 
     /// Ruled lines for handwritten notes (3-per-page handouts).
     fn note_lines(&self, s: &mut Surface, r: Rect) {
-        let mut y = r.y0 + 18.0;
+        // Counted, not stepped: at huge coordinates adding 22 leaves y unchanged, and a huge page
+        // would want millions of rules.
+        let first = r.y0 + 18.0;
+        let count = ((r.y1 - first) / 22.0).floor() + 1.0;
+        if count.is_nan() || count < 1.0 {
+            return;
+        }
         s.set_stroke(Some(krilla::paint::Stroke {
             paint: krilla::color::rgb::Color::new(0xB0, 0xB0, 0xB0).into(),
             width: 0.5,
             ..Default::default()
         }));
-        while y <= r.y1 {
+        for i in 0..(count.min(MAX_NOTE_LINES as f64) as usize) {
+            let y = first + 22.0 * i as f64;
             let mut p = kurbo::BezPath::new();
             p.move_to((r.x0, y));
             p.line_to((r.x1, y));
             if let Some(path) = to_path(&p) {
                 s.draw_path(&path);
             }
-            y += 22.0;
         }
         s.set_stroke(None);
     }
