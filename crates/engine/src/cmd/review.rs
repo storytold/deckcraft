@@ -1008,7 +1008,6 @@ fn apply_laser_color(sh: &mut deckcraft_model::ShowSettings, p: &Value) -> Resul
 /// clip (a media shape with `narration: true`); a shape merely named "Narration" stays.
 fn narration(s: &mut Session, p: &Value) -> Result<Value> {
     let index = target_slide(s, p, "show.narration")?;
-    let st = s.doc()?;
     let (name, bytes) = super::insert::media_bytes(p, "show.narration")?;
     if bytes.len() > 48_000_000 {
         return Err(bad("show.narration", "audio is too long"));
