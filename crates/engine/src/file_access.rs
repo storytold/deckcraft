@@ -408,7 +408,6 @@ mod tests {
 
     /// In a case-sensitive folder, `IN` beside the root `in` is another folder, there or not yet.
     #[cfg(windows)]
-    /// In a case-sensitive Windows folder, a sibling named in another case stays outside the root.
     #[test]
     fn a_case_sensitive_folder_keeps_a_differently_cased_name_out() {
         let base = std::env::temp_dir().join(format!("dc-file-access-case-sensitive-{}", std::process::id()));
