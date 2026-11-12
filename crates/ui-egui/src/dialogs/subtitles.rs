@@ -221,7 +221,7 @@ fn model_block(app: &mut SlideApp, ui: &mut Ui) {
         let busy = app.subtitles.download.is_some();
         // Presence alone is not "installed": while the hash check runs, a corrupt directory can
         // still be replaced by a download.
-        let ready = status.state == ModelState::Ready && !verifying;
+        let ready = status.state == ModelState::Ready && !verifying && app.subtitles.verify_error.is_none();
         if ui.add_enabled(!busy && hook.is_some() && !ready, egui::Button::new("Download")).clicked()
             && let Some(hook) = hook
         {

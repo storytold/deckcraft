@@ -121,11 +121,14 @@ impl Subtitles {
     }
 
     /// Whether live subtitles can run: the model is installed and hash-verified (and, in the
-    /// browser, never). Presence alone is not "installed" until the background check agrees.
+    /// browser, never). Presence alone is not "installed" until the background check agrees,
+    /// and a check that never started leaves an explicit error instead of availability.
     pub fn available(&mut self) -> bool {
         self.ensure_checked();
         self.poll_verification();
-        cfg!(not(target_arch = "wasm32")) && self.model.state == ModelState::Ready && !self.is_verifying()
+        // A check that never started leaves presence-only state behind: it is not verified, so
+        // the model is not available until a later check runs and reports.
+        cfg!(not(target_arch = "wasm32")) && self.model.state == ModelState::Ready && !self.is_verifying() && self.verify_error.is_none()
     }
 
     /// Look for the model once. Presence is cheap, but it is not proof: a present directory is

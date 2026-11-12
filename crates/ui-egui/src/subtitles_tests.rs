@@ -115,12 +115,11 @@ fn a_check_that_cannot_start_reports_instead_of_hashing_on_the_ui_thread() {
     let mut subs = Subtitles::default();
     subs.adopt_dir(dir.clone());
     assert_eq!(subs.presence_state(), ModelState::Ready, "presence is reported at once");
-    // The worker thread could not start: keep the presence state and say so instead of
-    // hashing 151 MB on the UI thread.
     subs.verify_unavailable();
     assert!(!subs.is_verifying(), "no worker means no repaint wait");
     assert_eq!(subs.presence_state(), ModelState::Ready, "the presence-only state is kept, not hashed here");
     assert!(subs.verify_error.as_deref().is_some_and(|e| e.contains("background check")), "the dialog names the failure: {:?}", subs.verify_error);
+    assert!(!subs.available(), "presence without a finished hash check is not available");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
