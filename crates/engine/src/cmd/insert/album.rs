@@ -80,6 +80,12 @@ pub(super) fn photo_album_edit(s: &mut Session, p: &Value) -> Result<Value> {
     let opts = album_opts(p)?;
     let items = album_items(p)?;
     let (id, ids) = album_target(s, p)?;
+    // The editor is seeded within the album limits; replacing the album from a trimmed seed would
+    // delete what it left out, so refuse rather than lose it.
+    let st = s.doc()?;
+    if items_from_slides(&st.doc, &album_slides(st, &ids)).1 {
+        return Err(bad("insert.photoAlbumEdit", "this album holds more than the editor can carry; editing it would delete the rest"));
+    }
     commit_album(s, items, opts, Some((id, ids)))
 }
 
@@ -545,6 +551,19 @@ fn album_target(s: &Session, p: &Value) -> Result<(u32, Vec<u64>)> {
     Err(bad("insert.photoAlbumEdit", "this slide is not part of a photo album"))
 }
 
+/// Whether a slide holds anything besides album items: shapes, notes, comments, a background, a
+/// transition, animations, a colour map or tags.
+fn has_slide_content(s: &deckcraft_model::Slide) -> bool {
+    !s.shapes.is_empty()
+        || !s.notes.text().trim().is_empty()
+        || !s.comments.is_empty()
+        || s.background.is_some()
+        || s.transition.is_some()
+        || !s.animations.is_empty()
+        || s.color_map.is_some()
+        || !s.tags.is_empty()
+}
+
 fn pic_count(slide: &deckcraft_model::Slide) -> usize {
     slide.shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).count()
 }
@@ -592,9 +611,16 @@ fn infer_album(slides: &[&deckcraft_model::Slide], theme_now: &str) -> (String, 
     (layout, frame.into(), captions, any && gray, theme_now.to_string())
 }
 
-fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_model::Slide]) -> Vec<Value> {
+/// The album's items for the dialog, within the limits `insert.photoAlbum` itself takes (items,
+/// bytes per picture and in all), checked before a picture is encoded: an album slide set can
+/// name one large picture many times.
+///
+/// The flag is true when something was left out for a limit.
+fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_model::Slide]) -> (Vec<Value>, bool) {
     let mut items = Vec::new();
-    for slide in slides {
+    let mut total = 0usize;
+    let mut omitted = false;
+    'slides: for slide in slides {
         let pics: Vec<&deckcraft_model::Shape> = slide.shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).collect();
         if pics.is_empty() {
             let text = slide
@@ -605,13 +631,27 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
                 .find(|t| !t.trim().is_empty())
                 .unwrap_or_default();
             if !text.trim().is_empty() {
+                if items.len() >= ALBUM_MAX_ITEMS {
+                    omitted = true;
+                    break 'slides;
+                }
                 items.push(json!({"text": text.trim()}));
+            } else if items.len() >= ALBUM_MAX_ITEMS && has_slide_content(slide) {
+                // Past the item limit, a slide with other content would be deleted by a replace.
+                omitted = true;
+                break 'slides;
             }
             continue;
         }
         for sh in pics {
             let ShapeKind::Picture { fill } = &sh.kind else { continue };
             let media = doc.media(fill.media);
+            let size = media.map_or(0, |m| m.data.len());
+            if items.len() >= ALBUM_MAX_ITEMS || size > ALBUM_MAX_BYTES || total.saturating_add(size) > ALBUM_MAX_TOTAL {
+                omitted = true;
+                break 'slides;
+            }
+            total += size;
             let name = if !sh.descr.is_empty() {
                 sh.descr.clone()
             } else {
@@ -626,14 +666,19 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
             }));
         }
     }
-    items
+    (items, omitted)
+}
+
+/// The slides of album `ids` as the editor would seed them.
+fn album_slides<'a>(st: &'a crate::DocState, ids: &[u64]) -> Vec<&'a deckcraft_model::Slide> {
+    ids.iter().filter_map(|sid| u32::try_from(*sid).ok()).filter_map(|n| st.doc.slide(deckcraft_model::SlideId(n))).collect()
 }
 
 fn album_seed(s: &Session) -> Result<Value> {
     let (id, ids) = album_target(s, &Value::Null)?;
     let st = s.doc()?;
-    let slides: Vec<&deckcraft_model::Slide> =
-        ids.iter().filter_map(|sid| u32::try_from(*sid).ok()).filter_map(|n| st.doc.slide(deckcraft_model::SlideId(n))).collect();
+    let slides = album_slides(st, &ids);
+    let (items, _) = items_from_slides(&st.doc, &slides);
     let theme_now = st.doc.masters.first().map(|m| m.theme.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "DeckCraft".into());
     let inferred = infer_album(&slides, &theme_now);
     let mark = slides.first().and_then(|sl| sl.raw_ext.as_deref().and_then(parse_album_mark));
@@ -655,7 +700,7 @@ fn album_seed(s: &Session) -> Result<Value> {
         "captions": captions,
         "grayscale": grayscale,
         "theme": theme,
-        "items": items_from_slides(&st.doc, &slides),
+        "items": items,
     }))
 }
 
@@ -721,4 +766,97 @@ fn insert_album(s: &mut Session, items: Vec<AlbumItem>, opts: &AlbumOpts, at: Op
     }
     s.execute("slide.go", &json!({"index": first}))?;
     Ok(json!({"slides": slides, "first": first, "pictures": pictures, "album": album_id}))
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use std::sync::Arc;
+
+    use deckcraft_model::style::PictureFill;
+    use deckcraft_model::{Shape, ShapeId, defaults};
+
+    use super::*;
+
+    #[test]
+    fn reopening_an_album_seeds_at_most_the_items_an_album_takes() {
+        // One picture named by 500 shapes: the dialog gets 48 items, not 500 encoded copies.
+        let mut p = defaults::new_presentation(None);
+        let img = p.add_media("a.png", "image/png", vec![1; 64 * 1024]).unwrap();
+        let pic = |k: u32| Shape {
+            id: ShapeId(10_000 + k),
+            kind: ShapeKind::Picture { fill: PictureFill { media: img, ..Default::default() } },
+            ..Default::default()
+        };
+        Arc::make_mut(&mut p.slides[0]).shapes = (0..500).map(pic).collect();
+        let slides: Vec<&deckcraft_model::Slide> = p.slides.iter().map(|s| s.as_ref()).collect();
+        let (items, omitted) = items_from_slides(&p, &slides);
+        assert_eq!(items.len(), ALBUM_MAX_ITEMS);
+        assert!(omitted);
+        let few: Vec<&deckcraft_model::Slide> = Vec::new();
+        assert!(!items_from_slides(&p, &few).1);
+    }
+
+    /// An album too big for the editor's seed cannot be replaced from that seed: the replace would
+    /// delete what the seed left out.
+    #[test]
+    fn editing_an_album_the_editor_cannot_hold_is_refused() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let texts: Vec<Value> = (0..ALBUM_MAX_ITEMS).map(|i| json!({"text": format!("t{i}")})).collect();
+        s.execute("insert.photoAlbum", &json!({"pictures": texts, "layout": "1"})).unwrap();
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let mut extra = doc.slides.last().unwrap().as_ref().clone();
+        extra.id = deckcraft_model::SlideId(doc.alloc_id().unwrap());
+        doc.slides.push(Arc::new(extra));
+        let n = doc.slides.len();
+        let e = s.execute("insert.photoAlbumEdit", &json!({"pictures": [{"text": "x"}], "layout": "1"})).unwrap_err().to_string();
+        assert!(e.contains("delete the rest"), "{e}");
+        assert_eq!(s.doc().unwrap().doc.slides.len(), n);
+    }
+
+    /// Past the item limit, a slide holding only a drawing counts as content the replace would delete.
+    #[test]
+    fn editing_an_album_with_a_drawing_slide_past_the_limit_is_refused() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let texts: Vec<Value> = (0..ALBUM_MAX_ITEMS).map(|i| json!({"text": format!("t{i}")})).collect();
+        s.execute("insert.photoAlbum", &json!({"pictures": texts, "layout": "1"})).unwrap();
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let mut extra = doc.slides.last().unwrap().as_ref().clone();
+        extra.id = deckcraft_model::SlideId(doc.alloc_id().unwrap());
+        extra.shapes = vec![Shape { id: ShapeId(90_000), ..Default::default() }];
+        doc.slides.push(Arc::new(extra));
+        let e = s.execute("insert.photoAlbumEdit", &json!({"pictures": [{"text": "x"}], "layout": "1"})).unwrap_err().to_string();
+        assert!(e.contains("delete the rest"), "{e}");
+    }
+
+    /// Notes or comments on a shapeless slide past the limit are content a replace would delete.
+    #[test]
+    fn editing_an_album_with_a_notes_only_slide_past_the_limit_is_refused() {
+        let mut s = crate::Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let texts: Vec<Value> = (0..ALBUM_MAX_ITEMS).map(|i| json!({"text": format!("t{i}")})).collect();
+        s.execute("insert.photoAlbum", &json!({"pictures": texts, "layout": "1"})).unwrap();
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let mut extra = doc.slides.last().unwrap().as_ref().clone();
+        extra.id = deckcraft_model::SlideId(doc.alloc_id().unwrap());
+        extra.shapes.clear();
+        extra.notes = deckcraft_model::text::TextBody::from_text("speaker notes");
+        doc.slides.push(Arc::new(extra));
+        let e = s.execute("insert.photoAlbumEdit", &json!({"pictures": [{"text": "x"}], "layout": "1"})).unwrap_err().to_string();
+        assert!(e.contains("delete the rest"), "{e}");
+    }
+
+    /// A shapeless slide with a background, transition, colour map or tags counts as content; a plain empty one does not.
+    #[test]
+    fn slide_level_settings_count_as_slide_content() {
+        use deckcraft_model::Slide;
+        assert!(!has_slide_content(&Slide::default()));
+        assert!(has_slide_content(&Slide { tags: vec![("k".into(), "v".into())], ..Default::default() }));
+        assert!(has_slide_content(&Slide { color_map: Some(vec![("bg1".into(), "lt1".into())]), ..Default::default() }));
+        assert!(has_slide_content(&Slide { transition: Some(Default::default()), ..Default::default() }));
+    }
 }

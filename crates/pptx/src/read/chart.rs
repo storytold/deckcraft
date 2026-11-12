@@ -39,6 +39,33 @@ pub(crate) fn rich_text(t: &El) -> Option<String> {
 /// Most category/value/size slots one chart may decode across all its series and caches, so
 /// sparse `ptCount`/`idx` declarations can't expand far beyond the XML they came from.
 pub(crate) const MAX_CHART_POINTS: usize = 1_000_000;
+/// Data slots (values and categories) the charts of one presentation may hold in all; a chart past
+/// it is read as a placeholder frame. Each frame that references a chart decodes its own copy.
+pub(crate) const MAX_PRESENTATION_CHART_POINTS: usize = 4_000_000;
+
+/// Chart part bytes all chart frames of a presentation may decode, counting every attempt: a
+/// chart that is rejected, or has no data slots, would otherwise be decoded again for each frame
+/// that shows it.
+pub(crate) const MAX_CHART_DECODE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Slots a decoded chart holds, counting the chart itself as at least one.
+pub(crate) fn point_count(c: &Chart) -> usize {
+    let series = |s: &deckcraft_model::chart::Series| {
+        let bars = s.error_bars.as_ref().map_or(0, |e| e.plus.len().saturating_add(e.minus.len()));
+        s.values.len().saturating_add(s.x_values.len()).saturating_add(s.sizes.len()).saturating_add(bars)
+    };
+    let levels: usize = c.category_levels.iter().map(Vec::len).sum();
+    1usize.saturating_add(c.categories.len()).saturating_add(levels).saturating_add(c.series.iter().map(series).fold(0, usize::saturating_add))
+}
+
+/// Bytes of the strings a kept relationship owns.
+fn part_bytes(p: &deckcraft_model::chart::ChartPart) -> usize {
+    p.bytes.len() + p.name.len() + p.content_type.len()
+}
+
+fn rel_bytes(r: &deckcraft_model::chart::ChartRel) -> usize {
+    r.id.len() + r.rel_type.len() + r.target.len() + r.part.len()
+}
 
 /// Most slots one cache may hold.
 const MAX_CACHE_POINTS: usize = 100_000;
@@ -100,6 +127,48 @@ pub fn read_chart_xml(bytes: &[u8]) -> Option<Chart> {
     }
     let mut c = chart_from(&root)?;
     c.raw = Some(String::from_utf8_lossy(bytes).into_owned());
+    Some(c)
+}
+
+/// The chart a graphic frame points at. A chart that would cross the presentation's point or
+/// decode limits is not modelled: it is kept as its original part with the relationships it
+/// reaches (`verbatim`), so a save writes it back whole instead of dropping it and its workbook.
+pub(crate) fn frame_chart(imp: &mut super::Imp, part: &super::Part, rid: &str, uri: &str) -> Option<Chart> {
+    let rel = part.rels.get(rid)?;
+    let chartex = uri.ends_with("/chartex");
+    let bytes = imp.pkg.xml_bytes(&rel.target)?;
+    if imp.chart_decode_bytes.saturating_add(bytes.len()) > MAX_CHART_DECODE_BYTES {
+        log::warn!("pptx: chart {} is past the presentation's chart decode limit and is not kept", rel.target);
+        return None;
+    }
+    imp.chart_decode_bytes += bytes.len();
+    let parsed = if imp.chart_points < imp.chart_points_cap {
+        let c = if chartex { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }?;
+        let n = point_count(&c);
+        if imp.chart_points.saturating_add(n) <= imp.chart_points_cap {
+            imp.chart_points = imp.chart_points.saturating_add(n);
+            let mut c = c;
+            c.kept = capture_kept(imp, &rel.target);
+            return Some(c);
+        }
+        Some(c)
+    } else {
+        None
+    };
+    // Past the limit: keep the part itself (charged to the sidecar budget) and show an empty chart.
+    if chartex || imp.kept_sidecar_bytes.saturating_add(bytes.len()) > MAX_KEPT_TOTAL_BYTES {
+        log::warn!("pptx: chart {} is past the presentation's chart limits and is not kept", rel.target);
+        return None;
+    }
+    imp.kept_sidecar_bytes += bytes.len();
+    log::warn!("pptx: chart {} is past the presentation's chart limits; shown empty and written back unchanged", rel.target);
+    let mut c = parsed.unwrap_or_default();
+    c.series.clear();
+    c.categories.clear();
+    c.category_levels.clear();
+    c.raw = Some(String::from_utf8_lossy(bytes).into_owned());
+    c.verbatim = true;
+    c.kept = capture_kept(imp, &rel.target);
     Some(c)
 }
 
@@ -466,9 +535,20 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
 
     let key = crate::opc::norm(chart_part);
     if let Some(cached) = imp.kept_charts.get(&key) {
+        // Every frame that shows this chart gets its own copy, so each copy is charged like the first.
+        let bytes: usize = cached.parts.iter().map(part_bytes).sum::<usize>() + cached.rels.iter().map(rel_bytes).sum::<usize>();
+        if imp.kept_sidecar_bytes.saturating_add(bytes) > MAX_KEPT_TOTAL_BYTES {
+            log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
+            return ChartKept::default();
+        }
+        imp.kept_sidecar_bytes += bytes;
         return cached.clone();
     }
 
+    let charged_before = imp.kept_sidecar_bytes;
+    if imp.rejected_kept.get(&key) == Some(&charged_before) {
+        return ChartKept::default();
+    }
     let mut kept = ChartKept::default();
     // The chart document itself is rewritten; don't store a second copy of it.
     let mut seen = std::collections::HashMap::from([(key.clone(), true)]);
@@ -485,6 +565,18 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: r.target, external: false });
         }
     }
+    // The first capture's relationship strings and the parts' names and content types are retained
+    // too (the part bytes were charged as copied).
+    let rel_total: usize =
+        kept.rels.iter().map(rel_bytes).sum::<usize>() + kept.parts.iter().map(|p| p.name.len() + p.content_type.len()).sum::<usize>();
+    if imp.kept_sidecar_bytes.saturating_add(rel_total) > MAX_KEPT_TOTAL_BYTES {
+        log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
+        // The dropped parts must not stay charged against later charts.
+        imp.kept_sidecar_bytes = charged_before;
+        imp.rejected_kept.insert(key, charged_before);
+        return ChartKept::default();
+    }
+    imp.kept_sidecar_bytes += rel_total;
     imp.kept_charts.insert(key, kept.clone());
     kept
 }
@@ -589,6 +681,16 @@ fn text_size(e: Option<&El>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn point_count_charges_every_retained_vector() {
+        let mut c = Chart { categories: vec!["a".into()], category_levels: vec![vec!["x".into(); 2], vec!["y".into(); 3]], ..Default::default() };
+        let mut s =
+            deckcraft_model::chart::Series { values: vec![Some(1.0); 4], x_values: vec![None; 5], sizes: vec![None; 6], ..Default::default() };
+        s.error_bars = Some(deckcraft_model::chart::ErrorBars { plus: vec![None; 7], minus: vec![None; 8], ..Default::default() });
+        c.series = vec![s];
+        assert_eq!(point_count(&c), 1 + 1 + 5 + 4 + 5 + 6 + 15);
+    }
 
     #[test]
     fn sparse_caches_share_one_chart_wide_budget() {
