@@ -1258,7 +1258,10 @@ mod tests {
             let mut e = c.clone();
             e.raw = None;
             e.legend_entries = vec![deckcraft_model::chart::LegendEntry { idx: 0, size: Some(size), bold: None, color: None }];
-            let back_size = crate::read::chart::read_chart_xml(&super::chart_xml(&e).0).unwrap().legend_entries[0].size;
+            let written = super::chart_xml(&e).0;
+            let sz = format!(r#"sz="{}""#, (back * 100.0) as u32);
+            assert!(String::from_utf8_lossy(&written).contains(&sz), "{size} pt is written as {sz}");
+            let back_size = crate::read::chart::read_chart_xml(&written).unwrap().legend_entries[0].size;
             assert_eq!(back_size, Some(back), "{size} pt");
         }
     }
