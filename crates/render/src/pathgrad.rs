@@ -310,6 +310,18 @@ pub fn fill_tiled(
     fill_tiled_flipped(ctx, kind, focus, stops, bounds, tile, GradientFlip::None, path, m, alpha);
 }
 
+/// The part of `tile` a tiled gradient raster covers, with whether it repeats across and down. On
+/// an axis where `tile` spans all of `cover` (the shape's box and path), the raster covers only
+/// `cover` and nothing repeats on that axis; on any other axis it covers the whole tile, which
+/// repeats.
+pub(crate) fn tiled_sample(cover: Rect, tile: Rect) -> (Rect, bool, bool) {
+    let spans_x = tile.x0 <= cover.x0 && tile.x1 >= cover.x1;
+    let spans_y = tile.y0 <= cover.y0 && tile.y1 >= cover.y1;
+    let (x0, x1) = if spans_x { (cover.x0, cover.x1) } else { (tile.x0, tile.x1) };
+    let (y0, y1) = if spans_y { (cover.y0, cover.y1) } else { (tile.y0, tile.y1) };
+    (Rect::new(x0, y0, x1, y1), !spans_x, !spans_y)
+}
+
 /// Fill `path` with repeated path-gradient tiles, reflecting alternate tiles along `flip` axes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fill_tiled_flipped(
@@ -329,7 +341,9 @@ pub(crate) fn fill_tiled_flipped(
     }
     let tile = if tile.is_finite() && tile.width() > 0.0 && tile.height() > 0.0 { tile } else { bounds };
     let untiled = tile == bounds;
-    let sample = if untiled { bounds } else { tile };
+    let cover = kurbo::Shape::bounding_box(path);
+    let cover = if cover.is_finite() { cover.union(bounds) } else { bounds };
+    let (sample, repeat_x, repeat_y) = if untiled { (bounds, false, false) } else { tiled_sample(cover, tile) };
     let k = crate::scale_of(m);
     let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
     let s = if untiled { (MAX_SIDE / (sample.width().max(sample.height()) * k)).min(1.0) * k } else { k };
@@ -379,13 +393,17 @@ pub(crate) fn fill_tiled_flipped(
     }
     let pm = Arc::new(Pixmap::from_parts(data, pw as u16, ph as u16));
     ctx.set_transform(m);
-    let extend = |reflected: bool| if reflected { peniko::Extend::Reflect } else { peniko::Extend::Repeat };
+    let extend = |repeats: bool, reflected: bool| match (repeats, reflected) {
+        (false, _) => peniko::Extend::Pad,
+        (true, true) => peniko::Extend::Reflect,
+        (true, false) => peniko::Extend::Repeat,
+    };
     let sampler = if untiled {
         peniko::ImageSampler { quality: peniko::ImageQuality::Medium, ..Default::default() }
     } else {
         peniko::ImageSampler {
-            x_extend: extend(matches!(flip, GradientFlip::X | GradientFlip::Xy)),
-            y_extend: extend(matches!(flip, GradientFlip::Y | GradientFlip::Xy)),
+            x_extend: extend(repeat_x, matches!(flip, GradientFlip::X | GradientFlip::Xy)),
+            y_extend: extend(repeat_y, matches!(flip, GradientFlip::Y | GradientFlip::Xy)),
             quality: peniko::ImageQuality::Medium,
             ..Default::default()
         }
@@ -516,6 +534,36 @@ mod tests {
         let mut px = vec![0u8; 64 * 64 * 4];
         ctx.render(vello_cpu::PixmapMut::new(64, 64, &mut px).unwrap(), &mut vello_cpu::Resources::new());
         assert!(px.chunks(4).all(|p| p[3] == 0), "nothing was painted");
+    }
+
+    #[test]
+    fn a_tile_reaching_past_the_shape_samples_only_the_shape() {
+        let b = Rect::new(0.0, 0.0, 400.0, 200.0);
+        // A corner preset's tile reaches a box up and left: nothing repeats, the shape is sampled.
+        assert_eq!(tiled_sample(b, Rect::new(-400.0, -200.0, 400.0, 200.0)), (b, false, false));
+        // A tile inside the shape repeats on both axes.
+        let inner = Rect::new(100.0, 50.0, 200.0, 150.0);
+        assert_eq!(tiled_sample(b, inner), (inner, true, true));
+        // A tile as tall as the shape and narrower repeats across only.
+        assert_eq!(tiled_sample(b, Rect::new(100.0, -10.0, 200.0, 210.0)), (Rect::new(100.0, 0.0, 200.0, 200.0), true, false));
+    }
+
+    #[test]
+    fn a_tile_reaching_past_the_shape_keeps_its_detail() {
+        // The tile is four boxes wide; the hard stop half way sits 200 pt in. The raster covers the
+        // shape only, so the edge stays within about a point.
+        let b = Rect::new(0.0, 0.0, 400.0, 200.0);
+        let tile = Rect::new(-1200.0, -200.0, 400.0, 200.0);
+        let (w, k) = (800u16, 2.0);
+        let stops = [(0.0, Rgba::WHITE), (0.5, Rgba::WHITE), (0.5, Rgba::BLACK), (1.0, Rgba::BLACK)];
+        let mut ctx = RenderContext::new(w, 400);
+        fill_tiled(&mut ctx, "rect", [0.0, 0.0, 1.0, 1.0], &stops, b, tile, &b.to_path(0.1), Affine::scale(k), 1.0);
+        ctx.flush();
+        let mut px = vec![0u8; usize::from(w) * 400 * 4];
+        ctx.render(vello_cpu::PixmapMut::new(w, 400, &mut px).unwrap(), &mut vello_cpu::Resources::new());
+        let red = |x: usize, y: usize| px[(y * usize::from(w) + x) * 4];
+        assert!(red(397, 20) > 240, "before the edge {}", red(397, 20));
+        assert!(red(403, 20) < 15, "after the edge {}", red(403, 20));
     }
 
     #[test]
