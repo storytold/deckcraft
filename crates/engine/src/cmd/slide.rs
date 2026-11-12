@@ -502,6 +502,17 @@ fn nearest_side(x: deckcraft_model::Xfrm, width: f64) -> deckcraft_model::Xfrm {
 
 /// Re-map a slide's placeholders onto a new layout (content kept, matched by type/index).
 pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> Result<()> {
+    apply_layout_with(doc, index, layout, true)
+}
+
+/// [`apply_layout`] for a change of theme: the placeholders the new layout has no counterpart for
+/// stay as they are drawn, with the idx they had. (PowerPoint copies the slide's layout into the
+/// new design instead, and nothing is left over; that is not done here.)
+pub fn apply_layout_in_place(doc: &mut Presentation, index: usize, layout: LayoutId) -> Result<()> {
+    apply_layout_with(doc, index, layout, false)
+}
+
+fn apply_layout_with(doc: &mut Presentation, index: usize, layout: LayoutId, leftovers_to_the_edges: bool) -> Result<()> {
     let lay_shapes: Vec<deckcraft_model::Shape> =
         doc.layout(layout).map(|(_, l)| l.shapes.clone()).ok_or_else(|| bad("slide.layout", "no such layout"))?;
     let mut fresh = vec![];
@@ -573,7 +584,7 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
         if footer_pairs {
             // A footer, date or slide number the new layout has too takes its frame.
             o.xfrm = None;
-        } else if let (Some(p), Some(x)) = (o.ph.as_mut(), o.xfrm) {
+        } else if leftovers_to_the_edges && let (Some(p), Some(x)) = (o.ph.as_mut(), o.xfrm) {
             p.idx = deckcraft_model::resolve::ORPHAN_IDX;
             o.xfrm = Some(nearest_side(x, width));
         }
@@ -1143,6 +1154,13 @@ mod tests {
     /// A deck with layout SRC (title, B at idx 10, C at idx 11), a slide "A", "B", "C" on it and
     /// layout DST; the slide is then moved to DST.
     fn move_to_dst(case: &Case) -> Session {
+        let mut s = seeded(case);
+        s.execute("slide.layout", &json!({"layout": "DST"})).expect("layout");
+        s
+    }
+
+    /// The deck of [`move_to_dst`] before the slide is moved.
+    fn seeded(case: &Case) -> Session {
         let mut s = Session::with_new();
         s.edit(|doc, _| {
             doc.slide_size.width = case.width;
@@ -1166,7 +1184,6 @@ mod tests {
             Ok(())
         })
         .expect("seed");
-        s.execute("slide.layout", &json!({"layout": "DST"})).expect("layout");
         s
     }
 
@@ -1238,6 +1255,21 @@ mod tests {
         s.execute("slide.layout", &json!({"layout": "SRC"})).expect("back");
         let c = shape_with(&s, "C");
         assert_eq!((c.ph.as_ref().map(|p| p.idx), c.xfrm), (Some(11), None));
+    }
+
+    #[test]
+    fn a_change_of_theme_leaves_a_placeholder_the_new_layout_lacks_where_it_is_drawn() {
+        // PowerPoint copies the slide's layout into the new design, so nothing is left over and nothing
+        // moves; here the leftover keeps the frame it was drawn at and its idx.
+        let case = Case { width: 960.0, b: frame(60.0, 405.0), c: frame(495.0, 405.0), target: vec![(10, frame(60.0, 840.0))], explicit: None };
+        let mut s = seeded(&case);
+        s.edit(|doc, _| {
+            let dst = doc.masters.iter().flat_map(|m| m.layouts.iter()).find(|l| l.name == "DST").map(|l| l.id).expect("DST");
+            super::apply_layout_in_place(doc, 0, dst)
+        })
+        .expect("apply");
+        let c = shape_with(&s, "C");
+        assert_eq!((c.ph.as_ref().map(|p| p.idx), c.xfrm.map(|x| x.x)), (Some(11), Some(495.0)));
     }
 
     #[test]

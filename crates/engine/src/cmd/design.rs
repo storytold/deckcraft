@@ -233,7 +233,7 @@ fn apply_master(s: &mut Session, src: &Presentation) -> Result<Value> {
             *slot = Arc::new(m);
         }
         for (i, l) in &moves {
-            super::slide::apply_layout(doc, *i, *l)?;
+            super::slide::apply_layout_in_place(doc, *i, *l)?;
         }
         if let Target::Layout { master, .. } = sel.target {
             sel.target = Target::Master { master };
