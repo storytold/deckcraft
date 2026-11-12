@@ -51,6 +51,9 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
+        // The window is closing for good: a ready update's helper starts now and installs it once
+        // the process has exited.
+        self.0.start_pending_update();
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -141,6 +144,14 @@ fn services(native_wayland: bool) -> Services {
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
         ..Default::default()
     }
+}
+
+/// Displays winit lists for `window`, counting an output Wayland lists twice once. `None` when it
+/// lists none: Presenter View then stays as it was.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn display_count(window: &winit::window::Window) -> Option<usize> {
+    let n = window.available_monitors().collect::<std::collections::BTreeSet<_>>().len();
+    (n > 0).then_some(n)
 }
 
 const APP_ID: &str = "ai.storyteller.deckcraft";
@@ -280,6 +291,11 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services(native_wayland));
+            // Presenter View asks winit how many displays there are when a show starts.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.displays = Some(Box::new(move || display_count(&window)));
+            }
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.

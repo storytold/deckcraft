@@ -461,6 +461,21 @@ fn sound_label(name: &str) -> String {
     if label.is_empty() { "sound.wav".into() } else { label }
 }
 
+/// Validate an unmodelled 3-D fragment (`a:scene3d`, `a:sp3d`, `a:flatTx`) before writing raw XML.
+pub fn valid_raw3d<'a>(raw: &'a str, allowed: &[&str]) -> Option<&'a str> {
+    if raw.is_empty() || raw.len() > 64 * 1024 {
+        return None;
+    }
+    let wrap = format!("<r xmlns:a=\"{}\">{raw}</r>", crate::opc::NS_A);
+    let doc = crate::xml::parse(wrap.as_bytes()).ok()?;
+    let els: Vec<_> = doc.root.elements().collect();
+    (!els.is_empty()
+        && els.len() <= allowed.len()
+        && doc.root.children.len() == els.len()
+        && els.iter().all(|e| e.prefix() == "a" && allowed.contains(&e.local()) && !crate::read::has_rel_refs(e)))
+    .then_some(raw)
+}
+
 pub fn body_pr(w: &mut W, b: &BodyProps) {
     let a = A::new()
         .o("rot", b.rot.map(|r| (r * 60_000.0).round().clamp(-21_600_000.0, 21_600_000.0) as i64))
@@ -481,7 +496,8 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
         .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
-    if warp.is_none() && b.autofit.is_none() {
+    let raw3d = b.raw3d.as_deref().and_then(|s| valid_raw3d(s, &["scene3d", "sp3d", "flatTx"]));
+    if warp.is_none() && b.autofit.is_none() && raw3d.is_none() {
         w.empty("a:bodyPr", a);
         return;
     }
@@ -514,6 +530,9 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
             w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
+    }
+    if let Some(raw) = raw3d {
+        w.raw(raw);
     }
     w.close("a:bodyPr");
 }

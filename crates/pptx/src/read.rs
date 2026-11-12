@@ -11,6 +11,7 @@ mod timing;
 pub(crate) use chart::{chart_from as chart_from_el, read_chart_xml};
 pub(crate) use chartex::{chartex_from, read_chartex_xml};
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -39,8 +40,17 @@ pub struct Imp<'a> {
     pub vml_previews: HashMap<String, HashMap<String, String>>,
     /// Aggregate byte count of retained chart sidecars across the presentation.
     pub kept_sidecar_bytes: usize,
+    /// Data slots of the charts decoded so far (see `chart::MAX_PRESENTATION_CHART_POINTS`).
+    pub chart_points: usize,
+    /// Points the presentation may hold across modelled charts.
+    pub chart_points_cap: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Chart parts whose sidecar capture was refused, with the retained-byte total it started from:
+    /// the same start gives the same refusal, so the copy is not repeated.
+    pub rejected_kept: HashMap<String, usize>,
+    /// Bytes of chart parts decoded so far, rejected ones included (see `chart::MAX_CHART_DECODE_BYTES`).
+    pub chart_decode_bytes: usize,
     /// Add-in tags parts, parsed once each, by normalized part name.
     pub tags_by_part: HashMap<String, Arc<[(String, String)]>>,
     /// Bytes of tags copied into the model so far (see [`MAX_TAG_BYTES`]).
@@ -91,21 +101,22 @@ pub struct Part {
     pub ns: Vec<(String, String)>,
     /// Prefixes bound below the root only (on a wrapper such as `mc:Choice`), each to one namespace.
     pub inner_ns: Vec<(String, String)>,
+    /// Bytes of namespace declarations this part may still copy onto kept fragments.
+    ns_budget: Cell<usize>,
 }
 
 impl Part {
     pub fn new(pkg: &Package, name: &str, doc: &Doc) -> Self {
         let ns = doc.ns_decls();
-        Part { name: name.to_string(), rels: pkg.rels(name), inner_ns: inner_decls(&doc.root, &ns), ns }
+        Part { name: name.to_string(), rels: pkg.rels(name), inner_ns: inner_decls(&doc.root, &ns), ns, ns_budget: Cell::new(MAX_COPIED_NS_BYTES) }
     }
     /// Serialize an element with the namespace declarations it needs from the part root.
     pub fn keep(&self, el: &El) -> String {
-        keep_xml(el, &self.ns)
+        keep_with(el, &[&self.ns], Some(&self.ns_budget))
     }
     /// Like [`Part::keep`], also declaring prefixes that only an enclosing wrapper binds.
     pub fn keep_inner(&self, el: &El) -> String {
-        let ns: Vec<(String, String)> = self.ns.iter().chain(&self.inner_ns).cloned().collect();
-        keep_xml(el, &ns)
+        keep_with(el, &[&self.ns, &self.inner_ns], Some(&self.ns_budget))
     }
 }
 
@@ -140,36 +151,81 @@ fn inner_decls(root: &El, ns: &[(String, String)]) -> Vec<(String, String)> {
     out
 }
 
-/// Serialize `el`, declaring every prefix it uses that the source root declared.
-pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
-    let mut used = HashSet::new();
-    fn rec(e: &El, used: &mut HashSet<String>, depth: usize) {
+/// Longest namespace name copied onto a kept fragment or a resolved `mc` branch. Real ones are
+/// URIs of well under 100 bytes; a longer one is not copied, so one declaration cannot be
+/// multiplied by every fragment that uses its prefix.
+const MAX_NS_VALUE: usize = 2048;
+
+/// Namespace declaration bytes one part may copy onto all its kept fragments together; past it a
+/// fragment keeps its markup but is not given further declarations.
+const MAX_COPIED_NS_BYTES: usize = 8 << 20;
+
+/// Prefixes `el` and its descendants use in element and attribute names, and those listed in
+/// `mc:Ignorable` or `mc:MustUnderstand` (which must stay declared for the markup-compatibility rules to hold),
+/// and those starting a QName-like attribute value.
+fn used_prefixes(el: &El) -> HashSet<&str> {
+    fn rec<'a>(e: &'a El, used: &mut HashSet<&'a str>, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
             return;
         }
         if let Some((p, _)) = e.name.split_once(':') {
-            used.insert(p.to_string());
+            used.insert(p);
         }
-        for (k, _) in &e.attrs {
-            if let Some((p, _)) = k.split_once(':')
+        for (k, v) in &e.attrs {
+            if let Some((p, local)) = k.split_once(':')
                 && p != "xmlns"
                 && p != "xml"
             {
-                used.insert(p.to_string());
+                used.insert(p);
+                if local == "Ignorable" || local == "MustUnderstand" {
+                    used.extend(v.split_whitespace());
+                }
+            }
+            // QName-valued attributes (`xsi:type="q:Item"`) need their prefix declared too.
+            if k != "xmlns" && !k.starts_with("xmlns:") {
+                for t in v.split_whitespace() {
+                    if let Some((p, _)) = t.split_once(':')
+                        && !p.is_empty()
+                    {
+                        used.insert(p);
+                    }
+                }
             }
         }
         for c in e.elements() {
             rec(c, used, depth + 1);
         }
     }
+    let mut used = HashSet::new();
     rec(el, &mut used, 0);
-    let mut el = el.clone();
-    for (k, v) in ns {
+    used
+}
+
+/// Serialize `el`, declaring every prefix it uses that the source root declared.
+pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
+    keep_with(el, &[ns], None)
+}
+
+fn keep_with(el: &El, decls: &[&[(String, String)]], budget: Option<&Cell<usize>>) -> String {
+    let used = used_prefixes(el);
+    let mut have: HashSet<&str> = el.attrs.iter().map(|(a, _)| a.as_str()).collect();
+    let mut extra = Vec::new();
+    for (k, v) in decls.iter().flat_map(|d| d.iter()) {
         let p = k.strip_prefix("xmlns:").unwrap_or("");
-        if !p.is_empty() && used.contains(p) && !el.attrs.iter().any(|(a, _)| a == k) {
-            el.attrs.push((k.clone(), v.clone()));
+        if !p.is_empty() && used.contains(p) && v.len() <= MAX_NS_VALUE && !have.contains(k.as_str()) {
+            let cost = k.len() + v.len();
+            if let Some(b) = budget {
+                if b.get() < cost {
+                    continue;
+                }
+                b.set(b.get() - cost);
+            }
+            have.insert(k);
+            extra.push((k.clone(), v.clone()));
         }
     }
+    let mut el = el.clone();
+    el.attrs.extend(extra);
     el.to_xml()
 }
 
@@ -318,10 +374,18 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
             // The part's own relationships (customXml item → itemProps) and their targets.
             let rp = opc::rels_path(&name);
             if let Some(rels_xml) = text(&rp) {
+                let mut capped = false;
                 for sub in pkg.rels(&name).items.iter().filter(|s| !s.external && keepable(&s.target)) {
-                    if let Some(x) = text(&sub.target)
-                        && !out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target))
-                    {
+                    // Checked before the part is read: repeated relationships to one large part
+                    // must not copy it again each time.
+                    if out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target)) {
+                        continue;
+                    }
+                    if out.len() >= 400 {
+                        capped = true;
+                        continue;
+                    }
+                    if let Some(x) = text(&sub.target) {
                         out.push(KeptPart {
                             content_type: pkg.content_type(&sub.target).unwrap_or_default(),
                             name: sub.target.clone(),
@@ -330,7 +394,9 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
                         });
                     }
                 }
-                out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
+                if !capped && out.len() < 400 {
+                    out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
+                }
             }
         }
     }
@@ -367,15 +433,39 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
                     });
                     let branch = choice.or_else(|| ac.child("Fallback"));
                     if let Some(b) = branch {
+                        // The branch's namespace declarations (the first usable one of each name,
+                        // in order), indexed by prefix once: each child then looks up the prefixes
+                        // it uses instead of scanning every declaration.
+                        let mut decls: Vec<(&String, &String)> = Vec::new();
+                        // An oversized declaration still shadows an outer one of its name: its
+                        // content is left unbound rather than bound to the outer namespace.
+                        let mut by_prefix: HashMap<&str, Option<usize>> = HashMap::new();
+                        for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
+                            let prefix = if k == "xmlns" { Some("") } else { k.strip_prefix("xmlns:") };
+                            if let Some(p) = prefix
+                                && !by_prefix.contains_key(p)
+                            {
+                                by_prefix.insert(p, (v.len() <= MAX_NS_VALUE).then_some(decls.len()));
+                                if v.len() <= MAX_NS_VALUE {
+                                    decls.push((k, v));
+                                }
+                            }
+                        }
                         for n in &b.children {
                             if let Node::El(e) = n {
+                                // Carry the namespace declarations from the branch that its content
+                                // uses (all of them per child made children x declarations copies).
+                                let used = used_prefixes(e);
+                                let have: HashSet<&str> = e.attrs.iter().map(|(a, _)| a.as_str()).collect();
+                                let mut wanted: Vec<usize> = std::iter::once("")
+                                    .chain(used.iter().copied())
+                                    .filter_map(|p| by_prefix.get(p).copied().flatten())
+                                    .filter(|&i| !have.contains(decls[i].0.as_str()))
+                                    .collect();
+                                wanted.sort_unstable();
+                                wanted.dedup();
                                 let mut e = e.clone();
-                                // Carry namespace declarations from the branch onto its content.
-                                for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
-                                    if k.starts_with("xmlns") && !e.attrs.iter().any(|(a, _)| a == k) {
-                                        e.attrs.push((k.clone(), v.clone()));
-                                    }
-                                }
+                                e.attrs.extend(wanted.into_iter().map(|i| (decls[i].0.clone(), decls[i].1.clone())));
                                 out.push(Node::El(e));
                             }
                         }
@@ -446,7 +536,11 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
@@ -464,6 +558,11 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
 /// [`import`], plus the parts of the slide list the file names but that couldn't be read (a
 /// missing or truncated slide): those slides are left out, so a caller can say so (#203).
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
+    import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
+}
+
+/// [`import_checked`] with the presentation's chart point budget set (tests lower it).
+pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>), PptxError> {
     let mut lost_slides: Vec<String> = vec![];
     let pkg = Package::open(bytes)?;
     let root_rels = pkg.rels("");
@@ -488,7 +587,11 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
@@ -1423,4 +1526,91 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
         }
     }
     hf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mc_branches_carry_only_the_declarations_their_content_uses() {
+        // 2,000 declarations on the branch and 2,000 children: each child gets the one it uses
+        // (and the default), not all 2,000.
+        let decls: String = (0..2000).map(|i| format!(r#" xmlns:n{i}="urn:n{i}""#)).collect();
+        let kids: String = (0..2000).map(|i| format!("<n{i}:x/>")).collect();
+        let x = format!(
+            r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns="urn:d"{decls}>{kids}</mc:Fallback></mc:AlternateContent></r>"#
+        );
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kids: Vec<&El> = d.root.elements().collect();
+        assert_eq!(kids.len(), 2000);
+        assert_eq!(kids[7].attrs, vec![("xmlns".to_string(), "urn:d".to_string()), ("xmlns:n7".to_string(), "urn:n7".to_string())]);
+    }
+
+    /// The branch's own declaration of a prefix wins over the `AlternateContent`'s; an oversized
+    /// one still shadows it (its content stays unbound); a child's own declaration is left alone.
+    #[test]
+    fn mc_branch_declarations_keep_their_precedence() {
+        let long = "u".repeat(MAX_NS_VALUE + 1);
+        let x = format!(
+            r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent xmlns:p="urn:ac" xmlns:q="urn:q-short"><mc:Fallback xmlns:p="urn:b" xmlns:q="{long}"><p:x/><q:y/><p:z xmlns:p="urn:own"/></mc:Fallback></mc:AlternateContent></r>"#
+        );
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kids: Vec<&El> = d.root.elements().collect();
+        let attrs = |i: usize| kids[i].attrs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
+        assert_eq!(attrs(0), ["xmlns:p=urn:b"]);
+        assert!(attrs(1).is_empty(), "{:?}", attrs(1));
+        assert_eq!(attrs(2), ["xmlns:p=urn:own"]);
+    }
+
+    #[test]
+    fn mc_branches_keep_prefixes_named_by_must_understand() {
+        let x = r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns:q="urn:q"><a mc:MustUnderstand="q"/></mc:Fallback></mc:AlternateContent></r>"#;
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kid = d.root.elements().next().unwrap();
+        assert!(kid.attrs.iter().any(|(k, v)| k == "xmlns:q" && v == "urn:q"), "{:?}", kid.attrs);
+    }
+
+    #[test]
+    fn mc_branches_keep_prefixes_used_in_qname_values() {
+        let x = r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns:q="urn:q" xmlns:z="urn:z"><n xmlns:xsi="urn:xsi" xsi:type="q:Item"/></mc:Fallback></mc:AlternateContent></r>"#;
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kid = d.root.elements().next().unwrap();
+        assert!(kid.attrs.iter().any(|(k, v)| k == "xmlns:q" && v == "urn:q"), "{:?}", kid.attrs);
+        assert!(!kid.attrs.iter().any(|(k, _)| k == "xmlns:z"), "unused declarations stay out: {:?}", kid.attrs);
+    }
+
+    #[test]
+    fn kept_fragments_skip_oversized_namespace_names() {
+        let big = "u".repeat(MAX_NS_VALUE + 1);
+        let ns = vec![("xmlns:a".to_string(), "urn:a".to_string()), ("xmlns:b".to_string(), big)];
+        let d = crate::xml::parse(br#"<a:x xmlns:a="urn:a" xmlns:b="urn:b"><b:y/></a:x>"#).unwrap();
+        let mut el = d.root.clone();
+        el.attrs.clear();
+        let out = keep_xml(&el, &ns);
+        assert!(out.contains(r#"xmlns:a="urn:a""#), "{out}");
+        assert!(!out.contains("uuuu"), "the oversized declaration is not copied");
+    }
+
+    #[test]
+    fn copied_namespace_bytes_are_budgeted_per_part() {
+        let d = crate::xml::parse(br#"<a:x xmlns:a="urn:a"><a:y/></a:x>"#).unwrap();
+        let mut el = d.root.clone();
+        el.attrs.clear();
+        let part = Part {
+            name: String::new(),
+            rels: Default::default(),
+            ns: vec![("xmlns:a".to_string(), "urn:a".to_string())],
+            inner_ns: vec![],
+            ns_budget: Cell::new(15),
+        };
+        assert!(part.keep(&el).contains(r#"xmlns:a="urn:a""#), "within budget");
+        assert!(part.ns_budget.get() < 15);
+        let again = part.keep(&el);
+        assert!(!again.contains("xmlns:a"), "budget spent, no further declarations: {again}");
+    }
 }

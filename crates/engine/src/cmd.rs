@@ -468,22 +468,26 @@ fn ctx_xfrm(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: 
 
 /// Run `f` on each target shape (copy-on-write), materialising inherited boxes first.
 pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
-    let ids = targets(s, p)?;
+    let mut ids = targets(s, p)?;
     if ids.is_empty() {
         return Err(bad(cmd, "no shapes selected"));
     }
+    // A shape named twice is edited once.
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(*id));
     s.edit(|doc, sel| {
-        let boxes: Vec<(ShapeId, Xfrm)> = {
-            let st_shapes: Vec<deckcraft_model::Shape> =
-                ids.iter().filter_map(|id| current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)).cloned()).collect();
-            st_shapes.iter().map(|sh| (sh.id, xfrm_of(doc, sel, sh))).collect()
-        };
+        // The boxes are read from the shapes in place: no copy of a shape (and its text) per id.
+        let boxes: std::collections::HashMap<ShapeId, Xfrm> = ids
+            .iter()
+            .filter_map(|id| current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)))
+            .map(|sh| (sh.id, xfrm_of(doc, sel, sh)))
+            .collect();
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         let mut n = 0;
         for id in &ids {
             if let Some(sh) = deckcraft_model::find_shape_mut(shapes, *id) {
                 if sh.xfrm.is_none() {
-                    sh.xfrm = boxes.iter().find(|(i, _)| i == id).map(|(_, x)| *x);
+                    sh.xfrm = boxes.get(id).copied();
                 }
                 f(sh)?;
                 n += 1;
