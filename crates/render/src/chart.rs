@@ -477,6 +477,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
             to_axis: &to_axis,
             zero,
             base,
+            text_color: text_col,
             error_marks: &mut err_marks,
         },
     );
@@ -857,6 +858,7 @@ struct LineDrawing<'a, 'ctx> {
     to_axis: &'a dyn Fn(bool, f64) -> f64,
     zero: f64,
     base: f64,
+    text_color: Rgba,
     error_marks: &'a mut Vec<(f64, f64, f64, f64, bool)>,
 }
 
@@ -885,6 +887,8 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
+        // Each point's own value (not the stacked total), for its data label.
+        let mut values = vec![];
         // Whether the series has any x value, found once rather than per point.
         let any_x = s.x_values.iter().flatten().next().is_some();
         for i in 0..ncat {
@@ -913,6 +917,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
             pts.push(Point::new(x, to_axis(sec, v)));
+            values.push(s.values.get(i).copied().flatten().unwrap_or(v));
         }
         if pts.is_empty() {
             continue;
@@ -938,6 +943,21 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
             ctx.set_paint(color(col, 1.0));
             for q in &pts {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
+            }
+        }
+        // A series that asks for value labels (`c:dLbls/c:showVal`) shows each point's value just
+        // above it, as bars do theirs (#2066). Area series keep none: theirs sit inside the area.
+        if !area_kind && c.series_data_labels(s) {
+            let gap = base * 0.3 + 3.5;
+            for (q, v) in pts.iter().zip(&values) {
+                label(
+                    ctx,
+                    rctx,
+                    m,
+                    &c.data_label(s, *v),
+                    Rect::new(q.x - 40.0, q.y - gap - base * 1.4, q.x + 40.0, q.y - gap),
+                    LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: draw.text_color, bold: false },
+                );
             }
         }
     }

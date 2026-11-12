@@ -3050,6 +3050,43 @@ fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
     assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
 }
 
+/// #2066: a line series that asks for value labels (`c:dLbls/c:showVal`, chart-wide or its own)
+/// shows each point's value above it; with the chart's text red, the labels add red ink there.
+/// Area series still draw none (their labels belong inside the area, not on a point).
+#[test]
+fn line_chart_value_labels_are_drawn_above_their_points() {
+    let draw = |kind: ChartType, labels: bool, own: bool| {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)));
+        if own {
+            c.series[0].data_labels = Some(labels);
+        } else {
+            c.data_labels = labels;
+        }
+        let sh = Shape { id: ShapeId(633), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let red = |img: &Image| {
+        (0..400u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[0] > 200 && p[1] < 60 && p[2] < 60
+            })
+            .count()
+    };
+    for kind in [ChartType::Line, ChartType::LineMarkers] {
+        let (off, on) = (red(&draw(kind, false, false)), red(&draw(kind, true, false)));
+        assert!(on > off + 100, "{kind:?}: labels add red ink ({off} → {on})");
+        let own = red(&draw(kind, true, true));
+        assert!(own > off + 30, "{kind:?}: a series' own showVal shows its labels ({off} → {own})");
+    }
+    let (off, on) = (red(&draw(ChartType::Area, false, false)), red(&draw(ChartType::Area, true, false)));
+    assert_eq!(on, off, "area series keep no point labels");
+}
+
 /// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a
 /// buffer from its on-screen length and abort. It is skipped; the rest of the slide still draws.
 #[test]
