@@ -2127,6 +2127,43 @@ fn group_child_scale_does_not_scale_line_widths() {
     }
 }
 
+/// #2067: a legend entry with its own text colour, size and weight (`c:legendEntry/c:txPr`) draws
+/// its name so; the other entries keep the legend's.
+#[test]
+fn a_legend_entry_draws_its_own_text_colour_and_size() {
+    let draw = |entry: Option<deckcraft_model::chart::LegendEntry>| {
+        let mut c = Chart::sample(ChartType::Line);
+        c.title = None;
+        c.legend = Some("r".into());
+        c.text_size = Some(10.0);
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(128, 128, 128)));
+        c.legend_entries = entry.into_iter().collect();
+        let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 480.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let green = |img: &Image| {
+        (0..480u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[1] > 150 && p[0] < 80 && p[2] < 80
+            })
+            .count()
+    };
+    let entry = |size: Option<f64>| deckcraft_model::chart::LegendEntry {
+        idx: 0,
+        size,
+        bold: Some(true),
+        color: Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 200, 0))),
+    };
+    let none = green(&draw(None));
+    let own = green(&draw(Some(entry(None))));
+    let big = green(&draw(Some(entry(Some(20.0)))));
+    assert_eq!(none, 0, "no green in a chart without the entry");
+    assert!(own > 40, "the first entry's name is drawn in its own colour ({own})");
+    assert!(big > own * 2, "and at its own size ({own} at 10 pt, {big} at 20 pt)");
+}
+
 #[test]
 fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_pixels() {
     // PowerPoint draws a picture's own fill behind its transparent pixels (and an old equation
