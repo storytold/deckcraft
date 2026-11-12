@@ -34,30 +34,29 @@ struct Out<'a> {
     media_data: Vec<String>,
 }
 
+/// Every field is required: a packet missing one (`{"version":1}`) is refused, not read as an
+/// empty clipboard that would replace this window's copy.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct In {
-    #[serde(default)]
     version: u32,
-    #[serde(default)]
     owner: u64,
-    #[serde(default)]
     seq: u64,
-    #[serde(default)]
     clipboard: Clipboard,
-    #[serde(default)]
     media_data: Vec<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Origin {
-    #[serde(default)]
     version: u32,
-    #[serde(default)]
     owner: u64,
-    #[serde(default)]
     seq: u64,
+}
+
+/// Whether `c` holds anything to paste (what [`Session::clipboard_packet`] writes at all).
+fn has_content(c: &Clipboard) -> bool {
+    !(c.shapes.is_empty() && c.slides.is_empty() && c.text.is_none() && c.plain.is_empty())
 }
 
 /// A packet is a JSON object. (serde would also build these structs from a JSON list.)
@@ -91,7 +90,7 @@ impl Session {
     /// when there is nothing on it (or it is too large to share).
     pub fn clipboard_packet(&self, owner: u64, seq: u64) -> Option<Vec<u8>> {
         let c = &self.clipboard;
-        if c.shapes.is_empty() && c.slides.is_empty() && c.text.is_none() && c.plain.is_empty() {
+        if !has_content(c) {
             return None;
         }
         let media_data = c.media.iter().map(|m| base64_encode(&m.data)).collect();
@@ -106,7 +105,7 @@ impl Session {
             return None;
         }
         let p: In = serde_json::from_slice(bytes).ok()?;
-        if p.version != VERSION || p.clipboard.media.len() != p.media_data.len() || p.media_data.len() > MAX_MEDIA {
+        if p.version != VERSION || !has_content(&p.clipboard) || p.clipboard.media.len() != p.media_data.len() || p.media_data.len() > MAX_MEDIA {
             return None;
         }
         let mut c = p.clipboard;
@@ -190,12 +189,24 @@ mod tests {
         let mut s = session_with_copied_text_box();
         let serial = s.clipboard_serial();
         let keep = s.clipboard.plain.clone();
-        for bad in [&b""[..], b"not json", b"{\"version\":99}", b"{\"version\":1,\"clipboard\":{},\"mediaData\":[\"AA==\"]}", b"[1,2,3]"] {
+        for bad in [
+            &b""[..],
+            b"not json",
+            b"{\"version\":99}",
+            b"{\"version\":1,\"clipboard\":{},\"mediaData\":[\"AA==\"]}",
+            b"[1,2,3]",
+            // Missing fields are not read as an empty clipboard that would replace the copy here.
+            b"{\"version\":1}",
+            b"{\"version\":1,\"owner\":3,\"seq\":4,\"mediaData\":[]}",
+            // A complete packet that holds nothing to paste.
+            b"{\"version\":1,\"owner\":3,\"seq\":4,\"clipboard\":{},\"mediaData\":[]}",
+        ] {
             assert_eq!(s.load_clipboard_packet(bad), None, "{:?}", String::from_utf8_lossy(bad));
         }
         assert_eq!(s.clipboard_serial(), serial);
         assert_eq!(s.clipboard.plain, keep);
         assert_eq!(packet_origin(b"{\"version\":99}"), None);
+        assert_eq!(packet_origin(b"{\"version\":1}"), None, "no owner, no copy number");
         assert_eq!(packet_origin(b"{\"version\":1,\"owner\":3,\"seq\":4}"), Some((3, 4)));
     }
 }

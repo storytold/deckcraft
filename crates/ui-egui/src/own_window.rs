@@ -17,9 +17,10 @@ pub(crate) fn is_presentation_path(path: &str) -> bool {
 
 impl SlideApp {
     /// The window is editing something worth keeping on screen: a presentation that has a file or
-    /// unsaved changes. A new untitled presentation nobody has touched is not.
+    /// unsaved changes (the same test that asks to save on close). A new untitled presentation
+    /// nobody has touched is not.
     pub(crate) fn window_in_use(&self) -> bool {
-        self.session.active().is_some_and(|d| d.path.is_some() || !std::sync::Arc::ptr_eq(&d.doc, &d.saved_doc))
+        self.session.active().is_some_and(|d| d.path.is_some() || d.is_dirty())
     }
 
     /// Start another window with `args` (a file to open, or none for a new presentation) when the
@@ -115,6 +116,67 @@ mod tests {
         let mods = deckcraft_engine::Mods { cmd: true, ..Default::default() };
         assert!(crate::menus::ui_shortcut(&mut app, egui::Key::N, mods));
         assert_eq!(*calls.borrow(), vec![Vec::<String>::new()]);
+    }
+
+    /// A file dropped on the window, read from disk as the native window reads it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+
+    /// The window's dropped files, as the native window hands them over.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn drop_files(app: &mut SlideApp, paths: &[&str]) {
+        let mut raw = egui::RawInput {
+            dropped_files: paths
+                .iter()
+                .map(|p| std::sync::Arc::new(Dropped((*p).into())) as std::sync::Arc<dyn egui::DroppedFile + Send + Sync>)
+                .collect(),
+            ..Default::default()
+        };
+        app.raw_input_hook(&egui::Context::default(), &mut raw);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_presentation_dropped_while_working_opens_in_another_window() {
+        let (mut app, calls) = app_with_spawner(true);
+        app.session.execute("slide.new", &json!({})).unwrap();
+        let docs = app.session.documents().len();
+        drop_files(&mut app, &["/tmp/dropped.pptx"]);
+        assert_eq!(*calls.borrow(), vec![vec!["/tmp/dropped.pptx".to_string()]]);
+        assert_eq!(app.ui.recent.first().map(String::as_str), Some("/tmp/dropped.pptx"), "it is listed under Open Recent");
+        assert_eq!(app.session.documents().len(), docs, "this window keeps its presentation");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_picture_dropped_while_working_stays_in_this_window() {
+        let (mut app, calls) = app_with_spawner(true);
+        app.session.execute("slide.new", &json!({})).unwrap();
+        // A 1 × 1 PNG.
+        const PNG: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+            0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF,
+            0xC0, 0xF0, 0x1F, 0x00, 0x05, 0x00, 0x01, 0xFF, 0x89, 0x99, 0x3D, 0x1D, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+            0x82,
+        ];
+        let png = std::env::temp_dir().join(format!("deckcraft-dropped-{}.png", std::process::id()));
+        std::fs::write(&png, PNG).unwrap();
+        let before = app.session.active().unwrap().current_slide().unwrap().shapes.len();
+        drop_files(&mut app, &[png.to_str().unwrap()]);
+        std::fs::remove_file(&png).ok();
+        assert!(calls.borrow().is_empty(), "a picture never starts a window");
+        assert_eq!(app.session.active().unwrap().current_slide().unwrap().shapes.len(), before + 1, "it lands on the slide");
     }
 
     #[test]
