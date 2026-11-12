@@ -250,7 +250,24 @@ fn axis_ticks((lo, hi, st): (f64, f64, f64)) -> impl Iterator<Item = f64> {
     (0..=n).map(move |k| lo + k as f64 * st)
 }
 
+/// Most category-by-series cells one chart draws: Excel's 255 series x 32,000 points per series
+/// (8,160,000); ordinary charts hold a few hundred.
+const MAX_CHART_CELLS: usize = 255 * 32_000;
+
+/// Whether the independent category and series lists make the drawing loops multiply past the budget.
+fn over_cell_budget(c: &Chart) -> bool {
+    let ncat = c.categories.len().max(c.series.iter().map(|s| s.values.len()).max().unwrap_or(0));
+    cells_over_budget(ncat, c.series.len())
+}
+
+fn cells_over_budget(categories: usize, series: usize) -> bool {
+    categories.saturating_mul(series.max(1)) > MAX_CHART_CELLS
+}
+
 pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
+    if over_cell_budget(c) {
+        return;
+    }
     match c.kind {
         // Histograms and Pareto charts are drawn as the column (and line) chart of their bins.
         ChartType::Histogram | ChartType::Pareto => {
@@ -1436,6 +1453,16 @@ mod tests {
     use super::*;
 
     const AREA: Rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+
+    #[test]
+    fn category_by_series_cells_are_budgeted() {
+        assert!(!over_cell_budget(&Chart::sample(ChartType::Column)));
+        // Excel's maximum chart (255 series x 32,000 points) is within the budget; one more point is not.
+        assert_eq!(MAX_CHART_CELLS, 8_160_000);
+        assert!(!cells_over_budget(32_000, 255));
+        assert!(cells_over_budget(32_001, 255));
+        assert!(cells_over_budget(usize::MAX, 2));
+    }
 
     #[test]
     fn tiny_data_gets_several_ticks() {
