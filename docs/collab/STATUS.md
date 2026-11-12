@@ -57,6 +57,15 @@ nothing for either), so the rollup on the delivered head carries no executed job
 `mergeStateStatus` is `UNSTABLE` for that reason alone. These statements are tied to that
 timestamp: any later push moves the delivered head, and the live value is
 `gh pr view 2012 --json headRefOid`.
+**The delivered head has moved since that timestamp: `ebbecf08`** — the merge of `origin/main`
+onto `collab/pr15` (the video-decode drop from main), pushed at 2026-11-12T05:28:24Z. At 05:44Z
+the fork head, the PR head and the local branch head were all `ebbecf08`, so the four commits the
+paragraph above calls unpushed (`bc16494a`, `51643c59`, `95b5feef`, `b314feef`) are inside the PR
+now; the four workflow runs created on that head (CI, Nix, House rules, SonarCloud) are
+`completed / action_required` and executed no job, so the rollup still carries no executed job.
+On top of `ebbecf08` are local, **unpushed** commits: `42544987` (code, tests and the RFC: the
+HTTP base slice, §A base above the inline limit is one HTTP request) and this docs commit (this
+file, `production.md` and `rfc.md`).
 The push delivered `fd5914e8` on top of `1f78cadb`, so every review fix up to that head is
 delivered: the fifth review's
 triage is delivered too — a room
@@ -152,7 +161,13 @@ image — and then the chunked-base slice: a base above `max_base_inline` is ann
 snapshot as `base.chunks` (digest, length, chunk size, depth) and fetched one chunk at a time with
 `base-chunk`, assembled and digest-checked by the client, resumable at the missing index, capped on
 both sides, with the "named without bytes" path kept as the fallback — with this docs commit on
-top.
+top — and then the HTTP-base slice `42544987`: a base above `max_base_inline` is also announced as
+one request (`base.http = {path, sha256, len}`, RFC §4.5.2) that the desktop link answers from
+`GET /v1/sessions/{id}/base/{sha256}` in the media reader's pattern — session token, digest in the
+normalised path, `application/vnd.deckcraft.native`, a `401` for another file and a `404` for a
+base the room no longer holds — with the chain kept in the same snapshot for a client without an
+HTTP side, size and digest checked before the replica is replaced, and no reopen from the cabinet
+below 256 MiB. Details: §A base above the inline limit is one HTTP request.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -262,13 +277,14 @@ and one Minor — triaged in §Fifth CodeRabbit review).
 
 Merging is a human step. Closing the superseded PRs is a human decision as well.
 
-**Three pull requests for one feature are open in `storytold/deckcraft`** (checked 2026-11-11):
+**Three pull requests for one feature are open in `storytold/deckcraft`** (checked
+2026-11-12T05:44Z):
 
 | PR | Branch | Head | GitHub state |
 |---|---|---|---|
-| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `5a105c61` (docs) on `aaecc6db` (code, the op_id slice) — fork = PR = local head at 2026-11-12T03:13:50Z | leading PR; `MERGEABLE` / `UNSTABLE` (no workflow run on `5a105c61`, a maintainer's approval is the next step); host gate `xtask ci` stops only on the known host-font render test, narrower gate green on `aaecc6db` |
-| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `6e9d10e7` | `MERGEABLE` / `CLEAN`, superseded |
-| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `be706a11` | `MERGEABLE` / `UNSTABLE`, superseded |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `ebbecf08` (the `origin/main` merge on top of the IME slices) — fork = PR = local head at 2026-11-12T05:44Z; the local branch now adds `42544987` and this docs commit, unpushed | leading PR; `MERGEABLE` / `UNSTABLE` (the four runs on `ebbecf08` are `action_required`, so nothing executed; approval is the next step); local §8 gate green on `ebbecf08` except the known host-font case |
+| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `abffb229` | `MERGEABLE` / `CLEAN`, superseded; **no unique code** (`pr15...pr11` = 32/4, and its `picture_place` fix is already on pr15 at `crates/pptx/src/dgm.rs:528`) |
+| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `6109fe1c` | `CONFLICTING` / `DIRTY`, superseded |
 
 #2012 is the top of the stack and supersedes the other two: #1998 carries the earlier
 `collab/pr11` head and #1975 the earlier `collab/pr10` head, both already contained in #2012's
@@ -411,6 +427,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr14` | `baa845ec` + this slice | Save in a live desktop session sends `ClientMsg::Commit` instead of writing the local file: one commit in flight (a repeated Save is the same request), `expected` is the cabinet version the session opened from or the one the last commit was accepted with, the document stays dirty until `commit-result` (dirty is cleared only if no edit landed meanwhile), a `409` keeps the edits and the banner offers Save a copy, viewers and commenters are refused locally without a request |
 | `collab/pr15` | `6e42a7ab` + this slice | optimistic preview: an optional `preview` local id on the operation (never stored, required or echoed by the room) and a client that shows one `command`-class operation at submit behind `DECKCRAFT_COLLAB_PREVIEW`; `applied` settles it without a second run, a refusal restores exactly that one edit, a foreign step in between abandons it and asks for the tail, and a preview never enters the undo history |
 | `collab/pr15` | `51643c59` (+ `95b5feef`) | an input method's composition is settled before anything leaves the client: `text.compose`/`text.commit` run on the replica, every other command settles first, and the settle sends the body it typed into as one whole value (`text.setBody`, undo image = the body before it); a composition outside slides is refused before the first write with its reason |
+| `collab/pr15` | `42544987` | a base above `max_base_inline` is one HTTP request (`base.http`, `GET /v1/sessions/{id}/base/{sha256}` in the media reader's pattern, RFC §4.5.2) beside the unchanged chunk chain: the desktop link fetches it once, checks size and digest, and the host rebuilds the replica and takes the key map without reopening the cabinet's file; 256 MiB ceiling, a token for another file refused, a base the room no longer holds a `404` |
 | `collab/pr15` | `b314feef` (+ docs) | an input method's deletion outside a composition is one `text.delete`: the engine resolves the range with the same walk `text.delete` uses (`surrounding_delete`), the normaliser sends it as one `TextDelete` (`NotesDelete` for notes, the cell address kept) with the body before the step as its undo image, and the two ranges a non-empty selection with text on both sides would remove are still refused at the gate before the queue, with their reason |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs), `44489f34` (+ docs), `c406a329` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`); the SmartArt node-picture slice `44489f34`: `smartArt.picture` as one final value (the top-level graphic, one top-level node, the media channel's digest and the picture's final place), the engine checks the target, the node, the picture allowlist and budget, the place's finite positive area and that the layout does not change before the first write, and the whole group is the undo image; and the 3-D model camera slice `c406a329`: `model3d.camera` as one final view (`position`/`target`/`up` in EMU, `fov` in degrees, or `null`), relative edits refused on the client, on the wire and in the engine before the first write, the view written as `am3d:camera`, and the whole model shape as the undo image |
 
@@ -539,7 +556,9 @@ human decision.
   at a time with `base-chunk`, so a deck whose native base is tens of megabytes still rebuilds a
   replica without a frame to hold it and without reopening the file from the cabinet; a chain
   interrupted mid-way resumes at the chunk the client is missing, a base compacted under it is a
-  retryable `stale`, and a base beyond `max_base_chunks` falls back to being named without bytes.
+  retryable `stale`, and a base beyond `max_base_chunks` is still fetched in one HTTP request
+  (RFC §4.5.2); only a base above the HTTP ceiling is named without bytes
+  (§A base above the inline limit is one HTTP request).
 - Per-actor undo: server-side before/after images, `undo-conflict` when someone else changed the
   object, undo is an ordinary new operation. The images cover `xfrm`, text, fill, outline, a
   slide's whole transition, one shape's whole animation step list, a slide's whole ordered
@@ -1525,31 +1544,45 @@ was not touched, and PR #1975 is unchanged.
    message (a fresh token today means a new `session` message). A page on another origin can use
    the channel once its origin is listed in `DECKCRAFT_CORS_ORIGINS` (the sync server answers the
    media and session requests with `Access-Control-Allow-Origin` and the preflight).
-7. **Soaks are in; CI still skips LibreOffice.** Four soaks now run in `tests/gates.rs` (see §8):
-   the 26-edit three-client soak, and the big-deck soak — 322 edits by three editors over a
-   120-slide deck with media, a viewer rebuilt from the 11.8 MiB base sent in 48 chunks, a fifth
-   participant whose socket drops mid-chain and resumes at the missing chunk, and a commit at the
-   head that reimports with every replica's values. What remains is running the LibreOffice gate in
-   CI, where LibreOffice is not installed (there it skips itself, printing a line).
-8. **Base transfer above the inline limit is done.** A client below a compacted journal is
-   rebuilt from the native base and key map carried by `snapshot`; above `max_base_inline` (8 MiB,
-   `COLLAB_MAX_BASE_INLINE`) the base arrives as a chain of chunks (`base.chunks`, `base-chunk`,
-   RFC §4.5.1) that the client assembles, verifies against the announced digest and installs, so a
-   100-slide deck with media no longer needs a reopen from the cabinet. Limits on both sides
-   (`COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS` on the server; 8 MiB per chunk, 4096 chunks
-   and 64 MiB per base on the client) and the "named without bytes" path stays as the fallback for
-   a client build that does not know `base-chunk`. What is left on this line is only the choice
-   between a chain and an HTTP-served base (the media endpoint pattern) for very large decks, which
-   the chain already covers.
-9. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
-    (§ Rebase onto origin/main), so the fork branches no longer fast-forward and the publish was a
-    `--force-with-lease`; that push is done. Nothing was pushed to `storytold/deckcraft`. The fork
-    head and the PR head are `fd5914e8` plus this STATUS commit, and it is the local branch head
-    as well: the fourth review's triage is delivered in `9ad80547`, the fifth's in `891187f5`,
-    `38a20a9c`/`1f78cadb` are the docs commits and `fd5914e8` is the presence heartbeat on top.
-    Nothing is pending a push. The workflow gate still needs a maintainer's approval (see §PR
-    publication); the local §8 gate is green on `fd5914e8`, and three PRs for one feature stay
-    open until a person closes the superseded two.
+7. **Soaks are in; CI still skips LibreOffice.** Five soaks and gate scenarios run in
+   `tests/gates.rs` (see §8): the 26-edit three-client soak, the big-deck soak — 322 edits by three
+   editors over a 120-slide deck with media, a viewer rebuilt from the 11.8 MiB base sent in 48
+   chunks, a fifth participant whose socket drops mid-chain and resumes at the missing chunk, and a
+   commit at the head that reimports with every replica's values — and the HTTP-base gate: a base
+   above the inline limit that the chain cannot carry, fetched in one request by a viewer below the
+   compacted journal (§A base above the inline limit is one HTTP request). What remains is running
+   the LibreOffice gate in CI, where LibreOffice is not installed (there it skips itself, printing
+   a line).
+8. **Base transfer above the inline limit is done, and its transport is settled.** A client below
+   a compacted journal is rebuilt from the native base and the key map the `snapshot` carries, and
+   above `max_base_inline` (8 MiB, `COLLAB_MAX_BASE_INLINE`) the same snapshot offers two ways to
+   get it: one HTTP request (`base.http`, the media reader's pattern, RFC §4.5.2) and a chain of
+   chunks over the session socket (`base.chunks`, `base-chunk`, RFC §4.5.1). The desktop link
+   installs a fetch (`WsTransport::base_fetcher`) and rebuilds in one round trip whatever the deck
+   weighs; a build without an HTTP side keeps the chain byte for byte as it was. Both check the
+   announced size and digest before the replica is replaced, and both end at the head through the
+   same `take_ready_base` path. Ceilings: `BaseHttp::MAX_LEN` (256 MiB) on a fetched base, 8 MiB
+   per chunk / 4096 chunks / 64 MiB assembled on the client, `COLLAB_MAX_BASE_CHUNK`/
+   `COLLAB_MAX_BASE_CHUNKS` on the server, and a validated relative path and hex digest on both
+   sides. Only a base above 256 MiB, or a room whose file id cannot be a path segment, is named
+   with no way to fetch it; the client then reopens the cabinet's file — the fallback, not the
+   expected path. Nothing is left on this line.
+9. **Upstream PR head.** The PR is open from the fork; nothing was pushed to
+    `storytold/deckcraft`. Both branches were rebased onto `main` (§ Rebase onto origin/main), so
+    the publish was a `--force-with-lease`; that push is done. At 2026-11-12T05:44Z the fork head,
+    the PR head and the local branch head were `ebbecf08` (the `origin/main` merge with the
+    video-decode drop, on top of the IME slices), with `MERGEABLE` / `UNSTABLE`; the four runs on
+    that head were created 05:28:24Z and are all `completed / action_required`, so GitHub's rollup
+    carries no executed job (approval is the maintainer's step; see §PR publication). On top of
+    `ebbecf08` the local branch has unpushed commits — `42544987` (the HTTP base slice, code,
+    tests and RFC) and this docs commit — and a push is a person's step.
+    **#1998 carries no unique code:** `git rev-list --left-right --count collab/pr15...collab/pr11`
+    is **32/4** (the four are `cf9b71cd` and three `origin/main` merges), and the fix older notes
+    credited to it — the empty-diagram fallback setting `picture_place: None` in
+    `crates/pptx/src/dgm.rs` — is already on `collab/pr15`, at `crates/pptx/src/dgm.rs:528`, so
+    nothing "moves over as its own slice" and the older **24/9** count is stale. #1998
+    (`abffb229`) and #1975 (`6109fe1c`, `CONFLICTING` / `DIRTY`) are superseded by #2012; a person
+    closes them, not an agent session.
 
 ## How to run locally
 
@@ -1592,10 +1625,13 @@ token from the cabinet.
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
 2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** — delivered head
-   `5a105c61` (the docs commit of the op_id slice on top of the code commit `aaecc6db`), which at
-   2026-11-12T03:13:50Z is the fork head, the PR head and the local branch head; every review
-   pass, the STATUS sync, the presence heartbeat, the `origin/main` merge and the op_id slice are
-   delivered. `gh pr view 2012` reports `MERGEABLE` / `UNSTABLE`; **no workflow run exists on
+   `ebbecf08` (the `origin/main` merge with the video-decode drop, on top of the IME slices),
+   which at 2026-11-12T05:44Z is the fork head, the PR head and the local branch head; every
+   review pass, the STATUS sync, the presence heartbeat, both `origin/main` merges, the op_id
+   slice and the IME slices are delivered, and the local branch adds `42544987` (the HTTP base
+   slice) plus this docs commit, unpushed. The paragraph below keeps the 03:13:50Z reading of
+   the same PR; read `5a105c61` there as "the head at that time", and the live value is
+   `gh pr view 2012 --json headRefOid`. `gh pr view 2012` reports `MERGEABLE` / `UNSTABLE`; **no workflow run exists on
    `5a105c61` or `aaecc6db`**, and the four runs on `38a20a9c` (created 2026-11-11T11:31:32Z) wait
    for a maintainer's approval, so the next step for a person is that approval and then review and
    merge; `5a105c61` itself needs no push, while this STATUS commit (local, on top of it) would
@@ -1620,9 +1656,10 @@ token from the cabinet.
    (`5852391245`, on `4a64e764`) is delivered in `9ad80547`, and the fifth (`5855491108`,
    submitted 07:49:58Z on `9ad80547`) is delivered in `891187f5` with its docs in `38a20a9c`; the
    next step for a person is the maintainer's approval of the runs, then review and merge.
-   #1998 (`6e9d10e7`, `CLEAN`) and #1975 (`be706a11`, `UNSTABLE`) are superseded by #2012 and stay
-   open until a person closes them — **do not close them from an agent session**. Do not touch CI
-   and do not mention agents.
+   #1998 (`abffb229`, `CLEAN`) and #1975 (`6109fe1c`, `CONFLICTING` / `DIRTY`) are superseded by
+   #2012 and stay open until a person closes them — **do not close them from an agent session**.
+   #1998 carries no unique code (`pr15...pr11` = 32/4) and its credited `picture_place` fix is
+   already on pr15 at `crates/pptx/src/dgm.rs:528`. Do not touch CI and do not mention agents.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
@@ -1657,7 +1694,7 @@ token from the cabinet.
    chart type/data/options step (the whole chart shape) and a model camera or scene step (the
    whole model shape). Every command on the wire has its undo image; relative effects are not on
    the wire by design.
-6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); they now cover the long run (322 edits, media, a chained base, a resume mid-chain) as well as the three-client soak, so the remaining gate work is running LibreOffice where it is installed.
+6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); they now cover the long run (322 edits, media, a chained base, a resume mid-chain, and the same 11.8 MiB base *offered* over HTTP), a base fetched over HTTP by a viewer below the compacted journal (2.4 MiB, one request, key map, head, no reopen) as well as the three-client soak, so the remaining gate work is running LibreOffice where it is installed.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 8. **Closed in `51643c59`: the IME finding** (`5866843261` on #1998). With `collab_queue` set,
@@ -1674,6 +1711,72 @@ token from the cabinet.
    sends it as one `TextDelete` (`NotesDelete` for notes, the cell kept), with the body before the
    step as its undo image; only a non-empty selection with text deleted on both sides stays refused
    at the gate (two ranges, one operation), and the two-replica tests are in §A and the session log.
+
+## A base above the inline limit is one HTTP request
+
+A client that missed the compaction was rebuilt from a base that the snapshot either carried
+inline (up to `max_base_inline`, 8 MiB) or offered as a chain of chunks over the session socket. A
+deck with hundreds of megabytes of media therefore took hundreds of round trips, and a base deeper
+than the configured chain was only named: the client had to reopen the file from the cabinet. This
+slice gives the same base a second, cheaper route.
+
+**Wire.** `BaseSnapshot` gains `http: {path, sha256, len}` (RFC §4.5.2), announced **beside**
+`chunks` in the same snapshot whenever the bytes do not travel inline. `BaseHttp::is_well_formed`
+accepts a relative path only: it starts with `/`, carries no `..`, `?`, `#`, control character or
+whitespace, names a 64-character hex digest and a size inside `BaseHttp::MAX_LEN` (256 MiB). An
+absolute URL is never sent and never followed, and `PROTO_VERSION` stays 1: a client that does not
+know the field sees exactly the frame it saw before.
+
+**Server.** `GET /v1/sessions/{id}/base/{sha256}` repeats the media reader's pattern: the session
+token names the caller (a viewer may read it — the base is the document, not an edit), the bytes
+are addressed by digest, the answer is `application/vnd.deckcraft.native`, and the path is checked
+before anything is read. A token that names another `fileId` is a `401`; a base the room no longer
+holds — compaction moved on, or the room is not loaded — is a `404`, and the client asks for the
+session again rather than installing bytes the room does not have. `base_http_total` and
+`base_http_bytes_total` count the reads. `DocSession::base_http` refuses to name a request for a
+file id a path would split (`/`, `\`, `?`, `#`, a control character): that room's base stays on the
+chain, where the id never appears.
+
+**Client.** `ClientSession::set_base_fetcher` takes the host's fetch (the desktop link builds it in
+`WsTransport::base_fetcher` and `CollabUi::start_native` installs it). With a fetch and no inline
+bytes, the snapshot is answered by one synchronous request; the client checks the size and the
+digest before anything is installed, then hands the bytes and the snapshot on through the same
+`take_ready_base` path the chain uses, so the host replaces its replica, takes the key map
+(`restore_keys`) and replays the tail **once**, with no second catch-up. A wrong size or digest is
+not installed: the reason lands in `last_error` and the chain the server announced beside the
+request is the fallback — and where neither exists, the old "reopen from the cabinet" message
+stays. The host had to learn one thing: a snapshot whose base was installed in the same call must
+not be read again as "the client has no bytes" — `CollabDoc::on_msg` now returns after
+`install_base`, which is what kept the desktop from reporting a reopen failure for an answer that
+worked.
+
+**The fetch is synchronous, in the host's pump** — the same place a media fetch already runs
+(`CollabDoc`'s `media_fetcher`), with the link's 10 s read and write timeouts as the bound. A base
+is the largest object fetched this way (pictures, audio and 3-D models are up to 32 MiB), so the
+cost is one blocking request of the deck's size, not a per-chunk round trip; an asynchronous fetch
+would need the host to pump a new message kind and is not part of this slice.
+
+**What did not change.** The chain, its resume-at-the-missing-index rule, the 8 MiB/4096/64 MiB
+ceilings, `base-chunk` staleness and the "named without bytes" fallback are untouched: a client
+without an HTTP side behaves exactly as before, which is what the big-deck soak still proves.
+
+**Verified on `42544987` (host `agents`).** `cargo fmt --all -- --check` clean; `cargo clippy
+--workspace --all-targets -- -D warnings` EXIT=0; `collab` 305 lib + 8 two_clients; `collab-proto`
+43; `collab-server` 20 unit + 5 commit + 6 gates (20.8 s, LibreOffice skipped on the host) + 18
+socket; `collab-web` 15; `deckcraft-web` 6; `cargo xtask wasm` ok (17 crates); `ui-egui --lib` 527
+passed + 4 ignored with the one known host-font failure
+(`ime_tests::korean_composes_in_the_notes_pane`, no CJK glyph on the host — an environment gap, not
+this change).
+
+**The new §8 gate** is `a_base_above_the_inline_limit_is_fetched_over_http_without_reopening_the_file`:
+a 24-slide deck with media, `COLLAB_MAX_BASE_INLINE` lowered to 256 KiB and the chain made unable
+to carry the base (`max_base_chunk` 256 KiB, `max_base_chunks` 1), 12 edits and two compactions, then
+a viewer joins at version 0 and is rebuilt from a 2.4 MiB base in **one request, 55–72 ms** over
+the runs — no
+chunk, no reopen — takes the key map, applies the next edit by key and converges with both
+editors; the gate also checks the endpoint's `401`/`404` answers and that the metrics counted one
+HTTP base and zero chunks. The big-deck soak now additionally asserts that its 11.8 MiB base is
+**offered** over HTTP while it still travels as 48 chunks to a client without one.
 
 ## One operation, one identity
 
@@ -2363,8 +2466,9 @@ compose command, so the room never receives `한`.
   `max_base_chunks` (`COLLAB_MAX_BASE_CHUNKS`, 1024). Client: `BaseChunks::MAX_CHUNK_SIZE` (8 MiB),
   `MAX_COUNT` (4096), `MAX_LEN` (64 MiB) and the consistency check `count == ceil(len/chunkSize)`,
   all enforced before a chunk is asked for or a byte allocated. A base that does not fit the chain
-  is still named without bytes, and the client reopens the file from the cabinet — the fallback
-  for a build without `base-chunk`, not the expected path.
+  is fetched in one HTTP request by a client that has an HTTP side; a build without one, or a base
+  above the 256 MiB HTTP ceiling, is named without bytes and reopens the cabinet's file — the
+  fallback, not the expected path.
 - Measured on `agents`: 322 edits in 15.1 s; the viewer rebuilt 11.8 MiB in **48 chunks** plus two
   tail steps in 168 ms; the commit at version 324 built 12 195 KiB in 223 ms and reimported with
   120 slides, 120 pictures and every slide's picture transform equal to the replicas'. The five §8

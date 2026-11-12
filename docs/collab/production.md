@@ -48,7 +48,7 @@ Binary: `deckcraft-collab-server`.
 | `COLLAB_SNAPSHOT_EVERY` | operations between base snapshots (memory-only rooms included) | `200` |
 | `COLLAB_MAX_BASE_INLINE` | largest native base sent inline to a client rebuilt after compaction | `8388608` |
 | `COLLAB_MAX_BASE_CHUNK` | bytes of one chunk of a base above the inline limit (base64 in one frame) | `1048576` |
-| `COLLAB_MAX_BASE_CHUNKS` | deepest chunk chain for one base; a bigger base is only named in the snapshot | `1024` |
+| `COLLAB_MAX_BASE_CHUNKS` | deepest chunk chain for one base; a bigger base still travels as one HTTP request over the session's base endpoint | `1024` |
 | `COLLAB_STORE_DIR` | room persistence (native base + journal + media); absent keeps rooms in memory | — |
 | `COLLAB_CABINET_URL` | the cabinet's commit endpoint; `{sessionId}`/`{fileId}` are substituted | — |
 | `COLLAB_CABINET_TOKEN` | service token the callback is authenticated with (required with the URL) | — |
@@ -72,6 +72,10 @@ POST   /v1/sessions/{id}/commit     Authorization: Bearer <service token>
        → 200 { fileId, name?, version, sha256, fileVersion, warnings[], bytes? }
        → 409 / 500 / 502            see "Commit" below
 DELETE /v1/sessions/{id}            Authorization: Bearer <service token>
+GET    /v1/sessions/{id}/base/{sha256}
+                                   Authorization: Bearer <session token>
+       → 200 the native base, Content-Type: application/vnd.deckcraft.native
+       → 401 / 404                  see "Base transfer" below
 GET    /healthz, /readyz            → { "ok": true, "version" }
 GET    /metrics                     → Prometheus text format
 ```
@@ -117,6 +121,7 @@ and answers with `error{code:"rate-limit"|"too-large"}`.
 ### Metrics
 
 `/metrics` exposes counters only: rooms, sessions, connections, messages, operations, rejected,
+base HTTP reads (`base_http_total`, `base_http_bytes_total`),
 commits, resyncs, bytes in/out, media uploads and bytes, and the cabinet publication
 (`cabinet_commits_total`, `cabinet_conflicts_total`, `cabinet_failures_total`). No file names,
 slide content, text or tokens are logged or exported.
@@ -443,26 +448,43 @@ must be treated as a development instance.
 A client that reconnects inside the retained journal receives the tail. Once compaction removed
 it, `resync` sends the native base, the session key map and the steps above the base; the client
 replaces its replica and replays them (`base_transfers_total`, `base_bytes_total`). Above
-`COLLAB_MAX_BASE_INLINE` the base travels as a **chunk chain** instead: the snapshot announces
-its `sha256`, length, chunk size and depth, the client asks for one chunk at a time
-(`base-chunk`, RFC §4.5.1) and installs the base only after the digest matches
-(`base_chunks_total` counts the chunks; `base_bytes_total` stays at 0 for a chain). The chunk size
-and the chain's depth are `COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS`: a base beyond them is
-named but not sent, and that client has to reopen the file from the cabinet — a fallback for a
-client build without `base-chunk`, not the expected path. The protocol also caps the assembled
-base at **64 MiB** (`BaseChunks::MAX_LEN`, the same ceiling as an inline base), so a larger base is
-named without bytes even when it would fit the configured chunk depth; it is not a knob an
-operator can raise. Measured on the build host: a 120-slide
-deck with 120 distinct 160×160 pictures has a native base of **11.8 MiB**, which a viewer rebuilt
-in 48 chunks of 256 KiB in 168 ms; the same deck with 320×320 pictures reaches 46.9 MiB, still
-inside a 1024-chunk chain at the default 1 MiB chunk.
+`COLLAB_MAX_BASE_INLINE` the base never rides in the snapshot frame; the snapshot announces two
+ways to get it, and a client picks the one it knows:
+
+- **One HTTP request** (`base.http`, RFC §4.5.2): the path
+  `/v1/sessions/{id}/base/{sha256}`, the digest and the size. The desktop link fetches it from the
+  same host and with the same token the session joined with, checks the size and the digest and
+  installs it — one round trip whatever the deck weighs. A viewer may read it (the base is the
+  document, not an edit), a token that names another `fileId` is a `401`, and a base the room no
+  longer holds (compaction moved on, the room is not loaded) is a `404`, after which the client
+  asks for the session again. The answer carries
+  `Content-Type: application/vnd.deckcraft.native`. `base_http_total` and
+  `base_http_bytes_total` count these reads. The fetch is synchronous in the desktop's pump (the
+  media fetch's pattern, bounded by the link's 10 s timeouts): one request of the deck's size
+  rather than one round trip per chunk.
+- **A chunk chain** (`base.chunks`, RFC §4.5.1) stays in the same snapshot for a client build
+  without the HTTP side (an older build, a headless host, a page that does not fetch): it asks for
+  one chunk at a time with `base-chunk` and installs the base only after the digest matches
+  (`base_chunks_total` counts the chunks; `base_bytes_total` stays at 0 for either route).
+
+The chunk size and the chain's depth are `COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS`; a base
+beyond them is still fetched in one request, which is what the HTTP route is for. The ceilings are
+on the client too: `BaseHttp::MAX_LEN` (**256 MiB**) for a fetched base, `BaseChunks::MAX_LEN`
+(64 MiB) for an assembled chain, and `BaseHttp`/`BaseChunks` validate the announced path, digest
+and size before anything is allocated. Only a base above 256 MiB — or a room whose file id cannot
+be a path segment — is named with no way to fetch it, and then the client reopens the cabinet's
+file; that is the fallback, not the expected path. Measured on the build host: a 120-slide deck
+with 120 distinct 160×160 pictures has a native base of **11.8 MiB**, which a viewer rebuilt in 48
+chunks of 256 KiB in 168 ms (the chain, no HTTP side installed) and, with the desktop link, in one
+2.4 MiB request in 55–72 ms for the gate deck; the same deck with 320×320 pictures reaches 46.9 MiB,
+still inside a 1024-chunk chain at the default 1 MiB chunk and inside the HTTP ceiling.
 
 ## Verification and tests
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 283 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit, a base sent as a chunk chain — order, one request at a time, resume at the missing index, a second snapshot for the same chain, a stale chain, the protocol ceilings, a short chunk and a wrong digest, steps collected by a catch-up), a per-connection peer key (two connections of one actor keep their own outbox and slot; a closed room refuses messages), an operation held until the snapshot that answers its resync, commit |
-| `cargo test -p deckcraft-collab-server` | 13 unit + 18 real-socket + 5 commit + 5 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including a `slide_restore` and a `shape_restore` operation — an operation is replayed, the actor history is not), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); a 20 MiB body read by the HTTP reader, an audio object replayed after a restart, a closed room refusing its sockets; 120 slides with media, LibreOffice on the commit, three sessions across a conflict, a three-client soak across compaction with a base transfer, and the big-deck soak: 322 edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base sent in 48 chunks plus its tail, a fifth participant that drops mid-chain and resumes at the missing chunk, and a commit at the head whose file reimports with every replica's values |
+| `cargo test -p deckcraft-collab` | 305 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format on a shape, one table cell, N cells of one table and a run range or caret, group fill, slide insert/delete, shape insert/delete with z-order and animations, transition, animation step lists and whole slide sequences from set/timing/move/options/clear/painter, a model camera), text rebase, shape insert, pictures/audio/video/3-D models through the media channel (a model is one `.glb` signature with its own budget, inserted on both replicas and undone as one structural step, its camera a final value with the whole model shape as the undo image), fill/line/format/duplicate/transition/animation/cell-format/multi-cell-format/caret slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit, a base sent as a chunk chain — order, one request at a time, resume at the missing index, a second snapshot for the same chain, a stale chain, the protocol ceilings, a short chunk and a wrong digest, steps collected by a catch-up — and a base fetched in one HTTP request: one call for the announced path, the size and digest checked before the install, the chain as the fallback after a bad answer, an absolute URL refused and an inline base never re-fetched), a per-connection peer key (two connections of one actor keep their own outbox and slot; a closed room refuses messages), an operation held until the snapshot that answers its resync, commit |
+| `cargo test -p deckcraft-collab-server` | 20 unit + 18 real-socket + 5 commit + 6 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including a `slide_restore` and a `shape_restore` operation — an operation is replayed, the actor history is not), media upload/fetch (picture and audio allowlists), picture insert, a 3-D model by its `.glb` signature fetched by digest, with an extension and with a query (the path is normalised, the content type comes from the signature), and its camera as a final view reaching both editors, the viewer and the committed file (a relative field is a bad frame and a degenerate camera is `invalid`, neither moving the version); the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); a 20 MiB body read by the HTTP reader, an audio object replayed after a restart, a base served by digest to a token for that file only (a viewer included; no token, another file and an unknown digest refused), a closed room refusing its sockets; 120 slides with media, LibreOffice on the commit, three sessions across a conflict, a three-client soak across compaction with a base transfer, and the big-deck soak: 322 edits by three editors on 120 slides with media, a viewer rebuilt from an 11.8 MiB base sent in 48 chunks plus its tail, a fifth participant that drops mid-chain and resumes at the missing chunk, a base fetched over HTTP by a viewer below the compacted journal (one request, key map, head, no chain, no reopen) and a commit at the head whose file reimports with every replica's values |
 | `cargo test -p deckcraft-ui-egui collab::` | 24 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue, a run-range format and a caret in a shape body carrying their character offsets, the painter's sequence over the link disarming a one-shot pick |
 | `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
 | `cargo test -p deckcraft-web` | 6 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
@@ -547,8 +569,9 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    (`base.chunks`, `base-chunk`, §4.5.1) and the replica is rebuilt from the wire, without
    reopening the file from the cabinet; a socket that drops mid-chain resumes at the missing
    chunk. The chain is capped on both sides (`COLLAB_MAX_BASE_CHUNK`/`COLLAB_MAX_BASE_CHUNKS`,
-   the client's 8 MiB/4096/64 MiB ceilings), and a base beyond the chain's depth still falls back
-   to "named without bytes".
+   the client's 8 MiB/4096/64 MiB ceilings); a base beyond the chain's depth is announced as one
+   HTTP request beside it (§4.5.2), and only a base above that ceiling falls back to "named
+   without bytes".
 7. **P3 — Soaks**: the 120-slide/media performance gate, the LibreOffice open/repair gate, the
    three-client soak (26 move/bounds/text/fill edits across compaction, a viewer rebuilt from the
    base, a reconnect from the journal, commit at the final version) and the big-deck soak (322
