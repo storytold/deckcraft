@@ -85,6 +85,23 @@ fn a_placeholder_no_layout_placeholder_pairs_with_has_no_frame() {
 }
 
 #[test]
+fn a_placeholder_no_layout_placeholder_pairs_with_has_nothing_to_render_alone() {
+    // Drag previews and Copy as Picture render shapes alone: one that is not drawn has no picture.
+    let placeholder = |frame: bool| Shape {
+        id: ShapeId(913),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx: 7, ..Default::default() }),
+        text: Some(TextBody::from_text("Unseen")),
+        ..Default::default()
+    };
+    for (frame, some) in [(false, false), (true, true)] {
+        let p = deck_with(vec![placeholder(frame)]);
+        assert_eq!(crate::render_shape(&p, &p.slides[0], ShapeId(913), 1.0).is_some(), some);
+        assert_eq!(render_shapes(&p, &p.slides[0], &[ShapeId(913)], 1.0).is_some(), some);
+    }
+}
+
+#[test]
 fn a_placeholder_no_layout_placeholder_pairs_with_is_not_placed_without_a_frame() {
     use deckcraft_model::text::{Action, Hyperlink};
     let link =
