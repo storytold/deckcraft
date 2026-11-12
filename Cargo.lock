@@ -847,7 +847,7 @@ dependencies = [
 [[package]]
 name = "craft-audio"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=8079878ae2b166c1ea8229e40eff7e08c916e532#8079878ae2b166c1ea8229e40eff7e08c916e532"
+source = "git+https://github.com/storytold/craft-libs?rev=45ba44f740ea0a6fd566675d476e0a0f616b0f6e#45ba44f740ea0a6fd566675d476e0a0f616b0f6e"
 dependencies = [
  "craft-media",
  "thiserror 2.0.21",
@@ -884,7 +884,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=8079878ae2b166c1ea8229e40eff7e08c916e532#8079878ae2b166c1ea8229e40eff7e08c916e532"
+source = "git+https://github.com/storytold/craft-libs?rev=45ba44f740ea0a6fd566675d476e0a0f616b0f6e#45ba44f740ea0a6fd566675d476e0a0f616b0f6e"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -948,7 +948,7 @@ dependencies = [
 [[package]]
 name = "craft-video"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=8079878ae2b166c1ea8229e40eff7e08c916e532#8079878ae2b166c1ea8229e40eff7e08c916e532"
+source = "git+https://github.com/storytold/craft-libs?rev=45ba44f740ea0a6fd566675d476e0a0f616b0f6e#45ba44f740ea0a6fd566675d476e0a0f616b0f6e"
 dependencies = [
  "craft-media",
  "rayon",
