@@ -104,7 +104,7 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
     let list: Vec<String> =
         app.ui.recent.iter().filter(|p| q.is_empty() || split_path(p).0.to_lowercase().contains(&q)).take(limit).cloned().collect();
     if list.is_empty() {
-        dim(ui, &format!("No recent presentations match “{}”.", query.trim()));
+        dim(ui, &crate::i18n::fmt(tl!("No recent presentations match “{query}”."), &[("query", query.trim())]));
         return;
     }
     let width = ui.available_width().min(CONTENT_W);
@@ -282,7 +282,7 @@ pub(super) fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         false
     };
     if !themes && !templates {
-        dim(ui, &format!("No themes or templates match “{}”.", q.trim()));
+        dim(ui, &crate::i18n::fmt(tl!("No themes or templates match “{query}”."), &[("query", q.trim())]));
     }
 }
 

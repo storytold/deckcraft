@@ -21,6 +21,9 @@ const DE: &str = "@id\tlanguage.name\tDeutsch
 \tFit\tEinpassen
 \tWeb Page or File\tWebseite oder Datei
 \tThis Document\tDieses Dokument
+\tFind Next\tWeitersuchen
+\tDeckCraft can't find “{text}”.\tDeckCraft findet „{text}“ nicht.
+\tMatch {n} of {total} on slide {slide}.\tTreffer {n} von {total} auf Folie {slide}.
 @plural\t{n} Column|{n} Columns\t{n} Spalte|{n} Spalten
 @plural\t{name} ({n} slide)|{name} ({n} slides)\t{name} ({n} Folie)|{name} ({n} Folien)
 ";
@@ -88,4 +91,25 @@ fn dialog_choices_are_drawn_in_the_interface_language() {
     h.get_by_label("Dieses Dokument").click();
     h.run_steps(3);
     assert_eq!(h.state().dialog.as_ref().and_then(|d| d.fields.get("mode")).map(String::as_str), Some("slide"));
+}
+
+/// Find's messages carry the searched text or the match position: they are looked up first.
+#[test]
+fn find_reports_in_the_interface_language() {
+    use_fixture("de", DE);
+    let mut s = Session::with_new();
+    s.execute("insert.textBox", &json!({"rect": [40, 40, 400, 80], "text": "Hello there"})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    let mut h = harness(SlideApp::new(s, Services::default()));
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    let status = |h: &Harness<'static, SlideApp>| h.state().dialog.as_ref().and_then(|d| d.fields.get("status").cloned());
+    for (text, want) in [("zzz", "DeckCraft findet „zzz“ nicht."), ("there", "Treffer 1 von 1 auf Folie 1.")] {
+        let mut d = Dialog::new("find");
+        d.fields.insert("text".into(), text.into());
+        h.state_mut().dialog = Some(d);
+        h.run_steps(3);
+        h.get_by_label("Weitersuchen").click();
+        h.run_steps(3);
+        assert_eq!(status(&h).as_deref(), Some(want));
+    }
 }
