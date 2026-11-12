@@ -288,6 +288,91 @@ pub fn paragraph_build_roles(text: &crate::text::TextBody) -> Vec<BuildRole> {
         .collect()
 }
 
+/// Which chart elements an imported animation targets (ECMA-376 `a:chart`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartBuildStep {
+    Category,
+    PointInCategory,
+    Series,
+    PointInSeries,
+    AllPoints,
+    GridLegend,
+}
+
+impl ChartBuildStep {
+    pub fn from_xml(value: &str) -> Option<Self> {
+        Some(match value {
+            "category" => Self::Category,
+            "ptInCategory" => Self::PointInCategory,
+            "series" => Self::Series,
+            "ptInSeries" => Self::PointInSeries,
+            "allPts" => Self::AllPoints,
+            "gridLegend" => Self::GridLegend,
+            _ => return None,
+        })
+    }
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::Category => "category",
+            Self::PointInCategory => "ptInCategory",
+            Self::Series => "series",
+            Self::PointInSeries => "ptInSeries",
+            Self::AllPoints => "allPts",
+            Self::GridLegend => "gridLegend",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartTarget {
+    pub step: ChartBuildStep,
+    pub series_index: Option<i32>,
+    pub category_index: Option<i32>,
+}
+
+/// Ordering of a chart's native build group, kept independently of its individual effects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartBuildKind {
+    AllAtOnce,
+    Series,
+    Category,
+    SeriesElement,
+    CategoryElement,
+}
+
+impl ChartBuildKind {
+    pub fn from_xml(value: &str) -> Option<Self> {
+        Some(match value {
+            "allAtOnce" => Self::AllAtOnce,
+            "series" => Self::Series,
+            "category" => Self::Category,
+            "seriesEl" => Self::SeriesElement,
+            "categoryEl" => Self::CategoryElement,
+            _ => return None,
+        })
+    }
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::AllAtOnce => "allAtOnce",
+            Self::Series => "series",
+            Self::Category => "category",
+            Self::SeriesElement => "seriesEl",
+            Self::CategoryElement => "categoryEl",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartBuild {
+    pub group: u32,
+    pub kind: Option<ChartBuildKind>,
+    pub animate_background: Option<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Animation {
@@ -306,6 +391,11 @@ pub struct Animation {
     pub text_build: TextBuild,
     /// Paragraph index when the effect animates one paragraph of a text body.
     pub paragraph: Option<u32>,
+    /// Imported chart target/build metadata retained for native and PPTX saves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chart_target: Option<ChartTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chart_build: Option<ChartBuild>,
     /// Motion path in slide-relative units (SVG-like `M 0 0 L 0.25 0 E`).
     pub path: Option<String>,
     /// Triggered by a click on another shape.
@@ -340,6 +430,8 @@ impl Default for Animation {
             rewind: false,
             text_build: TextBuild::AsOne,
             paragraph: None,
+            chart_target: None,
+            chart_build: None,
             path: None,
             trigger: None,
             amount: None,

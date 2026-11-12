@@ -1,6 +1,8 @@
 //! Transitions and the animation timing tree.
 
-use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
+use deckcraft_model::anim::{
+    AnimClass, AnimStart, Animation, BuildRole, ChartBuild, ChartTarget, TextBuild, Transition, build_filled, paragraph_build_roles,
+};
 use deckcraft_model::{Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdMap;
@@ -123,17 +125,25 @@ impl Ids {
     }
 }
 
-fn tgt(w: &mut W, spid: u32, para: Option<u32>) {
+fn tgt(w: &mut W, spid: u32, para: Option<u32>, chart: Option<ChartTarget>) {
     w.open0("p:tgtEl");
-    match para {
-        Some(p) => {
-            w.open("p:spTgt", A::new().a("spid", spid));
-            w.open0("p:txEl");
-            w.empty("p:pRg", A::new().a("st", p).a("end", p));
-            w.close("p:txEl");
-            w.close("p:spTgt");
+    if let Some(chart) = chart {
+        w.open("p:spTgt", A::new().a("spid", spid));
+        w.open0("p:graphicEl");
+        w.empty("a:chart", A::new().a("bldStep", chart.step.xml()).o("seriesIdx", chart.series_index).o("categoryIdx", chart.category_index));
+        w.close("p:graphicEl");
+        w.close("p:spTgt");
+    } else {
+        match para {
+            Some(p) => {
+                w.open("p:spTgt", A::new().a("spid", spid));
+                w.open0("p:txEl");
+                w.empty("p:pRg", A::new().a("st", p).a("end", p));
+                w.close("p:txEl");
+                w.close("p:spTgt");
+            }
+            None => w.empty("p:spTgt", A::new().a("spid", spid)),
         }
-        None => w.empty("p:spTgt", A::new().a("spid", spid)),
     }
     w.close("p:tgtEl");
 }
@@ -151,7 +161,7 @@ fn cbhvr(w: &mut W, ids: &mut Ids, e: &Eff, dur: u32, delay: Option<u32>, attrs:
         }
         None => w.empty("p:cTn", a),
     }
-    tgt(w, e.spid, e.paragraph);
+    tgt(w, e.spid, e.paragraph, e.a.chart_target);
     if !attrs.is_empty() {
         w.open0("p:attrNameLst");
         for n in attrs {
@@ -372,7 +382,7 @@ fn behaviors(w: &mut W, x: &mut Exp, ids: &mut Ids, e: &Eff) {
                     w.open("p:animClr", A::new().a("clrSpc", "rgb").a("dir", "cw"));
                     w.open("p:cBhvr", A::new().o("override", child.then_some("childStyle")));
                     w.empty("p:cTn", A::new().a("id", ids.next()).a("dur", dur.max(1)).a("autoRev", "1").a("fill", "remove"));
-                    tgt(w, e.spid, e.paragraph);
+                    tgt(w, e.spid, e.paragraph, e.a.chart_target);
                     w.open0("p:attrNameLst");
                     w.elt("p:attrName", attr);
                     w.close("p:attrNameLst");
@@ -592,12 +602,28 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
     }
 }
 
+fn new_group(spid: u32, next: &mut std::collections::HashMap<u32, u32>, reserved: &std::collections::HashSet<(u32, u32)>) -> u32 {
+    let n = next.entry(spid).or_insert(0);
+    while reserved.contains(&(spid, *n)) {
+        *n = n.saturating_add(1);
+    }
+    let group = *n;
+    *n = n.saturating_add(1);
+    group
+}
+
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
     let mut main: Vec<Eff> = vec![];
     let mut triggered: Vec<(u32, Vec<Eff>)> = vec![];
     let mut bld: Vec<(u32, u32, bool)> = vec![];
+    let mut chart_bld: Vec<(u32, ChartBuild)> = vec![];
+    let mut chart_bld_seen = std::collections::HashSet::new();
+    // Retained native chart groups must not be reused by newly generated shape/paragraph
+    // groups. Start searching at zero, rather than adding one to a possibly maximal file id.
+    let reserved_chart_groups: std::collections::HashSet<_> =
+        anims.iter().take(10_000).filter_map(|a| Some((idmap.get(a.shape)?, a.chart_build?.group))).collect();
     // The last paragraph effect written: (shape, class, trigger, grpId).
     let mut prev_para: Option<(ShapeId, AnimClass, Option<ShapeId>, u32)> = None;
     let mut by_id = std::collections::HashMap::new();
@@ -631,14 +657,10 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         // the same way.
         let para_effect = !by_para && text_sp && a.paragraph.is_some();
         let joins = para_effect && prev_para.is_some_and(|(s, c, t, _)| s == a.shape && c == a.class && t == a.trigger);
-        let grp = match prev_para {
-            Some((.., g)) if joins => g,
-            _ => {
-                let c = grp_count.entry(spid).or_insert(0);
-                let g = *c;
-                *c += 1;
-                g
-            }
+        let grp = match (a.chart_build, prev_para) {
+            (Some(build), _) => build.group,
+            (None, Some((.., g))) if joins => g,
+            _ => new_group(spid, &mut grp_count, &reserved_chart_groups),
         };
         prev_para = para_effect.then_some((a.shape, a.class, a.trigger, grp));
         let mut effs = vec![];
@@ -675,6 +697,12 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             effs.push(Eff { a, spid, start: a.start, paragraph: a.paragraph, grp });
         }
         effect_count += effs.len();
+        if let Some(build) = a.chart_build
+            && !effs.is_empty()
+            && chart_bld_seen.insert((spid, build.group))
+        {
+            chart_bld.push((spid, build));
+        }
         if text_sp && !joins {
             bld.push((spid, grp, by_para || para_effect));
         }
@@ -761,10 +789,17 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.close("p:cTn");
     w.close("p:par");
     w.close("p:tnLst");
-    if !bld.is_empty() {
+    if !bld.is_empty() || !chart_bld.is_empty() {
         w.open0("p:bldLst");
         for (spid, grp, build_p) in bld {
             w.empty("p:bldP", A::new().a("spid", spid).a("grpId", grp).o("build", build_p.then_some("p")).t("animBg", !build_p));
+        }
+        for (spid, build) in chart_bld {
+            w.open("p:bldGraphic", A::new().a("spid", spid).a("grpId", build.group));
+            w.open0("p:bldSub");
+            w.empty("a:bldChart", A::new().o("bld", build.kind.map(|k| k.xml())).o("animBg", build.animate_background.map(u8::from)));
+            w.close("p:bldSub");
+            w.close("p:bldGraphic");
         }
         w.close("p:bldLst");
     }

@@ -1,6 +1,9 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
-use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
+use deckcraft_model::anim::{
+    AnimClass, AnimStart, Animation, BuildRole, ChartBuild, ChartBuildKind, ChartBuildStep, ChartTarget, TextBuild, Transition, build_filled,
+    paragraph_build_roles,
+};
 use deckcraft_model::{Shape, ShapeKind, TextBody, find_shape, find_shape_mut};
 
 use super::shapes::IdCtx;
@@ -233,12 +236,39 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     }
 }
 
+fn chart_builds(timing: &El) -> std::collections::HashMap<(u32, u32), ChartBuild> {
+    let mut builds = std::collections::HashMap::new();
+    if let Some(list) = timing.child("bldLst") {
+        for g in list.children_named("bldGraphic").take(10_000) {
+            let Some(spid) = g.u32("spid") else { continue };
+            let Some(b) = g.path(&["bldSub", "bldChart"]) else { continue };
+            let group = g.u32("grpId").unwrap_or(0);
+            builds.entry((spid, group)).or_insert(ChartBuild {
+                group,
+                kind: b.attr("bld").and_then(ChartBuildKind::from_xml),
+                animate_background: b.bool("animBg"),
+            });
+        }
+    }
+    builds
+}
+
+fn chart_target(tgt: &El) -> Option<ChartTarget> {
+    let chart = tgt.path(&["graphicEl", "chart"])?;
+    Some(ChartTarget {
+        step: ChartBuildStep::from_xml(chart.attr("bldStep")?)?,
+        series_index: chart.attr("seriesIdx").and_then(|s| s.parse().ok()),
+        category_index: chart.attr("categoryIdx").and_then(|s| s.parse().ok()),
+    })
+}
+
 /// Flatten the timing tree into the Animation Pane list.
 pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
     collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
+    let chart_builds = chart_builds(timing);
     // Paragraph builds (`bldP build="p"`) by (spid, grpId).
     let by_para: Vec<(u32, String)> = timing
         .child("bldLst")
@@ -281,6 +311,8 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             duration_ms: max_dur(c, 0).unwrap_or(0),
             delay_ms: c.path(&["stCondLst", "cond"]).and_then(|d| ms_attr(d, "delay")).unwrap_or(0),
             paragraph,
+            chart_target: chart_target(tgt),
+            chart_build: chart_builds.get(&(file_id, c.u32("grpId").unwrap_or(0))).copied(),
             trigger: f.trigger.and_then(|t| ctx.lookup(t)),
             preset_id: Some(preset),
             preset_subtype: Some(sub),
