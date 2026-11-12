@@ -629,7 +629,19 @@ pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
 }
 
 pub fn text_body(imp: &mut Imp, part: &Part, tx: &El) -> TextBody {
-    let body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    let mut body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    if let Some(b) = tx.child("bodyPr") {
+        let mut raw3d = String::new();
+        if let Some(sc) = b.child("scene3d") {
+            raw3d.push_str(&part.keep_inner(sc));
+        }
+        if let Some(sp) = b.child("sp3d").or_else(|| b.child("flatTx")) {
+            raw3d.push_str(&part.keep_inner(sp));
+        }
+        if !raw3d.is_empty() && raw3d.len() <= 64 * 1024 {
+            body.raw3d = Some(raw3d);
+        }
+    }
     let list_style = tx.child("lstStyle").map(|l| list_style(imp, part, l)).unwrap_or_default();
     let paragraphs = tx.children_named("p").take(100_000).map(|p| paragraph(imp, part, p)).collect();
     TextBody { body, list_style, paragraphs }
@@ -729,7 +741,13 @@ mod tests {
         // 200 `m:t` nested in each other around one word: the word, not 200 copies of it.
         let x = format!(r#"<a14:m xmlns:a14="a" xmlns:m="m"><m:oMath>{}word{}</m:oMath></a14:m>"#, "<m:t>".repeat(200), "</m:t>".repeat(200));
         let d = parse(x.as_bytes()).unwrap();
-        let part = Part { name: "ppt/slides/slide1.xml".into(), rels: Default::default(), ns: vec![], inner_ns: vec![] };
+        let part = Part {
+            name: "ppt/slides/slide1.xml".into(),
+            rels: Default::default(),
+            ns: vec![],
+            inner_ns: vec![],
+            ns_budget: std::cell::Cell::new(1 << 20),
+        };
         let mut para = Paragraph::default();
         push_math_run(&mut para, &part, &d.root);
         assert_eq!(para.runs[0].text, "word");

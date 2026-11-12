@@ -488,3 +488,11 @@ fn an_installed_font_is_found_by_its_localized_family_name() {
     assert!(db.is_loaded("QanumGothic"), "the lookup by its Korean name loaded it");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn disabling_system_fallback_gates_automatic_family_loads() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert!(cfg!(target_arch = "wasm32") || db.system_fallback_enabled());
+    db.set_system_fallback(false);
+    assert!(!db.system_fallback_enabled());
+}
