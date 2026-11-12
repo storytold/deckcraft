@@ -96,6 +96,10 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
     true
 }
 
+/// UI commands the palette leaves out: run with `{}` they only report a setting. Interface
+/// Language is picked in Preferences…, which the palette lists.
+const PALETTE_HIDDEN: &[&str] = &["app.language"];
+
 /// The palette's entries for the lowercase query `q`. An engine command is hidden when a UI command has the same label: Open…, Save As…,
 /// Export… and Audio/Video from File… need a `path` the palette can't give, so the one entry left opens the dialog instead of failing.
 fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, String, Option<&'static str>)> {
@@ -105,7 +109,12 @@ fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, S
         // Commands that need a path or other value fail when the palette runs them with `{}`.
         .filter(|c| c.enabled && !crate::UI_COMMANDS.iter().any(|u| u.1 == c.label) && !deckcraft_engine::cmd::needs_arguments(c.params))
         .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
-        .chain(crate::UI_COMMANDS.iter().filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3)).map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
+        .chain(
+            crate::UI_COMMANDS
+                .iter()
+                .filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3) && !PALETTE_HIDDEN.contains(&c.0))
+                .map(|c| (c.0.to_string(), c.1.to_string(), c.2)),
+        )
         // Shown in the interface language; found by that name, the English one or the id.
         .filter(|(id, label, _)| {
             q.is_empty() || tl!(label).to_lowercase().contains(q) || label.to_lowercase().contains(q) || id.to_lowercase().contains(q)
@@ -318,7 +327,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::palette_items;
+    use super::{PALETTE_HIDDEN, palette_items};
 
     /// #79: the palette listed two "Export…" entries and the first (`file.export`) failed with "missing `path`".
     #[test]
@@ -332,12 +341,23 @@ mod tests {
         // Open…, Save As…, Audio/Video from File… and Notes had the same duplicates: every UI command is the only entry with its label.
         // Commands that need a value (Set Zoom's percent) are left out of the palette.
         for (id, label, _, params) in crate::UI_COMMANDS {
-            if deckcraft_engine::cmd::needs_arguments(params) {
+            if deckcraft_engine::cmd::needs_arguments(params) || PALETTE_HIDDEN.contains(id) {
                 continue;
             }
             let same: Vec<_> = palette_items(&session, &label.to_lowercase()).into_iter().filter(|(_, l, _)| l == label).collect();
             assert_eq!(same.len(), 1, "{label}");
             assert_eq!(same[0].0, *id, "{label}");
         }
+    }
+
+    /// Interface Language only reported the setting when the palette ran it, so choosing it did
+    /// nothing; the language is picked in Preferences….
+    #[test]
+    fn palette_offers_preferences_rather_than_the_language_query() {
+        let session = deckcraft_engine::Session::with_new();
+        for query in ["language", "interface"] {
+            assert!(palette_items(&session, query).iter().all(|(id, ..)| id != "app.language"), "query {query}");
+        }
+        assert!(palette_items(&session, "preferences").iter().any(|(id, ..)| id == "app.preferences"));
     }
 }

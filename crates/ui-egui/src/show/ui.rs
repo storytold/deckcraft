@@ -185,6 +185,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 current: show.remote_preview.clone().filter(|_| !show.presenter_grid),
                 next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next && !show.presenter_grid).map(|(_, image)| image.clone()),
                 slides: show.presenter_grid.then(|| show.remote_grid.clone()),
+                language: crate::i18n::current().code().to_string(),
             });
             show.remote_sent = now;
         }
