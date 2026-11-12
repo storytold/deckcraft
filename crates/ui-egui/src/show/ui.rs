@@ -699,19 +699,19 @@ fn paint_camera_segments(app: &mut SlideApp, show: &mut Show, sl: &Sl, f: &Fr, p
     let uv = show.zoom_uv();
     let tl = show.timeline(doc).clone();
     let anim = live_state(&tl, sl.step, sl.t, &sl.plays, &sl.stamps);
-    let mut frames: Vec<(ShapeId, deckcraft_geom::Xfrm, ShapeState)> = vec![];
+    let mut frames = vec![];
     for (shape, x) in crate::camera::cameo_boxes(&slide.shapes) {
         let state = anim(shape.id);
         if crate::camera::live_opacity(&sl.hidden, shape.id, &state).is_none() {
             continue;
         }
-        frames.push((shape.id, x, state));
+        frames.push((shape, x, state));
     }
     if frames.is_empty() {
         return;
     }
     let (sw, sh) = (doc.slide_size.width as f32, doc.slide_size.height as f32);
-    for (id, x, state) in &frames {
+    for (shape, x, state) in frames.iter() {
         // The overlay for the frames painted so far, before this Cameo's own frame: nothing
         // above the first frame paints yet, and each middle slice covers only what sits between
         // this Cameo and the frames before it. The painter is clipped to the slide so a Cameo
@@ -719,13 +719,12 @@ fn paint_camera_segments(app: &mut SlideApp, show: &mut Show, sl: &Sl, f: &Fr, p
         draw_overlay(show, f, sl, painter, live, false);
         let centre = deckcraft_geom::Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
         let st = state.clone();
-        let shape = slide.shapes.iter().find(|s| s.id == *id).expect("a painted Cameo is on the slide");
         let to_screen = |p: deckcraft_geom::Point| {
-            let p = crate::camera::animated(p, centre, &st);
-            slide_point_to_screen(srect, uv, p.x as f32 / sw.max(1.0), p.y as f32 / sh.max(1.0))
+            let q = crate::camera::animated(p, centre, &st);
+            slide_point_to_screen(srect, uv, q.x as f32 / sw.max(1.0), q.y as f32 / sh.max(1.0))
         };
         crate::camera::paint_cameo_clipped(&painter.with_clip_rect(srect), &texture, shape, *x, state.opacity, &to_screen);
-        live.push(*id);
+        live.push(shape.id);
     }
     draw_overlay(show, f, sl, painter, live, false);
 }
