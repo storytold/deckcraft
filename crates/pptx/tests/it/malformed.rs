@@ -324,6 +324,58 @@ fn missing_slide_relationships_are_reported() {
     assert!(lost.is_empty());
 }
 
+/// Every listed entry has its own slide part and relationship: the resource cap must not
+/// silently turn an otherwise readable large deck into a complete-looking partial load.
+#[test]
+fn over_limit_slide_lists_are_refused() {
+    fn deck(count: usize) -> Vec<u8> {
+        let mut es = entries(&valid());
+        let pres = es.iter_mut().find(|(n, _)| n == "ppt/presentation.xml").expect("presentation");
+        let mut xml = String::from_utf8(pres.1.clone()).expect("utf8");
+        let start = xml.find("<p:sldIdLst>").expect("slide list");
+        let end = xml.find("</p:sldIdLst>").expect("slide list end") + "</p:sldIdLst>".len();
+        let ids: String = (1..=count).map(|i| format!(r#"<p:sldId id="{}" r:id="capSlide{i}"/>"#, 255 + i)).collect();
+        xml.replace_range(start..end, &format!("<p:sldIdLst>{ids}</p:sldIdLst>"));
+        pres.1 = xml.into_bytes();
+        let rels = es.iter_mut().find(|(n, _)| n == "ppt/_rels/presentation.xml.rels").expect("relationships");
+        let mut xml = String::from_utf8(rels.1.clone()).expect("utf8");
+        let targets: String = (1..=count).map(|i| format!(r#"<Relationship Id="capSlide{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{i}.xml"/>"#)).collect();
+        xml = xml.replace("</Relationships>", &format!("{targets}</Relationships>"));
+        rels.1 = xml.into_bytes();
+        let types = es.iter_mut().find(|(n, _)| n == "[Content_Types].xml").expect("content types");
+        let xml = String::from_utf8(types.1.clone()).expect("utf8");
+        let overrides: String = (2..=count).map(|i| format!(r#"<Override PartName="/ppt/slides/slide{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"#)).collect();
+        types.1 = xml.replace("</Types>", &format!("{overrides}</Types>")).into_bytes();
+        let blank = br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#.to_vec();
+        es.iter_mut().find(|(n, _)| n == "ppt/slides/slide1.xml").expect("slide").1 = blank.clone();
+        let slide_rels = es.iter().find(|(n, _)| n == "ppt/slides/_rels/slide1.xml.rels").expect("slide relationships").1.clone();
+        for i in 2..=count {
+            es.push((format!("ppt/slides/slide{i}.xml"), blank.clone()));
+            es.push((format!("ppt/slides/_rels/slide{i}.xml.rels"), slide_rels.clone()));
+        }
+        rezip(&es)
+    }
+    let at_limit = deck(10_000);
+    let (p, lost) = deckcraft_pptx::import_checked(&at_limit).expect("exactly at the limit");
+    assert_eq!(p.slides.len(), 10_000);
+    assert!(lost.is_empty());
+    drop(p);
+
+    let over_limit = deck(10_001);
+    for error in [
+        deckcraft_pptx::import_checked(&over_limit).expect_err("must refuse a partial load"),
+        deckcraft_pptx::import(&over_limit).expect_err("plain import must also refuse"),
+    ] {
+        assert!(matches!(error, deckcraft_pptx::PptxError::Unsupported(_)));
+        assert!(error.to_string().contains("10000"), "{error}");
+        assert!(error.to_string().contains("slide"), "{error}");
+    }
+    assert!(
+        deckcraft_engine::cmd::file::loaded_file("Original.pptx", &over_limit).is_err(),
+        "no partial file may be adopted with the original save path"
+    );
+}
+
 /// Many slides naming one notes part: it is read for the first slide only, not copied onto every
 /// slide that names it.
 #[test]

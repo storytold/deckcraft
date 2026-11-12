@@ -561,6 +561,8 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
 }
 
+const MAX_SLIDE_ENTRIES: usize = 10_000;
+
 /// [`import_checked`] with the presentation's chart point budget set (tests lower it).
 pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>), PptxError> {
     let mut lost_slides: Vec<String> = vec![];
@@ -571,6 +573,12 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
     let pres_el = &pres_doc.root;
     if !pres_el.is("presentation") {
         return Err(PptxError::NotPptx(format!("{pres_path} is not a presentation part")));
+    }
+    // Refuse an oversized list before reading slide parts: truncating it would look like a
+    // complete import and allow a later save to overwrite the omitted slides (#1910).
+    // Looking only for the first entry past the cap keeps this check bounded.
+    if pres_el.child("sldIdLst").is_some_and(|list| list.children_named("sldId").nth(MAX_SLIDE_ENTRIES).is_some()) {
+        return Err(PptxError::Unsupported(format!("PPTX slide list exceeds the {MAX_SLIDE_ENTRIES}-entry import limit")));
     }
     let pres_part = Part::new(&pkg, &pres_path, &pres_doc);
 
@@ -642,7 +650,7 @@ fn master_and_slide_paths(pres_el: &El, pres_part: &Part, lost_slides: &mut Vec<
         .child("sldIdLst")
         .map(|l| {
             l.children_named("sldId")
-                .take(10_000)
+                .take(MAX_SLIDE_ENTRIES)
                 .filter_map(|s| {
                     let rid = s.attr("r:id").unwrap_or("");
                     let Some(path) = pres_part.rels.target(rid) else {
