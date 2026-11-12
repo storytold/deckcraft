@@ -197,12 +197,15 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         .flat_map(|l| l.children_named("legendEntry"))
         .take(MAX_LEGEND_ENTRIES)
         .filter_map(|e| {
+            // The paragraph's own run properties first, then the list style's defaults
+            // (`a:lstStyle` comes before `a:p`, and is the less specific of the two).
             let tx = e.child("txPr");
+            let para = tx.and_then(|t| t.child("p"));
             let entry = deckcraft_model::chart::LegendEntry {
                 idx: e.child("idx").and_then(|i| i.u32("val"))?,
-                size: text_size(tx),
-                bold: text_bold(tx),
-                color: text_color(tx),
+                size: text_size(para).or_else(|| text_size(tx)),
+                bold: text_bold(para).or_else(|| text_bold(tx)),
+                color: text_color(para).or_else(|| text_color(tx)),
             };
             (entry.size.is_some() || entry.bold.is_some() || entry.color.is_some()).then_some(entry)
         })

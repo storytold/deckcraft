@@ -542,7 +542,7 @@ fn draw_legend(ctx: &mut RenderContext, draw: &LegendDraw<'_, '_>, mut area: Rec
     let styles: Vec<(f64, bool, Rgba)> = (0..legend_items.len())
         .map(|i| {
             let e = own(i);
-            let size = e.and_then(|e| e.size).filter(|v| v.is_finite() && *v > 0.0).map_or(base, |v| v.min(base * 8.0));
+            let size = e.and_then(|e| e.size).filter(|v| v.is_finite() && *v > 0.0).map_or(base, |v| v.min(400.0));
             let col = e.and_then(|e| e.color.as_ref()).map_or(text_col, |cr| rctx.color(cr, None));
             (size, e.and_then(|e| e.bold).unwrap_or(false), col)
         })

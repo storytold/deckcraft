@@ -109,7 +109,8 @@ fn legend_entry(w: &mut W, e: &deckcraft_model::chart::LegendEntry) {
     w.open0("a:pPr");
     let mut a = A::new();
     if let Some(sz) = e.size.filter(|v| v.is_finite() && *v > 0.0) {
-        a = a.a("sz", ((sz * 100.0).round().clamp(100.0, 400_000.0) as u32).to_string());
+        // 1 to 400 pt, as the reader takes it, so a size reads back as written.
+        a = a.a("sz", ((sz * 100.0).round().clamp(100.0, 40_000.0) as u32).to_string());
     }
     if let Some(b) = e.bold {
         a = a.a("b", if b { "1" } else { "0" });
@@ -1243,6 +1244,23 @@ mod tests {
         // None: nothing written.
         e.legend_entries.clear();
         assert!(!String::from_utf8(super::chart_xml(&e).0).unwrap().contains("legendEntry"));
+        // The paragraph's own properties win over the list style's, which come first in the XML.
+        let listed = xml.replacen(
+            r#"<c:legendEntry><c:idx val="0"/><c:txPr><a:bodyPr/><a:lstStyle/>"#,
+            r#"<c:legendEntry><c:idx val="0"/><c:txPr><a:bodyPr/><a:lstStyle><a:lvl1pPr><a:defRPr sz="1200" b="0"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:defRPr></a:lvl1pPr></a:lstStyle>"#,
+            1,
+        );
+        assert_ne!(listed, xml, "the list style was put in");
+        let c = crate::read::chart::read_chart_xml(listed.as_bytes()).unwrap();
+        assert_eq!(c.legend_entries[0], want(0, (0xC0, 0, 0)), "the paragraph's 20 pt, bold, C00000");
+        // A size reads back as it was written, within the reader's 1-400 pt.
+        for (size, back) in [(20.5, 20.5), (400.0, 400.0), (500.0, 400.0)] {
+            let mut e = c.clone();
+            e.raw = None;
+            e.legend_entries = vec![deckcraft_model::chart::LegendEntry { idx: 0, size: Some(size), bold: None, color: None }];
+            let back_size = crate::read::chart::read_chart_xml(&super::chart_xml(&e).0).unwrap().legend_entries[0].size;
+            assert_eq!(back_size, Some(back), "{size} pt");
+        }
     }
 
     #[test]
