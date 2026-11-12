@@ -126,6 +126,14 @@ commits, resyncs, bytes in/out, media uploads and bytes, and the cabinet publica
 (`cabinet_commits_total`, `cabinet_conflicts_total`, `cabinet_failures_total`). No file names,
 slide content, text or tokens are logged or exported.
 
+`ops_total` counts the operations that **arrived** (a decode that reached the hub), not the ones
+that were applied, and a retried operation counts again; `rejected_total` counts the `rejected`
+frames the server wrote (an operation refused as `stale`/`dead`/`forbidden`, a commit the cabinet
+refused, a base a compaction replaced). Until `f1d1cd6a` nothing incremented `rejected_total`, so a
+room that refused every structural step looked exactly like a room that accepted them and did
+nothing — read the two together with the room's `version`, and remember that a `stale` refusal is
+retryable: the client resyncs and sends the step again, which moves `resyncs_total`.
+
 ## Client
 
 | Flag | Where | Meaning |
@@ -400,6 +408,12 @@ would be applied again. The client does not normally send one — an operation u
 disconnect goes back to the queue, a snapshot that carries a base clears that queue and releases
 the in-flight operations below the base, and a tail-only catch-up is deduped from the journal it
 replays — but across a compaction boundary this is a documented limit, not a guarantee.
+
+A repeat is also **not journalled again**: the stored answer to an `opId` the room already applied
+is what the dedup window returns, and appending it would write a second line of an old version on
+every resend. Until `3b8ebaff` the server did exactly that, and the production store of file 42
+grew to 302 lines for a room at version 92 (runs of versions restarting at 1). `Hub` now reports
+whether the last answer was a new step and only a new step reaches `Store::record`.
 
 **The per-actor undo history does not**: the replay calls `apply_confirmed`, which records
 no before/after image, so a step taken before a restart cannot be undone after it (`undo` answers

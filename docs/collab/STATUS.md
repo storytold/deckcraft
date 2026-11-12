@@ -1,6 +1,14 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-12. Branch: `collab/pr15`, branched from `collab/pr14` at `6e42a7ab` (the desktop
+Updated: 2026-11-12. Branch: `collab/pr15`. **The newest code slice is `3b8ebaff`** (on top of
+`f1d1cd6a`): a room that answers *below* the version a replica holds rebuilds that replica from its
+own base, a base that replaces the replica reports the edits it dropped, `rejected_total` counts
+the refusals the server actually answers, and a repeated `opId` is no longer journalled a second
+time. It is the fix for the production failure on file 42 of 2026-11-12 (§A room that came back
+behind its client). Everything below this line describes the branch as it stood at `ceeada59`;
+the preview slice follows.
+
+Branch: `collab/pr15`, branched from `collab/pr14` at `6e42a7ab` (the desktop
 commit and its docs commit): **optimistic preview** (RFC §3) — with `DECKCRAFT_COLLAB_PREVIEW=1`
 one local operation is shown before the room answers, settled by `applied`, rolled back exactly on
 a refusal and abandoned for a `resync` when another participant's step lands in between; the wire
@@ -181,6 +189,92 @@ below 256 MiB. Details: §A base above the inline limit is one HTTP request.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
+
+## A room that came back behind its client (2026-11-12)
+
+The production failure of 2026-11-11/12 on file 42 (`Craft acceptance/acceptance.pptx`) looked
+like a room that accepted `shape.insert` and changed nothing: `ops_total` moved by one,
+`rejected_total` stayed 0, the room's document kept its shape count, and the committed `.pptx` had
+no new figure; `resyncs_total` grew with every attempt. It was a **version that only moved
+forward**, on both sides of the wire.
+
+What the code did, exactly:
+
+- `DocSession::resync(last_version)` answered a tail (or "up to date") whenever
+  `tail_covers(last_version)`, and `tail_covers` is `version >= self.version || …`. A replica
+  *above* the room's head therefore got an empty tail and a head **below** its own version, and
+  the room never sent its document.
+- `ClientSession::on_msg(Welcome)` only asked for a resync when `welcome.version > self.version`.
+  A room that came back *behind* the replica (its store gone, restored from an older base, a
+  process that lost its journal) was silently accepted, and `self.version` kept the higher value
+  (`max`).
+- The `Snapshot` arm set `self.version = max(self.version, snapshot.version)`, so even a snapshot
+  could not move the state machine back to the room's head.
+- `next_outgoing` stamps `op.base_version = self.version`. Every structural step therefore left
+  with a `baseVersion` **above** the room's head, was refused `stale` (retryable, ADR 0004 §2),
+  was put back in the queue, asked for a resync, and was refused again — one resync per attempt,
+  the room's document untouched, and the committed file without the shape.
+- `rejected_total` was a counter **nothing incremented**, so the refusal was invisible in
+  `/metrics`; `ops_total` counts what arrived, not what was applied, which is why the room looked
+  like it had accepted the operation.
+
+`f1d1cd6a` fixes both sides of that loop:
+
+- `DocSession::resync` treats `last_version > head` as divergence: the **room is the authority**,
+  so the answer is its whole document as a base taken **at the head** (never an older stored one),
+  with nothing above it. A replica at or below the head keeps the journal answer exactly as before.
+- `ClientSession::on_msg(Welcome)` asks for that resync when the welcome differs in **either**
+  direction, and a snapshot that carries a base sets the version to the snapshot's — a base
+  replaces the replica, so the version may move **back**; a tail-only answer still only moves it
+  forward.
+- `CollabDoc` reports the edits a replacing base dropped (`the document was rebuilt from the room;
+  N queued edits were not sent`) instead of losing a click silently.
+- `send_msg` counts every `rejected` frame the server writes, so `rejected_total` is what its name
+  says (an operation, a commit, a base a compaction replaced).
+
+`3b8ebaff` closes the store defect the incident exposed: the room appended the **stored answer to
+a repeated `opId`** to the journal again, so every reconnect that resent an unacknowledged step
+grew `journal.jsonl` with duplicate lines of an old version. The production store of file 42 held
+**302 lines for a room at version 92** (runs of versions restarting at 1). `Hub::take_last_applied`
+now returns `(applied, fresh)`, `DocSession::already_applied` is the dedup check, and only a new
+step is journalled. The store was quarantined and the room re-created from the cabinet's bytes
+(production.md, "Recovering a damaged store").
+
+Tests, all of which fail without the fix:
+
+- `crates/collab/tests/restarted_room.rs` —
+  `an_insert_lands_when_the_room_came_back_behind_the_client` (two replicas, a non-empty deck, the
+  room re-created at version 0 while the client holds 1: one resync, then the insert lands on the
+  room and on both replicas) and `a_structural_step_over_a_stale_base_is_still_resolved_by_the_rfc`
+  (the ordinary stale-base repair is unchanged);
+- `session::tests::resync_answers_a_base_to_a_replica_above_the_head` (the wire contract: base at
+  the head, empty tail, keys);
+- `client::tests::a_room_that_came_back_behind_the_client_rebuilds_the_replica_from_its_base` and
+  `a_base_that_replaces_the_replica_reports_the_edits_it_dropped`;
+- `apps/deckcraft-collab-server/tests/socket.rs` —
+  `a_refused_structural_step_is_counted_as_rejected_not_as_an_applied_one` (a stale structural step
+  is refused, retryable, and moves `rejected_total` — `ops_total` stays the count of arrivals) and
+  `a_repeated_operation_is_not_journalled_twice` (one opId, one journal line).
+
+Gate on `3b8ebaff` (build host `agents`, rust 1.99.1): `cargo fmt --all -- --check` clean;
+`cargo clippy -p deckcraft-collab -p deckcraft-collab-server --all-targets -- -D warnings` clean;
+`cargo test -p deckcraft-collab` **308 + 2 + 8 + 20 + 5 + 6** passed (lib, `restarted_room`,
+`two_clients`, `apply`, `delta`, `keys`/`link`, media and the TASK.md §8 `gates` in 17.4 s);
+`cargo test -p deckcraft-collab-server` **20** passed.
+
+Production (2026-11-12, §M95 in the cabinet's `docs/CUTOVER.md`): static
+`0.18.1-collab.f1d1cd6a53b0` (35 MB, manifest `deploy/craft/assets/deckcraft-0.18.1-collab.f1d1cd6a53b0.sha256`,
+5 files verified), room binary `0.18.1` at `3b8ebaff` (glibc 2.35, `/home/l/mail-frontend/bin/deckcraft-collab-server`),
+the corrupted store of file 42 quarantined
+(`73475…` → `.damaged-m95-20261112-184618`, tarred under `deploy/backups/`), the room re-created
+from the cabinet's bytes. Acceptance with two protocol clients at the head (`owner`/`editor`
+tickets): both `welcome v57`, one resync each to the base at 57, `shape.insert` applied as v58 on
+**both** replicas, `POST /commit` → HTTP 200 → the cabinet stored 22 006 B as file version 6, and
+the downloaded `.pptx` holds **three** `p:sp` shapes (the text box and the two accepted inserts,
+sha256 `857a6847…` equal to the room's own digest). Three connections at the head afterwards moved
+`connections_total` by 3 and `resyncs_total` by **0**; `rejected_total` stayed 0 with
+`ops_total 29`. The room now writes versioned bases (`base-57.deckcraft`) and an empty journal
+after its snapshot.
 
 ## Merge of `origin/main` (2026-11-11)
 
@@ -1963,6 +2057,37 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-12 — an insert that never landed: a room behind its client, and a journal that grew
+
+- **What was asked.** Finish the M94 remainder: `shape.insert` on file 42 was received by the room
+  (`ops_total` +1, `rejected_total 0`) but the room's document never changed and the committed
+  `.pptx` had no new figure; `resyncs_total` grew on every connect. Find the cause in
+  `crates/collab*` and the server, reproduce it headless with two clients and a non-empty deck, fix
+  it, add a test that fails without the fix, rebuild the static and the room binary, deploy and
+  verify on production.
+- **What the evidence said.** The room for file 42 had been re-created many times and had come
+  back **behind** its clients (a legacy `base.deckcraft` with `meta.json version` 90, a journal of
+  302 lines whose versions repeat and restart). In that state the client kept its own higher
+  version (`Welcome` only resynced when the room was *ahead*, the `Snapshot` arm kept `max`), the
+  room answered "up to date" (`tail_covers` is true for a version above the head), and every
+  structural step left with `baseVersion` above the room's head: refused `stale`, requeued,
+  resynced, refused again. `rejected_total` was dead (nothing incremented it), so the refusal
+  looked like acceptance. Details and the two commits: §A room that came back behind its client.
+- **Reproduced headless before the fix.** `crates/collab/tests/restarted_room.rs`: a room at
+  version 1 with a client at 1, the room re-created at version 0, the client's insert — without the
+  fix the client stays at 1, the room at 0, one resync per attempt and no shape on either replica;
+  with it, one resync, the base at 0 replaces the replica, the insert lands as version 1 on the
+  room and on both replicas.
+- **Fixed.** `f1d1cd6a` (resync answers a base at the head for `last_version > head`; the client
+  asks on a welcome behind it and a base may move the version back; the dropped queue is reported;
+  `rejected_total` counts refusals) and `3b8ebaff` (a repeated `opId` is answered but not
+  journalled again). Gate and production evidence: §A room that came back behind its client.
+- **Not run, deliberately.** A real-browser two-window run: the acceptance drove two protocol
+  clients (the same `ClientSession`/`CollabDoc` the browser build uses, and the deployed wasm
+  carries the fix — `the document was rebuilt from the room` is in it), and the cabinet's Save →
+  room commit leg was exercised by calling the room's `/commit` with the service token the cabinet
+  uses. No push, no CI change; the branch is local.
 
 ### 2026-11-12 — the presence heartbeat is already on the branch; verified on the head `1d92f763`
 
