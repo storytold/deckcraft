@@ -4,7 +4,7 @@
 
 use deckcraft_engine::Session;
 use deckcraft_model::ShapeId;
-use deckcraft_model::text::RunProps;
+use deckcraft_model::text::{LevelStyle, RunProps};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
@@ -12,21 +12,22 @@ use serde_json::json;
 use super::fmt_state;
 use crate::{Services, SlideApp};
 
-/// A selected text box whose paragraph gives its text a shadow (`defRPr`), on the Home tab.
+/// A selected text box whose list style gives its text a shadow (`a:lstStyle`), on the Home tab.
 fn harness() -> (Harness<'static, SlideApp>, ShapeId) {
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100.0, 100.0, 300.0, 80.0], "text": "Shadowed"})).unwrap();
     let id = ShapeId(r["id"].as_u64().unwrap() as u32);
     s.execute("format.textShadow", &json!({"on": true})).unwrap();
-    // Move the shadow from the run to its paragraph, so the run only inherits it.
+    // Move the shadow from the run to the text box's list style, so the run only inherits it.
     let body = s.doc().unwrap().shape(id).unwrap().text.clone().unwrap();
     let shadow = body.paragraphs[0].runs[0].props.shadow.clone();
     assert!(shadow.is_some());
     s.execute("edit.undo", &json!({})).unwrap();
     s.edit(|doc, sel| {
         let sh = deckcraft_model::find_shape_mut(deckcraft_engine::shapes_mut(doc, sel).unwrap(), id).unwrap();
-        sh.text.as_mut().unwrap().paragraphs[0].def_props = RunProps { shadow, ..Default::default() };
+        let level = LevelStyle { run: RunProps { shadow, ..Default::default() }, ..Default::default() };
+        sh.text.as_mut().unwrap().list_style.levels = vec![Some(level)];
         Ok(())
     })
     .unwrap();
