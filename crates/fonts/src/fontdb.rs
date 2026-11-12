@@ -188,6 +188,10 @@ pub struct FontFace {
     /// UDPGothic. Office documents written on a Japanese, Chinese or Korean system name fonts so
     /// ("ＭＳ Ｐゴシック", "微软雅黑", "맑은 고딕"), and those names find the face.
     pub aliases: Vec<String>,
+    /// The Windows family's names in other languages (`name` ID 1) when the face has a Windows
+    /// family of its own ([`FontFace::legacy`]): "例サンス Semibold" names the Semibold face, as
+    /// its English Windows name does, not the family.
+    pub legacy_aliases: Vec<String>,
     /// usWeightClass-style weight (400 = regular).
     pub weight: f32,
     pub italic: bool,
@@ -286,6 +290,7 @@ impl FontFace {
         self.family.eq_ignore_ascii_case(name)
             || self.legacy.as_ref().is_some_and(|(l, _)| l.eq_ignore_ascii_case(name))
             || self.aliases.iter().any(|a| a.eq_ignore_ascii_case(name))
+            || self.legacy_aliases.iter().any(|a| a.eq_ignore_ascii_case(name))
     }
 
     pub fn data(&self) -> &[u8] {
@@ -501,19 +506,31 @@ fn face_names(f: &skrifa::FontRef<'_>) -> Option<(String, String)> {
 const MAX_FAMILY_ALIASES: usize = 32;
 
 /// The family names `f` gives in languages other than the one `family` came from (`name` IDs 16
-/// and 1, every platform and language), each once.
-fn family_aliases(f: &skrifa::FontRef<'_>, family: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+/// and 1, every platform and language), each once. With `legacy` (the face's own Windows family,
+/// see [`legacy_names`]) the ID 1 names are that family's and come second, apart from the
+/// typographic family's: a localized Windows family names one face, as the English one does.
+fn family_aliases(f: &skrifa::FontRef<'_>, family: &str, legacy: Option<&str>) -> (Vec<String>, Vec<String>) {
+    let (mut typographic, mut windows): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     for id in [StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME] {
+        let to_windows = id == StringId::FAMILY_NAME && legacy.is_some();
         for s in f.localized_strings(id) {
             let s = s.to_string();
             let s = s.trim();
-            if !s.is_empty() && !s.eq_ignore_ascii_case(family) && !out.iter().any(|a| a.eq_ignore_ascii_case(s)) && out.len() < MAX_FAMILY_ALIASES {
-                out.push(s.to_string());
+            let known = |v: &[String]| v.iter().any(|a| a.eq_ignore_ascii_case(s));
+            let room = if to_windows { windows.len() } else { typographic.len() } < MAX_FAMILY_ALIASES;
+            if s.is_empty()
+                || s.eq_ignore_ascii_case(family)
+                || legacy.is_some_and(|l| l.eq_ignore_ascii_case(s))
+                || known(&typographic)
+                || known(&windows)
+                || !room
+            {
+                continue;
             }
+            if to_windows { windows.push(s.to_string()) } else { typographic.push(s.to_string()) }
         }
     }
-    out
+    (typographic, windows)
 }
 
 /// A face's Windows (GDI) family and style (`name` IDs 1 and 2) when that family differs from the
@@ -600,9 +617,11 @@ fn file_face_names(path: &std::path::Path) -> Vec<(String, String, Vec<String>)>
             font.extend_from_slice(&table);
             let f = skrifa::FontRef::new(&font).ok()?;
             let (family, style) = face_names(&f)?;
-            let aliases = family_aliases(&f, &family);
-            // Cataloged under its Windows family too, so "Segoe UI Semibold" finds the file.
-            let legacy = legacy_names(&f, &family).map(|(fam, sty)| (fam, sty, Vec::new()));
+            let legacy = legacy_names(&f, &family);
+            let (aliases, legacy_aliases) = family_aliases(&f, &family, legacy.as_ref().map(|l| l.0.as_str()));
+            // Cataloged under its Windows family too, so "Segoe UI Semibold" finds the file, and
+            // that family's other-language names with it.
+            let legacy = legacy.map(|(fam, sty)| (fam, sty, legacy_aliases));
             Some(std::iter::once((family, style, aliases)).chain(legacy))
         })
         .flatten()
@@ -884,13 +903,16 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, coords
         .or(axis(b"slnt").map(|v| v.abs() > 0.1))
         .unwrap_or(!matches!(a.style, skrifa::attribute::Style::Normal) || style_italic(&style));
     let legacy = if coords.is_empty() { legacy_names(&f, &family) } else { instance_legacy_names(&family, &style) };
-    let aliases = family_aliases(&f, &family);
+    // A named instance's Windows name is made up (`instance_legacy_names`): the file's ID 1
+    // names are the family's, not that instance's.
+    let (aliases, legacy_aliases) = family_aliases(&f, &family, legacy.as_ref().filter(|_| coords.is_empty()).map(|l| l.0.as_str()));
     Some(FontFace {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         family,
         style,
         legacy,
         aliases,
+        legacy_aliases,
         weight,
         italic,
         upem: m.units_per_em.max(1) as f64,
@@ -1297,20 +1319,28 @@ impl FontDb {
             return None;
         }
         let alias = |aliases: &[String]| aliases.iter().any(|a| a.eq_ignore_ascii_case(family));
-        if let Some(f) = self.read_faces().iter().find(|f| alias(&f.aliases)) {
-            return Some(f.family.clone());
-        }
+        // An installed family called `family` wins over another family's alias, loaded or not, so
+        // the answer doesn't depend on what was loaded first. (The catalog is read, and its lock
+        // let go, before the faces are.)
         #[cfg(not(target_arch = "wasm32"))]
-        {
+        let cataloged = {
             let cat = self.read_catalog();
             if cat.iter().any(|c| c.family.eq_ignore_ascii_case(family)) {
                 return None;
             }
-            if let Some(c) = cat.iter().find(|c| alias(&c.aliases)) {
-                return Some(c.family.clone());
-            }
+            cat.iter().find(|c| alias(&c.aliases)).map(|c| c.family.clone())
+        };
+        #[cfg(target_arch = "wasm32")]
+        let cataloged: Option<String> = None;
+        let faces = self.read_faces();
+        // A Windows family's name in another language: that family, which finds its face.
+        if let Some((l, _)) = faces.iter().find(|f| alias(&f.legacy_aliases)).and_then(|f| f.legacy.as_ref()) {
+            return Some(l.clone());
         }
-        None
+        if let Some(f) = faces.iter().find(|f| alias(&f.aliases)) {
+            return Some(f.family.clone());
+        }
+        cataloged
     }
 
     pub(crate) fn is_loaded(&self, family: &str) -> bool {

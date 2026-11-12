@@ -489,6 +489,103 @@ fn an_installed_font_is_found_by_its_localized_family_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `font` with these Windows Unicode name records (`(language, name ID, text)`) put in, over any
+/// with the same language and ID; the `name` table is rebuilt at the end of the file.
+fn with_names(font: &[u8], names: &[(u16, u16, &str)]) -> Vec<u8> {
+    let be16 = |b: &[u8], at: usize| u16::from_be_bytes([b[at], b[at + 1]]);
+    let be32 = |b: &[u8], at: usize| u32::from_be_bytes(b[at..at + 4].try_into().unwrap());
+    let rec = (0..be16(font, 4) as usize).map(|i| 12 + 16 * i).find(|&r| &font[r..r + 4] == b"name").unwrap();
+    let (off, len) = (be32(font, rec + 8) as usize, be32(font, rec + 12) as usize);
+    let table = &font[off..off + len];
+    let storage = be16(table, 4) as usize;
+    let mut records: Vec<([u16; 4], Vec<u8>)> = (0..be16(table, 2) as usize)
+        .map(|i| {
+            let r = 6 + 12 * i;
+            let (l, o) = (be16(table, r + 8) as usize, be16(table, r + 10) as usize);
+            ([be16(table, r), be16(table, r + 2), be16(table, r + 4), be16(table, r + 6)], table[storage + o..storage + o + l].to_vec())
+        })
+        .collect();
+    for (lang, id, text) in names {
+        records.retain(|r| r.0 != [3, 1, *lang, *id]);
+        records.push(([3, 1, *lang, *id], text.encode_utf16().flat_map(u16::to_be_bytes).collect()));
+    }
+    records.sort_by_key(|r| r.0);
+    let mut out_table = [0u16, records.len() as u16, (6 + 12 * records.len()) as u16].iter().flat_map(|v| v.to_be_bytes()).collect::<Vec<u8>>();
+    let mut strings = Vec::new();
+    for (key, bytes) in &records {
+        out_table.extend(key.iter().chain(&[bytes.len() as u16, strings.len() as u16]).flat_map(|v| v.to_be_bytes()));
+        strings.extend_from_slice(bytes);
+    }
+    out_table.extend(strings);
+    let mut out = font.to_vec();
+    out.resize(out.len().next_multiple_of(4), 0);
+    let at = out.len() as u32;
+    out[rec + 8..rec + 12].copy_from_slice(&at.to_be_bytes());
+    out[rec + 12..rec + 16].copy_from_slice(&(out_table.len() as u32).to_be_bytes());
+    out.extend(out_table);
+    out
+}
+
+const JAPANESE: u16 = 0x0411;
+
+/// A face's Windows family in another language (`name` ID 1) names that face, as the English
+/// Windows family does: "デッキ旧 セミボールド" / "Regular" is the Semibold face, not the family's
+/// Regular. The typographic family's localized name (ID 16) still names the family.
+#[test]
+fn a_localized_windows_family_name_finds_its_own_face() {
+    let semibold =
+        with_names(include_bytes!("../tests/fixtures/legacy-semibold.ttf"), &[(JAPANESE, 16, "デッキ旧"), (JAPANESE, 1, "デッキ旧 セミボールド")]);
+    let regular = with_names(
+        include_bytes!("../tests/fixtures/legacy-regular.ttf"),
+        &[(0x0409, 16, "DeckCraft Legacy"), (JAPANESE, 16, "デッキ旧"), (JAPANESE, 1, "デッキ旧")],
+    );
+    let check = |db: &FontDb, how: &str| {
+        assert!(db.has_family("デッキ旧 セミボールド"), "{how}");
+        let f = db.face("デッキ旧 セミボールド", "Regular");
+        assert_eq!((f.family.as_str(), f.style.as_str()), ("DeckCraft Legacy", "Semibold"), "{how}: the localized Windows family");
+        let f = db.face("デッキ旧", "Regular");
+        assert_eq!((f.family.as_str(), f.style.as_str()), ("DeckCraft Legacy", "Regular"), "{how}: the localized typographic family");
+        assert_eq!(db.face("デッキ旧", "Semibold").style, "Semibold", "{how}");
+    };
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    assert_eq!(db.add_font(regular.clone()), 1);
+    assert_eq!(db.add_font(semibold.clone()), 1);
+    check(&db, "loaded");
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = std::env::temp_dir().join(format!("dk-localized-windows-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("legacy-regular.ttf"), &regular).unwrap();
+        std::fs::write(dir.join("legacy-semibold.ttf"), &semibold).unwrap();
+        let db = FontDb::with_font_dirs(vec![dir.clone()]);
+        db.set_system_fallback(false);
+        check(&db, "installed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// An installed family called `name` wins over a loaded family that has `name` as another
+/// language's name, before and after it loads: the answer used to depend on load order.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_installed_family_wins_over_a_loaded_familys_alias() {
+    let twin = with_names(include_bytes!("../tests/fixtures/legacy-regular.ttf"), &[(0x0409, 1, "Legacy Twin"), (0x0409, 16, "Legacy Twin")]);
+    let dir = std::env::temp_dir().join(format!("dk-alias-order-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("twin.ttf"), &twin).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.clone()]);
+    db.set_system_fallback(false);
+    // A loaded family whose Japanese name is the installed family's English one.
+    assert_eq!(db.add_font(with_names(include_bytes!("../tests/fixtures/legacy-semibold.ttf"), &[(JAPANESE, 16, "Legacy Twin")])), 1);
+    assert!(!db.is_loaded("Legacy Twin"), "only the scan of `dir` has it");
+    assert_eq!(db.face("Legacy Twin", "Regular").family, "Legacy Twin", "before it loads");
+    assert_eq!(db.face("Legacy Twin", "Regular").family, "Legacy Twin", "after");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn disabling_system_fallback_gates_automatic_family_loads() {
     let db = FontDb::with_font_dirs(Vec::new());
