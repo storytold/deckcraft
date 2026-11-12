@@ -798,6 +798,116 @@ mod tests {
         assert_eq!(hub.version(), 3);
     }
 
+    /// One replica with three blank slides: the first carries the two shapes of [`deck_session`].
+    fn three_slide_session() -> Session {
+        let mut s = deck_session();
+        for at in [1, 2] {
+            s.apply_remote("slide.new", &json!({"layout": "blank", "at": at})).expect("slide");
+        }
+        s
+    }
+
+    /// Carry both clients to quiescence: an operation a client holds behind a structural step
+    /// leaves only after that step's answer, so one pass over the sockets is not enough.
+    fn pump(hub: &mut Hub, a: &mut CollabDoc, sa: &mut Session, b: &mut CollabDoc, sb: &mut Session) {
+        for _ in 0..4 {
+            send_all(hub, a, "alice");
+            send_all(hub, b, "bob");
+            deliver(hub, a, sa, "alice");
+            deliver(hub, b, sb, "bob");
+        }
+    }
+
+    /// A command that moves a multiple selection is several operations. Each one is its own
+    /// identity and its own version, so every replica runs all of them — the author's included,
+    /// because a multi-operation command never previews (RFC §3). Before the fix every operation
+    /// repeated the command's id, the room deduplicated the second and the third against the
+    /// first, and only one shape moved while a preview-less client drew none.
+    #[test]
+    fn a_move_of_a_multiple_selection_applies_every_operation_on_both_replicas() {
+        let mut hub = hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = deck_session();
+        let mut sb = deck_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+
+        let ids: Vec<u64> = sa.doc().expect("doc").doc.slides[0].shapes.iter().map(|shape| u64::from(shape.id.0)).collect();
+        assert_eq!(ids.len(), 2, "two shapes move");
+        assert_eq!(a.submit(&mut sa, "shape.move", &json!({"ids": ids, "dx": 20.0, "dy": 10.0}), "a-1").expect("submit"), 2);
+        let mut sent = Vec::new();
+        while let Some(msg) = a.next_outgoing() {
+            if let ClientMsg::Op(op) = msg {
+                sent.push(op.clone());
+                hub.receive("alice", ClientMsg::Op(op)).expect("op");
+            }
+        }
+        assert_eq!(sent.len(), 2);
+        assert_ne!(sent[0].op_id, sent[1].op_id, "one operation, one identity");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+
+        let boxes = |s: &Session| {
+            let doc = s.doc().expect("doc");
+            doc.doc.slides[0]
+                .shapes
+                .iter()
+                .map(|shape| {
+                    let xfrm = shape.xfrm.expect("xfrm");
+                    (xfrm.x, xfrm.y)
+                })
+                .collect::<Vec<_>>()
+        };
+        let expected = vec![(120.0, 110.0), (420.0, 110.0)];
+        assert_eq!(boxes(&sa), expected, "both shapes moved on the author's replica");
+        assert_eq!(boxes(&sb), expected, "and on the other replica");
+        assert_eq!(hub.session().document().expect("doc").slides[0].shapes[0].xfrm.expect("xfrm").x, 120.0, "and in the room");
+        assert_eq!((hub.version(), a.version(), b.version()), (2, 2, 2), "two operations, two versions");
+
+        // The same two operations arriving again are one resend each: dedup still answers with
+        // the stored result, nothing applies twice and no version moves.
+        for op in &sent {
+            hub.receive("alice", ClientMsg::Op(op.clone())).expect("resend");
+        }
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(hub.version(), 2, "a repeated id is deduplicated");
+        assert_eq!(boxes(&sa), expected);
+        assert_eq!(boxes(&sb), expected);
+    }
+
+    #[test]
+    fn deleting_several_slides_applies_every_operation_on_both_replicas() {
+        let doc = three_slide_session().doc().expect("doc").doc.as_ref().clone();
+        let mut hub = Hub::new(DocSession::from_document("d", doc, Default::default()).expect("session"));
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = three_slide_session();
+        let mut sb = three_slide_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+
+        let slides: Vec<u64> = sa.doc().expect("doc").doc.slides.iter().map(|slide| u64::from(slide.id.0)).collect();
+        assert_eq!(slides.len(), 3);
+        assert_eq!(a.submit(&mut sa, "slide.delete", &json!({"ids": slides[1..]}), "a-1").expect("submit"), 2);
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+
+        let count = |s: &Session| s.doc().expect("doc").doc.slides.len();
+        assert_eq!(count(&sa), 1, "both deletions reached the author's replica");
+        assert_eq!(count(&sb), 1, "and the other replica");
+        assert_eq!(hub.session().document().expect("doc").slides.len(), 1, "and the room");
+        assert_eq!((hub.version(), a.version(), b.version()), (2, 2, 2));
+    }
+
     #[test]
     fn a_shape_insert_converges_with_the_same_id_and_key() {
         let mut hub = hub();

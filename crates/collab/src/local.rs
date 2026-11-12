@@ -776,15 +776,29 @@ pub fn normalize_with_painter(
     }
     let slide = st.doc.slides.get(st.selection.slide).ok_or(LocalError::NoDocument)?;
     let slide_key = keys.slide_key(slide.id).cloned();
-    let make = |target: Target, payload: Payload| OpEnvelope {
-        op_id: op_id.to_string(),
-        doc: doc.to_string(),
-        base_version: 0,
-        kind: class_of(&payload),
-        target,
-        payload,
-        history: None,
-        preview: None,
+    // One operation is one identity: the room remembers accepted operations by `opId` and answers
+    // a repeat with the stored result instead of applying it again (ADR 0003). A command that
+    // normalises to N operations — a move or a resize of a multiple selection, a deletion of
+    // several slides or animation steps — must therefore carry N different ids, or the room would
+    // apply only the first and answer the rest with its version, while this replica showed them
+    // all. The first operation keeps the id the caller handed in: the optimistic preview and the
+    // sender's own settle are keyed on it (RFC §3). The numbering is per command and counts from
+    // the first emitted operation, so normalising the same command twice gives the same ids and a
+    // resend is still one operation.
+    let seq = std::cell::Cell::new(0u32);
+    let make = |target: Target, payload: Payload| {
+        let index = seq.get();
+        seq.set(index + 1);
+        OpEnvelope {
+            op_id: if index == 0 { op_id.to_string() } else { format!("{op_id}#{index}") },
+            doc: doc.to_string(),
+            base_version: 0,
+            kind: class_of(&payload),
+            target,
+            payload,
+            history: None,
+            preview: None,
+        }
     };
     // A whole-value object — the rest of the table surface, a SmartArt graphic and a chart — is one
     // final value per command, every address resolved from this replica's selection, so the
@@ -2519,6 +2533,46 @@ mod tests {
         assert_eq!(ops[0].kind, OpKind::Command);
     }
 
+    /// A command that names several shapes is several operations on the wire, so each one needs
+    /// its own identity: the room answers a repeated `opId` with the stored result and would
+    /// silently drop the rest (ADR 0003). The first keeps the id the caller handed in, which is
+    /// what the optimistic preview and the sender's own settle are keyed on.
+    #[test]
+    fn a_move_of_a_multiple_selection_gives_each_operation_its_own_id() {
+        let (s, doc, slide, shapes) = deck();
+        let km = keys(s.doc().expect("doc").doc.as_ref());
+        let st = s.doc().expect("doc");
+        let p = json!({"ids": [shapes[0].0, shapes[1].0], "dx": 25.0, "dy": -5.0});
+        let ops = normalize(&km, st, "shape.move", &p, "op", &doc).expect("normalise");
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops.iter().map(|op| op.op_id.as_str()).collect::<Vec<_>>(), vec!["op", "op#1"], "one identity per operation");
+        for (op, id) in ops.iter().zip([shapes[0], shapes[1]]) {
+            assert_eq!(op.target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+            assert_eq!(op.target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(id));
+        }
+        assert_eq!(ops[0].payload, Payload::ShapeMove { x: 125.0, y: 95.0 });
+        assert_eq!(ops[1].payload, Payload::ShapeMove { x: 425.0, y: 95.0 });
+        // The same command normalised again gives the same ids, so a resend is still one
+        // operation per shape and the room dedups it instead of applying it twice.
+        let again = normalize(&km, st, "shape.move", &p, "op", &doc).expect("normalise again");
+        assert_eq!(again.iter().map(|op| op.op_id.as_str()).collect::<Vec<_>>(), vec!["op", "op#1"]);
+    }
+
+    #[test]
+    fn a_resize_of_a_multiple_selection_gives_each_operation_its_own_id() {
+        let (s, doc, slide, shapes) = deck();
+        let km = keys(s.doc().expect("doc").doc.as_ref());
+        let st = s.doc().expect("doc");
+        let p = json!({"ids": [shapes[0].0, shapes[1].0], "x": 10.0, "y": 20.0, "w": 30.0, "h": 40.0});
+        let ops = normalize(&km, st, "shape.setBounds", &p, "op", &doc).expect("normalise");
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops.iter().map(|op| op.op_id.as_str()).collect::<Vec<_>>(), vec!["op", "op#1"]);
+        for (op, id) in ops.iter().zip([shapes[0], shapes[1]]) {
+            assert_eq!(op.payload, Payload::ShapeSetBounds { x: 10.0, y: 20.0, w: 30.0, h: 40.0 });
+            assert_eq!(op.target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(id));
+        }
+    }
+
     #[test]
     fn a_finished_drag_normalises_to_one_operation_with_its_final_boxes() {
         let (s, doc, slide, shapes) = deck();
@@ -2830,6 +2884,28 @@ mod tests {
         assert_eq!(ops.len(), 1, "the current slide only");
         assert!(matches!(ops[0].payload, Payload::SlideDelete {}));
         assert_eq!(ops[0].kind, OpKind::Structural);
+    }
+
+    #[test]
+    fn deleting_several_slides_gives_each_operation_its_own_id() {
+        let (mut s, doc, _, _) = deck();
+        s.execute("slide.new", &json!({"layout": "blank"})).expect("second");
+        s.execute("slide.new", &json!({"layout": "blank"})).expect("third");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ids: Vec<u64> = st.doc.slides.iter().map(|slide| u64::from(slide.id.0)).collect();
+        let ops = normalize(&km, st, "slide.delete", &json!({"ids": ids}), "op", &doc).expect("normalise");
+        assert_eq!(ops.len(), 3);
+        assert_eq!(
+            ops.iter().map(|op| op.op_id.as_str()).collect::<Vec<_>>(),
+            vec!["op", "op#1", "op#2"],
+            "three deletions are three operations, not one answered three times"
+        );
+        for (op, id) in ops.iter().zip(&ids) {
+            assert!(matches!(op.payload, Payload::SlideDelete {}));
+            assert_eq!(op.kind, OpKind::Structural);
+            assert_eq!(op.target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(SlideId(*id as u32)));
+        }
     }
 
     #[test]

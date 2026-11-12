@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    BaseChunks, ClientInfo, ClientMsg, Hello, Lease, OpEnvelope, PROTO_VERSION, RejectCode, Role, ServerMsg, SnapshotMode, SnapshotMsg,
+    BaseChunks, ClientInfo, ClientMsg, Hello, Lease, OpEnvelope, OpKind, PROTO_VERSION, RejectCode, Role, ServerMsg, SnapshotMode, SnapshotMsg,
 };
 
 /// Why a submitted operation was not accepted by the client.
@@ -363,6 +363,15 @@ impl ClientSession {
             return Some(ClientMsg::Commit { expected_file_version: request.expected });
         }
         if self.in_flight.len() >= self.max_in_flight {
+            return None;
+        }
+        // A structural operation is accepted only at the head (ADR 0004 §2), so it must not
+        // overtake an operation the room has not answered yet: it would leave with a stale base
+        // and cost a resync to come back. A command that normalises into several structural
+        // operations — deleting several slides, several animation steps — therefore goes out one
+        // answer at a time, and nothing behind it overtakes it either, so the order the user made
+        // is the order the room applies.
+        if self.queued.front().is_some_and(|op| op.kind == OpKind::Structural) && !self.in_flight.is_empty() {
             return None;
         }
         let mut op = self.queued.pop_front()?;
@@ -728,6 +737,31 @@ mod tests {
 
     fn applied(id: &str, version: u64) -> ServerMsg {
         ServerMsg::Applied(Applied { op_id: id.into(), version, actor_id: "a".into(), command: None, delta: Delta::default() })
+    }
+
+    fn structural(id: &str, base: u64) -> OpEnvelope {
+        OpEnvelope { kind: OpKind::Structural, payload: Payload::SlideDelete {}, ..op(id, base) }
+    }
+
+    /// A structural operation is only accepted at the head, so it waits for every operation sent
+    /// before it to be answered — a command that normalises into several of them (deleting several
+    /// slides) goes out one answer at a time instead of coming back as a stale step and a resync.
+    #[test]
+    fn a_structural_operation_waits_for_the_answer_to_the_one_before_it() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.submit(op("o1", 0)).expect("queue");
+        c.submit(structural("o2", 0)).expect("queue");
+        c.submit(op("o3", 0)).expect("queue");
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Op(op)) if op.op_id == "o1"), "a command goes out at once");
+        assert!(c.next_outgoing().is_none(), "the structural step does not overtake it");
+        assert_eq!(c.on_msg(applied("o1", 1)), Effect::Settled);
+        // Sent now, it carries the head the room will order it against.
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Op(op)) if op.op_id == "o2" && op.base_version == 1));
+        // A command behind it may follow: the room orders it after the structural step and a
+        // non-structural payload is accepted on an older base.
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::Op(op)) if op.op_id == "o3"));
+        assert_eq!(c.on_msg(applied("o2", 2)), Effect::Settled);
     }
 
     #[test]
