@@ -114,6 +114,7 @@ struct Eff<'a> {
     start: AnimStart,
     paragraph: Option<u32>,
     grp: u32,
+    chart: Option<ChartTarget>,
 }
 
 struct Ids(u32);
@@ -161,7 +162,7 @@ fn cbhvr(w: &mut W, ids: &mut Ids, e: &Eff, dur: u32, delay: Option<u32>, attrs:
         }
         None => w.empty("p:cTn", a),
     }
-    tgt(w, e.spid, e.paragraph, e.a.chart_target);
+    tgt(w, e.spid, e.paragraph, e.chart);
     if !attrs.is_empty() {
         w.open0("p:attrNameLst");
         for n in attrs {
@@ -382,7 +383,7 @@ fn behaviors(w: &mut W, x: &mut Exp, ids: &mut Ids, e: &Eff) {
                     w.open("p:animClr", A::new().a("clrSpc", "rgb").a("dir", "cw"));
                     w.open("p:cBhvr", A::new().o("override", child.then_some("childStyle")));
                     w.empty("p:cTn", A::new().a("id", ids.next()).a("dur", dur.max(1)).a("autoRev", "1").a("fill", "remove"));
-                    tgt(w, e.spid, e.paragraph, e.a.chart_target);
+                    tgt(w, e.spid, e.paragraph, e.chart);
                     w.open0("p:attrNameLst");
                     w.elt("p:attrName", attr);
                     w.close("p:attrNameLst");
@@ -645,6 +646,10 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         let Some(&shape) = by_id.get(&a.shape) else { continue };
         let text_sp = matches!(shape.kind, ShapeKind::Shape) && shape.text.is_some();
         let is_text_sp = matches!(shape.kind, ShapeKind::Shape) && shape.text.as_ref().is_some_and(|t| !t.is_empty());
+        // Chart selectors and chart builds are only valid on a chart; the Animation Painter can copy them onto other shapes.
+        let chart_sp = matches!(shape.kind, ShapeKind::Chart(_));
+        let chart_build = a.chart_build.filter(|_| chart_sp);
+        let chart_target = a.chart_target.filter(|_| chart_sp);
         let text = shape.text.as_ref().filter(|_| a.text_build == TextBuild::ByParagraph && is_text_sp);
         let no_roles = Vec::new();
         let roles = match text {
@@ -657,7 +662,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         // the same way.
         let para_effect = !by_para && text_sp && a.paragraph.is_some();
         let joins = para_effect && prev_para.is_some_and(|(s, c, t, _)| s == a.shape && c == a.class && t == a.trigger);
-        let grp = match (a.chart_build, prev_para) {
+        let grp = match (chart_build, prev_para) {
             (Some(build), _) => build.group,
             (None, Some((.., g))) if joins => g,
             _ => new_group(spid, &mut grp_count, &reserved_chart_groups),
@@ -691,13 +696,13 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
                     }
                     break;
                 }
-                effs.push(Eff { a, spid, start, paragraph: Some(pi), grp });
+                effs.push(Eff { a, spid, start, paragraph: Some(pi), grp, chart: None });
             }
         } else {
-            effs.push(Eff { a, spid, start: a.start, paragraph: a.paragraph, grp });
+            effs.push(Eff { a, spid, start: a.start, paragraph: a.paragraph, grp, chart: chart_target });
         }
         effect_count += effs.len();
-        if let Some(build) = a.chart_build
+        if let Some(build) = chart_build
             && !effs.is_empty()
             && chart_bld_seen.insert((spid, build.group))
         {
