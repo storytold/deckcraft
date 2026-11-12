@@ -617,9 +617,12 @@ fn draw_live_layers(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painte
         }
     }
     if full_screen {
-        // A video playing full screen covers the whole slide: its frame paints last over the
-        // texture, with no overlay above it.
-        for (id, _, _, crop) in &videos {
+        // A video playing full screen covers the whole slide: only the playing clip paints,
+        // last over the texture, with no overlay above it. A paused inline video may still
+        // hold a texture; painting it into `full` would cover the playing clip.
+        if let Some((id, _, _, crop)) =
+            videos.iter().find(|(id, _, _, _)| sl.media.iter().any(|(mid, _, clip)| mid == id && clip.full_screen && app.media.is_playing(*id)))
+        {
             crate::media::paint_frame(painter, &app.media, *id, full, *crop);
         }
         return;
@@ -686,7 +689,13 @@ fn draw_retained_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Paint
                 let (_, _, h) = &mut show.overlay[p];
                 crate::textures::replace(ctx, h, ci);
             }
-            None => show.overlay.push((sl.key.clone(), skip.clone(), crate::textures::upload(ctx, "show-overlay", ci))),
+            None => {
+                // A long show would otherwise accrue a full-slide texture per slide, size, and
+                // document. Keep only this slide/size/document: eviction ignores the GIF frame
+                // (in `Key.gif`), so a looping GIF reuses its entry instead of re-rendering.
+                show.overlay.retain(|(k, _, _)| k.slide == sl.key.slide && k.size == sl.key.size && k.doc == sl.key.doc);
+                show.overlay.push((sl.key.clone(), skip.clone(), crate::textures::upload(ctx, "show-overlay", ci)));
+            }
         }
     }
     if let Some((_, _, h)) = show.overlay.iter().rev().find(|(k, s, _)| *k == sl.key && *s == skip) {
