@@ -29,7 +29,7 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
             if let Some(c) = cs.child(slot.xml_name()).and_then(dml::color) {
                 let rgb = match c.base {
                     ColorBase::Rgb { rgb } => rgb,
-                    ColorBase::System { last, .. } => last,
+                    ColorBase::System { name, last } => deckcraft_color::system_color(&name, last),
                     ColorBase::Preset { name } => deckcraft_color::preset(&name).unwrap_or(Rgba::BLACK),
                     ColorBase::Scheme { .. } => continue,
                 };
