@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-11. Branch: `collab/pr15`, branched from `collab/pr14` at `6e42a7ab` (the desktop
+Updated: 2026-11-12. Branch: `collab/pr15`, branched from `collab/pr14` at `6e42a7ab` (the desktop
 commit and its docs commit): **optimistic preview** (RFC §3) — with `DECKCRAFT_COLLAB_PREVIEW=1`
 one local operation is shown before the room answers, settled by `applied`, rolled back exactly on
 a refusal and abandoned for a `resync` when another participant's step lands in between; the wire
@@ -15,11 +15,18 @@ restart limits), then `9ad80547` (code, tests and docs: the fourth review's tria
 and record the unrun gate), then `fd5914e8` (the **presence heartbeat**: an unchanged presence is
 repeated every 10 s, inside the room's 30 s TTL, and a moved one stays capped at 20 Hz; the test
 drives the pump over an in-process pipe and fails without the heartbeat).
-**`fd5914e8` is the last code slice; the docs commit above it is `da8ba866`, and that is what the
-fork (`copoka/deckcraft`) and PR #2012 hold: `git ls-remote fork refs/heads/collab/pr15` and
-`gh pr view 2012 --json headRefOid` both name `da8ba866`. Local HEAD is the merge of `origin/main`
-at `c6846f6a` (`c9803277`, §Merge of `origin/main`) with this STATUS commit on top; neither is
-pushed, so local HEAD and the PR head differ until a person pushes the branch.**
+**`aaecc6db` is the newest code slice: one operation, one identity.** The normaliser gave every
+operation of one command the command's single `op_id`; the room dedups on `op_id`, so it applied the
+first operation of a multi-object command and answered the rest with the stored result — a
+multiple-selection move or resize moved one shape and deleting several slides deleted one, on every
+replica and with no rejection to notice it. Each operation now carries its own id (`<id>` for the
+first, `<id>#<n>` after it), and a structural operation waits for the answer to everything sent
+before it, so the N structural steps of one command go out one answer at a time instead of arriving
+stale and costing a `resync` each. Details and consequences: §One operation, one identity.
+**`96783106` is the delivered head — the `origin/main` merge `c9803277` plus its STATUS commit — and
+that is what the fork (`copoka/deckcraft`) and PR #2012 hold: `gh pr view 2012 --json headRefOid`
+named `96783106` at 2026-11-11T23:30Z. Local HEAD adds `aaecc6db` and this STATUS commit on top;
+neither is pushed, so local HEAD and the PR head differ until a person pushes the branch.**
 The push delivered `fd5914e8` on top of `1f78cadb`, so every review fix up to that head is
 delivered: the fifth review's
 triage is delivered too — a room
@@ -478,7 +485,10 @@ human decision.
   `fileId` plus the same document walk; tombstones refuse late operations.
 - Authoritative ordering: one server `version`, `opId` dedup with a 10 000-entry window,
   structural operations exclusive at the head, `applied` broadcast to everyone **with the
-  confirmed command** so every replica runs the same command in the same order.
+  confirmed command** so every replica runs the same command in the same order. Dedup is per
+  **operation**, not per command: a command that normalises into N operations carries N ids (the
+  first keeps the id the preview and the sender's settle are keyed on, the rest are `<id>#<n>`),
+  and a structural operation is only sent once everything before it has been answered.
 - Delta of changed fields (no values, no derived state): group frames, connector routes and
   autofit are recomputed on each replica.
 - Base transfer: when compaction removed the journal below a client's version, `resync`
@@ -1540,18 +1550,19 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (last code slice
-   `fd5914e8` with the STATUS commit on top = `da8ba866` = fork head = PR head); every
-   review pass, the STATUS sync and the presence heartbeat are delivered. **Local HEAD is the
-   merge of `origin/main` at `c6846f6a`, `c9803277`, with this STATUS commit on top** (§Merge of
-   `origin/main`) — the branch
-   is no longer `CONFLICTING` locally, but the merge is not pushed, so GitHub still sees
-   `da8ba866` and its `mergeable`/`mergeStateStatus` verdict will only be recomputed after the
-   push (`push` and CI approval are the owner's steps). The local TASK.md §8 gate is green on the
-   merge commit: fmt clean, clippy `--workspace --all-targets -D warnings` EXIT=0, `collab` 288 +
-   8, `collab-proto` 42, `collab-server` 19 unit + 5 commit + 18 socket + 5 gates (19.1 s),
-   `engine` 612 + 1, `pptx` 70 + 5 + 146, `ui-egui --lib` 526 + 4 ignored with only the known
-   host-font failure, `xtask` pdf-deps/assets/layers/wasm green. The **workflow** gate still has not run: CI, House
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (delivered head `96783106`
+   = the `origin/main` merge `c9803277` plus its STATUS commit); every review pass, the STATUS sync
+   and the presence heartbeat are delivered. **Local HEAD adds `aaecc6db` (the op_id slice,
+   §One operation, one identity) and this STATUS commit on top** — the branch is not `CONFLICTING`
+   locally, but these commits are not pushed, so GitHub still sees `96783106` and its
+   `mergeable`/`mergeStateStatus` verdict will only be recomputed after the push (`push` and CI
+   approval are the owner's steps). The local TASK.md §8 gate is green on `aaecc6db`: fmt clean,
+   clippy `-D warnings` for `collab` and `collab-server` EXIT=0, `collab` 294 + 8,
+   `collab-server` 19 unit + 5 commit + 5 gates + 18 socket, `ui-egui --lib` 526 + 4 ignored with
+   only the known host-font failure; the `--workspace` gate (engine 612, pptx 70 + 5 + 146,
+   `collab-proto` 42, `xtask` pdf-deps/assets/layers/wasm) is the one recorded for `c9803277` and
+   was not re-run for a change confined to `crates/collab`. The **workflow** gate still has not run:
+   CI, House
    rules, Nix and SonarCloud on `38a20a9c` are `action_required` (created 2026-11-11T11:31:32Z)
    and wait for a maintainer's approval; the runs for `fd5914e8` wait for the same approval.
    CodeRabbit's second review is closed, the third (`fd1ee71a`) found nothing in code, the fourth
@@ -1598,8 +1609,97 @@ token from the cabinet.
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); they now cover the long run (322 edits, media, a chained base, a resume mid-chain) as well as the three-client soak, so the remaining gate work is running LibreOffice where it is installed.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
+8. **Next code item, from the same review round (`5866843261` on #1998): the IME finding.** With
+   `collab_queue` set, `Session::execute_unguarded` (`crates/engine/src/lib.rs`) queues the command
+   and returns before `settle_composition()`, so a command sent while an input method is composing
+   is normalised against a document that does not yet hold the composing text. The fix is to settle
+   the composition before the queue branch (or to queue `text.commit` first) and needs IME tests in
+   `crates/engine`; it was left out of `aaecc6db` to keep that slice about operation identity.
+
+## One operation, one identity
+
+`normalize` turns one UI command into a list of operations. Until `aaecc6db` every operation of a
+command carried the single `op_id` the caller passed in (the `make` closure in
+`crates/collab/src/local.rs`), while `DocSession::apply` dedups on that id and `Hub::receive`
+broadcasts the stored `Applied` for a repeat (`crates/collab/src/session.rs`, `crates/collab/src/hub.rs`).
+A command naming several objects — `shape.move` with `ids`, `shape.setBounds` with `ids`,
+`slide.delete` of several slides (`slide_delete_ops`) — therefore ended as one version: the room ran
+the first operation and answered the following ones with it.
+
+Both consequences were silent. Every replica — the author's included, because a multi-operation
+command never previews — showed only the first change; and a resend could not repair the rest,
+because the ids were the same. The preview was never wrong here: `submit_prepared` previews only when
+`ops.len() == 1`, and that single operation's id is the command's id.
+
+**The rule.** One operation is one identity. The `make` closure numbers the operations of its
+command: the first keeps the caller's id, every later one is `<id>#<n>` in emit order. The numbering
+counts from the first operation a command emits and is deterministic, so normalising the same command
+twice (a deferred command, a retry) gives the same ids and a resend is still one operation per id —
+dedup by `opId` is untouched, and `ops[0].op_id` remains the id the optimistic preview and the
+sender's settle are keyed on.
+
+**Structural steps go one at a time.** `Adapter::apply` accepts a `structural` operation only at the
+head (ADR 0004 §2). With unique ids, the second `slide.delete` of one command would arrive with the
+base the first one already moved: `rejected{stale, retryable}` and a `resync` for every extra
+operation. `ClientSession::next_outgoing` therefore does not send a structural operation while an
+operation it sent before it is unanswered — the command's structural steps leave one answer at a
+time, in order, each with the head. A structural step from *another* participant still takes the
+stale + resync path, which is the ADR's intent.
+
+**What changes for the user.** A multiple-selection move or resize is now N versions and N undo steps
+rather than one silent no-op: the correct result, one step per object. A drag is unaffected — the UI
+sends it as `shape.setBoundsMany`, one operation with every final box — and so are
+`arrange.align`/`arrange.distribute`, which are carried as one final-bounds step. Grouping a
+multi-selection nudge into one undo step would need a history hint on the wire, which the protocol
+does not have: it changes nothing about convergence and is not part of this slice.
+
+**Verification** (host `agents`, on `aaecc6db`):
+
+```bash
+cargo fmt --all -- --check                              # clean
+cargo clippy -p deckcraft-collab -p deckcraft-collab-server --all-targets -- -D warnings   # EXIT=0
+cargo test -p deckcraft-collab -p deckcraft-collab-server
+# collab: 294 lib + 8 two_clients
+# collab-server: 19 unit + 5 commit + 5 gates + 18 socket
+cargo test -p deckcraft-ui-egui --lib                   # 526 passed, 4 ignored, the one known
+                                                        # host-font (CJK) failure: no ㄴ glyph
+```
+
+New tests: `local::tests::a_move_of_a_multiple_selection_gives_each_operation_its_own_id`,
+`a_resize_of_a_multiple_selection_gives_each_operation_its_own_id` and
+`deleting_several_slides_gives_each_operation_its_own_id` (ids, targets, deterministic repeat);
+`hub::tests::a_move_of_a_multiple_selection_applies_every_operation_on_both_replicas` (two replicas,
+two versions, both shapes moved, a resend of the same ids deduplicated),
+`deleting_several_slides_applies_every_operation_on_both_replicas`, and
+`client::tests::a_structural_operation_waits_for_the_answer_to_the_one_before_it`. Without the fix the
+two hub tests fail with the room at version 1 and one shape/slide changed. `rfc.md` §4.3 now states
+the rule.
 
 ## Session log
+
+### 2026-11-12 — one operation, one identity; multi-object commands reach the room whole
+
+- **What was wrong.** `crates/collab/src/local.rs`'s `make` closure stamped the command's single
+  `op_id` on every operation the command normalised into. The room's `opId` dedup (`session.rs`),
+  which answers a repeat with the stored `Applied`, then swallowed everything after the first
+  operation: a multiple-selection `shape.move`/`shape.setBounds` moved one shape and `slide.delete`
+  of several slides deleted one, on every replica, with no `rejected` to notice it. Found by
+  CodeRabbit (review `5866843261` on #1998) and confirmed on `96783106`.
+- **Done.** The normaliser numbers the operations of one command (`<id>`, `<id>#1`, …), the first
+  keeping the id the preview and the settle use; the numbering is deterministic so a resend keeps
+  its ids. `ClientSession` holds a structural operation until the operations sent before it are
+  answered, so the N structural steps of one command do not arrive stale. RFC §4.3 extended; the
+  consequences (N undo steps for a multi-selection move; a drag is still one step) are written down
+  in §One operation, one identity.
+- **Gate.** On `aaecc6db`: fmt clean, clippy `-D warnings` for collab and collab-server EXIT=0,
+  collab 294 lib + 8 two_clients, collab-server 19 unit + 5 commit + 5 gates + 18 socket, ui-egui
+  `--lib` 526 passed + 4 ignored with only the known host-font failure.
+- **Not done.** The second finding of the same round is untouched: with `collab_queue` the engine
+  returns the command from `execute_unguarded` (`crates/engine/src/lib.rs`) before
+  `settle_composition()`, so an input method's composing text is not settled before the command is
+  queued. It is a separate fix with its own IME tests.
+- **Delivery.** Local only: `aaecc6db` plus this STATUS commit on top of `96783106`. No push, no CI
+  run, no PR touched.
 
 ### 2026-11-11 — `origin/main` merged into `collab/pr15`; PR #2012 no longer conflicts
 
