@@ -489,20 +489,15 @@ fn hide(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Where PowerPoint puts a placeholder the new layout has no counterpart for: against the side edge
-/// of the slide that its centre is nearer, keeping its top, width and height (observed with the
-/// placeholders of a layout on slides 960 and 1100 pt wide: every one that was off the middle went
-/// to `0` or to `width - w`). One centred to within half a point stays where it is: the middle was
-/// not observed.
+/// of the slide that its centre is nearer, keeping its top, width and height (observed on slides
+/// 960 and 1100 pt wide, with content placeholders and with a footer and a slide number: every one
+/// went to `0` or to `width - w`). One whose centre is exactly the middle went to the left edge.
 fn nearest_side(x: deckcraft_model::Xfrm, width: f64) -> deckcraft_model::Xfrm {
     if !(width.is_finite() && width > 0.0 && x.x.is_finite() && x.w.is_finite()) {
         return x;
     }
-    let centre = x.x + x.w / 2.0;
-    let half = width / 2.0;
-    if (centre - half).abs() <= 0.5 {
-        return x;
-    }
-    deckcraft_model::Xfrm { x: if centre < half { 0.0 } else { width - x.w }, ..x }
+    let left = x.x + x.w / 2.0 <= width / 2.0 + 0.01;
+    deckcraft_model::Xfrm { x: if left { 0.0 } else { width - x.w }, ..x }
 }
 
 /// Re-map a slide's placeholders onto a new layout (content kept, matched by type/index).
@@ -565,16 +560,20 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
         }
     }
     // Leftover placeholders with content stay (empty ones go). As in PowerPoint, one with a frame of
-    // its own becomes an orphan (it pairs with nothing, on this layout or the next) and is moved
-    // against the side edge of the slide nearer its centre.
+    // its own becomes an orphan (it pairs with nothing, on this layout or the next), a footer, date
+    // or slide number the new layout lacks included, and is moved against the side edge of the
+    // slide nearer its centre.
     for mut o in old {
         let empty_ph = o.ph.is_some() && o.text.as_ref().is_none_or(|t| t.is_empty()) && matches!(o.kind, deckcraft_model::ShapeKind::Shape);
         if empty_ph {
             continue;
         }
-        if let (Some(p), Some(x)) = (o.ph.as_mut(), o.xfrm)
-            && !p.kind.is_footer_kind()
-        {
+        let footer_pairs =
+            o.ph.as_ref().is_some_and(|p| p.kind.is_footer_kind() && lay_shapes.iter().any(|l| l.ph.as_ref().is_some_and(|q| q.idx == p.idx)));
+        if footer_pairs {
+            // A footer, date or slide number the new layout has too takes its frame.
+            o.xfrm = None;
+        } else if let (Some(p), Some(x)) = (o.ph.as_mut(), o.xfrm) {
             p.idx = deckcraft_model::resolve::ORPHAN_IDX;
             o.xfrm = Some(nearest_side(x, width));
         }
@@ -1242,10 +1241,37 @@ mod tests {
     }
 
     #[test]
-    fn a_placeholder_centred_on_the_slide_stays_where_it_is() {
-        // The middle was not observed: nothing moves it.
-        let case = Case { width: 960.0, b: frame(60.0, 840.0), c: frame(66.0, 828.0), target: vec![(10, frame(60.0, 840.0))], explicit: None };
+    fn a_placeholder_centred_exactly_on_the_slide_goes_to_the_left_edge() {
+        // A footer 324 pt wide at 318 on a slide 960 wide went to 0 in PowerPoint.
+        let case = Case { width: 960.0, b: frame(60.0, 840.0), c: frame(318.0, 324.0), target: vec![(10, frame(60.0, 840.0))], explicit: None };
         let s = move_to_dst(&case);
-        assert_eq!(left_of(&s, "C"), Some(66.0));
+        assert_eq!(left_of(&s, "C"), Some(0.0));
+    }
+
+    #[test]
+    fn a_footer_and_a_slide_number_the_new_layout_lacks_become_orphans_against_the_edges() {
+        let mut s = Session::with_new();
+        s.execute("design.headerFooter", &json!({"slideNumber": true, "footer": true, "footerText": "FOOT"})).expect("footer");
+        s.edit(|doc, _| {
+            add_layout(doc, "NOFOOT", &[(10, frame(60.0, 840.0))]);
+            Ok(())
+        })
+        .expect("layout");
+        let size = |s: &Session, what: &str| {
+            let st = s.doc().expect("doc");
+            let slide = &st.doc.slides[st.selection.slide];
+            let sh = slide.shapes.iter().find(|x| x.ph.as_ref().is_some_and(|p| p.kind.xml() == what)).cloned().expect("the placeholder");
+            (sh.clone(), crate::cmd::xfrm_of(&st.doc, &st.selection, &sh))
+        };
+        let (_, foot_before) = size(&s, "ftr");
+        let (_, num_before) = size(&s, "sldNum");
+        s.execute("slide.layout", &json!({"layout": "NOFOOT"})).expect("layout");
+        for (what, before) in [("ftr", foot_before), ("sldNum", num_before)] {
+            let (sh, after) = size(&s, what);
+            assert_eq!(sh.ph.as_ref().map(|p| p.idx), Some(ORPHAN_IDX), "{what} pairs with nothing now");
+            let width = s.doc().expect("doc").doc.slide_size.width;
+            assert!(after.x == 0.0 || after.x == width - after.w, "{what} is against a side edge: {after:?}");
+            assert_eq!((after.y, after.w, after.h), (before.y, before.w, before.h));
+        }
     }
 }

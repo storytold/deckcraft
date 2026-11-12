@@ -1134,8 +1134,9 @@ fn a_placeholder_with_no_frame_cannot_be_hit() {
 }
 
 #[test]
-fn layout_change_keeps_a_leftover_placeholder_where_it_was_drawn() {
-    // The body pairs with nothing in the blank layout; with its text it stays, at its old frame.
+fn layout_change_keeps_a_leftover_placeholder_on_the_slide_against_the_left_edge() {
+    // The body pairs with nothing in the blank layout; with its text it stays, with the top, width
+    // and height it was drawn with. It is centred, and went to the left edge in PowerPoint.
     let mut s = session();
     s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "B"})).unwrap();
     let frame = |s: &Session| {
@@ -1153,7 +1154,7 @@ fn layout_change_keeps_a_leftover_placeholder_where_it_was_drawn() {
     s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
     let (after, lacks) = frame(&s);
     assert!(!lacks, "the leftover is still drawn");
-    assert_eq!(before, after);
+    assert_eq!((after.x, after.y, after.w, after.h), (0.0, before.y, before.w, before.h));
 }
 
 #[test]
