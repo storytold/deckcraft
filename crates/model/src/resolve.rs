@@ -51,7 +51,7 @@ impl<'a> Ctx<'a> {
 }
 
 /// The idx of a placeholder with no counterpart in any layout (one pasted from another deck).
-const ORPHAN_IDX: u32 = u32::MAX;
+pub const ORPHAN_IDX: u32 = u32::MAX;
 
 /// The layout placeholder a slide placeholder takes its place from. PowerPoint pairs them by idx
 /// and nothing else, whatever either one's type: a body with no idx takes the layout's title
