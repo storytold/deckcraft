@@ -166,11 +166,17 @@ impl Decoder {
         if frames.len() > 1 {
             self.stats.superframes += 1;
         }
+        let queued = self.pending.len();
         for f in frames {
             if f.is_empty() {
                 continue;
             }
-            self.decode_frame(f, pts)?;
+            if let Err(e) = self.decode_frame(f, pts) {
+                // A failed sample outputs nothing: drop what its earlier subframes queued so a
+                // later drain does not expand each repeat into its own picture.
+                self.pending.truncate(queued);
+                return Err(e);
+            }
         }
         Ok(self.drain(false))
     }

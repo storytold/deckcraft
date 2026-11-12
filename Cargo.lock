@@ -566,13 +566,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "calloop"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43b32313e937c8721c9d17ee9bf60699a6402b4b7c2cb6ac1bee0ffcaa4b4e5e"
+dependencies = [
+ "bitflags 2.13.2",
+ "polling",
+ "rustix 1.1.5",
+ "tracing",
+]
+
+[[package]]
 name = "calloop-wayland-source"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95a66a987056935f7efce4ab5668920b5d0dac4a7c99991a67395f13702ddd20"
 dependencies = [
- "calloop",
+ "calloop 0.13.0",
  "rustix 0.38.44",
+ "wayland-backend",
+ "wayland-client",
+]
+
+[[package]]
+name = "calloop-wayland-source"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa"
+dependencies = [
+ "calloop 0.14.5",
+ "rustix 1.1.5",
  "wayland-backend",
  "wayland-client",
 ]
@@ -821,14 +845,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-audio"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=75895c0321d8cb6e175a42466cba050352b117c5#75895c0321d8cb6e175a42466cba050352b117c5"
+dependencies = [
+ "craft-media",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "craft-fonts-build"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
 
 [[package]]
 name = "craft-i18n"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
 dependencies = [
  "fixed_decimal",
  "icu_decimal",
@@ -851,7 +884,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/storytold/craft-libs?rev=75895c0321d8cb6e175a42466cba050352b117c5#75895c0321d8cb6e175a42466cba050352b117c5"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -859,7 +892,7 @@ dependencies = [
 [[package]]
 name = "craft-pdf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
 dependencies = [
  "krilla",
  "thiserror 2.0.21",
@@ -868,7 +901,7 @@ dependencies = [
 [[package]]
 name = "craft-ui"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
 dependencies = [
  "craft-fonts-build",
  "craft-i18n",
@@ -888,7 +921,7 @@ dependencies = [
 [[package]]
 name = "craft-update"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
 dependencies = [
  "chrono",
  "dunce",
@@ -898,6 +931,7 @@ dependencies = [
  "image",
  "log",
  "plist",
+ "rustix 1.1.5",
  "semver",
  "serde",
  "serde_json",
@@ -909,6 +943,26 @@ dependencies = [
  "winreg",
  "winsafe",
  "zip 9.1.0",
+]
+
+[[package]]
+name = "craft-web-api"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=fd5e2feff6ea25bed371a99cc732b3968d621505#fd5e2feff6ea25bed371a99cc732b3968d621505"
+dependencies = [
+ "js-sys",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "craft-web-host"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=fd5e2feff6ea25bed371a99cc732b3968d621505#fd5e2feff6ea25bed371a99cc732b3968d621505"
+dependencies = [
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -984,7 +1038,7 @@ checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
 name = "deckcraft"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "arboard",
  "chrono",
@@ -1006,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-anim"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-geom",
  "deckcraft-model",
@@ -1015,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-av1"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1024,14 +1078,14 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-bitstream"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "craft-media",
 ]
 
 [[package]]
 name = "deckcraft-cli"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-mcp",
@@ -1041,14 +1095,14 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-color"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "deckcraft-engine"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "chrono",
  "deckcraft-anim",
@@ -1074,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-fonts"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "epaint_default_fonts",
  "harfrust 0.13.3",
@@ -1087,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-format"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-model",
  "serde",
@@ -1098,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-geom"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "kurbo",
  "serde",
@@ -1106,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-h264"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1115,7 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-hevc"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1123,22 +1177,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "deckcraft-isobmff"
-version = "0.15.0"
-dependencies = [
- "craft-media",
-]
-
-[[package]]
-name = "deckcraft-matroska"
-version = "0.15.0"
-dependencies = [
- "craft-media",
-]
-
-[[package]]
 name = "deckcraft-mcp"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-render",
@@ -1148,15 +1188,13 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-media"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
+ "craft-audio",
+ "craft-media",
  "deckcraft-av1",
  "deckcraft-h264",
  "deckcraft-hevc",
- "deckcraft-isobmff",
- "deckcraft-matroska",
- "deckcraft-ogg",
- "deckcraft-opus",
  "deckcraft-vp9",
  "image",
  "log",
@@ -1166,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-metafile"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "image",
  "kurbo",
@@ -1175,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-model"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
@@ -1186,16 +1224,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "deckcraft-ogg"
-version = "0.15.0"
-
-[[package]]
-name = "deckcraft-opus"
-version = "0.15.0"
-
-[[package]]
 name = "deckcraft-pdf"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "craft-pdf",
  "deckcraft-fonts",
@@ -1213,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-pptx"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-color",
  "deckcraft-engine",
@@ -1229,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-render"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-anim",
  "deckcraft-color",
@@ -1248,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-text"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "chrono",
  "deckcraft-color",
@@ -1262,7 +1292,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ui-egui"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "craft-ui",
  "craft-update",
@@ -1276,6 +1306,7 @@ dependencies = [
  "deckcraft-render",
  "deckcraft-text",
  "egui",
+ "egui_extras",
  "egui_kittest",
  "log",
  "serde",
@@ -1287,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-vp9"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1296,8 +1327,10 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-web"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
+ "craft-web-api",
+ "craft-web-host",
  "deckcraft-engine",
  "deckcraft-ui-egui",
  "eframe",
@@ -1508,17 +1541,33 @@ dependencies = [
  "block2 0.6.2",
  "bytemuck",
  "egui",
+ "image",
  "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "objc2-ui-kit 0.3.2",
+ "parking_lot",
  "profiling",
  "raw-window-handle",
+ "smithay-clipboard",
  "web-time",
  "webbrowser",
  "windows-sys 0.61.2",
  "winit",
+]
+
+[[package]]
+name = "egui_extras"
+version = "0.37.0"
+source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
+dependencies = [
+ "ahash",
+ "egui",
+ "enum-map",
+ "itertools",
+ "log",
+ "profiling",
 ]
 
 [[package]]
@@ -1587,6 +1636,26 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
+
+[[package]]
+name = "enum-map"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4532960034c15ba2f55e9eee631040ecc473c32e6c4b200828c759840f13a06"
+dependencies = [
+ "enum-map-derive",
+]
+
+[[package]]
+name = "enum-map-derive"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7127272f64b3e098f7d81f350d672081b879bff896d219c42370dc858b1af9ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
 
 [[package]]
 name = "enumflags2"
@@ -2709,7 +2778,7 @@ dependencies = [
 [[package]]
 name = "krilla"
 version = "0.8.2"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
 dependencies = [
  "base64 0.22.1",
  "bumpalo",
@@ -3488,7 +3557,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4404,8 +4473,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3457dea1f0eb631b4034d61d4d8c32074caa6cd1ab2d59f2327bd8461e2c0016"
 dependencies = [
  "bitflags 2.13.2",
- "calloop",
- "calloop-wayland-source",
+ "calloop 0.13.0",
+ "calloop-wayland-source 0.3.0",
  "cursor-icon",
  "libc",
  "log",
@@ -4420,6 +4489,44 @@ dependencies = [
  "wayland-protocols-wlr",
  "wayland-scanner",
  "xkeysym",
+]
+
+[[package]]
+name = "smithay-client-toolkit"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0512da38f5e2b31201a93524adb8d3136276fa4fe4aafab4e1f727a82b534cc0"
+dependencies = [
+ "bitflags 2.13.2",
+ "calloop 0.14.5",
+ "calloop-wayland-source 0.4.1",
+ "cursor-icon",
+ "libc",
+ "log",
+ "memmap2",
+ "rustix 1.1.5",
+ "thiserror 2.0.21",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-csd-frame",
+ "wayland-cursor",
+ "wayland-protocols",
+ "wayland-protocols-experimental",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "wayland-scanner",
+ "xkeysym",
+]
+
+[[package]]
+name = "smithay-clipboard"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71704c03f739f7745053bde45fa203a46c58d25bc5c4efba1d9a60e9dba81226"
+dependencies = [
+ "libc",
+ "smithay-client-toolkit 0.20.0",
+ "wayland-backend",
 ]
 
 [[package]]
@@ -4929,6 +5036,7 @@ version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
+ "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
@@ -5368,6 +5476,32 @@ dependencies = [
  "bitflags 2.13.2",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-experimental"
+version = "20250721.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40a1f863128dcaaec790d7b4b396cc9b9a7a079e878e18c47e6c2d2c5a8dcbb1"
+dependencies = [
+ "bitflags 2.13.2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-misc"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e9567599ef23e09b8dad6e429e5738d4509dfc46b3b21f32841a304d16b29c8"
+dependencies = [
+ "bitflags 2.13.2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
@@ -5981,7 +6115,7 @@ dependencies = [
  "bitflags 2.13.2",
  "block2 0.5.1",
  "bytemuck",
- "calloop",
+ "calloop 0.13.0",
  "cfg_aliases",
  "concurrent-queue",
  "core-foundation 0.9.4",
@@ -6002,7 +6136,7 @@ dependencies = [
  "raw-window-handle",
  "redox_syscall 0.4.1",
  "rustix 0.38.44",
- "smithay-client-toolkit",
+ "smithay-client-toolkit 0.19.2",
  "smol_str",
  "tracing",
  "unicode-segmentation",
@@ -6178,7 +6312,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.15.0"
+version = "0.18.1"
 dependencies = [
  "serde_json",
 ]
@@ -6424,7 +6558,6 @@ dependencies = [
  "nix",
  "typed-path",
  "windows-sys 0.61.2",
- "zopfli",
 ]
 
 [[package]]
@@ -6509,11 +6642,6 @@ dependencies = [
 
 [[patch.unused]]
 name = "egui_demo_lib"
-version = "0.37.0"
-source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
-
-[[patch.unused]]
-name = "egui_extras"
 version = "0.37.0"
 source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
 

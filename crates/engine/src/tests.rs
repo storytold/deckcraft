@@ -214,6 +214,368 @@ fn clipboard_copy_paste_shapes_and_slides() {
     assert!(s.doc().unwrap().doc.validate().is_empty());
 }
 
+/// The resolved look of every paragraph and run of shape `id` on the current slide: size, font,
+/// colour, bold, bullet, indent, alignment, and the box's insets and anchor.
+fn resolved_look(s: &Session, id: ShapeId) -> String {
+    use deckcraft_model::resolve;
+    let st = s.doc().unwrap();
+    let slide = st.current_slide().unwrap();
+    let ctx = resolve::Ctx::for_slide(&st.doc, slide).unwrap();
+    let sh = st.shape(id).unwrap();
+    let t = sh.text.as_ref().unwrap();
+    let b = resolve::body(&ctx, sh);
+    let mut out = format!("body {:?} {:?} {:?}\n", b.anchor, b.inset_l, b.autofit);
+    for p in &t.paragraphs {
+        let pp = resolve::para(&ctx, sh, p);
+        out += &format!("para {:?} {:?} {:?} {:?}\n", pp.align, pp.margin_left, pp.indent, pp.bullet);
+        for r in &p.runs {
+            let rp = resolve::run(&ctx, sh, p, &r.props);
+            out += &format!("  run {:?} {:?} {:?} {:?}\n", rp.size, rp.font, rp.bold, rp.fill);
+        }
+    }
+    out
+}
+
+/// A placeholder pasted or duplicated on a slide becomes a regular shape, and keeps the look its
+/// layout and master gave it: the title's size and font, the body's bullets and indents. Before,
+/// the copy fell back to the master's other-text style (18 pt, no bullets).
+#[test]
+fn a_pasted_or_duplicated_placeholder_keeps_its_inherited_look() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let phs: Vec<ShapeId> = s.doc().unwrap().current_slide().unwrap().shapes.iter().filter(|x| x.ph.is_some()).map(|x| x.id).collect();
+    assert!(phs.len() >= 2, "a title and a body placeholder");
+    for (k, id) in phs.iter().enumerate() {
+        s.execute("text.set", &json!({"id": id.0, "text": format!("Placeholder {k}\nSecond line")})).unwrap();
+    }
+    for id in phs {
+        let want = resolved_look(&s, id);
+        for cmd in ["paste", "duplicate"] {
+            s.execute("selection.select", &json!({"id": id.0})).unwrap();
+            if cmd == "paste" {
+                s.execute("edit.copy", &json!({})).unwrap();
+                s.execute("edit.paste", &json!({})).unwrap();
+            } else {
+                s.execute("edit.duplicate", &json!({})).unwrap();
+            }
+            let copy = s.doc().unwrap().selection.shapes[0];
+            assert_ne!(copy, id);
+            assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "{cmd}: the copy is a regular shape");
+            assert_eq!(resolved_look(&s, copy), want, "{cmd} of placeholder {}", id.0);
+        }
+    }
+    assert!(s.doc().unwrap().doc.validate().is_empty());
+}
+
+/// Dragging a copy of a placeholder off it keeps the look too: the title's size and font, the
+/// body's bullets. `edit.duplicate` is not the only way to duplicate.
+#[test]
+fn a_placeholder_duplicated_by_dragging_keeps_its_look() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let phs: Vec<ShapeId> = s.doc().unwrap().current_slide().unwrap().shapes.iter().filter(|x| x.ph.is_some()).map(|x| x.id).collect();
+    assert!(phs.len() >= 2, "a title and a body placeholder");
+    for id in phs {
+        s.execute("text.set", &json!({"id": id.0, "text": "First\nSecond"})).unwrap();
+        let want = resolved_look(&s, id);
+        s.execute("selection.select", &json!({"id": id.0})).unwrap();
+        let st = s.doc().unwrap();
+        let x = crate::cmd::xfrm_of(&st.doc, &st.selection, st.shape(id).unwrap());
+        let (cx, cy) = (x.x + x.w / 2.0, x.y + x.h / 2.0);
+        let alt = |kind, x, y| PointerEvent { mods: Mods { alt: true, ..Default::default() }, ..tev(kind, x, y) };
+        s.pointer(alt(PointerKind::Down, cx, cy)).unwrap();
+        s.pointer(alt(PointerKind::Drag, cx + 30.0, cy + 30.0)).unwrap();
+        s.pointer(alt(PointerKind::Up, cx + 30.0, cy + 30.0)).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_ne!(copy, id, "the drag made a copy");
+        assert!(s.doc().unwrap().shape(id).unwrap().ph.is_some(), "the original stays a placeholder");
+        assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "the copy is a regular shape");
+        assert_eq!(resolved_look(&s, copy), want, "placeholder {}", id.0);
+    }
+}
+
+/// Keep Source Formatting fixes a copy's theme colours as the source drew them: through the colour
+/// map of its slide or layout, not the master's. A title's inherited `tx1` stays the light colour
+/// an override gave it.
+#[test]
+fn keep_source_formatting_uses_the_slides_colour_map() {
+    use deckcraft_model::resolve;
+    let first_run_colour = |s: &Session, id: ShapeId| {
+        let st = s.doc().unwrap();
+        let ctx = resolve::Ctx::for_slide(&st.doc, st.current_slide().unwrap()).unwrap();
+        let sh = st.shape(id).unwrap();
+        let p = &sh.text.as_ref().unwrap().paragraphs[0];
+        resolve::text_color(&ctx, &resolve::run(&ctx, sh, p, &p.runs[0].props))
+    };
+    for on_layout in [false, true] {
+        let mut s = session();
+        s.execute("slide.new", &json!({})).unwrap();
+        let title = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.ph.is_some()).unwrap().id;
+        s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+        let plain = first_run_colour(&s, title);
+        let st = s.doc_mut().unwrap();
+        let at = st.selection.slide;
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        if on_layout {
+            let layout = doc.slides[at].layout;
+            let m = std::sync::Arc::make_mut(&mut doc.masters[0]);
+            m.layouts.iter_mut().find(|l| l.id == layout).unwrap().color_map = swapped_colour_map();
+        } else {
+            std::sync::Arc::make_mut(&mut doc.slides[at]).color_map = swapped_colour_map();
+        }
+        let want = first_run_colour(&s, title);
+        assert_ne!(want, plain, "the override changes how the title draws");
+
+        s.execute("selection.select", &json!({"id": title.0})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.pasteSpecial", &json!({"as": "keepSource"})).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_ne!(copy, title);
+        assert_eq!(first_run_colour(&s, copy), want, "override on the layout: {on_layout}");
+    }
+}
+
+/// A colour map that swaps text and background, as a dark slide or layout has.
+fn swapped_colour_map() -> Option<Vec<(String, String)>> {
+    Some([("bg1", "dk1"), ("tx1", "lt1"), ("bg2", "dk2"), ("tx2", "lt2")].map(|(a, b)| (a.to_string(), b.to_string())).to_vec())
+}
+
+/// A new rectangle in the edited tree, filled with theme colour `slot`.
+fn rect_filled_with(s: &mut Session, slot: deckcraft_color::SchemeSlot) -> ShapeId {
+    use deckcraft_model::{ColorRef, Fill};
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(u32::try_from(id).unwrap());
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        list.iter_mut().find(|x| x.id == id).unwrap().fill = Some(Fill::solid(ColorRef::scheme(slot)));
+        Ok(())
+    })
+    .unwrap();
+    id
+}
+
+/// How shape `id`'s fill draws in the edited tree.
+fn drawn_fill(s: &Session, id: ShapeId) -> deckcraft_color::Rgba {
+    use deckcraft_model::{Fill, resolve};
+    let st = s.doc().unwrap();
+    let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection).unwrap();
+    match resolve::fill(&ctx, st.shape(id).unwrap()).0 {
+        Some(Fill::Solid { color }) => ctx.color(&color, None),
+        other => panic!("not a solid fill: {other:?}"),
+    }
+}
+
+/// Copy the selected shape and paste it with Keep Source Formatting; the copy's id.
+fn keep_source_copy(s: &mut Session, id: ShapeId) -> ShapeId {
+    s.execute("selection.select", &json!({"id": id.0})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("edit.pasteSpecial", &json!({"as": "keepSource"})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert_ne!(copy, id);
+    copy
+}
+
+/// A colour map renames only `tx1`, `bg1`, `tx2` and `bg2`. Keep Source Formatting fixes every slot
+/// as it draws: `tx1` follows the map, while a direct `dk1` stays the theme's dark colour.
+#[test]
+fn keep_source_formatting_maps_only_the_alias_colours() {
+    use deckcraft_color::SchemeSlot::{self, *};
+    let mut s = session();
+    let st = s.doc_mut().unwrap();
+    let at = st.selection.slide;
+    std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[at]).color_map = swapped_colour_map();
+    let slots: [SchemeSlot; 9] = [Dk1, Lt1, Dk2, Lt2, Tx1, Bg1, Tx2, Bg2, Accent1];
+    let mut drawn = vec![];
+    for slot in slots {
+        let id = rect_filled_with(&mut s, slot);
+        let want = drawn_fill(&s, id);
+        let copy = keep_source_copy(&mut s, id);
+        assert_eq!(drawn_fill(&s, copy), want, "{slot:?}");
+        drawn.push(want);
+    }
+    assert_ne!(drawn[0], drawn[4], "the map sets `tx1` apart from `dk1`");
+}
+
+/// In Slide Master view a copy draws through the edited master's map, not an override on the slide
+/// that happens to be current.
+#[test]
+fn keep_source_formatting_in_slide_master_view_ignores_the_slides_colour_map() {
+    use deckcraft_color::SchemeSlot::Tx1;
+    for master in [false, true] {
+        let mut s = session();
+        let st = s.doc_mut().unwrap();
+        let at = st.selection.slide;
+        std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[at]).color_map = swapped_colour_map();
+        s.execute("view.slideMaster", &if master { json!({"master": 0}) } else { json!({}) }).unwrap();
+        let id = rect_filled_with(&mut s, Tx1);
+        let want = drawn_fill(&s, id);
+        let copy = keep_source_copy(&mut s, id);
+        assert_eq!(drawn_fill(&s, copy), want, "editing the master: {master}");
+    }
+}
+
+/// A slide's placeholder pasted in Slide Master view stays a placeholder that inherits from where
+/// it lands; only a paste on a slide turns it into a regular shape with the look it had.
+#[test]
+fn a_slide_placeholder_pasted_in_slide_master_view_stays_a_placeholder() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.ph.is_some()).unwrap().id;
+    s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+    let want = resolved_look(&s, title);
+    let source = s.doc().unwrap().shape(title).unwrap().clone();
+    s.execute("selection.select", &json!({"id": title.0})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+
+    s.execute("view.slideMaster", &json!({})).unwrap();
+    for paste in ["edit.paste", "edit.pasteSpecial"] {
+        s.execute(paste, &json!({"as": "keepSource"})).unwrap();
+        let st = s.doc().unwrap();
+        let copy = st.shape(st.selection.shapes[0]).unwrap();
+        assert_eq!(copy.ph.as_ref().map(|p| p.kind), source.ph.as_ref().map(|p| p.kind), "{paste} keeps the placeholder");
+        let list = copy.text.as_ref().map(|t| t.list_style.clone());
+        assert_eq!(list, source.text.as_ref().map(|t| t.list_style.clone()), "{paste} adds no baked styles");
+    }
+    s.execute("view.closeMaster", &json!({})).unwrap();
+
+    s.execute("edit.paste", &json!({})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "on a slide the copy is a regular shape");
+    assert_eq!(resolved_look(&s, copy), want);
+}
+
+/// The resolved fill, line and effects of shape `id` on the current slide, with their style colours.
+fn resolved_box(s: &Session, id: ShapeId) -> String {
+    use deckcraft_model::resolve;
+    let st = s.doc().unwrap();
+    let ctx = resolve::Ctx::for_slide(&st.doc, st.current_slide().unwrap()).unwrap();
+    let sh = st.shape(id).unwrap();
+    format!("{:?}\n{:?}\n{:?}", resolve::fill(&ctx, sh), resolve::line(&ctx, sh), resolve::effects(&ctx, sh))
+}
+
+/// Edit the title placeholders the current slide's title inherits from: its layout's and its
+/// master's. Returns the slide title's id.
+fn edit_title_parents(
+    s: &mut Session,
+    layout: impl FnOnce(&mut deckcraft_model::Shape),
+    master: impl FnOnce(&mut deckcraft_model::Shape),
+) -> ShapeId {
+    let st = s.doc_mut().unwrap();
+    let slide = st.current_slide().unwrap().clone();
+    let title = slide.shapes.iter().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap().id;
+    let doc = std::sync::Arc::make_mut(&mut st.doc);
+    let m = std::sync::Arc::make_mut(&mut doc.masters[0]);
+    let lay = m.layouts.iter_mut().find(|l| l.id == slide.layout).unwrap();
+    layout(lay.shapes.iter_mut().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap());
+    master(m.shapes.iter_mut().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap());
+    title
+}
+
+/// A copied placeholder takes each of fill, line and effects from where the original does: a
+/// style on the layout's placeholder (or on the slide's own) wins over an explicit value on the
+/// master's, as `resolve::fill`, `resolve::line` and `resolve::effects` decide.
+#[test]
+fn a_pasted_placeholder_keeps_the_style_precedence_of_its_box() {
+    use deckcraft_color::SchemeSlot;
+    use deckcraft_model::{ColorRef, Effects, Fill, Line, ShapeStyle};
+    for style_on_slide in [false, true] {
+        let mut s = session();
+        s.execute("slide.new", &json!({})).unwrap();
+        let style = ShapeStyle {
+            line_ref: (1, ColorRef::scheme(SchemeSlot::Accent2)),
+            fill_ref: (1, ColorRef::scheme(SchemeSlot::Accent1)),
+            effect_ref: (0, ColorRef::scheme(SchemeSlot::Accent3)),
+            font_ref: ("minor".into(), None),
+        };
+        let layout_style = (!style_on_slide).then(|| style.clone());
+        let title = edit_title_parents(
+            &mut s,
+            |l| l.style = layout_style,
+            |m| {
+                m.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Accent4)));
+                m.line = Some(Line::solid(ColorRef::scheme(SchemeSlot::Accent5), 20.0));
+                m.effects = Some(Effects { soft_edge: Some(5.0), ..Default::default() });
+            },
+        );
+        if style_on_slide {
+            s.edit(|doc, sel| {
+                let list = crate::shapes_mut(doc, sel).unwrap();
+                list.iter_mut().find(|x| x.id == title).unwrap().style = Some(style.clone());
+                Ok(())
+            })
+            .unwrap();
+        }
+        s.execute("text.set", &json!({"id": title.0, "text": "Styled title"})).unwrap();
+        let want = (resolved_box(&s, title), resolved_look(&s, title));
+        s.execute("selection.select", &json!({"id": title.0})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.paste", &json!({})).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_eq!((resolved_box(&s, copy), resolved_look(&s, copy)), want, "style on the slide: {style_on_slide}");
+    }
+}
+
+/// The master's placeholder style never reaches the copy's text: the original's text ignores it
+/// (only the shape's or the layout's font reference counts), so the copy must too.
+#[test]
+fn a_pasted_placeholder_ignores_the_masters_font_reference() {
+    use deckcraft_color::SchemeSlot;
+    use deckcraft_model::{ColorRef, ShapeStyle};
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let title = edit_title_parents(
+        &mut s,
+        |l| l.style = None,
+        |m| {
+            m.style = Some(ShapeStyle {
+                line_ref: (0, ColorRef::scheme(SchemeSlot::Accent2)),
+                fill_ref: (0, ColorRef::scheme(SchemeSlot::Accent1)),
+                effect_ref: (0, ColorRef::scheme(SchemeSlot::Accent3)),
+                font_ref: ("minor".into(), Some(ColorRef::scheme(SchemeSlot::Accent6))),
+            })
+        },
+    );
+    s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+    let want = (resolved_box(&s, title), resolved_look(&s, title));
+    assert!(want.1.contains("+mj-lt"), "the title draws in the heading font: {}", want.1);
+    s.execute("selection.select", &json!({"id": title.0})).unwrap();
+    s.execute("edit.duplicate", &json!({})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert_eq!((resolved_box(&s, copy), resolved_look(&s, copy)), want);
+}
+
+/// The same on every text placeholder of the sample deck (titles, bulleted bodies, subtitles).
+#[test]
+fn sample_placeholders_paste_with_their_look() {
+    let mut s = Session::new();
+    crate::sample::open_sample(&mut s).unwrap();
+    let slides = s.doc().unwrap().doc.slides.len();
+    let mut checked = 0;
+    for i in 0..slides {
+        s.execute("slide.go", &json!({"index": i})).unwrap();
+        let phs: Vec<ShapeId> = s
+            .doc()
+            .unwrap()
+            .current_slide()
+            .unwrap()
+            .shapes
+            .iter()
+            .filter(|x| x.ph.is_some() && x.text.as_ref().is_some_and(|t| !t.is_empty()))
+            .map(|x| x.id)
+            .collect();
+        for id in phs {
+            let want = resolved_look(&s, id);
+            s.execute("selection.select", &json!({"id": id.0})).unwrap();
+            s.execute("edit.copy", &json!({})).unwrap();
+            s.execute("edit.paste", &json!({})).unwrap();
+            let copy = s.doc().unwrap().selection.shapes[0];
+            assert_eq!(resolved_look(&s, copy), want, "slide {i}, placeholder {}", id.0);
+            checked += 1;
+        }
+    }
+    assert!(checked >= 3, "the sample has text placeholders ({checked})");
+}
+
 #[test]
 fn pasted_shapes_get_the_next_automatic_name() {
     let mut s = session();
@@ -1349,6 +1711,31 @@ fn tab_moves_between_cells_skipping_merged_ones() {
     s.execute("text.edit", &json!({"id": id, "cell": [1, 2]})).unwrap();
     s.key("Tab", Mods::default()).unwrap();
     assert_eq!((cell(&s), table_of(&s, id).n_rows()), (Some((2, 0)), 3), "Tab in the last cell adds a row");
+}
+
+#[test]
+fn format_paragraph_align_names_match_format_align() {
+    use deckcraft_model::text::Align;
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    let para = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes[0].text.as_ref().unwrap().paragraphs[0].props.align;
+    for (name, want) in [
+        ("justLow", Align::JustLow),
+        ("justifyLow", Align::JustLow),
+        ("thaiDist", Align::ThaiDistributed),
+        ("ctr", Align::Center),
+        ("centre", Align::Center),
+        ("r", Align::Right),
+        ("just", Align::Justify),
+        ("dist", Align::Distributed),
+        ("distributed", Align::Distributed),
+        ("left", Align::Left),
+    ] {
+        s.execute("format.paragraph", &json!({"align": name})).unwrap();
+        assert_eq!(para(&s), Some(want), "{name}");
+    }
+    assert!(s.execute("format.paragraph", &json!({"align": "bogus"})).is_err());
 }
 
 #[test]
@@ -3358,6 +3745,25 @@ fn undo_history_is_capped_by_memory_as_well_as_steps() {
     assert_eq!(s.doc().unwrap().history.undo.len(), 120);
 }
 
+/// A slide's notes count toward the undo budget: small edits to a slide with large notes keep a
+/// copy of those notes per step, and must not slip past the budget as if the slide were empty.
+#[test]
+fn undo_history_counts_slide_notes() {
+    let mut s = Session::with_new();
+    let notes = "n".repeat(1 << 20);
+    s.edit(|doc, _| {
+        std::sync::Arc::make_mut(&mut doc.slides[0]).notes = deckcraft_model::text::TextBody::from_text(&notes);
+        Ok(())
+    })
+    .unwrap();
+    s.doc_mut().unwrap().history = History { limit: 500, byte_limit: 8 << 20, ..Default::default() };
+    for i in 0..40 {
+        s.execute("slide.rename", &json!({"name": format!("v{i}"), "index": 0})).unwrap();
+    }
+    let n = s.doc().unwrap().history.undo.len();
+    assert!((1..=8).contains(&n), "{n} steps of 1 MB notes kept under an 8 MB budget");
+}
+
 #[test]
 fn picture_styles_replace_each_other_in_one_step() {
     const PNG: &[u8] = &[
@@ -5046,6 +5452,38 @@ fn pen_pressure_is_kept_and_a_mouse_draws_at_full_width() {
     assert_eq!(got, vec![vec![0.2, 1.0, 0.4], vec![1.0, 1.0]]);
 }
 
+#[test]
+fn a_long_ink_stroke_is_extended_in_place_and_capped() {
+    let mut s = session();
+    s.set_tool(tools::ToolKind::Ink { mode: "pen".into(), color: deckcraft_model::Rgba::rgb(20, 20, 20), width: 4.0 });
+    let ev = |kind, x: f64| tools::PointerEvent { kind, x, y: 80.0, mods: Mods::default(), tol: 3.0, pressure: Some(0.5) };
+    s.pointer(ev(PointerKind::Down, 0.0)).unwrap();
+    let n = tools::MAX_GESTURE_POINTS + 5_000;
+    for i in 1..n {
+        s.pointer(ev(PointerKind::Drag, (i % 500) as f64)).unwrap();
+    }
+    assert_eq!(s.tool.ink_preview.len(), tools::MAX_GESTURE_POINTS);
+    s.pointer(ev(PointerKind::Up, 0.0)).unwrap();
+    let kept: usize = ink_pressures(&s).iter().map(Vec::len).sum();
+    assert!((2..=tools::MAX_GESTURE_POINTS).contains(&kept), "{kept}");
+}
+
+#[test]
+fn double_clicking_a_capped_freeform_keeps_its_vertices() {
+    let mut s = session();
+    let ev = |kind, x: f64, y: f64| tools::PointerEvent { kind, x, y, mods: Default::default(), tol: 3.0, pressure: None };
+    s.set_tool(tools::ToolKind::Shape { preset: "freeform".into() });
+    s.pointer(ev(tools::PointerKind::Down, 100.0, 100.0)).unwrap();
+    // Densely clicked vertices, each within the double-click tolerance of the last.
+    for i in 0..tools::MAX_GESTURE_POINTS + 10 {
+        s.pointer(ev(tools::PointerKind::Down, 300.0 + i as f64 * 0.001, 100.0)).unwrap();
+    }
+    s.pointer(ev(tools::PointerKind::DoubleClick, 300.0, 100.0)).unwrap();
+    let st = s.doc().unwrap();
+    let deckcraft_model::Geom::Custom { paths } = &st.shapes().last().unwrap().geom else { panic!("no freeform") };
+    assert_eq!(paths[0].d.matches(" L ").count(), tools::MAX_GESTURE_POINTS - 1);
+}
+
 fn ink_pressures(s: &Session) -> Vec<Vec<f32>> {
     let st = s.doc().unwrap();
     let Some(sh) = st.shapes().iter().rev().find(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Ink { .. })) else {
@@ -6483,6 +6921,39 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
 
+/// A shape named many times in one edit is edited once and not copied per mention.
+#[test]
+fn repeated_target_ids_edit_the_shape_once() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "x".repeat(100_000)})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let edited = s.execute("shape.fill", &json!({"ids": vec![id; 50_000], "color": "#ff0000"})).unwrap();
+    assert_eq!(edited, json!(1));
+    let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
+    assert_eq!(v["shape"]["fill"]["color"]["base"]["rgb"], json!({"a": 255, "b": 0, "g": 0, "r": 255}));
+}
+
+#[test]
+fn many_distinct_fonts_are_listed_once_each_without_a_quadratic_scan() {
+    // 30,000 runs in 15,000 families, each written twice in different case.
+    let mut p = deckcraft_model::Presentation::default();
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    let mut body = deckcraft_model::text::TextBody::from_text("x");
+    let run = body.paragraphs[0].runs[0].clone();
+    body.paragraphs[0].runs = (0..30_000)
+        .map(|i| {
+            let mut r = run.clone();
+            let name = format!("Qqq Font {}", i / 2);
+            r.props.font = Some(if i % 2 == 0 { name } else { name.to_uppercase() });
+            r
+        })
+        .collect();
+    slide.shapes[0].text = Some(body);
+    let used = crate::fonts::used_fonts(&p);
+    assert_eq!(used.iter().filter(|f| f.starts_with("Qqq Font ")).count(), 15_000);
+    assert_eq!(crate::fonts::missing_fonts(&p).iter().filter(|f| f.to_ascii_lowercase().starts_with("qqq font ")).count(), 15_000);
+}
+
 #[test]
 fn slide_master_view_rejects_invalid_indices() {
     let mut s = Session::with_new();
@@ -6508,4 +6979,177 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
         assert_eq!(s.doc().unwrap().path, before);
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
+/// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
+/// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
+/// and the sites of a grouped shape were computed in the group's child space.
+#[test]
+fn shape_connect_glues_to_a_shape_inside_a_group() {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let glue = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        match st.shape(ShapeId(id as u32)).unwrap().kind {
+            ShapeKind::Connector { start, end } => (start.map(|(i, _)| i.0 as u64), end.map(|(i, _)| i.0 as u64)),
+            _ => (None, None),
+        }
+    };
+    let near = |p: deckcraft_geom::Point, x: f64, y: f64| (p.x - x).abs() < 1e-6 && (p.y - y).abs() < 1e-6;
+    // A new connector into the group.
+    let r = s.execute("shape.connect", &json!({"from": c, "to": a})).unwrap();
+    let k = r["id"].as_u64().unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "{r}");
+    let (p0, p1) = line_ends(&s, k);
+    assert!(near(p0, 400.0, 35.0), "from C's left site: {p0:?}");
+    assert!(near(p1, 110.0, 35.0), "to A's right site in slide space: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dy": 100})).unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "the glue survives the move");
+    let (_, p1) = line_ends(&s, k);
+    assert!(near(p1, 110.0, 135.0), "the connector follows the grouped shape: {p1:?}");
+    // Re-gluing an existing line with `id`.
+    let l = s.execute("shape.insert", &json!({"preset": "straightConnector1", "rect": [600, 400, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"id": l, "from": c, "to": b})).unwrap();
+    assert_eq!(r["id"], l, "{r}");
+    assert_eq!(glue(&s, l), (Some(c), Some(b)), "{r}");
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 110.0, 325.0), "to B's right site (C is mostly to its right) in slide space, B moved with the group: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dx": 50})).unwrap();
+    assert_eq!(glue(&s, l), (Some(c), Some(b)));
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 160.0, 325.0), "{p1:?}");
+    // shape.sites answers in slide space, as shape.connect uses them: A's right site, A moved
+    // with the group.
+    let v = s.execute("shape.sites", &json!({"id": a})).unwrap();
+    assert!(
+        v.as_array().unwrap().iter().any(|q| near(deckcraft_geom::Point::new(q[0].as_f64().unwrap(), q[1].as_f64().unwrap()), 160.0, 135.0)),
+        "{v}"
+    );
+    // A line inside a group is refused as `id`: its ends would be written in slide space into
+    // the group's space, and rerouting does not follow grouped connectors.
+    let m = s.execute("shape.insert", &json!({"preset": "line", "rect": [600, 300, 50, 0]})).unwrap()["id"].as_u64().unwrap();
+    let n = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600, 450, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("arrange.group", &json!({"ids": [m, n]})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    let e = s.execute("shape.connect", &json!({"id": m, "from": c, "to": b})).unwrap_err().to_string();
+    assert!(e.contains("inside a group"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+    // A grouped shape that is not a line is refused as not a line, not as a grouped line.
+    let e = s.execute("shape.connect", &json!({"id": n, "from": c, "to": b})).unwrap_err().to_string();
+    assert!(e.contains("not a line"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+}
+
+#[test]
+fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.textBox", &json!({"text": "Goals\nRevenue"})).unwrap();
+    let gid = s.execute("smartArt.fromText", &json!({"kind": "blockList"})).unwrap()["id"].as_u64().unwrap();
+    for cmd in ["arrange.flipHorizontal", "arrange.flipVertical", "shape.flip"] {
+        let e = s.execute(cmd, &json!({"ids": [gid]})).unwrap_err().to_string();
+        assert!(e.contains("SmartArt") && e.contains("smartArt.layout"), "{cmd}: {e}");
+    }
+    // Grouped with another shape it cannot be flipped either: ungrouping would hand it the flip.
+    let other = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
+    let group = s.execute("arrange.group", &json!({"ids": [gid, other]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("shape.flip", &json!({"ids": [group]})).unwrap_err().to_string();
+    assert!(e.contains("SmartArt"), "{e}");
+    s.execute("arrange.ungroup", &json!({"ids": [group]})).unwrap();
+    // Still a SmartArt graphic: smartArt commands keep working.
+    s.execute("smartArt.layout", &json!({"id": gid, "kind": "cycle"})).unwrap();
+    // Ordinary shapes still flip.
+    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap();
+    let id = b["id"].as_u64().unwrap();
+    assert_eq!(s.execute("arrange.flipHorizontal", &json!({"ids": [id]})).unwrap(), json!(1));
+}
+
+/// Table cell commands refuse a `cells` that is not a list of [row, col] cells in the table,
+/// instead of dropping the entry or reading the list as absent (which acts on the selection).
+#[test]
+fn table_cell_commands_refuse_a_malformed_cells_list() {
+    let mut s = session();
+    let t = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let rev = s.doc().unwrap().revision;
+    for cells in [
+        json!([[-1, 0]]),
+        json!([[0]]),
+        json!([[0, 0], "x"]),
+        json!([[0, 0, "x"]]),
+        json!([[0, 2]]),
+        json!([[0, u64::MAX]]),
+        json!("0,0"),
+        json!({"0": 0}),
+    ] {
+        for (cmd, extra) in [
+            ("table.cellFill", json!({"color": "#FF0000"})),
+            ("table.cellMargins", json!({"left": 4})),
+            ("table.cellAlign", json!({"align": "center"})),
+            ("table.borders", json!({"which": "right"})),
+        ] {
+            let mut p = extra.clone();
+            p["id"] = json!(t);
+            p["cells"] = cells.clone();
+            let e = s.execute(cmd, &p).unwrap_err().to_string();
+            assert!(e.contains(cmd) && e.contains("cell"), "{cmd} {cells}: {e}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().revision, rev, "nothing changed");
+    let many = json!(vec![[0, 0]; 100_001]);
+    assert!(s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": many})).unwrap_err().to_string().contains("at most"));
+    s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": [[1, 1]]})).unwrap();
+    assert!(table_of(&s, t).cell(1, 1).unwrap().fill.is_some() && table_of(&s, t).cell(0, 0).unwrap().fill.is_none());
+}
+
+/// The outline exports (PowerPoint's outline view) holds titles and body text only: footer,
+/// date and slide-number placeholders are not body lines.
+#[test]
+fn outline_export_skips_footer_date_and_slide_number() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "First point\nSecond point"})).unwrap();
+    s.execute(
+        "design.headerFooter",
+        &json!({"footer": true, "footerText": "Company Confidential", "slideNumber": true, "date": true, "dateText": "1 May 2026"}),
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-outline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.md");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "outline"})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(text.contains("Agenda") && text.contains("First point") && text.contains("Second point"), "{text:?}");
+    assert!(!text.contains("Company Confidential"), "footer text is not a body line: {text:?}");
+    assert!(!text.contains("‹#›"), "the slide-number field is not a body line: {text:?}");
+    assert!(!text.contains("1 May 2026"), "the date is not a body line: {text:?}");
+    // The RTF outline (Save As ▸ Outline/RTF) too.
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.rtf");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "rtf"})).unwrap();
+    let rtf = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rtf.contains("Agenda") && rtf.contains("First point"), "{rtf:?}");
+    assert!(!rtf.contains("Company Confidential") && !rtf.contains("1 May 2026"), "{rtf:?}");
+}
+
+#[test]
+fn shape_adjust_and_quick_style_reject_invalid_index() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 100, 200, 100]})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(id).unwrap().clone();
+    for bad in [json!(-1), json!(1.5)] {
+        assert!(s.execute("shape.adjust", &json!({"index": bad, "value": 0.4})).is_err(), "adjust accepted {bad}");
+        assert!(s.execute("shape.quickStyle", &json!({"index": bad})).is_err(), "quickStyle accepted {bad}");
+    }
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, before.geom);
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
+    s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
 }
