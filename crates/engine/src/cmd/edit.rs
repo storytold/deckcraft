@@ -94,19 +94,21 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             if st.selection.slides.is_empty() { st.current_slide().map(|x| vec![x.id]).unwrap_or_default() } else { st.selection.slides.clone() };
         let slides: Vec<Slide> = ids.iter().filter_map(|id| st.doc.slide(*id).cloned()).collect();
         let mut mids = vec![];
+        let mut layout_mids = vec![];
         let mut layouts: Vec<deckcraft_model::Layout> = vec![];
         for sl in &slides {
             mids.extend(crate::media_refs::slide_media(sl));
             if let Some((_, l)) = st.doc.layout(sl.layout)
                 && !layouts.iter().any(|x| x.id == l.id)
             {
-                crate::media_refs::visit::layout(l, &mut |id: &MediaId| mids.push(*id));
+                crate::media_refs::visit::layout(l, &mut |id: &MediaId| layout_mids.push(*id));
                 layouts.push(l.clone());
             }
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
+        let layout_media = st.doc.media.iter().filter(|m| layout_mids.contains(&m.id)).cloned().collect();
         let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
-        s.clipboard = crate::Clipboard { slides, layouts, source_uid: Some(st.uid), media, plain: plain.clone(), ..Default::default() };
+        s.clipboard = crate::Clipboard { slides, layouts, layout_media, source_uid: Some(st.uid), media, plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
     // Selected table cells copy as their text: a tab between cells and a paragraph per row.
@@ -322,6 +324,8 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
             let mut new_ids = vec![];
             // Source layout → the layout its slides take here (found or brought along).
             let mut brought: HashMap<deckcraft_model::LayoutId, deckcraft_model::LayoutId> = HashMap::new();
+            // The media of a layout come in with the first one brought along, not before.
+            let mut layout_media: Option<HashMap<MediaId, MediaId>> = None;
             for (k, sl) in clip.slides.iter().enumerate() {
                 let mut sl = sl.clone();
                 sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("edit.paste", NO_ID_SPACE))?);
@@ -338,7 +342,13 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                             let mi = super::reuse::master_before(doc, at + k);
                             let id = match doc.masters.get(mi).and_then(|m| super::reuse::find_layout(m, from)) {
                                 Some(id) => id,
-                                None => super::reuse::import_layout("edit.paste", doc, mi, from, (1.0, 1.0), remap_media(&media))?,
+                                None => {
+                                    if layout_media.is_none() {
+                                        layout_media = Some(bring_media("edit.paste", doc, &clip.layout_media)?);
+                                    }
+                                    let map = layout_media.as_ref().unwrap_or(&media);
+                                    super::reuse::import_layout("edit.paste", doc, mi, from, (1.0, 1.0), remap_media(map))?
+                                }
                             };
                             brought.insert(from.id, id);
                             id
