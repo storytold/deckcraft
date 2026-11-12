@@ -380,10 +380,11 @@ pub(crate) fn paint_preview(app: &mut SlideApp, painter: &egui::Painter, xf: cra
         }
         let (opacity, to_screen): (f64, Box<dyn Fn(Point) -> Pos2>) = match &st {
             Some(s) => {
-                // Shape-local animation first, then the slide mapping: the renderer composes
-                // `translate(offset) * shape * around`, so a flipped Cameo's spin turns with it.
+                // Shape-local animation first, then the slide mapping, then the slide-space
+                // offset: the renderer composes `translate(offset) * shape * around`, so a
+                // flipped Cameo's spin and shift both turn with it.
                 let centre = Point::new(x.w / 2.0, x.h / 2.0);
-                (s.opacity, Box::new(move |p: Point| xf.to_screen(x.affine() * animated(p, centre, s))))
+                (s.opacity, Box::new(move |p: Point| xf.to_screen(x.affine() * animated(p, centre, s) + s.offset)))
             }
             None => (1.0, Box::new(move |p: Point| xf.to_screen(x.affine() * p))),
         };
@@ -488,11 +489,11 @@ pub(crate) fn paint_show(painter: &egui::Painter, texture: &TextureHandle, doc: 
     for (shape, x) in cameo_boxes(&slide.shapes) {
         let st = state(shape.id);
         let Some(opacity) = live_opacity(hidden, shape.id, &st) else { continue };
-        // Shape-local animation first, then the slide mapping (with the zoom window): the
-        // renderer composes `translate(offset) * shape * around`.
+        // Shape-local animation first, then the slide mapping (with the zoom window), then the
+        // slide-space offset: the renderer composes `translate(offset) * shape * around`.
         let centre = Point::new(x.w / 2.0, x.h / 2.0);
         let to_screen = |p: Point| {
-            let p = x.affine() * animated(p, centre, &st);
+            let p = x.affine() * animated(p, centre, &st) + st.offset;
             slide_to_screen(srect, uv, p.x as f32 / sw.max(1.0), p.y as f32 / sh.max(1.0))
         };
         paint_cameo(painter, texture, shape, x, opacity, &to_screen);
@@ -515,15 +516,15 @@ pub(crate) fn cameo_ids(doc: &Presentation, slide: usize) -> Vec<ShapeId> {
 }
 
 /// `p` after an animation state in shape-local space: scaled and turned about `centre` (shape
-/// points, usually the box centre), then moved by the effect's slide-space offset. The caller
-/// applies the shape's own transform after this, matching the slide renderer
-/// (`translate(offset) * shape * around`).
+/// points, usually the box centre), without the effect's offset. The caller adds `st.offset`
+/// after the shape's own transform, matching the slide renderer (`parent * translate(offset) *
+/// shape * around`): an offset is slide space, so a flipped Cameo must not mirror it.
 pub(crate) fn animated(p: Point, centre: Point, st: &ShapeState) -> Point {
     let d = p - centre;
     let (x, y) = (d.x * st.scale.0, d.y * st.scale.1);
     let a = st.rotate.to_radians();
     let (sin, cos) = (a.sin(), a.cos());
-    Point::new(centre.x + x * cos - y * sin + st.offset.x, centre.y + x * sin + y * cos + st.offset.y)
+    Point::new(centre.x + x * cos - y * sin, centre.y + x * sin + y * cos)
 }
 
 /// Cameos on a slide with their slide-space boxes, including cameos inside groups. Hidden Cameos
@@ -612,9 +613,11 @@ fn push_polygon(cur: &mut Vec<Point>, out: &mut Vec<Vec<Point>>) {
     }
 }
 
-/// A textured mesh that covers `polygons` (shape-local) with the frame, using the shape's flip
-/// and rotation, its [`PictureFill::crop`] selection stretched over the box as PowerPoint shows a
-/// cropped video, and the same centre crop as [`cover_uv`] for the rest.
+/// A textured mesh that covers `polygons` (shape-local) with the frame: the caller owns the
+/// shape transform (flips, rotation, animation) inside `to_screen`, so points arrive here in
+/// shape-local space. UVs still index the shape box, and [`PictureFill::crop`] stretches its
+/// selection over the box as PowerPoint shows a cropped video (plus the centre crop from
+/// [`cover_uv`] for the rest).
 fn cameo_mesh(
     polygons: &[Vec<Point>],
     x: Xfrm,
@@ -624,7 +627,6 @@ fn cameo_mesh(
     tint: Color32,
     to_screen: &dyn Fn(Point) -> Pos2,
 ) -> Mesh {
-    let affine = x.affine();
     let uv = cover_uv(Rect::from_min_size(Pos2::ZERO, vec2(x.w as f32, x.h as f32)), tex_size);
     let [l, t, r, b] = crop.map(|v| if v.is_finite() { v.clamp(0.0, 0.99) as f32 } else { 0.0 });
     let cropped = crop.iter().any(|v| *v > 0.0);
@@ -639,7 +641,7 @@ fn cameo_mesh(
     };
     let mut mesh = Mesh::with_texture(tex);
     for poly in polygons {
-        let points: Vec<Pos2> = poly.iter().map(|p| to_screen(affine * *p)).collect();
+        let points: Vec<Pos2> = poly.iter().map(|p| to_screen(*p)).collect();
         if points.len() < 3 {
             continue;
         }
@@ -1025,16 +1027,20 @@ mod tests {
         assert_eq!(live_opacity(&[], id, &fading), Some(0.4));
     }
 
-    /// An entrance that moves and turns the Cameo moves and turns its frame with it.
+    /// An entrance that moves and turns the Cameo moves and turns its frame with it. The offset
+    /// is slide space: callers add it after the shape transform (renderer order), and a flipped
+    /// Cameo must not mirror it.
     #[test]
     fn an_animated_cameo_paints_its_frame_moved_and_turned() {
         let st = ShapeState { scale: (2.0, 2.0), rotate: 90.0, offset: deckcraft_geom::Vec2::new(5.0, -3.0), ..Default::default() };
         let centre = Point::new(50.0, 50.0);
-        let moved = animated(Point::new(51.0, 50.0), centre, &st);
-        // Measured: the point one unit right of the centre is scaled to two units, turned a
-        // quarter turn (y is down, so it goes down the slide) and moved by the effect's offset,
-        // landing at (55, 49) — the frame arrives moved and turned, not just faded.
-        assert!((moved.x - 55.0).abs() < 1e-9 && (moved.y - 49.0).abs() < 1e-9, "({}, {})", moved.x, moved.y);
+        // The helper turns shape-local points only; the slide-space offset lands afterwards.
+        let turned = animated(Point::new(51.0, 50.0), centre, &st);
+        // Scaled to two units right, turned a quarter turn (y is down, so it goes down the
+        // slide): (52, 50) — the frame arrives turned, not just faded.
+        assert!((turned.x - 52.0).abs() < 1e-9 && (turned.y - 50.0).abs() < 1e-9, "({}, {})", turned.x, turned.y);
+        let moved = turned + st.offset;
+        assert!((moved.x - 57.0).abs() < 1e-9 && (moved.y - 47.0).abs() < 1e-9, "({}, {})", moved.x, moved.y);
         let none = ShapeState::default();
         assert_eq!(animated(Point::new(51.0, 50.0), centre, &none), Point::new(51.0, 50.0));
     }
@@ -1228,16 +1234,20 @@ mod tests {
         (shape, x)
     }
 
-    /// Slide points as pixels, so a test can reason in the shape's own coordinates.
-    fn identity(p: Point) -> Pos2 {
-        pos2(p.x as f32, p.y as f32)
+    /// Shape-local points transformed by the Cameo's own box, as paint call sites do: with the
+    /// mesh callback owning only placement, the transform lives here.
+    fn placed(x: Xfrm) -> impl Fn(Point) -> Pos2 {
+        move |p: Point| {
+            let q = x.affine() * p;
+            pos2(q.x as f32, q.y as f32)
+        }
     }
 
     #[test]
     fn the_frame_is_masked_to_the_cameo_shape() {
         // The Cameo is an ellipse by default: no painted vertex may reach the box's corners.
         let (shape, x) = cameo("ellipse");
-        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
         assert!(!mesh.indices.is_empty(), "the ellipse is painted");
         let inv = x.affine().inverse();
         let (cx, cy) = (x.w / 2.0, x.h / 2.0);
@@ -1252,7 +1262,7 @@ mod tests {
     #[test]
     fn a_rectangular_camera_shape_still_fills_its_box() {
         let (shape, x) = cameo("rect");
-        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
         for (dx, dy) in [(0.0, 0.0), (x.w, 0.0), (x.w, x.h), (0.0, x.h)] {
             let (px, py) = (x.x + dx, x.y + dy);
             let painted = mesh.vertices.iter().any(|v| (v.pos.x as f64 - px).abs() < 0.01 && (v.pos.y as f64 - py).abs() < 0.01);
@@ -1266,8 +1276,8 @@ mod tests {
         // the uncropped mesh (which centre-crops the 640x480 frame into the wide box).
         let (shape, x) = cameo("rect");
         let polys = cameo_polygons(&shape, x.w, x.h);
-        let plain = cameo_mesh(&polys, x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
-        let cropped = cameo_mesh(&polys, x, [0.5, 0.0, 0.0, 0.0], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let plain = cameo_mesh(&polys, x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
+        let cropped = cameo_mesh(&polys, x, [0.5, 0.0, 0.0, 0.0], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
         let at_left =
             |m: &Mesh, x0: f64| m.vertices.iter().filter(|v| (v.pos.x as f64 - x0).abs() < 0.01).map(|v| v.uv.x).fold(f32::INFINITY, f32::min);
         let (u_plain, u_cropped) = (at_left(&plain, x.x), at_left(&cropped, x.x));
@@ -1281,7 +1291,7 @@ mod tests {
         let (shape, x) = cameo("star5");
         let polygons = cameo_polygons(&shape, x.w, x.h);
         assert_eq!(polygons.len(), 1, "one filled outline");
-        let mesh = cameo_mesh(&polygons, x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let mesh = cameo_mesh(&polygons, x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
         assert!(!mesh.indices.is_empty(), "the star is painted");
         let inv = x.affine().inverse();
         for t in mesh.indices.chunks(3) {
@@ -1309,9 +1319,9 @@ mod tests {
         let (shape, mut x) = cameo("rect");
         x.w = 200.0;
         x.h = 100.0;
-        let flat = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let flat = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
         x.rot = 45.0;
-        let turned = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &identity);
+        let turned = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
         let inv = x.affine().inverse();
         for v in &turned.vertices {
             let p = inv * Point::new(v.pos.x as f64, v.pos.y as f64);
@@ -1324,5 +1334,26 @@ mod tests {
         };
         assert!(!flat.vertices.iter().any(outside), "an upright Cameo stays in its box");
         assert!(turned.vertices.iter().any(outside), "the frame did not turn with the shape");
+    }
+
+    /// The mesh callback owns the shape transform exactly once: a translated Cameo paints at
+    /// its slide position, not at the origin and not twice-translated.
+    #[test]
+    fn a_translated_cameo_paints_at_its_slide_position() {
+        let (shape, mut x) = cameo("rect");
+        x.x = 100.0;
+        x.y = 50.0;
+        x.w = 200.0;
+        x.h = 100.0;
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, [0.0; 4], egui::TextureId::User(1), [640, 480], Color32::WHITE, &placed(x));
+        assert!(!mesh.vertices.is_empty(), "the Cameo paints");
+        for v in &mesh.vertices {
+            // Exactly one translation: inside the slide box, and far from the doubly-applied
+            // box (which would start at twice the offset).
+            assert!((x.x..=x.x + x.w).contains(&(v.pos.x as f64)), "x={} is outside the Cameo box", v.pos.x);
+            assert!((x.y..=x.y + x.h).contains(&(v.pos.y as f64)), "y={} is outside the Cameo box", v.pos.y);
+        }
+        let at_origin = mesh.vertices.iter().any(|v| v.pos.x < 1.0 && v.pos.y < 1.0);
+        assert!(!at_origin, "no vertex leaks to the origin: the transform applied once");
     }
 }

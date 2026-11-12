@@ -656,7 +656,7 @@ fn draw_live_layers(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painte
             let centre = deckcraft_geom::Point::new(x.w / 2.0, x.h / 2.0);
             let st = state.clone();
             let to_screen = |p: deckcraft_geom::Point| {
-                let q = x.affine() * crate::camera::animated(p, centre, &st);
+                let q = x.affine() * crate::camera::animated(p, centre, &st) + st.offset;
                 slide_point_to_screen(srect, uv, q.x as f32 / sw.max(1.0), q.y as f32 / sh.max(1.0))
             };
             crate::camera::paint_cameo_clipped(&painter.with_clip_rect(srect), cam_tex, shape, *x, state.opacity, &to_screen);
