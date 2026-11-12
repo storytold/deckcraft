@@ -1035,6 +1035,7 @@ mod tests {
         let st = ShapeState { scale: (2.0, 2.0), rotate: 90.0, offset: deckcraft_geom::Vec2::new(5.0, -3.0), ..Default::default() };
         let centre = Point::new(50.0, 50.0);
         // The helper turns shape-local points only; the slide-space offset lands afterwards.
+        let turned = animated(Point::new(51.0, 50.0), centre, &st);
         // Scaled to two units right, turned a quarter turn (y is down, so it goes down the
         // slide): (50, 52) — the frame arrives turned, not just faded.
         assert!((turned.x - 50.0).abs() < 1e-9 && (turned.y - 52.0).abs() < 1e-9, "({}, {})", turned.x, turned.y);
