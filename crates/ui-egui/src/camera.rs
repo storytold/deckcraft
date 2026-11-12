@@ -380,10 +380,12 @@ pub(crate) fn paint_preview(app: &mut SlideApp, painter: &egui::Painter, xf: cra
         }
         let (opacity, to_screen): (f64, Box<dyn Fn(Point) -> Pos2>) = match &st {
             Some(s) => {
-                let centre = Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
-                (s.opacity, Box::new(move |p: Point| xf.to_screen(animated(p, centre, s))))
+                // Shape-local animation first, then the slide mapping: the renderer composes
+                // `translate(offset) * shape * around`, so a flipped Cameo's spin turns with it.
+                let centre = Point::new(x.w / 2.0, x.h / 2.0);
+                (s.opacity, Box::new(move |p: Point| xf.to_screen(x.affine() * animated(p, centre, s))))
             }
-            None => (1.0, Box::new(move |p: Point| xf.to_screen(p))),
+            None => (1.0, Box::new(move |p: Point| xf.to_screen(x.affine() * p))),
         };
         paint_cameo(painter, &texture, shape, x, opacity, &to_screen);
     }
@@ -486,9 +488,11 @@ pub(crate) fn paint_show(painter: &egui::Painter, texture: &TextureHandle, doc: 
     for (shape, x) in cameo_boxes(&slide.shapes) {
         let st = state(shape.id);
         let Some(opacity) = live_opacity(hidden, shape.id, &st) else { continue };
-        let centre = Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+        // Shape-local animation first, then the slide mapping (with the zoom window): the
+        // renderer composes `translate(offset) * shape * around`.
+        let centre = Point::new(x.w / 2.0, x.h / 2.0);
         let to_screen = |p: Point| {
-            let p = animated(p, centre, &st);
+            let p = x.affine() * animated(p, centre, &st);
             slide_to_screen(srect, uv, p.x as f32 / sw.max(1.0), p.y as f32 / sh.max(1.0))
         };
         paint_cameo(painter, texture, shape, x, opacity, &to_screen);
@@ -510,8 +514,10 @@ pub(crate) fn cameo_ids(doc: &Presentation, slide: usize) -> Vec<ShapeId> {
     doc.slides.get(slide).map(|s| cameo_boxes(&s.shapes).into_iter().map(|(shape, _)| shape.id).collect()).unwrap_or_default()
 }
 
-/// `p` after an animation state: scaled and turned about `centre` (slide points), then moved by
-/// the effect's offset.
+/// `p` after an animation state in shape-local space: scaled and turned about `centre` (shape
+/// points, usually the box centre), then moved by the effect's slide-space offset. The caller
+/// applies the shape's own transform after this, matching the slide renderer
+/// (`translate(offset) * shape * around`).
 pub(crate) fn animated(p: Point, centre: Point, st: &ShapeState) -> Point {
     let d = p - centre;
     let (x, y) = (d.x * st.scale.0, d.y * st.scale.1);
@@ -1042,15 +1048,16 @@ mod tests {
         let mut x = Xfrm::new(10.0, 20.0, 100.0, 60.0);
         x.flip_h = true;
         let st = ShapeState { rotate: 90.0, ..Default::default() };
-        // Shape-local point one unit right of the shape's centre.
-        let local = Point::new(51.0, 30.0);
-        let centre = Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+        // Shape-local point one unit below the shape's centre (off the flip's mirror axis, so
+        // mirroring visibly changes the spun position); the animation turns points about the
+        // shape's own centre, in shape space.
+        let local = Point::new(50.0, 31.0);
+        let shape_centre = Point::new(x.w / 2.0, x.h / 2.0);
         // The live frame: animation first (shape-local), then the Cameo's own transform.
-        let frame = x.affine() * animated(local, centre, &st);
+        let frame = x.affine() * animated(local, shape_centre, &st);
         // The slide renderer: `translate(offset) * shape * around`, with no offset here.
-        let c = Point::new(x.w / 2.0, x.h / 2.0);
         let a = st.rotate.to_radians();
-        let around = Affine::translate(c.to_vec2()) * Affine::rotate(a) * Affine::translate(-c.to_vec2());
+        let around = Affine::translate(shape_centre.to_vec2()) * Affine::rotate(a) * Affine::translate(-shape_centre.to_vec2());
         let slide = x.affine() * around * local;
         assert!(
             (frame.x - slide.x).abs() < 1e-9 && (frame.y - slide.y).abs() < 1e-9,
@@ -1063,7 +1070,7 @@ mod tests {
         // And the flip really matters: without mirroring, the spin would go the other way.
         let mut plain = x;
         plain.flip_h = false;
-        let unflipped = plain.affine() * animated(local, centre, &st);
+        let unflipped = plain.affine() * animated(local, shape_centre, &st);
         assert!((frame.x - unflipped.x).abs() > 1.0, "the flip must change the spun position");
     }
 

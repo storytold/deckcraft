@@ -647,16 +647,17 @@ fn draw_live_layers(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painte
             }
         } else {
             let Some(cam_tex) = cam_tex.as_ref() else { continue };
-            let (id, _, x, state) = &cameos[*i];
-            let Some(shape) = slide.shape(*id) else { continue };
-            let centre = deckcraft_geom::Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+            let (_, _, x, state) = &cameos[*i];
+            let Some(shape) = slide.shape(cameos[*i].0) else { continue };
+            let id = cameos[*i].0;
+            let centre = deckcraft_geom::Point::new(x.w / 2.0, x.h / 2.0);
             let st = state.clone();
             let to_screen = |p: deckcraft_geom::Point| {
-                let q = crate::camera::animated(p, centre, &st);
+                let q = x.affine() * crate::camera::animated(p, centre, &st);
                 slide_point_to_screen(srect, uv, q.x as f32 / sw.max(1.0), q.y as f32 / sh.max(1.0))
             };
             crate::camera::paint_cameo_clipped(&painter.with_clip_rect(srect), cam_tex, shape, *x, state.opacity, &to_screen);
-            live.push(*id);
+            live.push(id);
         }
     }
     draw_retained_overlay(show, f, sl, painter, &live);
