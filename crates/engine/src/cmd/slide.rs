@@ -519,7 +519,11 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
     let frames: Vec<Option<deckcraft_model::Xfrm>> = {
         let slide = doc.slides.get(index).ok_or_else(|| bad("slide.layout", "no slide"))?;
         let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, slide);
-        let inherits = |s: &deckcraft_model::Shape| s.ph.is_some() && s.xfrm.is_none();
+        // A footer, date or slide number pairs with the new layout's by idx, and then takes its frame.
+        let pairs_anyway = |s: &deckcraft_model::Shape| {
+            s.ph.as_ref().is_some_and(|p| p.kind.is_footer_kind() && lay_shapes.iter().any(|l| l.ph.as_ref().is_some_and(|q| q.idx == p.idx)))
+        };
+        let inherits = |s: &deckcraft_model::Shape| s.ph.is_some() && s.xfrm.is_none() && !pairs_anyway(s);
         slide
             .shapes
             .iter()
@@ -608,12 +612,25 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, sel| {
         let layout = doc.slides.get(i).map(|x| x.layout).unwrap_or_default();
         apply_layout(doc, i, layout)?;
+        // Reset puts a placeholder back on its layout's frame. One that pairs with nothing in the
+        // layout has none to go back to and keeps its own, as in PowerPoint.
+        let keeps_frame: Vec<bool> = doc
+            .slides
+            .get(i)
+            .and_then(|sl| {
+                let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, sl)?;
+                let orphan = |s: &deckcraft_model::Shape| s.ph.as_ref().is_some_and(|p| p.idx == deckcraft_model::resolve::ORPHAN_IDX);
+                Some(sl.shapes.iter().map(|s| orphan(s) || deckcraft_model::resolve::unpaired_placeholder(&ctx, s)).collect())
+            })
+            .unwrap_or_default();
         if let Some(sl) = doc.slides.get_mut(i) {
             let sl = Arc::make_mut(sl);
             sl.background = None;
-            for sh in &mut sl.shapes {
+            for (k, sh) in sl.shapes.iter_mut().enumerate() {
                 if sh.ph.is_some() {
-                    sh.xfrm = None;
+                    if !keeps_frame.get(k).copied().unwrap_or(false) {
+                        sh.xfrm = None;
+                    }
                     sh.fill = None;
                     sh.line = None;
                     sh.effects = None;
