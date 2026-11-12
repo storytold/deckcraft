@@ -15,6 +15,8 @@ restart limits), then `9ad80547` (code, tests and docs: the fourth review's tria
 and record the unrun gate), then `fd5914e8` (the **presence heartbeat**: an unchanged presence is
 repeated every 10 s, inside the room's 30 s TTL, and a moved one stays capped at 20 Hz; the test
 drives the pump over an in-process pipe and fails without the heartbeat).
+**The head is `1d92f763`**, two `origin/main` merges on top of `fd5914e8` and delivered to the fork
+and PR #2012 (§PR publication); the §8 gate on it is green (§Verification, §Session log).
 **`aaecc6db` is the newest code slice: one operation, one identity.** The normaliser gave every
 operation of one command the command's single `op_id`; the room dedups on `op_id`, so it applied the
 first operation of a multi-object command and answered the rest with the stored result — a
@@ -66,6 +68,14 @@ now; the four workflow runs created on that head (CI, Nix, House rules, SonarClo
 On top of `ebbecf08` are local, **unpushed** commits: `42544987` (code, tests and the RFC: the
 HTTP base slice, §A base above the inline limit is one HTTP request) and this docs commit (this
 file, `production.md` and `rfc.md`).
+**The delivered head has moved again: `1d92f763`** — the second merge of `origin/main` onto
+`collab/pr15` (the chart-legend, chartEx-budget and guide-list drops from main), pushed
+2026-11-12T12:13Z. At 2026-11-12T13:00Z the local head, `git ls-remote fork
+refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` all named
+`1d92f763128ef7381df36fb444ece4b7d258910d` (`state` `OPEN`, `mergeStateStatus` `UNSTABLE`), so
+`42544987` and the docs commits above it are delivered and nothing on the branch was unpushed
+before this STATUS commit. The §8 gate was re-run on that head (§ Session log, 2026-11-12 — the
+presence heartbeat is already on the branch).
 The push delivered `fd5914e8` on top of `1f78cadb`, so every review fix up to that head is
 delivered: the fifth review's
 triage is delivered too — a room
@@ -282,7 +292,7 @@ Merging is a human step. Closing the superseded PRs is a human decision as well.
 
 | PR | Branch | Head | GitHub state |
 |---|---|---|---|
-| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `ebbecf08` (the `origin/main` merge on top of the IME slices) — fork = PR = local head at 2026-11-12T05:44Z; the local branch now adds `42544987` and this docs commit, unpushed | leading PR; `MERGEABLE` / `UNSTABLE` (the four runs on `ebbecf08` are `action_required`, so nothing executed; approval is the next step); local §8 gate green on `ebbecf08` except the known host-font case |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `1d92f763` (the second `origin/main` merge) — fork = PR = local head at 2026-11-12T13:00Z; the `42544987` base slice and the later docs commits are inside it, and only this STATUS commit is new | leading PR; `MERGEABLE` / `UNSTABLE` (no workflow run on the head has been approved, so nothing executed; approval is the next step); local §8 gate green on `1d92f763` (6 gates; the LibreOffice half skipped, no `soffice` on the host) |
 | [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `abffb229` | `MERGEABLE` / `CLEAN`, superseded; **no unique code** (`pr15...pr11` = 32/4, and its `picture_place` fix is already on pr15 at `crates/pptx/src/dgm.rs:528`) |
 | [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `6109fe1c` | `CONFLICTING` / `DIRTY`, superseded |
 
@@ -984,6 +994,7 @@ document as the editors.
 | after `collab/pr13` (chunked base): `fmt --check` clean, `clippy --workspace --all-targets -D warnings` clean, `collab-proto` 41, `collab` 269 + 8, `collab-server` 10 unit + 4 commit + 5 gates (19.4 s, LibreOffice skipped on the build host) + 17 socket, `collab-web` 15, `deckcraft-web` 6, `ui-egui collab::` 20 |
 | after `c895183a`: `fmt --check` clean, clippy `--workspace --all-targets -D warnings` clean, `collab` 215 + 8, `collab-proto` 32, `collab-server` 10 unit + 4 commit + 4 gates (2.43 s, LibreOffice skipped on the build host) + 7 socket, `collab-web` 15, `deckcraft-web` 6, `ui-egui collab::` 20, `deckcraft-engine` 584 + 1 ignored, `xtask layers` 32 crates, wasm32 check of `deckcraft-web` ok; `cargo test --workspace --no-fail-fast` green except the two known host-without-`craft-fonts` failures (`ui-egui ime_tests::korean_composes_in_the_notes_pane`, `render tests::east_asian_vertical_text_stands_ideographs_upright`) |
 | after the merge of `origin/main` (`c9803277`): `fmt --check` clean, clippy `--workspace --all-targets -D warnings` EXIT=0, `collab-proto` 42, `collab` 288 + 8, `collab-server` 19 unit + 5 commit + 18 socket + 5 gates (19.1 s, LibreOffice skipped on the build host), `collab-web` 15, `engine` 612 + 1 ignored (+ 6 + 8 integration), `pptx` 70 + 5 + 146, `ui-egui --lib` 526 passed + 4 ignored with the one known host-font failure (`ime_tests::korean_composes_in_the_notes_pane`), `xtask` `pdf-deps`/`assets` (48 files)/`layers` (28 crates)/`wasm` (22 crates) all EXIT=0, `cargo test --workspace --doc` pass; `cargo xtask ci` as a whole stops only at its `test` step, which is the same workspace run and the same host-font failure |
+| after the second `origin/main` merge, head `1d92f763` (2026-11-12T13:00Z, build host `agents`): `cargo fmt --all -- --check` clean, `cargo clippy -j 4 -p deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D warnings` clean, `collab` 305 lib + 8 `two_clients`, `ui-egui --lib collab::` 26 (the presence heartbeat test passes alone with `--exact`), `collab-server --test gates` **6 passed in 19.15 s** (the LibreOffice half skipped: no `soffice` on that host) — the §8 gate on the delivered head |
 
 Re-run on 2026-11-08 after `3ec81d70`: `fmt` clean, `collab-proto` 19, `collab` 113 + 7,
 `collab-server` 5 + 6, `ui-egui collab::` 17, `deckcraft-engine` 565 + 1 ignored; clippy over the
@@ -1624,18 +1635,20 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** — delivered head
-   `ebbecf08` (the `origin/main` merge with the video-decode drop, on top of the IME slices),
-   which at 2026-11-12T05:44Z is the fork head, the PR head and the local branch head; every
-   review pass, the STATUS sync, the presence heartbeat, both `origin/main` merges, the op_id
-   slice and the IME slices are delivered, and the local branch adds `42544987` (the HTTP base
-   slice) plus this docs commit, unpushed. The paragraph below keeps the 03:13:50Z reading of
-   the same PR; read `5a105c61` there as "the head at that time", and the live value is
-   `gh pr view 2012 --json headRefOid`. `gh pr view 2012` reports `MERGEABLE` / `UNSTABLE`; **no workflow run exists on
-   `5a105c61` or `aaecc6db`**, and the four runs on `38a20a9c` (created 2026-11-11T11:31:32Z) wait
-   for a maintainer's approval, so the next step for a person is that approval and then review and
-   merge; `5a105c61` itself needs no push, while this STATUS commit (local, on top of it) would
-   need one if it is to appear in the PR. The host gate on `5a105c61`
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** — the delivered head is
+   `1d92f763` (the second `origin/main` merge, pushed 2026-11-12T12:13Z): at 2026-11-12T13:00Z the
+   fork head, the PR head and the local branch head are that commit, so every review pass, the
+   STATUS sync, the presence heartbeat (`fd5914e8`), both `origin/main` merges, the op_id slice,
+   the IME slices and `42544987` (the HTTP base slice) are delivered and nothing on the branch is
+   unpushed; only this STATUS commit is new. The §8 gate on `1d92f763` is green (§ Session log,
+   2026-11-12 — the presence heartbeat is already on the branch; 6 gates in 19.15 s, the
+   LibreOffice half skipped on that host). The paragraph below keeps the 05:44Z reading of the same PR; read `ebbecf08`
+   there as "the head at that time", and the live value is `gh pr view 2012 --json headRefOid`.
+   `gh pr view 2012` reports `MERGEABLE` / `UNSTABLE`; **no workflow run has executed on any of
+   these heads** — the four runs on `38a20a9c` (created 2026-11-11T11:31:32Z) are
+   `completed / action_required` and the runs for the later heads wait for the same approval, so
+   the next step for a person is that approval and then review and merge. The host gate on
+   `5a105c61`
    (`.craft/logs/gate-deckcraft-2012-5a105c61.log`) is green on `fmt`/`pdf-deps`/`clippy` and stops
    at `test` only on the known host-font render test
    (`render::tests::east_asian_vertical_text_stands_ideographs_upright`, no CJK glyph on the host);
@@ -1950,6 +1963,45 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-12 — the presence heartbeat is already on the branch; verified on the head `1d92f763`
+
+- **What was asked.** Fold the stranded `collab/presence-heartbeat` (`9c93ae66`, cut from
+  `6e9d10e7`: "collab: repeat an unchanged presence before the room's TTL expires") into
+  `collab/pr15` — rebase it, keep the TTL test, run the §8 gates and record the slice here.
+- **Already on the branch: nothing to rebase.** The same change is `fd5914e8`, cherry-picked
+  onto `1f78cadb` conflict-free (§2026-11-11 — the presence heartbeat delivered on top of
+  `1f78cadb`). Compared region by region, the constant block (`PRESENCE_MIN_GAP_MS = 50`,
+  `PRESENCE_HEARTBEAT_MS = 10_000`, both with their comments), `presence_due` and
+  `collab::tests::an_unchanged_presence_is_repeated_before_the_room_forgets_it` are identical on
+  `9c93ae66` and on `1d92f763` (`git show <rev>:crates/ui-egui/src/collab.rs` diffed region by
+  region is empty), and `git log -S PRESENCE_HEARTBEAT_MS -- crates/ui-egui/src/collab.rs` finds
+  exactly one commit, `fd5914e8`. Applying `9c93ae66` again would add a second copy of the same
+  lines, so it was not applied. The chair's 09:45Z bus note already records `9c93ae66` as a
+  duplicate of `fd5914e8`, not a loss. The stranded branch itself can be deleted by a person;
+  this project does not delete branches (a destructive git operation).
+- **Head and push.** At 2026-11-12T13:00Z the local head,
+  `git ls-remote fork refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` all named
+  `1d92f763`, so every commit up to the second `origin/main` merge is delivered. This session
+  changed no code and pushed nothing; the only new local commit is this STATUS entry.
+- **Gate on `1d92f763`** (build host `agents`, rust 1.99.1): `cargo fmt --all -- --check` clean;
+  `cargo clippy -j 4 -p deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D warnings`
+  clean; `cargo test -p deckcraft-collab --lib` 305 passed; `cargo test -p deckcraft-collab
+  --test two_clients` 8 passed; `cargo test -p deckcraft-ui-egui --lib collab::` 26 passed, and
+  the heartbeat test alone (`--exact`) passes; the TASK.md §8 gate `cargo test -p
+  deckcraft-collab-server --test gates -- --test-threads=1` is **6 passed in 19.15 s** — the
+  120-slide/media room and its commit, the three-session
+  conflict/reconnect gate, the three-client soak with its base transfer, the 120-slide soak with
+  the chained base and the HTTP base above the inline limit. The LibreOffice half **skipped
+  itself**: `which soffice` prints nothing on the build host and the gate prints its skip line, so
+  the `pptx` open/repair evidence for this head is the workstation run recorded in §8 above, not a
+  host run. The heartbeat's own behaviour is unchanged from
+  `fd5914e8` and is still the reference: an unchanged presence is repeated every 10 s inside the
+  room's 30 s TTL, a moved one stays capped at 20 Hz, and the test drives the pump over an
+  in-process `PipeTransport` and fails without the repetition.
+- **Not done, deliberately.** No rebase of `collab/presence-heartbeat` (it would duplicate
+  `fd5914e8`), no push, no branch deletion, no CI change. Workflow approval on `1d92f763` is the
+  maintainer's step.
 
 ### 2026-11-12 — an input method's deletion outside a composition is one `text.delete`
 
