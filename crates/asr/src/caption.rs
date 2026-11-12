@@ -529,6 +529,21 @@ mod tests {
             assert!(estimated <= l.rect.w + 1e-9, "{line:?} estimates {estimated} wide, the box is {}", l.rect.w);
         }
     }
+    #[test]
+    fn a_glyph_wider_than_a_narrow_box_is_clipped_not_dropped() {
+        // A 100-point viewport with a 96-point font leaves a 64-point box: one wide glyph
+        // estimates near 100 points and cannot fit. The line still advances with that glyph
+        // instead of vanishing, and the show clips it to the box when drawing.
+        let screen = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let slide = Rect::new(0.0, 20.0, 100.0, 60.0);
+        let mut input = LayoutInput::new(screen, slide, Position::BottomOverlay, "字字字字");
+        input.font_pt = MAX_FONT_PT;
+        let laid = layout(&input);
+        assert_eq!(laid.lines, vec!["字".to_string()], "a single glyph wider than the line still advances");
+        assert!(laid.clipped, "the rest of the text does not fit");
+        let estimated = units_of(&laid.lines[0]) as f64 * laid.font_pt * ADVANCE_RATIO;
+        assert!(estimated > laid.rect.w, "the glyph overhangs the {}-point box and relies on the draw clip", laid.rect.w);
+    }
 
     #[test]
     fn a_long_caption_keeps_its_newest_words() {

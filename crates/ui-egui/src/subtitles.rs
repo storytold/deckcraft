@@ -78,6 +78,8 @@ pub struct Subtitles {
     pub download_error: Option<String>,
     /// A full hash check running off the UI thread; its result replaces `model`.
     verify: Option<VerifyJob>,
+    /// Why the last background hash check never ran; the dialog shows it until the next attempt.
+    pub verify_error: Option<String>,
     /// The input devices, enumerated once (a device list is not free) and reused.
     microphones: Option<Vec<String>>,
     /// The layout the last frame drew, reused while its key is unchanged.
@@ -99,6 +101,7 @@ impl Default for Subtitles {
             download: None,
             download_error: None,
             verify: None,
+            verify_error: None,
             microphones: None,
             caption_cache: RefCell::new(CaptionCache::default()),
         }
@@ -200,13 +203,20 @@ impl Subtitles {
             }
         });
         match spawned {
-            Ok(handle) => self.verify = Some(VerifyJob { stop, rx, handle: Some(handle) }),
-            // No thread available: pay the hash once here rather than report an unverified model.
-            Err(_) => {
-                self.model = model::check_dir(&self.model_dir, &whisper_tiny());
-                self.verify = None;
+            Ok(handle) => {
+                self.verify = Some(VerifyJob { stop, rx, handle: Some(handle) });
+                self.verify_error = None;
             }
+            Err(_) => self.verify_unavailable(),
         }
+    }
+
+    /// No thread was available for the background hash check: keep the presence-only state
+    /// and report the failure instead of hashing 151 MB on the UI thread. The next check
+    /// (Check Again, another download, another folder) retries off the UI thread.
+    pub(crate) fn verify_unavailable(&mut self) {
+        self.verify_error = Some("could not start the background check; the model state is presence-only".into());
+        self.verify = None;
     }
 
     /// Whether a background hash check is still running (a repaint is due when it finishes).
@@ -232,6 +242,7 @@ impl Subtitles {
         match job.rx.try_recv() {
             Ok(status) => {
                 self.model = status;
+                self.verify_error = None;
                 // A start that failed for a missing or damaged model is retried once the check
                 // says the model is now usable. A healthy running stream is not restarted: the
                 // check finishing must not drop the audio and reload the model mid-show.

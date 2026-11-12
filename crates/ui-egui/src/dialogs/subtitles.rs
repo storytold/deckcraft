@@ -198,6 +198,9 @@ fn model_block(app: &mut SlideApp, ui: &mut Ui) {
         // The hash result has not arrived yet: presence is not "installed".
         ui.label(egui::RichText::new("Checking the files…").color(tokens.warning));
     }
+    if let Some(error) = &app.subtitles.verify_error {
+        ui.label(egui::RichText::new(error).color(tokens.error));
+    }
     let can_download = app.services.download_model.is_some();
     let can_pick = app.services.pick_open.is_some();
     let folder = !app.subtitles.model_dir.as_os_str().is_empty();

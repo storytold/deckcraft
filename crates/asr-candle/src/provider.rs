@@ -225,16 +225,18 @@ fn run(
         Ok(capture) => capture,
         Err(e) => return fail(&status, &current, generation, &tx, e),
     };
-    {
+    // A replaced worker can still be opening the microphone while the new stream is starting:
+    // only the current generation may publish, so a stale open cannot overwrite it.
+    let running = {
         let caps = capabilities(settings.accelerator);
-        let mut s = status.lock().unwrap_or_else(PoisonError::into_inner);
-        *s = ProviderStatus {
+        ProviderStatus {
             microphone: Some(capture.device.clone()),
             accelerator: Some(caps.chosen),
             capabilities: Some(caps),
             ..ProviderStatus::running(whisper_tiny().id, settings.language_hint().map(str::to_string))
-        };
-    }
+        }
+    };
+    publish(&status, &current, generation, running);
     let hint = settings.language_hint().map(str::to_string);
     let mut ring: Vec<f32> = Vec::with_capacity(WINDOW_SAMPLES);
     let mut new_samples = 0usize;
@@ -300,9 +302,9 @@ fn run(
         while let Some(chunk) = capture.recv(Duration::ZERO) {
             absorb(&chunk, &mut ring, &mut new_samples, &mut last_voice);
         }
-        if last_voice.elapsed() >= FINAL_AFTER
-            && let Some(text) = pending.take()
-        {
+        // The caller folds in the audio that arrived during the decode first: speech heard
+        // meanwhile refreshes `last_voice`, so this only fires after a real pause.
+        if let Some(text) = finalize(&mut pending, last_voice) {
             let _ = tx.send(Event::final_line(text));
             // The finalized speech is in the window: drop it, so the next partial covers only
             // what has been said since instead of sending the same line again.
@@ -323,6 +325,13 @@ fn decode_due(last_finished: Instant, now: Instant) -> bool {
 /// repeat text that has already been shown.
 fn is_idle(pending: Option<&str>, last_voice: Instant) -> bool {
     pending.is_none() && last_voice.elapsed() >= FINAL_AFTER
+}
+
+/// The pending line when it has gone quiet since it was heard: `Some` to emit as the final
+/// line, `None` while speech is still arriving. Split out of the worker loop so the
+/// silence decision is testable without a microphone or a model.
+fn finalize(pending: &mut Option<String>, last_voice: Instant) -> Option<String> {
+    if last_voice.elapsed() >= FINAL_AFTER { pending.take() } else { None }
 }
 
 /// Add a captured chunk (converted to 16 kHz mono) to the ring, remembering when speech was last
@@ -426,6 +435,30 @@ mod tests {
         assert!(!is_idle(Some("still pending"), quiet_for_a_while), "a pending line still has to be finalized");
         assert!(!is_idle(None, Instant::now()), "speech heard now keeps the decoder running");
     }
+    #[test]
+    fn speech_heard_during_a_decode_holds_the_final_line_back() {
+        // A decode takes seconds; the worker folds in the audio that arrived meanwhile before
+        // the silence check, so continuous speech is never cut at a decode boundary even when
+        // the decode outlasted `FINAL_AFTER`.
+        let mut ring = Vec::new();
+        let mut new_samples = 0;
+        let mut last_voice = Instant::now() - FINAL_AFTER - Duration::from_millis(1);
+        let loud = AudioBuffer::new(vec![0.5; 1600], 16_000, 1);
+        absorb(&loud, &mut ring, &mut new_samples, &mut last_voice);
+        let mut pending = Some("the sentence so far".to_string());
+        assert_eq!(finalize(&mut pending, last_voice), None, "queued speech refreshed the voice clock: no final line");
+        assert!(pending.is_some(), "the line stays pending while speech arrives");
+    }
+
+    #[test]
+    fn silence_after_a_decode_finalizes_the_pending_line() {
+        let mut pending = Some("that is all".to_string());
+        let quiet = Instant::now() - FINAL_AFTER - Duration::from_millis(1);
+        assert_eq!(finalize(&mut pending, quiet), Some("that is all".to_string()));
+        assert!(pending.is_none(), "the finalized line leaves the worker loop");
+        let mut none: Option<String> = None;
+        assert_eq!(finalize(&mut none, quiet), None, "nothing pending means no final line");
+    }
 
     #[test]
     fn a_decode_is_not_scheduled_faster_than_the_decode_time() {
@@ -444,6 +477,19 @@ mod tests {
         assert_eq!(status.lock().unwrap_or_else(PoisonError::into_inner).state, ProviderState::Idle, "the retired stream is ignored");
         publish(&status, &generation, 2, ProviderStatus::stopped());
         assert_eq!(status.lock().unwrap_or_else(PoisonError::into_inner).state, ProviderState::Stopped, "the current stream publishes");
+    }
+    #[test]
+    fn a_stale_worker_cannot_publish_running_either() {
+        // The replacement stream is starting when the old worker finally opens the microphone:
+        // its `running` write must not overwrite the new stream's `starting`.
+        let status = Arc::new(Mutex::new(ProviderStatus::starting("whisper-tiny", Some("en".into()))));
+        let generation = Arc::new(AtomicU64::new(2));
+        publish(&status, &generation, 1, ProviderStatus::running("whisper-tiny", Some("en".into())));
+        assert_eq!(
+            status.lock().unwrap_or_else(PoisonError::into_inner).state,
+            ProviderState::Starting,
+            "the retired worker's running write is ignored"
+        );
     }
 
     #[test]

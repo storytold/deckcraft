@@ -104,6 +104,25 @@ fn a_missing_model_is_reported_once_and_does_not_restart_each_frame() {
         assert!(subs.sync(&settings, true).is_some());
     }
 }
+#[test]
+fn a_check_that_cannot_start_reports_instead_of_hashing_on_the_ui_thread() {
+    let dir = temp_dir("present");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    for name in ["model.safetensors", "config.json", "tokenizer.json"] {
+        std::fs::write(dir.join(name), b"not the model").expect("write");
+    }
+    let mut subs = Subtitles::default();
+    subs.adopt_dir(dir.clone());
+    assert_eq!(subs.presence_state(), ModelState::Ready, "presence is reported at once");
+    // The worker thread could not start: keep the presence state and say so instead of
+    // hashing 151 MB on the UI thread.
+    subs.verify_unavailable();
+    assert!(!subs.is_verifying(), "no worker means no repaint wait");
+    assert_eq!(subs.presence_state(), ModelState::Ready, "the presence-only state is kept, not hashed here");
+    assert!(subs.verify_error.as_deref().is_some_and(|e| e.contains("background check")), "the dialog names the failure: {:?}", subs.verify_error);
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
 #[test]
 fn cosmetic_settings_do_not_restart_the_stream() {
