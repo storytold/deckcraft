@@ -81,6 +81,21 @@ impl H264Mp4Track {
     /// Encode one packed RGBA picture, exactly `width × height × 4` bytes. Returns whether it is a
     /// key picture. The first picture and every [`KEY_EVERY_S`] seconds are keys.
     pub fn push_rgba(&mut self, rgba: &[u8]) -> Result<bool> {
+        Ok(self.push_checked(rgba, u64::MAX)?.0)
+    }
+
+    /// Encode one picture, writing it only when the finished MP4 stays within `byte_budget`.
+    /// Returns whether the sample was written: `false` ends the clip at the cap with what it
+    /// holds, instead of letting [`H264Mp4Track::finish`] reject the whole take. The refused
+    /// sample is still encoded, so a refusal must end the clip — the encoder's picture state
+    /// has already moved on.
+    pub fn push_rgba_capped(&mut self, rgba: &[u8], byte_budget: u64) -> Result<bool> {
+        Ok(self.push_checked(rgba, byte_budget)?.1)
+    }
+
+    /// Encode one picture and write its sample unless it would pass `byte_budget`: the key
+    /// picture and whether anything was written.
+    fn push_checked(&mut self, rgba: &[u8], byte_budget: u64) -> Result<(bool, bool)> {
         let need = self.width as usize * self.height as usize * 4;
         if rgba.len() != need {
             return Err(MediaError::Corrupt(format!("a {}×{} frame is {need} bytes, not {}", self.width, self.height, rgba.len())));
@@ -88,11 +103,14 @@ impl H264Mp4Track {
         let key = self.frames == 0 || self.since_key + 1 >= self.fps * KEY_EVERY_S;
         let pic = self.enc.encode_rgba(rgba, key).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         let sample = pic.length_prefixed();
+        if self.bytes.saturating_add(sample.len() as u64) > byte_budget {
+            return Ok((pic.key, false));
+        }
         self.mux.write_sample(self.track, WriteSample { data: &sample, duration: 1, composition_offset: 0, is_sync: pic.key }).map_err(mp4)?;
         self.bytes += sample.len() as u64;
         self.frames += 1;
         self.since_key = if pic.key { 0 } else { self.since_key + 1 };
-        Ok(pic.key)
+        Ok((pic.key, true))
     }
 
     /// Finish the movie (`moov` first, so a player can start without the whole file).

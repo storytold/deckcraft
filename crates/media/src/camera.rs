@@ -206,9 +206,6 @@ pub struct CameoRecorder {
     #[cfg(test)]
     last_written: Option<Vec<u8>>,
     capped: Option<CameoCap>,
-    /// The largest sample written so far: the byte budget must keep room for one more of these,
-    /// or a single big picture would push the MP4 past the cap and the whole take would be lost.
-    largest_sample: u64,
     /// Largest clip this recorder keeps, in MP4 bytes ([`MAX_CLIP_BYTES`] unless a test lowers it).
     max_bytes: usize,
 }
@@ -248,7 +245,6 @@ impl CameoRecorder {
             #[cfg(test)]
             last_written: None,
             capped: None,
-            largest_sample: 0,
             max_bytes: MAX_CLIP_BYTES,
         })
     }
@@ -349,15 +345,13 @@ impl CameoRecorder {
         let fitted = crate::encode::fitted_rgba(&src.rgba, src.width, src.height, self.width, self.height)?;
         let mut left = budget;
         while self.written < want && left > 0 {
-            // Room for one more sample of the size the biggest one took: a picture that alone
-            // passes the cap would make the finished MP4 too large, and `seal` then rejects it.
-            if self.track.bytes().saturating_add(self.largest_sample) >= self.byte_budget() {
+            // The finished sample's own size decides: it is already encoded when the track says
+            // no, so a refusal ends the clip here — writing more would only change pictures the
+            // clip never holds.
+            if !self.track.push_rgba_capped(&fitted, self.byte_budget())? {
                 self.capped = Some(CameoCap::Bytes);
                 break;
             }
-            let before = self.track.bytes();
-            self.track.push_rgba(&fitted)?;
-            self.largest_sample = self.largest_sample.max(self.track.bytes().saturating_sub(before));
             self.note_written(&fitted);
             self.written += 1;
             left -= 1;
@@ -529,8 +523,9 @@ mod tests {
         assert_eq!(rec.frames(), 2 * MAX_SAMPLES_PER_CALL);
     }
 
-    /// One large sample cannot push the clip past its byte budget: the budget keeps room for the
-    /// biggest sample written, so every class of take finalizes instead of being rejected.
+    /// One large sample cannot push the clip past its byte budget: each sample is refused when
+    /// its own finished size would pass the budget, so every class of take finalizes instead of
+    /// being rejected.
     #[test]
     fn a_large_sample_cannot_push_the_clip_past_its_budget() {
         let mut rec = CameoRecorder::new((64, 64), 15, 30, 0).expect("recorder").with_max_bytes(1 << 20);
@@ -612,6 +607,31 @@ mod tests {
         let clip = rec.finish(now).expect("the clip so far is kept, not rejected");
         assert!(clip.frames > 0);
         assert!(clip.mp4.len() <= MAX_CLIP_BYTES);
+    }
+
+    /// A sample larger than the remaining budget is refused on its own size, not on the size of
+    /// an earlier one: the refusal ends the clip with what it holds, and the take finalizes.
+    #[test]
+    fn a_sample_larger_than_the_remaining_budget_is_refused() {
+        use crate::encode::H264Mp4Track;
+
+        // The largest sample a 64x64 clip at QP 10 writes: later samples must fit beside it.
+        let mut probe = H264Mp4Track::new(64, 64, 15, 10).expect("track");
+        let mut noisy = vec![0u8; 64 * 64 * 4];
+        for (n, p) in noisy.chunks_mut(4).enumerate() {
+            let v = ((n * 7) % 251) as u8;
+            p.copy_from_slice(&[v, 255 - v, v / 2, 255]);
+        }
+        probe.push_rgba(&noisy).expect("probe sample");
+        let one = probe.bytes();
+        assert!(one > 0, "the probe wrote a sample to measure");
+        // A budget that holds samples but not another one of the probe's size: the next sample
+        // is refused for its own bytes, and the capped clip still finalizes inside the budget.
+        let mut small = H264Mp4Track::new(64, 64, 15, 10).expect("track");
+        small.push_rgba(&vec![128u8; 64 * 64 * 4]).expect("small sample");
+        let budget = small.bytes() + one.saturating_sub(1);
+        assert!(!small.push_rgba_capped(&noisy, budget).expect("checked push"), "the oversized sample is refused");
+        assert!(small.bytes() <= budget, "the refused sample wrote nothing: {}", small.bytes());
     }
 
     /// A clip the byte budget stopped can never write another sample: sealing it returns the clip
