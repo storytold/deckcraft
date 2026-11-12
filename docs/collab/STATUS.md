@@ -23,10 +23,17 @@ replica and with no rejection to notice it. Each operation now carries its own i
 first, `<id>#<n>` after it), and a structural operation waits for the answer to everything sent
 before it, so the N structural steps of one command go out one answer at a time instead of arriving
 stale and costing a `resync` each. Details and consequences: §One operation, one identity.
-**`96783106` is the delivered head — the `origin/main` merge `c9803277` plus its STATUS commit — and
-that is what the fork (`copoka/deckcraft`) and PR #2012 hold: `gh pr view 2012 --json headRefOid`
-named `96783106` at 2026-11-11T23:30Z. Local HEAD adds `aaecc6db` and this STATUS commit on top;
-neither is pushed, so local HEAD and the PR head differ until a person pushes the branch.**
+**As of the push at 2026-11-12T03:13:50Z the delivered head is `5a105c61`** — the docs commit of
+the op_id slice, on top of the code commit `aaecc6db` (and of the `origin/main` merge `c9803277`).
+The fork (`copoka/deckcraft`) and PR #2012 hold exactly that commit: `gh pr view 2012 --json
+headRefOid` returned `5a105c61a48d1484d8693332f54e42f95112f759` with `MERGEABLE` / `UNSTABLE` and
+`updatedAt` 2026-11-12T03:13:50Z, and the local branch head was the same commit before this STATUS
+commit; local HEAD now adds this docs commit on top of `5a105c61` and that commit is not pushed,
+so the PR head lags the local branch by one docs commit again until a person pushes. **No workflow run exists for `5a105c61` or `aaecc6db`** (`gh run list --commit` returns
+nothing for either), so the rollup on the delivered head carries no executed job and
+`mergeStateStatus` is `UNSTABLE` for that reason alone. These statements are tied to that
+timestamp: any later push moves the delivered head, and the live value is
+`gh pr view 2012 --json headRefOid`.
 The push delivered `fd5914e8` on top of `1f78cadb`, so every review fix up to that head is
 delivered: the fifth review's
 triage is delivered too — a room
@@ -36,8 +43,9 @@ exactly. The triage of `5852391245` was already delivered in `9ad80547`: `4a64e7
 and the commit adds 7 files, +498/−116. `7f93069e` — the connector-glue commit the earlier notes
 named — is a dangling commit with the same subject as `2bbe723f` and is **not** in the branch. GitHub's
 workflow runs on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
-`completed / action_required`; the new head (the docs commit above `fd5914e8`) has not been
-approved for a run yet, so the rollup still carries no executed job. The local TASK.md §8 gate on `fd5914e8` **did** run on
+`completed / action_required`; no later head has been approved for a run either — `gh run list
+--commit 5a105c61` and `--commit aaecc6db` are empty — so the rollup carries no executed job. The
+local TASK.md §8 gate on `fd5914e8` **did** run on
 the build host and is green: `cargo fmt --all -- --check` clean, `cargo clippy -p
 deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D warnings` clean, `cargo test -p
 deckcraft-collab` 288 + 8 passed, and `cargo test -p deckcraft-ui-egui --lib` 522 passed + 4
@@ -132,8 +140,9 @@ description is [`pr10.md`](pr10.md).
 so PR #2012 went `CONFLICTING` / `mergeStateStatus: DIRTY`. The branch was **merged, not
 rebased**: merge commit **`c9803277`** has `da8ba866` as its first parent and `c6846f6a` as its
 second, so every slice hash named in this file still names its commit and no history was
-rewritten. The tree is clean; local HEAD is that merge commit with this STATUS commit on top, and
-the fork and the PR still hold `da8ba866` until a person pushes.
+rewritten. The tree is clean; local HEAD was that merge commit with a STATUS commit on top, and at
+the time of the merge the fork and the PR still held `da8ba866`; the merge was pushed later and the
+delivered head has since moved on (see the header — `5a105c61` at 2026-11-12T03:13:50Z).
 
 What main brought: the media codecs and containers move to craft-libs, so the `opus`, `ogg`,
 `isobmff` and `matroska` crates leave the workspace (`git diff --stat HEAD^1 HEAD` on the merge:
@@ -188,30 +197,35 @@ head — is the owner's step (§PR publication); an agent does not push.
 ## PR publication (2026-11-11)
 
 **[PR #2012](https://github.com/storytold/deckcraft/pull/2012)** is open from
-`copoka/deckcraft:collab/pr15` (last code slice `fd5914e8`, this STATUS commit on top) into
-`storytold/deckcraft:main` and is **ready** (not a draft); its body is [`pr10.md`](pr10.md). The
-fork head **is** the PR head: `git ls-remote fork refs/heads/collab/pr15` and
-`gh pr view 2012 --json headRefOid` name the same commit — the docs commit above `fd5914e8`,
-`da8ba866`. Everything the branch delivered is there: the second review's
-commits, the fourth review's triage, the STATUS sync, the fifth review's triage (`891187f5`), its
-docs commit (`38a20a9c`), the delivered-head note (`1f78cadb`) and the presence heartbeat
-(`fd5914e8`). Local HEAD is one commit further — `c9803277`, the merge of `origin/main`
-(§Merge of `origin/main`) — and that merge is **not** pushed, so GitHub still reads the branch at
-`da8ba866`, reports the PR `CONFLICTING` / `mergeStateStatus: DIRTY` against today's `main`, and
-will only recompute the verdict after the owner's push. The local TASK.md §8 gate is green on the
-merge commit (see below).
+`copoka/deckcraft:collab/pr15` into `storytold/deckcraft:main` and is **ready** (not a draft); its
+body is [`pr10.md`](pr10.md). At 2026-11-12T03:13:50Z the fork head **is** the PR head **is** the
+local branch head: `5a105c61`, the docs commit of the op_id slice on top of the code commit
+`aaecc6db` (`gh pr view 2012 --json headRefOid` and `git rev-parse HEAD` agree). Everything the
+branch delivered is there: the second review's commits, the fourth review's triage, the STATUS
+sync, the fifth review's triage (`891187f5`), its docs commit (`38a20a9c`), the delivered-head note
+(`1f78cadb`), the presence heartbeat (`fd5914e8`), the `origin/main` merge `c9803277` (§Merge of
+`origin/main`) and the op_id slice (`aaecc6db` + `5a105c61`, §One operation, one identity). GitHub
+reads the branch `MERGEABLE` / `mergeStateStatus: UNSTABLE` against today's `main`; the merge
+commit resolved the earlier `CONFLICTING` / `DIRTY` verdict, and no conflict has been reported
+since.
 
-The **workflow gate has not run on any of these heads**: the four workflow runs (CI, House rules,
+The **workflow gate has not run on any of these heads**, including the delivered one: `gh run list
+--commit 5a105c61` and `--commit aaecc6db` are both empty, the four workflow runs (CI, House rules,
 Nix, SonarCloud) on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
-`completed / action_required` — they wait for a maintainer's approval and executed no job; the
-runs for `fd5914e8` wait for the same approval. The combined status for `38a20a9c` is empty
+`completed / action_required` — they wait for a maintainer's approval and executed no job — and the
+runs for the later heads wait for the same approval. The combined status for `38a20a9c` is empty
 (`state: pending`, no statuses) and the only check run is CodeRabbit's, `completed / skipped`
 (started 11:33:45Z), so the rollup carries no other signal; GitHub's verdict is
-`mergeStateStatus: UNSTABLE` for exactly that reason. Locally, on `fd5914e8`: `cargo fmt --all --
---check` clean, `cargo clippy -p deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D
-warnings` clean, `cargo test -p deckcraft-collab` 288 + 8 passed, `cargo test -p
-deckcraft-ui-egui --lib` 522 passed + 4 ignored with only the known host-font test skipped (it
-fails identically on `1f78cadb`). CodeRabbit's
+`mergeStateStatus: UNSTABLE` for exactly that reason. The **host gate** on the delivered head is
+recorded in `.craft/logs/gate-deckcraft-2012-5a105c61.log` (`cargo xtask ci -j 12` on `agents`):
+`fmt`, `pdf-deps` and `clippy` are `ok`, and the run stops at `test` on the known host-font
+failure `render::tests::east_asian_vertical_text_stands_ideographs_upright`
+(`crates/render/src/tests.rs:2396`, no CJK glyph on the host: "eaVert: upright stroke 39x70"),
+which fails identically on earlier heads. The narrower gate on `aaecc6db` is green:
+`cargo fmt --all -- --check` clean, `cargo clippy -p deckcraft-collab -p deckcraft-collab-server
+--all-targets -- -D warnings` EXIT=0, `collab` 294 lib + 8 two_clients, `collab-server` 19 unit +
+5 commit + 5 gates + 18 socket, `ui-egui --lib` 526 passed + 4 ignored with only that host-font
+failure. CodeRabbit's
 last completed check run is `completed / success` on `4a64e764`; its run on `9ad80547` was
 submitted as review `5855491108` at 07:49:58Z (see §Fifth CodeRabbit review). Its five submitted
 reviews are
@@ -229,7 +243,7 @@ Merging is a human step. Closing the superseded PRs is a human decision as well.
 
 | PR | Branch | Head | GitHub state |
 |---|---|---|---|
-| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `fd5914e8` + docs (`da8ba866`) in the fork; local HEAD adds the `origin/main` merge `c9803277`, unpushed | leading PR; `CONFLICTING`/`DIRTY` on `da8ba866` until the merge is pushed; local §8 gate green **on the merge**; workflow runs await approval (`mergeStateStatus` recomputed after the push) |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `5a105c61` (docs) on `aaecc6db` (code, the op_id slice) — fork = PR = local head at 2026-11-12T03:13:50Z | leading PR; `MERGEABLE` / `UNSTABLE` (no workflow run on `5a105c61`, a maintainer's approval is the next step); host gate `xtask ci` stops only on the known host-font render test, narrower gate green on `aaecc6db` |
 | [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `6e9d10e7` | `MERGEABLE` / `CLEAN`, superseded |
 | [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `be706a11` | `MERGEABLE` / `UNSTABLE`, superseded |
 
@@ -1239,7 +1253,7 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, last code slice `fd5914e8` with this STATUS commit on top = the fork head = the PR head = the local branch head), rebased onto `origin/main`; every review pass, the STATUS sync and the presence heartbeat are delivered; the local TASK.md §8 gate is green on `fd5914e8`, while the four workflow runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed) and the runs for the new head wait for the same approval; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, delivered head `5a105c61` = docs on code `aaecc6db` = the fork head = the PR head = the local branch head at 2026-11-12T03:13:50Z), rebased onto `origin/main` and merged with it; every review pass, the STATUS sync, the presence heartbeat and the op_id slice are delivered; no workflow run exists on `5a105c61`/`aaecc6db`, and the four runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), so approval is the human step; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
 
 Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
 pass pushed as `9b43c611a`, on
@@ -1550,13 +1564,19 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** (delivered head `96783106`
-   = the `origin/main` merge `c9803277` plus its STATUS commit); every review pass, the STATUS sync
-   and the presence heartbeat are delivered. **Local HEAD adds `aaecc6db` (the op_id slice,
-   §One operation, one identity) and this STATUS commit on top** — the branch is not `CONFLICTING`
-   locally, but these commits are not pushed, so GitHub still sees `96783106` and its
-   `mergeable`/`mergeStateStatus` verdict will only be recomputed after the push (`push` and CI
-   approval are the owner's steps). The local TASK.md §8 gate is green on `aaecc6db`: fmt clean,
+2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** — delivered head
+   `5a105c61` (the docs commit of the op_id slice on top of the code commit `aaecc6db`), which at
+   2026-11-12T03:13:50Z is the fork head, the PR head and the local branch head; every review
+   pass, the STATUS sync, the presence heartbeat, the `origin/main` merge and the op_id slice are
+   delivered. `gh pr view 2012` reports `MERGEABLE` / `UNSTABLE`; **no workflow run exists on
+   `5a105c61` or `aaecc6db`**, and the four runs on `38a20a9c` (created 2026-11-11T11:31:32Z) wait
+   for a maintainer's approval, so the next step for a person is that approval and then review and
+   merge; `5a105c61` itself needs no push, while this STATUS commit (local, on top of it) would
+   need one if it is to appear in the PR. The host gate on `5a105c61`
+   (`.craft/logs/gate-deckcraft-2012-5a105c61.log`) is green on `fmt`/`pdf-deps`/`clippy` and stops
+   at `test` only on the known host-font render test
+   (`render::tests::east_asian_vertical_text_stands_ideographs_upright`, no CJK glyph on the host);
+   the local TASK.md §8 gate is green on `aaecc6db`: fmt clean,
    clippy `-D warnings` for `collab` and `collab-server` EXIT=0, `collab` 294 + 8,
    `collab-server` 19 unit + 5 commit + 5 gates + 18 socket, `ui-egui --lib` 526 + 4 ignored with
    only the known host-font failure; the `--workspace` gate (engine 612, pptx 70 + 5 + 146,
@@ -1677,6 +1697,54 @@ the rule.
 
 ## Session log
 
+### 2026-11-12 — the SmartArt node-picture line was already closed; the delivery record moved to `5a105c61`
+
+- **What was asked.** Treat `smartArt.picture` as the next slice of the SmartArt line — a picture in
+  a node as one structural step over the media channel: normalised operation, engine check before
+  the first write (media in the session, crop and opacity, the node is really a graphic), undo
+  image = the whole source node, redo = the result, dedup by `op_id`, a viewer refused `ReadOnly`
+  and a hand-built operation refused `Forbidden` by the server without moving the version; two
+  replicas converging through the normaliser, the adapter and the in-memory hub; hostile input
+  refused before the first write; a socket test for the viewer.
+- **What was found.** All of it is delivered and has been since `44489f34` ("put a picture in a
+  SmartArt node as one final value"), which is an ancestor of the current head; the note
+  §2026-11-10 — a picture in a SmartArt node as one final value describes exactly that design. The
+  code is `Payload::SmartArtPicture` (`crates/collab-proto/src/lib.rs:435`), the address and the
+  pre-write refusals are `crates/collab/src/apply.rs:1363` (top-level graphic, node in the outline,
+  media present in the session, a picture object within `MAX_NODE_PICTURE_BYTES`), the engine command
+  is `smartArt.setPicture` (`crates/engine/src/cmd/smartart/edit.rs:714`) with its own crop/area/
+  opacity/layout checks, and the tests are `apply::tests::two_replicas_converge_on_a_node_picture_and_undo_restores_the_whole_node`,
+  `a_node_picture_refuses_a_plain_shape_an_unknown_node_and_a_hostile_place`,
+  `hub::tests::a_node_picture_reaches_both_replicas_through_the_hub_and_a_viewer_is_refused` (the
+  viewer's `Forbidden` with the version and document unchanged),
+  `local::tests::a_node_picture_normalises_to_the_media_reference_and_its_place`,
+  `a_node_picture_command_uploads_its_bytes_and_sends_only_a_reference` and
+  `apps/deckcraft-collab-server/tests/socket.rs:772` (`a_smartart_node_picture_travels_over_the_socket_and_a_viewer_is_refused`).
+  The "What remains" sentence that named this slice belonged to the *conversions* note written
+  before it; there was nothing left to implement, so **this pass wrote no code**.
+- **Done (docs only).** The two forward-pointers that still called the line open are closed with
+  the commits that answered them (`44489f34` for the picture, `c406a329`/`7b51e65d` for the model's
+  camera and scene). The delivery record now names the head the pr-agent pushed at
+  2026-11-12T03:13:50Z — `5a105c61` (docs) on `aaecc6db` (code) — and every "delivered head"
+  statement in the header, §PR publication, the PR table, the coverage table and item 2 of the next
+  session is tied to that timestamp, with the live value pointed at
+  `gh pr view 2012 --json headRefOid`. `gh run list --commit 5a105c61` and `--commit aaecc6db` are
+  both empty: no workflow has run on the delivered head.
+- **Gate, re-run on the branch head (`5a105c61` / code `aaecc6db`, host `agents`).**
+  `cargo fmt --all -- --check` clean; `cargo clippy -p deckcraft-collab -p deckcraft-collab-server
+  --all-targets -- -D warnings` EXIT=0; `cargo test -p deckcraft-collab -p deckcraft-collab-server`
+  294 lib + 8 two_clients + 19 unit + 5 commit + 5 gates (16.7 s) + 18 socket, all passed, 0 failed;
+  `cargo test -p deckcraft-collab-web` 15 passed; `cargo xtask wasm` ok (22 crates). The wider
+  `cargo xtask ci` on this head is `.craft/logs/gate-deckcraft-2012-5a105c61.log`: fmt/pdf-deps/
+  clippy ok, and `test` stops only on the known host-font render test
+  (`render::tests::east_asian_vertical_text_stands_ideographs_upright`,
+  `crates/render/src/tests.rs:2396` — no CJK glyph on the host, identical on earlier heads).
+- **Not done.** No push (the owner's step), no CI change, no PR comment. This STATUS commit sits on
+  top of the delivered head and is local only, so the PR head is one docs commit behind the branch
+  until a person pushes. The next code item stays
+  the IME finding from item 8: with `collab_queue` set, `Session::execute_unguarded`
+  (`crates/engine/src/lib.rs`) returns before `settle_composition()`.
+
 ### 2026-11-12 — one operation, one identity; multi-object commands reach the room whole
 
 - **What was wrong.** `crates/collab/src/local.rs`'s `make` closure stamped the command's single
@@ -1698,8 +1766,12 @@ the rule.
   returns the command from `execute_unguarded` (`crates/engine/src/lib.rs`) before
   `settle_composition()`, so an input method's composing text is not settled before the command is
   queued. It is a separate fix with its own IME tests.
-- **Delivery.** Local only: `aaecc6db` plus this STATUS commit on top of `96783106`. No push, no CI
-  run, no PR touched.
+- **Delivery (as of this writing).** `aaecc6db` (code) plus `5a105c61` (this STATUS commit) are
+  the delivered head: the pr-agent pushed `5a105c61` at 2026-11-12T03:13:50Z, so fork = PR = local
+  head at that moment. No workflow run was created on it (approval is a maintainer's step); the
+  host gate on `5a105c61` is `.craft/logs/gate-deckcraft-2012-5a105c61.log` (fmt/pdf-deps/clippy
+  ok, `test` stops only on the known host-font render test). A later push moves the head again —
+  read the live value from `gh pr view 2012 --json headRefOid`.
 
 ### 2026-11-11 — `origin/main` merged into `collab/pr15`; PR #2012 no longer conflicts
 
@@ -2197,7 +2269,8 @@ the rule.
   refused before the first write with the document unchanged and no history step.
 - Commit `44489f34` on `collab/pr11`, with this docs commit on top; `rfc.md` (§3.2.1, §6, §13,
   §14.1, §15), `production.md` and this file updated. Nothing pushed, CI untouched, PR
-  #1975/#1998 unchanged. What remains in this line: a model's camera/scene, then relative effects.
+  #1975/#1998 unchanged. What remains in this line: a model's camera/scene — delivered later in
+  `c406a329` and `7b51e65d` — then relative effects, which stay local by design.
 
 ### 2026-11-10 — SmartArt conversions: from text, to text, to shapes
 
@@ -2227,8 +2300,9 @@ the rule.
   step; the socket test sends a conversion and gets a viewer's refusal over a real connection.
 - Commit `db413e5d` on `collab/pr11`, with this docs commit on top; `rfc.md` (§3.2.1, §6, §13,
   §14.1, §15), `production.md` and this file updated. Nothing pushed, CI untouched, PR #1975
-  unchanged. What remains in this line: `smartArt.picture` (a media-channel slice), then model
-  camera/scene.
+  unchanged. What remains in this line: nothing — `smartArt.picture` is delivered in `44489f34`
+  (the note above) and the model's camera and scene in `c406a329` and `7b51e65d`; only relative
+  effects stay off the wire by design.
 
 ### 2026-11-10 — SmartArt insertion as one whole value and the authoritative nodes query
 
