@@ -1,29 +1,35 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-12. Branch: `collab/pr15`. **The delivered head is `ceeada59`**: at
-2026-11-12T13:27Z `gh pr view 2012 --json headRefOid` returned
-`ceeada5983e0d7cc8290f6161bbbf615464e3745` and `git ls-remote fork refs/heads/collab/pr15` named the
-same commit, so the PR head **is** the fork head. The pull request reads `mergeable: MERGEABLE` /
-`mergeStateStatus: UNSTABLE`, and **no workflow run has executed on that head**: the four runs
-created at 2026-11-12T13:27:39Z (CI, House rules, Nix, SonarCloud) are `completed /
-action_required` with a `0s` duration, so the rollup carries no executed job.
-**The local branch is `c5c8f0cb`, four commits above the delivered head, and none of the four is
-pushed: `f1d1cd6a`, `3b8ebaff`, `4e86a6e1`, `c5c8f0cb`.**
-`f1d1cd6a` is the fix for the production failure on file 42 of 2026-11-12 — a room that answers
-*below* the version a replica holds rebuilds that replica from its own base, a base that replaces
-the replica reports the edits it dropped, and `rejected_total` counts the refusals the server
-actually answers (§A room that came back behind its client). `3b8ebaff` closes the store defect the
-same incident exposed: a repeated `opId` answers the stored step and is no longer journalled a
-second time. `4e86a6e1` is its documentation (that section, `production.md` and `rfc.md`).
-**`c5c8f0cb` is the newest code on the branch**: a peer used to leave the room's map only when its
-frame loop ended *cleanly*, so the seats of refused frames, failing writes, resets and killed tabs
-accumulated until `max_participants` refused the next tab with `the room is full`; the loop now has
-one exit through a `Result`, the caller removes the peer on both paths, a reset without a close is
-a disconnect, and a peer silent for `COLLAB_PEER_PING_SECS` is pinged and dropped after
-`COLLAB_PEER_DEAD_SECS`. Docs commits sit on top of `c5c8f0cb` — `95327b5f` (this sync) and
-`b384d343` (§A connection that ended does not keep its seat) — and they are unpushed as well, so
-**`git log --oneline ceeada59..HEAD` is the authoritative list of what a push would carry**, and
-nothing on this branch was pushed from an agent session.
+Updated: 2026-11-12T17:51Z. Branch: `collab/pr15`. **The delivered head is `4ac9f44c`**: at
+2026-11-12T17:51Z `gh pr view 2012 --json headRefOid` returned
+`4ac9f44c41ff1994e32005daf4e51dc51e9f59ec`, `git ls-remote fork refs/heads/collab/pr15` named the
+same commit, and `git rev-parse HEAD` was that commit too with a clean tree, so the PR head, the
+fork head and the local head were one commit, 0 ahead / 0 behind. The pull request reads
+`mergeable: MERGEABLE` / `mergeStateStatus: UNSTABLE`, and **still no workflow run has executed on
+it**: the four runs created at 2026-11-12T17:31:27Z (CI, House rules, Nix, SonarCloud) are
+`completed / action_required`, their `run_started_at` equals the creation time, so no job ran and
+`UNSTABLE` is the missing approval, not a red job; the only other entry in the rollup is
+CodeRabbit `skipping`. The one docs commit above it — this STATUS sync — is unpushed, so
+**`git log --oneline 4ac9f44c..HEAD` is the authoritative list of what a further push would
+carry**.
+**The push of 2026-11-12T17:09Z delivered the seven commits that waited above the previous
+delivered head `ceeada59`** — the four code/docs commits the earlier header listed as unpushed,
+plus the three docs commits on top of them: `f1d1cd6a` (a room that answers *below* the version a
+replica holds rebuilds that replica from its own base, a base that replaces the replica reports the
+edits it dropped, `rejected_total` counts the refusals the server actually answers — §A room that
+came back behind its client), `3b8ebaff` (a repeated `opId` answers the stored step and is not
+journalled twice), `4e86a6e1` (docs for that incident, that fix and the production run),
+`c5c8f0cb` (a room forgets the seat of a connection that ended — refused frames, failing writes,
+resets, killed tabs — and pings, then drops, a peer silent for `COLLAB_PEER_DEAD_SECS`; §A
+connection that ended does not keep its seat), `95327b5f` (the previous STATUS sync), `b384d343`
+(that section and the viewer tab that could not get in) and `4ac9f44c` (the header points at
+`git log` instead of a list that goes stale). No code changed after `c5c8f0cb`.
+**What is left, and none of it is a push from an agent session**: a person approves the four runs
+on `4ac9f44c` so CI executes for the first time on this branch, the maintainer reviews and merges
+#2012, and #1975 (`8efe6cd8`) and #1998 (`d8850c74`) stay **open** as superseded — they are not to
+be closed from an agent session. The §8 gate is green on the code at `c5c8f0cb` (fmt and clippy
+clean, `collab` 308 + 2 + 8 + 20 + 5 + 6, `collab-server` 23 in 2.1 s); the three commits above it
+are docs-only, so the delivered head carries no code change since that run.
 The paragraphs below are the history of this branch as each head was delivered; every one of them
 names the commit it describes, and the preview slice follows.
 
@@ -101,10 +107,12 @@ file, `production.md` and `rfc.md`).
 refs/heads/collab/pr15` and `gh pr view 2012 --json headRefOid` all named
 `1d92f763128ef7381df36fb444ece4b7d258910d` (`state` `OPEN`, `mergeStateStatus` `UNSTABLE`), so
 `42544987` and the docs commits above it were delivered and the branch was fully pushed before that
-STATUS commit. **That is no longer the state**: the delivered head is now `ceeada59`
-and four commits above it are unpushed (`f1d1cd6a`, `3b8ebaff`, `4e86a6e1`, `c5c8f0cb` — see the
-first paragraph of this file). The §8 gate was re-run on that head (§ Session log, 2026-11-12 — the
-presence heartbeat is already on the branch).
+STATUS commit. **That is no longer the state**: the delivered head is now `4ac9f44c`; everything that
+was unpushed above `ceeada59` — `f1d1cd6a`, `3b8ebaff`, `4e86a6e1`, `c5c8f0cb` and the three docs
+commits `95327b5f`, `b384d343`, `4ac9f44c` — was delivered by the push of 2026-11-12T17:09Z, and
+the only commit above the delivered head is the current STATUS sync (see the first paragraph of
+this file). The §8 gate was re-run on `c5c8f0cb` (§ Session log, 2026-11-12 — the presence
+heartbeat is already on the branch).
 The push delivered `fd5914e8` on top of `1f78cadb`, so every review fix up to that head is
 delivered: the fifth review's
 triage is delivered too — a room
@@ -434,18 +442,21 @@ head — is the owner's step (§PR publication); an agent does not push.
 `copoka/deckcraft:collab/pr15` into `storytold/deckcraft:main` and is **ready** (not a draft); its
 body is [`pr10.md`](pr10.md).
 
-**Current reading (2026-11-12T13:27Z).** The delivered head is `ceeada59`: `headRefOid` and the
-fork's `collab/pr15` are that commit, `state` is `OPEN`, `mergeable` is `MERGEABLE` and
-`mergeStateStatus` is `UNSTABLE`. No workflow run executed on it — the four runs created at
-13:27:39Z are `completed / action_required` with a `0s` duration, so the rollup carries no executed
-job and the `UNSTABLE` verdict follows from that alone. The local branch is **`c5c8f0cb`, four
-commits above the delivered head and unpushed**: `f1d1cd6a` (the room behind its client rebuilds
-the replica from its base), `3b8ebaff` (a repeated `opId` is not journalled twice), `4e86a6e1`
-(docs: that incident, its fix and the production run) and `c5c8f0cb` (a room forgets the seats of
-connections that ended and drops a silent peer). The §8 gate is green on the delivered `1d92f763`
-and on `3b8ebaff`; on `c5c8f0cb` it is green too (§A connection that ended does not keep its
-seat: fmt and clippy clean, `collab` 308 + 2 + 8 + 20 + 5 + 6, `collab-server` 23). Pushing those
-commits and approving the runs is the owner's step.
+**Current reading (2026-11-12T17:51Z).** The delivered head is `4ac9f44c`: `headRefOid`, the
+fork's `collab/pr15` and the local head were that commit (0/0, clean tree), `state` is `OPEN`,
+`mergeable` is `MERGEABLE` and `mergeStateStatus` is `UNSTABLE`. No workflow run executed on it —
+the four runs created at 17:31:27Z are `completed / action_required` with `run_started_at` equal to
+the creation time, so the rollup carries no executed job and the `UNSTABLE` verdict follows from
+that alone; CodeRabbit `skipping` is the only other entry. The push of 17:09Z delivered the seven
+commits above `ceeada59`: `f1d1cd6a` (the room behind its client rebuilds the replica from its
+base), `3b8ebaff` (a repeated `opId` is not journalled twice), `4e86a6e1` (docs), `c5c8f0cb` (a
+room forgets the seats of connections that ended and drops a silent peer), `95327b5f`,
+`b384d343` and `4ac9f44c` (docs). The only commit above the delivered head is the current STATUS
+sync. The §8 gate is green on the code at `c5c8f0cb` (§A connection that ended does not keep its
+seat: fmt and clippy clean, `collab` 308 + 2 + 8 + 20 + 5 + 6, `collab-server` 23) and on the
+earlier heads; the three commits above it are docs-only. **What remains is the approve of those
+four runs and the maintainer's review and merge — not a push**; #1998 (`d8850c74`) and #1975
+(`8efe6cd8`) are still `OPEN` (`MERGEABLE` / `UNSTABLE`) and are not closed from an agent session.
 
 The paragraphs below are the earlier readings of the same pull request, kept as history.
 
@@ -490,14 +501,14 @@ and one Minor — triaged in §Fifth CodeRabbit review).
 
 Merging is a human step. Closing the superseded PRs is a human decision as well.
 
-**Three pull requests for one feature are open in `storytold/deckcraft`** (#1998 and #1975 checked
-2026-11-12T05:44Z, #2012 re-read at 2026-11-12T13:27Z):
+**Three pull requests for one feature are open in `storytold/deckcraft`** (#1998 and #1975 re-read
+2026-11-12T17:51Z, #2012 re-read at 2026-11-12T17:51Z):
 
 | PR | Branch | Head | GitHub state |
 |---|---|---|---|
-| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `ceeada59` — fork = PR head at 2026-11-12T13:27Z; the local branch is `c5c8f0cb`, four commits above it and unpushed (`f1d1cd6a`, `3b8ebaff`, `4e86a6e1`, `c5c8f0cb`), with this STATUS commit on top | leading PR; `MERGEABLE` / `UNSTABLE` (the four runs created 13:27:39Z are `action_required` / `0s`, so nothing executed; approving them and pushing the four commits are the next steps for a person); local §8 gate green on the delivered `1d92f763` and on `3b8ebaff`, none recorded for `c5c8f0cb` |
-| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `abffb229` | `MERGEABLE` / `CLEAN`, superseded; **no unique code** (`pr15...pr11` = 32/4, and its `picture_place` fix is already on pr15 at `crates/pptx/src/dgm.rs:528`) |
-| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `6109fe1c` | `CONFLICTING` / `DIRTY`, superseded |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `4ac9f44c` — fork = PR head = local head at 2026-11-12T17:51Z (0/0, clean tree), with the current STATUS sync as the only unpushed commit above it | leading PR; `MERGEABLE` / `UNSTABLE` (the four runs created 17:31:27Z are `action_required`, nothing executed; approving them and the maintainer's merge are the next steps for a person); local §8 gate green on the code at `c5c8f0cb`, the three commits above it docs-only |
+| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `d8850c74` | `OPEN`, `MERGEABLE` / `UNSTABLE`, superseded; **no unique code** (`pr15...pr11` = 32/4, and its `picture_place` fix is already on pr15 at `crates/pptx/src/dgm.rs:528`) |
+| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `8efe6cd8` | `OPEN`, `MERGEABLE` / `UNSTABLE`, superseded |
 
 #2012 is the top of the stack and supersedes the other two: #1998 carries the earlier
 `collab/pr11` head and #1975 the earlier `collab/pr10` head, both already contained in #2012's
@@ -642,8 +653,8 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr15` | `51643c59` (+ `95b5feef`) | an input method's composition is settled before anything leaves the client: `text.compose`/`text.commit` run on the replica, every other command settles first, and the settle sends the body it typed into as one whole value (`text.setBody`, undo image = the body before it); a composition outside slides is refused before the first write with its reason |
 | `collab/pr15` | `42544987` | a base above `max_base_inline` is one HTTP request (`base.http`, `GET /v1/sessions/{id}/base/{sha256}` in the media reader's pattern, RFC §4.5.2) beside the unchanged chunk chain: the desktop link fetches it once, checks size and digest, and the host rebuilds the replica and takes the key map without reopening the cabinet's file; 256 MiB ceiling, a token for another file refused, a base the room no longer holds a `404` |
 | `collab/pr15` | `b314feef` (+ docs) | an input method's deletion outside a composition is one `text.delete`: the engine resolves the range with the same walk `text.delete` uses (`surrounding_delete`), the normaliser sends it as one `TextDelete` (`NotesDelete` for notes, the cell address kept) with the body before the step as its undo image, and the two ranges a non-empty selection with text on both sides would remove are still refused at the gate before the queue, with their reason |
-| `collab/pr15` | `f1d1cd6a`, `3b8ebaff` (+ `4e86a6e1` docs) | a room that came back **behind** its client: `resync` treats a replica above the head as divergence and answers its whole document as a base taken at the head, a welcome that differs in either direction asks for that resync, a replacing base reports the edits it dropped (and may move the version back), `rejected_total` counts the refusals the server answers, and a repeated `opId` returns the stored step without a second journal line — the fix for the production failure on file 42 (§A room that came back behind its client); **unpushed at 2026-11-12** |
-| `collab/pr15` | `c5c8f0cb` | a room forgets the seats of connections that ended: the frame loop is `peer_loop` with one exit through a `Result`, the caller removes the peer on the clean path and the failure path, `ResetWithoutClosingHandshake` is a disconnect, and a peer silent for `COLLAB_PEER_PING_SECS` (30) is pinged and dropped after `COLLAB_PEER_DEAD_SECS` (60) — three socket tests (a refusal, a killed socket, a silent one); **unpushed at 2026-11-12** |
+| `collab/pr15` | `f1d1cd6a`, `3b8ebaff` (+ `4e86a6e1` docs) | a room that came back **behind** its client: `resync` treats a replica above the head as divergence and answers its whole document as a base taken at the head, a welcome that differs in either direction asks for that resync, a replacing base reports the edits it dropped (and may move the version back), `rejected_total` counts the refusals the server answers, and a repeated `opId` returns the stored step without a second journal line — the fix for the production failure on file 42 (§A room that came back behind its client); delivered 2026-11-12T17:09Z |
+| `collab/pr15` | `c5c8f0cb` | a room forgets the seats of connections that ended: the frame loop is `peer_loop` with one exit through a `Result`, the caller removes the peer on the clean path and the failure path, `ResetWithoutClosingHandshake` is a disconnect, and a peer silent for `COLLAB_PEER_PING_SECS` (30) is pinged and dropped after `COLLAB_PEER_DEAD_SECS` (60) — three socket tests (a refusal, a killed socket, a silent one); delivered 2026-11-12T17:09Z |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs), `44489f34` (+ docs), `c406a329` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`); the SmartArt node-picture slice `44489f34`: `smartArt.picture` as one final value (the top-level graphic, one top-level node, the media channel's digest and the picture's final place), the engine checks the target, the node, the picture allowlist and budget, the place's finite positive area and that the layout does not change before the first write, and the whole group is the undo image; and the 3-D model camera slice `c406a329`: `model3d.camera` as one final view (`position`/`target`/`up` in EMU, `fov` in degrees, or `null`), relative edits refused on the client, on the wire and in the engine before the first write, the view written as `am3d:camera`, and the whole model shape as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
@@ -1515,7 +1526,7 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, delivered head `5a105c61` = docs on code `aaecc6db` = the fork head = the PR head = the local branch head at 2026-11-12T03:13:50Z), rebased onto `origin/main` and merged with it; every review pass, the STATUS sync, the presence heartbeat and the op_id slice are delivered; no workflow run exists on `5a105c61`/`aaecc6db`, and the four runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), so approval is the human step; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` (the delivered head has moved since that reading — the header names the current one, `ceeada59`) | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, delivered head `5a105c61` = docs on code `aaecc6db` = the fork head = the PR head = the local branch head at 2026-11-12T03:13:50Z), rebased onto `origin/main` and merged with it; every review pass, the STATUS sync, the presence heartbeat and the op_id slice are delivered; no workflow run exists on `5a105c61`/`aaecc6db`, and the four runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), so approval is the human step; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` (the delivered head has moved since that reading — the header names the current one, `4ac9f44c`) | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
 
 Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
 pass pushed as `9b43c611a`, on
@@ -1841,29 +1852,30 @@ token from the cabinet.
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
 2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** — the delivered head is
-   `ceeada59`, which at 2026-11-12T13:27Z was both `headRefOid` and the fork's `collab/pr15`
-   (`mergeable: MERGEABLE`, `mergeStateStatus: UNSTABLE`, `state: OPEN`). **The local branch is
-   `c5c8f0cb`, four commits above the delivered head, and all four are unpushed**:
-   `f1d1cd6a` (a room that came back behind its client rebuilds the replica from its base, a
-   replacing base reports the edits it dropped, `rejected_total` counts real refusals),
-   `3b8ebaff` (a repeated `opId` answers the stored step and is not journalled twice),
-   `4e86a6e1` (docs for that incident, its fix and the production run) and `c5c8f0cb` (a room
-   forgets the seats of connections that ended and drops a peer that went silent). The docs commits
-   above it are unpushed too, so **the push is the next step for a person**, then the maintainer's
-   approval of the workflow runs, then review and merge.
-   **No workflow run has executed on the delivered head or on the four commits above it**: the four
-   runs created on `ceeada59` at 13:27:39Z (CI, House rules, Nix, SonarCloud) are `completed /
-   action_required` with a `0s` duration, and the runs for the earlier heads waited for the same
-   approval, which is why GitHub answers `UNSTABLE`.
-   The §8 gate is green on the delivered `1d92f763` (§ Session log, 2026-11-12: 6 gates in
-   19.15 s, the LibreOffice half skipped on that host) and on `3b8ebaff` (fmt clean, clippy
+   `4ac9f44c`, which at 2026-11-12T17:51Z was `headRefOid`, the fork's `collab/pr15` and the local
+   `HEAD` at once (0/0, clean tree; `mergeable: MERGEABLE`, `mergeStateStatus: UNSTABLE`,
+   `state: OPEN`). **Everything that waited for a push is delivered**: `f1d1cd6a` (a room that came
+   back behind its client rebuilds the replica from its base, a replacing base reports the edits it
+   dropped, `rejected_total` counts real refusals), `3b8ebaff` (a repeated `opId` answers the stored
+   step and is not journalled twice), `4e86a6e1` (docs for that incident, its fix and the production
+   run), `c5c8f0cb` (a room forgets the seat of a connection that ended and drops a peer that went
+   silent), `95327b5f`, `b384d343` and `4ac9f44c` (docs). The only unpushed commit is the current
+   STATUS sync on top of `4ac9f44c`; `git log --oneline 4ac9f44c..HEAD` names it.
+   **Still no workflow run has executed on the delivered head**: the four runs created on
+   `4ac9f44c` at 17:31:27Z (CI, House rules, Nix, SonarCloud) are `completed / action_required`
+   with `run_started_at` equal to the creation time, and the runs for the earlier heads waited for
+   the same approval, which is why GitHub answers `UNSTABLE`. **What is left is the approve, then
+   review and merge — no push**: a person approves those four runs so CI executes, and the
+   maintainer takes #2012.
+   The §8 gate is green on `1d92f763` (§ Session log, 2026-11-12: 6 gates in 19.15 s, the
+   LibreOffice half skipped on that host) and on `3b8ebaff` (fmt clean, clippy
    `-D warnings` clean for `collab` and `collab-server`, `collab` 308 + 2 + 8 + 20 + 5 + 6,
    `collab-server` 20 — §A room that came back behind its client) and on `c5c8f0cb` (§A connection
    that ended does not keep its seat: fmt and clippy clean, `collab` 308 + 2 + 8 + 20 + 5 + 6,
    `collab-server` 23 in 2.1 s).
    #1998 and #1975 are superseded by #2012 and stay open until a person closes them — **do not
    close them from an agent session**. Their heads and verdicts move without this project's
-   involvement: at 13:27Z #1998 read `d8850c74` and #1975 `8efe6cd8`, both `MERGEABLE` /
+   involvement: at 17:51Z #1998 read `d8850c74` and #1975 `8efe6cd8`, both `MERGEABLE` /
    `UNSTABLE`, against `abffb229` / `CLEAN` and `6109fe1c` / `CONFLICTING` in the 05:44Z reading;
    for `abffb229` the overlap with `pr15` measured 32/4 and its `picture_place` fix was already on
    pr15 at `crates/pptx/src/dgm.rs:528`. Do not touch CI and do not mention agents.
@@ -2160,6 +2172,21 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-12 — the delivered head is `4ac9f44c`; the seven commits left the queue
+
+- `gh pr view 2012 --json headRefOid` returned `4ac9f44c41ff1994e32005daf4e51dc51e9f59ec`, `git
+  ls-remote fork refs/heads/collab/pr15` named it and `git rev-parse HEAD` was it too, tree clean,
+  0 ahead / 0 behind: the push of 17:09Z delivered all seven commits that sat above `ceeada59`
+  (`f1d1cd6a`, `3b8ebaff`, `4e86a6e1`, `c5c8f0cb`, `95327b5f`, `b384d343`, `4ac9f44c`).
+- The four workflow runs created on that head at 17:31:27Z (CI, House rules, Nix, SonarCloud) are
+  `completed / action_required`, `run_started_at` equal to the creation time, so no job executed;
+  CI has still never run on this branch, and `UNSTABLE` is the missing approval.
+- The header, §PR publication, the PR table and §Next session said "local `c5c8f0cb`, four commits
+  unpushed". They now name `4ac9f44c`, the delivered seven, and what is left: the approve of those
+  runs and the maintainer's merge. #1998 (`d8850c74`) and #1975 (`8efe6cd8`) are still `OPEN` and
+  stay open.
+- Docs only; no code touched, nothing pushed. This sync is the one commit above the delivered head.
 
 ### 2026-11-12 — the viewer tab that could not get in: a leaked peer map, and a room restarted mid-run
 
