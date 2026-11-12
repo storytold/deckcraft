@@ -156,12 +156,25 @@ table cell, or `slide.notes` — which normalises to one `text.setBody` operatio
 the author saw, runs and paragraph properties included, both replicas converge, and one undo step
 puts the old body back (its image is that body's plain text, like any typed step). The address
 comes from where the composition began (slide by id, shape, cell), so clicking to another slide
-before it settles cannot send the text into another body, and a second settle adds nothing. Where
-the room has no operation to carry the text the command is refused before the first write with its
-reason and without moving the version: `text.deleteSurrounding` outside a composition (inside one
-it is part of the pre-edit and leaves with the settle) and a composition outside slides. A settled
-body must also fit one operation message (`COLLAB_MAX_MESSAGE_BYTES`, 256 KiB by default), so a
-pre-edit inside a body of roughly 100k characters cannot be shared and the replica resynchronises.
+before it settles cannot send the text into another body, and a second settle adds nothing.
+
+**A deletion around the input point is not a composition.** Outside a composition
+`text.deleteSurrounding` removes an ordinary range of the body — a platform's press-and-hold or
+dictation asking for the characters around the caret — so it does not run on the replica at all:
+the engine resolves the range with the same walk `text.delete` uses (`text/ime.rs`:
+`walk_backward`/`walk_forward`, characters or UTF-8 bytes, a paragraph break counting as one), and
+the normaliser turns exactly that range into one `text.delete` (`TextDelete { from, to, cell? }`, or
+`NotesDelete` for the notes pane) with the body before the step as its undo image — one version, one
+undo step, the same step a typed `text.delete` makes, and both replicas end at the text the author
+removed. One range is what a collaboration operation carries: a collapsed caret with text on both
+sides is one range spanning it, but a *non-empty* selection with text deleted on both sides is two
+ranges, so that request is refused before the queue is even touched — with its reason, without
+moving the version and without an undo step. The same refusal covers no text selection at all and a
+body that is gone. Inside a composition the deletion is part of the pre-edit and leaves with the
+settle; where the room has no operation to carry the text otherwise, the command is refused before
+the first write with its reason and without moving the version (a composition outside slides). A
+settled body must also fit one operation message (`COLLAB_MAX_MESSAGE_BYTES`, 256 KiB by default), so
+a pre-edit inside a body of roughly 100k characters cannot be shared and the replica resynchronises.
 
 **Optimistic preview** (`DECKCRAFT_COLLAB_PREVIEW=1`, RFC §3) shows one edit before the room
 confirms it. The client applies a `command`-class operation whose payload the server will not
@@ -187,6 +200,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `text.set` | command | whole body or one table cell (`cell: [row, col]`) |
 | `text.setBody` | command | one text body as a whole model value (`body`, `cell?`): the settled input-method composition (RFC §10.1), with its runs and paragraph properties; one undo step whose image is that body |
 | `text.insert`, `text.delete` | command | character offsets inside the shape body or one table cell; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts, and two cells of one table never shift each other |
+| `text.deleteSurrounding` (outside a composition) | command | the range the input method asked to remove around the caret, resolved by the engine's own walk (characters or UTF-8 bytes, a paragraph break counting as one) and sent as one `text.delete` (`TextDelete { from, to, cell? }`, `NotesDelete` for the notes pane); one version and one undo step whose image is the body before it. A non-empty selection with text deleted on both its sides is two ranges — refused before the queue with its reason, as are no selection and a body that is gone |
 | `table.edit` | structural | one row/column insert or delete (`axis`, `at`, `insert`) on a table shape; a queued cell text operation rebases its address past it, and a delete of the line holding the text refuses the operation |
 | `table.style` | command | one table's style as a final name (`table.style`); a table shape is the address, no cell moves |
 | `table.options` | command | the six style options (`headerRow`, `totalRow`, `bandedRows`, `firstColumn`, `lastColumn`, `bandedColumns`) as **all final values** in one `table.options`; the client applies the flags it names to the table it sees and sends the whole set, so no replica's own copy decides an unnamed option; an unknown or non-boolean flag is refused before anything is sent (and by the engine before the first write) |
