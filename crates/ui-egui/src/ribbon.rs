@@ -436,6 +436,9 @@ mod add_animation_menu_tests;
 mod align_tests;
 
 #[cfg(test)]
+mod font_menu_tests;
+
+#[cfg(test)]
 mod title_bar_tests {
     use super::*;
 

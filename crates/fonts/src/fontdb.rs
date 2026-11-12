@@ -1778,6 +1778,24 @@ mod font_dir_tests {
 
     use super::*;
 
+    /// The family list leaves out Windows alias names ("Segoe UI Semibold", a weight folded into
+    /// the family) and the system's dot-named interface fonts (".SF NS"), but both still resolve.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn aliases_and_dot_names_are_not_listed_but_still_resolve() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        // The first read scans the (empty) font folders; the entries go in after it.
+        db.families();
+        let entry =
+            |family: &str, alias: bool| CatalogEntry { family: family.into(), style: "Regular".into(), path: PathBuf::from("/none.ttf"), alias };
+        *db.catalog.write().unwrap() = vec![entry("Segoe UI", false), entry("Segoe UI Semibold", true), entry(".SF NS", false)];
+        let families = db.families();
+        assert!(families.iter().any(|f| f == "Segoe UI"), "{families:?}");
+        assert!(!families.iter().any(|f| f == "Segoe UI Semibold"), "an alias is not a family of its own");
+        assert!(!families.iter().any(|f| f.starts_with('.')), "no private interface fonts");
+        assert!(db.has_family("Segoe UI Semibold") && db.has_family(".SF NS"), "both still resolve by name");
+    }
+
     #[test]
     fn duplicate_collection_offsets_do_not_consume_face_cap() {
         let mut entries = vec![(0, 7); MAX_COLLECTION_FACES as usize];

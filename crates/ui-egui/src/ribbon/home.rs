@@ -161,6 +161,48 @@ pub fn font_families(app: &SlideApp) -> Vec<String> {
     v
 }
 
+/// The Font menu's entries for `fams`, the first `head` of them the theme's heading and body fonts:
+/// the family picked, if any. The other families appear once each, with their sizes and widths in
+/// a submenu (opened by hovering, clicking or tapping it, or with Enter or → from the keyboard).
+/// The font in use (`current`) is highlighted, and the family that holds it is in bold; each
+/// design is named in full for assistive technology although it shows only its suffix.
+pub(crate) fn font_menu(ui: &mut Ui, fams: &[String], head: usize, current: &str) -> Option<String> {
+    let mut picked = None;
+    for (k, f) in fams.iter().take(head).enumerate() {
+        let label = if k == 0 { format!("{f} (Headings)") } else { format!("{f} (Body)") };
+        if ui.selectable_label(f == current, label).clicked() {
+            picked = Some(f.clone());
+        }
+    }
+    if head == 2 {
+        ui.separator();
+    }
+    for g in deckcraft_fonts::family_groups(fams.get(head..).unwrap_or_default()) {
+        if g.designs.is_empty() {
+            if ui.selectable_label(g.name == current, &g.name).clicked() {
+                picked = Some(g.name.clone());
+            }
+            continue;
+        }
+        let holds_current = g.name == current || g.designs.iter().any(|(name, _)| name == current);
+        let title = if holds_current { egui::RichText::new(&g.name).strong() } else { egui::RichText::new(&g.name) };
+        ui.menu_button(title, |ui| {
+            if g.selectable && ui.selectable_label(g.name == current, &g.name).clicked() {
+                picked = Some(g.name.clone());
+            }
+            for (name, label) in &g.designs {
+                let r = ui.selectable_label(name == current, label);
+                let (enabled, selected) = (r.enabled(), name == current);
+                r.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, name));
+                if r.clicked() {
+                    picked = Some(name.clone());
+                }
+            }
+        });
+    }
+    picked
+}
+
 fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
     let en = enabled(app, "format.bold");
     group(ui, |ui| {
@@ -174,37 +216,9 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 // installed families, each once with its sizes and widths under it.
                 let head = if app.session.active().is_some_and(|d| !d.doc.masters.is_empty()) { 2.min(fams.len()) } else { 0 };
                 dropdown(ui, "Font", &font, 150.0, en, |ui| {
-                    for (k, f) in fams.iter().take(head).enumerate() {
-                        let label = if k == 0 { format!("{f} (Headings)") } else { format!("{f} (Body)") };
-                        if ui.button(egui::RichText::new(label)).clicked() {
-                            run(app, "format.font", json!({"family": f}));
-                            ui.close();
-                        }
-                    }
-                    if head == 2 {
-                        ui.separator();
-                    }
-                    for g in deckcraft_fonts::family_groups(&fams[head..]) {
-                        if g.designs.is_empty() {
-                            if ui.button(egui::RichText::new(&g.name)).clicked() {
-                                run(app, "format.font", json!({"family": g.name}));
-                                ui.close();
-                            }
-                            continue;
-                        }
-                        // Hovering a family that has sizes or widths opens them beside it.
-                        ui.menu_button(egui::RichText::new(&g.name), |ui| {
-                            if g.selectable && ui.button(egui::RichText::new(&g.name)).clicked() {
-                                run(app, "format.font", json!({"family": g.name}));
-                                ui.close();
-                            }
-                            for (name, label) in &g.designs {
-                                if ui.button(egui::RichText::new(label)).clicked() {
-                                    run(app, "format.font", json!({"family": name}));
-                                    ui.close();
-                                }
-                            }
-                        });
+                    if let Some(family) = font_menu(ui, &fams, head, &font) {
+                        run(app, "format.font", json!({"family": family}));
+                        ui.close();
                     }
                     ui.separator();
                     // Fonts installed while DeckCraft runs (e.g. into ~/.local/share/fonts).
