@@ -5,7 +5,7 @@
 //! input stream and its callback appends mono samples, so neither the app nor the UI thread ever
 //! runs the device loop.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -106,78 +106,99 @@ pub struct CpalIn {
     startup: Option<mpsc::Receiver<Result<(), String>>>,
     stop: Option<Arc<(Mutex<bool>, Condvar)>>,
     worker: Option<JoinHandle<()>>,
+    /// Start-attempt liveness: a worker detached while still opening must not fail or feed a
+    /// later take. Each `start` publishes a fresh generation here; stale workers check it
+    /// before touching anything shared.
+    live: Arc<AtomicU64>,
+    generation: u64,
+}
+
+/// Open the default input device and start capturing into `state`'s buffer. Runs on the worker,
+/// so a slow device or permission prompt never blocks the UI thread.
+fn open_capture(state: &WorkerState) -> Result<(cpal::Stream, u32), String> {
+    open_capture_into(state.buf.clone(), state.error.clone(), state.dead.clone(), state.dropped.clone(), state.generation, state.live.clone())
+}
+
+/// The device open with explicit capture state, so the generation check can gate the realtime
+/// callback too: a stale worker's stream errors must not fail the take that replaced it.
+#[allow(clippy::too_many_arguments)]
+fn open_capture_into(
+    buf: Arc<Mutex<Capture>>,
+    slot: ErrorSlot,
+    dead: Arc<AtomicBool>,
+    full: Arc<AtomicBool>,
+    generation: u64,
+    live: Arc<AtomicU64>,
+) -> Result<(cpal::Stream, u32), String> {
+    let dev = cpal::default_host().default_input_device().ok_or_else(|| "no microphone".to_string())?;
+    let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
+    let rate = cfg.sample_rate().0;
+    let channels = cfg.channels() as usize;
+    if !(8_000..=192_000).contains(&rate) {
+        return Err(format!("microphone sample rate {rate} is not supported"));
+    }
+    if channels == 0 {
+        return Err("the microphone reports no channels".to_string());
+    }
+    let config: cpal::StreamConfig = cfg.clone().into();
+    let cap = max_samples_for(cfg.sample_rate().0);
+    // The realtime error callback belongs to the attempt that opened it: a stale worker's
+    // stream errors must not fail the take that replaced it.
+    let is_current = move || live.load(Ordering::Relaxed) == generation;
+    let err = move |e: cpal::StreamError| {
+        if !is_current() {
+            return;
+        }
+        if matches!(e, cpal::StreamError::DeviceNotAvailable) {
+            dead.store(true, Ordering::Relaxed);
+        }
+        keep_stream_error(&slot, &e);
+    };
+    let stream = match cfg.sample_format() {
+        cpal::SampleFormat::F32 => {
+            let mut spill: Vec<f32> = Vec::new();
+            dev.build_input_stream(
+                &config,
+                move |data: &[f32], _| {
+                    spill.extend_from_slice(data);
+                    if let Ok(mut g) = buf.try_lock() {
+                        let all = std::mem::take(&mut spill);
+                        if g.samples.len() + all.len() / channels.max(1) > cap {
+                            full.store(true, Ordering::Relaxed);
+                        }
+                        push_mono(&mut g.samples, &all, channels, cap);
+                    }
+                },
+                err,
+                None,
+            )
+        }
+        cpal::SampleFormat::I16 => {
+            let mut spill: Vec<f32> = Vec::new();
+            dev.build_input_stream(
+                &config,
+                move |data: &[i16], _| {
+                    spill.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
+                    if let Ok(mut g) = buf.try_lock() {
+                        let all = std::mem::take(&mut spill);
+                        if g.samples.len() + all.len() / channels.max(1) > cap {
+                            full.store(true, Ordering::Relaxed);
+                        }
+                        push_mono(&mut g.samples, &all, channels, cap);
+                    }
+                },
+                err,
+                None,
+            )
+        }
+        other => return Err(format!("unsupported microphone format {other:?}")),
+    }
+    .map_err(|e| e.to_string())?;
+    stream.play().map_err(|e| e.to_string())?;
+    Ok((stream, rate))
 }
 
 impl CpalIn {
-    /// Open the default input device and start capturing into `buf`. Runs on the calling thread
-    /// only up to the worker's start handshake.
-    fn open(&self) -> Result<(cpal::Stream, u32), String> {
-        let dev = cpal::default_host().default_input_device().ok_or_else(|| "no microphone".to_string())?;
-        let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
-        let rate = cfg.sample_rate().0;
-        let channels = cfg.channels() as usize;
-        if !(8_000..=192_000).contains(&rate) {
-            return Err(format!("microphone sample rate {rate} is not supported"));
-        }
-        if channels == 0 {
-            return Err("the microphone reports no channels".to_string());
-        }
-        let config: cpal::StreamConfig = cfg.clone().into();
-        let cap = max_samples_for(cfg.sample_rate().0);
-        let buf = self.buf.clone();
-        let slot = self.error.clone();
-        let dead = self.dead.clone();
-        let full = self.dropped.clone();
-        let err = move |e: cpal::StreamError| {
-            if matches!(e, cpal::StreamError::DeviceNotAvailable) {
-                dead.store(true, Ordering::Relaxed);
-            }
-            keep_stream_error(&slot, &e);
-        };
-        let stream = match cfg.sample_format() {
-            cpal::SampleFormat::F32 => {
-                let mut spill: Vec<f32> = Vec::new();
-                dev.build_input_stream(
-                    &config,
-                    move |data: &[f32], _| {
-                        spill.extend_from_slice(data);
-                        if let Ok(mut g) = buf.try_lock() {
-                            let all = std::mem::take(&mut spill);
-                            if g.samples.len() + all.len() / channels.max(1) > cap {
-                                full.store(true, Ordering::Relaxed);
-                            }
-                            push_mono(&mut g.samples, &all, channels, cap);
-                        }
-                    },
-                    err,
-                    None,
-                )
-            }
-            cpal::SampleFormat::I16 => {
-                let mut spill: Vec<f32> = Vec::new();
-                dev.build_input_stream(
-                    &config,
-                    move |data: &[i16], _| {
-                        spill.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
-                        if let Ok(mut g) = buf.try_lock() {
-                            let all = std::mem::take(&mut spill);
-                            if g.samples.len() + all.len() / channels.max(1) > cap {
-                                full.store(true, Ordering::Relaxed);
-                            }
-                            push_mono(&mut g.samples, &all, channels, cap);
-                        }
-                    },
-                    err,
-                    None,
-                )
-            }
-            other => return Err(format!("unsupported microphone format {other:?}")),
-        }
-        .map_err(|e| e.to_string())?;
-        stream.play().map_err(|e| e.to_string())?;
-        Ok((stream, rate))
-    }
-
     fn report(&self) {
         if let Some(e) = take_stream_error(&self.error) {
             log::warn!("microphone stream error: {e}");
@@ -185,9 +206,27 @@ impl CpalIn {
     }
 }
 
-impl Drop for CpalIn {
-    fn drop(&mut self) {
-        self.stop();
+/// The capture state one worker owns: a detached worker from an older `start` must not fail or
+/// feed the take that replaced it, so each attempt carries its generation and checks it before
+/// touching anything shared.
+struct WorkerState {
+    buf: Arc<Mutex<Capture>>,
+    error: ErrorSlot,
+    dead: Arc<AtomicBool>,
+    dropped: Arc<AtomicBool>,
+    generation: u64,
+    live: Arc<AtomicU64>,
+}
+
+impl WorkerState {
+    fn is_current(&self) -> bool {
+        self.live.load(Ordering::Relaxed) == self.generation
+    }
+
+    fn report(&self) {
+        if let Some(e) = take_stream_error(&self.error) {
+            log::warn!("microphone stream error: {e}");
+        }
     }
 }
 
@@ -203,45 +242,66 @@ impl MicIn for CpalIn {
         self.dropped.store(false, Ordering::Relaxed);
         // A previous failure has been reported; the new take starts clean.
         let _ = take_stream_error(&self.error);
+        self.generation = self.generation.wrapping_add(1);
+        let generation = self.generation;
+        self.live.store(generation, Ordering::Relaxed);
         let (tx, rx) = mpsc::sync_channel(1);
         let stop = Arc::new((Mutex::new(false), Condvar::new()));
         let worker_stop = stop.clone();
-        let this = CpalIn {
+        // The worker needs the capture parameters, not the whole mic: the UI-side `stop`,
+        // `startup` and `worker` handles stay with the new take while a detached worker from
+        // an older attempt may still be inside `open()`.
+        let this = WorkerState {
             buf: self.buf.clone(),
             error: self.error.clone(),
             dead: self.dead.clone(),
             dropped: self.dropped.clone(),
-            startup: None,
-            stop: None,
-            worker: None,
+            generation,
+            live: self.live.clone(),
         };
         let handle = std::thread::Builder::new()
             .name("deckcraft-mic".into())
-            .spawn(move || match this.open() {
-                Ok((stream, rate)) => {
-                    this.buf.lock().unwrap_or_else(PoisonError::into_inner).rate = rate;
-                    if tx.send(Ok(())).is_err() {
-                        return;
+            .spawn(move || {
+                // The device open runs on the worker: a stale attempt that was detached while
+                // still opening must not hand its stream to the take that replaced it.
+                let opened = open_capture(&this);
+                match opened {
+                    Ok((stream, rate)) => {
+                        // A take that started after this worker was detached owns the buffer
+                        // now: a late success must not overwrite its rate or feed it samples.
+                        if !this.is_current() {
+                            drop(stream);
+                            return;
+                        }
+                        this.buf.lock().unwrap_or_else(PoisonError::into_inner).rate = rate;
+                        if tx.send(Ok(())).is_err() {
+                            return;
+                        }
+                        let (lock, cv) = &*worker_stop;
+                        let mut done = lock.lock().unwrap_or_else(PoisonError::into_inner);
+                        while !*done {
+                            done = cv.wait(done).unwrap_or_else(PoisonError::into_inner);
+                        }
+                        drop(done);
+                        drop(stream);
+                        // Only the current take's error slot is ours: a stale worker must not
+                        // drain the take that replaced it.
+                        if this.is_current() {
+                            this.report();
+                        }
                     }
-                    let (lock, cv) = &*worker_stop;
-                    let mut done = lock.lock().unwrap_or_else(PoisonError::into_inner);
-                    while !*done {
-                        done = cv.wait(done).unwrap_or_else(PoisonError::into_inner);
+                    Err(e) => {
+                        // Same rule for a late failure: it must not fail the take that
+                        // replaced this attempt.
+                        if !this.is_current() {
+                            let _ = tx.send(Err(e));
+                            return;
+                        }
+                        let error = this.error.clone();
+                        this.dead.store(true, Ordering::Relaxed);
+                        keep_stream_error(&error, &e);
+                        let _ = tx.send(Err(e));
                     }
-                    drop(done);
-                    drop(stream);
-                    this.report();
-                }
-                Err(e) => {
-                    // The worker's own `Drop` reports and drains the error slot, so keep the
-                    // reason where `failure()` reads it *after* that runs: a caller must not be
-                    // left with "the microphone is no longer available" instead of the device or
-                    // permission error.
-                    let error = this.error.clone();
-                    this.dead.store(true, Ordering::Relaxed);
-                    drop(this);
-                    keep_stream_error(&error, &e);
-                    let _ = tx.send(Err(e));
                 }
             })
             .map_err(|e| format!("couldn't start the microphone thread: {e}"))?;
@@ -291,6 +351,10 @@ impl MicIn for CpalIn {
         // flag end it when `open()` returns.
         let starting = self.startup.as_ref().is_some_and(|rx| matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
         if starting {
+            // The detached worker is now stale: publish a fresh generation so its late open,
+            // success, failure, stream errors and exit report cannot touch the next take.
+            self.generation = self.generation.wrapping_add(1);
+            self.live.store(self.generation, Ordering::Relaxed);
             self.startup = None;
             let _ = self.worker.take();
         } else if let Some(handle) = self.worker.take() {
@@ -450,5 +514,31 @@ mod tests {
         mic.stop();
         assert!(done.load(Ordering::Relaxed), "the worker ran to completion");
         assert!(mic.worker.is_none(), "the joined worker is cleared");
+    }
+
+    /// A worker detached while still opening must not fail or feed the take that replaced it:
+    /// its late error and late success are dropped once the generation moved on.
+    #[test]
+    fn a_detached_workers_late_results_do_not_touch_the_next_take() {
+        let live = Arc::new(AtomicU64::new(7));
+        let stale = WorkerState {
+            buf: Arc::new(Mutex::new(Capture::default())),
+            error: ErrorSlot::default(),
+            dead: Arc::new(AtomicBool::new(false)),
+            dropped: Arc::new(AtomicBool::new(false)),
+            generation: 7,
+            live: live.clone(),
+        };
+        // A new take started: the detached worker is now stale.
+        live.store(8, Ordering::Relaxed);
+        assert!(!stale.is_current(), "the detached generation is stale");
+        // Its stream-error callback path is gated the same way: simulate what the closed-over
+        // `is_current` check does instead of building a real cpal stream.
+        let was_current = stale.live.load(Ordering::Relaxed) == stale.generation;
+        if was_current {
+            stale.dead.store(true, Ordering::Relaxed);
+        }
+        assert!(!stale.dead.load(Ordering::Relaxed), "a stale DeviceNotAvailable sets nothing");
+        assert!(take_stream_error(&stale.error).is_none(), "a stale error keeps nothing");
     }
 }

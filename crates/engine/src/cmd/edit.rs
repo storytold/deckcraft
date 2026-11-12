@@ -767,16 +767,27 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     if commands.len() > 10_000 {
         return Err(bad("edit.batch", "more than 10,000 commands"));
     }
+    // A missing `id` is a request bug, not a per-command failure: refuse the whole batch
+    // before anything runs, so a later error cannot leave a half-applied take behind.
+    if commands.iter().any(|c| c.get("id").and_then(Value::as_str).is_none()) {
+        return Err(bad("edit.batch", "each command needs an `id`"));
+    }
     let mut ran = 0usize;
     let mut failed: Vec<String> = Vec::new();
     for c in commands {
         let Some(id) = c.get("id").and_then(Value::as_str) else {
             return Err(bad("edit.batch", "each command needs an `id`"));
         };
-        let params = c.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Object(Default::default()));
+        // Closing the document mid-batch would pull the document out from under the later
+        // entries (and the outer rollback could not restore it): report it and carry on.
+        if id == "file.close" {
+            failed.push("file.close: a batch cannot close the document".to_string());
+            continue;
+        }
         // The engine rolls a failed command back only at depth 0; an inner one is put back here,
         // so a half-applied command never joins the batch's single undo step.
         let before = s.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
+        let params = c.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Object(Default::default()));
         match s.execute(id, &params) {
             Ok(_) => ran += 1,
             // One bad clip must not discard the rest of the take: report it and carry on.
@@ -824,5 +835,32 @@ mod batch_tests {
         s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
         let err = s.execute("edit.batch", &json!({"commands": [{"command": "slide.new", "params": {"layout": "blank"}}]})).unwrap_err();
         assert!(err.to_string().contains("each command needs an `id`"), "{err}");
+    }
+
+    /// A missing `id` anywhere refuses the whole batch before anything runs: a later entry
+    /// must not leave a half-applied take behind.
+    #[test]
+    fn a_missing_id_anywhere_runs_no_command() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let slides = s.doc().unwrap().doc.slides.len();
+        let commands = vec![json!({"id": "slide.new", "params": {"layout": "blank"}}), json!({"params": {"layout": "blank"}})];
+        let err = s.execute("edit.batch", &json!({"commands": commands})).unwrap_err();
+        assert!(err.to_string().contains("each command needs an `id`"), "{err}");
+        assert_eq!(s.doc().unwrap().doc.slides.len(), slides, "nothing ran before the refusal");
+    }
+
+    /// `file.close` cannot run inside a batch: it is reported and the later entries still run
+    /// against the still-open document.
+    #[test]
+    fn file_close_is_reported_not_run() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let v = s.execute("edit.batch", &json!({"commands": [{"id": "file.close"}, {"id": "slide.new", "params": {"layout": "blank"}}]})).unwrap();
+        let failed = v.get("failed").and_then(|f| f.as_array()).cloned().unwrap_or_default();
+        assert_eq!(failed.len(), 1, "{v}");
+        assert!(failed[0].as_str().is_some_and(|m| m.contains("file.close")), "{v}");
+        assert_eq!(v.get("ran").and_then(|r| r.as_u64()), Some(1), "{v}");
+        assert!(s.doc().is_ok(), "the document is still open");
     }
 }
