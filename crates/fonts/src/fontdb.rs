@@ -594,12 +594,48 @@ fn font_file_ok(meta: &std::fs::Metadata) -> bool {
 /// The platform's font folders (the system's and the user's), scanned by [`FontDb::global`].
 /// Empty on wasm.
 pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
-    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     if cfg!(target_arch = "wasm32") {
-        return dirs;
+        return Vec::new();
     }
+    let os = if cfg!(target_os = "macos") {
+        FontOs::Macos
+    } else if cfg!(windows) {
+        FontOs::Windows
+    } else if cfg!(target_os = "android") {
+        FontOs::Android
+    } else {
+        FontOs::Unix
+    };
+    let mut dirs = font_dirs_for(os);
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    dirs
+}
+
+/// The platform families [`system_font_dirs`] knows the font folders of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FontOs {
+    Macos,
+    Windows,
+    /// Android's fonts are in its own system folders, not the Linux/XDG ones, and it has no
+    /// fontconfig.
+    Android,
+    /// Linux and the other Unix systems (XDG folders, Flatpak, fontconfig).
+    Unix,
+}
+
+/// Android's font folders: the system fonts (`/system/fonts`, listed by `/system/etc/fonts.xml`),
+/// the product partition's (`/product/fonts`, Android 10+) and the updatable fonts the system
+/// installs under `/data/fonts/files` (Android 12+).
+const ANDROID_FONT_DIRS: [&str; 3] = ["/system/fonts", "/product/fonts", "/data/fonts"];
+
+/// The font folders of `os`, before duplicates are removed.
+fn font_dirs_for(os: FontOs) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    if cfg!(target_os = "macos") {
+    if os == FontOs::Android {
+        dirs.extend(ANDROID_FONT_DIRS.map(Into::into));
+    } else if os == FontOs::Macos {
         dirs.extend(["/System/Library/Fonts", "/Library/Fonts"].map(Into::into));
         if let Some(h) = &home {
             dirs.push(h.join("Library/Fonts"));
@@ -619,7 +655,7 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
                 }
             }
         }
-    } else if cfg!(windows) {
+    } else if os == FontOs::Windows {
         let root = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
         dirs.push(root.join("Fonts"));
         if let Some(l) = std::env::var_os("LOCALAPPDATA") {
@@ -646,8 +682,6 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
             }
         }
     }
-    let mut seen = std::collections::HashSet::new();
-    dirs.retain(|d| seen.insert(d.clone()));
     dirs
 }
 
@@ -1746,6 +1780,15 @@ mod font_dir_tests {
             [PathBuf::from("/usr/share/fonts"), home.join(".local/share/fonts"), home.join(".fonts"), "/nix/store/abc-fonts/share/fonts".into()]
         );
         assert!(fontconfig_dirs("<dir>/never closed", None, Some(home)).is_empty());
+    }
+
+    #[test]
+    fn android_dirs_are_its_system_font_folders_only() {
+        // No Linux, XDG, Flatpak or fontconfig folders: Android has none of them.
+        assert_eq!(font_dirs_for(FontOs::Android), [PathBuf::from("/system/fonts"), "/product/fonts".into(), "/data/fonts".into()]);
+        for os in [FontOs::Macos, FontOs::Windows, FontOs::Unix] {
+            assert!(!font_dirs_for(os).contains(&PathBuf::from("/system/fonts")), "{os:?}");
+        }
     }
 
     #[test]
