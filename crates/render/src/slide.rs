@@ -176,6 +176,9 @@ pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale:
     let mut bounds: Option<Rect> = None;
     for id in ids.iter().take(256) {
         let Some(s) = slide.shape(*id) else { continue };
+        if resolve::lacks_frame(&rctx, s) {
+            continue;
+        }
         let b = resolve::xfrm(&rctx, s).bounds();
         if !b.width().is_finite() || !b.height().is_finite() || b.width() < 0.0 || b.height() < 0.0 {
             continue;
@@ -213,6 +216,9 @@ pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale:
 pub fn render_shape(pres: &Presentation, slide: &Slide, id: ShapeId, scale: f64) -> Option<Image> {
     let rctx = Ctx::for_slide(pres, slide)?;
     let s = slide.shape(id)?;
+    if resolve::lacks_frame(&rctx, s) {
+        return None;
+    }
     let x = resolve::xfrm(&rctx, s);
     let b = x.bounds().inflate(8.0, 8.0);
     let w = (b.width() * scale).ceil().clamp(1.0, MAX_SIDE as f64) as u16;

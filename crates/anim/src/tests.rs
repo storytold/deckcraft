@@ -563,6 +563,27 @@ fn morph_pairs_by_name_text_and_geometry() {
 }
 
 #[test]
+fn morph_does_not_draw_a_placeholder_that_has_no_frame_and_no_partner() {
+    // On neither slide is it drawn (PowerPoint draws nothing for it), so the transition does not either.
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let ph = |id| Shape {
+        ph: Some(deckcraft_model::Placeholder { kind: deckcraft_model::PhType::Obj, idx: 99, ..Default::default() }),
+        text: Some(TextBody::from_text("Alone")),
+        xfrm: None,
+        ..shape(id, "Content Placeholder 1")
+    };
+    let (mut a, mut b) = (Slide::default(), Slide::default());
+    a.shapes = vec![ph(1)];
+    b.shapes = vec![ph(2)];
+    let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+    assert!(
+        f.shapes.iter().all(|(s, _)| s.xfrm.is_none()),
+        "no frame was made up for it: {:?}",
+        f.shapes.iter().map(|(s, _)| s.xfrm).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn morph_pairs_leaves_unrelated_text_boxes_alone() {
     // A text box that leaves and an unrelated one that arrives fade in place (#119).
     let p = deckcraft_model::defaults::new_presentation(None);

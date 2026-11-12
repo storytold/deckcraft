@@ -179,7 +179,9 @@ fn solid_color(ctx: Option<&Ctx>, s: &Shape) -> Option<Rgba> {
 
 fn box_of(ctx: Option<&Ctx>, s: &Shape) -> Option<Xfrm> {
     match ctx {
-        Some(c) => Some(resolve::xfrm(c, s)),
+        // A placeholder with no frame and no partner in its layout is not drawn; giving it the
+        // frame it would otherwise fall back to would draw it for the length of the transition.
+        Some(c) => (!resolve::lacks_frame(c, s)).then(|| resolve::xfrm(c, s)),
         None => s.xfrm,
     }
 }
