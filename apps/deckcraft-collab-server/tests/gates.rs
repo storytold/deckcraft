@@ -13,13 +13,14 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use deckcraft_collab::{Adapter, ClientSession, DocSession, ReadyBase, SessionConfig};
 use deckcraft_collab_proto::{
-    Applied, BaseSnapshot, Capabilities, ClientInfo, ClientMsg, FillSpec, Limits, OpEnvelope, OpKind, PROTO_VERSION, Payload, Role, ServerMsg,
-    ShapeKey, SlideKey, SnapshotMode, SnapshotMsg, SnapshotRef, Target, Welcome,
+    Applied, BaseHttp, BaseSnapshot, Capabilities, ClientInfo, ClientMsg, FillSpec, Limits, OpEnvelope, OpKind, PROTO_VERSION, Payload, Role,
+    ServerMsg, ShapeKey, SlideKey, SnapshotMode, SnapshotMsg, SnapshotRef, Target, Welcome,
 };
 use deckcraft_engine::Session;
 use deckcraft_model::{Presentation, ShapeKind};
@@ -320,8 +321,14 @@ struct Live {
     last_base: Option<(u64, usize)>,
     /// How many journal steps the last `resync` delivered.
     last_tail: usize,
-    /// How many chunks the last chained base arrived in (`None` when it came inline).
+    /// How many chunks the last chained base arrived in (`None` when it came inline or over HTTP).
     last_chunks: Option<usize>,
+    /// The base the last snapshot offered over the session's HTTP side: the request it named.
+    last_http: Option<BaseHttp>,
+    /// Whether this host installed a fetch for such a base.
+    http_installed: bool,
+    /// How many times that fetch was called.
+    http_fetches: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// The chunk the client asked for last, so a resumed chain can be checked.
     last_chunk_request: Option<u32>,
 }
@@ -336,10 +343,33 @@ impl Live {
     /// A connected participant that has not caught up yet: the caller pumps what it asks for, so a
     /// gate can drop the socket half-way through a chained base.
     fn connect(addr: SocketAddr, id: &str, actor: &str, role: &str, bytes: &[u8]) -> Self {
+        Self::connect_with(addr, id, actor, role, bytes, false)
+    }
+
+    /// The same, with or without a fetch for a base the snapshot offers as one HTTP request. With
+    /// it the base above the inline limit arrives in one request; without it the chain is the way,
+    /// which is what a client build without an HTTP side does.
+    fn connect_with(addr: SocketAddr, id: &str, actor: &str, role: &str, bytes: &[u8], http: bool) -> Self {
         let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/v1/sessions/{id}/ws")).expect("ws");
         socket_timeout(&mut ws);
         let mut client = ClientSession::new(id);
-        let hello = client.connect(token(actor, role, id), ClientInfo { name: actor.into(), ver: "1".into() });
+        let jwt = token(actor, role, id);
+        let http_fetches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        if http {
+            let counted = http_fetches.clone();
+            let file = id.to_string();
+            let token = jwt.clone();
+            client.set_base_fetcher(std::sync::Arc::new(move |path: &str| {
+                let announced = format!("/v1/sessions/{file}/base/");
+                assert!(path.starts_with(&announced), "the snapshot names the base endpoint, not {path}");
+                counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (status, content_type, body) = http_bytes(addr, path, Some(&token));
+                assert_eq!(status, 200, "the base endpoint answered {status}");
+                assert_eq!(content_type.as_deref(), Some("application/vnd.deckcraft.native"), "the base is answered as the native document it is");
+                Some(body)
+            }));
+        }
+        let hello = client.connect(jwt, ClientInfo { name: actor.into(), ver: "1".into() });
         ws.send(tungstenite::Message::Text(deckcraft_collab_proto::encode_client(&hello).expect("encode").into())).expect("hello");
         let welcome = read_socket(&mut ws);
         let mut live = Self {
@@ -350,6 +380,9 @@ impl Live {
             last_base: None,
             last_tail: 0,
             last_chunks: None,
+            last_http: None,
+            http_installed: http,
+            http_fetches,
             last_chunk_request: None,
         };
         live.on(welcome);
@@ -381,16 +414,19 @@ impl Live {
                 self.last_tail = snapshot.tail.len();
                 self.last_base = None;
                 self.last_chunks = None;
+                self.last_http = snapshot.base.as_ref().and_then(|base| base.http.clone());
                 match &snapshot.base {
-                    Some(base) if base.is_chained() => {
-                        // The base travels in chunks: the client state machine assembles it and the
-                        // host installs it once it is whole, exactly like the desktop app does.
-                        let chain = base.chunks.as_ref().expect("a chained base names its chain");
-                        self.last_chunks = Some(chain.count as usize);
+                    Some(base) if base.bytes_base64.is_none() => {
+                        // The base is not inline: it arrives over the session's HTTP side in one
+                        // request (when this host installed a fetch) or as a chain of chunks, and
+                        // the client state machine hands it to the host once it is whole.
                         deferred = true;
+                        if !self.http_installed {
+                            self.last_chunks = base.chunks.as_ref().map(|chain| chain.count as usize);
+                        }
                     }
                     Some(base) => {
-                        let encoded = base.bytes_base64.as_deref().expect("the gate's inline base carries bytes");
+                        let encoded = base.bytes_base64.as_deref().expect("an inline base carries bytes");
                         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).expect("base64");
                         self.last_base = Some((base.version, bytes.len()));
                         self.replica.rebuild(&bytes, base).expect("the base reloads");
@@ -1004,6 +1040,10 @@ fn a_hundred_and_twenty_slide_deck_with_media_soaks_for_hundreds_of_steps_and_a_
     let chunks = viewer.last_chunks.expect("the base travels as a chain");
     assert_eq!(chunks, base_bytes.div_ceil(CHUNK), "one chunk per 256 KiB");
     assert_eq!(viewer.last_tail as u64, STEPS as u64 - base_version, "the steps above the base travel as a tail");
+    let announced = viewer.last_http.clone().expect("a base this size is offered over HTTP as well");
+    assert_eq!(announced.len, base_bytes as u64, "the request names the base the chain carries");
+    assert!(announced.path.starts_with(&format!("/v1/sessions/{ID}/base/")), "{}", announced.path);
+    assert_eq!(announced.sha256.len(), 64, "and its digest");
     eprintln!(
         "deckcraft gate: a viewer rebuilt {:.1} MiB of base in {chunks} chunks plus {} step(s) of tail in {join_ms:.1} ms",
         base_bytes as f64 / (1024.0 * 1024.0),
@@ -1037,6 +1077,103 @@ fn a_hundred_and_twenty_slide_deck_with_media_soaks_for_hundreds_of_steps_and_a_
     assert_eq!(all[0].replica.doc().slides.len(), BIG_SLIDES);
     assert_eq!(picture_count(all[0].replica.doc()), BIG_SLIDES);
     commit_the_big_deck(addr, ID, version, &alice);
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------- a base fetched over HTTP
+
+/// `slides` slides, each with its own noise picture and a rectangle: a native base of a few
+/// megabytes, small enough for a fast gate and large enough to sit above a lowered inline limit.
+fn http_gate_deck(slides: usize) -> Vec<u8> {
+    let mut session = Session::with_new();
+    for i in 0..slides {
+        if i > 0 {
+            session.apply_remote("slide.new", &json!({"layout": "blank", "at": i})).expect("slide");
+        }
+        let data = base64::engine::general_purpose::STANDARD.encode(noise_png(i));
+        session
+            .apply_remote("insert.picture", &json!({"name": format!("http-noise-{i}.png"), "data": data, "rect": [40.0, 60.0, 480.0, 270.0]}))
+            .expect("picture");
+        session.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [560.0, 80.0, 300.0, 120.0]})).expect("rect");
+    }
+    deckcraft_pptx::export(session.doc().expect("doc").doc.as_ref()).expect("export the http gate deck")
+}
+
+/// A base above the inline limit that a chunk chain cannot carry: the snapshot names one HTTP
+/// request, a client below the compacted journal fetches it in one answer, takes the key map it
+/// carries and keeps working — no reopen from the cabinet, no chunk chain.
+#[test]
+fn a_base_above_the_inline_limit_is_fetched_over_http_without_reopening_the_file() {
+    const ID: &str = "gate-http-base";
+    const SLIDES: usize = 24;
+    const STEPS: u64 = 12;
+    const SNAPSHOT_EVERY: u64 = 6;
+    const INLINE: usize = 256 << 10;
+
+    let initial = http_gate_deck(SLIDES);
+    let mut config = deckcraft_collab_server::Config::for_tests(SECRET, "service-token");
+    config.snapshot_every = SNAPSHOT_EVERY;
+    config.max_base_inline = INLINE;
+    // One 256 KiB chunk and no depth: the chain cannot carry this base, so the HTTP route is the
+    // only one that rebuilds a client below the journal without reopening the file.
+    config.max_base_chunk = INLINE;
+    config.max_base_chunks = 1;
+    let handle = deckcraft_collab_server::serve_ephemeral(config).expect("server");
+    let addr = handle.addr;
+    create(addr, ID, &initial);
+
+    let mut alice = Live::join(addr, ID, "alice", "editor", &initial);
+    let mut bob = Live::join(addr, ID, "bob", "editor", &initial);
+    let target = media_target(&alice.replica, 0, false);
+    let mut version = 0u64;
+    for step in 0..STEPS {
+        version += 1;
+        alice.submit(move_to(&format!("http-{step}"), ID, target.clone(), 100.0 + step as f64));
+        for peer in [&mut alice, &mut bob] {
+            expect_applied(peer, version);
+        }
+    }
+    assert_eq!(version, STEPS, "every step landed");
+
+    // A viewer joins at version 0: the journal no longer covers it and the last compaction is at
+    // the head, so it is rebuilt from a base above the inline limit — in one request.
+    let joined = Instant::now();
+    let mut viewer = Live::connect_with(addr, ID, "victor", "viewer", &initial, true);
+    viewer.catch_up_after_join();
+    assert_eq!(viewer.client.version(), STEPS, "the viewer caught up without reopening the file");
+    let (base_version, base_bytes) = viewer.last_base.expect("the viewer received a base");
+    assert_eq!(base_version, version, "the base is the compaction at the head");
+    assert!(base_bytes > INLINE, "the base is above the inline limit: {base_bytes} bytes");
+    assert_eq!(viewer.last_chunks, None, "no chunk chain was needed");
+    assert_eq!(viewer.http_fetches.load(Ordering::Relaxed), 1, "one request fetched the whole base");
+    let base_request = viewer.last_http.clone().expect("the snapshot named the request");
+    assert_eq!(base_request.len, base_bytes as u64, "the request names the size that arrived");
+    assert_eq!(viewer.last_tail, 0, "the base is at the head, so no tail rides with it");
+    eprintln!(
+        "deckcraft gate: a viewer rebuilt {} KiB of base over HTTP in one request, in {:.0} ms",
+        base_bytes / 1024,
+        joined.elapsed().as_secs_f64() * 1000.0
+    );
+
+    // The key map the base carries is the session's: the next edit addresses a shape by key and
+    // the rebuilt replica applies it like any other participant.
+    version += 1;
+    bob.submit(move_to("http-after-base", ID, target.clone(), 400.0));
+    expect_applied(&mut alice, version);
+    expect_applied(&mut bob, version);
+    expect_applied(&mut viewer, version);
+    assert_all_converged(&[&alice, &bob, &viewer], version);
+
+    // The endpoint is the media reader's pattern: a session token, the digest in the path and the
+    // native content type — and nothing to a caller who has none or names other bytes.
+    assert_eq!(http_bytes(addr, &base_request.path, None).0, 401, "a base needs a session token");
+    assert_eq!(http_bytes(addr, &base_request.path, Some("service-token")).0, 200, "the cabinet service reads it");
+    let unknown = format!("/v1/sessions/{ID}/base/{}", "0".repeat(64));
+    assert_eq!(http_bytes(addr, &unknown, Some("service-token")).0, 404, "a digest the room does not hold");
+    let (status, metrics) = http(addr, "GET", "/metrics", None, "");
+    assert_eq!(status, 200);
+    assert!(!metrics.contains("deckcraft_collab_base_http_total 0"), "the server counts the served bases: {metrics}");
+    assert!(metrics.contains("deckcraft_collab_base_chunks_total 0"), "no chunk was served: {metrics}");
     handle.shutdown();
 }
 
@@ -1074,17 +1211,34 @@ fn create(addr: SocketAddr, id: &str, initial: &[u8]) {
 }
 
 fn http(addr: SocketAddr, method: &str, path: &str, token: Option<&str>, body: &str) -> (u16, String) {
+    let (status, _, bytes) = http_request(addr, method, path, token, body.as_bytes());
+    (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// One HTTP request answered as bytes, with the status and the content type: the base is a binary
+/// document, so a gate that fetches it cannot read the answer as a string.
+fn http_bytes(addr: SocketAddr, path: &str, token: Option<&str>) -> (u16, Option<String>, Vec<u8>) {
+    http_request(addr, "GET", path, token, &[])
+}
+
+fn http_request(addr: SocketAddr, method: &str, path: &str, token: Option<&str>, body: &[u8]) -> (u16, Option<String>, Vec<u8>) {
     let mut stream = TcpStream::connect(addr).expect("connect");
     let auth = token.map(|token| format!("Authorization: Bearer {token}\r\n")).unwrap_or_default();
     let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: test\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: test\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(request.as_bytes()).expect("write");
-    let mut response = String::new();
-    stream.read_to_string(&mut response).expect("read");
-    let status = response.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-    (status, response.split("\r\n\r\n").nth(1).unwrap_or_default().to_string())
+    stream.write_all(body).expect("body");
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).expect("read");
+    let split = response.windows(4).position(|w| w == b"\r\n\r\n").map(|at| at + 4).unwrap_or(0);
+    let head = String::from_utf8_lossy(&response[..split]).to_string();
+    let status = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let content_type = head
+        .lines()
+        .find_map(|line| line.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.trim().to_string()));
+    (status, content_type, response[split..].to_vec())
 }
 
 fn join_socket(addr: SocketAddr, id: &str, actor: &str, role: &str) -> Client {

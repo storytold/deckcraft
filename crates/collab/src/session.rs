@@ -14,7 +14,7 @@ use std::collections::{HashMap, VecDeque};
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    Applied, BaseChunks, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, ServerError, SnapshotMode, SnapshotMsg,
+    Applied, BaseChunks, BaseHttp, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, ServerError, SnapshotMode, SnapshotMsg,
     SnapshotRef, Target,
 };
 use deckcraft_engine::Session;
@@ -33,16 +33,17 @@ pub struct SessionConfig {
     pub dedup_window: usize,
     /// How many applied operations the journal tail keeps between snapshots.
     pub max_tail: usize,
-    /// Largest native base sent inline to a client whose tail was compacted. Above it the base
-    /// travels as a chain of chunks ([`Self::max_base_chunk`], [`Self::max_base_chunks`]) and,
-    /// when it does not fit that either, the snapshot only names it and the client reopens the
-    /// file instead.
+    /// Largest native base sent inline to a client whose tail was compacted. Above it the base is
+    /// announced as one HTTP request and as a chain of chunks ([`Self::max_base_chunk`],
+    /// [`Self::max_base_chunks`]); the client takes the request when it has an HTTP side and the
+    /// chain when it does not.
     pub max_base_inline: usize,
     /// Bytes of one chunk of a chained base. A chunk is base64-encoded into one frame, so this is
     /// also what keeps one base frame well below the frame limit.
     pub max_base_chunk: usize,
     /// Deepest chain the server hands out. A base larger than
-    /// `max_base_chunk * max_base_chunks` is named without bytes (or inline, if it is small).
+    /// `max_base_chunk * max_base_chunks` is announced as one HTTP request instead (or inline, if
+    /// it is small).
     pub max_base_chunks: usize,
 }
 
@@ -69,14 +70,15 @@ pub struct SnapshotState {
     pub sha256: String,
 }
 
-/// One base in the form the snapshot carries it: inline bytes, a chain of chunks, or (when it is
-/// too large for both) only its version and cursor.
+/// One base in the form the snapshot carries it: inline bytes, one HTTP request that fetches it,
+/// a chain of chunks, or (when it is too large for all of them) only its version and cursor.
 struct BaseTransfer {
     version: u64,
     cursor: String,
     bytes_base64: Option<String>,
     keys: deckcraft_collab_proto::SnapshotKeys,
     chunks: Option<BaseChunks>,
+    http: Option<BaseHttp>,
 }
 
 /// What a commit produced. The bytes are the `.pptx` the cabinet stores.
@@ -543,10 +545,12 @@ impl DocSession {
     /// A tail answer is used while the journal still covers the client. Once compaction removed
     /// it, the client replaces its replica with the native base, so the session takes a snapshot
     /// on demand when the stored one is too old or missing. A base larger than
-    /// [`SessionConfig::max_base_inline`] travels as a chain of chunks the client asks for one at a
-    /// time (RFC §4.5.1); when it is too large even for that chain the snapshot names it without
-    /// bytes and the client has to reopen the file from the cabinet instead of rebuilding from the
-    /// wire.
+    /// [`SessionConfig::max_base_inline`] is announced as one HTTP request
+    /// ([`BaseSnapshot::http`], the media endpoint's pattern, RFC §4.5.2) and, beside it, as a
+    /// chain of chunks the client asks for one at a time (RFC §4.5.1): a client that knows the
+    /// HTTP side rebuilds from one answer, one that does not keeps using the chain, and only a
+    /// server with neither (or a base too large for both) names it without bytes, which makes the
+    /// client reopen the file from the cabinet.
     pub fn resync(&mut self, last_version: u64) -> SnapshotMsg {
         let head = self.version;
         if self.tail_covers(last_version) {
@@ -585,7 +589,13 @@ impl DocSession {
             version: head,
             snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: base.cursor },
             tail: self.tail_after(base.version),
-            base: Some(BaseSnapshot { version: base.version, bytes_base64: base.bytes_base64, keys: base.keys, chunks: base.chunks }),
+            base: Some(BaseSnapshot {
+                version: base.version,
+                bytes_base64: base.bytes_base64,
+                keys: base.keys,
+                chunks: base.chunks,
+                http: base.http,
+            }),
         }
     }
 
@@ -595,7 +605,31 @@ impl DocSession {
         let inline = snapshot.bytes.len() <= self.config.max_base_inline;
         let bytes_base64 = inline.then(|| base64::engine::general_purpose::STANDARD.encode(&snapshot.bytes));
         let chunks = (!inline).then(|| self.base_chain(snapshot)).flatten();
-        Some(BaseTransfer { version: snapshot.version, cursor: snapshot.cursor.clone(), bytes_base64, keys: self.adapter.snapshot_keys(), chunks })
+        let http = if inline { None } else { self.base_http(snapshot) };
+        Some(BaseTransfer {
+            version: snapshot.version,
+            cursor: snapshot.cursor.clone(),
+            bytes_base64,
+            keys: self.adapter.snapshot_keys(),
+            chunks,
+            http,
+        })
+    }
+
+    /// The one request that fetches this base over the session's HTTP side, or `None` when the id
+    /// this session was created with cannot name it in a path (a `/`, `?` or `#` would be split by
+    /// the endpoint, so such a base stays on the chain).
+    fn base_http(&self, snapshot: &SnapshotState) -> Option<BaseHttp> {
+        let id = self.file_id.as_str();
+        if id.is_empty() || id.contains(['/', '\\', '?', '#']) || id.chars().any(char::is_control) {
+            return None;
+        }
+        let http = BaseHttp {
+            path: format!("/v1/sessions/{id}/base/{}", snapshot.sha256),
+            sha256: snapshot.sha256.clone(),
+            len: snapshot.bytes.len() as u64,
+        };
+        http.is_well_formed().then_some(http)
     }
 
     /// The chain parameters for a base that is too large to inline, or `None` when it is also too
@@ -1574,6 +1608,9 @@ mod tests {
         assert_eq!(chain.count as usize, len.div_ceil(1024), "1000 bytes per chunk");
         assert!(chain.count > 1, "the base is bigger than one chunk");
         assert!(!base.keys.shapes.is_empty(), "the key map is small and still travels");
+        let http = base.http.clone().expect("and one request fetches it whole");
+        assert!(http.is_well_formed(), "{http:?}");
+        assert_eq!(http.len, len as u64, "the request names the size the chain carries");
 
         // The chain assembles into exactly the base the snapshot was taken from.
         let mut assembled = Vec::new();
@@ -1591,9 +1628,10 @@ mod tests {
     }
 
     #[test]
-    fn a_base_too_deep_for_a_chain_travels_without_bytes() {
-        // One chunk is allowed, the base is bigger than that: the depth limit leaves the base
-        // named but not served, and the client reopens the file from the cabinet.
+    fn a_base_too_deep_for_a_chain_is_offered_over_http_instead() {
+        // One chunk is allowed, the base is bigger than that: the chain cannot carry it, so the
+        // snapshot names one HTTP request for the whole base instead of making the client reopen
+        // the file from the cabinet.
         let mut s = DocSession::from_document(
             "d",
             deck(),
@@ -1604,10 +1642,41 @@ mod tests {
         s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
         let base = s.resync(0).base.expect("a base cursor");
         assert_eq!(base.version, 1);
-        assert!(base.bytes_base64.is_none(), "over the inline limit the client reopens the file");
+        assert!(base.bytes_base64.is_none(), "over the inline limit the bytes do not travel inline");
         assert!(base.chunks.is_none(), "and above the chain's depth the server does not offer one");
         assert!(!base.keys.shapes.is_empty(), "the key map is small and still travels");
+        let http = base.http.clone().expect("the base is still fetchable in one request");
+        let stored = s.snapshot().expect("base");
+        assert_eq!(http.path, format!("/v1/sessions/d/base/{}", stored.sha256));
+        assert_eq!(http.sha256, stored.sha256);
+        assert_eq!(http.len, stored.bytes.len() as u64);
         assert!(s.base_chunk(1, 0).is_err(), "a base that does not travel as a chain has no chunks");
+    }
+
+    #[test]
+    fn an_inline_base_names_no_http_request_and_an_id_a_path_would_split_names_none_either() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 1, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let base = s.resync(0).base.expect("a base");
+        assert!(base.bytes_base64.is_some(), "a small base still travels inline");
+        assert!(base.http.is_none(), "and names no request beside it");
+
+        // A cabinet file id may hold any character; one a path would split leaves the base on the
+        // chain, where the id never appears.
+        let mut split = DocSession::from_document(
+            "folder/deck",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 4096, ..SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide, shape) = keys(&split);
+        let mut op = move_op(&slide, &shape, 300.0, 0, "op-1");
+        op.doc = "folder/deck".into();
+        split.apply("a", &op).expect("apply");
+        let base = split.resync(0).base.expect("a base");
+        assert!(base.chunks.is_some(), "the chain carries it instead");
+        assert!(base.http.is_none(), "an id with a slash cannot name a path segment");
     }
 
     #[test]

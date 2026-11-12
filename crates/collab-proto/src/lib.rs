@@ -1453,8 +1453,8 @@ pub struct BaseSnapshot {
     /// The version the base represents; the tail carries the steps after it.
     pub version: u64,
     /// The native `.deckcraft` file. Absent when it is larger than the server's inline limit, in
-    /// which case the client either asks for the base in chunks ([`Self::chunks`]) or, when the
-    /// server cannot chain it, has to reopen the file from the cabinet.
+    /// which case the client fetches it ([`Self::http`]), asks for it in chunks ([`Self::chunks`])
+    /// or, when the server offers neither, has to reopen the file from the cabinet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes_base64: Option<String>,
     pub keys: SnapshotKeys,
@@ -1462,14 +1462,74 @@ pub struct BaseSnapshot {
     /// limits: the client asks for one chunk at a time with [`ClientMsg::BaseChunk`], so a base
     /// above `maxBaseInline` still reaches a replica that missed the compaction (RFC §4.5.1).
     /// Absent when the bytes are inline.
+    ///
+    /// A server that has an HTTP side announces it beside [`Self::http`]: a client that knows
+    /// `http` takes the base in one request, and one that does not keeps using the chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunks: Option<BaseChunks>,
+    /// Present when the base is larger than the server's inline limit and the server can hand it
+    /// out over its HTTP side: the one request that fetches it, the digest it must answer with and
+    /// the size. Announced beside [`Self::chunks`], so a client that predates this field falls
+    /// back to the chain instead of reloading the file; a client that knows it fetches the whole
+    /// base in one request, which is what a deck too large for a chain relies on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<BaseHttp>,
 }
 
 impl BaseSnapshot {
-    /// Whether the base travels inline or as a chain of chunks.
+    /// Whether the base travels as a chain of chunks.
     pub fn is_chained(&self) -> bool {
         self.chunks.is_some()
+    }
+
+    /// Whether the base travels over the session's HTTP side in one request.
+    pub fn is_fetchable(&self) -> bool {
+        self.http.is_some()
+    }
+
+    /// Whether the snapshot names a base without carrying any way to fetch it: the client then has
+    /// to reopen the file from the cabinet.
+    pub fn is_named_only(&self) -> bool {
+        self.bytes_base64.is_none() && self.chunks.is_none() && self.http.is_none()
+    }
+}
+
+/// One request that fetches a native base from the session's HTTP side (the media endpoint's
+/// pattern: a path on the server that answered the session, a session token, a content type).
+///
+/// The path is relative and always starts with `/`: the client already knows the host and the
+/// token it joined with, so a server never sends an absolute URL and a client never follows one.
+/// The bytes are content-addressed by `sha256` and bounded by `len`, so a truncated, substituted
+/// or hostile answer is refused before the replica is replaced.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseHttp {
+    /// Path on the session's server, e.g. `/v1/sessions/{id}/base/{sha256}`.
+    pub path: String,
+    /// Digest of the base, hex, as the media channel names objects.
+    pub sha256: String,
+    /// Size of the base in bytes.
+    pub len: u64,
+}
+
+impl BaseHttp {
+    /// Largest base a client accepts over HTTP. A native deck above this is named without bytes;
+    /// the client cannot install what it cannot hold.
+    pub const MAX_LEN: u64 = 256 << 20;
+
+    /// Whether the announced request is one a client may follow: a relative path, no traversal,
+    /// no query and a hex digest with a size inside the ceiling.
+    pub fn is_well_formed(&self) -> bool {
+        let path = self.path.as_str();
+        path.len() > 1
+            && path.starts_with('/')
+            && !path.contains("..")
+            && !path.contains(['?', '#'])
+            && !path.chars().any(|c| c.is_control() || c.is_whitespace())
+            && self.len > 0
+            && self.len <= Self::MAX_LEN
+            && self.sha256.len() == 64
+            && self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
     }
 }
 
@@ -1782,7 +1842,7 @@ mod tests {
             version: 9,
             snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@4".into() },
             tail: vec![],
-            base: Some(BaseSnapshot { version: 4, bytes_base64: Some("UEsD".into()), keys: keys.clone(), chunks: None }),
+            base: Some(BaseSnapshot { version: 4, bytes_base64: Some("UEsD".into()), keys: keys.clone(), chunks: None, http: None }),
         });
         let text = encode_server(&msg).expect("encode");
         assert!(text.contains("\"mode\":\"base\""), "{text}");
@@ -1802,7 +1862,7 @@ mod tests {
             version: 9,
             snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@4".into() },
             tail: vec![],
-            base: Some(BaseSnapshot { version: 4, bytes_base64: None, keys, chunks: Some(chain.clone()) }),
+            base: Some(BaseSnapshot { version: 4, bytes_base64: None, keys, chunks: Some(chain.clone()), http: None }),
         });
         let text = encode_server(&msg).expect("encode");
         assert!(text.contains("\"chunks\":{"), "{text}");
@@ -1829,6 +1889,36 @@ mod tests {
         assert!(!BaseChunks { len: BaseChunks::MAX_LEN + 1, ..good.clone() }.is_well_formed(), "a base above the ceiling");
         assert!(!BaseChunks { count: 3, ..good.clone() }.is_well_formed(), "a depth that does not match len and chunk_size");
         assert!(!BaseChunks { sha256: "zz".repeat(32), ..good.clone() }.is_well_formed(), "a digest that is not hex");
+    }
+
+    #[test]
+    fn an_http_base_names_one_request_and_is_bounded() {
+        let good = BaseHttp { path: format!("/v1/sessions/demo/base/{}", "ab".repeat(32)), sha256: "ab".repeat(32), len: 12 << 20 };
+        assert!(good.is_well_formed(), "a relative path, a hex digest and a size inside the ceiling");
+        assert!(!BaseHttp { path: "https://elsewhere/base".into(), ..good.clone() }.is_well_formed(), "an absolute URL");
+        assert!(!BaseHttp { path: "v1/sessions/demo/base".into(), ..good.clone() }.is_well_formed(), "a path without a leading slash");
+        assert!(!BaseHttp { path: "/v1/../base".into(), ..good.clone() }.is_well_formed(), "a traversal");
+        assert!(!BaseHttp { path: "/v1/sessions/demo/base?x=1".into(), ..good.clone() }.is_well_formed(), "a query");
+        assert!(!BaseHttp { path: "/v1/sessions/a b/base".into(), ..good.clone() }.is_well_formed(), "a space");
+        assert!(!BaseHttp { len: 0, ..good.clone() }.is_well_formed(), "an empty base");
+        assert!(!BaseHttp { len: BaseHttp::MAX_LEN + 1, ..good.clone() }.is_well_formed(), "a base above the ceiling");
+        assert!(!BaseHttp { sha256: "zz".repeat(32), ..good.clone() }.is_well_formed(), "a digest that is not hex");
+
+        // Announced beside the chain, so a client that does not know the field still rebuilds from
+        // the chunks: a frame carrying both decodes as it is and one carrying only the chain (an
+        // older server) decodes too.
+        let chain = BaseChunks { sha256: good.sha256.clone(), len: good.len, chunk_size: 1 << 20, count: 12 };
+        let keys = SnapshotKeys::default();
+        let msg = ServerMsg::Snapshot(SnapshotMsg {
+            version: 9,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@4".into() },
+            tail: vec![],
+            base: Some(BaseSnapshot { version: 4, bytes_base64: None, keys, chunks: Some(chain), http: Some(good.clone()) }),
+        });
+        let text = encode_server(&msg).expect("encode");
+        assert!(text.contains("\"http\":{"), "{text}");
+        assert!(text.contains("\"chunks\":{"), "the chain stays as the fallback: {text}");
+        assert_eq!(decode_server(&text).expect("decode"), msg);
     }
 
     #[test]

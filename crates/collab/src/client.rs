@@ -14,10 +14,12 @@
 //! - **A viewer cannot submit.** The server checks too; this only keeps the UI honest.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    BaseChunks, ClientInfo, ClientMsg, Hello, Lease, OpEnvelope, OpKind, PROTO_VERSION, RejectCode, Role, ServerMsg, SnapshotMode, SnapshotMsg,
+    BaseChunks, BaseHttp, ClientInfo, ClientMsg, Hello, Lease, OpEnvelope, OpKind, PROTO_VERSION, RejectCode, Role, ServerMsg, SnapshotMode,
+    SnapshotMsg,
 };
 
 /// Why a submitted operation was not accepted by the client.
@@ -109,6 +111,10 @@ pub struct ClientSession {
     /// A base the server is sending as a chain of chunks (RFC §4.5.1): the prefix assembled so
     /// far and the index the client is missing.
     base_download: Option<BaseDownload>,
+    /// How the host fetches a base the snapshot offers as one HTTP request
+    /// ([`BaseHttp`]): the desktop's link, a test's in-process server. Absent when the host has no
+    /// HTTP side, and then the chunks are the way the base arrives.
+    base_fetcher: Option<BaseFetch>,
     /// The chunk the client has asked for and not yet been answered. Cleared when the socket
     /// drops, so the same index is asked again and the chain resumes instead of restarting.
     base_request: Option<u32>,
@@ -141,6 +147,19 @@ pub struct ClientSession {
 pub struct ReadyBase {
     pub snapshot: SnapshotMsg,
     pub bytes: Vec<u8>,
+}
+
+/// How a host fetches the base a snapshot offers as one HTTP request (RFC §4.5.2): the desktop's
+/// link knows the server and the token, a test knows its own room. The argument is the relative
+/// path the snapshot announced; the answer is the base's bytes or `None` when they could not be
+/// had.
+#[derive(Clone)]
+struct BaseFetch(Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>);
+
+impl std::fmt::Debug for BaseFetch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BaseFetch")
+    }
 }
 
 /// The prefix of a chained base, and where the client is in the chain.
@@ -213,6 +232,7 @@ impl ClientSession {
             rewind_pending: None,
             last_error: None,
             base_download: None,
+            base_fetcher: None,
             base_request: None,
             pending_snapshot: None,
             snapshot_refused: false,
@@ -275,6 +295,13 @@ impl ClientSession {
             // assembled: the catch-up must start where the replica is.
             last_version: Some(self.replica_version),
         })
+    }
+
+    /// Supply the fetch of a base the snapshot offers as one HTTP request ([`BaseHttp`]). The
+    /// desktop link knows the server and the token; without a fetch the base arrives as a chain of
+    /// chunks, and only a base too large for both leaves the client with the cabinet's copy.
+    pub fn set_base_fetcher(&mut self, fetch: Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>) {
+        self.base_fetcher = Some(BaseFetch(fetch));
     }
 
     /// Submit a local operation. A viewer is refused here and on the server.
@@ -499,6 +526,17 @@ impl ClientSession {
                     // offset the base does not have.
                     self.queued.clear();
                 }
+                // A base above the inline limit that the server offers as one HTTP request is
+                // fetched here, through the fetch the host supplied: one answer replaces the
+                // replica, so a deck too large for a chunk chain no longer has to be reopened from
+                // the cabinet. An answer that is not the announced size and digest is refused and
+                // the chain the server announced beside it is the fallback.
+                if let Some(http) = snapshot.base.as_ref().and_then(|base| base.bytes_base64.is_none().then_some(base.http.clone()).flatten())
+                    && let Some(bytes) = self.fetch_base(&http)
+                {
+                    self.pending_snapshot = Some(snapshot);
+                    return self.deliver_base(bytes);
+                }
                 // A base larger than the frame limit travels as a chain of chunks: the host gets
                 // this snapshot only once the base is whole (`take_ready_base`), and until then
                 // the replica is the old document.
@@ -610,14 +648,10 @@ impl ClientSession {
         if self.base_download.as_ref().is_some_and(BaseDownload::finished) { self.finish_base() } else { Effect::None }
     }
 
-    /// The whole base arrived: check its size and digest, clear the chain metadata from the
-    /// snapshot and hand it to the host through [`Self::take_ready_base`].
+    /// The whole base arrived over HTTP or as a finished chain: check it is the announced one and
+    /// hand it to the host.
     fn finish_base(&mut self) -> Effect {
         let Some(download) = self.base_download.take() else { return Effect::None };
-        let Some(mut snapshot) = self.pending_snapshot.take() else {
-            self.missed_while_rebuilding = false;
-            return self.abandon_base("the base finished without the snapshot it belongs to");
-        };
         if download.bytes.len() != download.len {
             self.missed_while_rebuilding = false;
             return self.abandon_base(format!("the base is {} bytes, not {}", download.bytes.len(), download.len));
@@ -626,12 +660,49 @@ impl ClientSession {
             self.missed_while_rebuilding = false;
             return self.abandon_base("the assembled base does not match the digest the server announced");
         }
+        self.deliver_base(download.bytes)
+    }
+
+    /// Fetch the base a snapshot named as one HTTP request and refuse anything but the announced
+    /// bytes. `None` keeps the reason in `last_error` and leaves the base to the chain (or to a
+    /// reopen from the cabinet) instead of installing a document the room does not have.
+    fn fetch_base(&mut self, http: &BaseHttp) -> Option<Vec<u8>> {
+        let fetch = self.base_fetcher.clone()?;
+        if !http.is_well_formed() {
+            self.last_error = Some("the server announced a base this client will not fetch".into());
+            return None;
+        }
+        let Some(bytes) = (fetch.0)(&http.path) else {
+            self.last_error = Some("the base could not be fetched from the session's HTTP side".into());
+            return None;
+        };
+        if bytes.len() as u64 != http.len {
+            self.last_error = Some(format!("the fetched base is {} bytes, not {}", bytes.len(), http.len));
+            return None;
+        }
+        if crate::media::sha256_hex(&bytes) != http.sha256.to_ascii_lowercase() {
+            self.last_error = Some("the fetched base does not match the digest the server announced".into());
+            return None;
+        }
+        Some(bytes)
+    }
+
+    /// Install a base that arrived whole: its size and digest were checked by the caller, its
+    /// snapshot carries the key map and the tail, and the host installs it in place of the replica
+    /// through [`Self::take_ready_base`]. The transfer metadata is cleared, so the host never sees
+    /// a base it still has to fetch.
+    fn deliver_base(&mut self, bytes: Vec<u8>) -> Effect {
+        let Some(mut snapshot) = self.pending_snapshot.take() else {
+            self.missed_while_rebuilding = false;
+            return self.abandon_base("the base finished without the snapshot it belongs to");
+        };
         if let Some(base) = snapshot.base.as_mut() {
             base.chunks = None;
+            base.http = None;
             base.bytes_base64 = None;
         }
         self.replica_version = snapshot.version;
-        self.ready_base = Some(ReadyBase { snapshot, bytes: download.bytes });
+        self.ready_base = Some(ReadyBase { snapshot, bytes });
         if self.missed_while_rebuilding {
             // Steps arrived while the base was assembling and were not applied to the stale
             // replica; ask for the tail above the base now that it is installed.
@@ -866,7 +937,7 @@ mod tests {
             version: 3,
             snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@3".into() },
             tail: vec![],
-            base: Some(BaseSnapshot { version: 3, bytes_base64: None, keys: SnapshotKeys::default(), chunks: None }),
+            base: Some(BaseSnapshot { version: 3, bytes_base64: None, keys: SnapshotKeys::default(), chunks: None, http: None }),
         });
         assert_eq!(c.on_msg(snapshot), Effect::Rollback);
         assert_eq!(c.version(), 3, "a base above the rewind covers it");
@@ -1039,7 +1110,7 @@ mod tests {
                 Applied { op_id: "o8".into(), version: 8, actor_id: "a".into(), command: None, delta: Delta::default() },
                 Applied { op_id: "o9".into(), version: 9, actor_id: "a".into(), command: None, delta: Delta::default() },
             ],
-            base: Some(BaseSnapshot { version: 6, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default(), chunks: None }),
+            base: Some(BaseSnapshot { version: 6, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default(), chunks: None, http: None }),
         });
         assert_eq!(c.on_msg(snapshot), Effect::Rollback);
         assert_eq!(c.version(), 9, "after the base and its tail the client is at the head");
@@ -1085,7 +1156,13 @@ mod tests {
             version: head,
             snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: format!("base@{base_version}") },
             tail,
-            base: Some(BaseSnapshot { version: base_version, bytes_base64: None, keys: SnapshotKeys::default(), chunks: Some(chain.clone()) }),
+            base: Some(BaseSnapshot {
+                version: base_version,
+                bytes_base64: None,
+                keys: SnapshotKeys::default(),
+                chunks: Some(chain.clone()),
+                http: None,
+            }),
         })
     }
 
@@ -1164,6 +1241,121 @@ mod tests {
         c.on_msg(chunk_answer(6, &bytes, &chain, index));
         let ready = c.take_ready_base().expect("the assembled base");
         assert_eq!(ready.bytes, bytes, "the resumed chain assembles into the whole base");
+    }
+
+    // ------------------------------------------------------------ a base fetched over HTTP
+
+    /// The request a server names for these bytes.
+    fn http_of(bytes: &[u8]) -> BaseHttp {
+        let sha256 = crate::media::sha256_hex(bytes);
+        BaseHttp { path: format!("/v1/sessions/d/base/{sha256}"), sha256, len: bytes.len() as u64 }
+    }
+
+    /// A snapshot whose base travels as one HTTP request (and, beside it, optionally as a chain).
+    fn fetchable_snapshot(head: u64, base_version: u64, http: &BaseHttp, chain: Option<&BaseChunks>, tail: Vec<Applied>) -> ServerMsg {
+        use deckcraft_collab_proto::{BaseSnapshot, SnapshotKeys};
+        ServerMsg::Snapshot(SnapshotMsg {
+            version: head,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: format!("base@{base_version}") },
+            tail,
+            base: Some(BaseSnapshot {
+                version: base_version,
+                bytes_base64: None,
+                keys: SnapshotKeys::default(),
+                chunks: chain.cloned(),
+                http: Some(http.clone()),
+            }),
+        })
+    }
+
+    #[test]
+    fn a_base_offered_over_http_arrives_in_one_request_and_installs_without_a_chain() {
+        let bytes = base_bytes(3_000);
+        let http = http_of(&bytes);
+        let chain = chain_of(&bytes, 1024);
+        let tail = vec![Applied { op_id: "o7".into(), version: 7, actor_id: "a".into(), command: None, delta: Delta::default() }];
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let served = bytes.clone();
+        let seen = asked.clone();
+        let mut c = ClientSession::new("d");
+        c.set_base_fetcher(std::sync::Arc::new(move |path: &str| {
+            seen.lock().expect("lock").push(path.to_string());
+            Some(served.clone())
+        }));
+        c.on_msg(welcome(7, Role::Editor));
+        assert_eq!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 }), "the join asks for the state");
+        c.on_msg(fetchable_snapshot(7, 6, &http, Some(&chain), tail.clone()));
+        assert_eq!(asked.lock().expect("lock").as_slice(), [http.path.as_str()], "one request, and it names the announced path");
+        assert_eq!(c.next_outgoing(), None, "no chunk is asked for when the base arrived whole");
+        assert!(!c.rebuilding(), "nothing is being assembled");
+        let ready = c.take_ready_base().expect("the fetched base is handed to the host");
+        assert_eq!(ready.bytes, bytes);
+        let base = ready.snapshot.base.clone().expect("the snapshot travels with its base");
+        assert!(!base.is_chained() && !base.is_fetchable(), "the host gets a base it no longer has to fetch");
+        assert_eq!(base.version, 6);
+        assert_eq!(ready.snapshot.tail, tail, "and the tail above it");
+        assert_eq!(c.version(), 7, "the head the snapshot named");
+        assert_eq!(c.queued(), 0, "an edit from the old replica is not replayed onto the base");
+        assert_eq!(c.take_ready_base(), None, "the base is handed over once");
+    }
+
+    #[test]
+    fn a_fetched_base_that_is_not_the_announced_one_is_refused_and_the_chain_takes_over() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        let http = http_of(&bytes);
+        let mut c = ClientSession::new("d");
+        c.set_base_fetcher(std::sync::Arc::new(|_: &str| Some(vec![7u8; 2_500])));
+        c.on_msg(welcome(6, Role::Editor));
+        let _ = c.next_outgoing();
+        c.on_msg(fetchable_snapshot(6, 6, &http, Some(&chain), vec![]));
+        assert_eq!(c.take_ready_base(), None, "a base that is not the announced one is not installed");
+        assert!(c.last_error().is_some_and(|e| e.contains("does not match the digest")), "{:?}", c.last_error());
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::BaseChunk { .. })), "the chain announced beside it is the fallback");
+    }
+
+    #[test]
+    fn a_base_request_this_client_will_not_follow_is_not_fetched() {
+        let bytes = base_bytes(2_500);
+        let chain = chain_of(&bytes, 1024);
+        let mut http = http_of(&bytes);
+        http.path = "https://elsewhere/base".into();
+        let fetched = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = fetched.clone();
+        let mut c = ClientSession::new("d");
+        c.set_base_fetcher(std::sync::Arc::new(move |_: &str| {
+            seen.store(true, std::sync::atomic::Ordering::Relaxed);
+            None
+        }));
+        c.on_msg(welcome(6, Role::Editor));
+        let _ = c.next_outgoing();
+        c.on_msg(fetchable_snapshot(6, 6, &http, Some(&chain), vec![]));
+        assert!(!fetched.load(std::sync::atomic::Ordering::Relaxed), "an absolute URL is never followed");
+        assert!(c.last_error().is_some_and(|e| e.contains("will not fetch")), "{:?}", c.last_error());
+        assert!(matches!(c.next_outgoing(), Some(ClientMsg::BaseChunk { .. })), "the chain carries the base instead");
+    }
+
+    #[test]
+    fn a_base_inline_is_not_fetched_even_when_the_host_could() {
+        use deckcraft_collab_proto::{BaseSnapshot, SnapshotKeys};
+        let fetched = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = fetched.clone();
+        let mut c = ClientSession::new("d");
+        c.set_base_fetcher(std::sync::Arc::new(move |_: &str| {
+            seen.store(true, std::sync::atomic::Ordering::Relaxed);
+            None
+        }));
+        c.on_msg(welcome(4, Role::Editor));
+        let _ = c.next_outgoing();
+        c.on_msg(ServerMsg::Snapshot(SnapshotMsg {
+            version: 4,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@4".into() },
+            tail: vec![],
+            base: Some(BaseSnapshot { version: 4, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default(), chunks: None, http: None }),
+        }));
+        assert!(!fetched.load(std::sync::atomic::Ordering::Relaxed), "inline bytes are never fetched again");
+        assert_eq!(c.take_ready_base(), None, "the host installs an inline base itself");
+        assert_eq!(c.version(), 4);
     }
 
     #[test]

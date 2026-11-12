@@ -240,6 +240,9 @@ impl CollabUi {
         if let Some(fetch) = deckcraft_collab::WsTransport::media_fetcher(url, jwt) {
             doc.set_media_fetcher(fetch);
         }
+        if let Some(fetch) = deckcraft_collab::WsTransport::base_fetcher(url, jwt) {
+            doc.set_base_fetcher(fetch);
+        }
         let transport = deckcraft_collab::WsTransport::start(url, hello);
         self.attach(doc, Box::new(transport));
         Ok(())

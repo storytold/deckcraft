@@ -84,6 +84,21 @@ impl WsTransport {
             (status == 200).then_some(body)
         }))
     }
+
+    /// A fetcher for a base the snapshot offers as one HTTP request (RFC §4.5.2), for
+    /// [`crate::CollabDoc::set_base_fetcher`]. The path is the relative one the snapshot named, so
+    /// the request goes to the host the session joined and carries the same token; a path that is
+    /// not relative, or names a traversal or a query, is refused before any connection is made.
+    pub fn base_fetcher(url: &str, jwt: &str) -> Option<Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>> {
+        let endpoint = Endpoint::parse(url, jwt)?;
+        Some(Arc::new(move |path: &str| {
+            if !path.starts_with('/') || path.contains("..") || path.contains(['?', '#']) {
+                return None;
+            }
+            let (status, body) = endpoint.request("GET", path, &[]).ok()?;
+            (status == 200 && !body.is_empty()).then_some(body)
+        }))
+    }
 }
 
 impl Transport for WsTransport {
@@ -417,6 +432,15 @@ mod tests {
         assert_eq!(e.host_header, "collab.example.com:8443");
         assert!(Endpoint::parse("https://collab.example.com", "jwt").is_none(), "only ws and wss spell the server");
         assert!(Endpoint::parse("ws://collab.example.com/v1/sessions/demo/ws", "").is_none(), "a token is required");
+    }
+
+    #[test]
+    fn a_base_fetcher_refuses_a_path_that_is_not_relative() {
+        let fetch = WsTransport::base_fetcher("ws://127.0.0.1:9/v1/sessions/d/ws", "jwt").expect("a fetcher");
+        assert!(fetch("https://elsewhere/base").is_none(), "an absolute URL is not followed");
+        assert!(fetch("/v1/../etc").is_none(), "a traversal is not followed");
+        assert!(fetch("/v1/sessions/d/base/x?y").is_none(), "a query is not part of the path");
+        assert!(WsTransport::base_fetcher("ws://127.0.0.1:9", "").is_none(), "a token is required");
     }
 
     #[test]

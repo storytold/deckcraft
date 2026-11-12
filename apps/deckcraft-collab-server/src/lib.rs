@@ -92,8 +92,9 @@ pub struct Config {
     /// Bytes of one chunk of a base that is too large to inline.
     pub max_base_chunk: usize,
     /// Deepest chain of chunks for one base. A base larger than
-    /// `max_base_chunk * max_base_chunks` is only named in the snapshot; the client reopens the
-    /// file from the cabinet instead.
+    /// `max_base_chunk * max_base_chunks` still travels as one HTTP request
+    /// (`GET /v1/sessions/{id}/base/{sha256}`); only a base above the protocol's HTTP ceiling is
+    /// named with no way to fetch it, and then the client reopens the file from the cabinet.
     pub max_base_chunks: usize,
     /// Where a commit becomes a cabinet file version. `None` keeps commits inside the process.
     pub cabinet: Option<cabinet::CabinetConfig>,
@@ -180,6 +181,8 @@ struct Metrics {
     base_transfers: AtomicU64,
     base_bytes: AtomicU64,
     base_chunks: AtomicU64,
+    base_http: AtomicU64,
+    base_http_bytes: AtomicU64,
     cabinet_commits: AtomicU64,
     cabinet_conflicts: AtomicU64,
     cabinet_failures: AtomicU64,
@@ -205,6 +208,8 @@ impl Metrics {
         out.push_str(&row("base_transfers_total", self.base_transfers.load(Ordering::Relaxed)));
         out.push_str(&row("base_bytes_total", self.base_bytes.load(Ordering::Relaxed)));
         out.push_str(&row("base_chunks_total", self.base_chunks.load(Ordering::Relaxed)));
+        out.push_str(&row("base_http_total", self.base_http.load(Ordering::Relaxed)));
+        out.push_str(&row("base_http_bytes_total", self.base_http_bytes.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_commits_total", self.cabinet_commits.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_conflicts_total", self.cabinet_conflicts.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_failures_total", self.cabinet_failures.load(Ordering::Relaxed)));
@@ -530,6 +535,7 @@ fn route_inner(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Respo
                 ("GET", [id]) => session_info(id, shared, request),
                 ("DELETE", [id]) => close_session(id, shared, request),
                 ("POST", [id, "commit"]) => commit_session(id, request, shared),
+                ("GET", [id, "base", sha]) => Ok(get_base(id, sha, shared, request)),
                 ("PUT", [id, "media", sha]) => put_media(id, sha, request, shared),
                 _ => Ok(Response::json(if parts.len() > 2 { 404 } else { 405 }, json!({"error": "not found"}))),
             }
@@ -873,6 +879,50 @@ fn answer(hub: &Arc<Mutex<Hub>>, peer: &str, msg: ServerMsg) -> std::io::Result<
 
 fn rejected(op_id: &str, code: RejectCode, message: &str) -> Rejected {
     Rejected { op_id: op_id.into(), code, message: message.into(), retryable: false, hint: None }
+}
+
+/// `GET /v1/sessions/{id}/base/{sha256}`: the native base this room would send a client that
+/// missed a compaction, answered in one request instead of a chain of chunks (RFC §4.5.2). The
+/// pattern is the media reader's: the session token names the caller, the path names the bytes by
+/// their digest, and the reply carries the native format's content type. A base the session no
+/// longer holds (compaction moved on, the room is not loaded) is a `404`, so the client asks for
+/// the session again rather than installing bytes the room does not have.
+fn get_base(id: &str, sha: &str, shared: &Arc<Shared>, request: &Request) -> Response {
+    if !valid_sha(sha) {
+        return Response::json(404, json!({"error": "not found"}));
+    }
+    if !base_reader_allowed(id, request, shared) {
+        return Response::json(401, json!({"error": "a session token for this file is required"}));
+    }
+    let hub = shared.hubs.lock().ok().and_then(|hubs| hubs.get(id).cloned());
+    let Some(hub) = hub else {
+        return Response::json(404, json!({"error": "no such session"}));
+    };
+    let bytes = {
+        let hub = match hub.lock() {
+            Ok(hub) => hub,
+            Err(_) => return Response::json(500, json!({"error": "internal"})),
+        };
+        match hub.session().snapshot() {
+            Some(snapshot) if snapshot.sha256 == sha => snapshot.bytes.clone(),
+            _ => return Response::json(404, json!({"error": "the session has no such base"})),
+        }
+    };
+    shared.metrics.base_http.fetch_add(1, Ordering::Relaxed);
+    shared.metrics.base_http_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+    Response::binary(200, "application/vnd.deckcraft.native", bytes)
+}
+
+/// Who may read a base: the same callers as the media reader, and the token must name this file
+/// when it names one — the base is the whole document, not one object of it. A viewer may read it:
+/// a viewer below a compacted journal still has to rebuild its replica.
+fn base_reader_allowed(id: &str, request: &Request, shared: &Shared) -> bool {
+    let Some(token) = request.bearer() else { return false };
+    if shared.config.service_token.as_deref() == Some(token) {
+        return true;
+    }
+    verify_token(token, &shared.config.jwt, &shared.config.audience)
+        .is_ok_and(|claims| claims.app.as_deref().is_none_or(|app| app == "deckcraft") && claims.file_id.as_deref().is_none_or(|file| file == id))
 }
 
 /// `PUT /v1/sessions/{id}/media/{sha256}`: upload one media object (a picture, a font face, an
@@ -1295,6 +1345,84 @@ mod tests {
         assert_eq!(role_of(&out.role), Some(Role::Editor));
         assert!(verify_token(&token, &config, "other").is_err());
         assert_eq!(role_of("superuser"), None);
+    }
+
+    #[test]
+    fn a_base_is_served_by_digest_to_a_token_for_this_file_only() {
+        use deckcraft_collab::DocSession;
+        let config = Config::for_tests(b"secret", "service-token");
+        let shared = Arc::new(Shared {
+            config,
+            hubs: Mutex::new(HashMap::new()),
+            names: Mutex::new(HashMap::new()),
+            metrics: Metrics::default(),
+            store: None,
+            cabinet: None,
+        });
+        let deck = || {
+            let engine = deckcraft_engine::Session::with_new();
+            engine.doc().expect("document").doc.as_ref().clone()
+        };
+        let session = DocSession::from_document("file-b", deck(), SessionConfig::default()).expect("session");
+        let hub = Arc::new(Mutex::new(Hub::new(session)));
+        let (sha, len) = {
+            let mut hub = hub.lock().expect("hub");
+            let snapshot = hub.session_mut().take_snapshot().expect("a base");
+            (snapshot.sha256.clone(), snapshot.bytes.len())
+        };
+        shared.hubs.lock().expect("hubs").insert("file-b".into(), hub.clone());
+
+        let token = |actor: &str, role: &str, file: &str| {
+            let claims = TokenClaims {
+                sub: actor.into(),
+                role: role.into(),
+                file_id: Some(file.into()),
+                app: Some("deckcraft".into()),
+                session_id: Some(file.into()),
+                aud: Some("office-sync".into()),
+                exp: Some(now_secs() + 60),
+            };
+            jsonwebtoken::encode(&jsonwebtoken::Header::new(Algorithm::HS256), &claims, &jsonwebtoken::EncodingKey::from_secret(b"secret"))
+                .expect("token")
+        };
+        let request = |bearer: Option<&str>, path: &str| Request {
+            method: "GET".into(),
+            path: path.into(),
+            headers: bearer.map(|token| ("authorization".into(), format!("Bearer {token}"))).into_iter().collect(),
+            body: Vec::new(),
+        };
+        let path = format!("/v1/sessions/file-b/base/{sha}");
+
+        // A viewer beneath a compacted journal has to rebuild too, so reading the base is not a
+        // write: its token is enough, and the answer is the native format.
+        let response = get_base("file-b", &sha, &shared, &request(Some(&token("victor", "viewer", "file-b")), &path));
+        assert_eq!(response.status, 200, "{}", String::from_utf8_lossy(&response.body));
+        assert_eq!(response.content_type, "application/vnd.deckcraft.native");
+        assert_eq!(response.body.len(), len);
+        assert_eq!(deckcraft_collab::sha256_hex(&response.body), sha, "the answer is the base the path names");
+        assert_eq!(shared.metrics.base_http.load(Ordering::Relaxed), 1, "the transfer is counted");
+
+        assert_eq!(get_base("file-b", &sha, &shared, &request(Some("service-token"), &path)).status, 200, "the cabinet service reads it too");
+        assert_eq!(get_base("file-b", &sha, &shared, &request(None, &path)).status, 401, "no token, no document");
+        assert_eq!(
+            get_base("file-b", &sha, &shared, &request(Some(&token("alice", "editor", "file-other")), &path)).status,
+            401,
+            "a token for another file does not read this room"
+        );
+        let other = tombstone();
+        assert_eq!(
+            get_base("file-b", &other, &shared, &request(Some(&token("alice", "editor", "file-b")), &path)).status,
+            404,
+            "the path must name the base the session holds"
+        );
+        assert_eq!(get_base("file-b", "not-a-digest", &shared, &request(Some("service-token"), &path)).status, 404);
+        assert_eq!(get_base("file-missing", &sha, &shared, &request(Some("service-token"), &path)).status, 404, "a room that is not loaded");
+        assert_eq!(shared.metrics.base_http_bytes.load(Ordering::Relaxed), 2 * len as u64, "only the served bytes are counted");
+    }
+
+    /// A digest of something that is not this room's base.
+    fn tombstone() -> String {
+        deckcraft_collab::sha256_hex(b"a base this room does not hold")
     }
 
     #[test]

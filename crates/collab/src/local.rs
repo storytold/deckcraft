@@ -234,6 +234,13 @@ impl CollabDoc {
         self.media_fetcher = Some(fetch);
     }
 
+    /// Supply the fetch of a base the snapshot offers as one HTTP request (RFC §4.5.2). Without
+    /// it the base arrives as a chain of chunks; with it, a deck too large for a chain is rebuilt
+    /// from one answer instead of being reopened from the cabinet.
+    pub fn set_base_fetcher(&mut self, fetch: Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>) {
+        self.client.set_base_fetcher(fetch);
+    }
+
     /// Register picture bytes this replica has (the author uploads them through `submit`).
     pub fn put_media(&mut self, name: &str, bytes: Vec<u8>) -> Result<String, LocalError> {
         self.adapter.media_mut().put(name, bytes).map_err(|e| LocalError::BadParams(e.message))
@@ -558,9 +565,10 @@ impl CollabDoc {
     /// Handle one server message: move the client state machine, apply the confirmed command and
     /// replay a snapshot tail. Presence and commit results are left to the caller.
     ///
-    /// A base the server sends as a chain of chunks (RFC §4.5.1) is assembled by the client state
-    /// machine; this host installs it through [`Self::take_ready_base`] once it is whole, so a
-    /// snapshot that arrives with `chunks` changes nothing here yet.
+    /// A base above the inline limit arrives either as one HTTP request (fetched by the state
+    /// machine through [`Self::set_base_fetcher`]) or as a chain of chunks (RFC §4.5.1); both are
+    /// installed through [`Self::take_ready_base`] once the base is whole, so a snapshot that
+    /// carries either changes nothing here yet.
     pub fn on_msg(&mut self, session: &mut Session, msg: ServerMsg) -> Effect {
         let echo = msg.clone();
         // A step that is not the one this replica is showing, landing while a preview is
@@ -595,8 +603,10 @@ impl CollabDoc {
             // preview cannot be settled any more, so put it back before the resync lands.
             self.end_preview(session, true);
         }
+        let mut installed_base = false;
         if let Some(ready) = self.client.take_ready_base() {
             self.install_base(session, ready);
+            installed_base = true;
         }
         match echo {
             ServerMsg::Welcome(welcome) => {
@@ -609,6 +619,13 @@ impl CollabDoc {
             }
             ServerMsg::Applied(applied) => self.apply_broadcast(session, &applied),
             ServerMsg::Snapshot(snapshot) => {
+                if installed_base {
+                    // The base this answer carries was fetched whole (over HTTP) and installed
+                    // above, with the tail that came with it: the echo's base has no inline bytes
+                    // any more, and reading it as "the client must reopen the file" would report a
+                    // failure for an answer that worked.
+                    return effect;
+                }
                 if self.client.take_refused_snapshot() {
                     // The state machine refused this answer: it does not start at the version the
                     // host rewound its replica to, so installing its base or replaying its tail
@@ -693,7 +710,9 @@ impl CollabDoc {
         /// A hostile or misconfigured server must not make the client allocate without a cap.
         const MAX_BASE: usize = 64 << 20;
         let Some(encoded) = base.bytes_base64.as_deref() else {
-            return Err(LocalError::BadParams("the session was compacted past this replica; reopen the file from the cabinet".into()));
+            return Err(LocalError::BadParams(
+                "the session was compacted past this replica and its base could not be fetched; reopen the file from the cabinet".into(),
+            ));
         };
         if encoded.len() > MAX_BASE {
             return Err(LocalError::BadParams("the session base is larger than this client accepts".into()));
@@ -4398,6 +4417,75 @@ mod tests {
     /// The x of a shape's explicit box on the first slide.
     fn x_of(s: &Session, shape: ShapeId) -> f64 {
         find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shape).expect("shape").xfrm.expect("box").x
+    }
+
+    #[test]
+    fn a_base_fetched_over_http_rebuilds_the_replica_in_one_answer() {
+        use deckcraft_collab_proto::{Capabilities, Limits, PROTO_VERSION, Role, SnapshotMode, Welcome};
+
+        let (mut s, _doc, _slide, shapes) = deck();
+        let presentation = s.doc().expect("doc").doc.as_ref().clone();
+        // A base too large for one chunk and deeper than the chain the server hands out, so the
+        // snapshot can only name it as one HTTP request.
+        let mut server = crate::DocSession::from_document(
+            "d",
+            presentation,
+            crate::SessionConfig { snapshot_every: 2, max_base_inline: 1, max_base_chunk: 64, max_base_chunks: 1, ..crate::SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide_key, shape_key) = {
+            let doc = server.document().expect("doc");
+            let slide_ref = doc.slides.first().expect("slide");
+            (server.keys().slide_key(slide_ref.id).expect("slide").clone(), server.keys().shape_key(slide_ref.id, shapes[0]).expect("shape").clone())
+        };
+        let move_to = |id: &str, x: f64, base: u64| OpEnvelope {
+            op_id: id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide_key.clone()), shape: Some(shape_key.clone()), ..Target::default() },
+            payload: Payload::ShapeMove { x, y: 100.0 },
+            history: None,
+            preview: None,
+        };
+        for (i, x) in [200.0, 250.0, 300.0].iter().enumerate() {
+            server.apply("alice", &move_to(&format!("a-{i}"), *x, i as u64)).expect("apply");
+        }
+        let snapshot = server.resync(0);
+        let base = snapshot.base.clone().expect("a base");
+        assert!(base.chunks.is_none(), "the chain cannot carry it");
+        let http = base.http.clone().expect("the base is offered as one request");
+        let served = server.snapshot().expect("base").bytes.clone();
+        assert_eq!(http.len, served.len() as u64);
+
+        let mut local = CollabDoc::new("d");
+        let asked = http.path.clone();
+        let bytes = served.clone();
+        local.set_base_fetcher(Arc::new(move |path: &str| (path == asked).then(|| bytes.clone())));
+        let hello = local.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        assert!(matches!(hello, ClientMsg::Hello(_)));
+        local.on_msg(
+            &mut s,
+            ServerMsg::Welcome(Welcome {
+                v: PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 3,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: Capabilities { kinds: vec![OpKind::Command], limits: Limits::default(), commands: vec![] },
+            }),
+        );
+        assert!(matches!(local.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+        local.on_msg(&mut s, ServerMsg::Snapshot(snapshot));
+        assert_eq!(local.last_apply_error(), None, "a whole base is installed, not a reason to reopen the file");
+        assert!(!local.rebuilding(), "nothing is assembled after the answer");
+        assert!(local.take_ready_base().is_none(), "the host installed it in the same call");
+        assert_eq!(local.version(), 3, "the base plus its tail land on the head");
+        assert_eq!(*s.doc().expect("doc").doc, *server.document().expect("doc"), "the replica matches the room");
+        assert_eq!(x_of(&s, shapes[0]), 300.0, "the tail step applied on top of the fetched base");
+        assert_eq!(local.submit(&mut s, "shape.move", &json!({"x": 10.0, "y": 10.0}), "local-1").map(|_| ()), Ok(()), "edits are accepted again");
     }
 
     /// A client that shows local edits before the room confirms them, connected and welcomed as
