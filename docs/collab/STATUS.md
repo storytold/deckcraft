@@ -23,13 +23,24 @@ replica and with no rejection to notice it. Each operation now carries its own i
 first, `<id>#<n>` after it), and a structural operation waits for the answer to everything sent
 before it, so the N structural steps of one command go out one answer at a time instead of arriving
 stale and costing a `resync` each. Details and consequences: §One operation, one identity.
+**`51643c59` is the newest code slice: an input method's composition is settled before anything
+leaves the client.** `Session::execute_unguarded` queued a shared session's command and returned
+before it settled the composition, and the composition's own commands were queued as well, where
+the normaliser has no form for them: a text typed through an input method could not reach a room
+at all, and a command sent while a composition was open would have been planned against a document
+that did not yet hold the composing text. The input method's commands now run on the replica, every
+other command settles the composition before it is queued, and the settle hands the room the body
+it typed into as one whole value — `text.setBody`, runs and paragraph properties included, one undo
+step over the body before it. Details: §A composition is settled before anything leaves the client.
 **As of the push at 2026-11-12T03:13:50Z the delivered head is `5a105c61`** — the docs commit of
 the op_id slice, on top of the code commit `aaecc6db` (and of the `origin/main` merge `c9803277`).
 The fork (`copoka/deckcraft`) and PR #2012 hold exactly that commit: `gh pr view 2012 --json
 headRefOid` returned `5a105c61a48d1484d8693332f54e42f95112f759` with `MERGEABLE` / `UNSTABLE` and
 `updatedAt` 2026-11-12T03:13:50Z, and the local branch head was the same commit before this STATUS
 commit; local HEAD now adds this docs commit on top of `5a105c61` and that commit is not pushed,
-so the PR head lags the local branch by one docs commit again until a person pushes. **No workflow run exists for `5a105c61` or `aaecc6db`** (`gh run list --commit` returns
+so the PR head lags the local branch by one docs commit again until a person pushes. Since then
+three local commits are unpushed: `bc16494a` (docs), `51643c59` (code, §A composition is settled
+before anything leaves the client) and this STATUS commit. **No workflow run exists for `5a105c61` or `aaecc6db`** (`gh run list --commit` returns
 nothing for either), so the rollup on the delivered head carries no executed job and
 `mergeStateStatus` is `UNSTABLE` for that reason alone. These statements are tied to that
 timestamp: any later push moves the delivered head, and the live value is
@@ -387,6 +398,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr13` | `5c150c93` + this slice | a native base above `max_base_inline` travels as a chain of chunks (`base.chunks`, `base-chunk`): the client assembles it, checks the digest and the limits, resumes at the missing chunk after a dropped socket, and the snapshot is applied only when the base is whole; the big-deck soak (322 edits, 120 slides with media, an 11.8 MiB base in 48 chunks) is the §8 gate |
 | `collab/pr14` | `baa845ec` + this slice | Save in a live desktop session sends `ClientMsg::Commit` instead of writing the local file: one commit in flight (a repeated Save is the same request), `expected` is the cabinet version the session opened from or the one the last commit was accepted with, the document stays dirty until `commit-result` (dirty is cleared only if no edit landed meanwhile), a `409` keeps the edits and the banner offers Save a copy, viewers and commenters are refused locally without a request |
 | `collab/pr15` | `6e42a7ab` + this slice | optimistic preview: an optional `preview` local id on the operation (never stored, required or echoed by the room) and a client that shows one `command`-class operation at submit behind `DECKCRAFT_COLLAB_PREVIEW`; `applied` settles it without a second run, a refusal restores exactly that one edit, a foreign step in between abandons it and asks for the tail, and a preview never enters the undo history |
+| `collab/pr15` | `51643c59` (+ docs) | an input method's composition is settled before anything leaves the client: `text.compose`/`text.commit` run on the replica, every other command settles first, and the settle sends the body it typed into as one whole value (`text.setBody`, undo image = the body before it); a deletion outside a composition and a composition outside slides are refused before the first write with their reason |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs), `f67b0858` (+ docs), `cfd40da2` (+ docs), `db413e5d` (+ docs), `44489f34` (+ docs), `c406a329` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing; and the chart slice `f67b0858`: `chart.type`, `chart.data`, `chart.options` and `insert.chart` as **one whole `Chart` value** (`chart.setWhole` and the `chart_insert` payload), computed on the sender with the same engine `chart::plan` the single-user command runs, checked in the engine before the first write (unknown type, category/series/point counts, text bounds and the JSON size), refused for a shape that is not a chart, with the **whole chart shape** as the undo image (`shape_field{field: chart}`); and the SmartArt insertion slice `cfd40da2`: `insert.smartArt` as **one whole `Diagram` value** (`smartArtInsert`), computed on the sender with the same engine `smartart::insert_plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count, text and JSON size), with the **whole inserted shape** as the undo image (an insertion is one structural step, removed by `shape.delete` and put back whole by `shape.restore`), and `smartArt.nodes` answered by the server as a **read-only query** (no version, no journal, a viewer may ask), and the SmartArt conversion slice `db413e5d`: `smartArt.fromText`/`toText`/`toShapes` as **one structural step each** — the sender computes the whole resulting diagram or text body with the same engine plan the single-user command runs, the engine checks the value and box before the first write, the source shape is replaced in place, and the undo image is the whole source shape (`shape_restore`, or a same-id remove-then-insert for `toShapes`); the SmartArt node-picture slice `44489f34`: `smartArt.picture` as one final value (the top-level graphic, one top-level node, the media channel's digest and the picture's final place), the engine checks the target, the node, the picture allowlist and budget, the place's finite positive area and that the layout does not change before the first write, and the whole group is the undo image; and the 3-D model camera slice `c406a329`: `model3d.camera` as one final view (`position`/`target`/`up` in EMU, `fov` in degrees, or `null`), relative edits refused on the client, on the wire and in the engine before the first write, the view written as `am3d:camera`, and the whole model shape as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
@@ -590,6 +602,8 @@ human decision.
   closures and `Rc`, which never cross a thread on wasm32.
 - `Session::set_collab_queue`: with a room attached, every mutating path (ribbon, keys, pointer,
   IME, control channel) queues the command instead of executing it; `CollabUi::pump` sends it.
+  The input method is the one exception: `text.compose`/`text.commit` run on the replica and the
+  settle queues the whole body once (§A composition is settled before anything leaves the client).
   `apply_remote` still applies the server's command directly. A pointer gesture is a command too:
   a viewer's press starts no writing drag at all, and an editor's finished shape drag submits the
   boxes it left as one `shape.setBoundsMany` (final values, normalised to one `ShapesSetBounds`),
@@ -1581,7 +1595,11 @@ token from the cabinet.
    `collab-server` 19 unit + 5 commit + 5 gates + 18 socket, `ui-egui --lib` 526 + 4 ignored with
    only the known host-font failure; the `--workspace` gate (engine 612, pptx 70 + 5 + 146,
    `collab-proto` 42, `xtask` pdf-deps/assets/layers/wasm) is the one recorded for `c9803277` and
-   was not re-run for a change confined to `crates/collab`. The **workflow** gate still has not run:
+   was not re-run for a change confined to `crates/collab`. **The local §8 gate is green again on
+   `51643c59`** (engine, collab, collab-server, collab-proto and collab-web plus `xtask wasm`;
+   numbers in §A composition is settled before anything leaves the client) — this slice touched
+   `crates/engine`, `crates/collab-proto` and `crates/ui-egui` as well, and it needs no push to be
+   useful: `51643c59` is local. The **workflow** gate still has not run:
    CI, House
    rules, Nix and SonarCloud on `38a20a9c` are `action_required` (created 2026-11-11T11:31:32Z)
    and wait for a maintainer's approval; the runs for `fd5914e8` wait for the same approval.
@@ -1629,12 +1647,18 @@ token from the cabinet.
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); they now cover the long run (322 edits, media, a chained base, a resume mid-chain) as well as the three-client soak, so the remaining gate work is running LibreOffice where it is installed.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
-8. **Next code item, from the same review round (`5866843261` on #1998): the IME finding.** With
-   `collab_queue` set, `Session::execute_unguarded` (`crates/engine/src/lib.rs`) queues the command
-   and returns before `settle_composition()`, so a command sent while an input method is composing
-   is normalised against a document that does not yet hold the composing text. The fix is to settle
-   the composition before the queue branch (or to queue `text.commit` first) and needs IME tests in
-   `crates/engine`; it was left out of `aaecc6db` to keep that slice about operation identity.
+8. **Closed in `51643c59`: the IME finding** (`5866843261` on #1998). With `collab_queue` set,
+   `Session::execute_unguarded` queued the command and returned before `settle_composition()`, and
+   the composition's own commands were queued too, where the normaliser has no form for them — so a
+   text typed through an input method could not reach a room at all, and a command sent while a
+   composition was open would have been planned against a document that did not yet hold the
+   composing text. The slice runs the input method's commands on the replica, settles the
+   composition before any other command is queued, and hands the room the body as one whole value
+   (`text.setBody`, one undo step). The rule, its refusals and the limits are §A composition is
+   settled before anything leaves the client, `rfc.md` §10.1 and `production.md`. **Next code item
+   from that line:** `text.deleteSurrounding` outside a composition is refused in a room because it
+   has no wire form; normalising it into the `TextDelete` range it deletes (the offsets the engine
+   already computes, notes and cells included) would close that gap and needs a two-replica test.
 
 ## One operation, one identity
 
@@ -1695,7 +1719,128 @@ two versions, both shapes moved, a resend of the same ids deduplicated),
 two hub tests fail with the room at version 1 and one shape/slide changed. `rfc.md` §4.3 now states
 the rule.
 
+## A composition is settled before anything leaves the client
+
+An input method's composition (the preedit of #101: Korean, Japanese, Chinese) is the one edit a
+shared session makes **on the replica, before the room**. It belongs to one text body — a shape's
+own body, one table cell of it, or a slide's notes. `text.compose` and `text.commit` therefore run
+locally even with `collab_queue` on; they never enter `take_pending_commands()`, because a preedit
+is not text yet and every replica does not need to see every keystroke of a conversion.
+
+**The rule.** No operation leaves the client before the composition is settled.
+
+- Every other command — a click, a key, undo, a ribbon action — settles the composition first
+  (`Session::settle_composition`) and is queued only after it. Before this slice the queue branch
+  returned first, so the command was planned against a document that did not yet hold the
+  composing text: the operation carried a text its author never saw, and the undo step that
+  followed put back something else.
+- The settle itself queues exactly **one** command: the body it typed into, as a whole value —
+  `shape.setField { field: "text" }` for a shape body, `shape.setField { field: "cellText", cell }`
+  for a table cell, `slide.notes` for a slide's notes. The normaliser turns it into one
+  `text.setBody` operation (`body`, `cell?`), the server runs it through `shape.setField`, and its
+  undo image is that body before the step. A whole value converges on every replica, keeps the
+  runs, their formatting and the paragraph properties (which `text.set` would flatten to the first
+  run's), and gives the room one undo step.
+- The address is captured where the composition began — the slide by id, the shape, the cell — so
+  clicking to another slide between the preedit and the settle cannot send the text into another
+  body.
+- A second settle adds nothing and creates no second undo step: the second call finds no
+  composition.
+- Where the room has no operation to carry the text, the command is **refused before the first
+  write**, with its reason and without moving the version: `text.deleteSurrounding` outside a
+  composition (inside one it is part of the pre-edit and leaves with the settle — it has no wire
+  form of its own), and any composition outside slides (a master or layout view is not synced).
+
+`ShapeField` and `CellText` stay the server's own undo images — the adapter still refuses a
+client-sent one, because a restore must match the step it restores — and `text.setBody` is the one
+payload with which a client sets a whole body. The wire carries the body as JSON, so the engine
+decodes it into the model and bounds it (`MAX_FIELD_JSON`, 256 KiB) before the first write, like any
+other hostile input.
+
+**Limits, stated in `rfc.md` §10.1 and `production.md`.** A settled body must fit one operation
+message (`COLLAB_MAX_MESSAGE_BYTES`, 256 KiB by default), so a pre-edit inside a body of roughly
+100k characters cannot be shared: the server refuses the operation and the replica resynchronises.
+A text step's undo image is that body's plain text (as for typing), so undo restores the text, not
+the runs a composition typed into. A whole body is last-writer-wins, as `text.set` already was.
+
+**Verification** (host `agents`, on `51643c59`, plus the docs commit on top):
+
+```bash
+cargo fmt --all -- --check                                   # clean
+cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-server \
+  -p deckcraft-collab-proto -p deckcraft-ui-egui --all-targets -- -D warnings   # EXIT=0
+cargo test -p deckcraft-engine                               # 615 lib + 6 it + 8 show_paragraph_builds
+cargo test -p deckcraft-collab -p deckcraft-collab-server -p deckcraft-collab-proto \
+  -p deckcraft-collab-web
+# collab: 295 lib + 8 two_clients
+# collab-server: 19 unit + 5 commit + 5 gates + 18 socket
+# collab-proto: 42
+# collab-web: 15
+cargo xtask wasm                                             # ok (22 crates)
+cargo test -p deckcraft-ui-egui --lib                        # 527 passed, 4 ignored, the one known
+                                                             # host-font failure
+                                                             # (ime_tests::korean_composes_in_the_notes_pane,
+                                                             # no ㄴ glyph on the host)
+```
+
+New tests: `tests::a_shared_session_settles_the_composition_before_it_queues_the_next_command`
+(the pre-edit queues nothing; the settle queues the whole body with its bold run and the command
+follows it; a repeated settle adds no operation and no undo step),
+`tests::a_shared_composition_in_a_cell_and_in_the_notes_queues_that_body` (`cellText` with its
+cell, `slide.notes` with the slide's index),
+`tests::a_shared_input_method_deletion_outside_a_composition_is_refused_with_a_reason` (refused
+before the first write, revision and undo unchanged, nothing queued; inside a composition it runs
+and leaves with the settle),
+`hub::tests::a_settled_composition_reaches_both_replicas_as_one_whole_body_and_undo_restores_it`
+(two replicas through the normaliser, the adapter and the in-memory hub: the room does not see the
+pre-edit, both hold the author's text after the settle, one undo puts the original text back) and
+`collab::tests::a_composition_in_a_live_session_leaves_only_when_it_settles` (the live UI path: no
+operation while composing, one `text.setBody` on commit, nothing on a second settle). The proto
+round-trip test now covers `text_body_set` with and without a cell. Without the fix the engine test
+fails on its first assertion — the pre-edit is not applied at all and both the compose and the next
+command end up in the queue — and the hub test fails because the commit is queued beside the
+compose command, so the room never receives `한`.
+
 ## Session log
+
+### 2026-11-12 — an input method's composition now settles before anything leaves the client
+
+- **What was asked.** Take the code item from the previous handoff: with `collab_queue` set,
+  `Session::execute_unguarded` returns before `settle_composition()`, so an edit typed through a
+  composition (IME layouts, CJK) reaches the room under-formed — the operation's text is not the
+  text its author sees, an undo step brings back something else, and the settle arrives after the
+  send. The rule to implement: no operation may leave the client before the composition is settled
+  (settle before planning/applying, as in the single-user path), or the command is refused with an
+  explicit reason before the first write and without changing the version; a repeated settle must
+  not duplicate the edit or create a second undo step. Tests: the edit after a composition carries
+  the final text and matches on two replicas through the normaliser, the adapter and the in-memory
+  hub; undo restores the original text in one step; a send during an active composition does not
+  leave raw or is refused with its reason; the existing composition tests are rewritten to the
+  rule.
+- **What was found, in that order.** (1) The composition's own commands were *also* queued — and
+  the normaliser has no form for `text.compose`/`text.commit`, so in a room an IME user got
+  `unsupported command` per pre-edit and the typed text was lost outright, not merely
+  under-formed. (2) `shape.setField`/`CellText` are restore-only on the wire: the adapter refuses a
+  client-sent one (`check_restore`), so the whole body needed its own payload. (3) `Image::Text`
+  is the undo image of every text step and holds the plain text, so undo restores the text, not the
+  runs — and that is true of typing too, not of this slice.
+- **What landed** (`51643c59`, code; this docs commit on top, neither pushed):
+  `CompositionOwner` (slide id, shape, cell, notes) captured at the start of a composition;
+  `text.compose`/`text.commit` run locally in a shared session; every other command settles the
+  composition before it is queued (the settle block moved above the queue branch);
+  `end_composition` queues one whole-body command when the body changed; `composition_settle_command`
+  builds it (`shape.setField` text/cellText, `slide.notes`); `local::text_body_ops` normalises it to
+  the new `Payload::TextBodySet { body, cell? }`; `apply` runs it through `shape.setField` and
+  records the body as the undo image; `text.deleteSurrounding` outside a composition and any
+  composition outside slides are refused before the first write with their reason. `rfc.md` gained
+  §10.1, `production.md` the client paragraph, the sync table row and the limits.
+- **Evidence.** fmt clean; clippy `-D warnings` for engine, collab, collab-server, collab-proto and
+  ui-egui `--all-targets`; engine 615 + 6 + 8; collab 295 + 8; collab-server 19 + 5 + 5 + 18;
+  collab-proto 42; collab-web 15; `xtask wasm` ok (22 crates); ui-egui `--lib` 527 passed + 4
+  ignored with the one known host-font failure
+  (`ime_tests::korean_composes_in_the_notes_pane`, no ㄴ glyph on the host — the same environment gap
+  the earlier gate recorded for the render test). Nothing was pushed, CI was not touched and no PR
+  was commented on.
 
 ### 2026-11-12 — the SmartArt node-picture line was already closed; the delivery record moved to `5a105c61`
 

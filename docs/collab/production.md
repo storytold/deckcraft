@@ -147,6 +147,22 @@ return `{"queued":true}` and land in `take_pending_commands()` instead of changi
 the server's authoritative command directly. With the flag on but no link, the engine is
 read-only: an edit is refused instead of diverging.
 
+**The input method is the one local edit.** `text.compose` and `text.commit` do *not* enter the
+queue: a pre-edit is shown on this replica and nowhere else (RFC §10.1). Any other command settles
+the composition first, so nothing is normalised against a document that does not yet hold the
+composing text. The settle queues exactly one command carrying the body it typed into as a whole
+value — `shape.setField { field: "text" }`, `shape.setField { field: "cellText", cell }` for a
+table cell, or `slide.notes` — which normalises to one `text.setBody` operation: the text is what
+the author saw, runs and paragraph properties included, both replicas converge, and one undo step
+puts the old body back (its image is that body's plain text, like any typed step). The address
+comes from where the composition began (slide by id, shape, cell), so clicking to another slide
+before it settles cannot send the text into another body, and a second settle adds nothing. Where
+the room has no operation to carry the text the command is refused before the first write with its
+reason and without moving the version: `text.deleteSurrounding` outside a composition (inside one
+it is part of the pre-edit and leaves with the settle) and a composition outside slides. A settled
+body must also fit one operation message (`COLLAB_MAX_MESSAGE_BYTES`, 256 KiB by default), so a
+pre-edit inside a body of roughly 100k characters cannot be shared and the replica resynchronises.
+
 **Optimistic preview** (`DECKCRAFT_COLLAB_PREVIEW=1`, RFC §3) shows one edit before the room
 confirms it. The client applies a `command`-class operation whose payload the server will not
 rewrite (move/bounds/align, fill/line/format of a whole body, transition, animations, chart, table
@@ -169,6 +185,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `shape.move`, `shape.setBounds` | command | absolute position and size |
 | `arrange.align`, `arrange.distribute` | command | final boxes for the whole selection in one `shape.setBoundsMany` operation: the client computes them from the engine's own plan, so no replica recomputes the slide edge or the gaps; one version and one undo step |
 | `text.set` | command | whole body or one table cell (`cell: [row, col]`) |
+| `text.setBody` | command | one text body as a whole model value (`body`, `cell?`): the settled input-method composition (RFC §10.1), with its runs and paragraph properties; one undo step whose image is that body |
 | `text.insert`, `text.delete` | command | character offsets inside the shape body or one table cell; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts, and two cells of one table never shift each other |
 | `table.edit` | structural | one row/column insert or delete (`axis`, `at`, `insert`) on a table shape; a queued cell text operation rebases its address past it, and a delete of the line holding the text refuses the operation |
 | `table.style` | command | one table's style as a final name (`table.style`); a table shape is the address, no cell moves |
