@@ -73,6 +73,34 @@ fn a_grouped_cameo_counts_at_its_group() {
     let _ = buddy;
 }
 
+/// Two live Cameos with a shape between them: the middle slice covers the lower Cameo and what
+/// is below it while leaving the middle shape out, so the interleaved paint lands it between
+/// the two frames instead of above both.
+#[test]
+fn a_shape_between_two_cameos_lands_between_their_frames() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).expect("first Cameo");
+    let bottom = crate::camera::cameo_ids(&session.active().unwrap().doc, 0);
+    assert_eq!(bottom.len(), 1);
+    let middle = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let middle = ShapeId(middle["id"].as_u64().unwrap() as u32);
+    session.execute("insert.cameo", &json!({})).expect("second Cameo");
+    let doc = session.active().unwrap().doc.clone();
+    let live: Vec<ShapeId> = crate::camera::cameo_ids(&doc, 0);
+    assert_eq!(live.len(), 2, "both Cameos paint a frame");
+    let (lower, upper) = (live[0], live[1]);
+    // The middle slice: the lower Cameo is painted and everything at or below it is skipped,
+    // while the middle shape and the upper Cameo stay out for their own layers.
+    let lower_slice = below_live(&doc, 0, &[lower]);
+    assert!(lower_slice.contains(&lower), "the lower Cameo is left to the camera layer");
+    assert!(!lower_slice.contains(&middle), "the middle shape is not part of the lower slice");
+    assert!(!lower_slice.contains(&upper), "the upper Cameo is not part of the lower slice");
+    // The full stack: both Cameos are covered by the top slice while both edge shapes stay out.
+    let full = below_live(&doc, 0, &live);
+    assert!(full.contains(&lower) && full.contains(&upper), "both frames are left to the camera layer");
+    assert!(!full.contains(&middle), "the middle shape paints over the frames");
+}
+
 /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
 /// never gave way to the idle hide, so a still pointer stayed on the playing video.
 #[test]

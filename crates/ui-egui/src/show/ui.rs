@@ -673,17 +673,13 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         prefetch_next(app, show, f, &sl);
         if !draw_transition(show, f, &sl, painter, &tex) {
             show.trans = None;
+            // The video frames paint first, then each camera paints its own frame with the
+            // overlay above it, in stack order: what sits between a video and a later Cameo —
+            // or between two Cameos — lands between their frames instead of above both.
             let (mut live, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
             if !full_screen {
-                paint_camera(app, show, &sl, f, painter);
-                // Only when a frame was actually painted: with no camera texture nothing covers
-                // the Cameos, so their ids must not join `live` (the overlay would hide shapes
-                // stacked above an unpainted Cameo).
-                if app.camera.texture().is_some() {
-                    live.extend(crate::camera::cameo_ids(f.doc.as_ref(), sl.idx));
-                }
+                paint_camera_segments(app, show, &sl, f, painter, &mut live);
             }
-            draw_overlay(show, f, &sl, painter, &live, full_screen);
             draw_media_controls(app, ui, show, f, &sl, painter);
         }
         if sl.animating {
@@ -692,16 +688,53 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
     }
 }
 
-/// Paint the live camera in the Cameos of the current slide, in their animation state, clipped to
-/// the slide: a Cameo may hang over its edge or out of the zoom window.
-fn paint_camera(app: &SlideApp, show: &mut Show, sl: &Sl, f: &Fr, painter: &egui::Painter) {
+/// Paint the live camera in the Cameos of the current slide, in stack order and in their
+/// animation state, clipped to the slide: a Cameo may hang over its edge or out of the zoom
+/// window. Frames interleave with the overlay of what is stacked above them, so a shape between
+/// two live Cameos lands between their frames instead of above both.
+fn paint_camera_segments(app: &mut SlideApp, show: &mut Show, sl: &Sl, f: &Fr, painter: &egui::Painter, live: &mut Vec<ShapeId>) {
     let Fr { doc, srect, .. } = *f;
-    let Some(texture) = app.camera.texture() else { return };
+    let Some(texture) = app.camera.texture().cloned() else { return };
+    let Some(slide) = doc.slides.get(sl.idx) else { return };
     let uv = show.zoom_uv();
     let tl = show.timeline(doc).clone();
-    let state = live_state(&tl, sl.step, sl.t, &sl.plays, &sl.stamps);
-    let frame = crate::camera::ShowFrame { srect, uv, hidden: &sl.hidden, state: &state };
-    crate::camera::paint_show(&painter.with_clip_rect(srect), texture, doc, sl.idx, frame);
+    let anim = live_state(&tl, sl.step, sl.t, &sl.plays, &sl.stamps);
+    let mut frames: Vec<(ShapeId, deckcraft_geom::Xfrm, ShapeState)> = vec![];
+    for (shape, x) in crate::camera::cameo_boxes(&slide.shapes) {
+        let state = anim(shape.id);
+        if crate::camera::live_opacity(&sl.hidden, shape.id, &state).is_none() {
+            continue;
+        }
+        frames.push((shape.id, x, state));
+    }
+    if frames.is_empty() {
+        return;
+    }
+    let (sw, sh) = (doc.slide_size.width as f32, doc.slide_size.height as f32);
+    for (id, x, state) in &frames {
+        // The overlay for the frames painted so far, before this Cameo's own frame: nothing
+        // above the first frame paints yet, and each middle slice covers only what sits between
+        // this Cameo and the frames before it. The painter is clipped to the slide so a Cameo
+        // hanging over its edge cannot paint outside it.
+        draw_overlay(show, f, sl, painter, live, false);
+        let centre = deckcraft_geom::Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+        let st = state.clone();
+        let shape = slide.shapes.iter().find(|s| s.id == *id).expect("a painted Cameo is on the slide");
+        let to_screen = |p: deckcraft_geom::Point| {
+            let p = crate::camera::animated(p, centre, &st);
+            slide_point_to_screen(srect, uv, p.x as f32 / sw.max(1.0), p.y as f32 / sh.max(1.0))
+        };
+        crate::camera::paint_cameo_clipped(&painter.with_clip_rect(srect), &texture, shape, *x, state.opacity, &to_screen);
+        live.push(*id);
+    }
+    draw_overlay(show, f, sl, painter, live, false);
+}
+
+/// Slide fractions through the zoom window onto the screen.
+fn slide_point_to_screen(srect: Rect, uv: Rect, nx: f32, ny: f32) -> Pos2 {
+    let u = (nx - uv.min.x) / uv.width().max(1e-4);
+    let v = (ny - uv.min.y) / uv.height().max(1e-4);
+    pos2(srect.min.x + u * srect.width(), srect.min.y + v * srect.height())
 }
 
 fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, pointing: bool) {

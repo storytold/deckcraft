@@ -460,4 +460,18 @@ mod tests {
         assert!(commands.send(Command::Stop).is_ok(), "the respawned worker drains commands");
         camera.commands = Some(commands);
     }
+
+    #[test]
+    fn start_with_a_dead_sender_respawns_its_worker() {
+        // `start` itself drops a dead sender and retries: one call recovers from an exited
+        // worker without opening the platform camera (the new `run` loop only blocks on commands
+        // until a `Start` arrives; the session's event channel is dropped unread).
+        let mut camera = SystemCamera::default();
+        let (dead, receiver) = mpsc::channel::<Command>();
+        drop(receiver);
+        camera.commands = Some(dead);
+        let session = camera.start(&CameraRequest::default()).expect("the retry spawns a new worker");
+        drop(session);
+        camera.stop();
+    }
 }
