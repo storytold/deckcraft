@@ -2367,6 +2367,106 @@ fn ime_on_a_selected_shape_replaces_its_text() {
     assert_eq!(s.commit_text("x").unwrap()["handled"], false);
 }
 
+/// RFC §10.1 — a shared session: the input method's composition is this replica's own view, shown
+/// but never sent as it is typed. Anything else settles it first, and the settle hands the room
+/// the whole body it typed into — runs and all — as one operation whose undo image is the old body.
+#[test]
+fn a_shared_session_settles_the_composition_before_it_queues_the_next_command() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "one\ntwo"})).unwrap();
+    let shape = r["id"].as_u64().unwrap();
+    s.execute("text.edit", &json!({"id": shape})).unwrap();
+    // The second paragraph is bold: a body carried as plain text would lose that.
+    s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("text.select", &json!({"anchor": [1, 3], "caret": [1, 3]})).unwrap();
+    s.set_collab_queue(true);
+    s.compose_text("한", None).unwrap();
+    let body_text = |s: &Session| -> String {
+        s.doc().unwrap().shape(ShapeId(shape as u32)).and_then(|sh| sh.text.as_ref()).map(deckcraft_model::text::TextBody::text).unwrap_or_default()
+    };
+    assert_eq!(body_text(&s), "one\ntwo한", "the pre-edit is the author's own view");
+    assert!(s.take_pending_commands().is_empty(), "a pre-edit is not an operation");
+
+    // Any other command settles it first: its text is the operation that leaves first.
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let queued = s.take_pending_commands();
+    assert_eq!(queued.len(), 2, "the settled body, then the command: {queued:?}");
+    let (cmd, params) = &queued[0];
+    assert_eq!(cmd, "shape.setField");
+    assert_eq!(params["field"], "text");
+    assert_eq!(params["ids"][0], shape);
+    let body = &params["value"];
+    assert_eq!(body["paragraphs"][1]["runs"][0]["text"], "two한", "the operation carries the final text");
+    assert_eq!(body["paragraphs"][1]["runs"][0]["props"]["bold"], true, "and the formatting it was typed with");
+    assert!(body["paragraphs"][0]["runs"][0]["props"].get("bold").is_none(), "the rest of the body is as it was");
+    assert_eq!(queued[1].0, "slide.new", "the command follows the settle");
+    assert!(s.doc().unwrap().composition.is_none(), "settled once");
+
+    // However a settle is reached again, it adds no operation and no undo step.
+    let undo = s.doc().unwrap().history.undo.len();
+    s.settle_composition();
+    s.end_composition();
+    assert!(s.take_pending_commands().is_empty(), "a repeated settle queues nothing");
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "and is not a second undo step");
+}
+
+/// RFC §10.1 — the same rule for the other two bodies a composition can type into: one table cell
+/// leaves as `shape.setField` with its cell, a slide's notes as `slide.notes`.
+#[test]
+fn a_shared_composition_in_a_cell_and_in_the_notes_queues_that_body() {
+    let mut s = session();
+    s.execute("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 100, 300, 100]})).unwrap();
+    let table =
+        s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Table(_))).unwrap().id.0;
+    s.execute("text.set", &json!({"id": table, "cell": [0, 1], "text": "seed"})).unwrap();
+    s.set_collab_queue(true);
+    let at = (0, 4);
+    s.doc_mut().unwrap().selection.text =
+        Some(crate::TextSel { shape: ShapeId(table), anchor: at, caret: at, cell: Some((0, 1)), notes: false, line_end: None });
+    s.compose_text("々", None).unwrap();
+    s.commit_text("々").unwrap();
+    let queued = s.take_pending_commands();
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert_eq!(queued[0].0, "shape.setField");
+    assert_eq!(queued[0].1["field"], "cellText");
+    assert_eq!(queued[0].1["cell"], json!([0, 1]));
+    assert_eq!(queued[0].1["value"]["paragraphs"][0]["runs"][0]["text"], "seed々");
+
+    // The notes pane is a slide body, and only the slide names it.
+    let slide = s.doc().unwrap().selection.slide;
+    s.doc_mut().unwrap().selection.text =
+        Some(crate::TextSel { shape: ShapeId(0), anchor: (0, 0), caret: (0, 0), cell: None, notes: true, line_end: None });
+    s.compose_text("メモ", None).unwrap();
+    s.commit_text("メモ").unwrap();
+    let queued = s.take_pending_commands();
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert_eq!(queued[0].0, "slide.notes");
+    assert_eq!(queued[0].1["index"], slide);
+    assert_eq!(queued[0].1["body"]["paragraphs"][0]["runs"][0]["text"], "メモ");
+}
+
+/// RFC §10.1 — a shared session refuses, before the first write and with a reason, the one input
+/// method command that has no operation of its own. Inside a composition that same deletion is part
+/// of the pre-edit and leaves with its settle.
+#[test]
+fn a_shared_input_method_deletion_outside_a_composition_is_refused_with_a_reason() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "abc"})).unwrap();
+    s.set_collab_queue(true);
+    let (revision, undo) = (s.doc().unwrap().revision, s.doc().unwrap().history.undo.len());
+    let err = s.delete_surrounding(1, 0, false).unwrap_err();
+    assert!(err.to_string().contains("is not shared"), "the refusal says why: {err}");
+    assert_eq!(s.doc().unwrap().revision, revision, "the refused command wrote nothing");
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "and left no undo step");
+    assert!(s.take_pending_commands().is_empty(), "and queued nothing");
+    s.compose_text("か", None).unwrap();
+    assert!(s.delete_surrounding(1, 0, false).is_ok(), "inside the composition it belongs to the pre-edit");
+    assert!(s.take_pending_commands().is_empty(), "and leaves with the settle");
+}
+
 /// #101: the composition is underlined in place, under the composed characters, with a thicker
 /// line under the part being converted.
 #[test]

@@ -1638,6 +1638,57 @@ mod tests {
         assert_eq!(bold, vec![None, Some(true)], "the server's command bolded exactly the word at the caret");
     }
 
+    /// RFC §10.1: in a live session an input method's composition is the author's own view of one
+    /// text body. Nothing leaves while it is open, and its commit hands the room that whole body,
+    /// once — so the operation carries the text its author saw, not a pre-edit.
+    #[test]
+    fn a_composition_in_a_live_session_leaves_only_when_it_settles() {
+        use deckcraft_collab_proto::{ClientMsg, Payload};
+
+        let (mut app, from_ui, _to_ui) = live(Role::Editor);
+        let id = app.session.doc().expect("doc").doc.slides[0].shapes.last().expect("shape").id;
+        app.session.doc_mut().expect("doc").selection.shapes = vec![id];
+        assert!(app.session.is_collab_queue(), "a live session queues every edit");
+
+        app.session.compose_text("か", None).expect("compose");
+        app.collab.pump(&mut app.session, 1_010);
+        let mut during = Vec::new();
+        while let Ok(msg) = from_ui.try_recv() {
+            during.push(msg);
+        }
+        assert!(
+            !during.iter().any(|m| matches!(
+                m,
+                ClientMsg::Op(op)
+                    if matches!(op.payload, Payload::TextInsert { .. } | Payload::TextSet { .. } | Payload::TextBodySet { .. })
+            )),
+            "the pre-edit is not an operation: {during:?}"
+        );
+
+        app.session.commit_text("か").expect("commit");
+        app.collab.pump(&mut app.session, 1_020);
+        let mut ops = Vec::new();
+        while let Ok(msg) = from_ui.try_recv() {
+            if let ClientMsg::Op(op) = msg {
+                ops.push(op);
+            }
+        }
+        assert_eq!(ops.len(), 1, "one operation for the settled body: {ops:?}");
+        let Payload::TextBodySet { body, cell: None } = &ops[0].payload else {
+            panic!("the settled body leaves as one whole value: {:?}", ops[0].payload);
+        };
+        assert_eq!(body["paragraphs"][0]["runs"][0]["text"], "か", "the operation carries the final text");
+
+        // A settle reached again adds nothing: no second operation, no second undo step.
+        app.session.settle_composition();
+        app.collab.pump(&mut app.session, 1_030);
+        let mut after = Vec::new();
+        while let Ok(msg) = from_ui.try_recv() {
+            after.push(msg);
+        }
+        assert!(!after.iter().any(|m| matches!(m, ClientMsg::Op(_))), "a repeated settle sends nothing: {after:?}");
+    }
+
     #[test]
     fn commit_warnings_show_once_until_dismissed() {
         let mut ui = CollabUi::default();

@@ -168,6 +168,20 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<(u32, u32)>,
     },
+    /// Replaces one text body (or one table cell) with its **whole** model value (RFC §10.1): the
+    /// runs, their formatting, the paragraph properties and the bullet levels, as JSON. It is how
+    /// a settled input-method composition travels — the pre-edit is the author's own view until it
+    /// commits, and then the body it typed into is one operation, so every replica ends with
+    /// exactly the text its author saw and one undo step puts the old body back. [`Payload::TextSet`]
+    /// could not carry it: it keeps only the first run's formatting, which would flatten a body
+    /// with several runs or paragraphs. `cell` addresses one table cell; without it the address is
+    /// the shape's own body. The value is size-bounded and checked against the model before the
+    /// first write, like any other hostile input.
+    TextBodySet {
+        body: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cell: Option<(u32, u32)>,
+    },
     /// Inserts at a character offset in the shape's text body or in one table cell (`\n` is a
     /// paragraph break). The server rebases the offset against operations that arrived after
     /// `baseVersion`, so two people typing in one paragraph both keep their text. `cell`
@@ -1047,6 +1061,7 @@ impl Payload {
             Payload::ChartSet { .. } => "chart.setWhole",
             Payload::ShapeField { .. } => "shape.setField",
             Payload::CellText { .. } => "shape.setCellBody",
+            Payload::TextBodySet { .. } => "text.setBody",
             Payload::CellsText { .. } => "shape.setCellBodies",
             Payload::ShapeFields { .. } => "shape.setFields",
             Payload::ShapesSetBounds { .. } => "shape.setBoundsMany",
@@ -2358,6 +2373,18 @@ mod tests {
         assert!(text.contains("\"cell\":[1,2]"), "{text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
         assert_eq!(restore.command(), "shape.setCellBody");
+
+        // A settled input-method composition travels as one whole body, runs and all (RFC §10.1).
+        let composed = Payload::TextBodySet { body: json!({"paragraphs": [{"runs": [{"text": "한", "props": {"bold": true}}]}]}), cell: None };
+        let text = serde_json::to_string(&composed).expect("encode");
+        assert!(text.contains("\"cmd\":\"text_body_set\""), "{text}");
+        assert!(!text.contains("\"cell\""), "a shape's own body names no cell: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), composed);
+        assert_eq!(composed.command(), "text.setBody");
+        let in_cell = Payload::TextBodySet { body: json!({"paragraphs": []}), cell: Some((0, 1)) };
+        let text = serde_json::to_string(&in_cell).expect("encode");
+        assert!(text.contains("\"cell\":[0,1]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), in_cell);
 
         // A multi-cell format's undo image is those cells' whole bodies, in one operation.
         let cells = Payload::CellsText {

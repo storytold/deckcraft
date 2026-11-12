@@ -249,6 +249,15 @@ fn composition_fits(st: &DocState, c: &crate::Composition) -> bool {
     body.paragraphs.get(c.start.0).is_some_and(|p| c.start.1.saturating_add(c.len) <= p.char_len())
 }
 
+/// The body a new composition belongs to, by address: the slide and the shape (and cell) whose
+/// text it types into. A composition is only ever started by a text selection, so a missing one is
+/// a caller that skipped the command's own check.
+fn composition_owner(st: &DocState) -> Result<crate::CompositionOwner> {
+    let t = st.selection.text.as_ref().ok_or_else(|| bad("text.compose", "no text is being edited"))?;
+    let slide = st.doc.slides.get(st.selection.slide).ok_or_else(|| bad("text.compose", "no such slide"))?.id;
+    Ok(crate::CompositionOwner { slide, shape: (!t.notes).then_some(t.shape), cell: t.cell.map(|(r, c)| (r as u32, c as u32)), notes: t.notes })
+}
+
 /// `text.compose`: put an input method's preedit at the insertion point (replacing the selection)
 /// or replace the composition with the new preedit. An empty preedit cancels: the presentation
 /// goes back to how it was before the composition began.
@@ -275,6 +284,7 @@ pub(super) fn compose(s: &mut Session, p: &Value) -> Result<Value> {
         None => {
             let st = s.doc()?;
             let (before, before_selection) = (st.doc.clone(), st.selection.clone());
+            let owner = composition_owner(st)?;
             let (start, props) = edit_text(s, |body, t| {
                 let (a, b) = t.ordered();
                 let at = ed::delete(body, a, b);
@@ -284,7 +294,7 @@ pub(super) fn compose(s: &mut Session, p: &Value) -> Result<Value> {
                 t.caret = c;
                 (at, props)
             })?;
-            s.doc_mut()?.composition = Some(crate::Composition { start, len: n, active, props, before, before_selection });
+            s.doc_mut()?.composition = Some(crate::Composition { start, len: n, active, props, before, before_selection, owner });
             Ok(json!({"composing": true, "start": [start.0, start.1], "len": n}))
         }
         Some(c) if text.is_empty() => {

@@ -883,6 +883,8 @@ pub fn normalize_with_painter(
                 Payload::TextSet { text: text.to_string(), cell },
             )])
         }
+        // A settled input-method composition arrives as the whole body it typed into (RFC §10.1).
+        "shape.setField" => text_body_ops(keys, st, p, &make),
         "edit.delete" => {
             if p.get("scope").and_then(Value::as_str) == Some("slides") {
                 return slide_delete_ops(keys, st, p, make);
@@ -2258,6 +2260,56 @@ fn shape_ids(p: &Value, st: &DocState) -> Result<Vec<ShapeId>, LocalError> {
 
 fn shape_key(keys: &crate::KeyMap, slide: SlideId, id: ShapeId) -> Result<ShapeKey, LocalError> {
     keys.shape_key(slide, id).cloned().ok_or(LocalError::NoDocument)
+}
+
+/// The one operation a settled input-method composition sends (RFC §10.1): the text body it typed
+/// into as a final value. `shape.setField` names a shape's own body or one table cell; a whole
+/// value converges on every replica, keeps the runs and paragraph properties the author saw, and
+/// gives the room one undo step whose image is the body before it. `ShapeField`/`CellText` on the
+/// wire stay the server's own restores — a client-sent one is refused — and `text.set` would
+/// flatten the runs.
+fn text_body_ops(
+    keys: &crate::KeyMap,
+    st: &DocState,
+    p: &Value,
+    make: &impl Fn(Target, Payload) -> OpEnvelope,
+) -> Result<Vec<OpEnvelope>, LocalError> {
+    let field = p.get("field").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("shape.setField needs `field`".into()))?;
+    let id = p
+        .get("ids")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first()?.as_u64())
+        .or_else(|| p.get("id").and_then(Value::as_u64))
+        .map(|v| ShapeId(v as u32))
+        .ok_or_else(|| LocalError::BadParams("shape.setField needs a shape".into()))?;
+    let cell = match field {
+        "text" => None,
+        "cellText" => p
+            .get("cell")
+            .and_then(Value::as_array)
+            .and_then(|a| Some((a.first()?.as_u64()?, a.get(1)?.as_u64()?)))
+            .map(|(row, col)| Some((row as u32, col as u32)))
+            .ok_or_else(|| LocalError::BadParams("shape.setField: a cell body needs `cell`".into()))?,
+        other => return Err(LocalError::Unsupported(format!("shape.setField {other}"))),
+    };
+    let body =
+        p.get("value").filter(|v| v.is_object()).cloned().ok_or_else(|| LocalError::BadParams("shape.setField needs an object `value`".into()))?;
+    // The body's own slide, not the one this replica happens to be looking at: a settle runs after
+    // the author clicked away, and the shape names its slide wherever it is.
+    let owner = slide_with_shape(&st.doc, id)?;
+    let target = Target {
+        slide: Some(keys.slide_key(owner.id).cloned().ok_or(LocalError::NoDocument)?),
+        shape: Some(shape_key(keys, owner.id, id)?),
+        ..Target::default()
+    };
+    Ok(vec![make(target, Payload::TextBodySet { body, cell })])
+}
+
+/// The slide that holds a shape id. Object ids are handed out from one presentation-wide counter,
+/// so a shape id names one shape; the selected slide is tried first because that is the common
+/// case, and the rest of the deck follows for a settle that runs after the author clicked away.
+fn slide_with_shape(doc: &Presentation, id: ShapeId) -> Result<&Slide, LocalError> {
+    doc.slides.iter().find(|s| find_shape(&s.shapes, id).is_some()).map(|s| &**s).ok_or_else(|| LocalError::BadParams(format!("no shape {}", id.0)))
 }
 
 /// The normalised operations of `animation.options`, `animation.clear` and

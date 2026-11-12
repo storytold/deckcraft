@@ -31,7 +31,7 @@ pub mod tools;
 
 use std::sync::Arc;
 
-use deckcraft_model::{Presentation, Shape, ShapeId, Slide, SlideId};
+use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -211,6 +211,22 @@ pub struct Composition {
     /// The presentation and selection before the composition began.
     pub before: Arc<Presentation>,
     pub before_selection: Selection,
+    /// The text body it types into, named by address so a settle still finds it after the
+    /// selection moved (RFC §10.1).
+    pub owner: CompositionOwner,
+}
+
+/// The one text body a composition belongs to: a shape's own body, one table cell of it, or a
+/// slide's notes. The slide is named by id, not by index, so a reorder during the composition
+/// cannot move the settled text to another slide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompositionOwner {
+    pub slide: SlideId,
+    /// The shape holding the body (absent for notes, which belong to the slide).
+    pub shape: Option<ShapeId>,
+    /// The table cell inside that shape, when the body is a cell's.
+    pub cell: Option<(u32, u32)>,
+    pub notes: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -715,16 +731,42 @@ impl Session {
         if self.read_only && record && self.depth == 0 && spec.changes_document() {
             return Err(EngineError::Disabled(id.into(), cmd::READ_ONLY.into()));
         }
-        // In a shared session the document changes only through the server's `applied`. Queue the
-        // user's intent; the collaboration layer normalises and sends it. A nested call is part of
-        // the outermost command the user already submitted.
-        if self.collab_queue && record && self.depth == 0 && spec.changes_document() {
-            self.pending_commands.push((id.to_string(), params.clone()));
-            return Ok(json!({"queued": true}));
+        // The input method's own commands are the author's view of one text body: they run here even
+        // in a shared session, and what they type reaches the room as one whole-body operation when
+        // the composition settles (RFC §10.1). Where the room has no operation to carry the text,
+        // the command is refused here — before the first write, with a reason and without moving
+        // the version — rather than changing text nobody else will ever see.
+        let ime = matches!(id, "text.compose" | "text.commit" | "text.deleteSurrounding");
+        if self.collab_queue && record && self.depth == 0 && ime {
+            let on_slides = self.active().filter(|d| d.selection.target == Target::Slides);
+            let refused = match (id, on_slides) {
+                (_, None) => Some("an input method's text is only shared on slides"),
+                // Inside a composition the deletion is part of the pre-edit and its settle carries
+                // the body; on its own there is no operation for it.
+                ("text.deleteSurrounding", Some(st)) if st.composition.is_none() => {
+                    Some("an input method's deletion outside a composition is not shared")
+                }
+                _ => None,
+            };
+            if let Some(why) = refused {
+                return Err(EngineError::Disabled(id.into(), why.into()));
+            }
         }
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
-        if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
+        // This has to happen before the command is queued for a room: an operation normalised
+        // against a document that does not yet hold the composing text would carry a text its
+        // author never saw, and the undo step would not match it either.
+        if self.depth == 0 && (spec.journal || spec.undoable) && !ime {
             self.settle_composition();
+        }
+        // In a shared session the document changes only through the server's `applied`. Queue the
+        // user's intent; the collaboration layer normalises and sends it. A nested call is part of
+        // the outermost command the user already submitted. A settling composition queues its own
+        // whole-body command first (see `settle_composition`), so the room learns the text before
+        // it learns what the user did next.
+        if self.collab_queue && record && self.depth == 0 && spec.changes_document() && !ime {
+            self.pending_commands.push((id.to_string(), params.clone()));
+            return Ok(json!({"queued": true}));
         }
         if let Err(e) = (spec.enabled)(self) {
             let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
@@ -824,12 +866,28 @@ impl Session {
     ///
     /// This is also how the input method's own commit ends a composition: the platform has
     /// already finished that one, so it must not ask for an interrupt.
+    ///
+    /// In a shared session this is the one place the composed text reaches the room (RFC §10.1): the
+    /// body it typed into is queued as a whole value, so the operation carries exactly the text the
+    /// author sees and its undo image is the whole body. It is queued once — a second settle finds
+    /// no composition and adds nothing.
     pub fn end_composition(&mut self) {
         let vertex_kind = self.tool.vertex_kind.clone();
-        let Some(st) = self.active_mut() else { return };
-        let Some(c) = st.composition.take() else { return };
-        if !Arc::ptr_eq(&c.before, &st.doc) {
-            push_undo(st, HistoryEntry { label: "Type Text".into(), doc: c.before, selection: c.before_selection, vertex_kind });
+        let settle = {
+            let Some(st) = self.active_mut() else { return };
+            let Some(c) = st.composition.take() else { return };
+            let changed = !Arc::ptr_eq(&c.before, &st.doc);
+            if changed {
+                push_undo(st, HistoryEntry { label: "Type Text".into(), doc: c.before, selection: c.before_selection, vertex_kind });
+                composition_settle_command(st, &c.owner)
+            } else {
+                None
+            }
+        };
+        if let Some((cmd, params)) = settle
+            && self.collab_queue
+        {
+            self.pending_commands.push((cmd, params));
         }
     }
 
@@ -873,6 +931,29 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// The one command a settled composition hands a shared session (RFC §10.1): the body it typed
+/// into as a whole value. `shape.setField` carries a shape's own body or one table cell and
+/// `slide.notes` a slide's notes, so each is one operation whose undo image is the whole body —
+/// the text is exactly what the author sees, two replicas converge on it, and one undo step puts
+/// the old text back. `None` when the body (or its slide) is gone: then there is nothing the room
+/// could be told, and the local text went with it.
+fn composition_settle_command(st: &DocState, owner: &CompositionOwner) -> Option<(String, Value)> {
+    let index = st.doc.slides.iter().position(|s| s.id == owner.slide)?;
+    let slide = &st.doc.slides[index];
+    if owner.notes {
+        let body = serde_json::to_value(&slide.notes).ok()?;
+        return Some(("slide.notes".into(), json!({"index": index, "body": body})));
+    }
+    let shape = deckcraft_model::find_shape(&slide.shapes, owner.shape?)?;
+    if let Some((row, col)) = owner.cell {
+        let ShapeKind::Table(t) = &shape.kind else { return None };
+        let body = serde_json::to_value(&t.cell(row as usize, col as usize)?.text).ok()?;
+        return Some(("shape.setField".into(), json!({"field": "cellText", "cell": [row, col], "value": body, "ids": [shape.id.0]})));
+    }
+    let body = serde_json::to_value(shape.text.as_ref()?).ok()?;
+    Some(("shape.setField".into(), json!({"field": "text", "value": body, "ids": [shape.id.0]})))
 }
 
 /// Keep the selection pointing at things that exist.

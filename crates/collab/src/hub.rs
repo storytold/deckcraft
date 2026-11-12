@@ -798,6 +798,56 @@ mod tests {
         assert_eq!(hub.version(), 3);
     }
 
+    /// RFC §10.1: an input method's composition is its author's own view; when it settles, one
+    /// operation carries the whole body it typed into, so both replicas hold exactly the text the
+    /// author saw and one undo step puts the original text back.
+    #[test]
+    fn a_settled_composition_reaches_both_replicas_as_one_whole_body_and_undo_restores_it() {
+        let mut hub = text_hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = text_session();
+        let mut sb = text_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+
+        let shape = sa.doc().expect("doc").doc.slides[0].shapes[0].id.0;
+        let body_text =
+            |s: &Session| s.doc().expect("doc").doc.slides[0].shapes[0].text.as_ref().map(deckcraft_model::text::TextBody::text).unwrap_or_default();
+        sa.set_collab_queue(true);
+        sa.execute("text.edit", &json!({"id": shape})).expect("edit");
+        sa.execute("text.select", &json!({"anchor": [1, 4], "caret": [1, 4]})).expect("caret");
+        sa.compose_text("한", None).expect("compose");
+        assert_eq!(body_text(&sa), "Alpha\nBeta한", "the author sees the pre-edit");
+        assert_eq!(body_text(&sb), "Alpha\nBeta", "the room does not");
+        assert!(sa.take_pending_commands().is_empty(), "a pre-edit is not an operation");
+
+        // The input method's own commit settles it: the body leaves as one operation.
+        sa.commit_text("한").expect("commit");
+        let queued = sa.take_pending_commands();
+        assert_eq!(queued.len(), 1, "{queued:?}");
+        assert_eq!(queued[0].0, "shape.setField");
+        a.submit(&mut sa, &queued[0].0, &queued[0].1, "a-1").expect("submit");
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+        assert_eq!(body_text(&sa), "Alpha\nBeta한");
+        assert_eq!(body_text(&sb), "Alpha\nBeta한", "both replicas carry the text the author saw");
+        assert_eq!(
+            hub.session().document().expect("doc").slides[0].shapes[0].text.as_ref().map(deckcraft_model::text::TextBody::text),
+            Some("Alpha\nBeta한".to_string())
+        );
+        assert_eq!((a.version(), b.version()), (1, 1));
+
+        a.undo().expect("undo");
+        pump(&mut hub, &mut a, &mut sa, &mut b, &mut sb);
+        assert_eq!(body_text(&sa), "Alpha\nBeta", "one step back to the original text");
+        assert_eq!(body_text(&sb), "Alpha\nBeta");
+        assert_eq!(a.version(), 2);
+    }
+
     /// One replica with three blank slides: the first carries the two shapes of [`deck_session`].
     fn three_slide_session() -> Session {
         let mut s = deck_session();

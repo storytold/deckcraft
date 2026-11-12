@@ -342,6 +342,9 @@ impl Adapter {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
             Payload::ShapesSetBounds { items } => return self.capture_bounds_step(before, after, op, items),
             Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
+            // A settled composition replaces the whole body, runs and all, and its undo image is
+            // that body (or one cell's) as it was (RFC §10.1).
+            Payload::TextBodySet { cell, .. } => (*cell, Image::Text(String::new())),
             Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => (*cell, Image::Text(String::new())),
             // A table is one value: a structural edit changes the cell indices and values, a
             // style, a cell fill, a merge/split or a column width/row height changes the table
@@ -927,6 +930,21 @@ impl Adapter {
                     args["cell"] = json!([r, c]);
                 }
                 self.call(session, "text.set", args, head)
+            }
+            Payload::TextBodySet { body, cell } => {
+                // The whole body as the author's engine produced it (RFC §10.1): runs, formatting,
+                // paragraph properties and levels. It goes through `shape.setField`, which
+                // deserialises it into the model and bounds it before the first write, so the
+                // operation is exactly the value the author saw and no replica's own copy decides
+                // what a run looks like.
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                let mut args = match cell {
+                    Some((r, c)) => json!({"ids": [shape.0], "field": "cellText", "cell": [r, c]}),
+                    None => json!({"ids": [shape.0], "field": "text"}),
+                };
+                args["value"] = body.clone();
+                self.call(session, "shape.setField", args, head)
             }
             Payload::TextInsert { at, text, cell } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
@@ -2265,6 +2283,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::ShapeSetBounds { .. }
         | Payload::ShapesSetBounds { .. }
         | Payload::TextSet { .. }
+        | Payload::TextBodySet { .. }
         | Payload::TextInsert { .. }
         | Payload::TextDelete { .. }
         | Payload::Model3dCamera { .. }
