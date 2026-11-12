@@ -493,10 +493,7 @@ mod tests {
         let ctx = egui::Context::default();
         ctx.data_mut(|d| {
             d.insert_temp(active_id(), true);
-            d.insert_temp(
-                frame_id(),
-                Frame { tab: "Home".into(), titles: vec!["Clipboard".into()], levels: vec![COMPACT], drawn: Vec::new() },
-            );
+            d.insert_temp(frame_id(), Frame { tab: "Home".into(), titles: vec!["Clipboard".into()], levels: vec![COMPACT], drawn: Vec::new() });
         });
         assert_eq!(level(&ctx, "Clipboard"), COMPACT, "the row's own group uses the plan");
         ctx.data_mut(|d| d.insert_temp(active_id(), false));

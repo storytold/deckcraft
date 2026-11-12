@@ -31,10 +31,8 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
 fn stacked_photo_album(app: &mut SlideApp, ui: &mut Ui) {
     let en = enabled(app, "insert.photoAlbum");
     let (main, arrow) = small_button_ex(ui, Icon::Picture, "Photo Album", en, false, true);
-    let _ = main.clone().on_hover_text(tip("insert.photoAlbum", "Photo Album…"));
-    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album…"));
+    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album"));
     if let Some(a) = &arrow {
-        let _ = a.clone().on_hover_text("Photo Album options");
         a.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album options"));
     }
     if main.clicked() {
