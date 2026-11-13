@@ -357,21 +357,40 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             wrap(exec(b, c, a.get("params").cloned().unwrap_or(json!({}))))
         }
         "batch" => {
+            use crate::server::{MAX_BATCH_BYTES, MAX_BATCH_ITEMS};
             let keep = a.get("keepGoing").and_then(Value::as_bool).unwrap_or(false);
+            let commands = a.get("commands").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+            if commands.len() > MAX_BATCH_ITEMS {
+                return ToolResult::error(format!("a batch holds at most {MAX_BATCH_ITEMS} commands"));
+            }
             let mut out = vec![];
-            for c in a.get("commands").and_then(Value::as_array).cloned().unwrap_or_default() {
+            let mut used = 0usize;
+            for c in commands {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
-                match exec(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
-                    Ok(v) => out.push(json!({"command": id, "ok": true, "result": v})),
-                    Err(e) => {
-                        out.push(json!({"command": id, "ok": false, "error": e}));
-                        if !keep {
-                            return ToolResult { content: vec![json!({"type": "text", "text": Value::Array(out).to_string()})], is_error: true };
-                        }
-                    }
+                let (entry, failed) = match exec(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
+                    Ok(v) => (json!({"command": id, "ok": true, "result": v}), false),
+                    Err(e) => (json!({"command": id, "ok": false, "error": e}), true),
+                };
+                // What the reply carries: the entry as text, escaped again inside the JSON-RPC reply.
+                // Failures count too: with keepGoing, a remote backend's large errors add up.
+                used = used.saturating_add(json!(entry.to_string()).to_string().len());
+                if used > MAX_BATCH_BYTES {
+                    let shown: String = id.chars().take(128).collect();
+                    out.push(json!({"command": shown, "ok": false, "error": "the batch's results passed 64 MiB; stopped here"}));
+                    return ToolResult { content: vec![json!({"type": "text", "text": Value::Array(out).to_string()})], is_error: true };
+                }
+                out.push(entry);
+                if failed && !keep {
+                    return ToolResult { content: vec![json!({"type": "text", "text": Value::Array(out).to_string()})], is_error: true };
                 }
             }
-            ToolResult::json(&Value::Array(out))
+            // The reply is pretty-printed, which is longer than the compact entries counted above.
+            let reply = ToolResult::json(&Value::Array(out));
+            let text = reply.content[0]["text"].as_str().unwrap_or_default();
+            if json!(text).to_string().len() > MAX_BATCH_BYTES {
+                return ToolResult::error("the batch's results passed 64 MiB; nothing is returned");
+            }
+            reply
         }
         "new_presentation" => wrap(exec(b, "file.new", a)),
         "open_presentation" => wrap(exec(b, "file.open", a)),
