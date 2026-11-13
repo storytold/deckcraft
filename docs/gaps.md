@@ -21,7 +21,7 @@ revision history.
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
-| 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
+| 5 | UI English, first Japanese catalog in review: menus, ribbon, status bar and Preferences translated; dialogs, tooltips and help still English | Localization | B (5 languages) | 45–80 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 8 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
@@ -332,9 +332,13 @@ Detail in [hardware-parity.md](hardware-parity.md).
 
 Detail in [localization-parity.md](localization-parity.md).
 
-- **English only, no string catalog** (#15, #30; Ukrainian PR #34 open). PowerPoint for Mac ships
-  26 languages. Infrastructure 8–14 h, then 3–16 h per language plus native review. Beta needs the
-  infrastructure and at least Simplified Chinese, Spanish, French, German and Japanese (~30–45 h).
+- **A Japanese catalog is the first, and most of the UI is still English** (#15, #30; Ukrainian
+  PR #34 open). The catalog system, system-language following and the Interface language setting
+  landed with the Japanese catalog (554 entries: menus, ribbon, status bar, command labels and
+  Preferences); dialog bodies, tooltips, help and the File-tab pages still show English. PowerPoint
+  for Mac ships 26 languages. A new language is its catalog file plus one row in `LANGUAGES`
+  (3–16 h plus native review). Beta needs at least Simplified Chinese, Spanish, French, German and
+  Japanese (~30–45 h), with Japanese partly there.
 - **Hangul in the interface needs an installed Korean font** (#101). craft-fonts has no Korean face
   (Noto CJK is excluded by the asset policy), so the web build draws Korean file names, notes and
   outline text as boxes; desktop borrows Malgun Gothic, Apple SD Gothic Neo or Noto Sans CJK.

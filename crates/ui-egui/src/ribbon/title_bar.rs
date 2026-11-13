@@ -68,7 +68,7 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
             app.palette = Some((String::new(), 0));
         }
         let share = right.add(
-            egui::Button::new(egui::RichText::new("  Present  ").color(t.accent_text).font(theme::bold(13.0)))
+            egui::Button::new(egui::RichText::new(tl!("  Present  ")).color(t.accent_text).font(theme::bold(13.0)))
                 .fill(t.accent)
                 .corner_radius(control_h / 2.0)
                 .min_size(vec2(84.0, control_h)),
