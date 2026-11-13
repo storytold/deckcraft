@@ -392,6 +392,21 @@ fn change_file_type_exports_all_slides_as_pictures() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Save As shows every type in its open list: the last one is picked by a click, not hidden
+/// below the list's default height (#2019).
+#[test]
+fn save_as_type_list_shows_every_type() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Save as type").click();
+    h.run_steps(3);
+    let (last, label, _) = crate::backstage::SAVE_TYPES[crate::backstage::SAVE_TYPES.len() - 1];
+    h.get_by_label(label).click();
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.file_type), Some(last));
+}
+
 /// Close closes a saved presentation at once and asks about unsaved changes first.
 #[test]
 fn close_closes_and_asks_about_unsaved_changes() {

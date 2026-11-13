@@ -158,6 +158,8 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     ui.horizontal(|ui| {
         craft_ui::ComboBox::from_id_salt("backstage_save_type")
             .width(340.0)
+            // Every type in view: at the default height the last ones were behind a scroll.
+            .height(f32::INFINITY)
             .selected_text(current)
             .show_ui(ui, |ui| {
                 for (id, label, _) in SAVE_TYPES {
