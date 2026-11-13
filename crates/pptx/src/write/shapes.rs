@@ -106,7 +106,9 @@ pub fn geometry(w: &mut W, g: &Geom) {
                 let single = !adj1 && if defaults.is_empty() { vals.len() == 1 } else { defaults.len() == 1 };
                 for (i, v) in vals.iter().enumerate() {
                     let n = if single && i == 0 { "adj".to_string() } else { format!("adj{}", i + 1) };
-                    let v = if v.is_finite() { v.round().clamp(-2.0e9, 2.0e9) as i64 } else { 0 };
+                    // A near-zero-width connector can need a large ratio for an ordinary-size bend.
+                    // Keep guide literals bounded to the signed integer serialization domain.
+                    let v = if v.is_finite() { v.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64 } else { 0 };
                     w.empty("a:gd", A::new().a("name", n).a("fmla", format!("val {v}")));
                 }
                 for (n, v) in extra_guides(name) {
@@ -303,7 +305,8 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.close("p:nvPicPr");
             dml::blip_fill(w, x, o, "p:blipFill", fill);
             let mut s2 = s.clone();
-            if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+            // Group fill is a separate backing behind transparent image pixels.
+            if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background)) {
                 s2.fill = None;
             }
             sp_pr(w, x, o, &s2, true);
@@ -542,10 +545,22 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     let (sx, sy) = (frame.w / child.w.max(1e-6), frame.h / child.h.max(1e-6));
     let mut k = 0;
     let mut flat = vec![];
-    walk(children, &mut |c, _| {
-        if matches!(c.kind, ShapeKind::Shape) {
-            flat.push(c.clone());
+    walk(children, &mut |c, _| match &c.kind {
+        ShapeKind::Shape => flat.push(c.clone()),
+        ShapeKind::Connector { .. } => {
+            let mut sc = c.clone();
+            if sc.geom.preset_name() == Some("rect") {
+                sc.geom = Geom::preset("line");
+            }
+            flat.push(sc);
         }
+        ShapeKind::Picture { fill } => {
+            let mut sc = c.clone();
+            sc.kind = ShapeKind::Shape;
+            sc.fill = Some(deckcraft_model::style::Fill::Picture(fill.clone()));
+            flat.push(sc);
+        }
+        _ => {}
     });
     for mut c in flat.into_iter().take(10_000) {
         if let Some(xf) = &mut c.xfrm {
@@ -929,7 +944,7 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
         // As for any picture, a colour or pattern fill shows behind the image (an object's preview
         // keeps its fallback picture's fill).
         let mut s2 = s.clone();
-        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background)) {
             s2.fill = None;
         }
         sp_pr(w, x, o, &s2, true);
@@ -1019,6 +1034,23 @@ pub fn tree_header(w: &mut W) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guide_literals_remain_finite_bounded_integers() {
+        for (guide, expected) in [
+            (f64::NAN, 0),
+            (f64::INFINITY, 0),
+            (f64::NEG_INFINITY, 0),
+            (f64::MAX, i64::MAX),
+            (f64::MIN, i64::MIN),
+            (12500.6, 12501),
+            (-12500.6, -12501),
+        ] {
+            let mut w = W::frag();
+            geometry(&mut w, &Geom::Preset { name: "bentConnector3".into(), adj: vec![guide] });
+            assert!(w.s.contains(&format!(r#"fmla="val {expected}""#)), "{}", w.s);
+        }
+    }
 
     /// PowerPoint asks to repair a `star5` whose guide list lacks `hf`/`vf` (found black-box).
     #[test]

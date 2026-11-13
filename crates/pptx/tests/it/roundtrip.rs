@@ -1400,6 +1400,45 @@ fn single_guide_names_follow_the_preset() {
     }
 }
 
+/// Large finite guides position a visible bend even when the connector is only one EMU wide.
+#[test]
+fn large_connector_adjustments_keep_their_elbows_through_two_saves() {
+    let cases = [
+        ("ordinary", 80.0, 50000.0),
+        ("near control", 1588.0 / 12700.0, -12800000.0),
+        ("near negative", 1.0 / 12700.0, -20320000000.0),
+        ("near positive", 1.0 / 12700.0, 20320000000.0),
+        ("zero width", 0.0, 20320000000.0),
+        ("ordinary negative", 80.0, -20000.0),
+    ];
+    let mut p = defaults::new_presentation(None);
+    p.slides.clear();
+    let mut s = new_slide(&mut p, "Connectors");
+    s.shapes.clear();
+    for (name, width, guide) in cases {
+        let mut sh = shape(&mut p, name, 100.0, 80.0, width, 140.0);
+        sh.kind = ShapeKind::Connector { start: None, end: None };
+        sh.geom = Geom::Preset { name: "bentConnector3".into(), adj: vec![guide] };
+        s.shapes.push(sh);
+    }
+    p.slides.push(Arc::new(s));
+    for generation in 1..=2 {
+        p = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("reopen");
+        for (name, width, guide) in cases {
+            let sh = p.slides[0].shapes.iter().find(|sh| sh.name == name).expect("connector");
+            let Geom::Preset { name: preset, adj } = &sh.geom else {
+                panic!("preset connector");
+            };
+            assert_eq!(adj, &[guide], "{name}, save {generation}");
+            let xfrm = sh.xfrm.expect("transform");
+            assert_eq!((xfrm.w, xfrm.h), (width, 140.0));
+            let expected = deckcraft_geom::preset::build("bentConnector3", width, 140.0, &[guide]).expect("expected geometry");
+            let actual = deckcraft_geom::preset::build(preset, xfrm.w, xfrm.h, adj).expect("reopened geometry");
+            assert_eq!(actual.outline(), expected.outline(), "{name}, save {generation}");
+        }
+    }
+}
+
 /// #147: PowerPoint's Float Down is preset 47 (Float Up is 42); it imported as a plain fade.
 #[test]
 fn float_down_is_preset_47_both_ways() {

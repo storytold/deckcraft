@@ -743,7 +743,13 @@ mod tests {
         // 200 `m:t` nested in each other around one word: the word, not 200 copies of it.
         let x = format!(r#"<a14:m xmlns:a14="a" xmlns:m="m"><m:oMath>{}word{}</m:oMath></a14:m>"#, "<m:t>".repeat(200), "</m:t>".repeat(200));
         let d = parse(x.as_bytes()).unwrap();
-        let part = Part { name: "ppt/slides/slide1.xml".into(), rels: Default::default(), ns: vec![], inner_ns: vec![] };
+        let part = Part {
+            name: "ppt/slides/slide1.xml".into(),
+            rels: Default::default(),
+            ns: vec![],
+            inner_ns: vec![],
+            ns_budget: std::cell::Cell::new(1 << 20),
+        };
         let mut para = Paragraph::default();
         push_math_run(&mut para, &part, &d.root);
         assert_eq!(para.runs[0].text, "word");
