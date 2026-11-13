@@ -229,3 +229,64 @@ fn generic_chart_and_paragraph_animations_remain_unchanged() {
         assert!(w.builds.is_empty());
     }
 }
+
+#[test]
+fn painter_keeps_chart_selectors_only_on_the_original_shape() {
+    for target_kind in ["plain", "chart", "self"] {
+        let mut p = deckcraft_pptx::import(&fixture(true, false)).expect("import");
+        let original = p.slides[0].shapes[0].id;
+        let target = if target_kind == "self" {
+            original
+        } else {
+            let id = ShapeId(p.alloc_id().expect("id"));
+            let mut shape = p.slides[0].shapes[0].clone();
+            shape.id = id;
+            if target_kind == "plain" {
+                shape.kind = ShapeKind::Shape;
+            }
+            Arc::make_mut(&mut p.slides[0]).shapes.push(shape);
+            id
+        };
+        let expected = p.slides[0].animations.clone();
+        let mut session = deckcraft_engine::Session::new();
+        session.add_document(deckcraft_engine::DocState::new(p, None, "Painter probe".into()));
+        session.execute("animation.painter", &serde_json::json!({"id": original.0})).expect("pick");
+        session.execute("animation.painterApply", &serde_json::json!({"ids": [target.0]})).expect("paint");
+        let doc = &session.doc().expect("doc").doc;
+        let painted: Vec<_> = doc.slides[0].animations.iter().filter(|a| a.shape == target).collect();
+        assert_eq!(painted.len(), expected.len());
+        for (actual, original_animation) in painted.iter().zip(&expected) {
+            if target == original {
+                assert_eq!(*actual, original_animation, "painting onto itself retains native selectors");
+            } else {
+                assert_eq!(actual.chart_target, None, "{target_kind}: selectors belong to the original chart");
+                assert_eq!(actual.chart_build, None, "{target_kind}: build groups belong to the original chart");
+            }
+        }
+        let saved = deckcraft_pptx::export(doc).expect("export");
+        let reopened = deckcraft_pptx::import(&saved).expect("reopen");
+        assert_eq!(reopened.slides[0].animations.len(), doc.slides[0].animations.len());
+    }
+}
+
+#[test]
+fn chart_build_expansion_state_survives_two_saves() {
+    for expanded in [false, true] {
+        let mut bytes = rewrite_xml(&fixture(true, false), |name, xml| {
+            if name == "ppt/slides/slide1.xml" {
+                xml.replace("<p:bldGraphic ", &format!("<p:bldGraphic uiExpand=\"{}\" ", u8::from(expanded)))
+            } else {
+                xml.into()
+            }
+        });
+        for _ in 0..2 {
+            let p = deckcraft_pptx::import(&bytes).expect("import");
+            assert!(p.slides[0].animations.iter().all(|a| a.chart_build.expect("build").ui_expand == Some(expanded)));
+            bytes = deckcraft_pptx::export(&p).expect("export");
+            let xml = slide_xml(&bytes);
+            let doc = deckcraft_pptx::parse_xml(xml.as_bytes()).expect("xml");
+            let build = doc.root.path(&["timing", "bldLst", "bldGraphic"]).expect("build");
+            assert_eq!(build.bool("uiExpand"), Some(expanded));
+        }
+    }
+}

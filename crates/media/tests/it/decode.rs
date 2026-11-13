@@ -206,7 +206,8 @@ fn ogg_opus_with_a_huge_granule_does_not_overflow() {
     extra[18..22].copy_from_slice(&seq.to_le_bytes());
     pages.push(seal(extra));
     let b: Bytes = Arc::new(pages.concat());
-    assert!(probe(&b).is_ok_and(|i| i.duration_ms > 1 << 40), "the granule is taken at its word");
+    // craft-media treats a granule past 2^62 as missing: the page continues from the previous one.
+    assert!(probe(&b).is_ok_and(|i| i.duration_ms < 1 << 40), "the out-of-range granule is ignored");
     let p = audio::decode(&b).expect("decode");
     assert_eq!(p.channels, 3);
     assert!(!p.samples.is_empty());

@@ -508,6 +508,12 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
             let paras = deckcraft_model::find_shape(&sl.shapes, *id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len());
             for a in &painted {
                 let mut cloned = a.clone();
+                // Native chart selectors and build groups refer to the source chart's parts.
+                // Keep them only when painting the same shape, not a different chart or shape.
+                if cloned.shape != *id {
+                    cloned.chart_target = None;
+                    cloned.chart_build = None;
+                }
                 cloned.shape = *id;
                 if cloned.paragraph.is_some_and(|i| i as usize >= paras) {
                     cloned.paragraph = None;

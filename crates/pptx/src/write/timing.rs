@@ -794,6 +794,11 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.close("p:cTn");
     w.close("p:par");
     w.close("p:tnLst");
+    build_list(w, bld, chart_bld);
+    w.close("p:timing");
+}
+
+fn build_list(w: &mut W, bld: Vec<(u32, u32, bool)>, chart_bld: Vec<(u32, ChartBuild)>) {
     if !bld.is_empty() || !chart_bld.is_empty() {
         w.open0("p:bldLst");
         for (spid, grp, build_p) in bld {
@@ -808,5 +813,4 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         }
         w.close("p:bldLst");
     }
-    w.close("p:timing");
 }

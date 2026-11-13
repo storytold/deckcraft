@@ -15,6 +15,7 @@ mod fills;
 mod kept_parts;
 mod locks;
 mod malformed;
+mod master_text_styles;
 mod math_ns;
 mod media_timing;
 mod notes;
@@ -30,3 +31,5 @@ mod table_styles;
 mod tags;
 mod transition_xml;
 mod trigger_steps;
+
+mod picture_backing;
