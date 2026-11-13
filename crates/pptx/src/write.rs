@@ -48,11 +48,20 @@ const RT_AUTHORS_MODERN: &str = "http://schemas.microsoft.com/office/2018/10/rel
 const CT_CORE: &str = "application/vnd.openxmlformats-package.core-properties+xml";
 const CT_APP: &str = "application/vnd.openxmlformats-officedocument.extended-properties+xml";
 
+/// Draws an SVG picture into a PNG, for the raster fallback PowerPoint keeps beside the vector.
+/// The writer has no renderer of its own (it sits below one in the layering), so the caller
+/// supplies it.
+pub type SvgFallback<'a> = &'a dyn Fn(&deckcraft_model::MediaItem) -> Option<Vec<u8>>;
+
 /// Export state.
 pub struct Exp<'a> {
     pub p: &'a Presentation,
     pub pkg: PackageOut,
     media_parts: HashMap<MediaId, String>,
+    /// The PNG part written beside an SVG picture, by media id.
+    svg_fallbacks: HashMap<MediaId, String>,
+    /// Draws an SVG picture into a PNG; `None` leaves the SVG alone in `r:embed`.
+    fallback: Option<SvgFallback<'a>>,
     /// Each media id's item in `p.media` (the first with the id, as `Presentation::media`).
     media_at: HashMap<MediaId, usize>,
     n_image: u32,
@@ -80,6 +89,12 @@ impl Out {
     fn new(name: &str) -> Self {
         Out { name: name.to_string(), rels: RelsOut::default() }
     }
+}
+
+/// Is this media item an SVG picture? Read from the content type, which the model carries from
+/// the file it came from (and `image/svg+xml` is what the insert path stores).
+fn is_svg(m: &deckcraft_model::MediaItem) -> bool {
+    m.content_type == "image/svg+xml"
 }
 
 fn ext_for(content_type: &str, name: &str, data: &[u8]) -> String {
@@ -164,6 +179,30 @@ impl<'a> Exp<'a> {
         let part = self.media_part(id)?;
         Some(o.rels.add(kind, &opc::relative(&o.name, &part), false))
     }
+    /// The PNG a package carries beside an SVG picture, as a relationship from `o`. `None` when
+    /// the item is not an SVG, no fallback was supplied, or it does not draw.
+    pub fn svg_fallback_rel(&mut self, o: &mut Out, id: MediaId) -> Option<String> {
+        let m = self.media(id)?;
+        if !is_svg(m) || m.data.is_empty() {
+            return None;
+        }
+        let part = match self.svg_fallbacks.get(&id) {
+            Some(p) => p.clone(),
+            None => {
+                let png = (self.fallback?)(m)?;
+                if png.is_empty() {
+                    return None;
+                }
+                self.n_image += 1;
+                let name = format!("ppt/media/image{}.png", self.n_image);
+                self.pkg.binary(&name, "image/png", png);
+                self.svg_fallbacks.insert(id, name.clone());
+                name
+            }
+        };
+        Some(o.rels.add("image", &opc::relative(&o.name, &part), false))
+    }
+
     pub fn media_rel_new(&mut self, o: &mut Out, id: MediaId, kind: &str) -> Option<String> {
         let m = self.media(id)?;
         if m.data.is_empty() {
@@ -535,13 +574,15 @@ fn sanitized(p: &Presentation) -> std::borrow::Cow<'_, Presentation> {
     std::borrow::Cow::Owned(q)
 }
 
-pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
+pub fn export(p: &Presentation, main_ct: &str, fallback: Option<SvgFallback<'_>>) -> Result<Vec<u8>, PptxError> {
     let p = sanitized(p);
     let p: &Presentation = &p;
     let mut x = Exp {
         p,
         pkg: PackageOut::default(),
         media_parts: HashMap::new(),
+        svg_fallbacks: HashMap::new(),
+        fallback,
         media_at: {
             let mut m = HashMap::new();
             for (i, item) in p.media.iter().enumerate() {

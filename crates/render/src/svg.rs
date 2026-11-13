@@ -72,6 +72,15 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     image::RgbaImage::from_raw(w as u32, h as u32, px)
 }
 
+/// The picture drawn into a PNG whose longer side is `side` pixels, for the raster fallback an
+/// exported package carries next to the vector. `None` when the document doesn't parse.
+pub fn rasterize_png(bytes: &[u8], side: u32) -> Option<Vec<u8>> {
+    let img = rasterize(bytes, side)?;
+    let mut buf = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).ok()?;
+    Some(buf)
+}
+
 /// The bitmap size and the user-units → pixels transform for a target `side`.
 fn layout(svg: &Svg, side: u32) -> (u16, u16, Affine) {
     let (pw, ph) = svg.size;
@@ -371,6 +380,17 @@ mod tests {
         let mid = img.get_pixel(48, 48);
         assert!(mid[0] > 200 && mid[1] < 60 && mid[3] == 255, "{mid:?}");
         assert_eq!(img.get_pixel(1, 1)[3], 0);
+    }
+
+    #[test]
+    fn a_picture_becomes_a_png_for_the_export_fallback() {
+        let png = rasterize_png(STAR.as_bytes(), 48).expect("rasterizes");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "a PNG");
+        // The stars' colours survive the encode: decode it back and look at the middle.
+        let img = image::load_from_memory(&png).expect("decodes").to_rgba8();
+        assert_eq!(img.dimensions(), (48, 48));
+        let mid = img.get_pixel(24, 24);
+        assert!(mid[0] > 200 && mid[1] < 60, "{mid:?}");
     }
 
     #[test]

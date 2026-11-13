@@ -26,6 +26,8 @@ pub const NS_MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/
 pub const NS_P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/main";
 pub const NS_P15: &str = "http://schemas.microsoft.com/office/powerpoint/2012/main";
 pub const NS_P159: &str = "http://schemas.microsoft.com/office/powerpoint/2015/09/main";
+/// The SVG picture extension PowerPoint writes beside the raster fallback.
+pub const NS_ASVG: &str = "http://schemas.microsoft.com/office/drawing/2016/SVG/main";
 pub const NS_A14: &str = "http://schemas.microsoft.com/office/drawing/2010/main";
 /// Modern (threaded) comments, Office 2018/8 schema.
 pub const NS_P188: &str = "http://schemas.microsoft.com/office/powerpoint/2018/8/main";

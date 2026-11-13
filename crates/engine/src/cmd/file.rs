@@ -344,10 +344,23 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
     Ok(())
 }
 
+/// The PNG a saved package carries beside an SVG picture, the way PowerPoint writes it, so a
+/// reader without SVG support still draws something.
+fn svg_fallback(m: &deckcraft_model::MediaItem) -> Option<Vec<u8>> {
+    if m.content_type != "image/svg+xml" {
+        return None;
+    }
+    // Twice the picture's own size, with a floor that keeps an icon crisp when it is placed
+    // large, and a ceiling that bounds the export.
+    let (w, h) = deckcraft_render::natural_size(&m.data)?;
+    let side = (w.max(h) * 2.0).clamp(512.0, 2048.0).round() as u32;
+    deckcraft_render::svg_png(&m.data, side)
+}
+
 /// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
-        f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
+        f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as_with(doc, f, &svg_fallback).map_err(|e| EngineError::Other(e.to_string())),
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
         "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),

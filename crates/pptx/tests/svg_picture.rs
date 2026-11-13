@@ -150,6 +150,95 @@ fn a_linked_svg_leaves_the_raster_fallback_in_place() {
     assert_eq!(data, PNG);
 }
 
+/// A deck whose picture is the SVG itself, as DeckCraft's insert path stores it.
+fn svg_deck() -> Presentation {
+    let mut p = deck();
+    let media = p.add_media("a.svg", "image/svg+xml", SVG.to_vec()).expect("media");
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    for s in &mut slide.shapes {
+        if let ShapeKind::Picture { fill } = &mut s.kind {
+            fill.media = media;
+        }
+    }
+    p
+}
+
+/// The parts of a package, by name.
+fn parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("zip");
+    let mut out = Vec::new();
+    for i in 0..zip.len() {
+        let mut e = zip.by_index(i).expect("entry");
+        let name = e.name().to_string();
+        let mut data = vec![];
+        e.read_to_end(&mut data).expect("read");
+        out.push((name, data));
+    }
+    out
+}
+
+/// The target a relationship id names in `rels`, and whether it is external.
+fn target(rels: &str, rid: &str) -> Option<String> {
+    let start = rels.find(&format!("Id=\"{rid}\""))?;
+    let rest = rels.get(start..)?;
+    let t = rest.find("Target=\"")? + "Target=\"".len();
+    let rest = rest.get(t..)?;
+    let end = rest.find('"')?;
+    rest.get(..end).map(str::to_string)
+}
+
+#[test]
+fn an_svg_picture_is_saved_with_a_png_fallback_beside_it() {
+    let bytes = deckcraft_pptx::export_with(&svg_deck(), &|_m| Some(PNG.to_vec())).expect("export");
+    let parts = parts(&bytes);
+    let slide = parts.iter().find(|(n, _)| n == "ppt/slides/slide1.xml").map(|(_, d)| String::from_utf8_lossy(d).into_owned()).expect("slide");
+    let rels =
+        parts.iter().find(|(n, _)| n == "ppt/slides/_rels/slide1.xml.rels").map(|(_, d)| String::from_utf8_lossy(d).into_owned()).expect("rels");
+    let types = parts.iter().find(|(n, _)| n == "[Content_Types].xml").map(|(_, d)| String::from_utf8_lossy(d).into_owned()).expect("types");
+    let has = |name: &str| parts.iter().any(|(n, _)| n == name);
+
+    // `r:embed` is the raster, the vector rides in the extension, and both parts are in the package.
+    let embed = slide.find("<a:blip").and_then(|start| {
+        let rest = slide.get(start..)?;
+        let i = rest.find("r:embed=\"")? + "r:embed=\"".len();
+        let rest = rest.get(i..)?;
+        let end = rest.find('"')?;
+        rest.get(..end)
+    });
+    let embed = embed.expect("r:embed");
+    let raster = target(&rels, embed).expect("raster target");
+    assert!(raster.ends_with(".png"), "{raster}");
+    let raster_part = format!("ppt/{}", raster.trim_start_matches("../"));
+    assert!(has(&raster_part), "{raster_part} is in the package");
+    let svg_blip = slide.find("asvg:svgBlip").expect("the vector extension");
+    let rest = &slide[svg_blip..];
+    let i = rest.find("r:embed=\"").expect("svg r:embed") + "r:embed=\"".len();
+    let rest = &rest[i..];
+    let svg_rid = &rest[..rest.find('"').expect("end")];
+    let vector = target(&rels, svg_rid).expect("vector target");
+    assert!(vector.ends_with(".svg"), "{vector}");
+    let vector_part = format!("ppt/{}", vector.trim_start_matches("../"));
+    assert!(has(&vector_part), "{vector_part} is in the package");
+    assert!(types.contains("image/png"), "the PNG content type is declared");
+    assert!(types.contains("image/svg+xml"), "the SVG content type is declared");
+
+    // And the package reopens with the vector, not the fallback.
+    let back = deckcraft_pptx::import(&bytes).expect("import");
+    let (ct, data) = picture_media(&back);
+    assert_eq!(ct, "image/svg+xml");
+    assert_eq!(data, SVG);
+}
+
+#[test]
+fn without_a_fallback_an_svg_picture_stays_in_the_blip() {
+    let bytes = deckcraft_pptx::export(&svg_deck()).expect("export");
+    let slide =
+        parts(&bytes).into_iter().find(|(n, _)| n == "ppt/slides/slide1.xml").map(|(_, d)| String::from_utf8_lossy(&d).into_owned()).expect("slide");
+    assert!(!slide.contains("asvg:svgBlip"), "no extension without a raster");
+    let back = deckcraft_pptx::import(&bytes).expect("import");
+    assert_eq!(picture_media(&back).0, "image/svg+xml");
+}
+
 #[test]
 fn without_the_extension_the_raster_fallback_stays() {
     let p = deckcraft_pptx::import(&patched(Vector::None)).expect("import");
