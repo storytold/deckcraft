@@ -140,6 +140,14 @@ impl SlideApp {
         updates_ui::enable(self);
     }
 
+    /// Start the helper of an update that is ready, so that it installs once the process has
+    /// exited. The desktop shell calls it in `on_exit`, which ends the process on macOS before the
+    /// app is dropped. Later calls do nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_pending_update(&mut self) {
+        updates_ui::start_pending_update(self);
+    }
+
     /// A message that must be seen wherever the user is: a toast, which also shows over the start
     /// screen and the File tab, where there is no status bar.
     pub fn notify(&mut self, msg: impl Into<String>) {

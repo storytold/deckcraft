@@ -148,7 +148,19 @@ pub fn rotate(dir: &Path) -> std::io::Result<(PathBuf, File)> {
 /// One formatted log line: `<timestamp> <LEVEL> [<thread>] <target>: <message>\n`.
 pub fn format_line(ts: &str, level: log::Level, thread: &str, target: &str, message: &str) -> String {
     let message = message.strip_suffix('\n').unwrap_or(message);
-    format!("{ts} {level:<5} [{thread}] {target}: {message}\n")
+    // Messages can embed document-controlled text (a part name, a relationship id): control
+    // characters other than tab are escaped and each continuation line is marked, so such text
+    // cannot start a line that looks like a record of its own.
+    let mut text = String::with_capacity(message.len());
+    for c in message.chars() {
+        match c {
+            '\n' => text.push_str("\n    | "),
+            '\t' => text.push(c),
+            c if c.is_control() => text.extend(c.escape_default()),
+            c => text.push(c),
+        }
+    }
+    format!("{ts} {level:<5} [{thread}] {target}: {text}\n")
 }
 
 /// Where formatted lines go besides standard error: kept in memory until a file is attached,
@@ -446,8 +458,13 @@ mod tests {
             ),
             "2026-10-08T07:59:17.728Z WARN  [main] deckcraft_pptx::opc: pptx: skipping oversized part ppt/media/image1.png\n"
         );
-        // A multi-line message keeps its lines; the record still ends in exactly one newline.
-        assert!(format_line("t", log::Level::Error, "w", "x", "a\nb\n").ends_with("x: a\nb\n"));
+        // A multi-line message keeps its lines, each continuation marked; the record still ends in
+        // exactly one newline.
+        assert!(format_line("t", log::Level::Error, "w", "x", "a\nb\n").ends_with("x: a\n    | b\n"));
+        // Injected line breaks and escape sequences cannot forge a record.
+        let line = format_line("t", log::Level::Warn, "w", "x", "part a\r\n2026 ERROR [m] y: forged\x1b[2J");
+        assert_eq!(line.matches('\n').count(), 2);
+        assert!(!line.contains('\r') && !line.contains('\x1b'));
     }
 
     #[test]

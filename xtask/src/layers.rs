@@ -34,21 +34,10 @@ impl Class {
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
-    // Codecs and containers (ported from FilmCraft): L0 standalone leaves, L1 codecs over
-    // `bitstream`, and `media` (probe, decode, playback mixer) at L2.
-    ("bitstream", Class::Standalone),
-    ("matroska", Class::Standalone),
-    ("ogg", Class::Standalone),
-    ("opus", Class::Standalone),
-    ("h264", Class::Layer(1)),
-    ("hevc", Class::Layer(1)),
-    ("vp9", Class::Layer(1)),
-    ("av1", Class::Layer(1)),
-    ("isobmff", Class::Layer(1)),
+    // `media` (probe, decode, playback mixer) at L2. Containers, the Opus decoder and the video
+    // decoders come from craft-libs (craft-media, craft-audio, craft-video).
     ("media", Class::Layer(2)),
     ("color", Class::Layer(0)),
-    // WMF/EMF reader (ported from WordCraft).
-    ("metafile", Class::Layer(0)),
     ("model", Class::Layer(1)),
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),

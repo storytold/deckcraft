@@ -74,6 +74,10 @@ display_name = "Arshiya"
 real_name = "Arshiya Rahgozar"
 sync_github_name = false
 
+[people.adikshan11]
+real_name = "Adithya Shankaran"
+sync_github_name = true
+
 [people.mocenigo]
 real_name = "Roberto Avanzi"
 display_name = "mocenigo"
