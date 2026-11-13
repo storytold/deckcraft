@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-13T13:58Z. Branch: `collab/pr15`.
+Updated: 2026-11-13T15:12Z. Branch: `collab/pr15`.
 
 **This page does not state the delivered head, the CI verdict or what is unpushed.** Those move
 without anyone touching this file, and a header that writes them down is false after the next
@@ -16,8 +16,16 @@ gh pr view 2012 --json headRefOid,mergeable,mergeStateStatus,state,reviewDecisio
 git ls-remote fork refs/heads/collab/pr15
 git rev-parse HEAD; git status --porcelain
 git log --oneline <headRefOid>..HEAD                 # what a further push would carry
-gh run list --commit <headRefOid> --json name,status,conclusion,createdAt
+gh run list --commit <headRefOid> --json databaseId,name,status,conclusion,createdAt,headSha
 ```
+
+**`--commit` takes the full 40-character SHA and nothing shorter.** Checked on
+2026-11-13T15:05Z against a head that has four runs: prefixes of 7, 8, 12, 16, 24, 32 and 39
+characters each printed `[]`, the whole SHA printed the four. An empty answer from a prefix is a
+defect of the reading, not evidence that no run exists; the run's own `headSha` field ties it to the
+commit. `gh api …/commits/<sha>/check-runs` is no substitute either — a run waiting for approval is
+`action_required` in the runs list and never appears as a check run, so "the check-runs list is
+empty" proves nothing about it.
 
 Every hash below is the value of one dated reading, printed with the time it was taken. Dated
 entries are **history**: they record what was true when written, not what is true now. Read them
@@ -34,10 +42,20 @@ headRefOid,mergeable,mergeStateStatus,state,updatedAt` printed
 `3095c6fedde3761fde48c3bb6ac46a8104ded0b8` / `MERGEABLE` / `UNSTABLE` / `OPEN` /
 `2026-11-13T13:20:06Z`; `git ls-remote fork refs/heads/collab/pr15` named the same commit, the
 local branch held it plus one docs commit (`7e569096`, `git log --oneline 3095c6fe..HEAD`) and the
-tree was clean. `gh run list --commit 3095c6fe --json name,status,conclusion,createdAt` printed
-`[]` at 13:52Z — **no workflow run exists for that head at all**, not even an unapproved one — and
-the rollup of #2012 holds only CodeRabbit `COMPLETED / SKIPPED` (13:20:54Z), so the `UNSTABLE`
-verdict is the absence of every job. That head is `3095c6fe` — "fix(collab): the lock names the
+tree was clean. **The run line of that 13:52Z reading was wrong and is corrected here.** It was
+taken with the eight-character prefix (`gh run list --commit 3095c6fe`), and a prefix prints `[]`
+for a head that has runs (see the command block above): **four workflow runs exist for
+`3095c6fedde3761fde48c3bb6ac46a8104ded0b8`.** Measured again at 2026-11-13T15:04:53Z,
+`gh run list --repo storytold/deckcraft --commit 3095c6fedde3761fde48c3bb6ac46a8104ded0b8 --json
+databaseId,name,status,conclusion,createdAt,headSha` printed CI `43432922003`, House rules
+`43432921895`, Nix `43432922038` (created 13:21:13Z) and SonarCloud `43432922089` (13:21:14Z), all
+`completed / action_required` with `startedAt` equal to `createdAt` and `headSha` equal to that
+commit — created before the 13:52Z measurement, not after it. None executed a job, so the
+`UNSTABLE` verdict is **the missing approval, not the absence of runs**: the rollup of #2012 holds
+only CodeRabbit `COMPLETED / SKIPPED` (13:20:54Z) because an `action_required` run never becomes a
+check run. That approve has to be given on `3095c6fe` itself; the runs of the 09:41Z head
+`e4ef9128` are not these and their approval does not carry. That head is `3095c6fe` —
+"fix(collab): the lock names the
 0.18.1 collab crates", four `version` fields in `Cargo.lock` (`deckcraft-collab`,
 `-collab-proto`, `-collab-server` and `-collab-web`) from `0.18.0` to `0.18.1`, nothing else —
 pushed at 13:18–13:20Z by the repository's Cargo.lock sweep, **not by a session of this project**,
@@ -71,11 +89,13 @@ three heads was CodeRabbit `completed / success` on `5b67339e` (started 09:41:39
 updated #1998 at 09:48:07Z). An approval covers the runs of the commit it was given on, so an
 approve has to be made against whatever head #2012 reports at that moment; an approval given to an
 earlier head does not carry over.
-**This STATUS edit is local at 13:58Z**: two docs commits above `3095c6fe`, the head the fork
-held at 13:20Z — `7e569096` (the header stops naming a head and records the 09:41Z merges as
-history) and this one — on `collab/pr15`, neither pushed. They travel with the next legitimate
-push, so the delivered head stays where the fork holds it until then, and `git log --oneline
-<headRefOid>..HEAD` is what such a push would carry.
+**The local branch is ahead of the delivered head by docs commits only, and none is pushed.** At
+2026-11-13T15:04:20Z `git rev-parse HEAD` printed `2165cd3f` — two docs commits above `3095c6fe`,
+the head the fork held at 13:20Z and still holds: `7e569096` (the header stops naming a head and
+records the 09:41Z merges as history) and `2165cd3f` (the lock fix is the head and its gate is
+green) — with a clean tree. This STATUS edit adds one more docs commit on top. `git log --oneline
+<headRefOid>..HEAD` names exactly those and is what a further push would carry, so the delivered
+head stays where the fork holds it until a person pushes.
 **The push of 2026-11-12T17:09Z delivered the seven commits that waited above the previous
 delivered head `ceeada59`** — the four code/docs commits the earlier header listed as unpushed,
 plus the three docs commits on top of them: `f1d1cd6a` (a room that answers *below* the version a
@@ -145,10 +165,15 @@ so the PR head lags the local branch by one docs commit again until a person pus
 five local commits are unpushed: `bc16494a` (docs), `51643c59` (code, §A composition is settled
 before anything leaves the client), `95b5feef` (docs, that slice), `b314feef` (code, §A — an input
 method's deletion outside a composition is one `text.delete`) and this STATUS commit.
-**No workflow run exists for `5a105c61` or `aaecc6db`** (`gh run list --commit` returns
-nothing for either), so the rollup on the delivered head carries no executed job and
-`mergeStateStatus` is `UNSTABLE` for that reason alone. These statements are tied to that
-timestamp: any later push moves the delivered head, and the live value is
+**That paragraph's run sentence was a prefix defect and is corrected here (2026-11-13T15:07Z).** It
+claimed no run exists for `5a105c61` or `aaecc6db`; measured with the full SHA, `gh run list --repo
+storytold/deckcraft --commit 5a105c61a48d1484d8693332f54e42f95112f759 --json
+databaseId,name,conclusion,createdAt` prints four runs created 2026-11-12T03:13:46Z — CI
+`43146768799`, House rules `43146768740`, Nix `43146768817`, SonarCloud `43146768741` — all
+`completed / action_required`; `--commit aaecc6db205766ab22e749adcd7e1b216e7028ce` prints `[]`, so
+that half stands. Either way no job executed, so the rollup on the delivered head carried no
+executed job and `mergeStateStatus` was `UNSTABLE` for the missing approval. These statements are
+tied to that timestamp: any later push moves the delivered head, and the live value is
 `gh pr view 2012 --json headRefOid`.
 **The delivered head has moved since that timestamp: `ebbecf08`** — the merge of `origin/main`
 onto `collab/pr15` (the video-decode drop from main), pushed at 2026-11-12T05:28:24Z. At 05:44Z
@@ -181,7 +206,9 @@ and the commit adds 7 files, +498/−116. `7f93069e` — the connector-glue comm
 named — is a dangling commit with the same subject as `2bbe723f` and is **not** in the branch. GitHub's
 workflow runs on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
 `completed / action_required`; no later head has been approved for a run either — `gh run list
---commit 5a105c61` and `--commit aaecc6db` are empty — so the rollup carries no executed job. The
+--commit 5a105c61` and `--commit aaecc6db` printed `[]` with the eight-character prefix, and the
+full SHA shows four `action_required` runs on `5a105c61` (correction above, 2026-11-13T15:07Z) —
+so either way no job executed and the rollup carries no executed job. The
 local TASK.md §8 gate on `fd5914e8` **did** run on
 the build host and is green: `cargo fmt --all -- --check` clean, `cargo clippy -p
 deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D warnings` clean, `cargo test -p
@@ -535,7 +562,9 @@ commit resolved the earlier `CONFLICTING` / `DIRTY` verdict, and no conflict has
 since.
 
 The **workflow gate has not run on any of these heads**, including the delivered one: `gh run list
---commit 5a105c61` and `--commit aaecc6db` are both empty, the four workflow runs (CI, House rules,
+--commit 5a105c61` and `--commit aaecc6db` printed `[]` with the eight-character prefix (the full
+SHA shows four `action_required` runs on `5a105c61` — correction above, 2026-11-13T15:07Z), the four
+workflow runs (CI, House rules,
 Nix, SonarCloud) on `38a20a9c` were created 2026-11-11T11:31:32Z and are all
 `completed / action_required` — they wait for a maintainer's approval and executed no job — and the
 runs for the later heads wait for the same approval. The combined status for `38a20a9c` is empty
@@ -1592,7 +1621,7 @@ unchanged.
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`); optimistic preview is a second opt-in on top (`DECKCRAFT_COLLAB_PREVIEW`, one operation at a time) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint remains external (CORS is in the server, `DECKCRAFT_CORS_ORIGINS`) | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, delivered head `5a105c61` = docs on code `aaecc6db` = the fork head = the PR head = the local branch head at 2026-11-12T03:13:50Z), rebased onto `origin/main` and merged with it; every review pass, the STATUS sync, the presence heartbeat and the op_id slice are delivered; no workflow run exists on `5a105c61`/`aaecc6db`, and the four runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), so approval is the human step; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` (the delivered head has moved several times since that reading — it is the head of #2012, read it with `gh pr view 2012 --json headRefOid`; the header carries the dated reading) | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
+| PR in `storytold/deckcraft` | ✅ open and **ready** as [#2012](https://github.com/storytold/deckcraft/pull/2012) from the fork (`copoka/deckcraft:collab/pr15`, delivered head `5a105c61` = docs on code `aaecc6db` = the fork head = the PR head = the local branch head at 2026-11-12T03:13:50Z), rebased onto `origin/main` and merged with it; every review pass, the STATUS sync, the presence heartbeat and the op_id slice are delivered; the four runs created on `5a105c61` (2026-11-12T03:13:46Z) are `action_required` and `aaecc6db` has none — read with the full 40-character SHA on 2026-11-13T15:07Z — and the four runs on `38a20a9c` are `action_required` (created 11:31:32Z, awaiting approval, nothing executed), so approval is the human step; the second review's five findings are closed, the third review found nothing in code, the fourth review's four Major and one Minor are delivered in `9ad80547` and the fifth's five in `891187f5` (the delivered head has moved several times since that reading — it is the head of #2012, read it with `gh pr view 2012 --json headRefOid`; the header carries the dated reading) | [`pr10.md`](pr10.md); merge is a human decision; #1998/#1975 are superseded and closed by a person, not by this project |
 
 Re-run on 2026-11-10 after the CodeRabbit review pass on #2012 (`5b6fcfcd`, the code commit of the
 pass pushed as `9b43c611a`, on
@@ -1927,7 +1956,11 @@ token from the cabinet.
    pushed are `completed / action_required` with `startedAt` equal to the creation time, so no job
    started, the `UNSTABLE` verdict is the missing approval and not a red job, and the only
    executed check on those heads is CodeRabbit's (which shows on the pull request rather than in
-   the rollup). **What is left is an approve, then review and merge — no push**: a person
+   the rollup). Read them with the **full** 40-character `headRefOid`, never a prefix: a prefix
+   prints `[]` for a head that has runs (verified 2026-11-13T15:05Z for every length 7–39), and the
+   run's `headSha` field ties it to the commit. The head read at 2026-11-13T15:04Z carries four such
+   runs — CI `43432922003`, House rules `43432921895`, Nix `43432922038`, SonarCloud `43432922089`,
+   created 13:21:13–14Z. **What is left is an approve, then review and merge — no push**: a person
    approves the runs of whatever head #2012 reports, and the maintainer takes #2012. An approval
    given to an earlier head's runs does not move to a new head, so it has to be given against the
    head the pull request reports at that moment.
@@ -2238,7 +2271,39 @@ compose command, so the room never receives `한`.
 
 ## Session log
 
-### 2026-11-13 — the head changed to the lock fix `3095c6fe`; its gate is green, no run exists for it
+### 2026-11-13 — the `--commit` prefix defect: `3095c6fe` has had four runs since 13:21Z
+
+- **Measured at 2026-11-13T15:04:20Z.** `gh pr view 2012 --json
+  headRefOid,mergeable,mergeStateStatus,state,updatedAt` printed
+  `3095c6fedde3761fde48c3bb6ac46a8104ded0b8`, `MERGEABLE`, `UNSTABLE`, `OPEN`,
+  `2026-11-13T13:20:06Z`; `git ls-remote fork refs/heads/collab/pr15` named the same commit;
+  `git rev-parse HEAD` printed `2165cd3f`, `git log --oneline 3095c6fe..HEAD` named `7e569096` and
+  `2165cd3f`, and `git status --porcelain` was empty. The head has not moved since 13:20Z.
+- **Corrected: four workflow runs have existed on it since 13:21Z.** Full-SHA `gh run list --repo
+  storytold/deckcraft --commit 3095c6fedde3761fde48c3bb6ac46a8104ded0b8 --json
+  databaseId,name,status,conclusion,createdAt,headSha` at 15:04:53Z returned CI `43432922003`,
+  House rules `43432921895`, Nix `43432922038` (created 13:21:13Z) and SonarCloud `43432922089`
+  (13:21:14Z) — all `completed / action_required`, `startedAt` equal to `createdAt`, `headSha` equal
+  to the head. The `[]` recorded at 13:52Z, and in the lock-fix entry below, came from `--commit
+  3095c6fe`: prefixes of 7, 8, 12, 16, 24, 32 and 39 characters all print `[]` (checked at 15:05Z),
+  only the full 40 print the runs. The same defect withdrew the older "no run exists" sentences
+  about `5a105c61`, which has four runs created 2026-11-12T03:13:46Z (CI `43146768799`, House rules
+  `43146768740`, Nix `43146768817`, SonarCloud `43146768741`, all `action_required`); `aaecc6db`
+  really has none, re-checked with its full SHA `aaecc6db205766ab22e749adcd7e1b216e7028ce`.
+- **What this changes.** The `UNSTABLE` verdict is the missing approval, not an absent run, and the
+  approve has to be given on `3095c6fe` itself: the four runs of the 09:41Z head `e4ef9128` are not
+  these, and an approval does not carry from one head to another. Nothing was pushed, the head was
+  not moved, no code was touched, and no run was started, approved or re-run; #1998 / #1975 stay
+  open for a person to close.
+- **What changed here.** The header's command block (full-SHA `--commit` plus `headSha`, and why an
+  empty check-runs list proves nothing) and the 13:52Z reading; the paragraph about what the local
+  branch carries above the delivered head; the lock-fix entry below (its heading, its run bullet and
+  its "what is left"); the run paragraph of §Next session; and the historical places that repeated
+  the same absence claim (`5a105c61`/`aaecc6db` in the delivered-head history, the workflow-gate
+  paragraph of §PR publication, the status table row, and one sentence of §Session log). Docs only;
+  the §8 gate was not re-run — it was green on this head at 13:55Z and the head has not moved.
+
+### 2026-11-13 — the head changed to the lock fix `3095c6fe`; its gate is green and its four runs wait for an approve
 
 - **Measured at 2026-11-13T13:52Z (UTC).** `gh pr view 2012 --json
   headRefOid,mergeable,mergeStateStatus,state,reviewDecision,updatedAt` printed
@@ -2246,9 +2311,21 @@ compose command, so the room never receives `한`.
   empty, `updatedAt` `2026-11-13T13:20:06Z`; `git ls-remote fork refs/heads/collab/pr15` named the
   same commit; `git rev-parse HEAD` printed `7e569096` and `git log --oneline 3095c6fe..HEAD` held
   that one docs commit ("Stop naming a head in STATUS; record the 09:41Z merges as history"), tree
-  clean (`git status --porcelain` empty). `gh run list --commit 3095c6fe --json
-  name,status,conclusion,createdAt` printed `[]` — **no workflow run exists for the head**, and the
-  rollup of #2012 holds only CodeRabbit `COMPLETED / SKIPPED` (13:20:54Z).
+  clean (`git status --porcelain` empty). The run line of that bullet was taken with the
+  eight-character prefix and is **corrected in the next bullet**.
+- **Corrected at 2026-11-13T15:04:53Z.** `gh run list --repo storytold/deckcraft --commit
+  3095c6fedde3761fde48c3bb6ac46a8104ded0b8 --json
+  databaseId,name,status,conclusion,createdAt,headSha` printed **four** runs, not `[]`: CI
+  `43432922003`, House rules `43432921895`, Nix `43432922038` (created 2026-11-13T13:21:13Z) and
+  SonarCloud `43432922089` (13:21:14Z), each `completed / action_required`, `startedAt` equal to
+  `createdAt`, `headSha` `3095c6fedde3761fde48c3bb6ac46a8104ded0b8`. They were created 30 minutes
+  before the 13:52Z reading, so that reading did not miss them in time — it missed them in the
+  command: `--commit 3095c6fe` is a prefix, and prefixes of 7, 8, 12, 16, 24, 32 and 39 characters
+  all print `[]` (checked at 15:05Z); only all 40 answer. No run executed a job, and the rollup of
+  #2012 holds only CodeRabbit `COMPLETED / SKIPPED` (13:20:54Z), because an `action_required` run
+  never becomes a check run. **The `UNSTABLE` verdict is the missing approval, not the absence of
+  runs** — and the approve has to be given **on this head**: the four runs of `e4ef9128` (09:41Z)
+  are not these, and an approval does not carry from one head to another.
 - **What the head is.** `3095c6fe` — "fix(collab): the lock names the 0.18.1 collab crates",
   committed 13:18:44Z and pushed by the repository-wide Cargo.lock sweep at 13:18–13:20Z, not by a
   session of this project (the last deckcraft session closed at 10:34Z). Its whole diff is four
@@ -2273,8 +2350,9 @@ compose command, so the room never receives `한`.
 - **What is left, and what is not.** Nothing is left on this project's side for the head
   `3095c6fe`: the gate is green, the tree is clean, and the branch is pushed except for docs
   commits, which a person may push or let travel with the next legitimate push (§PR publication).
-  The remaining items are human: an approve of the runs #2012 reports **at that moment** (there are
-  none for this head yet — an approve also creates them), the maintainer's review and merge, and,
+  The remaining items are human: an approve of the runs #2012 reports **at that moment** (four of
+  them have sat on this head since 13:21Z as `action_required` — an approval executes them; it does
+  not have to create them), the maintainer's review and merge, and,
   if the maintainer wants it, closing #1998 / #1975. No push was made from this session and no CI
   file was touched.
 - **What changed here.** This entry and the header reading above; the §Next session gate paragraph
@@ -2647,7 +2725,9 @@ compose command, so the room never receives `한`.
   statement in the header, §PR publication, the PR table, the coverage table and item 2 of the next
   session is tied to that timestamp, with the live value pointed at
   `gh pr view 2012 --json headRefOid`. `gh run list --commit 5a105c61` and `--commit aaecc6db` are
-  both empty: no workflow has run on the delivered head.
+  both empty with the eight-character prefix: no workflow has executed on the delivered head — and
+  on the full SHA `5a105c61` holds four `action_required` runs (correction at 2026-11-13T15:07Z
+  above), while `aaecc6db` really holds none.
 - **Gate, re-run on the branch head (`5a105c61` / code `aaecc6db`, host `agents`).**
   `cargo fmt --all -- --check` clean; `cargo clippy -p deckcraft-collab -p deckcraft-collab-server
   --all-targets -- -D warnings` EXIT=0; `cargo test -p deckcraft-collab -p deckcraft-collab-server`
