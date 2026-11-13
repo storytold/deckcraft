@@ -38,7 +38,8 @@ fn font_combo(ui: &mut Ui, label: &str, choices: &[String], selected: &mut Strin
         }
     });
     let shown = selected.clone();
-    let access = label.to_string();
+    // The combo box's id stays the English label, so switching languages keeps its state.
+    let access = tl!(label).to_string();
     resp.response.widget_info(move || {
         let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, access.clone());
         info.current_text_value = Some(shown.clone());
@@ -93,7 +94,7 @@ pub(super) fn theme_fonts_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
         let resp = ui.add(egui::TextEdit::singleline(&mut name).desired_width(240.0).id_salt("schemeName"));
         let shown = name.clone();
         resp.widget_info(move || {
-            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Scheme name");
+            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, tl!("Scheme name"));
             info.current_text_value = Some(shown.clone());
             info
         });

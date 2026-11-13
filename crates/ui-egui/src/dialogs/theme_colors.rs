@@ -19,7 +19,7 @@ fn theme_color_row(ui: &mut Ui, d: &mut Dialog, slot: SchemeSlot) {
     let key = slot.xml_name();
     let mut v = d.get(key, "000000");
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(188.0, 18.0), egui::Label::new(slot.label()));
+        ui.add_sized(vec2(188.0, 18.0), egui::Label::new(tl!(slot.label())));
         let fill = deckcraft_color::Rgba::from_hex(&v).map(theme::to_color32).unwrap_or_else(|| Color32::from_gray(200));
         let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
         ui.painter().rect(rect, CornerRadius::same(2), fill, Stroke::new(1.0, Tokens::get(ui.ctx()).border), egui::StrokeKind::Inside);

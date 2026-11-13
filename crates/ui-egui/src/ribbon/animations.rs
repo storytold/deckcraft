@@ -164,7 +164,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                     deckcraft_model::AnimStart::WithPrevious => "With Previous",
                     deckcraft_model::AnimStart::AfterPrevious => "After Previous",
                 });
-                dropdown(ui, "Start", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
+                dropdown(ui, tl!("Start"), tl!(s.unwrap_or("")), 112.0, cur.is_some(), |ui| {
                     for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
                         if ui.button(tl!(l)).clicked() {
                             run(app, "animation.timing", json!({"start": v}));

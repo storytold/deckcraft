@@ -23,6 +23,9 @@ const DE: &str = "@id\tlanguage.name\tDeutsch
 \tThis Document\tDieses Dokument
 \tFind Next\tWeitersuchen
 \t▶ Play From\t▶ Wiedergabe ab hier
+\tCap type\tAbschlusstyp
+\tFlat\tFlach
+\tRound\tRund
 \tDeckCraft can't find “{text}”.\tDeckCraft findet „{text}“ nicht.
 \tMatch {n} of {total} on slide {slide}.\tTreffer {n} von {total} auf Folie {slide}.
 @plural\t{n} Column|{n} Columns\t{n} Spalte|{n} Spalten
@@ -133,4 +136,28 @@ fn pane_buttons_are_drawn_in_the_interface_language() {
     h.run_steps(3);
     assert!(h.query_by_label("▶ Play From").is_none());
     assert!(h.query_by_label("▶ Wiedergabe ab hier").is_some());
+}
+
+/// A Format Shape drop-down shows its choices in the interface language, closed and open, and
+/// picking a translated one runs the command with the English value.
+#[test]
+fn format_shape_choices_are_translated_when_the_list_is_open() {
+    use_fixture("de", DE);
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 40, 120, 80]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("format".into());
+    app.ui.format_tab = "fill".into();
+    let mut h = harness(app);
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Abschlusstyp").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Round").is_none(), "the open list shows the translated choices");
+    h.get_by_label("Rund").click();
+    h.run_steps(3);
+    let cap = h.state().session.active().and_then(|d| d.shapes().iter().find(|s| u64::from(s.id.0) == id).and_then(|s| s.line.as_ref()?.cap));
+    assert_eq!(cap, Some(deckcraft_model::style::LineCap::Round), "the command got the English value");
 }

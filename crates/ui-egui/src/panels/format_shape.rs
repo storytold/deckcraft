@@ -491,11 +491,11 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
 /// `shape.line` with `{key: value}`.
 fn line_choice(app: &mut SlideApp, ui: &mut Ui, label: &str, key: &str, current: &str, items: &[(&str, &str)]) {
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
         let shown = items.iter().find(|(_, v)| *v == current).map_or(current, |(l, _)| *l);
         let combo = craft_ui::ComboBox::from_id_salt(("fmt-line", key)).selected_text(tl!(shown)).width(120.0).show_ui(ui, |ui| {
             for (l, v) in items {
-                if ui.selectable_label(*v == current, *l).clicked() {
+                if ui.selectable_label(*v == current, tl!(l)).clicked() {
                     run(app, "shape.line", json!({key: v}));
                 }
             }
@@ -651,11 +651,11 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
             let mirrors = [("none", "None"), ("x", "Horizontal"), ("y", "Vertical"), ("xy", "Both")];
             for (label, key, opts, cur) in [("Alignment", "align", &aligns[..], align), ("Mirror type", "mirror", &mirrors[..], flip)] {
                 ui.horizontal(|ui| {
-                    let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+                    let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
                     let shown = opts.iter().find(|(k, _)| k == cur).map_or(opts[0].1, |(_, l)| *l);
                     let combo = craft_ui::ComboBox::from_id_salt(("picfill", id, key)).selected_text(tl!(shown)).show_ui(ui, |ui| {
                         for (k, l) in opts {
-                            if ui.selectable_label(*k == cur.as_str(), *l).clicked() {
+                            if ui.selectable_label(*k == cur.as_str(), tl!(l)).clicked() {
                                 run(app, "shape.fill", json!({"pictureProps": {key: k}}));
                             }
                         }
