@@ -272,7 +272,12 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 });
                 let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
-                egui::ScrollArea::vertical().show(&mut child, |ui| {
+                // A new slide's notes open at the top; on the same slide the presenter keeps
+                // their place (#2037).
+                let fresh = show.notes_slide != Some(cur);
+                show.notes_slide = Some(cur);
+                let notes_area = if fresh { egui::ScrollArea::vertical().vertical_scroll_offset(0.0) } else { egui::ScrollArea::vertical() };
+                notes_area.show(&mut child, |ui| {
                     presenter_notes(ui, notes, show.notes_px);
                 });
             });
