@@ -303,7 +303,8 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.close("p:nvPicPr");
             dml::blip_fill(w, x, o, "p:blipFill", fill);
             let mut s2 = s.clone();
-            if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+            // Group fill is a separate backing behind transparent image pixels.
+            if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background)) {
                 s2.fill = None;
             }
             sp_pr(w, x, o, &s2, true);
@@ -940,7 +941,7 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
         // As for any picture, a colour or pattern fill shows behind the image (an object's preview
         // keeps its fallback picture's fill).
         let mut s2 = s.clone();
-        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background)) {
             s2.fill = None;
         }
         sp_pr(w, x, o, &s2, true);
