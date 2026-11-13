@@ -312,8 +312,14 @@ impl Session {
                 let origs: Vec<(ShapeId, Xfrm)> =
                     ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
                 let ids: Vec<ShapeId> = origs.iter().map(|(id, _)| *id).collect();
+                let parent = cmd::parent_transform(st, id);
+                let determinant = parent.determinant();
+                // A collapsed parent has no unique slide-to-child mapping for this handle.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 self.begin("Size");
-                let start = cmd::parent_transform(self.doc()?, id).inverse() * p;
+                let start = parent.inverse() * p;
                 self.tool.drag = Some(Drag::Resize { id, orig, ids, handle, origs, start });
             }
             Some(Hit::LineEnd { id, end }) => {

@@ -1772,6 +1772,105 @@ fn rotation_shift_snap_is_independent_of_selection_order() {
     }
 }
 
+fn check_grouped_box_drag_collapsed_parent(resize: bool) {
+    use deckcraft_geom::{Point, Vec2};
+    for nested in [false, true] {
+        for (w, h) in [(0.0, 120.0), (200.0, 0.0), (0.0, 0.0)] {
+            for duplicate in [false, true] {
+                let (mut s, id) = grouped_snap_scene(2.0, true, nested);
+                s.prefs.smart_guides = false;
+                let group = s.doc().unwrap().shapes().last().unwrap().id;
+                s.execute("shape.setBounds", &json!({"ids":[group], "w":w, "h":h})).unwrap();
+                let other =
+                    ShapeId(s.execute("shape.insert", &json!({"preset":"rect", "rect":[700,400,100,80]})).unwrap()["id"].as_u64().unwrap() as u32);
+                s.execute("edit.select", &json!({"ids":if resize { vec![id] } else { vec![id, other] }})).unwrap();
+                let st = s.doc().unwrap();
+                let original = st.doc.clone();
+                let sh = st.shape(id).unwrap();
+                let parent = cmd::parent_transform(st, id);
+                assert_eq!(parent.determinant(), 0.0);
+                let at = if resize { parent * tools::box_handles(&sh.xfrm.unwrap()).0[0] } else { Point::new(750.0, 440.0) };
+                let target = at + Vec2::new(25.0, 35.0);
+                let ev = |kind, p: Point| PointerEvent {
+                    kind,
+                    x: p.x,
+                    y: p.y,
+                    tol: 1.0,
+                    mods: Mods { alt: duplicate, ..Default::default() },
+                    ..Default::default()
+                };
+                if resize {
+                    let hit = s.hit_test(at, 1.0);
+                    if w == 0.0 && h == 0.0 {
+                        // All handles coincide; the existing rotation handle takes precedence.
+                        assert!(matches!(hit, Some(tools::Hit::Rotate { id: hit }) if hit==id));
+                    } else {
+                        assert!(matches!(hit, Some(tools::Hit::Resize { id: hit, .. }) if hit==id));
+                    }
+                }
+                s.pointer(ev(PointerKind::Down, at)).unwrap();
+                s.pointer(ev(PointerKind::Drag, target)).unwrap();
+                assert_eq!(s.doc().unwrap().doc, original, "after Drag: {w},{h}, nested={nested}, resize={resize}, duplicate={duplicate}");
+                s.pointer(ev(PointerKind::Up, target)).unwrap();
+                assert_eq!(s.doc().unwrap().doc, original, "after Up: collapsed drag is a no-op");
+                let st = s.doc().unwrap();
+                let bytes = cmd::file::save_bytes(&st.doc, "deckcraft").unwrap();
+                let back = deckcraft_format::load(&bytes).unwrap();
+                assert_eq!(back.slides[st.selection.slide].shapes, original.slides[st.selection.slide].shapes);
+            }
+        }
+    }
+}
+
+/// Resizing a child of a collapsed parent must preserve its model and native save.
+#[test]
+fn grouped_resize_ignores_collapsed_parent() {
+    check_grouped_box_drag_collapsed_parent(true);
+}
+
+/// A mixed selection containing a collapsed member must not move or duplicate shapes.
+#[test]
+fn grouped_move_ignores_collapsed_parent() {
+    check_grouped_box_drag_collapsed_parent(false);
+}
+
+/// Tiny invertible parents still admit box gestures, and undo restores both member and parent.
+#[test]
+fn grouped_box_drags_preserve_invertible_behavior() {
+    use deckcraft_geom::{Point, Vec2};
+    for nested in [false, true] {
+        for (w, h) in [(200.0, 120.0), (1e-6, 8e-7)] {
+            for resize in [true, false] {
+                let (mut s, id) = grouped_snap_scene(2.0, true, nested);
+                s.prefs.smart_guides = false;
+                let group = s.doc().unwrap().shapes().last().unwrap().id;
+                s.execute("shape.setBounds", &json!({"ids":[group], "w":w, "h":h})).unwrap();
+                let other =
+                    ShapeId(s.execute("shape.insert", &json!({"preset":"rect", "rect":[700,400,100,80]})).unwrap()["id"].as_u64().unwrap() as u32);
+                s.execute("edit.select", &json!({"ids":if resize { vec![id] } else { vec![id,other] }})).unwrap();
+                let st = s.doc().unwrap();
+                let before = st.doc.clone();
+                let original = st.shape(id).unwrap().xfrm.unwrap();
+                let parent = cmd::parent_transform(st, id);
+                assert_ne!(parent.determinant(), 0.0);
+                let local = tools::box_handles(&original).0[0];
+                let at = if resize { parent * local } else { Point::new(750.0, 440.0) };
+                let target = if resize { parent * (local + Vec2::new(-20.0, -15.0)) } else { at + Vec2::new(25.0, 35.0) };
+                let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1e-12, ..Default::default() };
+                s.pointer(ev(PointerKind::Down, at)).unwrap();
+                s.pointer(ev(PointerKind::Drag, target)).unwrap();
+                s.pointer(ev(PointerKind::Up, target)).unwrap();
+                let st = s.doc().unwrap();
+                let changed = st.shape(id).unwrap().xfrm.unwrap();
+                assert!([changed.x, changed.y, changed.w, changed.h, changed.rot].iter().all(|v| v.is_finite()));
+                assert_ne!(changed, original, "normal/tiny parent must still allow {resize} gestures");
+                s.execute("edit.undo", &json!({})).unwrap();
+                assert_eq!(s.doc().unwrap().doc, before);
+            }
+        }
+    }
+}
+
 /// A selected callout inside the same transformed/nested fixture used for grouped text.
 fn grouped_callout_adjust_fixture(w: f64, h: f64, nested: bool) -> (Session, ShapeId) {
     use deckcraft_geom::Xfrm;

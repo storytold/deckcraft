@@ -36,6 +36,11 @@ impl Session {
             }
             Drag::Resize { id, orig, ids, handle, origs, start } => {
                 let parent = cmd::parent_transform(self.doc()?, id);
+                let determinant = parent.determinant();
+                // Refitting can collapse a group during a resize; do not invert it on the next sample.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 let local = parent.inverse() * p;
                 let keep_aspect = mods.shift || self.is_picture(id);
                 let nx = resize_box(&orig, handle, local - start, keep_aspect, mods.alt);
@@ -254,6 +259,16 @@ impl Session {
         let MoveDrag { ids, start, origs, moved, duplicate, enter_text } = drag;
         let mut d = p - start;
         if !moved && (d.hypot() < tol.max(1.0) || origs.is_empty()) {
+            return Ok(Value::Null);
+        }
+        let st = self.doc()?;
+        // Keep the entire selection unchanged when any member lacks a unique parent inverse,
+        // before Alt-drag can duplicate it or a partial move can alter the other members.
+        if origs.iter().any(|(id, _)| {
+            let parent = cmd::parent_transform(st, *id);
+            let determinant = parent.determinant();
+            determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite()
+        }) {
             return Ok(Value::Null);
         }
         if !moved {
