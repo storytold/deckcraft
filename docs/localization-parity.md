@@ -10,7 +10,9 @@ the commit in `craft-i18n.rev`, and a build without it is English only. The inte
 system language (#15), or Preferences › Interface language and `app.language` (`auto`, `en`,
 `de`). Command ids, engine labels returned to scripts, the control channel, the CLI and MCP stay
 English. The status bar looks its message up as it draws it (#2110): the UI's own messages and
-the engine's fixed ones follow the interface language. Still English: slide placeholder prompts
+the engine's fixed ones follow the interface language, and switch with it while they show. A
+message filled in with a name or a count (`Saved {name}`) is translated when it is made and keeps
+that language for the six seconds it shows. Still English: slide placeholder prompts
 (drawn by the renderer), engine messages with variable parts (they need `@msg` template matching,
 which the `craft-i18n` crate doesn't have yet), the native macOS menu bar and some dialog choice lists. Other requests: #30 and PR #34
 (Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as
