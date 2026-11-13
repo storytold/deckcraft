@@ -110,8 +110,9 @@ render, and import takes `a:extLst/…/asvg:svgBlip` over the PNG fallback
 `a:blip/@r:embed`; PowerPoint keeps the vector in the `asvg` extension and a PNG in `r:embed`, and
 older readers draw only that fallback.
 - **Impact:** an SVG inserted here may show blank in readers that expect the fallback. Text,
-filters, masks, clip paths and patterns inside an SVG aren't read, and a gradient fill is drawn as
-the average of its stops.
+filters, masks, clip paths and patterns inside an SVG aren't read, a gradient fill is drawn as
+the average of its stops, and a group's opacity applies to each shape in it rather than to the
+composited group.
 - **Estimate:** 2–4 h (rasterize once at export, write the PNG part plus the `asvg` extension).
 
 ### Macro-enabled variants aren't recognized

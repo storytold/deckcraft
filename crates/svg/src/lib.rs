@@ -5,6 +5,10 @@
 //! masks, clip paths, patterns, animation and scripting are skipped. Gradients become the average
 //! of their stops (a `shortcut:` the renderer can replace with real gradients).
 //!
+//! `display: none` hides a subtree and `visibility: hidden` one shape. An ancestor's `opacity`
+//! multiplies each shape it paints rather than compositing the group once, so overlapping shapes
+//! in a translucent group show their overlap (a `shortcut:` for real group compositing).
+//!
 //! Geometry stays in the document's user units (the `viewBox` space); [`Svg::size`] is the size the
 //! picture asks for in 96-dpi pixels, which is where the renderer maps the geometry.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -24,6 +28,14 @@ use kurbo::{Affine, BezPath, Point, Shape as _};
 pub const MAX_ITEMS: usize = 100_000;
 /// Largest document read.
 const MAX_BYTES: usize = 64 << 20;
+/// Most path segments kept per picture, across all shapes.
+const MAX_SEGMENTS_TOTAL: usize = 2_000_000;
+/// Most elements visited, which also bounds a reference graph that paints nothing.
+const MAX_VISITS: usize = 500_000;
+/// Most stops read from one gradient.
+const MAX_STOPS: usize = 64;
+/// Largest coordinate or radius taken from a shape (a bigger one would only tessellate absurdly).
+const MAX_COORD: f64 = 1e5;
 /// Most segments one path may hold.
 const MAX_SEGMENTS: usize = 50_000;
 /// Deepest `use` chain followed.
@@ -68,12 +80,25 @@ pub struct Item {
     pub stroke: Option<(Rgba, kurbo::Stroke)>,
 }
 
-/// Does `bytes` look like an SVG picture?
+/// Does `bytes` look like an SVG picture? The root may carry a namespace prefix (`<s:svg>`).
 pub fn is_svg(bytes: &[u8]) -> bool {
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
     let head = bytes.get(..bytes.len().min(4096)).unwrap_or(bytes);
     let first = head.iter().find(|b| !b.is_ascii_whitespace()).copied().unwrap_or(0);
-    first == b'<' && head.windows(4).any(|w| w.eq_ignore_ascii_case(b"<svg"))
+    first == b'<' && root_is_svg(head)
+}
+
+/// Any start tag in `head` whose local name is `svg`.
+fn root_is_svg(head: &[u8]) -> bool {
+    let name_at = |i: usize| -> &[u8] {
+        let rest = head.get(i + 1..).unwrap_or(&[]);
+        let end = rest.iter().position(|b| !(b.is_ascii_alphanumeric() || matches!(b, b':' | b'-' | b'_'))).unwrap_or(rest.len());
+        rest.get(..end).unwrap_or(&[])
+    };
+    head.iter().enumerate().filter(|(_, b)| **b == b'<').any(|(i, _)| {
+        let name = name_at(i);
+        name.rsplit(|b| *b == b':').next().unwrap_or(name).eq_ignore_ascii_case(b"svg")
+    })
 }
 
 /// Read a picture. `None` when the document is not XML, not an `svg` root, or too large.
@@ -85,16 +110,11 @@ pub fn parse(bytes: &[u8]) -> Option<Svg> {
     if root.name != "svg" {
         return None;
     }
-    let view_box = root
-        .attr("viewBox")
-        .or_else(|| root.attr("viewbox"))
-        .map(attr::numbers)
-        .filter(|v| v.len() == 4 && v[2] > 0.0 && v[3] > 0.0)
-        .map(|v| [v[0], v[1], v[2], v[3]]);
+    let view_box = view_box_of(&root);
     let size = root_size(&root, view_box);
     let mut ids = HashMap::new();
     collect_ids(&root, &mut ids);
-    let mut build = Build { items: Vec::new(), ids, uses: 0 };
+    let mut build = Build { items: Vec::new(), ids, uses: 0, visits: 0, segments: 0 };
     build.walk(&root, &Frame { transform: Affine::IDENTITY, style: Style::default() }, 0, true);
     Some(Svg { size, view_box, items: build.items })
 }
@@ -135,7 +155,13 @@ struct Style {
     even_odd: bool,
     fill_opacity: f64,
     stroke_opacity: f64,
+    /// The element's own `opacity`, applied to what it paints.
     opacity: f64,
+    /// The product of the `opacity` of every group above, which composites the subtree.
+    group_opacity: f64,
+    /// `display` is not inherited: `none` hides the whole subtree.
+    display: bool,
+    visibility: bool,
 }
 
 impl Default for Style {
@@ -152,6 +178,9 @@ impl Default for Style {
             fill_opacity: 1.0,
             stroke_opacity: 1.0,
             opacity: 1.0,
+            group_opacity: 1.0,
+            display: true,
+            visibility: true,
         }
     }
 }
@@ -159,6 +188,10 @@ impl Default for Style {
 impl Style {
     fn resolve(&self, node: &Node, ids: &HashMap<String, Arc<Node>>) -> Style {
         let mut s = self.clone();
+        // `opacity` belongs to the element that sets it: what an ancestor set composites the
+        // subtree instead of being replaced by a descendant's own value.
+        s.group_opacity *= self.opacity;
+        s.opacity = 1.0;
         for (k, v) in &node.attrs {
             if k != "style" {
                 s.set(k, v, ids);
@@ -214,6 +247,8 @@ impl Style {
             "fill-opacity" => self.fill_opacity = opacity(v).unwrap_or(1.0),
             "stroke-opacity" => self.stroke_opacity = opacity(v).unwrap_or(1.0),
             "opacity" => self.opacity = opacity(v).unwrap_or(1.0),
+            "display" => self.display = !v.trim().eq_ignore_ascii_case("none"),
+            "visibility" => self.visibility = !matches!(v.trim(), "hidden" | "collapse"),
             _ => {}
         }
     }
@@ -242,6 +277,9 @@ fn gradient_color(node: &Node, ids: &HashMap<String, Arc<Node>>) -> Option<Rgba>
             return;
         }
         for k in &n.kids {
+            if out.len() >= MAX_STOPS {
+                break;
+            }
             if k.name != "stop" {
                 continue;
             }
@@ -295,18 +333,28 @@ struct Build {
     items: Vec<Item>,
     ids: HashMap<String, Arc<Node>>,
     uses: u32,
+    /// Elements visited, so a reference graph that expands without painting anything stops too.
+    visits: usize,
+    /// Path elements kept, so many references cannot pile up behind [`MAX_ITEMS`].
+    segments: usize,
 }
 
 impl Build {
     /// `via_use`: the element was named by `use`, so a definition such as a `symbol` draws here.
     fn walk(&mut self, node: &Node, f: &Frame, depth: usize, via_use: bool) {
-        if depth > dom::MAX_DEPTH || self.items.len() >= MAX_ITEMS {
+        self.visits += 1;
+        if depth > dom::MAX_DEPTH || self.visits > MAX_VISITS || self.items.len() >= MAX_ITEMS || self.segments >= MAX_SEGMENTS_TOTAL {
             return;
         }
         if !via_use && DEFINITIONS.contains(&node.name.as_str()) {
             return;
         }
         let style = f.style.resolve(node, &self.ids);
+        // `display: none` hides the subtree; `visibility: hidden` leaves descendants able to show
+        // themselves, so it is applied where a shape is painted.
+        if !style.display {
+            return;
+        }
         let mut transform = f.transform;
         if node.name == "svg" {
             let at = |k: &str| node.attr(k).and_then(attr::length).unwrap_or(0.0);
@@ -332,14 +380,28 @@ impl Build {
         let Some(id) = k_href(node) else { return };
         let Some(target) = self.ids.get(id).cloned() else { return };
         let at = |k: &str| node.attr(k).and_then(attr::length).unwrap_or(0.0);
-        let frame = Frame { transform: f.transform * Affine::translate((at("x"), at("y"))), style: f.style.clone() };
+        let mut transform = f.transform * Affine::translate((at("x"), at("y")));
+        // A `symbol` (or nested `svg`) maps its own `viewBox` into the `use`'s width and height.
+        if let Some(vb) = view_box_of(&target) {
+            let w = node.attr("width").and_then(attr::length).unwrap_or(vb[2]);
+            let h = node.attr("height").and_then(attr::length).unwrap_or(vb[3]);
+            transform *= fit(vb, w, h);
+        }
+        let frame = Frame { transform, style: f.style.clone() };
         self.uses += 1;
         self.walk(&target, &frame, depth + 1, true);
         self.uses -= 1;
     }
 
     fn shape(&mut self, node: &Node, f: &Frame) {
+        if !f.style.visibility {
+            return;
+        }
         let Some(mut path) = shape_path(node) else { return };
+        let segments = path.elements().len();
+        if self.segments.saturating_add(segments) > MAX_SEGMENTS_TOTAL {
+            return;
+        }
         let bb = path.bounding_box();
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) {
             return;
@@ -348,7 +410,7 @@ impl Build {
         // The pen is scaled with the shape; a non-uniform transform cannot scale it evenly, so the
         // mean of both axes stands in.
         let scale = f.transform.determinant().abs().sqrt();
-        let opacity = f.style.opacity;
+        let opacity = f.style.group_opacity * f.style.opacity;
         let fill = f.style.fill.map(|c| c.with_alpha(mul_alpha(c.a, f.style.fill_opacity * opacity)));
         let stroke = f.style.stroke.filter(|_| f.style.width > 0.0).map(|c| {
             let color = c.with_alpha(mul_alpha(c.a, f.style.stroke_opacity * opacity));
@@ -361,8 +423,28 @@ impl Build {
         if fill.is_none() && stroke.is_none() {
             return;
         }
+        self.segments += segments;
         self.items.push(Item { path, even_odd: f.style.even_odd, fill, stroke });
     }
+}
+
+/// The `viewBox` of a `symbol` or nested `svg`, in user units.
+fn view_box_of(node: &Node) -> Option<[f64; 4]> {
+    node.attr("viewBox")
+        .or_else(|| node.attr("viewbox"))
+        .map(attr::numbers)
+        .filter(|v| v.len() == 4 && v[2] > 0.0 && v[3] > 0.0)
+        .map(|v| [v[0], v[1], v[2], v[3]])
+}
+
+/// Fits a `viewBox` into a `w` × `h` viewport, both sides visible and centred (SVG's default
+/// `preserveAspectRatio`).
+fn fit(vb: [f64; 4], w: f64, h: f64) -> Affine {
+    let s = (w / vb[2]).min(h / vb[3]);
+    if !(s.is_finite() && s > 0.0) {
+        return Affine::IDENTITY;
+    }
+    Affine::translate(((w - vb[2] * s) / 2.0, (h - vb[3] * s) / 2.0)) * Affine::scale(s) * Affine::translate((-vb[0], -vb[1]))
 }
 
 fn mul_alpha(a: u8, k: f64) -> u8 {
@@ -375,11 +457,12 @@ fn shape_path(n: &Node) -> Option<BezPath> {
     match n.name.as_str() {
         "path" => {
             let p = BezPath::from_svg(n.attr("d")?).ok()?;
-            (p.elements().len() <= MAX_SEGMENTS).then_some(p)
+            let bb = p.bounding_box();
+            (p.elements().len() <= MAX_SEGMENTS && bb.width() <= 1e6 && bb.height() <= 1e6).then_some(p)
         }
         "rect" => {
             let (x, y, w, h) = (num("x", 0.0), num("y", 0.0), num("width", 0.0), num("height", 0.0));
-            if !(w > 0.0 && h > 0.0 && w < 1e7 && h < 1e7) {
+            if !(w > 0.0 && h > 0.0 && w <= MAX_COORD && h <= MAX_COORD) {
                 return None;
             }
             let rx = n.attr("rx").and_then(attr::length);
@@ -395,11 +478,12 @@ fn shape_path(n: &Node) -> Option<BezPath> {
         }
         "circle" => {
             let r = num("r", 0.0);
-            (r > 0.0).then(|| kurbo::Ellipse::new((num("cx", 0.0), num("cy", 0.0)), (r, r), 0.0).to_path(0.1))
+            (r > 0.0 && r <= MAX_COORD).then(|| kurbo::Ellipse::new((num("cx", 0.0), num("cy", 0.0)), (r, r), 0.0).to_path(0.1))
         }
         "ellipse" => {
             let (rx, ry) = (num("rx", 0.0), num("ry", 0.0));
-            (rx > 0.0 && ry > 0.0).then(|| kurbo::Ellipse::new((num("cx", 0.0), num("cy", 0.0)), (rx, ry), 0.0).to_path(0.1))
+            (rx > 0.0 && ry > 0.0 && rx <= MAX_COORD && ry <= MAX_COORD)
+                .then(|| kurbo::Ellipse::new((num("cx", 0.0), num("cy", 0.0)), (rx, ry), 0.0).to_path(0.1))
         }
         "line" => {
             let mut p = BezPath::new();
@@ -464,6 +548,38 @@ mod tests {
     }
 
     #[test]
+    fn a_child_opacity_does_not_replace_its_groups() {
+        let s = svg("<g opacity='0.5'><rect width='4' height='4' opacity='0.5' fill='black'/></g>");
+        assert_eq!(s.items[0].fill, Some(Rgba::rgba(0, 0, 0, 64)));
+        let s = svg("<g opacity='0.5'><rect width='4' height='4' fill='black'/></g>");
+        assert_eq!(s.items[0].fill, Some(Rgba::rgba(0, 0, 0, 128)));
+    }
+
+    #[test]
+    fn display_none_hides_the_subtree_and_visibility_hides_one_shape() {
+        let s = svg("<g display='none'><rect width='4' height='4'/></g>");
+        assert!(s.items.is_empty());
+        let s = svg("<g visibility='hidden'><rect width='4' height='4'/><rect width='4' height='4' visibility='visible'/></g>");
+        assert_eq!(s.items.len(), 1);
+    }
+
+    #[test]
+    fn a_symbol_is_scaled_into_the_use_viewport() {
+        let s = svg(
+            "<defs><symbol id='s' viewBox='0 0 10 10'><rect width='10' height='10' fill='black'/></symbol></defs><use href='#s' width='100' height='100'/>",
+        );
+        let b = s.items[0].path.bounding_box();
+        assert!((b.width() - 100.0).abs() < 1e-6 && (b.height() - 100.0).abs() < 1e-6, "{b:?}");
+    }
+
+    #[test]
+    fn absurd_shapes_are_refused_instead_of_tessellated() {
+        assert!(svg("<circle r='1e60'/>").items.is_empty());
+        assert!(svg("<ellipse rx='1e60' ry='1'/>").items.is_empty());
+        assert!(svg("<rect width='1e60' height='1'/>").items.is_empty());
+    }
+
+    #[test]
     fn use_draws_the_element_it_names() {
         let s = svg("<defs><rect id='r' width='4' height='4' fill='red'/></defs><use href='#r' x='10' y='5'/>");
         assert_eq!(s.items.len(), 1);
@@ -520,8 +636,10 @@ mod tests {
     fn sniffing_accepts_svg_and_refuses_other_data() {
         assert!(is_svg(b"\xEF\xBB\xBF<?xml version='1.0'?><svg xmlns='http://www.w3.org/2000/svg'/>"));
         assert!(is_svg(b"  <SVG viewBox='0 0 1 1'/>"));
+        assert!(is_svg(b"<s:svg xmlns:s='http://www.w3.org/2000/svg'><s:rect width='1' height='1'/></s:svg>"));
         assert!(!is_svg(b"\x89PNG\r\n\x1a\n"));
         assert!(!is_svg(b"text before <svg"));
+        assert!(!is_svg(b"<svga viewBox='0 0 1 1'/>"));
         assert!(!parse(b"<html><body/></html>").is_some());
     }
 }

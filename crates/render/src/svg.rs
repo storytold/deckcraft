@@ -40,7 +40,7 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
         }
         if let Some((c, pen)) = &it.stroke {
             ctx.set_paint(peniko::Color::from_rgba8(c.r, c.g, c.b, c.a));
-            ctx.set_stroke(pen_at(pen, k));
+            ctx.set_stroke(pen_at(pen, k, &path));
             ctx.stroke_path(&path);
         }
     }
@@ -77,10 +77,12 @@ fn layout(svg: &Svg, side: u32) -> (u16, u16, Affine) {
 }
 
 /// The pen at the layout scale (the picture scatters its own transforms into the geometry).
-fn pen_at(p: &kurbo::Stroke, k: f64) -> kurbo::Stroke {
+fn pen_at(p: &kurbo::Stroke, k: f64, path: &BezPath) -> kurbo::Stroke {
     let mut s = kurbo::Stroke::new((p.width * k).max(1e-4)).with_caps(p.start_cap).with_join(p.join).with_miter_limit(p.miter_limit);
     if !p.dash_pattern.is_empty() {
-        s = s.with_dashes(p.dash_offset, p.dash_pattern.iter().map(|d| d * k));
+        // A dash shorter than a pixel would ask for unbounded dashes, as on any line.
+        let pattern: Vec<f64> = p.dash_pattern.iter().map(|d| d * k).collect();
+        s = s.with_dashes(p.dash_offset, crate::stroke::limit_dash_count(path, pattern));
     }
     s
 }
@@ -106,6 +108,16 @@ mod tests {
     fn keeps_the_pictures_aspect() {
         let img = rasterize(b"<svg width='40' height='10' viewBox='0 0 4 1'><rect width='4' height='1' fill='black'/></svg>", 80).expect("draws");
         assert_eq!(img.dimensions(), (80, 20));
+    }
+
+    #[test]
+    fn a_tiny_dash_pattern_draws_instead_of_expanding() {
+        let img = rasterize(
+            b"<svg width='20' height='20' viewBox='0 0 20 20'><line x1='0' y1='10' x2='20' y2='10' stroke='black' stroke-width='2' stroke-dasharray='1e-9 1e-9'/></svg>",
+            40,
+        )
+        .expect("draws");
+        assert!(img.pixels().any(|p| p[3] > 0), "the dashing line paints something");
     }
 
     #[test]

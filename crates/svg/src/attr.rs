@@ -102,12 +102,12 @@ pub fn named(name: &str) -> Option<Rgba> {
     Some(Rgba::rgb(rgb.0, rgb.1, rgb.2))
 }
 
-/// A `transform` list, applied left to right as SVG does.
+/// A `transform` list, applied left to right as SVG does. Operations may be separated by commas.
 pub fn transform(s: &str) -> Affine {
     let mut m = Affine::IDENTITY;
     let mut rest = s;
     while let Some(open) = rest.find('(') {
-        let name = rest.get(..open).unwrap_or("").trim().to_ascii_lowercase();
+        let name = rest.get(..open).unwrap_or("").trim().trim_start_matches(',').trim().to_ascii_lowercase();
         let Some(close) = rest.get(open..).and_then(|r| r.find(')')) else { break };
         let args = numbers(rest.get(open + 1..open + close).unwrap_or(""));
         let a = args.as_slice();
@@ -125,8 +125,9 @@ pub fn transform(s: &str) -> Affine {
                 }
             }
             "matrix" if a.len() >= 6 => Affine::new([a[0], a[1], a[2], a[3], a[4], a[5]]),
-            "skewx" => Affine::skew(a.first().copied().unwrap_or(0.0).to_radians(), 0.0),
-            "skewy" => Affine::skew(0.0, a.first().copied().unwrap_or(0.0).to_radians()),
+            // `Affine::skew` takes tangent factors, not radians.
+            "skewx" => Affine::skew(a.first().copied().unwrap_or(0.0).to_radians().tan(), 0.0),
+            "skewy" => Affine::skew(0.0, a.first().copied().unwrap_or(0.0).to_radians().tan()),
             _ => Affine::IDENTITY,
         };
         m *= t;
@@ -174,5 +175,24 @@ mod tests {
         assert!((p.x - 5.0).abs() < 1e-9 && (p.y - 6.0).abs() < 1e-9, "{p:?}");
         assert_eq!(transform("matrix(1 0 0 1 3 4)") * kurbo::Point::new(0.0, 0.0), kurbo::Point::new(3.0, 4.0));
         assert_eq!(transform("nonsense"), Affine::IDENTITY);
+    }
+
+    #[test]
+    fn a_comma_between_operations_is_a_separator() {
+        let a = transform("translate(10 20),scale(2)");
+        let b = transform("translate(10 20) , scale(2)");
+        assert_eq!(a, transform("translate(10 20) scale(2)"));
+        assert_eq!(b, a);
+    }
+
+    #[test]
+    fn skew_takes_the_tangent_of_its_angle() {
+        // skewX(45) maps (x, y) to (x + y, y).
+        let m = transform("skewX(45)");
+        let p = m * kurbo::Point::new(0.0, 10.0);
+        assert!((p.x - 10.0).abs() < 1e-9 && (p.y - 10.0).abs() < 1e-9, "{p:?}");
+        let m = transform("skewY(45)");
+        let p = m * kurbo::Point::new(10.0, 0.0);
+        assert!((p.x - 10.0).abs() < 1e-9 && (p.y - 10.0).abs() < 1e-9, "{p:?}");
     }
 }
