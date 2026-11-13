@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use deckcraft_color::Rgba;
 use dom::Node;
-use kurbo::{Affine, BezPath, ParamCurve as _, Point, Shape as _};
+use kurbo::{Affine, BezPath, ParamCurve as _, ParamCurveDeriv as _, Point, Rect, Shape as _};
 
 /// Most shapes read from one picture.
 pub const MAX_ITEMS: usize = 100_000;
@@ -233,7 +233,8 @@ pub fn parse(bytes: &[u8]) -> Option<Svg> {
     let size = root_size(&root, view_box);
     let mut ids = HashMap::new();
     collect_ids(&root, &mut ids);
-    let mut build = Build { items: Vec::new(), ids, uses: 0, visits: 0, segments: 0 };
+    let viewport = view_box.map(|v| (v[2], v[3])).unwrap_or(size);
+    let mut build = Build { items: Vec::new(), ids, viewport, uses: 0, visits: 0, segments: 0, marker_depth: 0, text_chars: 0 };
     build.walk(&root, &Frame { transform: Affine::IDENTITY, style: Style::default() }, 0, true);
     Some(Svg { size, view_box, items: build.items })
 }
@@ -253,6 +254,8 @@ fn root_size(root: &Node, view_box: Option<[f64; 4]>) -> (f64, f64) {
     (size.0.clamp(0.01, 1e6), size.1.clamp(0.01, 1e6))
 }
 
+// shortcut: an element with an id is deep-copied into the map, so a definitions-heavy picture
+// copies more than it draws; resolve ids as node paths if that ever shows up in profiles.
 fn collect_ids(node: &Node, out: &mut HashMap<String, Arc<Node>>) {
     if let Some(id) = node.attr("id").filter(|i| !i.is_empty()) {
         out.entry(id.to_string()).or_insert_with(|| Arc::new(node.clone()));
@@ -330,7 +333,7 @@ impl Default for Style {
 }
 
 impl Style {
-    fn resolve(&self, node: &Node, ids: &HashMap<String, Arc<Node>>) -> Style {
+    fn resolve(&self, node: &Node, ids: &HashMap<String, Arc<Node>>, viewport: (f64, f64)) -> Style {
         let mut s = self.clone();
         // `opacity` belongs to the element that sets it: what an ancestor set composites the
         // subtree instead of being replaced by a descendant's own value.
@@ -338,21 +341,21 @@ impl Style {
         s.opacity = 1.0;
         for (k, v) in &node.attrs {
             if k != "style" {
-                s.set(k, v, ids);
+                s.set(k, v, ids, viewport);
             }
         }
         // A `style` attribute wins over the presentation attributes, as CSS does.
         if let Some(d) = node.attr("style") {
             for decl in d.split(';') {
                 if let Some((k, v)) = decl.split_once(':') {
-                    s.set(k.trim(), v.trim(), ids);
+                    s.set(k.trim(), v.trim(), ids, viewport);
                 }
             }
         }
         s
     }
 
-    fn set(&mut self, key: &str, v: &str, ids: &HashMap<String, Arc<Node>>) {
+    fn set(&mut self, key: &str, v: &str, ids: &HashMap<String, Arc<Node>>, viewport: (f64, f64)) {
         let opacity = |v: &str| {
             {
                 let v = v.trim();
@@ -362,8 +365,8 @@ impl Style {
             .map(|v: f64| v.clamp(0.0, 1.0))
         };
         match key {
-            "fill" => self.fill = paint(v, ids),
-            "stroke" => self.stroke = paint(v, ids),
+            "fill" => self.fill = paint(v, ids, viewport),
+            "stroke" => self.stroke = paint(v, ids, viewport),
             "stroke-width" => {
                 if let Some(w) = attr::length(v) {
                     self.width = w.clamp(0.0, 1e4);
@@ -404,7 +407,7 @@ impl Style {
                 let v = v.trim();
                 let size = match v.strip_suffix('%') {
                     Some(p) => p.trim().parse::<f64>().ok().map(|p| self.font.size * p / 100.0),
-                    None => attr::length(v),
+                    None => attr::length_em(v, self.font.size),
                 };
                 if let Some(s) = size.filter(|s: &f64| s.is_finite() && *s > 0.0) {
                     self.font.size = s.clamp(0.1, MAX_COORD);
@@ -426,9 +429,10 @@ impl Style {
                     _ => Anchor::Start,
                 }
             }
-            "letter-spacing" => self.font.spacing = attr::length(v).filter(|v| v.is_finite()).map(|v| v.clamp(-1e3, 1e3)).unwrap_or(0.0),
-            // `xml:space`, whose namespace prefix this reader drops.
-            "space" => self.font.preserve = v.trim() == "preserve",
+            "letter-spacing" => {
+                self.font.spacing = attr::length_em(v, self.font.size).filter(|v| v.is_finite()).map(|v| v.clamp(-1e3, 1e3)).unwrap_or(0.0)
+            }
+            "xml:space" => self.font.preserve = v.trim() == "preserve",
             "marker-start" => self.marker_start = marker_ref(v),
             "marker-mid" => self.marker_mid = marker_ref(v),
             "marker-end" => self.marker_end = marker_ref(v),
@@ -440,7 +444,7 @@ impl Style {
 /// A paint value: solid, or a gradient whose stops the renderer ramps between. A reference to
 /// anything else (a pattern, a filter) falls back to the average of its stops, and an unreadable
 /// colour is black, as an unreadable colour name is in a browser.
-fn paint(v: &str, ids: &HashMap<String, Arc<Node>>) -> Option<Paint> {
+fn paint(v: &str, ids: &HashMap<String, Arc<Node>>, viewport: (f64, f64)) -> Option<Paint> {
     let v = v.trim();
     if v.eq_ignore_ascii_case("none") {
         return None;
@@ -448,7 +452,9 @@ fn paint(v: &str, ids: &HashMap<String, Arc<Node>>) -> Option<Paint> {
     if let Some(inner) = v.strip_prefix("url(").and_then(|r| r.strip_suffix(')')) {
         let id = inner.trim().trim_matches(|c| c == '\'' || c == '"').trim().strip_prefix('#').unwrap_or(inner.trim());
         let Some(node) = ids.get(id) else { return Some(Paint::Solid(Rgba::BLACK)) };
-        if let Some(g) = gradient_of(node, ids) {
+        // shortcut: a gradient is read again for every element that references it, rather than
+        // cached by id; the parse is small and its result is cloned anyway.
+        if let Some(g) = gradient_of(node, ids, viewport) {
             return Some(Paint::Gradient(g));
         }
         return Some(Paint::Solid(gradient_color(node, ids).unwrap_or(Rgba::BLACK)));
@@ -465,7 +471,7 @@ fn marker_ref(v: &str) -> Option<String> {
 
 /// The gradient a `url(#…)` names, or `None` when the element is not a gradient this reader
 /// understands (or has no usable stops).
-fn gradient_of(node: &Node, ids: &HashMap<String, Arc<Node>>) -> Option<Gradient> {
+fn gradient_of(node: &Node, ids: &HashMap<String, Arc<Node>>, viewport: (f64, f64)) -> Option<Gradient> {
     let linear = match node.name.as_str() {
         "linearGradient" => true,
         "radialGradient" => false,
@@ -488,16 +494,25 @@ fn gradient_of(node: &Node, ids: &HashMap<String, Arc<Node>>) -> Option<Gradient
         _ => Spread::Pad,
     };
     let transform = attr::transform(chain_attr(&chain, "gradientTransform").unwrap_or(""));
+    // SVG's own defaults: `0,0 → 100%,0` for a linear ramp, `50%,50%,50%` for the circle.
+    let (full_x, half_x, half_y, half_r) = match units {
+        Units::ObjectBoundingBox => (1.0, 0.5, 0.5, 0.5),
+        Units::UserSpace => (viewport.0, viewport.0 / 2.0, viewport.1 / 2.0, viewport.0.hypot(viewport.1) / 2.0 / std::f64::consts::SQRT_2),
+    };
     let kind = if linear {
         GradientKind::Linear {
-            x1: coord(&chain, "x1", 0.0),
-            y1: coord(&chain, "y1", 0.0),
-            x2: coord(&chain, "x2", 1.0),
-            y2: coord(&chain, "y2", 0.0),
+            x1: coord(&chain, "x1", 0.0, units, viewport, Axis::X),
+            y1: coord(&chain, "y1", 0.0, units, viewport, Axis::Y),
+            x2: coord(&chain, "x2", full_x, units, viewport, Axis::X),
+            y2: coord(&chain, "y2", 0.0, units, viewport, Axis::Y),
         }
     } else {
-        let (cx, cy) = (coord(&chain, "cx", 0.5), coord(&chain, "cy", 0.5));
-        GradientKind::Radial { cx, cy, r: coord(&chain, "r", 0.5).clamp(0.0, MAX_COORD), fx: coord(&chain, "fx", cx), fy: coord(&chain, "fy", cy) }
+        let cx = coord(&chain, "cx", half_x, units, viewport, Axis::X);
+        let cy = coord(&chain, "cy", half_y, units, viewport, Axis::Y);
+        let r = coord(&chain, "r", half_r, units, viewport, Axis::Radius).clamp(0.0, MAX_COORD);
+        let fx = coord(&chain, "fx", cx, units, viewport, Axis::X);
+        let fy = coord(&chain, "fy", cy, units, viewport, Axis::Y);
+        GradientKind::Radial { cx, cy, r, fx, fy }
     };
     Some(Gradient { kind, stops, units, transform, spread })
 }
@@ -522,18 +537,34 @@ fn chain_attr<'a>(chain: &[&'a Node], key: &str) -> Option<&'a str> {
     chain.iter().find_map(|n| n.attr(key))
 }
 
-/// A gradient coordinate: `50%` is half the box, a bare number keeps the units it names.
-fn coord(chain: &[&Node], key: &str, default: f64) -> f64 {
+/// A gradient coordinate: a percentage is a fraction of the bounding box (SVG's default units) or
+/// of the viewport (`userSpaceOnUse`), and a bare number keeps the units it names.
+fn coord(chain: &[&Node], key: &str, default: f64, units: Units, viewport: (f64, f64), axis: Axis) -> f64 {
     let Some(v) = chain_attr(chain, key).map(str::trim) else { return default };
+    let base = match (units, axis) {
+        (Units::ObjectBoundingBox, _) => 1.0,
+        (Units::UserSpace, Axis::X) => viewport.0,
+        (Units::UserSpace, Axis::Y) => viewport.1,
+        // SVG 1.1: a percentage radius is a fraction of the diagonal over the square root of two.
+        (Units::UserSpace, Axis::Radius) => viewport.0.hypot(viewport.1) / std::f64::consts::SQRT_2,
+    };
     let v = match v.strip_suffix('%') {
-        Some(p) => p.trim().parse::<f64>().ok().map(|p| p / 100.0),
+        Some(p) => p.trim().parse::<f64>().ok().map(|p| p / 100.0 * base),
         None => attr::length(v),
     };
     v.filter(|v: &f64| v.is_finite()).map(|v| v.clamp(-MAX_COORD, MAX_COORD)).unwrap_or(default)
 }
 
-/// The stops of the first gradient in `chain` that has any, by offset, each offset at least the
-/// one before it.
+/// Which axis of the viewport a percentage coordinate is measured on.
+#[derive(Clone, Copy)]
+enum Axis {
+    X,
+    Y,
+    Radius,
+}
+
+/// The stops of the first gradient in `chain` that has any, in document order, each offset at
+/// least the one before it.
 fn stops_of(chain: &[&Node]) -> Vec<(f64, Rgba)> {
     for n in chain {
         let mut out: Vec<(f64, Rgba)> = Vec::new();
@@ -556,7 +587,8 @@ fn stops_of(chain: &[&Node]) -> Vec<(f64, Rgba)> {
             out.push((offset, c.with_alpha(mul_alpha(c.a, a))));
         }
         if !out.is_empty() {
-            out.sort_by(|a, b| a.0.total_cmp(&b.0));
+            // SVG keeps the stops in document order and raises an offset that falls behind the
+            // one before it; it does not reorder them.
             let mut last = 0.0;
             for (o, _) in &mut out {
                 last = o.max(last);
@@ -631,7 +663,14 @@ struct Frame {
 struct Build {
     items: Vec<Item>,
     ids: HashMap<String, Arc<Node>>,
+    /// The picture's own box, which a percentage in `userSpaceOnUse` is a fraction of.
+    viewport: (f64, f64),
     uses: u32,
+    /// Marker instances being drawn, so a marker that references itself stops instead of
+    /// recursing until the stack dies.
+    marker_depth: u32,
+    /// Characters kept across every text element, so repeated references to one label are bounded.
+    text_chars: usize,
     /// Elements visited, so a reference graph that expands without painting anything stops too.
     visits: usize,
     /// Path elements kept, so many references cannot pile up behind [`MAX_ITEMS`].
@@ -648,7 +687,7 @@ impl Build {
         if !via_use && DEFINITIONS.contains(&node.name.as_str()) {
             return;
         }
-        let style = f.style.resolve(node, &self.ids);
+        let style = f.style.resolve(node, &self.ids, self.viewport);
         // `display: none` hides the subtree; `visibility: hidden` leaves descendants able to show
         // themselves, so it is applied where a shape is painted.
         if !style.display {
@@ -722,13 +761,13 @@ impl Build {
         // mean of both axes stands in.
         let scale = f.transform.determinant().abs().sqrt();
         let opacity = f.style.group_opacity * f.style.opacity;
-        let fill = f.style.fill.clone().map(|p| p.faded(f.style.fill_opacity * opacity));
-        let stroke = f.style.stroke.clone().filter(|_| f.style.width > 0.0).map(|p| {
+        let fill = f.style.fill.clone().and_then(|p| world(p.faded(f.style.fill_opacity * opacity), f.transform, bb));
+        let stroke = f.style.stroke.clone().filter(|_| f.style.width > 0.0).and_then(|p| {
             let mut pen = kurbo::Stroke::new((f.style.width * scale).max(1e-4)).with_caps(f.style.cap).with_join(f.style.join);
             if let Some(d) = &f.style.dash {
                 pen = pen.with_dashes(0.0, d.iter().map(|v| v * scale));
             }
-            (p.faded(f.style.stroke_opacity * opacity), pen)
+            world(p.faded(f.style.stroke_opacity * opacity), f.transform, bb).map(|p| (p, pen))
         });
         if fill.is_none() && stroke.is_none() {
             return;
@@ -748,15 +787,22 @@ impl Build {
                 continue;
             }
             let pen = f.style.width;
-            // The marker's own style, not the shape's: a definition inherits from where it sits.
-            let style = Style::default().resolve(&marker, &self.ids);
+            // The marker's own style, not the shape's fill and stroke: a definition inherits from
+            // where it sits. The opacity of the shape it marks still fades the marker with it.
+            let mut style = Style::default().resolve(&marker, &self.ids, self.viewport);
+            style.group_opacity *= f.style.group_opacity * f.style.opacity;
             for (i, v) in verts.iter().enumerate() {
                 if !at.matches(i, verts.len()) {
                     continue;
                 }
+                if self.marker_depth >= MAX_MARKER_DEPTH {
+                    return;
+                }
                 let Some(m) = marker_frame(&marker, v, pen) else { continue };
                 let frame = Frame { transform: f.transform * m, style: style.clone() };
+                self.marker_depth += 1;
                 self.walk(&marker, &frame, 0, true);
+                self.marker_depth -= 1;
             }
         }
     }
@@ -765,9 +811,6 @@ impl Build {
     /// out. The reader has no fonts, so it records where each run starts and the renderer
     /// advances the pen.
     fn text(&mut self, node: &Node, f: &Frame) {
-        if !f.style.visibility {
-            return;
-        }
         let mut runs = Vec::new();
         self.text_runs(node, &f.style, true, &mut runs, f.transform.determinant().abs().sqrt());
         // SVG drops the whitespace that starts and ends the element, unless it is preserved.
@@ -778,6 +821,19 @@ impl Build {
             last.text = last.text.trim_end().to_string();
         }
         runs.retain(|r| !r.text.is_empty());
+        // A run that only held whitespace is gone; the element's own position now belongs to the
+        // first run that survived, unless a nearer `tspan` already set one.
+        let at = |k: &str| node.attr(k).and_then(attr::length).filter(|v| v.is_finite());
+        if let Some(first) = runs.first_mut() {
+            if first.at_x.is_none() {
+                first.at_x = Some(at("x").unwrap_or(0.0));
+            }
+            if first.at_y.is_none() {
+                first.at_y = Some(at("y").unwrap_or(0.0));
+            }
+            first.dx += at("dx").unwrap_or(0.0);
+            first.dy += at("dy").unwrap_or(0.0);
+        }
         if runs.is_empty() {
             return;
         }
@@ -787,11 +843,13 @@ impl Build {
     /// Append `node`'s characters and those of the `tspan`s under it. `parent` is the style in
     /// force above the node, `root` tells whether the node is the `text` element itself.
     fn text_runs(&mut self, node: &Node, parent: &Style, root: bool, out: &mut Vec<TextRun>, scale: f64) {
-        if out.iter().map(|r| r.text.len()).sum::<usize>() >= MAX_TEXT_CHARS || self.visits > MAX_VISITS {
+        if self.text_chars >= MAX_TEXT_CHARS || self.visits > MAX_VISITS {
             return;
         }
-        let style = if root { parent.clone() } else { parent.resolve(node, &self.ids) };
-        if !style.display || !style.visibility {
+        let style = if root { parent.clone() } else { parent.resolve(node, &self.ids, self.viewport) };
+        // `display: none` hides the subtree, but `visibility: hidden` leaves a child able to show
+        // itself, so that one is applied where characters are kept.
+        if !style.display {
             return;
         }
         let opacity = style.group_opacity * style.opacity;
@@ -809,10 +867,24 @@ impl Build {
         let start = out.len();
         for kid in &node.kids {
             match kid.name.as_str() {
-                "#text" => {
-                    let text = if style.font.preserve { kid.text.clone() } else { collapse(&kid.text) };
-                    if text.is_empty() {
+                "#text" if style.visibility => {
+                    let mut text = if style.font.preserve { kid.text.clone() } else { collapse(&kid.text) };
+                    // Only the characters still inside the document's budget are kept, cut at a
+                    // character boundary.
+                    let room = MAX_TEXT_CHARS.saturating_sub(self.text_chars);
+                    if text.len() > room {
+                        text.truncate(room.min(text.len()));
+                        while !text.is_char_boundary(text.len()) {
+                            text.pop();
+                        }
+                    }
+                    if text.is_empty() || room == 0 {
                         continue;
+                    }
+                    self.text_chars += text.len();
+                    // A space that the previous run already ended with would double it.
+                    if text.starts_with(' ') && out.last().is_some_and(|r| r.text.ends_with(' ')) {
+                        text.remove(0);
                     }
                     out.push(TextRun {
                         text,
@@ -835,16 +907,17 @@ impl Build {
                 _ => {}
             }
         }
-        // `x`/`y`/`dx`/`dy` on the element place the first glyph it contributes.
+        // `x`/`y`/`dx`/`dy` on the element place the first glyph it contributes, unless a nearer
+        // `tspan` already placed it: the nearest positioning element wins.
         if let Some(run) = out.get_mut(start) {
-            if at_x.is_some() {
+            if run.at_x.is_none() {
                 run.at_x = at_x;
             }
-            if at_y.is_some() {
+            if run.at_y.is_none() {
                 run.at_y = at_y;
             }
-            run.dx = rel("dx");
-            run.dy = rel("dy");
+            run.dx += rel("dx");
+            run.dy += rel("dy");
         }
     }
 }
@@ -920,39 +993,49 @@ impl At {
 }
 
 /// Most markers drawn on one shape; a path of thousands of points (a map outline) would otherwise
-/// fill the picture with arrowheads.
+/// fill the picture with arrowheads. The first and last vertex always stay.
 const MAX_MARKERS: usize = 256;
+/// Most marker instances that may sit inside each other before a self-referencing marker stops.
+const MAX_MARKER_DEPTH: u32 = 4;
 
-/// The vertices of a path with the direction of the segment that leaves each one.
-fn marker_vertices(path: &BezPath) -> Vec<Vertex> {
-    let segs: Vec<kurbo::PathSeg> = path.segments().collect();
-    let direction = |s: &kurbo::PathSeg| {
-        let d = s.end() - s.start();
-        if d.hypot() > 1e-12 { d.y.atan2(d.x).to_degrees() } else { 0.0 }
+/// The direction a segment leaves (`at_end` false) or arrives at, in degrees. A curve is measured
+/// on the tangent there, not on its chord: an arrowhead at the end of an arc must follow the arc.
+fn tangent(seg: &kurbo::PathSeg, at_end: bool) -> f64 {
+    let t = if at_end { 1.0 } else { 0.0 };
+    let chord = seg.end() - seg.start();
+    let d = match seg {
+        kurbo::PathSeg::Line(l) => l.deriv().eval(t).to_vec2(),
+        kurbo::PathSeg::Quad(q) => q.deriv().eval(t).to_vec2(),
+        kurbo::PathSeg::Cubic(c) => c.deriv().eval(t).to_vec2(),
     };
+    let d = if d.hypot() > 1e-12 { d } else { chord };
+    if d.hypot() > 1e-12 { d.y.atan2(d.x).to_degrees() } else { 0.0 }
+}
+
+/// The direction between two directions, taking the shorter way round.
+fn bisect(a: f64, b: f64) -> f64 {
+    let d = (b - a).to_radians();
+    let d = (d + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+    a + d.to_degrees() / 2.0
+}
+
+/// The vertices of a path with the direction the path runs through each one.
+fn marker_vertices(path: &BezPath) -> Vec<Vertex> {
+    // shortcut: every segment is collected (up to the path cap) even though only MAX_MARKERS
+    // vertices are kept; iterate lazily if a path-heavy picture ever shows up in profiles.
+    let segs: Vec<kurbo::PathSeg> = path.segments().collect();
     let mut out: Vec<Vertex> = Vec::with_capacity(segs.len().min(MAX_MARKERS) + 1);
-    for (i, s) in segs.iter().enumerate().take(MAX_MARKERS) {
-        let a = direction(s);
-        if i == 0 {
-            out.push(Vertex { point: s.start(), angle: a, first: true, last: false });
-        }
-        // An interior vertex points along the bisector of the segments it joins.
-        let angle = match segs.get(i + 1) {
-            Some(next) => {
-                let b = direction(next);
-                let (a, b) = (a.to_radians(), b.to_radians());
-                let half = ((b - a) / 2.0).rem_euclid(std::f64::consts::PI);
-                (a + half).to_degrees() % 360.0
-            }
-            None => a,
-        };
-        out.push(Vertex { point: s.end(), angle, first: false, last: false });
+    let Some(first) = segs.first() else { return out };
+    out.push(Vertex { point: first.start(), angle: tangent(first, false), first: true, last: false });
+    // An interior vertex points along the bisector of the segments it joins, up to the cap.
+    let last = segs.len() - 1;
+    for i in 0..last.min(MAX_MARKERS.saturating_sub(1)) {
+        let angle = bisect(tangent(&segs[i], true), tangent(&segs[i + 1], false));
+        out.push(Vertex { point: segs[i].end(), angle, first: false, last: false });
     }
-    let single = out.len() == 1;
-    if let Some(last) = out.last_mut() {
-        last.last = true;
-        last.first |= single;
-    }
+    // The end vertex is always drawn, even when the interior was capped.
+    let end = &segs[last];
+    out.push(Vertex { point: end.end(), angle: tangent(end, true), first: false, last: true });
     out
 }
 
@@ -984,6 +1067,29 @@ fn marker_frame(marker: &Node, v: &Vertex, pen: f64) -> Option<Affine> {
         None => Affine::scale(scale),
     };
     Some(m * Affine::translate((-rx, -ry)))
+}
+
+/// A paint in the picture's own user space: an element's transform applies to its paint as it does
+/// to its geometry, and a bounding-box gradient runs over the element's box as it was declared. A
+/// bounding-box gradient on a shape with no area paints nothing, as SVG says.
+fn world(paint: Paint, transform: Affine, bbox: Rect) -> Option<Paint> {
+    match paint {
+        Paint::Solid(c) => Some(Paint::Solid(c)),
+        Paint::Gradient(mut g) => {
+            g.transform = match g.units {
+                Units::ObjectBoundingBox => {
+                    if !(bbox.width() > 0.0 && bbox.height() > 0.0) {
+                        return None;
+                    }
+                    transform * Affine::translate(bbox.origin().to_vec2()) * Affine::scale_non_uniform(bbox.width(), bbox.height()) * g.transform
+                }
+                Units::UserSpace => transform * g.transform,
+            };
+            // The coordinates are in the picture's user space now, whatever they were measured on.
+            g.units = Units::UserSpace;
+            Some(Paint::Gradient(g))
+        }
+    }
 }
 
 fn mul_alpha(a: u8, k: f64) -> u8 {
@@ -1146,10 +1252,55 @@ mod tests {
             "<defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#000000'/><stop offset='100%' stop-color='#ffffff'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)'/>",
         );
         let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
-        assert_eq!(g.units, Units::ObjectBoundingBox);
         assert_eq!(g.spread, Spread::Pad);
         assert_eq!(g.kind, GradientKind::Linear { x1: 0.0, y1: 0.0, x2: 0.0, y2: 1.0 });
         assert_eq!(g.stops, vec![(0.0, Rgba::rgb(0, 0, 0)), (1.0, Rgba::rgb(255, 255, 255))]);
+        // The bounding box is folded into the transform, so the paint is in user space by now: the
+        // unit square of a 4 x 4 rectangle.
+        assert_eq!(g.units, Units::UserSpace);
+        assert!((g.transform.determinant() - 16.0).abs() < 1e-9, "{:?}", g.transform);
+    }
+
+    #[test]
+    fn a_gradient_moves_with_the_element_it_fills() {
+        let s = svg(
+            "<defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='10' y2='0'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient></defs>\
+             <rect width='10' height='10' transform='translate(20 5)' fill='url(#g)'/>",
+        );
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.units, Units::UserSpace);
+        let moved = g.transform * Point::new(0.0, 0.0);
+        assert!((moved.x - 20.0).abs() < 1e-9 && (moved.y - 5.0).abs() < 1e-9, "{moved:?}");
+    }
+
+    #[test]
+    fn a_percentage_in_user_space_is_measured_on_the_viewport() {
+        let s = parse(
+            "<svg viewBox='0 0 200 100' width='200' height='100'><defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='0%' x2='100%'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient></defs><rect width='200' height='100' fill='url(#g)'/></svg>"
+                .as_bytes(),
+        )
+        .expect("reads");
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.kind, GradientKind::Linear { x1: 0.0, y1: 0.0, x2: 200.0, y2: 0.0 });
+    }
+
+    #[test]
+    fn a_bounding_box_gradient_on_a_line_with_no_area_paints_nothing() {
+        // SVG: a bounding-box gradient on a shape with no area is not rendered.
+        let s = svg(
+            "<defs><linearGradient id='g'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient></defs><line x1='0' y1='0' x2='10' y2='0' stroke='url(#g)' stroke-width='2'/>",
+        );
+        assert!(s.items[0].stroke.is_none());
+    }
+
+    #[test]
+    fn stops_keep_their_order_and_only_a_falling_offset_is_raised() {
+        let s = svg(
+            "<defs><linearGradient id='g'><stop offset='0' stop-color='#ff0000'/><stop offset='1' stop-color='#00ff00'/><stop offset='0.5' stop-color='#0000ff'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)'/>",
+        );
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.stops.iter().map(|s| s.0).collect::<Vec<_>>(), vec![0.0, 1.0, 1.0]);
+        assert_eq!(g.stops[2].1, Rgba::rgb(0, 0, 255));
     }
 
     #[test]
@@ -1263,6 +1414,59 @@ mod tests {
     }
 
     #[test]
+    fn a_tspans_own_position_wins_over_its_parent() {
+        let s = svg("<text x='5' y='9'><tspan x='50' dx='3'>A</tspan></text>");
+        let r = &text_of(&s).runs[0];
+        assert_eq!((r.at_x, r.at_y), (Some(50.0), Some(9.0)));
+        assert_eq!(r.dx, 3.0);
+    }
+
+    #[test]
+    fn the_element_position_goes_to_the_first_run_that_survives_the_trim() {
+        let s = svg("<text x='5' y='9'> <tspan>B</tspan></text>");
+        let t = text_of(&s);
+        assert_eq!(t.runs.len(), 1, "the whitespace-only run is gone");
+        assert_eq!((t.runs[0].at_x, t.runs[0].at_y), (Some(5.0), Some(9.0)));
+    }
+
+    #[test]
+    fn character_references_keep_their_place_in_a_label() {
+        let s = svg("<text x='0' y='10'>A&amp;B&#x2192;</text>");
+        let joined: String = text_of(&s).runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(joined, "A&B\u{2192}");
+    }
+
+    #[test]
+    fn a_space_at_a_run_boundary_is_not_doubled() {
+        let s = svg("<text x='0' y='10'>A <tspan> B</tspan></text>");
+        let t = text_of(&s);
+        let joined: String = t.runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(joined, "A B");
+    }
+
+    #[test]
+    fn an_em_is_measured_against_the_font_size_in_force() {
+        let s = svg("<g font-size='20'><text x='0' y='10' font-size='2em' letter-spacing='0.5em'>A</text></g>");
+        let r = &text_of(&s).runs[0];
+        assert_eq!(r.size, 40.0);
+        assert_eq!(r.spacing, 20.0);
+    }
+
+    #[test]
+    fn a_visible_tspan_shows_inside_a_hidden_text() {
+        let s = svg("<text x='0' y='10' visibility='hidden'><tspan visibility='visible'>A</tspan></text>");
+        assert_eq!(text_of(&s).runs.len(), 1);
+    }
+
+    #[test]
+    fn a_text_node_beyond_the_budget_is_cut_instead_of_kept() {
+        let long = "a".repeat(MAX_TEXT_CHARS + 5000);
+        let s = svg(&format!("<text x='0' y='10'>{long}</text>"));
+        let kept: usize = text_of(&s).runs.iter().map(|r| r.text.len()).sum();
+        assert!(kept <= MAX_TEXT_CHARS, "{kept}");
+    }
+
+    #[test]
     fn a_tspan_position_starts_a_new_chunk() {
         let s = svg("<text x='0' y='10'>A<tspan x='30'>B</tspan></text>");
         let t = text_of(&s);
@@ -1316,6 +1520,59 @@ mod tests {
         assert_eq!(s.items.len(), 1);
         let s = svg("<line x1='0' y1='0' x2='9' y2='0' stroke='black' marker-end='url(#missing)'/>");
         assert_eq!(s.items.len(), 1);
+    }
+
+    #[test]
+    fn a_marker_that_references_itself_stops_instead_of_recursing() {
+        let s = svg(
+            "<defs><marker id='m' markerWidth='2' markerHeight='2' viewBox='0 0 2 2'><path d='M0 0 2 0 2 2Z' fill='black' marker-start='url(#m)'/></marker></defs><line x1='0' y1='0' x2='9' y2='0' stroke='black' marker-start='url(#m)'/>",
+        );
+        // Nesting stops at the depth cap; the picture still draws what the first levels paint.
+        assert!(s.items.len() <= 16, "{}", s.items.len());
+    }
+
+    #[test]
+    fn a_mid_marker_points_into_a_clockwise_turn() {
+        let s = svg(
+            "<defs><marker id='m' markerWidth='10' markerHeight='10' markerUnits='userSpaceOnUse' orient='auto' refX='0' refY='0' viewBox='0 0 10 10'><line x1='0' y1='0' x2='6' y2='0' stroke='black'/></marker></defs><path d='M0 0 L10 0 L10 -10' fill='none' stroke='black' marker-mid='url(#m)'/>",
+        );
+        let b = s.items.last().expect("a marker").path.bounding_box();
+        // The corner turns upwards: the bisector is 45 degrees above the x axis, not below it.
+        assert!((b.x0 - 10.0).abs() < 1e-6, "{b:?}");
+        assert!((b.y0 + 4.2426).abs() < 0.01 && b.y1.abs() < 1e-6, "{b:?}");
+    }
+
+    #[test]
+    fn an_end_marker_follows_the_tangent_of_a_curve() {
+        let s = svg(
+            "<defs><marker id='m' markerWidth='10' markerHeight='10' markerUnits='userSpaceOnUse' orient='auto' refX='0' refY='0' viewBox='0 0 10 10'><line x1='0' y1='0' x2='6' y2='0' stroke='black'/></marker></defs><path d='M0 0 C0 10 10 10 10 0' fill='none' stroke='black' marker-end='url(#m)'/>",
+        );
+        let b = s.items.last().expect("a marker").path.bounding_box();
+        // The curve arrives at its end running straight up, so the marker's arm points up too.
+        assert!((b.y0 + 6.0).abs() < 0.6 && b.y1.abs() < 0.6, "{b:?}");
+        assert!((b.x0 - 10.0).abs() < 0.6 && (b.x1 - 10.0).abs() < 0.6, "{b:?}");
+    }
+
+    #[test]
+    fn a_marker_fades_with_the_shape_it_marks() {
+        let s = svg(
+            "<defs><marker id='m' markerWidth='2' markerHeight='2' markerUnits='userSpaceOnUse' viewBox='0 0 2 2'><path d='M0 0 2 0 2 2Z' fill='black'/></marker></defs><line x1='0' y1='0' x2='9' y2='0' stroke='black' opacity='0.5' marker-end='url(#m)'/>",
+        );
+        let Some(Paint::Solid(c)) = &s.items[1].fill else { panic!("a filled marker") };
+        assert_eq!(c.a, 128, "the shape's opacity reaches the marker");
+    }
+
+    #[test]
+    fn the_last_vertex_keeps_its_marker_on_a_long_path() {
+        let mut d = String::from("M0 0");
+        for i in 1..=300 {
+            d.push_str(&format!(" L{i} 0"));
+        }
+        let s = svg(&format!(
+            "<defs><marker id='m' markerWidth='1' markerHeight='1' markerUnits='userSpaceOnUse' viewBox='0 0 1 1'><path d='M0 0 1 1Z' fill='black'/></marker></defs><path d='{d}' fill='none' stroke='black' marker-end='url(#m)'/>"
+        ));
+        let b = s.items.last().expect("a marker").path.bounding_box();
+        assert!(b.x1 > 299.0, "{b:?}");
     }
 
     #[test]

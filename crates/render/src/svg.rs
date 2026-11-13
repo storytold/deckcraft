@@ -39,14 +39,15 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) || bb.width() > 1e6 || bb.height() > 1e6 {
             continue;
         }
+        let bbox = it.path.bounding_box();
         if let Some(f) = &it.fill {
-            set_paint(&mut ctx, f, it.path.bounding_box(), m);
+            set_paint(&mut ctx, f, bbox, m);
             ctx.set_fill_rule(if it.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
             ctx.fill_path(&path);
             ctx.reset_paint_transform();
         }
         if let Some((c, pen)) = &it.stroke {
-            set_paint(&mut ctx, c, it.path.bounding_box(), m);
+            set_paint(&mut ctx, c, bbox, m);
             ctx.set_stroke(pen_at(pen, k, &path));
             ctx.stroke_path(&path);
             ctx.reset_paint_transform();
@@ -143,14 +144,16 @@ fn peniko_gradient(g: &Gradient) -> Option<peniko::Gradient> {
 fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
     let to_device = m * t.transform;
     // A run that sets x or y opens a chunk. SVG anchors align each positioned chunk, so a chunk
-    // is measured as a whole.
+    // is measured as a whole, while the pen keeps the coordinate the chunk did not set.
+    ctx.set_fill_rule(peniko::Fill::NonZero);
+    let mut pen = (0.0, 0.0);
     let mut i = 0;
     while i < t.runs.len() {
         let mut j = i + 1;
         while j < t.runs.len() && t.runs[j].at_x.is_none() && t.runs[j].at_y.is_none() {
             j += 1;
         }
-        draw_chunk(ctx, &t.runs[i..j], to_device);
+        draw_chunk(ctx, &t.runs[i..j], to_device, &mut pen);
         i = j;
     }
     ctx.set_transform(Affine::IDENTITY);
@@ -168,8 +171,9 @@ struct Placed {
 }
 
 /// Draw one chunk of runs, advancing the pen from run to run and aligning the chunk by its anchor.
-fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine) {
-    let (mut pen_x, mut pen_y) = (0.0, 0.0);
+/// `pen` is the position the last chunk ended at, so a run that sets only `x` keeps the baseline.
+fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen: &mut (f64, f64)) {
+    let (mut pen_x, mut pen_y) = *pen;
     let mut placed: Vec<Placed> = Vec::new();
     let mut widths: Vec<f64> = vec![0.0; runs.len()];
     for (ri, r) in runs.iter().enumerate() {
@@ -203,7 +207,10 @@ fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine) {
         }
         widths[ri] = pen_x - start;
     }
-    let total: f64 = widths.iter().sum();
+    *pen = (pen_x, pen_y);
+    // The space a run asks for after its last character is not part of the visible line.
+    let trailing = runs.last().map(|r| r.spacing).unwrap_or(0.0);
+    let total: f64 = widths.iter().sum::<f64>() - trailing;
     let shift = match runs.first().map(|r| r.anchor).unwrap_or(Anchor::Start) {
         Anchor::Start => 0.0,
         Anchor::Middle => -total / 2.0,
@@ -211,17 +218,29 @@ fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine) {
     };
     for p in &placed {
         let run = &runs[p.run];
-        let Some(fill) = &run.fill else { continue };
-        let Some(path) = glyph_path(&p.face, p.gid) else { continue };
+        if run.fill.is_none() && run.stroke.is_none() {
+            continue;
+        }
         let k = p.size / p.face.upem.max(1.0);
-        ctx.set_transform(to_device * Affine::translate((p.x + shift, p.y)) * Affine::scale(k));
-        // A gradient over glyphs has no box to measure here: its first stop stands in.
-        set_flat(ctx, fill);
-        ctx.fill_path(&path);
+        let at = to_device * Affine::translate((p.x + shift, p.y)) * Affine::scale(k);
+        // The same extent guard the shapes get: a glyph under an absurd transform is dropped
+        // rather than flattened into device coordinates nothing can draw.
+        let on_screen = at.determinant().abs().sqrt();
+        if !(on_screen.is_finite() && on_screen > 1e-9 && on_screen < 1e6) {
+            continue;
+        }
+        let Some(path) = glyph_path(&p.face, p.gid) else { continue };
+        ctx.set_transform(at);
+        if let Some(fill) = &run.fill {
+            // A gradient over glyphs has no box to measure here: its first stop stands in.
+            set_flat(ctx, fill);
+            ctx.fill_path(path.as_ref());
+        }
+        // A label can be stroked without a fill, and then it still draws.
         if let Some((paint, stroke)) = &run.stroke {
             set_flat(ctx, paint);
             ctx.set_stroke(kurbo::Stroke::new(stroke.width / k.max(1e-9)).with_caps(stroke.start_cap).with_join(stroke.join));
-            ctx.stroke_path(&path);
+            ctx.stroke_path(path.as_ref());
         }
     }
 }
@@ -257,10 +276,11 @@ fn segments<'a>(r: &'a TextRun, face: &Arc<FontFace>) -> Vec<(Arc<FontFace>, &'a
     out
 }
 
-/// The outline of one glyph, or `None` when the face has none (a space, a missing glyph).
-fn glyph_path(face: &FontFace, gid: u32) -> Option<BezPath> {
+/// The outline of one glyph, or `None` when the face has none (a space, a missing glyph). The
+/// outline is the shared, cached path, so a repeated glyph is not outlined again.
+fn glyph_path(face: &FontFace, gid: u32) -> Option<Arc<BezPath>> {
     let p = crate::glyph(face, gid);
-    (!p.elements().is_empty()).then(|| p.as_ref().clone())
+    (!p.elements().is_empty()).then_some(p)
 }
 
 /// The face a run asks for: the first family it names that is installed, then the closest style.
@@ -386,6 +406,29 @@ mod tests {
         .expect("draws");
         assert_eq!(img.dimensions(), (60, 20));
         assert!(img.pixels().any(|p| p[3] > 0), "the label paints");
+    }
+
+    #[test]
+    fn a_label_that_sets_only_one_coordinate_keeps_the_other() {
+        // The second chunk sets x only; its baseline stays the one the first chunk used.
+        let img = rasterize(
+            b"<svg width='200' height='40' viewBox='0 0 200 40'><text y='30' font-size='20' font-family='sans-serif' fill='#000000'><tspan x='0'>H</tspan><tspan x='100'>H</tspan></text></svg>",
+            200,
+        )
+        .expect("draws");
+        let ink = |x0: u32, x1: u32| (0..img.height()).flat_map(|y| (x0..x1).map(move |x| (x, y))).any(|(x, y)| img.get_pixel(x, y)[3] > 128);
+        assert!(ink(90, 120), "the second glyph sits at its own x");
+        assert!(!ink(120, 200), "nothing spills past it");
+    }
+
+    #[test]
+    fn a_stroked_label_without_a_fill_still_draws() {
+        let img = rasterize(
+            b"<svg width='60' height='40' viewBox='0 0 60 40'><text x='4' y='30' font-size='24' font-family='sans-serif' fill='none' stroke='#000000' stroke-width='1'>I</text></svg>",
+            60,
+        )
+        .expect("draws");
+        assert!(img.pixels().any(|p| p[3] > 128), "an outlined label paints");
     }
 
     #[test]

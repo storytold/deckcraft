@@ -6,6 +6,11 @@ use kurbo::Affine;
 /// A length in user units. `px` and a bare number are the same unit (96 to the inch); percentages
 /// need a viewport this reader does not track, and return `None`.
 pub fn length(s: &str) -> Option<f64> {
+    length_em(s, 16.0)
+}
+
+/// [`length`] with the font size an `em` or `ex` is measured against.
+pub fn length_em(s: &str, em: f64) -> Option<f64> {
     let s = s.trim();
     let end = s.char_indices().rev().take_while(|(_, c)| c.is_ascii_alphabetic() || *c == '%').last().map(|(i, _)| i).unwrap_or(s.len());
     let (num, unit) = s.split_at(end);
@@ -20,8 +25,8 @@ pub fn length(s: &str) -> Option<f64> {
         "mm" => 96.0 / 25.4,
         "cm" => 96.0 / 2.54,
         "in" => 96.0,
-        "em" => 16.0,
-        "ex" => 8.0,
+        "em" => em,
+        "ex" => em / 2.0,
         _ => return None,
     };
     Some(v * k).filter(|v| v.is_finite())

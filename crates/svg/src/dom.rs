@@ -71,14 +71,20 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
             Event::Text(t) => {
                 // Only elements that lay characters out keep them, as `#text` children in the
                 // order they appear, so mixed content (`A<tspan>B</tspan>C`) stays in order.
-                if let Some(parent) = stack.last_mut().filter(|p| matches!(p.name.as_str(), "text" | "tspan")) {
-                    parent.kids.push(Arc::new(text_node(t.decode().map(|c| c.into_owned()).unwrap_or_default())));
-                }
+                let raw = t.decode().map(|c| c.into_owned()).unwrap_or_default();
+                push_text(&mut stack, &mut nodes, raw);
             }
-            Event::CData(c) => {
-                if let Some(parent) = stack.last_mut().filter(|p| matches!(p.name.as_str(), "text" | "tspan")) {
-                    parent.kids.push(Arc::new(text_node(String::from_utf8_lossy(&c).into_owned())));
-                }
+            Event::CData(c) => push_text(&mut stack, &mut nodes, String::from_utf8_lossy(&c).into_owned()),
+            // `&amp;` and `&#x2192;` are separate events, and their position in a label matters.
+            Event::GeneralRef(r) => {
+                let raw = match r.resolve_char_ref() {
+                    Ok(Some(c)) => c.to_string(),
+                    _ => {
+                        let name = String::from_utf8_lossy(&r).into_owned();
+                        quick_xml::escape::resolve_predefined_entity(&name).map(str::to_string).unwrap_or_default()
+                    }
+                };
+                push_text(&mut stack, &mut nodes, raw);
             }
             Event::Eof => break,
             // Comments, declarations and processing instructions carry nothing we draw.
@@ -90,6 +96,21 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
         push(&mut stack, &mut root, node);
     }
     root.map(Arc::new)
+}
+
+/// Keep a stretch of characters as a `#text` child of the innermost open text element, charged
+/// against the document's node budget so a small file of many references still stops.
+fn push_text(stack: &mut [Node], nodes: &mut usize, raw: String) {
+    if raw.is_empty() {
+        return;
+    }
+    *nodes += 1;
+    if *nodes > MAX_NODES {
+        return;
+    }
+    if let Some(parent) = stack.last_mut().filter(|p| matches!(p.name.as_str(), "text" | "tspan")) {
+        parent.kids.push(Arc::new(text_node(raw)));
+    }
 }
 
 /// A run of characters inside a text element, as a child node so its order is kept.
@@ -119,7 +140,9 @@ fn element(b: &quick_xml::events::BytesStart, reader: &quick_xml::Reader<&[u8]>)
         if key == "xmlns" || key.starts_with("xmlns:") {
             continue;
         }
-        let local = key.rsplit_once(':').map(|(_, l)| l).unwrap_or(&key).to_string();
+        // `xml:space` keeps its prefix: it means whitespace handling, not an attribute called
+        // `space` in whatever namespace.
+        let local = if key == "xml:space" { key.clone() } else { key.rsplit_once(':').map(|(_, l)| l).unwrap_or(&key).to_string() };
         let value = a
             .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
             .map(|c| c.into_owned())

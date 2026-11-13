@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-13 | SVG review pass: gradients follow the element transform and resolve viewport percentages, markers cannot recurse and follow a curve's tangent, a stroked label without a fill draws, and text positions follow the nearest `tspan`. Limits unchanged (filters, masks, clip paths, export fallback) |
 | 2026-11-13 | SVG pictures draw their text (`text`/`tspan`, font family, size, weight, style, `text-anchor`, letter spacing, whitespace as SVG reads it), real gradient ramps (stops, `objectBoundingBox`/`userSpaceOnUse`, `gradientTransform`, `spreadMethod`) and markers (`marker-start`/`-mid`/`-end`, `orient`, `markerUnits`, view box). Filters, masks and clip paths are still not read. Checklist Pictures 64%, unchanged |
 | 2026-11-13 | SVG pictures: `crates/svg` reads paths, basic shapes, groups, transforms, `use` and solid or gradient fills, and `crates/render/src/svg.rs` draws them as vectors, so SVG files insert at their own size and render; import takes `asvg:svgBlip` over the PNG fallback. Export still writes no raster fallback. Checklist Pictures 60 → 64% |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |

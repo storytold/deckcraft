@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-13 · **Change:** minor (SVG pictures draw their text, real gradient ramps and markers; filters, masks and clip paths still are not read, export still lacks the PNG fallback; previous: minor (SVG pictures render as vectors, insert from disk and import their vector original from PowerPoint files; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-13 · **Change:** trivial (gradients follow their element's transform and resolve viewport percentages; a marker cannot recurse, the last vertex keeps its marker and curve markers follow the tangent; a `url(#…)` that names no paint draws black; previous: minor (SVG pictures draw their text, real gradient ramps and markers; filters, masks and clip paths still are not read, export still lacks the PNG fallback; previous: minor (SVG pictures render as vectors, insert from disk and import their vector original from PowerPoint files; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -113,9 +113,9 @@ SVG files insert and render, and import takes `a:extLst/…/asvg:svgBlip` over t
 older readers draw only that fallback.
 - **Impact:** an SVG inserted here may show blank in readers that expect the fallback. Filters
 (glow and shadow), masks, clip paths and patterns inside an SVG aren't read, so such a picture
-loses its blur and clipping; a group's opacity applies to each shape in it rather than to the
-composited group; and a gradient coordinate written as a percentage in `userSpaceOnUse` has no
-viewport to resolve against.
+loses its blur and clipping, and a group's opacity applies to each shape in it rather than to the
+composited group. A `url(#…)` paint this reader cannot resolve is drawn black, where a browser
+draws nothing unless the paint names a fallback colour.
 - **Estimate:** 2–4 h (rasterize once at export, write the PNG part plus the `asvg` extension).
 
 ### Macro-enabled variants aren't recognized
@@ -375,6 +375,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | trivial | SVG gradients now follow the element transform and resolve percentages in `userSpaceOnUse` against the viewport; markers cannot recurse, keep the last vertex and follow a curve's tangent; the gap that remains is filters, masks and clip paths, plus the missing export fallback |
 | 2026-11-13 | minor | SVG pictures draw their text (families, size, weight, style, anchor, tspans), real gradient ramps (stops, units, transform, spread) and markers; filters, masks and clip paths remain, and so does export without a PNG fallback |
 | 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from `asvg:svgBlip`; the gap that remains is export without a PNG fallback, and gradients drawn as average stops |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
