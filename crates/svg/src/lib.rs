@@ -339,23 +339,45 @@ impl Style {
         // subtree instead of being replaced by a descendant's own value.
         s.group_opacity *= self.opacity;
         s.opacity = 1.0;
-        for (k, v) in &node.attrs {
-            if k != "style" {
-                s.set(k, v, ids, viewport);
-            }
-        }
-        // A `style` attribute wins over the presentation attributes, as CSS does.
-        if let Some(d) = node.attr("style") {
-            for decl in d.split(';') {
-                if let Some((k, v)) = decl.split_once(':') {
-                    s.set(k.trim(), v.trim(), ids, viewport);
-                }
-            }
-        }
+        // `em` in a font size measures against the size inherited, while `em` anywhere else
+        // measures against the size this element computed, whatever order the declarations come
+        // in. So the size is resolved first, then everything else.
+        s.declare(node, ids, viewport, Some(s.font.size));
+        s.declare(node, ids, viewport, None);
         s
     }
 
-    fn set(&mut self, key: &str, v: &str, ids: &HashMap<String, Arc<Node>>, viewport: (f64, f64)) {
+    /// Apply the element's own declarations: the attributes first, then the `style` attribute,
+    /// which wins as CSS does. `only_size` resolves the font size and nothing else.
+    fn declare(&mut self, node: &Node, ids: &HashMap<String, Arc<Node>>, viewport: (f64, f64), size_pass: Option<f64>) {
+        let mut decls: Vec<(&str, &str)> = Vec::new();
+        for (k, v) in &node.attrs {
+            if k != "style" {
+                decls.push((k.as_str(), v.as_str()));
+            }
+        }
+        if let Some(d) = node.attr("style") {
+            for decl in d.split(';') {
+                if let Some((k, v)) = decl.split_once(':') {
+                    decls.push((k.trim(), v.trim()));
+                }
+            }
+        }
+        for (k, v) in decls {
+            match size_pass {
+                Some(inherited) if k == "font-size" => self.set(k, v, ids, viewport, inherited),
+                Some(_) => {}
+                None if k == "font-size" => {}
+                None => {
+                    let em = self.font.size;
+                    self.set(k, v, ids, viewport, em)
+                }
+            }
+        }
+    }
+
+    /// Apply one declaration. `em` is the size an `em` or `ex` in it measures against.
+    fn set(&mut self, key: &str, v: &str, ids: &HashMap<String, Arc<Node>>, viewport: (f64, f64), em: f64) {
         let opacity = |v: &str| {
             {
                 let v = v.trim();
@@ -407,7 +429,7 @@ impl Style {
                 let v = v.trim();
                 let size = match v.strip_suffix('%') {
                     Some(p) => p.trim().parse::<f64>().ok().map(|p| self.font.size * p / 100.0),
-                    None => attr::length_em(v, self.font.size),
+                    None => attr::length_em(v, em),
                 };
                 if let Some(s) = size.filter(|s: &f64| s.is_finite() && *s > 0.0) {
                     self.font.size = s.clamp(0.1, MAX_COORD);
@@ -429,9 +451,7 @@ impl Style {
                     _ => Anchor::Start,
                 }
             }
-            "letter-spacing" => {
-                self.font.spacing = attr::length_em(v, self.font.size).filter(|v| v.is_finite()).map(|v| v.clamp(-1e3, 1e3)).unwrap_or(0.0)
-            }
+            "letter-spacing" => self.font.spacing = attr::length_em(v, em).filter(|v| v.is_finite()).map(|v| v.clamp(-1e3, 1e3)).unwrap_or(0.0),
             "xml:space" => self.font.preserve = v.trim() == "preserve",
             "marker-start" => self.marker_start = marker_ref(v),
             "marker-mid" => self.marker_mid = marker_ref(v),
@@ -873,17 +893,21 @@ impl Build {
                     // character boundary.
                     let room = MAX_TEXT_CHARS.saturating_sub(self.text_chars);
                     if text.len() > room {
-                        text.truncate(room.min(text.len()));
-                        while !text.is_char_boundary(text.len()) {
-                            text.pop();
+                        // The cut has to land on a character boundary: `truncate` panics on a byte
+                        // inside a multi-byte character.
+                        let mut cut = room.min(text.len());
+                        while cut > 0 && !text.is_char_boundary(cut) {
+                            cut -= 1;
                         }
+                        text.truncate(cut);
                     }
                     if text.is_empty() || room == 0 {
                         continue;
                     }
                     self.text_chars += text.len();
-                    // A space that the previous run already ended with would double it.
-                    if text.starts_with(' ') && out.last().is_some_and(|r| r.text.ends_with(' ')) {
+                    // A space that the previous run already ended with would double it, unless the
+                    // document asked for its whitespace to be preserved.
+                    if !style.font.preserve && text.starts_with(' ') && out.last().is_some_and(|r| r.text.ends_with(' ')) {
                         text.remove(0);
                     }
                     out.push(TextRun {
@@ -908,8 +932,9 @@ impl Build {
             }
         }
         // `x`/`y`/`dx`/`dy` on the element place the first glyph it contributes, unless a nearer
-        // `tspan` already placed it: the nearest positioning element wins.
-        if let Some(run) = out.get_mut(start) {
+        // `tspan` already placed it: the nearest positioning element wins. The `text` element
+        // itself is placed once by [`Build::text`], after the whitespace trim.
+        if !root && let Some(run) = out.get_mut(start) {
             if run.at_x.is_none() {
                 run.at_x = at_x;
             }
@@ -1450,6 +1475,48 @@ mod tests {
         let r = &text_of(&s).runs[0];
         assert_eq!(r.size, 40.0);
         assert_eq!(r.spacing, 20.0);
+    }
+
+    #[test]
+    fn a_relative_font_size_measures_against_the_inherited_size() {
+        // 2em of the inherited 16, not of the 20 the presentation attribute set first.
+        let s = svg("<text x='0' y='10' font-size='20' style='font-size:2em'>A</text>");
+        assert_eq!(text_of(&s).runs[0].size, 32.0);
+    }
+
+    #[test]
+    fn an_em_letter_spacing_uses_the_size_the_element_computed() {
+        for body in
+            ["<text x='0' y='10' letter-spacing='0.5em' font-size='20'>A</text>", "<text x='0' y='10' font-size='20' letter-spacing='0.5em'>A</text>"]
+        {
+            let s = svg(body);
+            assert_eq!(text_of(&s).runs[0].spacing, 10.0, "{body}");
+        }
+    }
+
+    #[test]
+    fn the_elements_own_displacement_is_applied_once() {
+        let s = svg("<text x='10' y='5' dx='2' dy='3'>A</text>");
+        let r = &text_of(&s).runs[0];
+        assert_eq!((r.at_x, r.at_y, r.dx, r.dy), (Some(10.0), Some(5.0), 2.0, 3.0));
+    }
+
+    #[test]
+    fn a_truncated_label_cut_inside_a_character_does_not_panic() {
+        // Three bytes per character, so the byte budget lands inside one.
+        let long = "\u{4e2d}".repeat(MAX_TEXT_CHARS / 3 + 10);
+        let s = svg(&format!("<text x='0' y='10'>{long}</text>"));
+        let runs = &text_of(&s).runs;
+        let kept: usize = runs.iter().map(|r| r.text.len()).sum();
+        assert!(kept <= MAX_TEXT_CHARS, "{kept}");
+        assert!(runs.iter().all(|r| std::str::from_utf8(r.text.as_bytes()).is_ok()));
+    }
+
+    #[test]
+    fn preserved_whitespace_keeps_its_spaces_across_runs() {
+        let s = svg("<text x='0' y='10' xml:space='preserve'>A <tspan> B</tspan></text>");
+        let joined: String = text_of(&s).runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(joined, "A  B");
     }
 
     #[test]
