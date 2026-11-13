@@ -1,0 +1,14 @@
+[package]
+name = "deckcraft-svg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft SVG reader: shapes, paths, fills and strokes into bezier geometry, for pictures the model stores as image/svg+xml"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-color = { workspace = true }
+kurbo = { workspace = true }
+quick-xml = { workspace = true }

@@ -132,6 +132,9 @@ fn decode_at(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     if crate::metafile::is_metafile(bytes) {
         return crate::metafile::rasterize(bytes, side);
     }
+    if crate::svg::is_svg(bytes) {
+        return crate::svg::rasterize(bytes, side);
+    }
     decode_raster(bytes, MAX_RGBA)
 }
 
@@ -184,6 +187,9 @@ fn decode_raster(bytes: &[u8], max: u64) -> Option<image::RgbaImage> {
 pub fn natural_size(bytes: &[u8]) -> Option<(f64, f64)> {
     if crate::metafile::is_metafile(bytes) {
         return None;
+    }
+    if crate::svg::is_svg(bytes) {
+        return deckcraft_svg::parse(bytes).map(|s| s.size).filter(|(w, h)| *w > 0.0 && *h > 0.0);
     }
     let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()?;
     if w == 0 || h == 0 {

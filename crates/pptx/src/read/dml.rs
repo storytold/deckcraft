@@ -144,8 +144,9 @@ pub fn gradient(f: &El) -> Gradient {
 /// `blipFill` (either `a:` or `p:`) → picture fill, registering the image as media.
 pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let blip = bf.child("blip");
-    let media = blip.and_then(|b| media_ref(imp, part, b));
-    let media = media?;
+    // PowerPoint stores an icon's vector original in `a:extLst` next to a PNG fallback in
+    // `r:embed`; the vector is what we draw, so it wins when the part really is an SVG.
+    let media = blip.and_then(|b| svg_blip(imp, part, b).or_else(|| media_ref(imp, part, b)))?;
     let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
     if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
         && let Some(effect) = layer
@@ -206,6 +207,13 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
 }
 
 /// Media for an element with `r:embed` (or `r:link`).
+/// The SVG original of a picture (`a:extLst/a:ext/…/asvg:svgBlip`), when the file has one.
+fn svg_blip(imp: &mut Imp, part: &Part, blip: &El) -> Option<deckcraft_model::MediaId> {
+    let ext = blip.child("extLst")?.elements().find(|e| e.local() == "ext")?;
+    let id = media_ref(imp, part, ext.find("svgBlip")?)?;
+    imp.media.iter().any(|m| m.id == id && m.content_type == "image/svg+xml").then_some(id)
+}
+
 pub fn media_ref(imp: &mut Imp, part: &Part, b: &El) -> Option<deckcraft_model::MediaId> {
     if let Some(id) = b.attr("r:embed").filter(|s| !s.is_empty())
         && let Some(r) = part.rels.get(id)

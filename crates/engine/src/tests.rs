@@ -2818,6 +2818,24 @@ mod copy_remap {
     }
 
     #[test]
+    fn an_svg_picture_inserts_at_its_own_size_and_draws() {
+        const SVG: &[u8] =
+            b"<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><rect width='24' height='24' fill='#ff0000'/></svg>";
+        let mut s = Session::with_new();
+        let r = s.execute("insert.picture", &json!({"data": cmd::base64_encode(SVG), "name": "icon.svg"})).unwrap();
+        let id = ShapeId(r["id"].as_u64().unwrap() as u32);
+        let sh = shape(&s, 0, id);
+        let x = sh.xfrm.expect("placed");
+        // 24 px at 96 dpi are 18 pt, which fit inside the slide as they are.
+        assert_eq!((x.w.round(), x.h.round()), (18.0, 18.0));
+        assert_eq!(picture_bytes(&s, &sh), SVG, "the vector stays in the file");
+        let img = deckcraft_render::decode_image(&picture_bytes(&s, &sh)).expect("draws");
+        assert_eq!(img.get_pixel(img.width() / 2, img.height() / 2).0, [255, 0, 0, 255]);
+        // An unreadable SVG is refused instead of inserted blank.
+        assert!(s.execute("insert.picture", &json!({"data": cmd::base64_encode(b"<svg><oops"), "name": "bad.svg"})).is_err());
+    }
+
+    #[test]
     fn paste_as_picture_into_a_deck_with_a_colliding_media_id_draws_the_copied_picture() {
         let mut a = Session::with_new();
         let mut b = Session::with_new();
