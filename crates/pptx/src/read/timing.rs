@@ -57,6 +57,8 @@ struct Found<'a> {
     group: usize,
     /// Sum of the start delays of the time nodes between the click group and the effect, in ms.
     offset: u32,
+    /// Whether any ancestor time node defers start until an event (`onClick`, `onEnd`, targeted `onBegin`) or nonzero delay.
+    deferred: bool,
 }
 
 /// Where `collect` is in the time tree: the click group and the delay accumulated inside it.
@@ -65,6 +67,7 @@ struct At {
     trigger: Option<u32>,
     group: usize,
     offset: u32,
+    deferred: bool,
 }
 
 fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, depth: usize) {
@@ -73,7 +76,8 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
     }
     for c in e.elements() {
         if c.is("cTn") && c.has_attr("presetClass") {
-            out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset });
+            let deferred = at.deferred || c.child("stCondLst").is_some_and(defers_start);
+            out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset, deferred });
             continue;
         }
         let mut at = at;
@@ -84,14 +88,26 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
             at.trigger = ctn.path(&["stCondLst", "cond", "tgtEl", "spTgt"]).and_then(|s| s.u32("spid"));
         }
         if c.is("cTn")
-            && let Some(cond) = c.path(&["stCondLst", "cond"])
+            && let Some(st) = c.child("stCondLst")
         {
-            if cond.attr("delay").map(str::trim) == Some("indefinite") {
-                *groups += 1;
-                at.group = *groups;
-                at.offset = 0;
-            } else {
-                at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
+            let is_main_seq_auto = st.children_named("cond").any(|d| d.attr("delay").map(str::trim) == Some("indefinite"))
+                && st.children_named("cond").any(|d| {
+                    d.attr("evt") == Some("onBegin")
+                        && d.attr("delay").map(str::trim) == Some("0")
+                        && d.child("tgtEl").is_none()
+                        && d.child("rtn").is_none()
+                });
+            if !is_main_seq_auto && defers_start(st) {
+                at.deferred = true;
+            }
+            if let Some(cond) = st.child("cond") {
+                if cond.attr("delay").map(str::trim) == Some("indefinite") {
+                    *groups += 1;
+                    at.group = *groups;
+                    at.offset = 0;
+                } else {
+                    at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
+                }
             }
         }
         collect(c, at, groups, out, depth + 1);
@@ -277,10 +293,10 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     let root_deferred = timing.path(&["tnLst", "par", "cTn", "stCondLst"]).is_some_and(defers_start);
     if !root_deferred && let Some(tn) = timing.child("tnLst") {
         let mut found = vec![];
-        collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
+        collect(tn, At { trigger: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
         for f in found.into_iter().filter(|f| f.trigger.is_none()) {
             let c = f.ctn;
-            if c.attr("nodeType") == Some("clickEffect") {
+            if c.attr("nodeType") == Some("clickEffect") || f.deferred {
                 break;
             }
             let class = AnimClass::from_xml(c.attr("presetClass").unwrap_or("entr"));
@@ -305,7 +321,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
-    collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
+    collect(tn, At { trigger: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
     // Paragraph builds (`bldP`) by (spid, grpId) -> whether `build="p"`.
     let bld_p: std::collections::HashMap<(u32, String), bool> = timing
         .child("bldLst")
