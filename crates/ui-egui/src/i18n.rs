@@ -26,6 +26,8 @@
 //! 2. Add its code to [`LANGUAGES`].
 //!
 //! The Preferences dropdown, `app.language` and the system-language match pick it up from there.
+//! Until then a catalog craft-i18n already has is embedded but not offered: the interface
+//! doesn't show that language, and moving `craft-i18n.rev` past it changes nothing here.
 //!
 //! # Looking strings up
 //! - [`tl!`](crate::tl) / [`t`]: a string in the current language. [`tr`]: in a given one.
