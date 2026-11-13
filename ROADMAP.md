@@ -156,7 +156,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-11-13 | Interface languages (#2107): the placeholder prompts on slides (`Click to add title`, `Click icon to add picture` …) and the empty canvas's `Click to add first slide` follow the interface language; the renderer takes the UI's lookup through `RenderOpts::prompt`, exports and the CLI stay as before, and a language switch redraws the canvas |
+| 2026-11-13 | Interface languages (#2107): the placeholder prompts on slides (`Click to add title`, `Click icon to add picture` …) and the empty canvas's `Click to add first slide` follow the interface language where the catalog translates them (German and French have only `Click to add text` so far); the renderer takes the UI's lookup through `RenderOpts::prompt`, exports and the CLI stay as before, and a language switch redraws the canvas |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |

@@ -5,12 +5,14 @@
 
 DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
 are looked up in the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs when the
-UI is drawn (`tl!`, `crates/ui-egui/src/i18n.rs`); `build.rs` embeds them from `CRAFT_I18N_DIR` at
-the commit in `craft-i18n.rev`, and a build without it is English only. The interface follows the
+UI is drawn (`tl!`, `crates/ui-egui/src/i18n.rs`); `build.rs` embeds them from the checkout in
+`CRAFT_I18N_DIR` (CI and releases check out the commit in `craft-i18n.rev`; a local checkout has to
+be at that commit too), and a build without it is English only. The interface follows the
 system language (#15), or Preferences › Interface language and `app.language` (`auto`, `en`,
 `de`). Command ids, engine labels returned to scripts, the control channel, the CLI and MCP stay
 English. The placeholder prompts on slides (`Click to add title`) are drawn in the interface
-language too: the renderer takes the UI's lookup (`RenderOpts::prompt`, #2107). Still English:
+language too where the catalog has them: the renderer takes the UI's lookup
+(`RenderOpts::prompt`, #2107); German and French have only `Click to add text` so far. Still English:
 status messages from the engine, the native macOS menu bar and some dialog choice lists. Other requests: #30 and PR #34
 (Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as
 catalog-only PRs there. Dimension score: **~15% ready** (estimated: English complete, German
