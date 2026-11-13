@@ -29,7 +29,7 @@ fn closed_stdout() -> Stdio {
 }
 
 fn run(dir: &Path, args: &[&str], stdout: Stdio) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).current_dir(dir).args(args).stdout(stdout).stderr(Stdio::piped()).output().unwrap()
+    Command::new(crate::deckcraft_cli()).current_dir(dir).args(args).stdout(stdout).stderr(Stdio::piped()).output().unwrap()
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn broken_pipe_does_not_skip_later_commands_or_save() {
     assert!(out.status.success(), "exit {:?}: {}", out.status, String::from_utf8_lossy(&out.stderr));
     let saved = dir.0.join("out.deckcraft");
     assert!(saved.is_file(), "requested save was skipped");
-    let info = Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).arg("info").arg(saved).output().unwrap();
+    let info = Command::new(crate::deckcraft_cli()).arg("info").arg(saved).output().unwrap();
     assert!(info.status.success(), "{}", String::from_utf8_lossy(&info.stderr));
     let data: serde_json::Value = serde_json::from_slice(&info.stdout).unwrap();
     let slides = data["slides"].as_array().unwrap();
