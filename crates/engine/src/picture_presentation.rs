@@ -17,8 +17,7 @@ use crate::{EngineError, Result};
 /// Render scale in pixels per point when none is given (144 dpi for a 720 pt wide slide).
 pub const DEFAULT_SCALE: f64 = 2.0;
 
-/// The `.pptx` bytes of `doc` as one picture per slide. `scale` is px per pt; non-finite or
-/// out-of-range values fall back to [`DEFAULT_SCALE`], never panic.
+/// The `.pptx` bytes of `doc` as one picture per slide. `scale` is px per pt; a non-finite value uses [`DEFAULT_SCALE`] and a finite one is clamped to 0.01–16 (and to the renderer's largest picture), as PNG export does.
 pub fn encode(doc: &Presentation, scale: f64) -> Result<Vec<u8>> {
     deckcraft_pptx::export(&build(doc, scale)?).map_err(|e| EngineError::Other(e.to_string()))
 }
