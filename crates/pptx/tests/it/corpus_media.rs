@@ -11,7 +11,10 @@ use deckcraft_color::Rgba;
 use deckcraft_geom::Xfrm;
 use deckcraft_model::anim::{AnimClass, Animation};
 use deckcraft_model::text::{Run, RunKind, RunProps, TextBody};
-use deckcraft_model::{Geom, InkStroke, MediaClip, Presentation, Section, Shape, ShapeId, ShapeKind, Slide, SlideId, defaults};
+use deckcraft_model::{
+    Geom, InkStroke, MediaClip, ModelCamera, ModelEnvironment, ModelLight, ModelLightKind, ModelScene, Presentation, Section, Shape, ShapeId,
+    ShapeKind, Slide, SlideId, defaults,
+};
 
 fn png(rgb: [u8; 3]) -> Vec<u8> {
     let mut out = Cursor::new(vec![]);
@@ -67,9 +70,18 @@ fn corpus() -> (Presentation, Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut embedded = shape(&mut p, "Embedded", 340.0, 80.0, 144.0, 72.0);
     embedded.kind = ShapeKind::Opaque { xml: OLE.into(), preview: None, label: "DeckCraft.Note.1".into(), parts: vec![] };
     let mut block_shape = shape(&mut p, "Block", 40.0, 240.0, 120.0, 90.0);
-    block_shape.kind = ShapeKind::Model3d { media: block_id, poster: None };
+    block_shape.kind = ShapeKind::Model3d { media: block_id, poster: None, camera: None, scene: None };
     let mut globe_shape = shape(&mut p, "Globe", 180.0, 240.0, 160.0, 120.0);
-    globe_shape.kind = ShapeKind::Model3d { media: globe_id, poster: Some(poster_id) };
+    // A view of the globe and the scene it is lit by: what PowerPoint would keep in the slide part.
+    globe_shape.kind = ShapeKind::Model3d {
+        media: globe_id,
+        poster: Some(poster_id),
+        camera: Some(ModelCamera { position: [0.0, 0.0, 11_713_743.0], target: [0.0, 0.0, 0.0], up: [0.0, 36_000_000.0, 0.0], fov: 45.0 }),
+        scene: Some(ModelScene {
+            light: ModelLight { kind: ModelLightKind::Spot, direction: [0.0, -1.0, -0.25], intensity: 0.65, angle: Some(27.0) },
+            environment: ModelEnvironment { ambient: 0.2, background: Some([0xff, 0xef, 0xd5]) },
+        }),
+    };
     let mut number = shape(&mut p, "Slide number", 360.0, 240.0, 80.0, 28.0);
     number.text = Some(field("4", "slidenum"));
     let mut date = shape(&mut p, "Date", 360.0, 276.0, 160.0, 28.0);
@@ -231,8 +243,23 @@ fn models_survive(q: &Presentation, block: &[u8], globe: &[u8], poster: &[u8]) {
     assert!(block_media.name.to_ascii_lowercase().ends_with(".glb"), "{}", block_media.name);
 
     let globe_shape = by_name(q, "Globe");
-    let ShapeKind::Model3d { media, poster: Some(poster_media) } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
+    let ShapeKind::Model3d { media, poster: Some(poster_media), camera, scene } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
     assert_eq!(globe_shape.xfrm, Some(Xfrm::new(180.0, 240.0, 160.0, 120.0)));
+    // The camera is a final view in the slide part: EMU positions and a field of view in
+    // 1/60000 degree, read back exactly.
+    let camera = camera.as_ref().expect("the globe keeps its view");
+    assert_eq!(camera.position, [0.0, 0.0, 11_713_743.0]);
+    assert_eq!(camera.target, [0.0, 0.0, 0.0]);
+    assert_eq!(camera.up, [0.0, 36_000_000.0, 0.0]);
+    assert_eq!(camera.fov, 45.0);
+    // The scene is two final values — one light and the environment — written as `am3d:scene`.
+    let scene = scene.as_ref().expect("the globe keeps its scene");
+    assert_eq!(scene.light.kind, ModelLightKind::Spot);
+    assert_eq!(scene.light.direction, [0.0, -1.0, -0.25]);
+    assert_eq!(scene.light.intensity, 0.65);
+    assert_eq!(scene.light.angle, Some(27.0));
+    assert_eq!(scene.environment.ambient, 0.2);
+    assert_eq!(scene.environment.background, Some([0xff, 0xef, 0xd5]));
     assert_eq!(q.media(*media).expect("globe").data.as_ref(), globe);
     assert_eq!(q.media(*poster_media).expect("poster").data.as_ref(), poster);
 }
@@ -355,7 +382,7 @@ fn an_alternate_content_model_keeps_the_glb_and_its_poster() {
     for q in [&once, &twice] {
         assert!(q.slides[0].shapes.iter().all(|s| s.name != "Model poster"), "the fallback picture replaced the model");
         let s = by_name(q, "Model from file");
-        let ShapeKind::Model3d { media, poster: Some(poster_id) } = &s.kind else { panic!("{:?}", s.kind) };
+        let ShapeKind::Model3d { media, poster: Some(poster_id), .. } = &s.kind else { panic!("{:?}", s.kind) };
         assert_eq!(s.xfrm, Some(Xfrm::new(40.0, 50.0, 120.0, 90.0)));
         let model_item = q.media(*media).expect("glb");
         assert_eq!(model_item.data.as_ref(), model.as_slice());

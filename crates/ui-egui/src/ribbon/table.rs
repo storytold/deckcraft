@@ -210,6 +210,27 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
             small(app, ui, Icon::DistributeV, "Distribute Rows", "table.distributeRows", json!({}));
             small(app, ui, Icon::DistributeH, "Distribute Columns", "table.distributeColumns", json!({}));
         });
+        // PowerPoint's Table Layout ▸ Cell Size fields. They carry the selected column's width and
+        // row's height and run the same `table.columnWidth` / `table.rowHeight` commands a border
+        // drag does, so a live session queues them like any other edit.
+        if let Some((id, col, row, width, height)) = cell_size(app) {
+            ui.horizontal(|ui| {
+                let label = ui.add_sized(vec2(92.0, 18.0), egui::Label::new("Column Width"));
+                let mut w = width;
+                let r = ui.add(egui::DragValue::new(&mut w).speed(0.5).range(4.0..=4000.0).max_decimals(1).suffix(" pt")).labelled_by(label.id);
+                if (r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged())) && (w - width).abs() > 1e-9 {
+                    run(app, "table.columnWidth", json!({"id": id, "col": col, "width": w}));
+                }
+            });
+            ui.horizontal(|ui| {
+                let label = ui.add_sized(vec2(92.0, 18.0), egui::Label::new("Row Height"));
+                let mut h = height;
+                let r = ui.add(egui::DragValue::new(&mut h).speed(0.5).range(4.0..=4000.0).max_decimals(1).suffix(" pt")).labelled_by(label.id);
+                if (r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged())) && (h - height).abs() > 1e-9 {
+                    run(app, "table.rowHeight", json!({"id": id, "row": row, "height": h}));
+                }
+            });
+        }
     });
     group(ui, |ui| {
         rows(ui, |ui| {
@@ -236,4 +257,18 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     arrange_group(app, ui);
+}
+
+/// The cell the Cell Size fields act on: the caret's cell, the start of the selected cell range,
+/// or the first cell of the one selected table. Returns the table's id, the cell, and that
+/// column's width and row's height; `None` when no table is in reach.
+fn cell_size(app: &SlideApp) -> Option<(u32, usize, usize, f64, f64)> {
+    let st = app.session.active()?;
+    let picked = st.selection.text.as_ref().and_then(|t| t.cell.map(|c| (t.shape, c))).or_else(|| st.selection.cells.map(|c| (c.0, c.1)));
+    let id = picked.map(|(s, _)| s).or_else(|| st.selection.shapes.first().copied())?;
+    let ShapeKind::Table(table) = &st.shape(id)?.kind else {
+        return None;
+    };
+    let (row, col) = picked.map(|(_, c)| c).unwrap_or((0, 0));
+    Some((id.0, col, row, *table.cols.get(col)?, table.rows.get(row)?.height))
 }

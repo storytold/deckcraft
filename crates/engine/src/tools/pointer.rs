@@ -1,7 +1,7 @@
 use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
 use super::{
     Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind, TABLE_ERASER,
-    TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
+    TextTarget, ToolKind, Value, Vec2, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
 };
 
 impl Session {
@@ -222,7 +222,17 @@ impl Session {
 
     /// Handle a pointer press and start the applicable tool interaction.
     fn down(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
-        if let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone() {
+        // A viewer selects, places a caret and marquees, but never starts a gesture that writes.
+        // Several arms below return before the gate at the end of this function (a freeform's next
+        // vertex, a shape/text/ink tool, the eraser, an Edit Points vertex or handle), and every
+        // one of them reaches `edit` — below the command gate — so a writing drag already running
+        // is dropped here and those arms are not taken at all.
+        if self.read_only {
+            self.drop_writing_drag();
+        }
+        if !self.read_only
+            && let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone()
+        {
             // Next click of a freeform: close on the start point, else add a vertex.
             if points.len() > 2 && points.first().is_some_and(|s| (*s - p).hypot() <= tol * 2.0) {
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });
@@ -236,33 +246,35 @@ impl Session {
             self.tool.drag = Some(Drag::Freeform { mode, points, pressed: true });
             return Ok(Value::Null);
         }
-        match self.tool.kind.clone() {
-            ToolKind::Shape { preset } if is_freeform_tool(&preset) => {
-                self.tool.drag = Some(Drag::Freeform { mode: preset.clone(), points: vec![p], pressed: true });
-                self.tool.path_preview = vec![p];
-                self.tool.path_smooth = preset == "curve";
-                self.tool.path_closing = false;
-                return Ok(Value::Null);
-            }
-            ToolKind::Shape { preset } if preset == TABLE_ERASER => {
-                // Click a border to merge the cells on either side; elsewhere does nothing.
-                return Ok(self.execute("table.eraseLine", &json!({"at": [p.x, p.y], "tol": tol.max(4.0)})).unwrap_or(Value::Null));
-            }
-            ToolKind::Shape { .. } | ToolKind::TextBox => {
-                self.tool.drag = Some(Drag::Create { start: p });
-                self.tool.preview = Some(Xfrm::new(p.x, p.y, 0.0, 0.0));
-                return Ok(Value::Null);
-            }
-            ToolKind::Ink { mode, .. } => {
-                if mode == "eraser" {
-                    return self.erase_at(p, tol);
+        if !self.read_only {
+            match self.tool.kind.clone() {
+                ToolKind::Shape { preset } if is_freeform_tool(&preset) => {
+                    self.tool.drag = Some(Drag::Freeform { mode: preset.clone(), points: vec![p], pressed: true });
+                    self.tool.path_preview = vec![p];
+                    self.tool.path_smooth = preset == "curve";
+                    self.tool.path_closing = false;
+                    return Ok(Value::Null);
                 }
-                let sample = self.ink_sample(p);
-                self.tool.drag = Some(Drag::Ink { points: vec![sample] });
-                self.tool.ink_preview = vec![sample];
-                return Ok(Value::Null);
+                ToolKind::Shape { preset } if preset == TABLE_ERASER => {
+                    // Click a border to merge the cells on either side; elsewhere does nothing.
+                    return Ok(self.execute("table.eraseLine", &json!({"at": [p.x, p.y], "tol": tol.max(4.0)})).unwrap_or(Value::Null));
+                }
+                ToolKind::Shape { .. } | ToolKind::TextBox => {
+                    self.tool.drag = Some(Drag::Create { start: p });
+                    self.tool.preview = Some(Xfrm::new(p.x, p.y, 0.0, 0.0));
+                    return Ok(Value::Null);
+                }
+                ToolKind::Ink { mode, .. } => {
+                    if mode == "eraser" {
+                        return self.erase_at(p, tol);
+                    }
+                    let sample = self.ink_sample(p);
+                    self.tool.drag = Some(Drag::Ink { points: vec![sample] });
+                    self.tool.ink_preview = vec![sample];
+                    return Ok(Value::Null);
+                }
+                ToolKind::Select => {}
             }
-            ToolKind::Select => {}
         }
         // Clicking inside the text being edited moves the caret / starts a text selection.
         let before = self.text_selection();
@@ -274,7 +286,9 @@ impl Session {
         let hit = self.hit_test(p, tol);
         // Edit Points: drag a vertex, Ctrl-click one to delete it or the outline to add one;
         // a click anywhere else leaves Edit Points.
-        if let Some(eid) = self.doc().ok().and_then(|st| self.tool.editing_points(st)) {
+        if !self.read_only
+            && let Some(eid) = self.doc().ok().and_then(|st| self.tool.editing_points(st))
+        {
             if let Some(Hit::Vertex { id, path, index }) = hit {
                 if mods.cmd {
                     return self.execute("shape.deletePoint", &json!({"id": id, "path": path, "index": index}));
@@ -343,7 +357,15 @@ impl Session {
                     sel.text = None;
                     sel.cells = None;
                 })?;
-                self.tool.drag = Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt, enter_text: None });
+                self.tool.drag = Some(Drag::Move {
+                    ids: vec![id],
+                    start: p,
+                    origs,
+                    delta: Vec2::ZERO,
+                    moved: false,
+                    duplicate: mods.alt && !self.collab_queue,
+                    enter_text: None,
+                });
             }
             Some(Hit::Warp { id, index }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
@@ -409,8 +431,11 @@ impl Session {
                     sel.text = None;
                     sel.cells = None;
                 })?;
-                let duplicate = mods.alt && origs.len() == ids.len();
-                self.tool.drag = Some(Drag::Move { ids, start: p, origs, moved: false, duplicate, enter_text });
+                // Alt-drag duplicates the selection, which makes new objects: a shared session has
+                // no command for that copy yet, so the gesture stays a move there instead of
+                // leaving a shape only this replica has.
+                let duplicate = mods.alt && !self.collab_queue && origs.len() == ids.len();
+                self.tool.drag = Some(Drag::Move { ids, start: p, origs, delta: Vec2::ZERO, moved: false, duplicate, enter_text });
                 // Format Painter applies on click.
                 if self.painter.is_some() && !toggle {
                     let _ = self.execute("format.painterApply", &json!({"ids": [id]}));
@@ -441,7 +466,75 @@ impl Session {
                 self.tool.marquee = Some(Rect::from_points(p, p));
             }
         }
+        // A viewer selects and places a caret, but never starts a gesture that writes: every drag
+        // arm in `drag` changes the document through `edit`, which sits below the command gate, so
+        // dropping the drag here is what keeps a viewer's pointer from moving a shape. The press
+        // has already made its selection, and a text selection or a marquee only moves the
+        // selection, so those two stay.
+        if self.read_only {
+            self.drop_writing_drag();
+        }
         Ok(json!({"hit": serde_json::to_value(&hit).unwrap_or_default()}))
+    }
+
+    /// Drop a drag that writes the document, keeping the two that only move the selection (a text
+    /// selection and a marquee). A viewer's press must never leave a writing gesture armed,
+    /// whichever path started it: a tool chosen before the role changed, a freeform or ink stroke
+    /// already in progress, or one of the early returns in `down`.
+    ///
+    /// A move has already written the boxes it was following, so dropping the gesture as it stands
+    /// would leave the replica showing a position the room never accepted. Only the values this
+    /// gesture wrote are put back — the box at the press plus the last offset it applied — so a
+    /// step another participant settled meanwhile is a confirmed value and stays where it is.
+    fn drop_writing_drag(&mut self) {
+        let restore = match &self.tool.drag {
+            None | Some(Drag::TextSelect { .. } | Drag::Marquee { .. }) => return,
+            Some(Drag::Move { origs, delta, moved: true, duplicate: false, .. }) => Some((origs.clone(), *delta)),
+            // An Alt-drag duplicate has made new objects the room has no command for; a gesture
+            // that only armed a drag wrote nothing at all.
+            Some(_) => None,
+        };
+        if let Some((origs, delta)) = restore
+            && !origs.is_empty()
+        {
+            self.cancel_move_drag(&origs, delta);
+        }
+        self.tool.drag = None;
+        self.tool.preview = None;
+        self.tool.marquee = None;
+        self.tool.guide_drag = None;
+        self.tool.ink_preview.clear();
+        self.tool.path_preview.clear();
+    }
+
+    /// Put back the boxes a move gesture wrote and close its interaction without an undo step.
+    ///
+    /// Only a box this gesture wrote — the value at the press plus the offset it last applied — is
+    /// reverted, so a step another participant settled meanwhile is a confirmed value and stays.
+    fn cancel_move_drag(&mut self, origs: &[(ShapeId, Xfrm)], delta: Vec2) {
+        let _ = self.edit(|doc, sel| {
+            let Some(list) = crate::shapes_mut(doc, sel) else { return Ok(()) };
+            for (id, orig) in origs {
+                let Some(sh) = deckcraft_model::find_shape_mut(list, *id) else { continue };
+                let written = sh.xfrm.is_some_and(|x| {
+                    (x.x - (orig.x + delta.x)).abs() < 1e-6
+                        && (x.y - (orig.y + delta.y)).abs() < 1e-6
+                        && (x.w - orig.w).abs() < 1e-6
+                        && (x.h - orig.h).abs() < 1e-6
+                });
+                if written {
+                    sh.xfrm = Some(*orig);
+                }
+            }
+            Ok(())
+        });
+        // The gesture is cancelled, not undone: its interaction closes without an undo step, and
+        // the next press records its own before-image instead of inheriting this one.
+        if let Some(st) = self.active_mut()
+            && st.interaction.as_ref().is_some_and(|i| i.label == "Move")
+        {
+            st.interaction = None;
+        }
     }
 
     /// Handle a pointer release and finalize the active tool interaction.
@@ -588,6 +681,18 @@ impl Session {
                 out = self.paint_if_selection_changed(before, out)?;
                 self.commit();
             }
+            Some(Drag::Move { moved: true, ids, origs, delta, duplicate, .. }) => {
+                // The shapes followed the pointer through `edit`; a shared session submits where
+                // the drag left them so the room orders the move instead of one replica keeping
+                // it to itself. A role that changed mid-gesture takes that right away: the boxes
+                // go back instead of being kept locally and offered to the room.
+                if self.read_only && !duplicate {
+                    self.cancel_move_drag(&origs, delta);
+                } else {
+                    out = self.submit_drag_move(&ids)?;
+                    self.commit();
+                }
+            }
             Some(_) => self.commit(),
             None => {}
         }
@@ -595,6 +700,28 @@ impl Session {
         self.commit();
         let _ = mods;
         Ok(out)
+    }
+
+    /// Hand a finished shape drag to the room as one operation carrying the final boxes, the same
+    /// final-value form `arrange.align`/`arrange.distribute` use, so every replica lands on the
+    /// boxes the drag left and the step has one undo image. Nothing is submitted for a single-user
+    /// session, where the gesture's own interaction undo is the whole story. A viewer never gets
+    /// here: its press does not start the drag (`down`).
+    fn submit_drag_move(&mut self, ids: &[ShapeId]) -> Result<Value> {
+        if !self.collab_queue || self.read_only {
+            return Ok(Value::Null);
+        }
+        let st = self.doc()?;
+        let mut items = Vec::new();
+        for id in ids {
+            let Some(sh) = st.shape(*id) else { continue };
+            let x = xfrm_of(&st.doc, &st.selection, sh);
+            items.push(json!({"id": id.0, "x": x.x, "y": x.y, "w": x.w, "h": x.h}));
+        }
+        if items.is_empty() {
+            return Ok(Value::Null);
+        }
+        self.execute("shape.setBoundsMany", &json!({"items": items}))
     }
 
     pub(super) fn is_picture(&self, id: ShapeId) -> bool {

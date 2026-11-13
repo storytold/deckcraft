@@ -26,7 +26,9 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let sr = p.text(pos2(rect.min.x + 14.0, rect.center().y), Align2::LEFT_CENTER, &left, theme::font(12.0), t.text_dim);
         shown_text(ui, sr, "status_slide", &left);
         // Where the controls on the right begin; nothing on the left paints or clicks past it.
-        let right_x = rect.max.x - 560.0;
+        // The collaboration indicator lives at the left end of that cluster and needs its room.
+        let collab_w = if app.collab.is_enabled() { 150.0 } else { 0.0 };
+        let right_x = rect.max.x - 560.0 - collab_w;
         // The selection's proofing language; a click opens Review › Language.
         let (lang, no_proof) = crate::dialogs::selected_language(app);
         let name = crate::squiggles::display_lang_name(ui.ctx(), &lang) + if no_proof { " (not checked)" } else { "" };
@@ -110,6 +112,10 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let n_on = app.ui.notes;
         if labeled(&mut right, Icon::NotesSmall, "Notes", n_on).clicked() {
             app.ui.notes = !n_on;
+        }
+        if app.collab.is_enabled() {
+            right.add_space(8.0);
+            crate::collab::indicator(app, &mut right);
         }
         let _ = Stroke::NONE;
     });

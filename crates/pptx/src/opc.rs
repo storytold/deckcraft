@@ -27,6 +27,8 @@ pub const NS_P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/ma
 pub const NS_P15: &str = "http://schemas.microsoft.com/office/powerpoint/2012/main";
 pub const NS_P159: &str = "http://schemas.microsoft.com/office/powerpoint/2015/09/main";
 pub const NS_A14: &str = "http://schemas.microsoft.com/office/drawing/2010/main";
+/// The 3-D model namespace (`p:contentPart` of a `.glb`): the model's camera and lighting.
+pub const NS_AM3D: &str = "http://schemas.microsoft.com/office/drawing/2017/model3d";
 /// Modern (threaded) comments, Office 2018/8 schema.
 pub const NS_P188: &str = "http://schemas.microsoft.com/office/powerpoint/2018/8/main";
 

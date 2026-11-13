@@ -18,8 +18,17 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A viewer's role may have arrived since the last frame; the engine gate follows it.
+        self.sync_collab_gate();
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
+        } else if id == "file.save" && params.get("path").is_none() && self.host_session_id.is_some() {
+            // A live session behind the host bridge: Save is a commit, as from the ribbon. A
+            // refused commit is a refusal here too, not a stored file.
+            self.save().map(|()| json!({"committed": true}))
+        } else if id == "file.save" && params.get("path").is_none() && self.collab.owns_save() {
+            // A live native session: Save commits the room, not the local copy (ADR 0009).
+            self.save().map(|()| json!({"committed": true}))
         } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
             // A page that keeps the files (`?host=parent`): Save by id (the command palette) goes
             // to the page like Ctrl+S. The engine would write to the presentation's path, which a

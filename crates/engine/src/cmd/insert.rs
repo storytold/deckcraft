@@ -21,12 +21,13 @@ mod picture;
 mod text_fields;
 
 use album::{photo_album, photo_album_edit};
-pub use chart::chart_type;
-use chart::{chart, chart_data, chart_options, chart_type_cmd};
+pub use chart::plan as chart_plan;
+pub use chart::{MAX_CHART_JSON, chart_type};
+use chart::{chart, chart_data, chart_options, chart_type_cmd, set_whole};
 use links::{action_button, hyperlink, shape_action};
 pub use picture::content_type;
 pub(crate) use picture::media_bytes;
-use picture::{audio, picture, video};
+use picture::{audio, model3d, picture, video};
 use text_fields::{date_time, slide_number, symbol, word_art};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -85,12 +86,21 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart…",
             ["Insert", "Illustrations"],
             None,
-            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, rect?, categories?: [..], series?: [{name, values}]}",
+            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, rect?, categories?: [..], series?: [{name, values}], chart?: the whole Chart value (a collaborative insertion: replaces the sample and the typed data)}",
             has_slide,
             chart
         ),
         cmd!("insert.audio", "Audio from File…", ["Insert", "Media", "Audio"], None, "{path? | data: base64, name?, rect?}", has_slide, audio),
         cmd!("insert.video", "Video from File…", ["Insert", "Media", "Video"], None, "{path? | data: base64, name?, rect?}", has_slide, video),
+        cmd!(
+            "insert.model3d",
+            "3D Model…",
+            ["Insert", "Media", "3D Models"],
+            None,
+            "{path? | data: base64, name?, rect?: [x,y,w,h]} (a binary glTF `.glb`; it goes to the media channel as a `p:contentPart` and is drawn as a placeholder or its poster)",
+            has_slide,
+            model3d
+        ),
         cmd!("insert.wordArt", "WordArt", ["Insert", "Text"], None, "{text?, style?: 0..}", has_slide, word_art),
         cmd!("insert.slideNumber", "Slide Number", ["Insert", "Text"], None, "{}", has_slide, slide_number),
         cmd!(
@@ -141,11 +151,20 @@ pub fn specs() -> Vec<CommandSpec> {
             chart_options
         ),
         cmd!(
+            "chart.setWhole",
+            "Restore Chart",
+            ["Chart Design", "Data"],
+            None,
+            "{id?, chart: the whole Chart value} (the confirmed command of chart.type/chart.data/chart.options and the exact value of a chart step: every replica replaces the whole chart, data, type and options together)",
+            has_selection,
+            set_whole
+        ),
+        cmd!(
             "insert.smartArt",
             "SmartArt",
             ["Insert", "Illustrations"],
             None,
-            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}]} → {id}",
+            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}], diagram?: the whole Diagram value (a collaborative insertion: replaces the kind/nodes), rect?: [x,y,w,h]} → {id}",
             has_slide,
             smart_art
         ),
@@ -354,14 +373,15 @@ fn table(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A SmartArt graphic: a group regenerated from its outline (see [`super::smartart`]). Items with
-/// leading tabs are sub-points; `nodes` (`[{text, level}]`) may be given instead.
+/// leading tabs are sub-points; `nodes` (`[{text, level}]`) may be given instead. A `diagram`
+/// carries the whole value of a collaborative insertion, so every replica creates exactly the
+/// graphic the author's command would have left; it is checked before the first write.
 fn smart_art(s: &mut Session, p: &Value) -> Result<Value> {
-    let kind = str_param(p, "kind").unwrap_or("process").to_string();
-    let nodes = match p.get("nodes") {
-        Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("insert.smartArt", e.to_string()))?,
-        None => super::smartart::nodes_from_lines(p.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)),
+    let d = match p.get("diagram") {
+        Some(value) => super::smartart::verified_diagram(value, "insert.smartArt")?,
+        None => super::smartart::insert_plan(p)?,
     };
-    super::smartart::insert(s, &kind, nodes)
+    super::smartart::insert_value(s, d, rect_param(p, "rect"))
 }
 
 #[cfg(test)]

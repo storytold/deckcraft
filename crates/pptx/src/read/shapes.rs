@@ -310,8 +310,95 @@ fn content_part(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<S
     if let Some(x) = e.child("xfrm") {
         s.xfrm = Some(dml::xfrm(x).0);
     }
-    s.kind = ShapeKind::Model3d { media, poster: None };
+    let camera = model_camera(e);
+    s.kind = ShapeKind::Model3d { media, poster: None, camera, scene: model_scene(e) };
     Some(s)
+}
+
+/// The camera of a 3-D model: `am3d:camera` in the slide part next to the content part. A camera
+/// with a missing or malformed member is dropped whole rather than half-read, so a view this
+/// build cannot reproduce is never written back as a different one.
+fn model_camera(e: &El) -> Option<deckcraft_model::ModelCamera> {
+    let cam = e.child("camera")?;
+    let vec3 = |name: &str, keys: [&str; 3]| -> Option<[f64; 3]> {
+        let el = cam.child(name)?;
+        let mut v = [0.0; 3];
+        for (i, k) in keys.iter().enumerate() {
+            // The parser accepts `NaN` and `inf`; a camera with one is not a view this build can
+            // reproduce (and `serde_json` would write `NaN` as `null`). Slide EMU never comes near
+            // the bound, so anything beyond it is malformed too.
+            v[i] = el.attr(k)?.parse::<f64>().ok().filter(|x| x.is_finite() && x.abs() <= 1.0e9)?;
+        }
+        Some(v)
+    };
+    let position = vec3("pos", ["x", "y", "z"])?;
+    let target = vec3("lookAt", ["x", "y", "z"])?;
+    let up = vec3("up", ["dx", "dy", "dz"])?;
+    // Office writes the perspective's field of view in 1/60000 degree.
+    let fov = cam.child("perspective")?.attr("fov")?.parse::<f64>().ok()? / 60_000.0;
+    (fov.is_finite() && fov > 0.0).then_some(deckcraft_model::ModelCamera { position, target, up, fov })
+}
+
+/// The scene of a 3-D model: `am3d:scene` in the slide part next to the content part — one light
+/// (`type`, `direction`, `intensity`, and a spot's `angle`) and the environment (`ambient`, an
+/// optional background). A scene with a missing or malformed member is dropped whole rather than
+/// half-read, so a scene this build cannot reproduce is never written back as a different one.
+fn model_scene(e: &El) -> Option<deckcraft_model::ModelScene> {
+    use deckcraft_model::{ModelEnvironment, ModelLight, ModelLightKind, ModelScene};
+    let scene = e.child("scene")?;
+    let light = scene.child("light")?;
+    let kind = ModelLightKind::parse(light.attr("type")?)?;
+    let dir = light.child("dir")?;
+    let mut direction = [0.0; 3];
+    for (i, key) in ["dx", "dy", "dz"].iter().enumerate() {
+        direction[i] = dir.attr(key)?.parse::<f64>().ok()?;
+        if !direction[i].is_finite() {
+            return None;
+        }
+    }
+    if direction.iter().all(|v| *v == 0.0) {
+        return None;
+    }
+    let intensity = light.attr("intensity")?.parse::<f64>().ok()? / 100_000.0;
+    if !(0.0..=1.0).contains(&intensity) {
+        return None;
+    }
+    // The angle belongs to a spot light and to nothing else; a spot without one cannot be drawn.
+    let angle = match light.attr("angle") {
+        Some(angle) => {
+            let value = angle.parse::<f64>().ok()? / 60_000.0;
+            if !(1.0..=179.0).contains(&value) {
+                return None;
+            }
+            Some(value)
+        }
+        None => None,
+    };
+    if (kind == ModelLightKind::Spot) != angle.is_some() {
+        return None;
+    }
+    let env = scene.child("environment")?;
+    let ambient = env.attr("ambient")?.parse::<f64>().ok()? / 100_000.0;
+    if !(0.0..=1.0).contains(&ambient) {
+        return None;
+    }
+    let background = match env.attr("color") {
+        Some(hex) => Some(srgb(hex)?),
+        None => None,
+    };
+    Some(ModelScene { light: ModelLight { kind, direction, intensity, angle }, environment: ModelEnvironment { ambient, background } })
+}
+
+/// An sRGB colour as `RRGGBB`, the way Office writes `a:srgbClr`.
+fn srgb(hex: &str) -> Option<[u8; 3]> {
+    if hex.len() != 6 {
+        return None;
+    }
+    let mut rgb = [0u8; 3];
+    for (i, slot) in rgb.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(rgb)
 }
 
 /// A 3-D model wrapped in `mc:AlternateContent`: the model choice, plus the fallback picture.
@@ -325,8 +412,8 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
             fb.find_all("blip", &mut pics);
             pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
         });
-        if let ShapeKind::Model3d { media, .. } = s.kind {
-            s.kind = ShapeKind::Model3d { media, poster };
+        if let ShapeKind::Model3d { media, camera, scene, .. } = s.kind {
+            s.kind = ShapeKind::Model3d { media, poster, camera, scene };
         }
         return Some(s);
     }
@@ -588,11 +675,13 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {
         let rels = imp.pkg.rels(&dm.target);
-        for (k, rid) in crate::dgm::node_pictures(&data.root) {
+        for (k, rid, crop, alpha) in crate::dgm::node_pictures(&data.root) {
             let Some(target) = rels.get(&rid).filter(|r| !r.external).map(|r| r.target.clone()) else { continue };
             let media = imp.media_for(&target);
             if let Some(n) = d.nodes.get_mut(k) {
                 n.picture = media;
+                n.picture_place =
+                    (crop.is_some() || alpha.is_some()).then(|| deckcraft_model::PicturePlace { crop: crop.unwrap_or([0.0; 4]), alpha });
             }
         }
     }
@@ -825,4 +914,40 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
         c.fill = dml::fill_of(imp, part, pr);
     }
     c
+}
+
+#[cfg(test)]
+mod camera_tests {
+    use super::model_camera;
+
+    fn camera(xml: &str) -> Option<deckcraft_model::ModelCamera> {
+        let doc = crate::xml::parse(xml.as_bytes()).expect("xml");
+        model_camera(&doc.root)
+    }
+
+    const GOOD: &str = r#"<contentPart>
+        <camera>
+            <pos x="0" y="0" z="914400"/>
+            <lookAt x="0" y="0" z="0"/>
+            <up dx="0" dy="1" dz="0"/>
+            <perspective fov="2700000"/>
+        </camera>
+    </contentPart>"#;
+
+    #[test]
+    fn a_camera_with_a_finite_view_is_read() {
+        let cam = camera(GOOD).expect("a camera");
+        assert_eq!(cam.position, [0.0, 0.0, 914_400.0]);
+        assert!((cam.fov - 45.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_camera_with_a_non_finite_or_unbounded_member_is_dropped() {
+        for bad in ["NaN", "inf", "-inf", "1e400", "1e12"] {
+            for key in ["x=\"0\" y=\"0\" z=\"914400\"", "dx=\"0\" dy=\"1\" dz=\"0\""] {
+                let hostile = GOOD.replace(key, &key.replacen("0\"", &format!("{bad}\""), 1));
+                assert_eq!(camera(&hostile), None, "{bad} in {key}");
+            }
+        }
+    }
 }

@@ -5,8 +5,8 @@ use deckcraft_model::{Shape, ShapeKind, Table};
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, bad, bool_or, bool_param, cmd, color_param, edit_shapes, f64_param, has_selection, has_slide, id_param, ok, opt_usize_param,
-    str_param, table_drawn_heights, xfrm_of,
+    CommandSpec, bad, bool_or, cmd, color_param, edit_shapes, f64_param, has_selection, has_slide, id_param, ok, opt_usize_param, str_param,
+    table_drawn_heights, xfrm_of,
 };
 use crate::{DocState, Result, Session};
 
@@ -366,25 +366,48 @@ fn style(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// The six table style options, in the order the command documents them. Each is an independent
+/// boolean of the table, so collaboration carries all six as final values (RFC §15).
+const OPTION_NAMES: [&str; 6] = ["headerRow", "totalRow", "bandedRows", "firstColumn", "lastColumn", "bandedColumns"];
+
+fn apply_option(t: &mut Table, name: &str, v: bool) {
+    match name {
+        "headerRow" => t.first_row = v,
+        "totalRow" => t.last_row = v,
+        "bandedRows" => t.band_row = v,
+        "firstColumn" => t.first_col = v,
+        "lastColumn" => t.last_col = v,
+        "bandedColumns" => t.band_col = v,
+        _ => {}
+    }
+}
+
 fn options(s: &mut Session, p: &Value) -> Result<Value> {
-    with_table(s, p, "table.options", |t| {
-        if let Some(v) = bool_param(p, "headerRow") {
-            t.first_row = v;
+    // A toggle is a final value: a typo in a name, a value that is not a boolean, or a call that
+    // names no option at all is refused before the table is touched, so a caller never believes
+    // it changed something it did not (and a collaborator never receives a no-op operation).
+    let Some(map) = p.as_object() else {
+        return Err(bad("table.options", "params are an object"));
+    };
+    let mut set: Vec<(&str, bool)> = Vec::new();
+    for (key, value) in map {
+        if key == "id" {
+            continue;
         }
-        if let Some(v) = bool_param(p, "totalRow") {
-            t.last_row = v;
+        if !OPTION_NAMES.contains(&key.as_str()) {
+            return Err(bad("table.options", format!("unknown option `{key}`; one of {}", OPTION_NAMES.join(", "))));
         }
-        if let Some(v) = bool_param(p, "bandedRows") {
-            t.band_row = v;
-        }
-        if let Some(v) = bool_param(p, "firstColumn") {
-            t.first_col = v;
-        }
-        if let Some(v) = bool_param(p, "lastColumn") {
-            t.last_col = v;
-        }
-        if let Some(v) = bool_param(p, "bandedColumns") {
-            t.band_col = v;
+        let Some(v) = value.as_bool() else {
+            return Err(bad("table.options", format!("`{key}` is a boolean, not {value}")));
+        };
+        set.push((key.as_str(), v));
+    }
+    if set.is_empty() {
+        return Err(bad("table.options", "nothing to set"));
+    }
+    with_table(s, p, "table.options", move |t| {
+        for (name, v) in &set {
+            apply_option(t, name, *v);
         }
         Ok(())
     })

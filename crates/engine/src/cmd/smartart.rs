@@ -23,10 +23,14 @@ mod layout;
 mod nodes;
 mod paint;
 
-use edit::{
-    add_node, change_colors, change_layout, change_style, demote, from_text, nodes, promote, remove_node, set_nodes, set_picture, to_shapes, to_text,
+pub use edit::{
+    FromTextPlan, MAX_CONVERSION_TEXT_JSON, MAX_DIAGRAM_JSON, MAX_NODE_PICTURE_BYTES, ToTextPlan, from_text_plan, insert_plan, insert_value,
+    place_param, plan, selected, set_picture_value, synced, to_shapes_plan, to_text_plan, top_node, verified_diagram,
 };
-pub use edit::{insert, selected};
+use edit::{
+    add_node, change_colors, change_layout, change_style, demote, detach, from_text, nodes, promote, remove_node, replace_with_diagram,
+    replace_with_text, set_diagram, set_nodes, set_picture, to_shapes, to_text,
+};
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};
 #[cfg(test)]
@@ -173,6 +177,15 @@ pub fn is_kind(k: &str) -> bool {
     LAYOUTS.iter().any(|(id, _)| *id == k)
 }
 
+/// The SmartArt group that `id` names: the graphic itself, or the graphic that contains it.
+///
+/// The single-user commands resolve their target through the selection; the collaboration
+/// normaliser resolves the same group from an explicit id, so it can send the whole resulting
+/// diagram value.
+pub fn group_of(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
+    edit::diagram_group(shapes, id)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -192,6 +205,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id?, nodes?: [{text, level}], lines?: [string] (leading tabs set the level), index?, text?, title?} (index + text edits one node; title: its Name and Title box)",
             has_selection,
             set_nodes
+        ),
+        cmd!(
+            "smartArt.setDiagram",
+            "Restore SmartArt",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?, diagram: the whole Diagram value} (the confirmed command of every outline, layout, style and colour edit, and the exact restore of such a step; the group's shapes are regenerated from the value)",
+            has_selection,
+            set_diagram
         ),
         cmd!(
             "smartArt.addNode",
@@ -250,13 +272,49 @@ pub fn specs() -> Vec<CommandSpec> {
             to_shapes
         ),
         cmd!(
+            "smartArt.replaceWithDiagram",
+            "Replace with SmartArt",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?, diagram: the whole Diagram value, rect: [x,y,w,h]} (the confirmed command of smartArt.fromText: the source shape is replaced by the graphic the author's plan produced)",
+            has_selection,
+            replace_with_diagram
+        ),
+        cmd!(
+            "smartArt.replaceWithText",
+            "Replace SmartArt with Text",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?, body: the whole TextBody value, rect: [x,y,w,h]} (the confirmed command of smartArt.toText: the graphic is replaced by the text box the author's plan produced)",
+            has_selection,
+            replace_with_text
+        ),
+        cmd!(
+            "smartArt.detach",
+            "Detach SmartArt",
+            ["SmartArt Design", "Reset"],
+            None,
+            "{id?} (the confirmed command of smartArt.toShapes: the graphic's diagram is dropped and its drawing becomes a plain group)",
+            has_selection,
+            detach
+        ),
+        cmd!(
             "smartArt.picture",
             "Insert Picture in SmartArt",
             ["SmartArt Design", "Create Graphic"],
             None,
-            "{id?, index, data?: base64 | path?: string | reset?: bool} (the node's picture placeholder in picture layouts)",
+            "{id?, index, data?: base64 | path?: string | place?: {crop?: [l,t,r,b], alpha?} | reset?: bool} (the node's picture placeholder in picture layouts)",
             has_selection,
             set_picture
+        ),
+        cmd!(
+            "smartArt.setPicture",
+            "Restore SmartArt Picture",
+            ["SmartArt Design", "Create Graphic"],
+            None,
+            "{id?, index, data: base64, name?, place?, reset?: bool} (the confirmed command of smartArt.picture: the picture from the media channel and its final place)",
+            has_selection,
+            set_picture_value
         ),
         cmd!(
             "smartArt.style",
@@ -290,7 +348,14 @@ mod tests {
         levels
             .iter()
             .enumerate()
-            .map(|(i, l)| DiagramNode { text: format!("n{i}"), level: *l, picture: None, assistant: false, title: String::new() })
+            .map(|(i, l)| DiagramNode {
+                text: format!("n{i}"),
+                level: *l,
+                picture: None,
+                picture_place: None,
+                assistant: false,
+                title: String::new(),
+            })
             .collect()
     }
 

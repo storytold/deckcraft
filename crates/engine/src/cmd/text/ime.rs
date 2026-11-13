@@ -1,4 +1,4 @@
-use super::caret::cell_on_slide;
+use super::caret::{cell_on_slide, count_param};
 use super::editing::unlinked_at_link_end;
 use super::layout::{ctx_for, layout_for};
 use super::{DocState, Paragraph, Result, Session, TextBody, TextSel, Value, bad, body_of, ed, edit_text, json, str_param, xfrm_of};
@@ -166,6 +166,111 @@ pub(super) fn walk_backward(
     }
 }
 
+/// The characters one `text.deleteSurrounding` request removes, resolved against the body it is
+/// editing.
+///
+/// The request counts characters (or UTF-8 bytes) around the selection or the pre-edit, so the
+/// removed text is what the two walks from it reach. It is one contiguous range only when the
+/// selection is collapsed or one side has nothing to remove; a non-empty selection with text on
+/// both sides leaves two ranges with the selection kept between them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SurroundingDelete {
+    /// The selection's (or the pre-edit's) start: the right end of the backward range.
+    pub start: (usize, usize),
+    /// Its end: the left end of the forward range.
+    pub end: (usize, usize),
+    /// Where the backward walk stopped; the removed range is `from..start`.
+    pub from: (usize, usize),
+    /// Where the forward walk stopped; the removed range is `end..to`.
+    pub to: (usize, usize),
+    /// Characters removed before the selection or pre-edit.
+    pub before: usize,
+    /// Characters removed after it.
+    pub after: usize,
+}
+
+impl SurroundingDelete {
+    /// Characters the request removes.
+    pub fn deleted(&self) -> usize {
+        self.before + self.after
+    }
+
+    /// The removed characters as **one** contiguous range, or `None` when there is nothing to
+    /// remove or the removal is two ranges with the selection left between them. One collaboration
+    /// operation carries one range, so the second case has no operation.
+    pub fn span(&self) -> Option<((usize, usize), (usize, usize))> {
+        if self.deleted() == 0 || (self.before > 0 && self.after > 0 && self.start != self.end) {
+            return None;
+        }
+        Some((self.from, self.to))
+    }
+}
+
+/// Resolve a `text.deleteSurrounding` request against `body`.
+///
+/// This is the engine's own walk, shared by the single-user command and by the collaboration
+/// normaliser, so both resolve exactly the same characters (RFC §10.1). `None` when the selection
+/// or the pre-edit is not in the body.
+pub fn surrounding_delete(
+    body: &TextBody,
+    comp: Option<&crate::Composition>,
+    t: &TextSel,
+    before: usize,
+    after: usize,
+    bytes: bool,
+) -> Option<SurroundingDelete> {
+    let comp = composition_range(body, comp);
+    let a = model_pos(body, t.anchor)?;
+    let b = model_pos(body, t.caret)?;
+    let (start, end) = if a <= b { (a, b) } else { (b, a) };
+    // The selection (or the input method's pre-edit) stays exactly where it is. Only whole scalars
+    // fully inside the requested before/after ranges around it are removed.
+    let (start, end) = match comp {
+        Some((pi, cs, ce)) => ((pi, cs), (pi, ce)),
+        None => (start, end),
+    };
+    let (from, before_chars, _) = walk_backward(body, comp, start, before, bytes);
+    let (to, after_chars, _) = walk_forward(body, comp, end, after, bytes);
+    Some(SurroundingDelete { start, end, from, to, before: before_chars, after: after_chars })
+}
+
+/// What a shared session does with a `text.deleteSurrounding` outside a composition (RFC §10.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SharedImeDelete {
+    /// Nothing to remove: the command answers `{deleted: 0}` as it would alone.
+    Nothing,
+    /// One contiguous range of the body, which `text.delete` carries as `TextDelete`.
+    Range,
+    /// No operation carries what this request removes; the string is the reason to show.
+    Refused(&'static str),
+}
+
+/// Classify a `text.deleteSurrounding` outside a composition for a shared session.
+///
+/// Outside a composition the request is an ordinary deletion of the body, so the range its walk
+/// reaches leaves as one `text.delete`. Only the cases one operation cannot carry stay refused, and
+/// the refusal is made here — before the command is queued and therefore before the first write:
+/// no text selection, the body gone, and text on both sides of a non-empty selection.
+pub fn shared_surrounding_delete(st: &DocState, p: &Value) -> SharedImeDelete {
+    let Some(t) = st.selection.text.as_ref() else {
+        return SharedImeDelete::Refused("an input method's deletion outside a composition needs a text selection");
+    };
+    let Some(body) = body_of(st, t) else {
+        return SharedImeDelete::Refused("the text being edited is gone");
+    };
+    let bytes = p.get("bytes").and_then(Value::as_bool).unwrap_or(false);
+    let Some(d) = surrounding_delete(body, st.composition.as_ref(), t, count_param(p, "before"), count_param(p, "after"), bytes) else {
+        return SharedImeDelete::Refused("the selection is not in the text being edited");
+    };
+    if d.deleted() == 0 {
+        SharedImeDelete::Nothing
+    } else if d.span().is_none() {
+        SharedImeDelete::Refused("an input method's deletion outside a composition removes text on both sides of a selection and is not shared")
+    } else {
+        SharedImeDelete::Range
+    }
+}
+
 /// The committed logical text between two model positions (excluding `end`). `None` when it is
 /// longer than `cap` bytes: every caller only needs a bounded answer.
 fn logical_between(body: &TextBody, comp: Option<(usize, usize, usize)>, start: (usize, usize), end: (usize, usize), cap: usize) -> Option<String> {
@@ -249,6 +354,15 @@ fn composition_fits(st: &DocState, c: &crate::Composition) -> bool {
     body.paragraphs.get(c.start.0).is_some_and(|p| c.start.1.saturating_add(c.len) <= p.char_len())
 }
 
+/// The body a new composition belongs to, by address: the slide and the shape (and cell) whose
+/// text it types into. A composition is only ever started by a text selection, so a missing one is
+/// a caller that skipped the command's own check.
+fn composition_owner(st: &DocState) -> Result<crate::CompositionOwner> {
+    let t = st.selection.text.as_ref().ok_or_else(|| bad("text.compose", "no text is being edited"))?;
+    let slide = st.doc.slides.get(st.selection.slide).ok_or_else(|| bad("text.compose", "no such slide"))?.id;
+    Ok(crate::CompositionOwner { slide, shape: (!t.notes).then_some(t.shape), cell: t.cell.map(|(r, c)| (r as u32, c as u32)), notes: t.notes })
+}
+
 /// `text.compose`: put an input method's preedit at the insertion point (replacing the selection)
 /// or replace the composition with the new preedit. An empty preedit cancels: the presentation
 /// goes back to how it was before the composition began.
@@ -275,6 +389,7 @@ pub(super) fn compose(s: &mut Session, p: &Value) -> Result<Value> {
         None => {
             let st = s.doc()?;
             let (before, before_selection) = (st.doc.clone(), st.selection.clone());
+            let owner = composition_owner(st)?;
             let (start, props) = edit_text(s, |body, t| {
                 let (a, b) = t.ordered();
                 let at = ed::delete(body, a, b);
@@ -284,7 +399,7 @@ pub(super) fn compose(s: &mut Session, p: &Value) -> Result<Value> {
                 t.caret = c;
                 (at, props)
             })?;
-            s.doc_mut()?.composition = Some(crate::Composition { start, len: n, active, props, before, before_selection });
+            s.doc_mut()?.composition = Some(crate::Composition { start, len: n, active, props, before, before_selection, owner });
             Ok(json!({"composing": true, "start": [start.0, start.1], "len": n}))
         }
         Some(c) if text.is_empty() => {
