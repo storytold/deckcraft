@@ -977,6 +977,154 @@ fn group_ungroup_roundtrip_positions() {
     assert!((v["box"]["x"].as_f64().unwrap() - 310.0).abs() < 1e-6, "{v}");
 }
 
+/// Ungrouping a group inside another group frees its shapes into the outer group, in its place
+/// in the outer group's order, drawn where they were, and selects them. Before, arrange.ungroup
+/// looked only at the slide's top level: it answered `{ids: []}` and changed nothing.
+#[test]
+fn ungrouping_a_nested_group_frees_its_shapes_into_the_outer_group() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let sites = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        connect::sites_of(&st.doc, &st.selection, st.shapes(), sid(id)).unwrap()
+    };
+    // The outer group moved and stretched; then an inner group turned and flipped, inside an outer
+    // group that is turned and moved.
+    type Edits<'a> = &'a [(&'a str, Value)];
+    let cases: [(Edits<'_>, Edits<'_>); 2] = [
+        (&[], &[("shape.move", json!({"dx": 200})), ("shape.resize", json!({"w": 450}))]),
+        (
+            &[("shape.rotate", json!({"deg": 30})), ("shape.flip", json!({"axis": "horizontal"}))],
+            &[("shape.rotate", json!({"deg": 45})), ("shape.move", json!({"dx": 120, "dy": 40}))],
+        ),
+    ];
+    let edit = |s: &mut Session, id: u64, edits: Edits<'_>| {
+        for (cmd, p) in edits {
+            let mut p = p.clone();
+            p["ids"] = json!([id]);
+            s.execute(cmd, &p).unwrap();
+        }
+    };
+    for (n, (inner_edits, outer_edits)) in cases.into_iter().enumerate() {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let (a, b, c) = (rect(&mut s, 100.0, 100.0), rect(&mut s, 300.0, 100.0), rect(&mut s, 100.0, 300.0));
+        let inner = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+        edit(&mut s, inner, inner_edits);
+        let outer = s.execute("arrange.group", &json!({"ids": [inner, c]})).unwrap()["id"].as_u64().unwrap();
+        edit(&mut s, outer, outer_edits);
+        let before = [sites(&s, a), sites(&s, b), sites(&s, c)];
+        let r = s.execute("arrange.ungroup", &json!({"ids": [inner]})).unwrap();
+        assert_eq!(r["ids"], json!([a, b]), "case {n}");
+        assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b)]);
+        let st = s.doc().unwrap();
+        let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
+        assert_eq!(order, [sid(a), sid(b), sid(c)], "case {n}");
+        for (id, was) in [a, b, c].into_iter().zip(before) {
+            let now = sites(&s, id);
+            assert_eq!(was.len(), now.len(), "case {n}: shape {id}");
+            assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "case {n}: shape {id} moved from {was:?} to {now:?}");
+        }
+    }
+    // Two named groups, one inside the other, inside a third: the shapes of both go to the third,
+    // each listed once.
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let (a, b, c, d) = (rect(&mut s, 100.0, 100.0), rect(&mut s, 300.0, 100.0), rect(&mut s, 100.0, 300.0), rect(&mut s, 300.0, 300.0));
+    let inner = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    let middle = s.execute("arrange.group", &json!({"ids": [inner, c]})).unwrap()["id"].as_u64().unwrap();
+    let outer = s.execute("arrange.group", &json!({"ids": [middle, d]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("shape.resize", &json!({"ids": [outer], "w": 600})).unwrap();
+    let before = [a, b, c, d].map(|id| sites(&s, id));
+    let r = s.execute("arrange.ungroup", &json!({"ids": [inner, middle]})).unwrap();
+    assert_eq!(r["ids"], json!([a, b, c]));
+    assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b), sid(c)]);
+    let st = s.doc().unwrap();
+    let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
+    assert_eq!(order, [sid(a), sid(b), sid(c), sid(d)]);
+    for (id, was) in [a, b, c, d].into_iter().zip(before) {
+        let now = sites(&s, id);
+        assert_eq!(was.len(), now.len(), "shape {id}");
+        assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "shape {id} moved from {was:?} to {now:?}");
+    }
+}
+
+/// Ungrouping nested groups in one call returns each freed shape once, whatever order the groups
+/// are named in. Before, a group freed into a group that the same call freed next was listed twice
+/// and replaced once, so the call returned the id of a group that no longer existed.
+#[test]
+fn ungrouping_nested_groups_in_any_order_returns_only_freed_shapes() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    fn group(s: &mut Session, ids: [u64; 2]) -> u64 {
+        s.execute("arrange.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let [a, b, c, d, e] = [(100.0, 100.0), (300.0, 100.0), (100.0, 300.0), (300.0, 300.0), (500.0, 300.0)].map(|(x, y)| rect(&mut s, x, y));
+    let inner = group(&mut s, [a, b]);
+    let middle = group(&mut s, [inner, c]);
+    let upper = group(&mut s, [middle, d]);
+    let outer = group(&mut s, [upper, e]);
+    let r = s.execute("arrange.ungroup", &json!({"ids": [middle, upper, inner]})).unwrap();
+    assert_eq!(r["ids"], json!([a, b, c, d]));
+    assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b), sid(c), sid(d)]);
+    let st = s.doc().unwrap();
+    let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
+    assert_eq!(order, [sid(a), sid(b), sid(c), sid(d), sid(e)]);
+}
+
+/// Ungrouping a top-level group and a group inside it in one call frees the shapes of both onto
+/// the slide, in the top-level group's place and drawn where they were, whichever is named first.
+#[test]
+fn ungrouping_a_top_level_group_with_a_group_inside_it_frees_both() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    fn group(s: &mut Session, ids: [u64; 2]) -> u64 {
+        s.execute("arrange.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let sites = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        connect::sites_of(&st.doc, &st.selection, st.shapes(), sid(id)).unwrap()
+    };
+    let roots = |s: &Session| -> Vec<ShapeId> { s.doc().unwrap().shapes().iter().map(|x| x.id).collect() };
+    for outer_first in [true, false] {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let [a, b, c, z] = [(100.0, 100.0), (300.0, 100.0), (100.0, 300.0), (500.0, 500.0)].map(|(x, y)| rect(&mut s, x, y));
+        let inner = group(&mut s, [a, b]);
+        let outer = group(&mut s, [inner, c]);
+        s.execute("shape.resize", &json!({"ids": [outer], "w": 600})).unwrap();
+        let before = [a, b, c].map(|id| sites(&s, id));
+        let freed = [sid(a), sid(b), sid(c)];
+        let mut expected = vec![];
+        for x in roots(&s) {
+            if x == sid(outer) {
+                expected.extend(freed);
+            } else {
+                expected.push(x);
+            }
+        }
+        assert!(expected.contains(&sid(z)));
+        let ids = if outer_first { [outer, inner] } else { [inner, outer] };
+        let r = s.execute("arrange.ungroup", &json!({"ids": ids})).unwrap();
+        assert_eq!(r["ids"], json!([a, b, c]), "{ids:?}");
+        assert_eq!(s.doc().unwrap().selection.shapes, freed, "{ids:?}");
+        assert_eq!(roots(&s), expected, "{ids:?}");
+        for (id, was) in [a, b, c].into_iter().zip(before) {
+            let now = sites(&s, id);
+            assert_eq!(was.len(), now.len(), "{ids:?}: shape {id}");
+            assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "{ids:?}: shape {id} moved from {was:?} to {now:?}");
+        }
+    }
+}
+
 /// Grouping a group again and again stops at `MAX_GROUP_DEPTH`: past about 39 levels a saved
 /// .deckcraft file no longer opens, and past 64 commands such as format.languageAll miss the text.
 #[test]
