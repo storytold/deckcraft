@@ -45,6 +45,77 @@
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © the DeckCraft authors. MIT OR Apache-2.0.</string>
 
+  <!-- The documents DeckCraft opens, so Finder's Open With and "Change All" can offer it (the
+       Apple events arrive through apps/deckcraft/src/apple_events.rs). PowerPoint stays the
+       preferred app for its formats unless the user picks DeckCraft. The same set as the Windows
+       installer (deckcraft.wxs) and the Linux desktop file; a test in apps/deckcraft keeps
+       them equal. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>DeckCraft Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>DeckCraft</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>ai.storyteller.deckcraft.presentation</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.openxmlformats.presentationml.presentation</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>pptx</string></array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array><string>application/vnd.openxmlformats-officedocument.presentationml.presentation</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint Template</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.openxmlformats.presentationml.template</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>potx</string></array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array><string>application/vnd.openxmlformats-officedocument.presentationml.template</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint Slide Show</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.openxmlformats.presentationml.slideshow</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>ppsx</string></array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array><string>application/vnd.openxmlformats-officedocument.presentationml.slideshow</string></array>
+    </dict>
+  </array>
+
   <!-- DeckCraft's own format: a zip of a JSON manifest plus media. -->
   <key>UTExportedTypeDeclarations</key>
   <array>
@@ -87,6 +158,40 @@
       <dict>
         <key>public.filename-extension</key>
         <array><string>pptx</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>org.openxmlformats.presentationml.template</string>
+      <key>UTTypeDescription</key>
+      <string>Open XML Presentation Template</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.presentation</string>
+        <string>public.zip-archive</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>potx</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>org.openxmlformats.presentationml.slideshow</string>
+      <key>UTTypeDescription</key>
+      <string>Open XML Slide Show</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.presentation</string>
+        <string>public.zip-archive</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>ppsx</string></array>
       </dict>
     </dict>
   </array>

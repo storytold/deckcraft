@@ -48,6 +48,19 @@ fn ms(secs: f64) -> u64 {
 
 /// Probe `bytes`.
 pub fn probe(bytes: &Bytes) -> Result<MediaInfo> {
+    let mut info = probe_headers(bytes)?;
+    if info.duration_ms == 0 && info.audio.as_ref().is_some_and(|a| a.decodable) && info.video.is_none() {
+        // No length in the header (raw MP3 / ADTS without an index): decode to measure.
+        if let Ok(pcm) = crate::audio::decode(bytes) {
+            info.duration_ms = ms(pcm.duration());
+        }
+    }
+    Ok(info)
+}
+
+/// [`probe`] from the headers alone, without decoding: a raw MP3 or ADTS stream without an
+/// index reports a `duration_ms` of 0.
+pub fn probe_headers(bytes: &Bytes) -> Result<MediaInfo> {
     let c = Container::sniff(bytes);
     let mut info = match c {
         Container::Mp4 => probe_mp4(bytes)?,
@@ -58,20 +71,20 @@ pub fn probe(bytes: &Bytes) -> Result<MediaInfo> {
     };
     if info.audio.is_none() && info.video.is_none() || info.audio.as_ref().is_some_and(|a| a.sample_rate == 0) {
         // Plain audio files (and anything our demuxers didn't describe): symphonia's probe.
-        let (codec, rate, channels, frames) =
-            crate::audio::probe_symphonia(bytes, c.name()).ok_or_else(|| MediaError::Unsupported("this kind of media file".into()))?;
+        // Symphonia opens an MP4 wherever its probe finds an `ftyp` (after leading ID3v2 tags too); other known containers (a WAV's audio bytes can spell an `ftyp`) skip the check.
+        if matches!(c, Container::Mp4 | Container::Unknown | Container::Mp3) && !crate::mp4guard::probe_fits(bytes) {
+            return Err(MediaError::Corrupt("the MP4's sample tables do not fit the file".into()));
+        }
+        let (codec, rate, channels, frames) = std::panic::catch_unwind(|| crate::audio::probe_symphonia(bytes, c.name()))
+            .ok()
+            .flatten()
+            .ok_or_else(|| MediaError::Unsupported("this kind of media file".into()))?;
         info.audio = Some(AudioInfo { codec: codec_label(&codec), sample_rate: rate, channels, decodable: true });
         if info.duration_ms == 0
             && let Some(n) = frames
             && rate > 0
         {
             info.duration_ms = ms(n as f64 / rate as f64);
-        }
-    }
-    if info.duration_ms == 0 && info.audio.as_ref().is_some_and(|a| a.decodable) && info.video.is_none() {
-        // No length in the header (raw MP3 / ADTS without an index): decode to measure.
-        if let Ok(pcm) = crate::audio::decode(bytes) {
-            info.duration_ms = ms(pcm.duration());
         }
     }
     Ok(info)
@@ -93,9 +106,9 @@ fn codec_label(short: &str) -> String {
 }
 
 fn probe_mp4(bytes: &Bytes) -> Result<MediaInfo> {
-    use deckcraft_isobmff::{CodecConfig, TrackKind};
+    use craft_media::isobmff::{CodecConfig, TrackKind};
     let src: &[u8] = bytes;
-    let f = deckcraft_isobmff::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+    let f = craft_media::isobmff::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
     let mut info = MediaInfo { container: if f.is_quicktime { "mov" } else { "mp4" }, ..Default::default() };
     let mut dur = if f.timescale > 0 { f.duration as f64 / f.timescale as f64 } else { 0.0 };
     if let Some(ti) = f.track_of_kind(TrackKind::Video) {
@@ -133,9 +146,9 @@ fn probe_mp4(bytes: &Bytes) -> Result<MediaInfo> {
 }
 
 fn probe_mkv(bytes: &Bytes) -> Result<MediaInfo> {
-    use deckcraft_matroska::{Codec, TrackKind};
+    use craft_media::matroska::{Codec, TrackKind};
     let src: &[u8] = bytes;
-    let f = deckcraft_matroska::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+    let f = craft_media::matroska::open(src).map_err(|e| MediaError::Corrupt(e.to_string()))?;
     let mut info = MediaInfo { container: if f.is_webm() { "webm" } else { "matroska" }, ..Default::default() };
     let dur = f.duration_ns().map(|n| n as f64 / 1e9).unwrap_or(0.0);
     info.duration_ms = ms(dur);
@@ -166,11 +179,11 @@ fn probe_mkv(bytes: &Bytes) -> Result<MediaInfo> {
 
 fn probe_ogg(bytes: &Bytes) -> Option<MediaInfo> {
     let src: &[u8] = bytes;
-    let f = deckcraft_ogg::open(src).ok()?;
-    let s = f.stream_of(deckcraft_ogg::Codec::Opus)?;
+    let f = craft_media::ogg::open(src).ok()?;
+    let s = f.stream_of(craft_media::ogg::Codec::Opus)?;
     let st = f.streams.get(s)?;
-    let head = deckcraft_opus::OpusHead::parse(st.headers.first()?).ok()?;
-    let timing = deckcraft_ogg::OpusTiming::of(st, head.pre_skip as u32);
+    let head = craft_audio::opus::OpusHead::parse(st.headers.first()?).ok()?;
+    let timing = craft_media::ogg::OpusTiming::of(st, head.pre_skip as u32);
     Some(MediaInfo {
         container: "ogg",
         duration_ms: ms(timing.total as f64 / 48_000.0),
@@ -193,8 +206,8 @@ fn probe_asf(b: &[u8]) -> Result<MediaInfo> {
     }
     let header_end = (u64le(16) as usize).min(b.len());
     let mut info = MediaInfo { container: "asf", ..Default::default() };
-    let mut pos = 30;
-    while pos + 24 <= header_end {
+    let mut pos: usize = 30;
+    while pos.checked_add(24).is_some_and(|end| end <= header_end) {
         let guid = &b[pos..pos + 16];
         let size = u64le(pos + 16) as usize;
         if size < 24 {
@@ -225,7 +238,24 @@ fn probe_asf(b: &[u8]) -> Result<MediaInfo> {
                 info.video = Some(VideoInfo { codec: "WMV".into(), width: u32le(td), height: u32le(td + 4), decodable: false, ..Default::default() });
             }
         }
-        pos += size;
+        // A hostile size must not wrap the walk (or walk off the end): an object that
+        // overruns the header ends it, which is also the correct ASF semantics.
+        let Some(next) = pos.checked_add(size).filter(|&p| p <= header_end) else { break };
+        pos = next;
     }
     Ok(info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hostile_asf_object_sizes_end_the_walk() {
+        // The header object GUID followed by 48 × 0xFF: the walk reads usize::MAX back as
+        // every object size and must end instead of wrapping `pos` (and panicking).
+        let mut b = crate::ASF_HEADER.to_vec();
+        b.extend_from_slice(&[0xFF; 48]);
+        assert!(matches!(probe_asf(&b), Ok(info) if info.container == "asf"));
+    }
 }

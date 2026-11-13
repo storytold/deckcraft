@@ -51,7 +51,7 @@ const ASSET_EXT: &[&str] = &[
 const ASSET_DIRS: &[&str] = &["assets/", "docs/images/", "docs/brand/", "examples/"];
 
 pub fn is_asset(path: &str) -> bool {
-    let ext = Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+    let ext = Path::new(path).extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).unwrap_or_default();
     ASSET_DIRS.iter().any(|d| path.starts_with(d)) || ASSET_EXT.contains(&ext.as_str())
 }
 
@@ -61,24 +61,37 @@ pub fn missing(files: &[String], assets_md: &str) -> Vec<String> {
     files.iter().filter(|f| is_asset(f) && !patterns.iter().any(|p| glob(p, f))).cloned().collect()
 }
 
-/// `*` matches any run of characters except `/`; everything else literally.
+/// `*` matches any run of characters except `/`; everything else literally. Matched with a
+/// table over the pattern, so a pattern with many `*` costs pattern length times name length
+/// rather than exploring every way to split the name.
 fn glob(pat: &str, s: &str) -> bool {
-    match pat.split_once('*') {
-        None => pat == s,
-        Some((head, tail)) => {
-            let Some(rest) = s.strip_prefix(head) else { return false };
-            (0..=rest.len()).take_while(|&i| i == 0 || !rest[..i].contains('/')).any(|i| rest.is_char_boundary(i) && glob(tail, &rest[i..]))
+    let t: Vec<char> = s.chars().collect();
+    // `row[k]`: the pattern so far matches the first k characters of the name.
+    let mut row = vec![false; t.len() + 1];
+    row[0] = true;
+    for pc in pat.chars() {
+        let mut next = vec![false; t.len() + 1];
+        next[0] = pc == '*' && row[0];
+        for k in 1..=t.len() {
+            next[k] = if pc == '*' { row[k] || (next[k - 1] && t[k - 1] != '/') } else { row[k - 1] && t[k - 1] == pc };
         }
+        row = next;
     }
+    row[t.len()]
+}
+
+/// Splits `git ls-files -z` output into real file names (no display quoting of Unicode or special characters).
+fn parse_ls_files(out: &[u8]) -> Vec<String> {
+    out.split(|&b| b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect()
 }
 
 pub fn run(root: &Path) -> Result<(), String> {
     let out = Command::new("git")
         .current_dir(root)
-        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+        .args(["ls-files", "--cached", "--others", "--exclude-standard", "-z"])
         .output()
         .map_err(|e| format!("git ls-files: {e}"))?;
-    let files: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().filter(|l| root.join(l).exists()).map(str::to_owned).collect();
+    let files: Vec<String> = parse_ls_files(&out.stdout).into_iter().filter(|l| root.join(l).exists()).collect();
     let md = std::fs::read_to_string(root.join("ATTRIBUTION.md")).map_err(|e| format!("ATTRIBUTION.md: {e}"))?;
     let miss = missing(&files, &md);
     if miss.is_empty() {
@@ -103,5 +116,29 @@ mod tests {
         let md = "`assets/app-icon/hicolor/*/apps/x.png`";
         assert!(missing(&["assets/app-icon/hicolor/16x16/apps/x.png".into()], md).is_empty());
         assert_eq!(missing(&["assets/app-icon/hicolor/a/b/apps/x.png".into()], md).len(), 1);
+    }
+
+    #[test]
+    fn glob_handles_multibyte_names() {
+        assert!(glob("assets/*/x.png", "assets/żółć/x.png"));
+        assert!(glob("assets/*.png", "assets/日本語.png"));
+        assert!(!glob("assets/*/x.png", "assets/ż/ó/x.png"));
+        assert!(missing(&["assets/żółć/x.png".into()], "`assets/*/x.png`").is_empty());
+        assert_eq!(missing(&["assets/é.png".into()], "`assets/*.svg`"), vec!["assets/é.png".to_string()]);
+    }
+
+    #[test]
+    fn many_wildcards_on_a_failing_name_finish_at_once() {
+        let pat = format!("{}b", "a*".repeat(40));
+        assert!(!glob(&pat, &"a".repeat(60)));
+        assert!(glob(&pat, &format!("{}b", "a".repeat(60))));
+        assert!(!glob("a*b", "a/b"));
+        assert!(glob("a*b", "ab"));
+    }
+
+    #[test]
+    fn ls_files_output_is_nul_separated_and_unquoted() {
+        let names = parse_ls_files("assets/zażółć.png\0docs/images/a b\nc.png\0".as_bytes());
+        assert_eq!(names, vec!["assets/zażółć.png".to_string(), "docs/images/a b\nc.png".into()]);
     }
 }

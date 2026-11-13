@@ -1,0 +1,81 @@
+{
+  "id": "deckcraft",
+  "name": "DeckCraft",
+  "upgradeCode": "6F9C69E7-7825-40D2-BF26-C274DA676425",
+  "sources": [
+    "deckcraft.wxs"
+  ],
+  "icon": "assets/app-icon/deckcraft.ico",
+  "localization": [],
+  "extensions": [
+    "UI"
+  ],
+  "payloads": [
+    "NOTICE",
+    "deckcraft-cli.exe",
+    "deckcraft.exe"
+  ],
+  "registry": [
+    [
+      "-1",
+      "Software\\Classes\\Applications\\deckcraft.exe",
+      "FriendlyAppName",
+      "DeckCraft"
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\deckcraft.exe\\shell\\open\\command",
+      "",
+      "\"[#DeckcraftExe]\" \"%1\""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\deckcraft.exe\\SupportedTypes",
+      ".deckcraft",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\deckcraft.exe\\SupportedTypes",
+      ".pptx",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\deckcraft.exe\\SupportedTypes",
+      ".potx",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\Applications\\deckcraft.exe\\SupportedTypes",
+      ".ppsx",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\.pptx\\OpenWithProgids",
+      "DeckCraft.Presentation",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\.potx\\OpenWithProgids",
+      "DeckCraft.Presentation",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Classes\\.ppsx\\OpenWithProgids",
+      "DeckCraft.Presentation",
+      ""
+    ],
+    [
+      "-1",
+      "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\deckcraft.exe",
+      "",
+      "[#DeckcraftExe]"
+    ]
+  ],
+  "mode": "dualScope"
+}

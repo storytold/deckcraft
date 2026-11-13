@@ -66,8 +66,8 @@ impl VideoFeed {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = self.tx.send(Cmd::Seek(t, self.generation));
-            // Unblock the worker if it's waiting to hand over a stale frame.
-            while self.rx.try_recv().is_ok() {}
+            // pull() discards stale generations and unblocks the worker. Draining here could
+            // also discard the new generation's frames or EOF if the worker handles seek fast.
         }
         #[cfg(target_arch = "wasm32")]
         self.dec.seek(t);
@@ -176,5 +176,59 @@ fn worker(mut dec: VideoDecoder, cmds: std::sync::mpsc::Receiver<Cmd>, frames: s
         if frames.send((generation, frame)).is_err() {
             return;
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seek_keeps_new_generation_frames_and_end_of_stream() {
+        let (tx, _commands) = std::sync::mpsc::channel();
+        let (frames, rx) = std::sync::mpsc::sync_channel(AHEAD);
+        let frame = |time| Frame { time, width: 1, height: 1, rgba: vec![0, 0, 0, 255] };
+        frames.send((0, Some(frame(0.3)))).expect("stale frame");
+        frames.send((0, None)).expect("stale end of stream");
+        // Model a fast worker's seek response already waiting when seek drains the queue.
+        frames.send((1, Some(frame(0.0)))).expect("new frame");
+        frames.send((1, None)).expect("new end of stream");
+        let mut feed = VideoFeed { size: (1, 1), current: None, next: None, generation: 0, ended: false, tx, rx };
+
+        feed.seek(0.05);
+        let shown = feed.frame_at(0.05).expect("frame from the new generation");
+        assert_eq!(shown.time, 0.0);
+        assert!(feed.ended());
+
+        frames.send((2, Some(frame(0.3)))).expect("superseded seek frame");
+        frames.send((2, None)).expect("superseded seek end of stream");
+        frames.send((3, Some(frame(0.0)))).expect("latest seek frame");
+        frames.send((3, None)).expect("latest seek end of stream");
+        feed.seek(0.35);
+        feed.seek(0.05);
+        assert_eq!(feed.frame_at(0.05).expect("latest seek wins").time, 0.0);
+        assert!(feed.ended());
+    }
+
+    #[test]
+    fn seek_unblocks_worker_when_stale_queue_is_full() {
+        let (tx, commands) = std::sync::mpsc::channel();
+        let (frames, rx) = std::sync::mpsc::sync_channel(AHEAD);
+        let frame = || Frame { time: 0.0, width: 1, height: 1, rgba: vec![0, 0, 0, 255] };
+        for _ in 0..AHEAD {
+            frames.send((0, Some(frame()))).expect("fill stale queue");
+        }
+        let worker = std::thread::spawn(move || {
+            let Cmd::Seek(_, generation) = commands.recv().expect("seek command");
+            frames.send((generation, Some(frame()))).expect("seek frame");
+            frames.send((generation, None)).expect("seek end of stream");
+        });
+        let mut feed = VideoFeed { size: (1, 1), current: None, next: None, generation: 0, ended: false, tx, rx };
+
+        feed.seek(0.05);
+        let shown = feed.frame_at_blocking(0.05, std::time::Duration::from_secs(5)).expect("worker unblocked");
+        assert_eq!(shown.time, 0.0);
+        assert!(feed.ended());
+        worker.join().expect("worker completed");
     }
 }

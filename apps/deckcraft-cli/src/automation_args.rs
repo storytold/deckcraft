@@ -1,0 +1,83 @@
+//! Parse `--automation-read-root` / `--automation-write-root` before the server starts. A malformed
+//! flag must not silently remove a root and leave the server unconfined.
+
+use std::path::PathBuf;
+
+pub struct AutomationArgs {
+    pub read_roots: Vec<PathBuf>,
+    pub write_roots: Vec<PathBuf>,
+}
+
+impl AutomationArgs {
+    pub fn new(read_root: Option<PathBuf>, write_root: Option<PathBuf>) -> Self {
+        Self { read_roots: read_root.into_iter().collect(), write_roots: write_root.into_iter().collect() }
+    }
+
+    /// Returns whether this argument is a root flag. Both spellings (`--flag DIR` and
+    /// `--flag=DIR`) may be repeated.
+    pub fn consume(&mut self, arg: &str, args: &mut impl Iterator<Item = String>) -> Result<bool, String> {
+        let (flag, inline) = arg.split_once('=').map_or((arg, None), |(flag, value)| (flag, Some(value)));
+        let roots = match flag {
+            "--automation-read-root" => &mut self.read_roots,
+            "--automation-write-root" => &mut self.write_roots,
+            _ => return Ok(false),
+        };
+        let value = match inline {
+            Some(value) => value.to_owned(),
+            None => {
+                let value = args.next().ok_or_else(|| format!("{flag} needs a folder"))?;
+                if value.starts_with('-') {
+                    return Err(format!("{flag} needs a folder; use {flag}=<dir> for a folder starting with '-'"));
+                }
+                value
+            }
+        };
+        if value.is_empty() {
+            return Err(format!("{flag} needs a non-empty folder"));
+        }
+        roots.push(value.into());
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roots_are_repeated_and_other_arguments_are_left() {
+        let mut roots = AutomationArgs::new(None, None);
+        let mut args = ["a folder".to_owned(), "deck.pptx".to_owned()].into_iter();
+        assert!(roots.consume("--automation-read-root", &mut args).unwrap());
+        assert!(roots.consume("--automation-read-root=other", &mut args).unwrap());
+        assert!(roots.consume("--automation-write-root=out", &mut args).unwrap());
+        assert!(!roots.consume("--sample", &mut args).unwrap());
+        assert_eq!(roots.read_roots, [PathBuf::from("a folder"), PathBuf::from("other")]);
+        assert_eq!(roots.write_roots, [PathBuf::from("out")]);
+        assert_eq!(args.next().as_deref(), Some("deck.pptx"));
+    }
+
+    #[test]
+    fn invalid_operands_leave_roots_unchanged() {
+        for flag in ["--automation-read-root", "--automation-write-root"] {
+            for operand in [None, Some(""), Some("--version"), Some("--connect"), Some("-folder")] {
+                let mut roots = AutomationArgs::new(Some("read".into()), Some("write".into()));
+                let mut args = operand.map(str::to_owned).into_iter();
+                assert!(roots.consume(flag, &mut args).is_err(), "{flag} {operand:?}");
+                assert_eq!(roots.read_roots, [PathBuf::from("read")]);
+                assert_eq!(roots.write_roots, [PathBuf::from("write")]);
+            }
+            let mut roots = AutomationArgs::new(None, None);
+            assert!(roots.consume(&format!("{flag}="), &mut std::iter::empty()).is_err());
+        }
+    }
+
+    #[test]
+    fn explicit_dash_folder_and_relative_dash_folder_are_valid() {
+        let mut roots = AutomationArgs::new(None, None);
+        assert!(roots.consume("--automation-read-root=-folder", &mut std::iter::empty()).unwrap());
+        assert!(roots.consume("--automation-write-root", &mut ["./-folder".to_owned()].into_iter()).unwrap());
+        assert_eq!(roots.read_roots, [PathBuf::from("-folder")]);
+        assert_eq!(roots.write_roots, [PathBuf::from("./-folder")]);
+    }
+}

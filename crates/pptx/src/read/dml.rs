@@ -3,8 +3,8 @@
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_geom::{Xfrm, emu_to_pt};
 use deckcraft_model::style::{
-    ColorBase, ColorRef, Compound, Dash, Effects, Fill, Glow, Gradient, GradientShape, GradientStop, Line, LineCap, LineEnd, LineJoin, PatternFill,
-    PictureFill, PictureMode, Reflection, Shadow,
+    ColorBase, ColorRef, Compound, Dash, Effects, Fill, Glow, Gradient, GradientFlip, GradientShape, GradientStop, Line, LineAlign, LineCap, LineEnd,
+    LineJoin, PatternFill, PictureFill, PictureMode, Reflection, Shadow,
 };
 use deckcraft_model::text::{
     Action, Align, Anchor, AutoFit, BodyProps, Bullet, Caps, Hyperlink, LevelStyle, ListStyle, ParaProps, Paragraph, Run, RunKind, RunProps, Spacing,
@@ -21,6 +21,16 @@ pub fn pt(e: &El, name: &str) -> Option<f64> {
 /// 1/100 000 → fraction.
 pub fn pct(e: &El, name: &str) -> Option<f64> {
     e.f64(name).map(|v| v / 100_000.0)
+}
+
+fn bullet_size_points(value: Option<&str>) -> Option<f64> {
+    value.and_then(|v| v.trim().parse::<u32>().ok()).filter(|v| (100..=400_000).contains(v)).map(|v| v as f64 / 100.0)
+}
+
+fn bullet_size_percent(value: Option<&str>) -> Option<f64> {
+    let value = value?.trim();
+    let (value, scale) = if let Some(value) = value.strip_suffix('%') { (value.trim(), 100.0) } else { (value, 100_000.0) };
+    value.parse::<f64>().ok().filter(|v| v.is_finite()).map(|v| v / scale)
 }
 
 /// 1/60 000 degree → degrees.
@@ -77,17 +87,28 @@ pub fn fill_el(imp: &mut Imp, part: &Part, f: &El) -> Option<Fill> {
         "solidFill" => Fill::Solid { color: color(f).unwrap_or(ColorRef::rgb(Rgba::BLACK)) },
         "gradFill" => Fill::Gradient(gradient(f)),
         "blipFill" => match blip_fill(imp, part, f) {
+            // A picture filling a shape or background with neither `a:stretch` nor `a:tile` is
+            // tiled at its own size, as PowerPoint draws it.
+            Some(mut p) if f.child("stretch").is_none() && f.child("tile").is_none() => {
+                p.mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 1.0, sy: 1.0, flip: "none".into(), align: "tl".into() };
+                Fill::Picture(p)
+            }
             Some(p) => Fill::Picture(p),
             None => Fill::None,
         },
-        "pattFill" => Fill::Pattern(PatternFill {
-            preset: f.attr("prst").unwrap_or("pct5").to_string(),
-            fg: f.child("fgClr").and_then(color).unwrap_or(ColorRef::rgb(Rgba::BLACK)),
-            bg: f.child("bgClr").and_then(color).unwrap_or(ColorRef::rgb(Rgba::WHITE)),
-        }),
+        "pattFill" => Fill::Pattern(pattern(f)),
         "grpFill" => Fill::Group,
         _ => return None,
     })
+}
+
+/// An `a:pattFill`: its preset (5 % dots when unset), foreground (black) and background (white).
+pub fn pattern(f: &El) -> PatternFill {
+    PatternFill {
+        preset: f.attr("prst").unwrap_or("pct5").to_string(),
+        fg: f.child("fgClr").and_then(color).unwrap_or(ColorRef::rgb(Rgba::BLACK)),
+        bg: f.child("bgClr").and_then(color).unwrap_or(ColorRef::rgb(Rgba::WHITE)),
+    }
 }
 
 pub fn gradient(f: &El) -> Gradient {
@@ -110,7 +131,14 @@ pub fn gradient(f: &El) -> Gradient {
     } else {
         GradientShape::Linear { angle: 90.0, scaled: false }
     };
-    Gradient { stops, shape, rotate_with_shape: f.bool("rotWithShape").unwrap_or(true) }
+    let tile = f.child("tileRect").map(|r| [pct(r, "l"), pct(r, "t"), pct(r, "r"), pct(r, "b")].map(|v| v.unwrap_or(0.0).clamp(-10.0, 10.0)));
+    Gradient {
+        tile: tile.unwrap_or_default(),
+        stops,
+        shape,
+        flip: f.attr("flip").and_then(GradientFlip::from_xml),
+        rotate_with_shape: f.bool("rotWithShape").unwrap_or(true),
+    }
 }
 
 /// `blipFill` (either `a:` or `p:`) → picture fill, registering the image as media.
@@ -118,7 +146,18 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let blip = bf.child("blip");
     let media = blip.and_then(|b| media_ref(imp, part, b));
     let media = media?;
-    let mut pf = PictureFill { media, ..Default::default() };
+    let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
+    if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
+        && let Some(effect) = layer
+            .elements()
+            .filter(|e| e.local() == "imgEffect")
+            .flat_map(|e| e.elements())
+            .map(|e| e.local().to_string())
+            .find(|n| n.starts_with("artistic"))
+        && let Some(original) = media_ref(imp, part, layer)
+    {
+        pf.artistic = Some(deckcraft_model::style::Artistic { effect, original });
+    }
     if let Some(b) = blip {
         for e in b.elements() {
             match e.local() {
@@ -128,6 +167,8 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
                     pf.adjust.contrast = pct(e, "contrast").unwrap_or(0.0).clamp(-1.0, 1.0);
                 }
                 "grayscl" => pf.adjust.grayscale = true,
+                "biLevel" => pf.adjust.bilevel = Some(pct(e, "thresh").unwrap_or(0.5).clamp(0.0, 1.0)),
+                "alphaInv" => pf.adjust.alpha_inv = true,
                 "duotone" => {
                     let cs: Vec<ColorRef> = e.elements().filter_map(color_el).collect();
                     if let [a, b] = cs.as_slice() {
@@ -197,6 +238,7 @@ pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
         _ => LineCap::Flat,
     });
     l.compound = ln.attr("cmpd").map(Compound::from_xml);
+    l.align = ln.attr("algn").and_then(LineAlign::from_xml);
     l.fill = fill_of(imp, part, ln);
     for e in ln.elements() {
         match e.local() {
@@ -207,13 +249,27 @@ pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
             }
             "round" => l.join = Some(LineJoin::Round),
             "bevel" => l.join = Some(LineJoin::Bevel),
-            "miter" => l.join = Some(LineJoin::Miter),
+            "miter" => {
+                l.join = Some(LineJoin::Miter);
+                l.miter_limit = e.attr("lim").and_then(parse_miter_limit);
+            }
             "headEnd" => l.head = line_end(e),
             "tailEnd" => l.tail = line_end(e),
             _ => {}
         }
     }
     l
+}
+
+fn parse_miter_limit(value: &str) -> Option<u32> {
+    const MAX: u32 = i32::MAX as u32;
+    let value = value.trim();
+    if let Some(percent) = value.strip_suffix('%') {
+        let units = percent.trim().parse::<f64>().ok()? * 1000.0;
+        (units.is_finite() && (0.0..=MAX as f64).contains(&units)).then(|| units.round() as u32)
+    } else {
+        value.parse::<u32>().ok().filter(|limit| *limit <= MAX)
+    }
 }
 
 fn line_end(e: &El) -> Option<LineEnd> {
@@ -251,6 +307,14 @@ pub fn effects(el: &El) -> Effects {
             "innerShdw" => fx.inner_shadow = Some(shadow(e, true)),
             "glow" => fx.glow = Some(Glow { color: color(e).unwrap_or(ColorRef::rgb(Rgba::BLACK)), radius: pt(e, "rad").unwrap_or(0.0).max(0.0) }),
             "softEdge" => fx.soft_edge = Some(pt(e, "rad").unwrap_or(0.0).max(0.0)),
+            "fillOverlay" => {
+                let fill = e.elements().find_map(|f| match f.local() {
+                    "solidFill" => color(f).map(|c| Fill::Solid { color: c }),
+                    "gradFill" => Some(Fill::Gradient(gradient(f))),
+                    _ => None,
+                });
+                fx.fill_overlay = fill.map(|fill| deckcraft_model::style::FillOverlay { blend: e.attr("blend").unwrap_or("over").to_string(), fill });
+            }
             "reflection" => {
                 fx.reflection = Some(Reflection {
                     blur: pt(e, "blurRad").unwrap_or(0.0),
@@ -258,6 +322,15 @@ pub fn effects(el: &El) -> Effects {
                     end_alpha: pct(e, "endA").unwrap_or(0.0),
                     end_pos: pct(e, "endPos").unwrap_or(1.0),
                     dist: pt(e, "dist").unwrap_or(0.0),
+                    st_pos: e.i64("stPos").and_then(|v| i32::try_from(v).ok()),
+                    dir: e.i64("dir").and_then(|v| i32::try_from(v).ok()),
+                    fade_dir: e.i64("fadeDir").and_then(|v| i32::try_from(v).ok()),
+                    sx: e.i64("sx").and_then(|v| i32::try_from(v).ok()),
+                    sy: e.i64("sy").and_then(|v| i32::try_from(v).ok()),
+                    kx: e.i64("kx").and_then(|v| i32::try_from(v).ok()),
+                    ky: e.i64("ky").and_then(|v| i32::try_from(v).ok()),
+                    align: e.attr("algn").filter(|v| matches!(*v, "tl" | "t" | "tr" | "l" | "ctr" | "r" | "bl" | "b" | "br")).map(str::to_owned),
+                    rotate_with_shape: e.bool("rotWithShape"),
                 })
             }
             _ => {}
@@ -303,23 +376,59 @@ pub fn body_pr(b: &El) -> BodyProps {
         col_spacing: pt(b, "spcCol"),
         rtl_col: b.bool("rtlCol"),
         upright: b.bool("upright"),
+        space_first_last: b.bool("spcFirstLastPara"),
+        compat_ln_spc: b.bool("compatLnSpc"),
+        vert_overflow: b.attr("vertOverflow").and_then(deckcraft_model::text::TextOverflow::from_xml),
+        horz_overflow: b.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml),
         ..Default::default()
     };
     for e in b.elements() {
         match e.local() {
             "normAutofit" => {
                 p.autofit = Some(AutoFit::Shrink {
-                    font_scale: pct(e, "fontScale").unwrap_or(1.0).clamp(0.01, 1.0),
+                    font_scale: pct(e, "fontScale").map(|v| v.clamp(0.01, 1.0)),
                     line_reduction: pct(e, "lnSpcReduction").unwrap_or(0.0).clamp(0.0, 1.0),
                 })
             }
             "spAutoFit" => p.autofit = Some(AutoFit::Shape),
             "noAutofit" => p.autofit = Some(AutoFit::None),
-            "prstTxWarp" => p.warp = e.attr("prst").filter(|w| *w != "textNoShape").map(String::from),
+            "prstTxWarp" => {
+                p.warp = e.attr("prst").filter(|w| *w != "textNoShape" && !w.is_empty()).map(String::from);
+                p.warp_adj = p.warp.as_deref().map(|w| warp_adjusts(w, e)).unwrap_or_default();
+            }
             _ => {}
         }
     }
     p
+}
+
+/// `prstTxWarp/avLst` guides `adj` / `adj1`… as raw values by index (empty when none is given);
+/// slots the file leaves out keep the preset's default.
+fn warp_adjusts(preset: &str, e: &El) -> Vec<f64> {
+    let mut adj: Vec<f64> = Vec::new();
+    let Some(av) = e.child("avLst") else { return adj };
+    let defaults = deckcraft_geom::warp::adjust_defaults(preset);
+    for gd in av.children_named("gd").take(16) {
+        let n = gd.attr("name").unwrap_or("");
+        let idx = if n == "adj" {
+            0
+        } else if let Some(k) = n.strip_prefix("adj").and_then(|k| k.parse::<usize>().ok()).filter(|k| (1..=8).contains(k)) {
+            k - 1
+        } else {
+            continue;
+        };
+        let Some(v) = gd.attr("fmla").and_then(|f| f.trim().strip_prefix("val")).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite())
+        else {
+            continue;
+        };
+        while adj.len() <= idx {
+            adj.push(defaults.get(adj.len()).copied().unwrap_or(0.0));
+        }
+        if let Some(slot) = adj.get_mut(idx) {
+            *slot = v.clamp(-1.0e9, 1.0e9);
+        }
+    }
+    adj
 }
 
 fn spacing(e: &El) -> Option<Spacing> {
@@ -339,6 +448,8 @@ pub fn ppr(imp: &mut Imp, part: &Part, p: &El) -> (Option<u8>, ParaProps, Option
         rtl: p.bool("rtl"),
         font_align: p.attr("fontAlgn").map(String::from),
         east_asian_line_break: p.bool("eaLnBrk"),
+        latin_line_break: p.bool("latinLnBrk"),
+        hanging_punct: p.bool("hangingPunct"),
         default_tab: pt(p, "defTabSz"),
         ..Default::default()
     };
@@ -363,8 +474,24 @@ pub fn ppr(imp: &mut Imp, part: &Part, p: &El) -> (Option<u8>, ParaProps, Option
                 }
             }
             "buFont" => pp.bullet_font = e.attr("typeface").map(String::from),
+            "buFontTx" => pp.bullet_font_follow_text = Some(true),
             "buClr" => pp.bullet_color = color(e),
-            "buSzPct" => pp.bullet_size = pct(e, "val").map(|v| v.clamp(0.25, 4.0)),
+            "buSzPct" => {
+                pp.bullet_size_points = None;
+                pp.bullet_size_follow_text = None;
+                pp.bullet_size = bullet_size_percent(e.attr("val")).map(|v| v.clamp(0.25, 4.0));
+            }
+            "buSzPts" => {
+                pp.bullet_size = None;
+                pp.bullet_size_follow_text = None;
+                pp.bullet_size_points = bullet_size_points(e.attr("val"));
+            }
+            "buClrTx" => pp.bullet_color_follow_text = Some(true),
+            "buSzTx" => {
+                pp.bullet_size = None;
+                pp.bullet_size_points = None;
+                pp.bullet_size_follow_text = Some(true);
+            }
             "tabLst" => {
                 pp.tabs = Some(
                     e.children_named("tab")
@@ -380,7 +507,7 @@ pub fn ppr(imp: &mut Imp, part: &Part, p: &El) -> (Option<u8>, ParaProps, Option
     (lvl, pp, def)
 }
 
-pub fn hyperlink(imp: &Imp, part: &Part, h: &El) -> Option<Hyperlink> {
+pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
     let rid = h.attr("r:id").unwrap_or("");
     let rel = part.rels.get(rid);
     let action = h.attr("action").unwrap_or("");
@@ -399,7 +526,8 @@ pub fn hyperlink(imp: &Imp, part: &Part, h: &El) -> Option<Hyperlink> {
         Action::Slide { slide }
     } else if let Some(q) = action.strip_prefix("ppaction://customshow?") {
         let id = q.split('&').find_map(|kv| kv.strip_prefix("id=")).unwrap_or("0");
-        Action::CustomShow { name: imp.custom_show_names.get(id).cloned().unwrap_or_else(|| id.to_string()) }
+        let returns = !matches!(q.split('&').find_map(|kv| kv.strip_prefix("return=")), Some("false" | "0"));
+        Action::CustomShow { name: imp.custom_show_names.get(id).cloned().unwrap_or_else(|| id.to_string()), returns }
     } else if action.starts_with("ppaction://program") {
         Action::Program { path: rel.map(|r| r.target.clone()).unwrap_or_default() }
     } else if action.starts_with("ppaction://media") {
@@ -419,12 +547,25 @@ pub fn hyperlink(imp: &Imp, part: &Part, h: &El) -> Option<Hyperlink> {
     } else {
         return None;
     };
-    Some(Hyperlink { action: a, tooltip: h.attr("tooltip").unwrap_or("").to_string(), highlight_click: h.bool("highlightClick").unwrap_or(false) })
+    Some(Hyperlink {
+        action: a,
+        tooltip: h.attr("tooltip").unwrap_or("").to_string(),
+        highlight_click: h.bool("highlightClick").unwrap_or(false),
+        stop_sound: h.bool("endSnd").unwrap_or(false),
+        sound: h.child("snd").and_then(|s| media_ref(imp, part, s)),
+        zoom_return: None,
+    })
+}
+
+fn typeface(e: &El) -> Option<String> {
+    let t = e.attr("typeface").filter(|t| !t.is_empty())?;
+    Some(t.chars().take(256).collect())
 }
 
 pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
     let mut p = RunProps {
         lang: r.attr("lang").map(String::from),
+        alt_lang: r.attr("altLang").map(|lang| lang.chars().take(256).collect()),
         size: r.f64("sz").map(|s| (s / 100.0).clamp(1.0, 4000.0)),
         bold: r.bool("b"),
         italic: r.bool("i"),
@@ -443,6 +584,7 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
         spacing: r.f64("spc").map(|s| (s / 100.0).clamp(-4000.0, 4000.0)),
         kern: r.f64("kern").map(|k| (k / 100.0).clamp(0.0, 4000.0)),
         no_proof: r.bool("noProof"),
+        normalize_height: r.bool("normalizeH"),
         ..Default::default()
     };
     for e in r.elements() {
@@ -452,15 +594,19 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
             "effectLst" => {
                 let fx = effects(e);
                 p.shadow = fx.outer_shadow;
+                p.inner_shadow = fx.inner_shadow;
                 p.glow = fx.glow;
+                p.reflection = fx.reflection;
+                p.soft_edge = fx.soft_edge;
             }
             "highlight" => p.highlight = color(e),
             "uFill" => p.underline_color = e.child("solidFill").and_then(color),
-            "latin" => p.font = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
-            "ea" => p.font_ea = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
-            "cs" => p.font_cs = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
-            "sym" => p.font_sym = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
+            "latin" => p.font = typeface(e),
+            "ea" => p.font_ea = typeface(e),
+            "cs" => p.font_cs = typeface(e),
+            "sym" => p.font_sym = typeface(e),
             "hlinkClick" => p.link = hyperlink(imp, part, e),
+            "hlinkMouseOver" => p.hover = hyperlink(imp, part, e),
             _ => {}
         }
     }
@@ -483,10 +629,72 @@ pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
 }
 
 pub fn text_body(imp: &mut Imp, part: &Part, tx: &El) -> TextBody {
-    let body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    let mut body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    if let Some(b) = tx.child("bodyPr") {
+        let mut raw3d = String::new();
+        if let Some(sc) = b.child("scene3d") {
+            raw3d.push_str(&part.keep_inner(sc));
+        }
+        if let Some(sp) = b.child("sp3d").or_else(|| b.child("flatTx")) {
+            raw3d.push_str(&part.keep_inner(sp));
+        }
+        if !raw3d.is_empty() && raw3d.len() <= 64 * 1024 {
+            body.raw3d = Some(raw3d);
+        }
+    }
     let list_style = tx.child("lstStyle").map(|l| list_style(imp, part, l)).unwrap_or_default();
     let paragraphs = tx.children_named("p").take(100_000).map(|p| paragraph(imp, part, p)).collect();
     TextBody { body, list_style, paragraphs }
+}
+
+const MAX_PARAGRAPH_RUNS: usize = 10_000;
+
+/// The run properties of `e`'s `rPr` child, or the defaults.
+fn run_props(imp: &mut Imp, part: &Part, e: &El) -> RunProps {
+    e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default()
+}
+
+/// Appends the runs of an `a:r` text, where a vertical tab or line feed is a line break, as it
+/// lays out and as export writes it.
+fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
+    for (i, piece) in text.split(['\u{b}', '\n']).enumerate() {
+        if para.runs.len() >= MAX_PARAGRAPH_RUNS {
+            break;
+        }
+        if i > 0 {
+            para.runs.push(Run { text: String::new(), props: props.clone(), kind: RunKind::Break });
+        }
+        if !piece.is_empty() {
+            if para.runs.len() >= MAX_PARAGRAPH_RUNS {
+                break;
+            }
+            para.runs.push(Run { text: piece.to_string(), props: props.clone(), kind: RunKind::Text });
+        }
+    }
+}
+
+/// Appends an Office Math (a14:m) run: its plain text and its OMML.
+fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
+    if para.runs.len() < MAX_PARAGRAPH_RUNS {
+        // The text of the outermost `t` elements: a `t` nested in another is already part of
+        // the outer one's text, and taking it again would copy it once per nesting level.
+        fn outer_t(e: &El, depth: usize, text: &mut String) {
+            if depth > crate::xml::MAX_DEPTH {
+                return;
+            }
+            for c in e.elements() {
+                if c.is("t") {
+                    text.push_str(&c.text());
+                } else {
+                    outer_t(c, depth + 1, text);
+                }
+            }
+        }
+        let mut text = String::new();
+        outer_t(e, 0, &mut text);
+        let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
+        para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
+    }
 }
 
 pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
@@ -494,43 +702,28 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
     for e in p.elements() {
         match e.local() {
             "pPr" => {
-                let (lvl, pp, _) = ppr(imp, part, e);
+                let (lvl, pp, def) = ppr(imp, part, e);
                 para.level = lvl.unwrap_or(0);
                 para.props = pp;
-            }
-            "r" => {
-                let props = e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default();
-                let text: String = e.child("t").map(|t| t.text()).unwrap_or_default();
-                // Vertical tab inside text is a soft break in some writers.
-                for (i, piece) in text.split('\u{b}').enumerate() {
-                    if i > 0 {
-                        para.runs.push(Run { text: String::new(), props: props.clone(), kind: RunKind::Break });
-                    }
-                    if !piece.is_empty() {
-                        para.runs.push(Run { text: piece.to_string(), props: props.clone(), kind: RunKind::Text });
-                    }
+                if let Some(d) = def {
+                    para.def_props = d;
                 }
             }
-            "br" => {
-                let props = e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default();
+            "r" => {
+                let props = run_props(imp, part, e);
+                let text: String = e.child("t").map(|t| t.text()).unwrap_or_default();
+                push_text_runs(&mut para, props, &text);
+            }
+            "br" if para.runs.len() < MAX_PARAGRAPH_RUNS => {
+                let props = run_props(imp, part, e);
                 para.runs.push(Run { text: String::new(), props, kind: RunKind::Break });
             }
-            "fld" => {
-                let props = e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default();
+            "fld" if para.runs.len() < MAX_PARAGRAPH_RUNS => {
+                let props = run_props(imp, part, e);
                 let text = e.child("t").map(|t| t.text()).unwrap_or_default();
                 para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
             }
-            "m" => {
-                // Office Math (a14:m) — keep the OMML and its plain text.
-                let mut text = String::new();
-                let mut ts = vec![];
-                e.find_all("t", &mut ts);
-                for t in ts {
-                    text.push_str(&t.text());
-                }
-                let omml = e.elements().map(|c| c.to_xml()).collect::<String>();
-                para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
-            }
+            "m" => push_math_run(&mut para, part, e),
             "endParaRPr" => para.end_props = rpr(imp, part, e),
             _ => {}
         }
@@ -542,6 +735,23 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
 mod tests {
     use super::*;
     use crate::xml::parse;
+
+    #[test]
+    fn nested_math_text_is_taken_once() {
+        // 200 `m:t` nested in each other around one word: the word, not 200 copies of it.
+        let x = format!(r#"<a14:m xmlns:a14="a" xmlns:m="m"><m:oMath>{}word{}</m:oMath></a14:m>"#, "<m:t>".repeat(200), "</m:t>".repeat(200));
+        let d = parse(x.as_bytes()).unwrap();
+        let part = Part {
+            name: "ppt/slides/slide1.xml".into(),
+            rels: Default::default(),
+            ns: vec![],
+            inner_ns: vec![],
+            ns_budget: std::cell::Cell::new(1 << 20),
+        };
+        let mut para = Paragraph::default();
+        push_math_run(&mut para, &part, &d.root);
+        assert_eq!(para.runs[0].text, "word");
+    }
 
     #[test]
     fn colors_and_transforms() {
@@ -559,6 +769,31 @@ mod tests {
     }
 
     #[test]
+    fn bullet_point_size_trims_schema_whitespace() {
+        let d = parse(br#"<a:buSzPts xmlns:a="x" val=" 1400 "/>"#).unwrap();
+        assert_eq!(bullet_size_points(d.root.attr("val")), Some(14.0));
+        assert_eq!(bullet_size_points(Some("1400")), Some(14.0));
+    }
+
+    #[test]
+    fn bullet_percentage_size_accepts_numeric_and_percent_forms() {
+        assert_eq!(bullet_size_percent(Some("100000")), Some(1.0));
+        assert_eq!(bullet_size_percent(Some("100%")), Some(1.0));
+        assert_eq!(bullet_size_percent(Some(" 125% ")), Some(1.25));
+        assert_eq!(bullet_size_percent(Some("invalid")), None);
+    }
+
+    #[test]
+    fn miter_limit_accepts_both_percentage_forms_with_schema_bounds() {
+        assert_eq!(parse_miter_limit("200000"), Some(200_000));
+        assert_eq!(parse_miter_limit("200%"), Some(200_000));
+        assert_eq!(parse_miter_limit("1000001"), Some(1_000_001));
+        assert_eq!(parse_miter_limit("malformed"), None);
+        assert_eq!(parse_miter_limit("2147483648"), None);
+        assert_eq!(parse_miter_limit("2147483.648%"), None);
+    }
+
+    #[test]
     fn body_props() {
         let d = parse(br#"<a:bodyPr lIns="91440" anchor="ctr" wrap="none" vert="vert270" numCol="2"><a:normAutofit fontScale="62500" lnSpcReduction="20000"/></a:bodyPr>"#).unwrap();
         let b = body_pr(&d.root);
@@ -567,6 +802,23 @@ mod tests {
         assert_eq!(b.wrap, Some(false));
         assert_eq!(b.vert, Some(TextDir::Vertical270));
         assert_eq!(b.columns, Some(2));
-        assert_eq!(b.autofit, Some(AutoFit::Shrink { font_scale: 0.625, line_reduction: 0.2 }));
+        assert_eq!(b.autofit, Some(AutoFit::Shrink { font_scale: Some(0.625), line_reduction: 0.2 }));
+        assert_eq!(b.space_first_last, None);
+        // A bare `<a:normAutofit/>` keeps no scale: the schema default 100 % is drawn as it is,
+        // not the same as a saved 100 % (`fontScale="100000"`) (#724).
+        let d = parse(br#"<a:bodyPr><a:normAutofit/></a:bodyPr>"#).unwrap();
+        assert_eq!(body_pr(&d.root).autofit, Some(AutoFit::Shrink { font_scale: None, line_reduction: 0.0 }));
+        let d = parse(br#"<a:bodyPr><a:normAutofit fontScale="100000"/></a:bodyPr>"#).unwrap();
+        assert_eq!(body_pr(&d.root).autofit, Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 }));
+        let d = parse(br#"<a:bodyPr spcFirstLastPara="1"/>"#).unwrap();
+        assert_eq!(body_pr(&d.root).space_first_last, Some(true));
+        // mongolianVert is its own direction (PowerPoint runs its lines left to right) and is
+        // written back as it was read.
+        let d = parse(br#"<a:bodyPr vert="mongolianVert"/>"#).unwrap();
+        let b = body_pr(&d.root);
+        assert_eq!(b.vert, Some(TextDir::MongolianVertical));
+        assert_eq!(b.vert.map(|v| v.xml()), Some("mongolianVert"));
+        let d = parse(br#"<a:bodyPr vert="wordArtVertRtl"/>"#).unwrap();
+        assert_eq!(body_pr(&d.root).vert.map(|v| v.xml()), Some("wordArtVertRtl"));
     }
 }

@@ -1,7 +1,9 @@
 //! DrawingML writing: colours, fills, lines, effects, transforms and text.
 
 use deckcraft_geom::{Xfrm, pt_to_emu};
-use deckcraft_model::style::{ColorBase, ColorRef, Compound, Dash, Effects, Fill, GradientShape, Line, LineCap, LineJoin, PictureFill, PictureMode};
+use deckcraft_model::style::{
+    ColorBase, ColorRef, Compound, Dash, Effects, Fill, GradientFlip, GradientShape, Line, LineAlign, LineCap, LineJoin, PictureFill, PictureMode,
+};
 use deckcraft_model::text::{
     Action, AutoFit, BodyProps, Bullet, Caps, Hyperlink, ListStyle, ParaProps, Paragraph, RunKind, RunProps, Spacing, Strike, TextBody,
 };
@@ -36,9 +38,10 @@ pub fn color(w: &mut W, c: &ColorRef) {
     let (tag, a) = match &c.base {
         ColorBase::Rgb { rgb } => ("a:srgbClr", A::new().a("val", rgb.hex())),
         ColorBase::Scheme { slot } => ("a:schemeClr", A::new().a("val", slot.xml_name())),
-        ColorBase::Preset { name } => ("a:prstClr", A::new().a("val", if name.is_empty() { "black" } else { name })),
+        // The reader keeps any name a file has; only names the schema allows are written.
+        ColorBase::Preset { name } => ("a:prstClr", A::new().a("val", if deckcraft_color::is_preset_name(name) { name } else { "black" })),
         ColorBase::System { name, last } => {
-            ("a:sysClr", A::new().a("val", if name.is_empty() { "windowText" } else { name }).a("lastClr", last.hex()))
+            ("a:sysClr", A::new().a("val", if deckcraft_color::is_system_name(name) { name } else { "windowText" }).a("lastClr", last.hex()))
         }
     };
     let rgb_alpha = match &c.base {
@@ -76,40 +79,7 @@ pub fn fill(w: &mut W, x: &mut Exp, o: &mut Out, f: &Fill) {
     match f {
         Fill::None => w.empty0("a:noFill"),
         Fill::Solid { color: c } => solid(w, c),
-        Fill::Gradient(g) => {
-            w.open("a:gradFill", A::new().a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
-            w.open0("a:gsLst");
-            let mut stops = g.stops.clone();
-            if stops.is_empty() {
-                stops.push(deckcraft_model::style::GradientStop { pos: 0.0, color: ColorRef::rgb(deckcraft_color::Rgba::WHITE) });
-            }
-            if stops.len() == 1 {
-                let mut s = stops[0].clone();
-                s.pos = 1.0;
-                stops.push(s);
-            }
-            for s in &stops {
-                w.open("a:gs", A::new().a("pos", pct(s.pos.clamp(0.0, 1.0))));
-                color(w, &s.color);
-                w.close("a:gs");
-            }
-            w.close("a:gsLst");
-            match &g.shape {
-                GradientShape::Linear { angle, scaled } => {
-                    w.empty("a:lin", A::new().a("ang", ang(*angle)).a("scaled", if *scaled { "1" } else { "0" }))
-                }
-                GradientShape::Path { path, focus } => {
-                    let p = match path.as_str() {
-                        "rect" | "shape" | "circle" => path.as_str(),
-                        _ => "circle",
-                    };
-                    w.open("a:path", A::new().a("path", p));
-                    w.empty("a:fillToRect", A::new().a("l", pct(focus[0])).a("t", pct(focus[1])).a("r", pct(focus[2])).a("b", pct(focus[3])));
-                    w.close("a:path");
-                }
-            }
-            w.close("a:gradFill");
-        }
+        Fill::Gradient(g) => gradient(w, g),
         Fill::Picture(pf) => blip_fill(w, x, o, "a:blipFill", pf),
         Fill::Pattern(p) => {
             w.open("a:pattFill", A::new().a("prst", if p.preset.is_empty() { "pct5" } else { &p.preset }));
@@ -128,12 +98,22 @@ pub fn fill(w: &mut W, x: &mut Exp, o: &mut Out, f: &Fill) {
 
 /// `a:blipFill` / `p:blipFill`.
 pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
+    // An image that lives outside the package is a linked picture: `a:blip` names it through
+    // `r:link`; `r:embed` may only reference a part inside the package.
+    let linked = x.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
-    w.open(tag, A::new().a("rotWithShape", "1"));
+    w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     let adj = &pf.adjust;
-    let has_kids =
-        pf.alpha.is_some() || adj.brightness != 0.0 || adj.contrast != 0.0 || adj.grayscale || adj.duotone.is_some() || adj.clear_color.is_some();
-    let a = A::new().a("r:embed", &rid);
+    let has_kids = pf.alpha.is_some()
+        || adj.brightness != 0.0
+        || adj.contrast != 0.0
+        || adj.grayscale
+        || adj.duotone.is_some()
+        || adj.clear_color.is_some()
+        || adj.bilevel.is_some()
+        || adj.alpha_inv
+        || pf.artistic.is_some();
+    let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
         w.open("a:blip", a);
         if let Some(c) = adj.clear_color {
@@ -149,6 +129,12 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         if let Some(al) = pf.alpha {
             w.empty("a:alphaModFix", A::new().a("amt", pct(al.clamp(0.0, 1.0))));
         }
+        if adj.alpha_inv {
+            w.empty0("a:alphaInv");
+        }
+        if let Some(t) = adj.bilevel {
+            w.empty("a:biLevel", A::new().a("thresh", pct(t.clamp(0.0, 1.0))));
+        }
         if let Some((d, l)) = &adj.duotone {
             w.open0("a:duotone");
             color(w, d);
@@ -160,6 +146,25 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         }
         if adj.brightness != 0.0 || adj.contrast != 0.0 {
             w.empty("a:lum", A::new().a("bright", pct(adj.brightness.clamp(-1.0, 1.0))).a("contrast", pct(adj.contrast.clamp(-1.0, 1.0))));
+        }
+        // Artistic effect: the blip is the processed picture; the original rides in an
+        // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
+        if let Some(art) = &pf.artistic
+            && art.effect.starts_with("artistic")
+            && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
+            && let Some(orig) = x.media_rel(o, art.original, "image")
+        {
+            w.open0("a:extLst");
+            w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
+            w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
+            w.open("a14:imgLayer", A::new().a("r:embed", &orig));
+            w.open0("a14:imgEffect");
+            w.empty0(&format!("a14:{}", art.effect));
+            w.close("a14:imgEffect");
+            w.close("a14:imgLayer");
+            w.close("a14:imgProps");
+            w.close("a:ext");
+            w.close("a:extLst");
         }
         w.close("a:blip");
     } else {
@@ -205,6 +210,7 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
                 LineCap::Flat => "flat",
             }),
         )
+        .o("algn", l.align.map(LineAlign::xml))
         .o("cmpd", l.compound.map(Compound::xml));
     w.open(tag, a);
     if let Some(f) = &l.fill {
@@ -230,7 +236,10 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
     match l.join {
         Some(LineJoin::Round) => w.empty0("a:round"),
         Some(LineJoin::Bevel) => w.empty0("a:bevel"),
-        Some(LineJoin::Miter) => w.empty0("a:miter"),
+        Some(LineJoin::Miter) => {
+            let limit = l.miter_limit.filter(|limit| *limit <= i32::MAX as u32);
+            w.empty("a:miter", A::new().o("lim", limit));
+        }
         None => {}
     }
     for (t, e) in [("a:headEnd", &l.head), ("a:tailEnd", &l.tail)] {
@@ -275,8 +284,59 @@ fn shadow(w: &mut W, tag: &str, s: &deckcraft_model::style::Shadow) {
     w.close(tag);
 }
 
+fn gradient(w: &mut W, g: &deckcraft_model::style::Gradient) {
+    w.open("a:gradFill", A::new().o("flip", g.flip.map(GradientFlip::xml)).a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
+    // No stops: no `a:gsLst`, so the gradient keeps taking them from its style's fill.
+    let mut stops = g.stops.clone();
+    if stops.len() == 1 {
+        let mut s = stops[0].clone();
+        s.pos = 1.0;
+        stops.push(s);
+    }
+    if !stops.is_empty() {
+        w.open0("a:gsLst");
+        for s in &stops {
+            w.open("a:gs", A::new().a("pos", pct(s.pos.clamp(0.0, 1.0))));
+            color(w, &s.color);
+            w.close("a:gs");
+        }
+        w.close("a:gsLst");
+    }
+    match &g.shape {
+        GradientShape::Linear { angle, scaled } => w.empty("a:lin", A::new().a("ang", ang(*angle)).a("scaled", if *scaled { "1" } else { "0" })),
+        GradientShape::Path { path, focus } => {
+            let p = match path.as_str() {
+                "rect" | "shape" | "circle" => path.as_str(),
+                _ => "circle",
+            };
+            w.open("a:path", A::new().a("path", p));
+            w.empty("a:fillToRect", A::new().a("l", pct(focus[0])).a("t", pct(focus[1])).a("r", pct(focus[2])).a("b", pct(focus[3])));
+            w.close("a:path");
+        }
+    }
+    if g.tile.iter().any(|v| *v != 0.0) {
+        let [l, t, r, b] = g.tile;
+        w.empty("a:tileRect", A::new().a("l", pct(l)).a("t", pct(t)).a("r", pct(r)).a("b", pct(b)));
+    }
+    w.close("a:gradFill");
+}
+
 pub fn effects(w: &mut W, fx: &Effects) {
     w.open0("a:effectLst");
+    // Schema order: blur, fillOverlay, glow, innerShdw, outerShdw, prstShdw, reflection, softEdge.
+    if let Some(ov) = &fx.fill_overlay {
+        let blend = match ov.blend.as_str() {
+            b @ ("over" | "mult" | "screen" | "darken" | "lighten") => b,
+            _ => "over",
+        };
+        w.open("a:fillOverlay", A::new().a("blend", blend));
+        match &ov.fill {
+            Fill::Solid { color: c } => solid(w, c),
+            Fill::Gradient(g) => gradient(w, g),
+            _ => w.empty0("a:noFill"),
+        }
+        w.close("a:fillOverlay");
+    }
     if let Some(g) = &fx.glow {
         w.open("a:glow", A::new().a("rad", emu(g.radius).max(0)));
         color(w, &g.color);
@@ -297,16 +357,33 @@ pub fn effects(w: &mut W, fx: &Effects) {
                 .a("endA", pct(r.end_alpha.clamp(0.0, 1.0)))
                 .a("endPos", pct(r.end_pos.clamp(0.0, 1.0)))
                 .a("dist", emu(r.dist).max(0))
-                .a("dir", 5_400_000)
-                .a("sy", -100_000)
-                .a("algn", "bl")
-                .a("rotWithShape", "0"),
+                // Kept from a file as read: held to the schema's ranges so a stray value can't
+                // make PowerPoint repair the file (ST_PositiveFixedAngle, ST_FixedAngle,
+                // ST_PositiveFixedPercentage).
+                .o("stPos", r.st_pos.map(|v| v.clamp(0, 100_000)))
+                .o("dir", r.dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("fadeDir", r.fade_dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("sx", r.sx)
+                .o("sy", r.sy)
+                .o("kx", r.kx.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("ky", r.ky.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("algn", r.align.as_deref())
+                .b("rotWithShape", r.rotate_with_shape),
         );
     }
     if let Some(r) = fx.soft_edge {
         w.empty("a:softEdge", A::new().a("rad", emu(r).max(0)));
     }
     w.close("a:effectLst");
+}
+
+/// `a:sp3d` for a bevel preset when the shape or theme style has no kept 3-D XML.
+/// The preset name is limited to ASCII letters and digits so it cannot break the markup.
+pub fn bevel_sp3d(preset: &str) -> Option<String> {
+    if preset.is_empty() || preset.len() > 32 || !preset.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(format!("<a:sp3d><a:bevelT prst=\"{preset}\"/></a:sp3d>"))
 }
 
 pub fn xfrm(w: &mut W, tag: &str, x: &Xfrm, child: Option<&Xfrm>) {
@@ -347,9 +424,10 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         Action::LastSlide => (String::new(), Some("ppaction://hlinkshowjump?jump=lastslide".into())),
         Action::EndShow => (String::new(), Some("ppaction://hlinkshowjump?jump=endshow".into())),
         Action::LastViewed => (String::new(), Some("ppaction://hlinkshowjump?jump=lastslideviewed".into())),
-        Action::CustomShow { name } => {
+        Action::CustomShow { name, returns } => {
             let id = x.p.custom_shows.iter().position(|c| c.name == *name).unwrap_or(0);
-            (String::new(), Some(format!("ppaction://customshow?id={id}&return=true")))
+            let ret = if *returns { "true" } else { "false" };
+            (String::new(), Some(format!("ppaction://customshow?id={id}&return={ret}")))
         }
         Action::Program { path } => {
             if path.is_empty() {
@@ -359,14 +437,43 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         }
         Action::PlayMedia => (String::new(), Some("ppaction://media".into())),
     };
-    w.empty(
-        tag,
-        A::new()
-            .a("r:id", rid)
-            .o("action", action)
-            .o("tooltip", (!h.tooltip.is_empty()).then_some(h.tooltip.as_str()))
-            .t("highlightClick", h.highlight_click),
-    );
+    let attrs = A::new()
+        .a("r:id", rid)
+        .o("action", action)
+        .o("tooltip", (!h.tooltip.is_empty()).then_some(h.tooltip.as_str()))
+        .t("highlightClick", h.highlight_click)
+        .t("endSnd", h.stop_sound);
+    let sound = h.sound.and_then(|id| x.media_rel(o, id, "audio").map(|rid| (rid, id)));
+    let Some((sound_rid, sound_id)) = sound else {
+        w.empty(tag, attrs);
+        return;
+    };
+    w.open(tag, attrs);
+    let name = x.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
+    w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
+    w.close(tag);
+}
+
+/// Display name PowerPoint stores on `a:snd`.
+fn sound_label(name: &str) -> String {
+    let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let label: String = file.chars().filter(|c| c.is_ascii() && !c.is_control() && *c != '"' && *c != '<' && *c != '>').take(80).collect();
+    if label.is_empty() { "sound.wav".into() } else { label }
+}
+
+/// Validate an unmodelled 3-D fragment (`a:scene3d`, `a:sp3d`, `a:flatTx`) before writing raw XML.
+pub fn valid_raw3d<'a>(raw: &'a str, allowed: &[&str]) -> Option<&'a str> {
+    if raw.is_empty() || raw.len() > 64 * 1024 {
+        return None;
+    }
+    let wrap = format!("<r xmlns:a=\"{}\">{raw}</r>", crate::opc::NS_A);
+    let doc = crate::xml::parse(wrap.as_bytes()).ok()?;
+    let els: Vec<_> = doc.root.elements().collect();
+    (!els.is_empty()
+        && els.len() <= allowed.len()
+        && doc.root.children.len() == els.len()
+        && els.iter().all(|e| e.prefix() == "a" && allowed.contains(&e.local()) && !crate::read::has_rel_refs(e)))
+    .then_some(raw)
 }
 
 pub fn body_pr(w: &mut W, b: &BodyProps) {
@@ -383,27 +490,49 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .b("rtlCol", b.rtl_col)
         .o("anchor", b.anchor.map(|a| a.xml()))
         .b("anchorCtr", b.anchor_ctr)
-        .b("upright", b.upright);
+        .b("upright", b.upright)
+        .b("spcFirstLastPara", b.space_first_last)
+        .b("compatLnSpc", b.compat_ln_spc)
+        .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
+        .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
-    if warp.is_none() && b.autofit.is_none() {
+    let raw3d = b.raw3d.as_deref().and_then(|s| valid_raw3d(s, &["scene3d", "sp3d", "flatTx"]));
+    if warp.is_none() && b.autofit.is_none() && raw3d.is_none() {
         w.empty("a:bodyPr", a);
         return;
     }
     w.open("a:bodyPr", a);
     if let Some(p) = warp {
         w.open("a:prstTxWarp", A::new().a("prst", p));
-        w.empty0("a:avLst");
+        let adj: Vec<(usize, i64)> =
+            b.warp_adj.iter().take(8).enumerate().filter(|(_, v)| v.is_finite()).map(|(i, v)| (i, v.round().clamp(-2.0e9, 2.0e9) as i64)).collect();
+        if adj.is_empty() {
+            w.empty0("a:avLst");
+        } else {
+            let single = deckcraft_geom::warp::adjust_count(p) <= 1 && b.warp_adj.len() == 1;
+            w.open0("a:avLst");
+            for (i, v) in adj {
+                let n = if single { "adj".to_string() } else { format!("adj{}", i + 1) };
+                w.empty("a:gd", A::new().a("name", n).a("fmla", format!("val {v}")));
+            }
+            w.close("a:avLst");
+        }
         w.close("a:prstTxWarp");
     }
     match b.autofit {
         Some(AutoFit::None) => w.empty0("a:noAutofit"),
         Some(AutoFit::Shape) => w.empty0("a:spAutoFit"),
         Some(AutoFit::Shrink { font_scale, line_reduction }) => {
-            let fs = pct(font_scale.clamp(0.01, 1.0));
+            // A scale the model holds is written, 100 % included: reopening then keeps the same
+            // "draw the saved scale" state instead of becoming a bare `<a:normAutofit/>` (#724).
+            let fs = font_scale.map(|s| pct(s.clamp(0.01, 1.0)));
             let lr = pct(line_reduction.clamp(0.0, 1.0));
-            w.empty("a:normAutofit", A::new().o("fontScale", (fs != 100_000).then_some(fs)).o("lnSpcReduction", (lr != 0).then_some(lr)));
+            w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
+    }
+    if let Some(raw) = raw3d {
+        w.raw(raw);
     }
     w.close("a:bodyPr");
 }
@@ -432,14 +561,20 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         .o("defTabSz", p.default_tab.map(|v| emu(v).max(0)))
         .b("rtl", p.rtl)
         .b("eaLnBrk", p.east_asian_line_break)
+        .b("latinLnBrk", p.latin_line_break)
+        .b("hangingPunct", p.hanging_punct)
         .o("fontAlgn", p.font_align.as_deref().filter(|f| matches!(*f, "auto" | "t" | "ctr" | "base" | "b")));
     let has_kids = p.line_spacing.is_some()
         || p.space_before.is_some()
         || p.space_after.is_some()
         || p.bullet.is_some()
         || p.bullet_font.is_some()
+        || p.bullet_font_follow_text.is_some()
         || p.bullet_color.is_some()
+        || p.bullet_color_follow_text.is_some()
         || p.bullet_size.is_some()
+        || p.bullet_size_points.is_some()
+        || p.bullet_size_follow_text.is_some()
         || p.tabs.is_some()
         || def.is_some();
     if !has_kids {
@@ -456,15 +591,23 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
     if let Some(s) = &p.space_after {
         spacing(w, "a:spcAft", s);
     }
-    if let Some(c) = &p.bullet_color {
+    if p.bullet_color.is_none() && p.bullet_color_follow_text == Some(true) {
+        w.empty0("a:buClrTx");
+    } else if let Some(c) = &p.bullet_color {
         w.open0("a:buClr");
         color(w, c);
         w.close("a:buClr");
     }
-    if let Some(s) = p.bullet_size {
+    if p.bullet_size.is_none() && p.bullet_size_points.is_none() && p.bullet_size_follow_text == Some(true) {
+        w.empty0("a:buSzTx");
+    } else if let Some(s) = p.bullet_size_points.filter(|s| s.is_finite() && (1.0..=4000.0).contains(s)) {
+        w.val("a:buSzPts", ((s * 100.0).round() as u32).to_string());
+    } else if let Some(s) = p.bullet_size {
         w.val("a:buSzPct", pct(s.clamp(0.25, 4.0)));
     }
-    if let Some(f) = &p.bullet_font {
+    if p.bullet_font.is_none() && p.bullet_font_follow_text == Some(true) {
+        w.empty0("a:buFontTx");
+    } else if let Some(f) = &p.bullet_font {
         w.empty("a:buFont", A::new().a("typeface", f));
     }
     match &p.bullet {
@@ -477,7 +620,12 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         Some(Bullet::Picture { media }) => match x.media_rel(o, *media, "image") {
             Some(rid) => {
                 w.open0("a:buBlip");
-                w.empty("a:blip", A::new().a("r:embed", rid));
+                let a = if x.media(*media).is_some_and(|m| m.data.is_empty() && m.link.is_some()) {
+                    A::new().a("r:link", &rid)
+                } else {
+                    A::new().a("r:embed", &rid)
+                };
+                w.empty("a:blip", a);
                 w.close("a:buBlip");
             }
             None => w.empty("a:buChar", A::new().a("char", "•")),
@@ -511,6 +659,7 @@ fn typeface(w: &mut W, tag: &str, f: &Option<String>) {
 pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     let a = A::new()
         .o("lang", r.lang.as_deref().filter(|l| !l.is_empty()))
+        .o("altLang", r.alt_lang.as_deref().filter(|l| !l.is_empty()))
         .o("sz", r.size.map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
         .b("b", r.bold)
         .b("i", r.italic)
@@ -534,18 +683,20 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
         )
         .o("spc", r.spacing.map(|s| (s.clamp(-4000.0, 4000.0) * 100.0).round() as i64))
         .o("baseline", r.baseline.map(|b| pct(b.clamp(-10.0, 10.0))))
-        .b("noProof", r.no_proof);
+        .b("noProof", r.no_proof)
+        .b("normalizeH", r.normalize_height);
+    let has_fx = r.shadow.is_some() || r.inner_shadow.is_some() || r.glow.is_some() || r.reflection.is_some() || r.soft_edge.is_some();
     let has_kids = r.outline.is_some()
         || r.fill.is_some()
-        || r.shadow.is_some()
-        || r.glow.is_some()
+        || has_fx
         || r.highlight.is_some()
         || r.underline_color.is_some()
         || r.font.is_some()
         || r.font_ea.is_some()
         || r.font_cs.is_some()
         || r.font_sym.is_some()
-        || r.link.is_some();
+        || r.link.is_some()
+        || r.hover.is_some();
     if !has_kids {
         w.empty(tag, a);
         return;
@@ -560,8 +711,19 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
             f => fill(w, x, o, f),
         }
     }
-    if r.shadow.is_some() || r.glow.is_some() {
-        effects(w, &Effects { outer_shadow: r.shadow.clone(), glow: r.glow.clone(), ..Default::default() });
+    if has_fx {
+        // Same child order as a shape's effect list: glow, inner shadow, outer shadow, reflection, soft edge.
+        effects(
+            w,
+            &Effects {
+                outer_shadow: r.shadow.clone(),
+                inner_shadow: r.inner_shadow.clone(),
+                glow: r.glow.clone(),
+                reflection: r.reflection.clone(),
+                soft_edge: r.soft_edge,
+                ..Default::default()
+            },
+        );
     }
     if let Some(h) = &r.highlight {
         w.open0("a:highlight");
@@ -579,6 +741,10 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     typeface(w, "a:sym", &r.font_sym);
     if let Some(h) = &r.link {
         hyperlink(w, x, o, "a:hlinkClick", h);
+    }
+    // Schema order: hlinkClick, hlinkMouseOver.
+    if let Some(h) = &r.hover {
+        hyperlink(w, x, o, "a:hlinkMouseOver", h);
     }
     w.close(tag);
 }
@@ -615,17 +781,27 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
 }
 
 fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
+    // The run's properties are the same for every piece and line break: serialize them once.
+    let mut rpr_xml: Option<String> = None;
+    let mut put_rpr = |w: &mut W| match &rpr_xml {
+        Some(xml) => w.s.push_str(xml),
+        None => {
+            let start = w.s.len();
+            rpr(w, x, o, "a:rPr", props);
+            rpr_xml = Some(w.s[start..].to_string());
+        }
+    };
     for (i, piece) in text.split(['\n', '\u{b}']).enumerate() {
         if i > 0 {
             w.open0("a:br");
-            rpr(w, x, o, "a:rPr", props);
+            put_rpr(w);
             w.close("a:br");
         }
         if piece.is_empty() && i > 0 {
             continue;
         }
         w.open0("a:r");
-        rpr(w, x, o, "a:rPr", props);
+        put_rpr(w);
         w.elt("a:t", piece);
         w.close("a:r");
     }
@@ -633,8 +809,9 @@ fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
 
 pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool, index: usize) {
     w.open0("a:p");
-    if p.level > 0 || !is_default_ppr(&p.props) {
-        ppr(w, x, o, "a:pPr", Some(p.level), &p.props, None);
+    let def = (p.def_props != RunProps::default()).then_some(&p.def_props);
+    if p.level > 0 || !is_default_ppr(&p.props) || def.is_some() {
+        ppr(w, x, o, "a:pPr", Some(p.level), &p.props, def);
     }
     for (ri, r) in p.runs.iter().enumerate() {
         match &r.kind {
@@ -671,4 +848,24 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
 
 pub fn has_math(tb: &TextBody) -> bool {
     tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_color::Rgba;
+
+    #[test]
+    fn unknown_preset_and_system_names_save_as_black_and_window_text() {
+        let write = |base: ColorBase| {
+            let mut w = W::frag();
+            color(&mut w, &ColorRef { base, mods: vec![] });
+            w.s
+        };
+        assert_eq!(write(ColorBase::Preset { name: "notAColor".into() }), r#"<a:prstClr val="black"/>"#);
+        assert_eq!(write(ColorBase::Preset { name: "darkBlue".into() }), r#"<a:prstClr val="darkBlue"/>"#);
+        let last = Rgba::rgb(0x12, 0x34, 0x56);
+        assert_eq!(write(ColorBase::System { name: "notAColor".into(), last }), r#"<a:sysClr val="windowText" lastClr="123456"/>"#);
+        assert_eq!(write(ColorBase::System { name: "3dLight".into(), last }), r#"<a:sysClr val="3dLight" lastClr="123456"/>"#);
+    }
 }

@@ -1233,3 +1233,457 @@ unknown interface language	idioma da interface desconhecido
 ▶ Play All	▶ Reproduzir tudo
 ◀ Previous	◀ Anterior
 ✏ on	✏ ativado
+Single L	Único esq.
+Single R	Único dir.
+Hex L	Hex esq.
+Hex R	Hex dir.
+Hex U	Hex cima
+Hex D	Hex baixo
+Strips In	Tiras entrando
+Strips Out	Tiras saindo
+Particles In	Partículas entrando
+Particles Out	Partículas saindo
+Grid Options…	Opções de grade…
+Set Zoom	Definir zoom
+New Window	Nova janela
+Keep Mouse Cursor Visible	Manter o cursor visível
+Preview Animations	Visualizar animações
+Print	Imprimir
+Check for Updates…	Verificar atualizações…
+Insert Picture in SmartArt…	Inserir imagem no SmartArt…
+Change Picture…	Alterar imagem…
+Reuse Slides…	Reutilizar slides…
+Browse for Themes…	Procurar temas…
+Compare…	Comparar…
+Paste Special…	Colar especial…
+Quick Access Toolbar	Barra de Ferramentas de Acesso Rápido
+Replace…	Substituir…
+Starter Templates	Modelos iniciais
+Open	Abrir
+Info	Informações
+Color At	Cor no ponto
+Paste Special	Colar especial
+Select Slide Range	Selecionar intervalo de slides
+List Slides to Reuse	Listar slides a reutilizar
+Icon Gallery	Galeria de ícones
+Photo Album…	Álbum de fotografias…
+Edit Photo Album…	Editar álbum de fotografias…
+Action Settings	Configurações de ação
+Text Pane	Painel de texto
+Edit SmartArt Text	Editar texto do SmartArt
+Add Shape	Adicionar forma
+Remove Shape	Remover forma
+Promote	Promover
+Demote	Rebaixar
+Change Layout	Alterar layout
+Convert to SmartArt	Converter em SmartArt
+Convert to Text	Converter em texto
+Convert to Shapes	Converter em formas
+Insert Picture in SmartArt	Inserir imagem no SmartArt
+SmartArt Styles	Estilos de SmartArt
+Change Colors	Alterar cores
+Size and Position…	Tamanho e posição…
+Smooth Corners	Cantos suaves
+Picture Style Gallery	Galeria de estilos de imagem
+Recolor	Recolorir
+Recolor Gallery	Galeria de recolorização
+Set Transparent Color	Definir cor transparente
+Add Guide	Adicionar guia
+Move Guide	Mover guia
+Delete Guide	Excluir guia
+Edit Points	Editar pontos
+Points	Pontos
+Move Point	Mover ponto
+Add Point	Adicionar ponto
+Point Type	Tipo de ponto
+Move Handle	Mover alça
+Delete Point	Excluir ponto
+Delete Segment	Excluir segmento
+Segment Type	Tipo de segmento
+Open Path	Abrir caminho
+Close Path	Fechar caminho
+Fonts in Presentation	Fontes da apresentação
+Replace Fonts	Substituir fontes
+AutoCorrect Options	Opções de AutoCorreção
+Compose Text	Compor texto
+Commit Composition	Confirmar composição
+Delete Surrounding Text	Excluir texto ao redor
+Add Font	Adicionar fonte
+Rescan Installed Fonts	Examinar fontes instaladas novamente
+Text Transparency	Transparência do texto
+Language for All Text	Idioma para todo o texto
+Font…	Fonte…
+Text Transform	Transformar texto
+Tabs…	Tabulações…
+Variants	Variantes
+Variant Gallery	Galeria de variantes
+Handout Placeholders	Espaços reservados do folheto
+Notes Placeholders	Espaços reservados das anotações
+Preserve	Preservar
+Layout Placeholders	Espaços reservados do layout
+Apply Design Idea	Aplicar ideia de design
+Sound	Som
+Borders	Bordas
+Cell Margins	Margens da célula
+Align Cell Text	Alinhar texto da célula
+Draw Table	Desenhar tabela
+Table Eraser	Borracha de tabela
+Find	Localizar
+Replace	Substituir
+Next Comment	Próximo comentário
+Previous Comment	Comentário anterior
+Change Spelling	Alterar ortografia
+Add to Dictionary	Adicionar ao dicionário
+Spelling Dictionary	Dicionário ortográfico
+Insert Synonym	Inserir sinônimo
+Compare	Comparar
+Revisions	Revisões
+Accept Revision	Aceitar revisão
+Reject Revision	Rejeitar revisão
+End Review	Encerrar revisão
+Inspect Slide Actions	Inspecionar ações do slide
+Artistic Effects	Efeitos artísticos
+Compress Pictures	Compactar imagens
+Print…	Imprimir…
+Line: Rising	Linha: ascendente
+Trapezoid: Uneven Sides	Trapézio: lados desiguais
+Quarter Wedge	Cunha de um quarto
+Corner Tabs: Triangles	Abas de canto: triângulos
+Corner Tabs: Squares	Abas de canto: quadrados
+Corner Tabs: Quarter Circles	Abas de canto: quartos de círculo
+Gear: 6 Teeth	Engrenagem: 6 dentes
+Gear: 9 Teeth	Engrenagem: 9 dentes
+Chart Marker: Cross Lines	Marcador de gráfico: linhas cruzadas
+Chart Marker: Star Lines	Marcador de gráfico: linhas em estrela
+Chart Marker: Plus Lines	Marcador de gráfico: linhas em cruz
+Arrow: Curved Right	Seta: curva à direita
+Arrow: Curved Left	Seta: curva à esquerda
+Arrow: Curved Up	Seta: curva para cima
+Arrow: Curved Down	Seta: curva para baixo
+Arrow: Circular	Seta: circular
+Arrow: Circular Counter-clockwise	Seta: circular anti-horária
+Arrow: Circular Two-headed	Seta: circular de duas pontas
+Arrow: Swoosh	Seta: arco
+Callout: Left-Right Arrow	Balão: seta esquerda-direita
+Callout: Up-Down Arrow	Balão: seta cima-baixo
+Callout: Quad Arrow	Balão: seta quádrupla
+Flowchart: Offline Storage	Fluxograma: armazenamento off-line
+Ribbon: Curved and Tilted Up	Faixa: curvada e inclinada para cima
+Ribbon: Curved and Tilted Down	Faixa: curvada e inclinada para baixo
+Ribbon: Left-Right Fold	Faixa: dobra esquerda-direita
+Callout: Bent Line	Balão: linha dobrada
+Callout: Double Bent Line	Balão: linha dupla dobrada
+Callout: Line with Accent Bar	Balão: linha com barra de destaque
+Callout: Bent Line with Accent Bar	Balão: linha dobrada com barra de destaque
+Callout: Double Bent Line with Accent Bar	Balão: linha dupla dobrada com barra de destaque
+Callout: Line with No Border	Balão: linha sem borda
+Callout: Bent Line with No Border	Balão: linha dobrada sem borda
+Callout: Double Bent Line with No Border	Balão: linha dupla dobrada sem borda
+Callout: Line with Border and Accent Bar	Balão: linha com borda e barra de destaque
+Callout: Bent Line with Border and Accent Bar	Balão: linha dobrada com borda e barra de destaque
+Callout: Double Bent Line with Border and Accent Bar	Balão: linha dupla dobrada com borda e barra de destaque
+Peek Out	Espiar
+Sink Down	Afundar
+Contract	Contrair
+Diagonal Down Right	Diagonal para baixo à direita
+Diagonal Up Right	Diagonal para cima à direita
+Zigzag	Ziguezague
+Sine Wave	Onda senoidal
+Decaying Wave	Onda decrescente
+Heartbeat	Batida de coração
+S Curve 1	Curva S 1
+S Curve 2	Curva S 2
+Stairs Down	Escada descendente
+Bounce Right	Salto à direita
+Bounce Left	Salto à esquerda
+Spiral Right	Espiral à direita
+Spiral Left	Espiral à esquerda
+Spring	Mola
+Swoosh	Arco
+4 Point Star	Estrela de 4 pontas
+5 Point Star	Estrela de 5 pontas
+6 Point Star	Estrela de 6 pontas
+8 Point Star	Estrela de 8 pontas
+Crescent Moon	Lua crescente
+Football	Bola de futebol americano
+Curved Square	Quadrado curvo
+Horizontal Figure 8	Oito horizontal
+Vertical Figure 8	Oito vertical
+Loop de Loop	Laço
+Bean	Feijão
+Peanut	Amendoim
+Neutron	Nêutron
+Interface language	Idioma da interface
+  Format:	  Formato:
+(missing)	(ausente)
+(no spelling suggestions)	(nenhuma sugestão de ortografia)
+(none)	(nenhum)
++ Add	+ Adicionar
+3-D Format	Formato 3D
+3-D Rotation	Rotação 3D
+ALL pictures black and white	TODAS as imagens em preto e branco
+AaBbCcDd	AaBbCcDd
+Accept	Aceitar
+All	Tudo
+Action Settings…	Configurações de ação…
+Add	Adicionar
+Add Pictures…	Adicionar imagens…
+Add a title with a picture or some text to get layout ideas.	Adicione um título, uma imagem ou um texto para receber ideias de layout.
+After	Depois
+Album theme	Tema do álbum
+Alignment	Alinhamento
+Alignment:	Alinhamento:
+All caps	Todas em maiúsculas
+All slides	Todos os slides
+Alt text	Texto alternativo
+Animation	Animação
+Animation Painter (double-click to keep it on)	Pincel de animação (clique duas vezes para mantê-lo ativo)
+Appearance	Aparência
+Applies to this presentation's theme colours.	Aplica-se às cores do tema desta apresentação.
+Apply only to this picture	Aplicar somente a esta imagem
+Apply to:	Aplicar a:
+Artistic	Artístico
+As:	Como:
+AutoCorrect Options…	Opções de AutoCorreção…
+Automatic bulleted and numbered lists	Listas com marcadores e numeradas automáticas
+Available formats:	Formatos disponíveis:
+Back	Voltar
+Back (Esc)	Voltar (Esc)
+Baseline	Linha de base
+Blank Presentation	Apresentação em branco
+Blur	Desfoque
+Body font	Fonte do corpo
+Body:	Corpo:
+Browse	Procurar
+Bullets and Numbering…	Marcadores e numeração…
+Cap type	Extremidade
+Capitalize first letter of sentences	Colocar em maiúscula a primeira letra de frases
+Capitalize names of days	Colocar em maiúscula nomes de dias
+Captions under pictures	Legendas sob as imagens
+Centimeters	Centímetros
+Change File Type	Alterar tipo de arquivo
+Change to:	Alterar para:
+Chart cell	Célula do gráfico
+Choose a slide to show it, or press G to return.	Escolha um slide para exibi-lo ou pressione G para voltar.
+Clear	Limpar
+Clear All	Limpar tudo
+Click a colour in the picture to make it transparent	Clique em uma cor da imagem para torná-la transparente
+Click the preview to zoom.	Clique na visualização para ampliar.
+Click the slide to take the colour under the pointer	Clique no slide para pegar a cor sob o ponteiro
+Click to change this one; Shift-click to change all	Clique para alterar só este; Shift+clique para alterar todos
+Color:	Cor:
+Columns…	Colunas…
+Compare this presentation with a revised copy from Review › Compare.	Compare esta apresentação com uma cópia revisada em Revisão › Comparar.
+Compress	Compactar
+Compression options	Opções de compactação
+Convert	Converter
+Copy path	Copiar caminho
+Correct TWo INitial CApitals	Corrigir DUas MAiúsculas INiciais
+Correct accidental use of cAPS LOCK key	Corrigir uso acidental da tecla CAPS LOCK
+Create Handouts	Criar folhetos
+Create a PDF Document	Criar um documento PDF
+Custom character:	Caractere personalizado:
+Customize Colors…	Personalizar cores…
+Customize Fonts…	Personalizar fontes…
+Customize Quick Access Toolbar	Personalizar Barra de Ferramentas de Acesso Rápido
+Default tab stops (in):	Tabulações padrão (pol):
+Delay	Atraso
+Delete Repeated Word	Excluir palavra repetida
+Delete cropped areas of pictures	Excluir áreas cortadas das imagens
+Display	Exibir
+Display drawing guides on screen	Mostrar guias de desenho na tela
+Display grid on screen	Mostrar grade na tela
+Distance	Distância
+Do not check spelling or grammar	Não verificar ortografia ou gramática
+Double	Duplo
+Duration	Duração
+Exit Edit Points	Sair da edição de pontos
+Eyedropper	Conta-gotas
+Find Next	Localizar próximo
+Find what:	Localizar:
+Find whole words only	Localizar somente palavras inteiras
+First line	Primeira linha
+Flat	Plano
+Follow Path	Seguir caminho
+Font name	Nome da fonte
+Font size	Tamanho da fonte
+Footers	Rodapés
+Frame Slides	Moldurar slides
+Frame shape	Forma da moldura
+From	De
+From slide:	Do slide:
+From the top-left corner of the slide	Do canto superior esquerdo do slide
+Gradient bar	Barra de gradiente
+Grid	Grade
+Options	Opções
+Grid and Guides	Grade e guias
+Hanging	Deslocada
+Heading and body fonts for this presentation.	Fontes de título e corpo desta apresentação.
+Heading font	Fonte do título
+Heading:	Título:
+Hidden slides	Slides ocultos
+Hide	Ocultar
+Highlight click	Realçar clique
+Horizontal (in):	Horizontal (pol):
+Hyperlink to:	Hiperlink para:
+Ignore All	Ignorar tudo
+Inches	Polegadas
+Indentation	Recuo
+Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes	Tinta em forma: transforma linhas, retângulos, elipses e triângulos desenhados em formas
+Insert…	Inserir…
+Join type	Tipo de junção
+Keep mouse cursor visible	Manter o cursor do mouse visível
+Keep source formatting	Manter a formatação de origem
+Landscape	Paisagem
+Language:	Idioma:
+Layouts	Layouts
+Leave the slide background out: only what is on the slide is drawn	Deixar o plano de fundo do slide de fora: só o que está no slide é desenhado
+Less Brightness	Menos brilho
+Less Contrast	Menos contraste
+Lighting	Iluminação
+Line spacing	Espaçamento entre linhas
+Location	Local
+Lock aspect ratio	Bloquear proporção
+Look up	Consultar
+Loop forever	Repetir indefinidamente
+Mark all text in the presentation as:	Marcar todo o texto da apresentação como:
+Match case	Diferenciar maiúsculas de minúsculas
+Material	Material
+Measurement units:	Unidades de medida:
+Media position	Posição da mídia
+Mirror	Espelhar
+Miter	Mitra
+Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time.	Os nomes dos meses e AM/PM aparecem em inglês. Outros idiomas listam a data numérica e o horário de 24 horas.
+More Brightness	Mais brilho
+More Columns…	Mais colunas…
+More Contrast	Mais contraste
+More Picture Styles	Mais estilos de imagem
+New	Novo
+New Photo Album…	Novo álbum de fotografias…
+New Text Box	Nova caixa de texto
+No Transform	Sem transformação
+No comments.	Sem comentários.
+No differences left.	Não há diferenças restantes.
+No icons match.	Nenhum ícone corresponde.
+No pictures yet	Ainda sem imagens
+Not a copy of this presentation: slides are matched by position.	Não é uma cópia desta apresentação: os slides são correspondidos por posição.
+Not saved yet	Ainda não salvo
+Number:	Número:
+OK	OK
+Open a presentation from a folder (Ctrl+O)	Abrir uma apresentação de uma pasta (Ctrl+O)
+Open another window on this presentation	Abrir outra janela desta apresentação
+Open file location	Abrir local do arquivo
+Ordinals (1st) with superscript	Ordinais (1º) com sobrescrito
+Orientation	Orientação
+Orientation:	Orientação:
+Other Sound…	Outro som…
+Paper size	Tamanho do papel
+Pattern	Padrão
+Pause animated GIF	Pausar GIF animado
+Pen	Caneta
+Pen Color	Cor da caneta
+Pen Style	Estilo da caneta
+Pen Weight	Espessura da caneta
+Percent:	Porcentagem:
+Photo	Foto
+Album	Álbum
+Photo Album options	Opções do álbum de fotografias
+Pick a design for this slide. Ideas are generated on your device.	Escolha um design para este slide. As ideias são geradas no seu dispositivo.
+Picture layout	Layout da imagem
+Picture source	Origem da imagem
+Pictures in album	Imagens do álbum
+Play animated GIF	Reproduzir GIF animado
+Play this slide's animations on the canvas	Reproduzir as animações deste slide na tela
+Play this slide's transition	Reproduzir a transição deste slide
+Portrait	Retrato
+Presets	Predefinições
+Previous	Anterior
+Print Hidden Slides	Imprimir slides ocultos
+Print layout	Layout de impressão
+Print range	Intervalo de impressão
+Program:	Programa:
+Put a picture in the selected node's picture placeholder	Colocar uma imagem no espaço reservado de imagem do nó selecionado
+RRGGBB	RRGGBB
+Recover Unsaved Presentations	Recuperar apresentações não salvas
+Reject	Rejeitar
+Remove bullets and numbering	Remover marcadores e numeração
+Remove from Quick Access Toolbar	Remover da Barra de Ferramentas de Acesso Rápido
+Remove from Recent	Remover dos recentes
+Remove the picture style	Remover o estilo da imagem
+Repeated word	Palavra repetida
+Replace All	Substituir tudo
+Replace fractions (1/2) with fraction characters (½)	Substituir frações (1/2) por caracteres de fração (½)
+Replace text as you type	Substituir texto ao digitar
+Replace with:	Substituir por:
+Replace:	Substituir:
+Reset 3-D	Redefinir 3D
+Reset Style	Redefinir estilo
+Reset to Defaults	Redefinir padrões
+Resolution	Resolução
+Return to the audience window to resume the connection.	Volte à janela da audiência para retomar a conexão.
+Right-click any ribbon button to add it.	Clique com o botão direito em qualquer botão da faixa para adicioná-lo.
+Rotate Left	Girar à esquerda
+Rotate Right	Girar à direita
+Rotation (°):	Rotação (°):
+Round	Arredondado
+Sample deck: Northern Lights	Apresentação de exemplo: Aurora Boreal
+Save as type	Salvar como tipo
+Search for a word	Pesquisar uma palavra
+Search icons	Pesquisar ícones
+Seconds per slide:	Segundos por slide:
+Select None	Selecionar nenhum
+Select a SmartArt graphic to edit its text.	Selecione um gráfico SmartArt para editar o texto.
+Select a word on the slide, or type one above.	Selecione uma palavra no slide ou digite uma acima.
+Selected text	Texto selecionado
+Set	Definir
+Single	Simples
+Size:	Tamanho:
+Slides	Slides
+Slides per page	Slides por página
+Slides:	Slides:
+Small caps	Versalete
+SmartArt items	Itens do SmartArt
+SmartArt text	Texto do SmartArt
+Snap	Encaixar
+Snap objects to other objects	Encaixar objetos em outros objetos
+Sound:	Som:
+Spacing	Espaçamento
+Spacing (in):	Espaçamento (pol):
+Spacing (pt):	Espaçamento (pt):
+Special	Especial
+Spelling is checked for languages marked (dictionary).	A ortografia é verificada para os idiomas marcados (dicionário).
+Start	Início
+Start at:	Começar em:
+Tab stop position (in):	Posição da parada de tabulação (pol):
+Tab stops:	Paradas de tabulação:
+Templates	Modelos
+Text box:	Caixa de texto:
+Text ruler	Régua de texto
+The audience window has closed.	A janela da audiência foi fechada.
+The audience window is not responding.	A janela da audiência não está respondendo.
+Themes (whole presentation)	Temas (apresentação inteira)
+This presentation has no custom shows (Slide Show ▸ Custom Slide Show).	Esta apresentação não tem apresentações personalizadas (Apresentação de Slides ▸ Apresentação Personalizada).
+Tile picture as texture	Ladrilhar imagem como textura
+Title	Título
+To slide:	Até o slide:
+Top Left Corner	Canto superior esquerdo
+Transform	Transformar
+Transparent background	Fundo transparente
+Type and organise the diagram's text	Digite e organize o texto do diagrama
+Type your text here	Digite seu texto aqui
+Unlock	Desbloquear
+Update	Atualizar
+Update automatically	Atualizar automaticamente
+Vertical (in):	Vertical (pol):
+Waiting for the audience window…	Aguardando a janela da audiência…
+Warp	Distorcer
+Whole presentation	Apresentação inteira
+Width (pixels):	Largura (pixels):
+Window title bar	Barra de título da janela
+With	Com
+With:	Com:
+Zoom level	Nível de zoom
+Painter	Pincel
+Zoom to	Zoom em
+[No Sound]	[Sem som]
+[Stop Previous Sound]	[Parar som anterior]

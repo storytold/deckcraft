@@ -3,7 +3,7 @@
 use deckcraft_color::{ColorScheme, ColorTransform, Rgba, SchemeSlot};
 use serde::{Deserialize, Serialize};
 
-use crate::style::{ColorRef, Effects, Fill, Gradient, GradientShape, GradientStop, Line, Shadow};
+use crate::style::{ColorRef, Effects, Fill, Glow, Gradient, GradientShape, GradientStop, Line, Shadow};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -108,12 +108,14 @@ fn ph() -> ColorRef {
 pub fn default_format() -> FormatScheme {
     let grad = |a: i32, b: i32| {
         Fill::Gradient(Gradient {
+            tile: [0.0; 4],
             stops: vec![
                 GradientStop { pos: 0.0, color: ph().with(ColorTransform::LumMod(a)).with(ColorTransform::SatMod(103000)) },
                 GradientStop { pos: 1.0, color: ph().with(ColorTransform::LumMod(b)) },
             ],
             shape: GradientShape::Linear { angle: 90.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })
     };
     FormatScheme {
@@ -146,6 +148,31 @@ pub fn default_format() -> FormatScheme {
             grad(102000, 85000),
         ],
     }
+}
+
+/// Design ▸ Variants: four colour variations of `t`, built from its built-in colours when it is
+/// a built-in theme (so picking one variant after another doesn't drift), else from its own.
+/// 1: as designed; 2 and 3: the accents rotated; 4: dark (light and dark colours swapped).
+pub fn theme_variants(t: &Theme) -> Vec<ColorScheme> {
+    let base = builtin_themes().into_iter().find(|b| b.name == t.name).map_or_else(|| t.colors.clone(), |b| b.colors);
+    let rotate = |by: usize| {
+        let mut c = base.clone();
+        let accents: Vec<_> = base.colors.get(4..10).map(<[_]>::to_vec).unwrap_or_default();
+        for (i, slot) in c.colors.iter_mut().skip(4).take(6).enumerate() {
+            if let Some(a) = accents.get((i + by) % accents.len().max(1)) {
+                *slot = *a;
+            }
+        }
+        c
+    };
+    let mut dark = base.clone();
+    dark.colors.swap(0, 1);
+    dark.colors.swap(2, 3);
+    let mut out = vec![base.clone(), rotate(1), rotate(3), dark];
+    for (i, c) in out.iter_mut().enumerate().skip(1) {
+        c.name = format!("{} {}", base.name, i + 1);
+    }
+    out
 }
 
 /// Our original built-in themes (shown in Design ▸ Themes). Colours and names are our own.
@@ -266,4 +293,58 @@ pub fn builtin_font_schemes() -> Vec<FontScheme> {
         f("Office Compatible", "Carlito", "Carlito"),
         f("Times / Arial", "Liberation Serif", "Liberation Sans"),
     ]
+}
+
+fn shadow(blur: f64, dist: f64, alpha: i32) -> Effects {
+    Effects {
+        outer_shadow: Some(Shadow {
+            color: ColorRef::rgb(Rgba::BLACK).with(ColorTransform::Alpha(alpha)),
+            blur,
+            dist,
+            dir: 90.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: "b".into(),
+            rotate_with_shape: false,
+        }),
+        ..Default::default()
+    }
+}
+
+fn glow(radius: f64) -> Effects {
+    Effects { glow: Some(Glow { color: ph().with(ColorTransform::Alpha(60_000)), radius }), ..Default::default() }
+}
+
+/// Named effect schemes for Design ▸ Effects. Each one replaces the theme's format scheme
+/// (subtle, moderate and intense fills, lines and effects) and leaves the colour and font schemes.
+pub fn builtin_format_schemes() -> Vec<FormatScheme> {
+    let mut soft = default_format();
+    soft.name = "Soft".into();
+    soft.lines = vec![Line::solid(ph(), 0.5), Line::solid(ph(), 0.75), Line::solid(ph(), 1.0)];
+    soft.effects = vec![shadow(16.0, 1.0, 18_000), shadow(12.0, 2.0, 22_000), shadow(10.0, 3.0, 28_000)];
+
+    let mut crisp = default_format();
+    crisp.name = "Crisp".into();
+    crisp.fills = vec![Fill::solid(ph()), Fill::solid(ph()), Fill::solid(ph())];
+    crisp.lines = vec![Line::solid(ph(), 1.0), Line::solid(ph(), 1.5), Line::solid(ph(), 2.25)];
+    crisp.effects = vec![Effects::default(), Effects::default(), shadow(0.0, 2.0, 55_000)];
+
+    let mut lift = default_format();
+    lift.name = "Lift".into();
+    lift.effects = vec![Effects::default(), shadow(8.0, 6.0, 28_000), shadow(12.0, 10.0, 35_000)];
+
+    let mut glow_scheme = default_format();
+    glow_scheme.name = "Glow".into();
+    glow_scheme.effects = vec![Effects::default(), glow(6.0), glow(12.0)];
+
+    let mut plain = default_format();
+    plain.name = "Plain".into();
+    plain.fills = vec![Fill::solid(ph()), Fill::solid(ph()), Fill::solid(ph())];
+    plain.lines = vec![Line::solid(ph(), 0.75), Line::solid(ph(), 0.75), Line::solid(ph(), 0.75)];
+    plain.effects = vec![Effects::default(), Effects::default(), Effects::default()];
+
+    vec![default_format(), soft, crisp, lift, glow_scheme, plain]
 }

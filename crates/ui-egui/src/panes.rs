@@ -74,7 +74,7 @@ fn color_button(
     ui.horizontal(|ui| {
         ui.label(crate::i18n::tr(label));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let r = widgets::drop_button(ui, "Color", vec2(70.0, 22.0), true);
+            let r = widgets::drop_button(ui, crate::i18n::tr("Color"), vec2(70.0, 22.0), true);
             widgets::color_popup(&r).show(|ui| {
                 if let Some(c) = widgets::color_grid(ui, &sc, none_label) {
                     let (id, p) = on_pick(c);
@@ -107,7 +107,7 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         if matches!(sh.kind, ShapeKind::Picture { .. })
-            && widgets::icon_toggle(ui, Icon::Picture, "Picture", true, app.ui.format_tab == "picture").clicked()
+            && widgets::icon_toggle(ui, Icon::Picture, crate::i18n::tr("Picture"), true, app.ui.format_tab == "picture").clicked()
         {
             app.ui.format_tab = "picture".into();
         }
@@ -213,7 +213,7 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             ] {
                 ui.horizontal(|ui| {
                     ui.add_sized(vec2(60.0, 20.0), egui::Label::new(crate::i18n::tr(l)));
-                    if let Some(nv) = widgets::spinner(ui, &format!("m{k}"), v, 1.0, " pt", 60.0) {
+                    if let Some(nv) = widgets::spinner(ui, &format!("m{k}"), v, 1.0, crate::i18n::tr(" pt"), 60.0) {
                         run(app, "format.margins", json!({k: nv.max(0.0)}));
                     }
                 });
@@ -279,7 +279,7 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             }
-            color_button(app, ui, "Color", Some("No Fill"), |c| match c {
+            color_button(app, ui, crate::i18n::tr("Color"), Some(crate::i18n::tr("No Fill")), |c| match c {
                 Some(c) => ("shape.fill".into(), json!({"color": cref_param(&c)})),
                 None => ("shape.fill".into(), json!({"none": true})),
             });
@@ -316,14 +316,14 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             if ui.radio(sh.line.is_none(), crate::i18n::tr("Automatic")).clicked() {
                 run(app, "shape.line", json!({"reset": true}));
             }
-            color_button(app, ui, "Color", Some("No Outline"), |c| match c {
+            color_button(app, ui, crate::i18n::tr("Color"), Some(crate::i18n::tr("No Outline")), |c| match c {
                 Some(c) => ("shape.line".into(), json!({"color": cref_param(&c)})),
                 None => ("shape.line".into(), json!({"none": true})),
             });
             ui.horizontal(|ui| {
                 ui.label(crate::i18n::tr("Width"));
                 let w = sh.line.as_ref().and_then(|l| l.width).unwrap_or(0.75);
-                if let Some(v) = widgets::spinner(ui, "lw", w, 0.25, " pt", 60.0) {
+                if let Some(v) = widgets::spinner(ui, "lw", w, 0.25, crate::i18n::tr(" pt"), 60.0) {
                     run(app, "shape.line", json!({"width": v.max(0.0)}));
                 }
             });
@@ -390,7 +390,7 @@ fn background(app: &mut SlideApp, ui: &mut Ui) {
             current = Some(json!({"color": cref_param(color)}));
             ui.horizontal(|ui| {
                 ui.label(crate::i18n::tr("Color"));
-                let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
+                let r = widgets::drop_button(ui, crate::i18n::tr("Color"), vec2(70.0, 20.0), true);
                 widgets::color_popup(&r).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                         run(app, "design.background", json!({"color": cref_param(&c)}));
@@ -416,7 +416,7 @@ fn background(app: &mut SlideApp, ui: &mut Ui) {
             for (label, fg) in [("Foreground", true), ("Background", false)] {
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::tr(label));
-                    let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
+                    let r = widgets::drop_button(ui, crate::i18n::tr("Color"), vec2(70.0, 20.0), true);
                     widgets::color_popup(&r).show(|ui| {
                         if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                             let (f, b) = if fg { (c, pt.bg.clone()) } else { (pt.fg.clone(), c) };

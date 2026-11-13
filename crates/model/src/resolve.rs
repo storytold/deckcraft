@@ -4,7 +4,7 @@
 use deckcraft_color::{ColorScheme, Rgba, SchemeSlot};
 use deckcraft_geom::Xfrm;
 
-use crate::style::{ColorRef, Effects, Fill, Line};
+use crate::style::{ColorRef, Effects, Fill, Line, ShapeStyle};
 use crate::text::{Anchor, AutoFit, BodyProps, LevelStyle, ListStyle, ParaProps, RunProps};
 use crate::{Background, Layout, Master, PhType, Presentation, Shape, Slide};
 
@@ -22,23 +22,27 @@ pub struct Ctx<'a> {
     pub layout: Option<&'a Layout>,
     pub owner: Owner,
     pub scheme: ColorScheme,
+    /// The colour map in force: the slide's override, else its layout's, else the master's.
+    pub color_map: Vec<(String, String)>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn for_slide(pres: &'a Presentation, slide: &Slide) -> Option<Ctx<'a>> {
         let (master, layout) = pres.master_for(slide)?;
-        Some(Ctx { pres, master, layout, owner: Owner::Slide, scheme: master.scheme() })
+        let map = slide.color_map.as_ref().or(layout.and_then(|l| l.color_map.as_ref())).unwrap_or(&master.color_map).clone();
+        Some(Ctx { pres, master, layout, owner: Owner::Slide, scheme: master.scheme_with(&map), color_map: map })
     }
     pub fn for_layout(pres: &'a Presentation, master: &'a Master, layout: &'a Layout) -> Ctx<'a> {
-        Ctx { pres, master, layout: Some(layout), owner: Owner::Layout, scheme: master.scheme() }
+        let map = layout.color_map.as_ref().unwrap_or(&master.color_map).clone();
+        Ctx { pres, master, layout: Some(layout), owner: Owner::Layout, scheme: master.scheme_with(&map), color_map: map }
     }
     pub fn for_master(pres: &'a Presentation, master: &'a Master) -> Ctx<'a> {
-        Ctx { pres, master, layout: None, owner: Owner::Master, scheme: master.scheme() }
+        Ctx { pres, master, layout: None, owner: Owner::Master, scheme: master.scheme(), color_map: master.color_map.clone() }
     }
     pub fn color(&self, c: &ColorRef, ph: Option<Rgba>) -> Rgba {
         let c = match &c.base {
             crate::ColorBase::Scheme { slot } if matches!(slot, SchemeSlot::Bg1 | SchemeSlot::Tx1 | SchemeSlot::Bg2 | SchemeSlot::Tx2) => {
-                ColorRef { base: crate::ColorBase::Scheme { slot: self.master.map_slot(*slot) }, mods: c.mods.clone() }
+                ColorRef { base: crate::ColorBase::Scheme { slot: crate::map_slot(&self.color_map, *slot) }, mods: c.mods.clone() }
             }
             _ => c.clone(),
         };
@@ -96,8 +100,15 @@ pub fn parents<'a>(ctx: &Ctx<'a>, shape: &Shape) -> (Option<&'a Shape>, Option<&
     }
 }
 
-/// The text style group (title / body / other) a shape draws from.
+/// The text style group (title / body / other) a shape draws from. Text in a table takes the
+/// master's other-text style, also when the table sits in a content placeholder, as in PowerPoint
+/// for Mac (a table cell is 14 pt under an `otherStyle` of 14 pt, a `defaultTextStyle` of 26 pt and
+/// a bulleted 36 pt `bodyStyle`, with or without `<p:ph idx="1"/>`, while a shape's or a text box's
+/// text is 26 pt); other shapes take the presentation's default text style.
 pub fn master_list_style<'a>(ctx: &Ctx<'a>, shape: &Shape) -> &'a ListStyle {
+    if matches!(shape.kind, crate::ShapeKind::Table(_)) {
+        return &ctx.master.other_style;
+    }
     match shape.ph_type() {
         Some(PhType::Title | PhType::CtrTitle) => &ctx.master.title_style,
         Some(
@@ -130,11 +141,8 @@ pub fn xfrm(ctx: &Ctx, shape: &Shape) -> Xfrm {
 /// Effective fill and the style colour (`phClr`) to resolve it with.
 pub fn fill(ctx: &Ctx, shape: &Shape) -> (Option<Fill>, Option<Rgba>) {
     let (lp, mp) = parents(ctx, shape);
-    for s in [Some(shape), lp, mp].into_iter().flatten() {
-        if let Some(f) = &s.fill {
-            return (Some(f.clone()), None);
-        }
-        if let Some(st) = &s.style {
+    let style_fill = |s: &Shape| {
+        s.style.as_ref().map(|st| {
             let (idx, col) = &st.fill_ref;
             let ph = ctx.color(col, None);
             let f = match *idx {
@@ -142,7 +150,25 @@ pub fn fill(ctx: &Ctx, shape: &Shape) -> (Option<Fill>, Option<Rgba>) {
                 i if i >= 1001 => ctx.master.theme.format.bg_fills.get((i - 1001) as usize).cloned(),
                 i => ctx.master.theme.format.fills.get((i - 1) as usize).cloned(),
             };
-            return (f, Some(ph));
+            (f, Some(ph))
+        })
+    };
+    for s in [Some(shape), lp, mp].into_iter().flatten() {
+        if let Some(f) = &s.fill {
+            // A gradient without stops (`a:gradFill` with no `a:gsLst`) takes them from the
+            // gradient its style refers to, keeping its own direction, as PowerPoint draws it.
+            if let Fill::Gradient(g) = f
+                && g.stops.is_empty()
+                && let Some((Some(Fill::Gradient(sg)), ph)) = style_fill(s)
+            {
+                let mut g = g.clone();
+                g.stops = sg.stops;
+                return (Some(Fill::Gradient(g)), ph);
+            }
+            return (Some(f.clone()), None);
+        }
+        if let Some(r) = style_fill(s) {
+            return r;
         }
     }
     if shape.text_box {
@@ -192,6 +218,68 @@ pub fn effects(ctx: &Ctx, shape: &Shape) -> (Option<Effects>, Option<Rgba>) {
     (None, None)
 }
 
+/// Turn a placeholder into a regular shape that looks the same: what it inherited from its layout
+/// and master placeholders (position, fill, line, effects, style, body properties and the text
+/// style of every outline level, the master's title or body style included) becomes its own, and
+/// `ph` is cleared. A shape that is not a placeholder is left as it is.
+///
+/// Theme references (`+mj-lt`, scheme colours) stay references, so the copy still follows the
+/// destination theme, as PowerPoint's default paste does.
+pub fn detach_placeholder(ctx: &Ctx, shape: &mut Shape) {
+    if shape.ph.is_none() {
+        return;
+    }
+    // The text first: `level_style` reads the shape's own style, which changes below.
+    let text = shape.text.as_ref().map(|_| (body(ctx, shape), (0..9).map(|l| Some(level_style(ctx, shape, l))).collect::<Vec<_>>()));
+    let own = shape.clone();
+    let (lp, mp) = parents(ctx, &own);
+    let chain = [Some(&own), lp, mp].into_iter().flatten();
+
+    // Each property comes from where `fill`, `line` and `effects` take it: the first shape in the
+    // chain with an explicit value or a style. Lines merge explicit values up to the first styled
+    // shape, whose style line fills the rest.
+    let fill_src = chain.clone().find(|s| s.fill.is_some() || s.style.is_some());
+    let effects_src = chain.clone().find(|s| s.effects.is_some() || s.style.is_some());
+    let mut line = None;
+    let mut line_src = None;
+    for s in chain.clone() {
+        if let Some(l) = &s.line {
+            line.get_or_insert_with(Line::default).inherit(l);
+        }
+        if s.style.is_some() {
+            line_src = Some(s);
+            break;
+        }
+    }
+    // Text takes its font reference from the shape's style or its layout placeholder's (a table's
+    // from its own only), never the master's.
+    let table = matches!(own.kind, crate::ShapeKind::Table(_));
+    let font_src = own.style.as_ref().or(lp.filter(|_| !table).and_then(|s| s.style.as_ref()));
+
+    // One style for the copy, each reference taken from the shape that supplied that property. A
+    // property with an explicit value ignores its reference, except a gradient without stops,
+    // which takes them from its own shape's style; a neutral reference (index 0) adds nothing.
+    let style_of = |s: Option<&Shape>| s.and_then(|s| s.style.clone());
+    let neutral = (0, ColorRef::scheme(SchemeSlot::Tx1));
+    let style = chain.clone().any(|s| s.style.is_some()).then(|| ShapeStyle {
+        fill_ref: style_of(fill_src).map_or_else(|| neutral.clone(), |st| st.fill_ref),
+        line_ref: style_of(line_src).map_or_else(|| neutral.clone(), |st| st.line_ref),
+        effect_ref: style_of(effects_src).map_or_else(|| neutral.clone(), |st| st.effect_ref),
+        font_ref: font_src.map_or_else(|| ("none".into(), None), |st| st.font_ref.clone()),
+    });
+
+    shape.xfrm = Some(xfrm(ctx, &own));
+    shape.fill = fill_src.and_then(|s| s.fill.clone());
+    shape.effects = effects_src.and_then(|s| s.effects.clone());
+    shape.line = line;
+    shape.style = style;
+    if let (Some(t), Some((body, levels))) = (shape.text.as_mut(), text) {
+        t.body = body;
+        t.list_style = ListStyle { levels };
+    }
+    shape.ph = None;
+}
+
 /// Body properties with defaults filled in.
 pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
     let (lp, mp) = parents(ctx, shape);
@@ -219,15 +307,23 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         columns: Some(1),
         col_spacing: Some(0.0),
         warp: None,
+        warp_adj: Vec::new(),
         rtl_col: Some(false),
         upright: Some(false),
+        space_first_last: Some(false),
+        compat_ln_spc: None,
+        vert_overflow: None,
+        horz_overflow: None,
+        raw3d: None,
     });
     b
 }
 
 /// The merged level style (paragraph + run defaults) for paragraphs at `level` in `shape`.
 pub fn level_style(ctx: &Ctx, shape: &Shape, level: u8) -> LevelStyle {
-    let (lp, mp) = parents(ctx, shape);
+    // A table's text inherits nothing from a placeholder the table sits in: PowerPoint draws it in
+    // the other-text style even under list styles on the layout's and master's placeholders.
+    let (lp, mp) = if matches!(shape.kind, crate::ShapeKind::Table(_)) { (None, None) } else { parents(ctx, shape) };
     let mut out = LevelStyle::default();
     let add = |out: &mut LevelStyle, ls: Option<&LevelStyle>| {
         if let Some(l) = ls {
@@ -264,16 +360,22 @@ pub fn level_style(ctx: &Ctx, shape: &Shape, level: u8) -> LevelStyle {
 /// Fully resolved run properties for `run` in paragraph `para` (explicit → paragraph style).
 pub fn run(ctx: &Ctx, shape: &Shape, para: &crate::text::Paragraph, run: &RunProps) -> RunProps {
     let mut r = run.clone();
+    // Paragraph `defRPr` fills gaps in the run, and the list style (including the layout
+    // placeholder this shape inherits from) fills whatever is still unset.
+    r.inherit(&para.def_props);
     let lvl = level_style(ctx, shape, para.level);
     r.inherit(&lvl.run);
     // Hyperlinked text is drawn in the theme's hyperlink colour and underlined, as in PowerPoint,
     // unless the run itself sets a colour (honoured since PowerPoint 2019) or an underline
     // (`u="none"` removes it). Colours and underlines from list styles don't count.
     if r.link.is_some() {
-        if run.fill.is_none() {
+        // A colour or underline on the run, or on the same `defRPr` that carries the link, is
+        // kept. A colour that arrived only from a list style is not.
+        let from_def = run.link.is_none();
+        if run.fill.is_none() && !(from_def && para.def_props.fill.is_some()) {
             r.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink)));
         }
-        if run.underline.is_none() {
+        if run.underline.is_none() && !(from_def && para.def_props.underline.is_some()) {
             r.underline = Some("sng".into());
         }
     }
