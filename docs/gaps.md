@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-04 · **Change:** minor (picture glow transparency regression covered (#1597); remaining fidelity and reference-corpus gaps unchanged; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -69,6 +69,9 @@ revision history.
 ## File formats
 
 Detail in [file-format-parity.md](file-format-parity.md).
+
+Picture glows now follow image alpha instead of filling transparent picture bounds (#1597).
+Synthetic coverage checks do not close the PowerPoint reference-corpus gap or establish complete effect parity.
 
 ### PPTX corpus is only decks we author
 - **Evidence:** every PPTX test (`crates/pptx/tests`) uses decks built in this repo; the
@@ -371,6 +374,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
+| 2026-11-01 | minor | Picture glow transparency regression covered (#1597); remaining fidelity and reference-corpus gaps unchanged |
 | 2026-11-01 | trivial | Workflow-breaking regression: image paste entry: the OS clipboard was off from #1350 to 0.15.0; Linux re-checked, Windows #1414 to re-test |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |

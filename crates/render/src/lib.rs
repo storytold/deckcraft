@@ -23,6 +23,7 @@ mod morph_path;
 mod morph_text;
 mod paint;
 mod pattern;
+mod picture_glow;
 
 mod pathgrad;
 mod placed;
