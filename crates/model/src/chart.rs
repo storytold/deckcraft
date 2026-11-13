@@ -324,6 +324,10 @@ pub struct Chart {
     pub legend: Option<String>,
     /// `c:legend/c:overlay`: the legend is drawn over the plot instead of shrinking it.
     pub legend_overlay: bool,
+    /// `c:legend/c:legendEntry`: entries whose text has its own size, weight or colour, over
+    /// the legend's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub legend_entries: Vec<LegendEntry>,
     /// Text size in points of the axis labels and legend (from their `c:txPr`, else the chart's);
     /// `None`: the file gives none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -392,10 +396,28 @@ pub struct Chart {
     /// Original chart XML part kept for round-trip of unmodelled options.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
+    /// The chart was too large to model: `raw` and `kept` are written back unchanged on save.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub verbatim: bool,
     /// Package parts the original chart still points at (embedded workbook, styles, drawings).
     /// The PPTX writer clears this before comparing modelled state. Native saves keep it too.
     #[serde(skip_serializing_if = "ChartKept::is_empty")]
     pub kept: ChartKept,
+}
+
+/// One legend entry's own text (`c:legendEntry/c:txPr`): what it sets wins over the legend's.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LegendEntry {
+    /// The entry's place in the legend, from 0 (`c:idx`).
+    pub idx: u32,
+    /// Text size in points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<ColorRef>,
 }
 
 /// One relationship of a chart part, with the target string as it was written.
@@ -450,6 +472,7 @@ impl Default for Chart {
             series: vec![],
             legend: Some("b".into()),
             legend_overlay: false,
+            legend_entries: vec![],
             text_size: None,
             title_size: None,
             data_labels: false,
@@ -485,6 +508,7 @@ impl Default for Chart {
             bin_count: None,
             bin_size: None,
             raw: None,
+            verbatim: false,
             kept: ChartKept::default(),
         }
     }
@@ -1311,6 +1335,7 @@ impl Chart {
             series: vec![],
             gap_width: 0.0,
             raw: None,
+            verbatim: false,
             subtotals: vec![],
             ..self.clone()
         };
