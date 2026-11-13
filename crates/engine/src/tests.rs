@@ -98,6 +98,33 @@ fn text_editing_flow() {
     assert_eq!(s.doc().unwrap().selection.shapes.len(), 1);
 }
 
+/// Forward Delete removes a whole grapheme cluster, not just its first scalar.
+#[test]
+fn forward_delete_removes_whole_grapheme_cluster() {
+    for (input, rest) in [("\u{1F44D}\u{1F3FD}y", "y"), ("e\u{301}x", "x")] {
+        let mut s = session();
+        let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+        s.execute("text.edit", &json!({"id": title})).unwrap();
+        s.execute("text.selectAll", &json!({})).unwrap();
+        s.execute("text.insert", &json!({"text": input})).unwrap();
+        s.execute("text.move", &json!({"to": "start"})).unwrap();
+        s.execute("text.delete", &json!({"dir": "forward"})).unwrap();
+        let t = s.execute("text.get", &json!({"id": title})).unwrap();
+        assert_eq!(t["text"], rest);
+    }
+    // Inside a cluster, Delete stops at that cluster's end and leaves the next flag intact.
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": "\u{1F1FA}\u{1F1F8}\u{1F1E8}\u{1F1E6}"})).unwrap();
+    s.execute("text.move", &json!({"to": "start"})).unwrap();
+    s.execute("text.move", &json!({"to": "right"})).unwrap();
+    s.execute("text.delete", &json!({"dir": "forward"})).unwrap();
+    let t = s.execute("text.get", &json!({"id": title})).unwrap();
+    assert_eq!(t["text"], "\u{1F1FA}\u{1F1E8}\u{1F1E6}");
+}
+
 /// `text.set` treats CRLF (or a lone CR) as one paragraph break and keeps no `\r` in the text.
 #[test]
 fn text_set_crlf_makes_clean_paragraphs() {
