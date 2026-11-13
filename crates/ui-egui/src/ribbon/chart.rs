@@ -1,6 +1,6 @@
 use super::arrange::arrange_group;
 use super::insert::chart_menu_types;
-use super::*;
+use super::{Icon, SlideApp, Ui, big, big_button, group, json};
 
 pub(super) fn chart_design(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {

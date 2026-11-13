@@ -1,7 +1,7 @@
 use super::caret::cell_on_slide;
 use super::editing::unlinked_at_link_end;
 use super::layout::{ctx_for, layout_for};
-use super::*;
+use super::{DocState, Paragraph, Result, Session, TextBody, TextSel, Value, bad, body_of, ed, edit_text, json, str_param, xfrm_of};
 
 /// Maximum number of UTF-8 bytes in an outgoing IME surrounding-text query.
 ///
@@ -598,9 +598,9 @@ mod ime_surrounding_tests {
         s.delete_surrounding(usize::MAX, 0, false).unwrap();
         assert_eq!(text(&s, id), "é😀b", "everything before the caret goes, no panic");
         let expected = usize::try_from(4_294_967_296u64).unwrap_or(usize::MAX);
-        assert_eq!(super::count_param(&json!({"before": 4_294_967_296u64}), "before"), expected);
+        assert_eq!(super::super::caret::count_param(&json!({"before": 4_294_967_296u64}), "before"), expected);
         assert!(expected > 0, "the count is clamped, not wrapped to nothing");
-        assert_eq!(super::count_param(&json!({}), "before"), 0);
+        assert_eq!(super::super::caret::count_param(&json!({}), "before"), 0);
     }
 
     /// A non-composing input-method deletion is exactly one undo step; the manual history entry

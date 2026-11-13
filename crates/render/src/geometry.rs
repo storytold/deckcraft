@@ -199,3 +199,21 @@ pub(crate) fn scale_of(m: Affine) -> f64 {
 pub(crate) fn blur(sigma: f64) -> Filter {
     Filter::from_primitive(FilterPrimitive::GaussianBlur { std_deviation: sigma.clamp(0.0, 500.0) as f32, edge_mode: EdgeMode::None })
 }
+
+/// The widest a shape may reach on screen, in pixels, and still be drawn: ten thousand screens
+/// across, far past any real deck, and still cheap for vello to flatten (#1165).
+const MAX_DEVICE_EXTENT: f64 = 1e7;
+
+/// Whether a shape's geometry can go to vello. Geometry far beyond any screen (a size at the EMU
+/// limit, group scales compounding, custom-geometry guides) makes vello's flattener size a buffer
+/// by its on-screen length, and the allocation aborts the process (#1165). Each path is checked
+/// for finite points first: a bounding box drops NaN, and a union with the frame would hide it.
+/// The extent is the control box, which always holds the curve: the tight bounding box can miss
+/// a curve's extremum when finding it overflows.
+pub(crate) fn drawable(geo: &Geometry, m: Affine, w: f64, h: f64) -> bool {
+    if !geo.paths.iter().all(|p| p.path.is_finite()) {
+        return false;
+    }
+    let dev = m.transform_rect_bbox(geo.outline().control_box().union(Rect::new(0.0, 0.0, w, h)));
+    dev.is_finite() && dev.width().max(dev.height()) <= MAX_DEVICE_EXTENT
+}

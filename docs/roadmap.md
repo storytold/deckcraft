@@ -8,15 +8,14 @@ Forward-looking: where DeckCraft is going and in what order. The one-page summar
 
 ## Alpha gate: PowerPoint's core workflows
 
-What a typical PowerPoint user does every day, checked end to end on macOS, the main platform
-(craftrules `standards/progress-docs.md`, "The core-workflow gate"). Every workflow passes, so
+What a typical PowerPoint user does every day, checked end to end on macOS, the main platform. Every workflow passes, so
 DeckCraft stays **alpha**. The "partial" rows don't block the workflow, but they are its weakest
 points and lead the beta plan.
 
 | Core workflow | Works end to end? | Evidence | Hours to full pass |
 |---|---|---|---|
-| Build a deck from scratch (theme, layouts, titles and bullets, shapes, pictures from file), save, close and reopen it | yes | Commands for all of it; `.deckcraft` and `.pptx` round-trip tests (`crates/pptx/tests/it/roundtrip.rs`, `crates/format`); AutoRecover. Close discards edits without asking (#60, PR #75); image *paste* fails on Windows/Linux (#53), though insert-from-file works | 1–3 |
-| Open a colleague's `.pptx`, edit it, save it back as `.pptx` that PowerPoint opens | partial (not blocking) | The reader is lenient and keeps unknown objects. Files open in PowerPoint without repair (checked 2026-10-06). But only generated decks have been tested; text inside EMF/WMF pictures is missing; comment threads, media options and rewind are lost (#70, #74, #77) | 31–55 |
+| Build a deck from scratch (theme, layouts, titles and bullets, shapes, pictures from file), save, close and reopen it | yes | Commands for all of it; `.deckcraft` and `.pptx` round-trip tests (`crates/pptx/tests/it/roundtrip.rs`, `crates/format`); AutoRecover. Close discards edits without asking (#60; PR #75 was closed unmerged); image *paste* fails on Windows (#1414), though insert-from-file works | 1–3 |
+| Open a colleague's `.pptx`, edit it, save it back as `.pptx` that PowerPoint opens | partial (not blocking) | The reader is lenient and keeps unknown objects. Files open in PowerPoint without repair (checked 2026-10-06). But only generated decks have been tested; text inside EMF/WMF pictures is missing; comment threads and media options are lost (#70, #74) | 31–55 |
 | Present: full-screen show with transitions, animations, media, presenter view with notes, next slide and timer | yes | 48/48 transitions, 64 effects, triggers, builds, media playback, presenter window, See All Slides and zoom. The presenter timer pauses and resets, and notes have a size control. A custom show plays only its slides. Typing a slide number during the show shows it, and Enter goes there. Presenter view isn't placed on the second display automatically (drag it there; #433) | 2–4 |
 | Add business content: tables, charts with their data, simple diagrams | partial (not blocking) | Tables with styles, merge/split, all D or P. Charts insert with the common types and edit data in the Chart Data dialog (P0 partial); SmartArt is basic (pre-drawn shapes) | 12–20 |
 | Share the deck: PDF of slides, notes or handouts; images | yes | `file.export` PDF with text layer, links, bookmarks, handouts 1–9; PNG/JPEG. Artwork is raster in the PDF; no direct print (print the PDF) | 10–16 |
@@ -24,32 +23,31 @@ points and lead the beta plan.
 
 ## Current focus (2026-10-10)
 
-1. **Stop losing work and crashing:** land Close's save prompt (#60, PR #75), the Windows GPU
-   startup crashes (#40, #59), image paste on Windows/Linux (#53). 6–12 h.
+1. **Stop losing work and crashing:** add Close's save prompt (#60; PR #75 was closed unmerged), fix the Windows GPU
+   startup crashes (#40, #59) and image paste on Windows (#1414). 6–12 h.
 2. **PPTX on real decks:** the owned corpus (`crates/pptx/tests/it/corpus*.rs`) round-trips decks we
    author: tables, charts, animations, media, sections, masters and layouts, comments, links and
    actions, custom shows, rotated groups, inherited placeholders, text effects and body layout,
    theme effects, fills, bevels, connectors, 3-D models and animation bounce end, and keeps notes-
    and handout-master text, paragraph defaults and action sounds. Still open: decks from outside
-   this repo, media options and rewind on save (#74, #77), relationship-bearing SmartArt and OLE
+   this repo, media options on save (#74), relationship-bearing SmartArt and OLE
    (#203), EMF+ records and SVG. 31–55 h.
-3. **Review the open PRs:** equations (#55), browser print (#66), Morph alignment (#67), macOS
+3. **Review the open PRs:** equations (#55), browser print (#66), macOS
    open-with (#68), font lookup (#80), Ukrainian (#34, after the catalog exists). 4–8 h.
 
 ## Plan to beta (~120–210 h; ~40–70 h wall clock with 3–4 agents)
 
-Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` reliably
-(craftrules `standards/progress-docs.md`). Ranked:
+Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` reliably. Ranked:
 
 | # | Work | Hours | Moves |
 |---|---|---|---|
 | 1 | Stability: #60, #40/#59, soak and fuzz the editor | 10–20 | Stability 60 → 85% |
 | 2 | PPTX real-deck corpus and fixes | 20–35 | File formats 58 → 75% |
-| 3 | PPTX round-trip losses (#70, #74, #77), `.potx`/`.ppsx`/`.pptm` content types, MicroType embedded-font subsets | 8–15 | File formats → 80% |
+| 3 | PPTX round-trip losses (#70, #74), `.potx`/`.ppsx`/`.pptm` content types, MicroType embedded-font subsets | 8–15 | File formats → 80% |
 | 4 | EMF/WMF and SVG pictures | 8–14 | File formats, Pictures |
 | 5 | Vector PDF, printing | 10–16 | File formats, Files |
 | 6 | Localization infrastructure + zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
-| 7 | Font weights (#69), image paste (#53), Tab in text (#78) | 6–11 | Features |
+| 7 | Font weights (#69), image paste on Windows (#1414), Tab in text (#78) | 6–11 | Features |
 | 8 | Charts: data grid, elements | 6–10 | Features |
 | 10 | Presenter view on the right display, swap displays | 2–4 | Hardware, Slide show |
 | 9 | Animation Pane: effect options (the timeline and Play From are in) | 3–6 | Features |
@@ -94,7 +92,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 
 ## History: the 2026-10-07 alpha checklist
 
-Before the craftrules stages existed, DeckCraft defined "alpha" as: install a signed build on
+Before the stages existed, DeckCraft defined "alpha" as: install a signed build on
 macOS, Windows or Linux, make a real deck from scratch or from a PowerPoint file, present it with
 transitions, animations and media, save back to `.pptx`/PDF without losing work, and hit no crashes
 on common paths. On 2026-10-07 it was ~80% there with these blockers:
@@ -102,13 +100,13 @@ on common paths. On 2026-10-07 it was ~80% there with these blockers:
 | Blocker (2026-10-07) | Status 2026-10-10 |
 |---|---|
 | First real release run: signing, notarization, installers verified on each OS | Signed releases v0.1.0–v0.4.0 published; installers not hand-checked on each OS; Windows startup crashes on some GPUs (#40, #59) |
-| PPTX fidelity on a corpus of real decks | Owned corpus checks in CI (tables, charts, animations, media, sections, masters, comments, links, custom shows, groups, inherited placeholders, text effects, body layout, theme effects, fills, bevels, connectors, 3-D models); notes- and handout-master text kept. Decks from outside this repo and #74/#77 stay open; beta item 2 |
+| PPTX fidelity on a corpus of real decks | Owned corpus checks in CI (tables, charts, animations, media, sections, masters, comments, links, custom shows, groups, inherited placeholders, text effects, body layout, theme effects, fills, bevels, connectors, 3-D models); notes- and handout-master text kept. Decks from outside this repo and #74 stay open; beta item 2 |
 | Presenter view and Animation Pane polish | Still open; beta items 9 and 10 |
 | Soak and fuzz the editor | Still open; beta item 1 |
 | UI fidelity pass on the most-used ribbon groups and dialogs; first run | Partly (start-screen fixes #20, #49); beta item 11 |
 | Mascot app icon, README screenshots, user docs | App icon (with a scalable SVG, #29) and README screenshots in place; user docs open |
 
-By the standard's definitions DeckCraft is **alpha** (~55% ready); these blockers now feed the beta
+DeckCraft is **alpha** (~55% ready); these blockers now feed the beta
 plan above.
 
 ## Revision history

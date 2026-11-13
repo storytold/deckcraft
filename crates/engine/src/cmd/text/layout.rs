@@ -1,5 +1,8 @@
 use super::caret::cell_on_slide;
-use super::*;
+use super::{
+    Affine, Arc, AutoFit, Ctx, DocState, Paragraph, Point, Pos, Presentation, Rect, Result, Selection, Session, Shape, ShapeId, Target, TextBody,
+    TextSel, Value, ed, resolve, xfrm_of,
+};
 
 /// Refit a shape after its text changed: remember the shrink-on-overflow scale the layout
 /// computes (#724), then grow/shrink an auto-sizing text box (Resize shape to fit text) to its

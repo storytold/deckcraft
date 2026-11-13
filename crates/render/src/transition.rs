@@ -87,7 +87,7 @@ pub fn render_transition(pres: &Presentation, index: usize, t: f64, opts: &Rende
                 .iter()
                 .map(|x| crate::PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix })
                 .collect();
-            return render_blend(pres, from, index, m.mix, &m.shapes, &text, &paths, &o);
+            return render_blend(pres, (from, index), m.mix, &m.shapes, &text, &paths, &o);
         }
     }
     let new = render_slide(pres, index, opts);

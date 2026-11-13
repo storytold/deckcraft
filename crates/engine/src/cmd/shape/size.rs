@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, Session, Value, bad, edit_geometry, f64_param, json, str_param, targets, xfrm_of};
 
 /// Keeps a side length in `0..=MAX_PT` so a huge value cannot exhaust memory when rendering.
 /// An overflow to infinity lands on the limit; NaN becomes 0.
@@ -191,6 +191,13 @@ pub(super) fn rotate(s: &mut Session, p: &Value) -> Result<Value> {
 pub(super) fn flip(s: &mut Session, p: &Value) -> Result<Value> {
     let v = str_param(p, "axis").unwrap_or("horizontal").starts_with('v');
     edit_geometry(s, p, "shape.flip", |sh| {
+        // PowerPoint greys Flip out for a SmartArt graphic (SmartArt Design > Right to Left mirrors it),
+        // also inside a group: ungrouping would hand the flip to the graphic.
+        let mut graphic = false;
+        deckcraft_model::walk(std::slice::from_ref(&*sh), &mut |x, _| graphic |= x.diagram.is_some());
+        if graphic {
+            return Err(bad("shape.flip", "Flip is not available for a SmartArt graphic; use `smartArt.layout` to change how it is laid out"));
+        }
         if let Some(x) = sh.xfrm.as_mut() {
             if v {
                 x.flip_v = !x.flip_v;

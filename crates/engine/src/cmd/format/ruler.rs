@@ -1,5 +1,5 @@
 use super::paragraph::{clamp_pt, finite_key, tab_align, tabs_params};
-use super::*;
+use super::{Result, Session, TabStop, TextDir, Value, bad, bool_or, current_para, format_para, json, ok, resolve};
 
 /// What the horizontal ruler shows while editing text: the paragraph's indents and tab stops,
 /// and where its text area sits on the slide.

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Chart, ChartType, Result, RunKind, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
+    rect_param, str_param,
+};
 
 pub fn chart_type(name: &str) -> ChartType {
     match name.to_ascii_lowercase().replace(['-', '_', ' '], "").as_str() {
@@ -187,6 +190,7 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
     with_chart(s, p, "chart.options", |c| {
         if let Some(t) = &text_color {
             c.text_color = t.clone();
+            c.legend_entries.iter_mut().for_each(|e| e.color = None);
         }
         apply_bin_options(c, bin_count, bin_size);
         apply_subtotals_and_bars(c, p, subtotals.as_deref());

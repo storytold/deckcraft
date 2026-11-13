@@ -1,4 +1,4 @@
-use super::*;
+use super::{Dialog, SlideApp, Ui, Value, buttons, choice, finite_pt, inches_text, json, json_text, labeled_text, pt_text, seed_once, vec2};
 
 fn seed_paragraph_fields(d: &mut Dialog) {
     seed_once(d, "align", json_text(d.params.get("align"), "left"));

@@ -1,5 +1,5 @@
 use super::catalog::{FillMode, Geometry, Handle, SubPath};
-use super::*;
+use super::{Arc, BezPath, Point, Rect, Vec2};
 
 // ---------- path builder ----------
 

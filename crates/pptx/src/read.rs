@@ -10,6 +10,7 @@ mod timing;
 pub(crate) use chart::{chart_from as chart_from_el, read_chart_xml};
 pub(crate) use chartex::{chartex_from, read_chartex_xml};
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -38,8 +39,26 @@ pub struct Imp<'a> {
     pub vml_previews: HashMap<String, HashMap<String, String>>,
     /// Aggregate byte count of retained chart sidecars across the presentation.
     pub kept_sidecar_bytes: usize,
+    /// Data slots of the charts decoded so far (see `chart::MAX_PRESENTATION_CHART_POINTS`).
+    pub chart_points: usize,
+    /// Points the presentation may hold across modelled charts.
+    pub chart_points_cap: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Chart parts whose sidecar capture was refused, with the retained-byte total it started from:
+    /// the same start gives the same refusal, so the copy is not repeated.
+    pub rejected_kept: HashMap<String, usize>,
+    /// Bytes of chart parts decoded so far, rejected ones included (see `chart::MAX_CHART_DECODE_BYTES`).
+    pub chart_decode_bytes: usize,
+    /// Add-in tags parts, parsed once each, by normalized part name.
+    pub tags_by_part: HashMap<String, Arc<[(String, String)]>>,
+    /// Bytes of tags copied into the model so far (see [`MAX_TAG_BYTES`]).
+    pub tag_bytes: usize,
+    /// The tag budget ran out and the warning was given.
+    pub tags_capped: bool,
+    /// Whether a part has relationships of its own, by normalized part name: looked up once
+    /// however many embedded objects point at the part.
+    pub has_rels: HashMap<String, bool>,
 }
 
 impl Imp<'_> {
@@ -81,21 +100,22 @@ pub struct Part {
     pub ns: Vec<(String, String)>,
     /// Prefixes bound below the root only (on a wrapper such as `mc:Choice`), each to one namespace.
     pub inner_ns: Vec<(String, String)>,
+    /// Bytes of namespace declarations this part may still copy onto kept fragments.
+    ns_budget: Cell<usize>,
 }
 
 impl Part {
     pub fn new(pkg: &Package, name: &str, doc: &Doc) -> Self {
         let ns = doc.ns_decls();
-        Part { name: name.to_string(), rels: pkg.rels(name), inner_ns: inner_decls(&doc.root, &ns), ns }
+        Part { name: name.to_string(), rels: pkg.rels(name), inner_ns: inner_decls(&doc.root, &ns), ns, ns_budget: Cell::new(MAX_COPIED_NS_BYTES) }
     }
     /// Serialize an element with the namespace declarations it needs from the part root.
     pub fn keep(&self, el: &El) -> String {
-        keep_xml(el, &self.ns)
+        keep_with(el, &[&self.ns], Some(&self.ns_budget))
     }
     /// Like [`Part::keep`], also declaring prefixes that only an enclosing wrapper binds.
     pub fn keep_inner(&self, el: &El) -> String {
-        let ns: Vec<(String, String)> = self.ns.iter().chain(&self.inner_ns).cloned().collect();
-        keep_xml(el, &ns)
+        keep_with(el, &[&self.ns, &self.inner_ns], Some(&self.ns_budget))
     }
 }
 
@@ -130,36 +150,81 @@ fn inner_decls(root: &El, ns: &[(String, String)]) -> Vec<(String, String)> {
     out
 }
 
-/// Serialize `el`, declaring every prefix it uses that the source root declared.
-pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
-    let mut used = HashSet::new();
-    fn rec(e: &El, used: &mut HashSet<String>, depth: usize) {
+/// Longest namespace name copied onto a kept fragment or a resolved `mc` branch. Real ones are
+/// URIs of well under 100 bytes; a longer one is not copied, so one declaration cannot be
+/// multiplied by every fragment that uses its prefix.
+const MAX_NS_VALUE: usize = 2048;
+
+/// Namespace declaration bytes one part may copy onto all its kept fragments together; past it a
+/// fragment keeps its markup but is not given further declarations.
+const MAX_COPIED_NS_BYTES: usize = 8 << 20;
+
+/// Prefixes `el` and its descendants use in element and attribute names, and those listed in
+/// `mc:Ignorable` or `mc:MustUnderstand` (which must stay declared for the markup-compatibility rules to hold),
+/// and those starting a QName-like attribute value.
+fn used_prefixes(el: &El) -> HashSet<&str> {
+    fn rec<'a>(e: &'a El, used: &mut HashSet<&'a str>, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
             return;
         }
         if let Some((p, _)) = e.name.split_once(':') {
-            used.insert(p.to_string());
+            used.insert(p);
         }
-        for (k, _) in &e.attrs {
-            if let Some((p, _)) = k.split_once(':')
+        for (k, v) in &e.attrs {
+            if let Some((p, local)) = k.split_once(':')
                 && p != "xmlns"
                 && p != "xml"
             {
-                used.insert(p.to_string());
+                used.insert(p);
+                if local == "Ignorable" || local == "MustUnderstand" {
+                    used.extend(v.split_whitespace());
+                }
+            }
+            // QName-valued attributes (`xsi:type="q:Item"`) need their prefix declared too.
+            if k != "xmlns" && !k.starts_with("xmlns:") {
+                for t in v.split_whitespace() {
+                    if let Some((p, _)) = t.split_once(':')
+                        && !p.is_empty()
+                    {
+                        used.insert(p);
+                    }
+                }
             }
         }
         for c in e.elements() {
             rec(c, used, depth + 1);
         }
     }
+    let mut used = HashSet::new();
     rec(el, &mut used, 0);
-    let mut el = el.clone();
-    for (k, v) in ns {
+    used
+}
+
+/// Serialize `el`, declaring every prefix it uses that the source root declared.
+pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
+    keep_with(el, &[ns], None)
+}
+
+fn keep_with(el: &El, decls: &[&[(String, String)]], budget: Option<&Cell<usize>>) -> String {
+    let used = used_prefixes(el);
+    let mut have: HashSet<&str> = el.attrs.iter().map(|(a, _)| a.as_str()).collect();
+    let mut extra = Vec::new();
+    for (k, v) in decls.iter().flat_map(|d| d.iter()) {
         let p = k.strip_prefix("xmlns:").unwrap_or("");
-        if !p.is_empty() && used.contains(p) && !el.attrs.iter().any(|(a, _)| a == k) {
-            el.attrs.push((k.clone(), v.clone()));
+        if !p.is_empty() && used.contains(p) && v.len() <= MAX_NS_VALUE && !have.contains(k.as_str()) {
+            let cost = k.len() + v.len();
+            if let Some(b) = budget {
+                if b.get() < cost {
+                    continue;
+                }
+                b.set(b.get() - cost);
+            }
+            have.insert(k);
+            extra.push((k.clone(), v.clone()));
         }
     }
+    let mut el = el.clone();
+    el.attrs.extend(extra);
     el.to_xml()
 }
 
@@ -196,16 +261,64 @@ fn choice_has_model3d(el: &El, rels: &Rels) -> bool {
     rec(el, rels, 0)
 }
 
+/// Bytes of tags one import copies into the model, every tags part and reference together: a
+/// small compressed tags part listed by many shapes, or many times by one, must not grow without
+/// bound (#1164). The package budgets (`opc::MAX_XML_PART`, `MAX_TOTAL`, #1283) bound what is
+/// parsed; this bounds what is copied from it.
+pub const MAX_TAG_BYTES: usize = 64 << 20;
+/// What each copied pair costs besides its text, so empty pairs count too.
+const TAG_PAIR_COST: usize = std::mem::size_of::<(String, String)>();
+
 /// Add-in tags named by `holder`'s `p:custDataLst`: the name/value pairs of each tags part.
-pub fn tags(imp: &Imp, part: &Part, holder: &El) -> Vec<(String, String)> {
+/// Each part is parsed once per import and counted once per holder. Once [`MAX_TAG_BYTES`] is
+/// reached, no further tag parts are parsed or cached (#1164).
+pub fn tags(imp: &mut Imp, part: &Part, holder: &El) -> Vec<(String, String)> {
+    if imp.tags_capped {
+        return vec![];
+    }
     let Some(list) = holder.child("custDataLst") else { return vec![] };
     let mut out = Vec::new();
+    let mut seen = HashSet::new();
     for t in list.children_named("tags").take(100) {
-        let Some(doc) = t.attr("r:id").and_then(|id| part.rels.get(id)).and_then(|r| imp.pkg.xml(&r.target)) else { continue };
-        for tag in doc.root.children_named("tag").take(10_000) {
-            if let Some(name) = tag.attr("name") {
-                out.push((name.to_string(), tag.attr("val").unwrap_or("").to_string()));
+        if imp.tags_capped {
+            return out;
+        }
+        let Some(target) = t.attr("r:id").and_then(|id| part.rels.get(id)).map(|r| opc::norm(&r.target)) else { continue };
+        if !seen.insert(target.clone()) {
+            continue;
+        }
+        let parsed = match imp.tags_by_part.get(&target) {
+            Some(p) => p.clone(),
+            None => {
+                if imp.tags_capped {
+                    return out;
+                }
+                let p: Arc<[(String, String)]> = imp
+                    .pkg
+                    .xml(&target)
+                    .map(|doc| {
+                        doc.root
+                            .children_named("tag")
+                            .take(10_000)
+                            .filter_map(|tag| Some((tag.attr("name")?.to_string(), tag.attr("val").unwrap_or("").to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                imp.tags_by_part.insert(target, p.clone());
+                p
             }
+        };
+        for (name, val) in parsed.iter() {
+            let n = imp.tag_bytes.saturating_add(TAG_PAIR_COST + name.len() + val.len());
+            if n > MAX_TAG_BYTES {
+                if !imp.tags_capped {
+                    log::warn!("pptx: add-in tags over {MAX_TAG_BYTES} bytes; the rest are dropped");
+                    imp.tags_capped = true;
+                }
+                return out;
+            }
+            imp.tag_bytes = n;
+            out.push((name.clone(), val.clone()));
         }
     }
     out
@@ -260,10 +373,18 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
             // The part's own relationships (customXml item → itemProps) and their targets.
             let rp = opc::rels_path(&name);
             if let Some(rels_xml) = text(&rp) {
+                let mut capped = false;
                 for sub in pkg.rels(&name).items.iter().filter(|s| !s.external && keepable(&s.target)) {
-                    if let Some(x) = text(&sub.target)
-                        && !out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target))
-                    {
+                    // Checked before the part is read: repeated relationships to one large part
+                    // must not copy it again each time.
+                    if out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target)) {
+                        continue;
+                    }
+                    if out.len() >= 400 {
+                        capped = true;
+                        continue;
+                    }
+                    if let Some(x) = text(&sub.target) {
                         out.push(KeptPart {
                             content_type: pkg.content_type(&sub.target).unwrap_or_default(),
                             name: sub.target.clone(),
@@ -272,7 +393,9 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
                         });
                     }
                 }
-                out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
+                if !capped && out.len() < 400 {
+                    out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
+                }
             }
         }
     }
@@ -309,15 +432,39 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
                     });
                     let branch = choice.or_else(|| ac.child("Fallback"));
                     if let Some(b) = branch {
+                        // The branch's namespace declarations (the first usable one of each name,
+                        // in order), indexed by prefix once: each child then looks up the prefixes
+                        // it uses instead of scanning every declaration.
+                        let mut decls: Vec<(&String, &String)> = Vec::new();
+                        // An oversized declaration still shadows an outer one of its name: its
+                        // content is left unbound rather than bound to the outer namespace.
+                        let mut by_prefix: HashMap<&str, Option<usize>> = HashMap::new();
+                        for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
+                            let prefix = if k == "xmlns" { Some("") } else { k.strip_prefix("xmlns:") };
+                            if let Some(p) = prefix
+                                && !by_prefix.contains_key(p)
+                            {
+                                by_prefix.insert(p, (v.len() <= MAX_NS_VALUE).then_some(decls.len()));
+                                if v.len() <= MAX_NS_VALUE {
+                                    decls.push((k, v));
+                                }
+                            }
+                        }
                         for n in &b.children {
                             if let Node::El(e) = n {
+                                // Carry the namespace declarations from the branch that its content
+                                // uses (all of them per child made children x declarations copies).
+                                let used = used_prefixes(e);
+                                let have: HashSet<&str> = e.attrs.iter().map(|(a, _)| a.as_str()).collect();
+                                let mut wanted: Vec<usize> = std::iter::once("")
+                                    .chain(used.iter().copied())
+                                    .filter_map(|p| by_prefix.get(p).copied().flatten())
+                                    .filter(|&i| !have.contains(decls[i].0.as_str()))
+                                    .collect();
+                                wanted.sort_unstable();
+                                wanted.dedup();
                                 let mut e = e.clone();
-                                // Carry namespace declarations from the branch onto its content.
-                                for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
-                                    if k.starts_with("xmlns") && !e.attrs.iter().any(|(a, _)| a == k) {
-                                        e.attrs.push((k.clone(), v.clone()));
-                                    }
-                                }
+                                e.attrs.extend(wanted.into_iter().map(|i| (decls[i].0.clone(), decls[i].1.clone())));
                                 out.push(Node::El(e));
                             }
                         }
@@ -388,7 +535,15 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
+        has_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -399,9 +554,17 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     import_checked(bytes).map(|(p, _)| p)
 }
 
-/// [`import`], plus the parts of the slide list the file names but that couldn't be read (a
-/// missing or truncated slide): those slides are left out, so a caller can say so (#203).
+/// [`import`], plus the slides the file's slide list names but that couldn't be read (a missing
+/// or truncated slide part, or an entry whose relationship is missing): those slides are left
+/// out, so a caller can say so (#203).
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
+    import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
+}
+
+const MAX_SLIDE_ENTRIES: usize = 10_000;
+
+/// [`import_checked`] with the presentation's chart point budget set (tests lower it).
+pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>), PptxError> {
     let mut lost_slides: Vec<String> = vec![];
     let pkg = Package::open(bytes)?;
     let root_rels = pkg.rels("");
@@ -411,53 +574,16 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     if !pres_el.is("presentation") {
         return Err(PptxError::NotPptx(format!("{pres_path} is not a presentation part")));
     }
+    // Refuse an oversized list before reading slide parts: truncating it would look like a
+    // complete import and allow a later save to overwrite the omitted slides (#1910).
+    // Looking only for the first entry past the cap keeps this check bounded.
+    if pres_el.child("sldIdLst").is_some_and(|list| list.children_named("sldId").nth(MAX_SLIDE_ENTRIES).is_some()) {
+        return Err(PptxError::Unsupported(format!("PPTX slide list exceeds the {MAX_SLIDE_ENTRIES}-entry import limit")));
+    }
     let pres_part = Part::new(&pkg, &pres_path, &pres_doc);
 
-    // Masters, layouts and slides to read.
-    let master_paths: Vec<String> = pres_el
-        .child("sldMasterIdLst")
-        .map(|l| l.children_named("sldMasterId").filter_map(|m| pres_part.rels.target(m.attr("r:id").unwrap_or(""))).map(String::from).collect())
-        .unwrap_or_default();
-    let mut master_paths: Vec<String> =
-        if master_paths.is_empty() { pres_part.rels.all_of("slideMaster").map(|r| r.target.clone()).collect() } else { master_paths };
-    let mut slide_entries: Vec<(u32, String)> = pres_el
-        .child("sldIdLst")
-        .map(|l| {
-            l.children_named("sldId")
-                .take(10_000)
-                .filter_map(|s| Some((s.u32("id").unwrap_or(0), pres_part.rels.target(s.attr("r:id").unwrap_or(""))?.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let mut docs: HashMap<String, Doc> = HashMap::new();
-    let mut max_id = 0u32;
-    let mut seen_masters = HashSet::new();
-    master_paths.retain(|m| seen_masters.insert(opc::norm(m)));
-
-    let mut all_parts: Vec<String> = master_paths.clone();
-    let mut seen_layouts = HashSet::new();
-    for m in &master_paths {
-        for r in pkg.rels(m).all_of("slideLayout") {
-            let key = opc::norm(&r.target);
-            if seen_layouts.insert(key) {
-                all_parts.push(r.target.clone());
-            }
-        }
-    }
-    let mut seen_slides = HashSet::new();
-    slide_entries.retain(|(_, p)| seen_slides.insert(opc::norm(p)));
-    all_parts.extend(slide_entries.iter().map(|(_, p)| p.clone()));
-    for p in &all_parts {
-        let key = opc::norm(p);
-        if docs.contains_key(&key) {
-            continue;
-        }
-        if let Some(d) = load(&pkg, p) {
-            max_cnvpr(&d.root, &mut max_id);
-            docs.insert(key, d);
-        }
-    }
+    let (master_paths, slide_entries) = master_and_slide_paths(pres_el, &pres_part, &mut lost_slides);
+    let (docs, max_id) = load_part_docs(&pkg, &master_paths, &slide_entries);
 
     let mut imp = Imp {
         pkg: &pkg,
@@ -469,11 +595,121 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap,
         kept_charts: HashMap::new(),
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
+        has_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
+    let slide_ids = register_slides(&mut imp, &docs, &slide_entries, &mut lost_slides);
+    read_custom_show_names(&mut imp, pres_el);
+
+    let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+    p.masters.clear();
+    p.media.clear();
+    p.default_text_style = Default::default();
+
+    read_presentation_settings(&mut imp, &mut p, &pres_part, pres_el);
+    let layout_by_part = read_masters(&mut imp, &mut p, &master_paths, &docs);
+    let file_slide_ids = read_slides(&mut imp, &mut p, &pres_part, &docs, &slide_ids, &layout_by_part);
+    read_sections(&mut p, &pres_part, pres_el, &file_slide_ids);
+    p.tags = tags(&mut imp, &pres_part, pres_el);
+    read_custom_shows(&mut p, &imp, &pres_part, pres_el);
+    read_guides_and_show(&mut p, &imp, &pres_part);
+    read_notes_master(&mut imp, &mut p, &pres_part);
+    read_handout_master(&mut imp, &mut p, &pres_part);
+    read_document_properties(&mut p, &pkg, &root_rels);
+
+    p.kept_parts = kept_parts(&pkg, &pres_path);
+
+    inherit_placeholder_geometry(&mut p);
+    default_text_anchor(&mut p);
+    p.header_footer = header_footer(&p);
+    p.embedded_fonts = read_embedded_fonts(&mut imp, &pres_part, pres_el);
+    p.media = std::mem::take(&mut imp.media);
+    p.next_id = imp.next;
+    p.fix_next_id();
+    Ok((p, lost_slides))
+}
+
+/// Masters, layouts and slides to read, in file order and without duplicates: (master paths,
+/// (file slide id, slide path)).
+fn master_and_slide_paths(pres_el: &El, pres_part: &Part, lost_slides: &mut Vec<String>) -> (Vec<String>, Vec<(u32, String)>) {
+    let master_paths: Vec<String> = pres_el
+        .child("sldMasterIdLst")
+        .map(|l| l.children_named("sldMasterId").filter_map(|m| pres_part.rels.target(m.attr("r:id").unwrap_or(""))).map(String::from).collect())
+        .unwrap_or_default();
+    let mut master_paths: Vec<String> =
+        if master_paths.is_empty() { pres_part.rels.all_of("slideMaster").map(|r| r.target.clone()).collect() } else { master_paths };
+    let mut slide_entries: Vec<(u32, String)> = pres_el
+        .child("sldIdLst")
+        .map(|l| {
+            l.children_named("sldId")
+                .take(MAX_SLIDE_ENTRIES)
+                .filter_map(|s| {
+                    let rid = s.attr("r:id").unwrap_or("");
+                    let Some(path) = pres_part.rels.target(rid) else {
+                        // A missing relationship still represents a lost slide. Report it so
+                        // the engine opens a repaired copy instead of overwriting the original.
+                        lost_slides.push(format!("slide {} (missing relationship {rid})", s.u32("id").unwrap_or(0)));
+                        return None;
+                    };
+                    Some((s.u32("id").unwrap_or(0), path.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut seen_masters = HashSet::new();
+    master_paths.retain(|m| seen_masters.insert(opc::norm(m)));
+    let mut seen_slides = HashSet::new();
+    slide_entries.retain(|(_, p)| seen_slides.insert(opc::norm(p)));
+    (master_paths, slide_entries)
+}
+
+/// Loads every master, layout and slide part once. Returns them by normalized path and the
+/// largest shape id found in them.
+fn load_part_docs(pkg: &Package, master_paths: &[String], slide_entries: &[(u32, String)]) -> (HashMap<String, Doc>, u32) {
+    let mut all_parts: Vec<String> = master_paths.to_vec();
+    let mut seen_layouts = HashSet::new();
+    for m in master_paths {
+        for r in pkg.rels(m).all_of("slideLayout") {
+            let key = opc::norm(&r.target);
+            if seen_layouts.insert(key) {
+                all_parts.push(r.target.clone());
+            }
+        }
+    }
+    all_parts.extend(slide_entries.iter().map(|(_, p)| p.clone()));
+    let mut docs: HashMap<String, Doc> = HashMap::new();
+    let mut max_id = 0u32;
+    for p in &all_parts {
+        let key = opc::norm(p);
+        if docs.contains_key(&key) {
+            continue;
+        }
+        if let Some(d) = load(pkg, p) {
+            max_cnvpr(&d.root, &mut max_id);
+            docs.insert(key, d);
+        }
+    }
+    (docs, max_id)
+}
+
+/// Allocates an id for every readable slide; slides that are missing or unreadable are recorded in
+/// `lost_slides` and left out.
+fn register_slides(
+    imp: &mut Imp,
+    docs: &HashMap<String, Doc>,
+    slide_entries: &[(u32, String)],
+    lost_slides: &mut Vec<String>,
+) -> Vec<(u32, String, SlideId)> {
     let mut slide_ids: Vec<(u32, String, SlideId)> = vec![];
-    for (file_id, path) in &slide_entries {
+    for (file_id, path) in slide_entries {
         if !docs.contains_key(&opc::norm(path)) {
             log::warn!("pptx: slide {path} is missing or unreadable; skipped");
             lost_slides.push(path.clone());
@@ -483,6 +719,10 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         imp.slide_by_part.insert(opc::norm(path), id);
         slide_ids.push((*file_id, path.clone(), id));
     }
+    slide_ids
+}
+
+fn read_custom_show_names(imp: &mut Imp, pres_el: &El) {
     if let Some(l) = pres_el.child("custShowLst") {
         for cs in l.children_named("custShow") {
             if let (Some(id), Some(name)) = (cs.attr("id"), cs.attr("name")) {
@@ -490,12 +730,10 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
             }
         }
     }
+}
 
-    let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
-    p.masters.clear();
-    p.media.clear();
-    p.default_text_style = Default::default();
-
+/// Slide and notes size, first slide number, default text style and table styles.
+fn read_presentation_settings(imp: &mut Imp, p: &mut Presentation, pres_part: &Part, pres_el: &El) {
     if let Some(sz) = pres_el.child("sldSz") {
         let w = sz.i64("cx").map(emu_to_pt).unwrap_or(960.0);
         let h = sz.i64("cy").map(emu_to_pt).unwrap_or(540.0);
@@ -508,24 +746,26 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     }
     p.first_slide_number = pres_el.u32("firstSlideNum").unwrap_or(1).min(9999);
     if let Some(dts) = pres_el.child("defaultTextStyle") {
-        p.default_text_style = dml::list_style(&mut imp, &pres_part, dts);
+        p.default_text_style = dml::list_style(imp, pres_part, dts);
     }
     if let Some(r) = pres_part.rels.first_of("tableStyles")
-        && let Some(d) = load(&pkg, &r.target)
+        && let Some(d) = load(imp.pkg, &r.target)
     {
-        let part = Part::new(&pkg, &r.target, &d);
-        p.table_styles = table_styles(&mut imp, &part, &d.root);
+        let part = Part::new(imp.pkg, &r.target, &d);
+        p.table_styles = table_styles(imp, &part, &d.root);
         imp.table_style_ids = p.table_styles.iter().map(|s| s.id.clone()).collect();
     }
+}
 
-    // Masters and layouts.
+/// Reads the slide masters and their layouts; a file without a readable master gets a default one.
+fn read_masters(imp: &mut Imp, p: &mut Presentation, master_paths: &[String], docs: &HashMap<String, Doc>) -> HashMap<String, LayoutId> {
     let mut layout_by_part: HashMap<String, LayoutId> = HashMap::new();
-    for mp in &master_paths {
+    for mp in master_paths {
         let Some(doc) = docs.get(&opc::norm(mp)) else {
             log::warn!("pptx: master {mp} missing; skipped");
             continue;
         };
-        let master = read_master(&mut imp, mp, doc, &docs, &mut layout_by_part);
+        let master = read_master(imp, mp, doc, docs, &mut layout_by_part);
         p.masters.push(Arc::new(master));
     }
     if p.masters.is_empty() {
@@ -534,87 +774,114 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         imp.next = imp.next.saturating_add(200);
         p.masters.push(Arc::new(m));
     }
-    let fallback_layout = p.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
+    layout_by_part
+}
 
-    // Slides.
+/// Reads every registered slide with its notes and comments. Returns the slide ids by file id.
+fn read_slides(
+    imp: &mut Imp,
+    p: &mut Presentation,
+    pres_part: &Part,
+    docs: &HashMap<String, Doc>,
+    slide_ids: &[(u32, String, SlideId)],
+    layout_by_part: &HashMap<String, LayoutId>,
+) -> HashMap<u32, SlideId> {
+    let pkg = imp.pkg;
+    let fallback_layout = p.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
     let mut file_slide_ids: HashMap<u32, SlideId> = HashMap::new();
-    let mut notes_by_target: HashMap<String, TextBody> = HashMap::new();
-    for (file_id, path, id) in &slide_ids {
+    // A notes or comments part belongs to one slide; one shared by many must not be read (and
+    // copied) once per slide that names it.
+    let mut owned_parts: HashSet<String> = HashSet::new();
+    for (file_id, path, id) in slide_ids {
         let Some(doc) = docs.get(&opc::norm(path)) else { continue };
-        let part = Part::new(&pkg, path, doc);
+        let part = Part::new(pkg, path, doc);
         let layout = part.rels.first_of("slideLayout").and_then(|r| layout_by_part.get(&opc::norm(&r.target)).copied()).unwrap_or(fallback_layout);
-        let mut slide = read_slide(&mut imp, &part, doc, *id, layout);
-        // Notes.
-        if let Some(n) = part.rels.first_of("notesSlide") {
-            let n_key = opc::norm(&n.target);
-            if let Some(cached_notes) = notes_by_target.get(&n_key) {
-                slide.notes = cached_notes.clone();
-            } else if let Some(nd) = load(&pkg, &n.target) {
-                let np = Part::new(&pkg, &n.target, &nd);
-                let notes = read_notes(&mut imp, &np, &nd.root);
-                notes_by_target.insert(n_key, notes.clone());
-                slide.notes = notes;
-            }
+        let mut slide = read_slide(imp, &part, doc, *id, layout);
+        if let Some(notes) = slide_notes(imp, &part, &mut owned_parts) {
+            slide.notes = notes;
         }
-        // Comments. A modern part and the legacy part can describe the same threads (PowerPoint
-        // writes both): the modern one wins, its flattened legacy copy is skipped.
-        let mut parts: Vec<(Doc, bool)> = vec![];
-        for c in part.rels.all_of("comments") {
-            if let Some(cd) = pkg.xml(&c.target) {
-                // The content type names the modern part; a package that types it only through a
-                // Default entry instead of an Override is still modern when its root is p188.
-                let modern = pkg.content_type(&c.target).as_deref() == Some(crate::write::CT_COMMENTS_MODERN) || cd.root.prefix() == "p188";
-                parts.push((cd, modern));
-            }
-        }
-        let has_modern = parts.iter().any(|(_, m)| *m);
-        for (cd, modern) in parts {
-            if has_modern && !modern {
-                continue;
-            }
-            slide.comments.extend(read_comments(&pkg, &pres_part, &cd.root, modern));
-        }
+        read_slide_comments(pkg, pres_part, &part, &mut slide, &mut owned_parts);
         file_slide_ids.insert(*file_id, *id);
         p.slides.push(Arc::new(slide));
     }
+    file_slide_ids
+}
 
-    // Sections.
-    if let Some(ext) = pres_el.child("extLst") {
-        if let Some(sl) = ext.find("sectionLst") {
-            for s in sl.children_named("section").take(10_000) {
-                let slides = s
-                    .child("sldIdLst")
-                    .map(|l| l.children_named("sldId").filter_map(|x| x.u32("id").and_then(|i| file_slide_ids.get(&i).copied())).collect())
-                    .unwrap_or_default();
-                p.sections.push(Section { name: s.attr("name").unwrap_or("").to_string(), slides });
-            }
-        }
-        let kept: String = ext
-            .children_named("ext")
-            .filter(|e| e.attr("uri") != Some(crate::SECTION_EXT_URI) && !has_rel_refs(e))
-            .map(|e| pres_part.keep(e))
-            .collect();
-        if !kept.is_empty() {
-            p.raw_ext = Some(kept);
+/// The slide's notes text. A notes part is the notes of the first slide that names it.
+fn slide_notes(imp: &mut Imp, part: &Part, owned: &mut HashSet<String>) -> Option<TextBody> {
+    let n = part.rels.first_of("notesSlide")?;
+    if !owned.insert(opc::norm(&n.target)) {
+        log::warn!("pptx: notes part {} is named by more than one slide; kept on the first", n.target);
+        return None;
+    }
+    let pkg = imp.pkg;
+    let nd = load(pkg, &n.target)?;
+    let np = Part::new(pkg, &n.target, &nd);
+    Some(read_notes(imp, &np, &nd.root))
+}
+
+/// Comments. A modern part and the legacy part can describe the same threads (PowerPoint
+/// writes both): the modern one wins, its flattened legacy copy is skipped.
+/// Each comments part is read once, for the first slide that names it.
+fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide, owned: &mut HashSet<String>) {
+    let mut parts: Vec<(Doc, bool, bool)> = vec![];
+    for c in part.rels.all_of("comments") {
+        // An already-owned part is not re-read, but its kind still decides modern precedence.
+        let fresh = owned.insert(opc::norm(&c.target));
+        if let Some(cd) = pkg.xml(&c.target) {
+            // The content type names the modern part; a package that types it only through a
+            // Default entry instead of an Override is still modern when its root is p188.
+            let modern = pkg.content_type(&c.target).as_deref() == Some(crate::write::CT_COMMENTS_MODERN) || cd.root.prefix() == "p188";
+            parts.push((cd, modern, fresh));
         }
     }
-    p.tags = tags(&imp, &pres_part, pres_el);
-    // Custom shows.
-    if let Some(l) = pres_el.child("custShowLst") {
-        for cs in l.children_named("custShow") {
-            let slides = cs
-                .child("sldLst")
-                .map(|l| {
-                    l.children_named("sld")
-                        .filter_map(|s| pres_part.rels.target(s.attr("r:id").unwrap_or("")))
-                        .filter_map(|t| imp.slide_by_part.get(&opc::norm(t)).copied())
-                        .collect()
-                })
+    let has_modern = parts.iter().any(|(_, m, _)| *m);
+    for (cd, modern, fresh) in parts {
+        if !fresh || (has_modern && !modern) {
+            continue;
+        }
+        slide.comments.extend(read_comments(pkg, pres_part, &cd.root, modern));
+    }
+}
+
+/// Sections, and the extension elements the model does not understand (kept verbatim).
+fn read_sections(p: &mut Presentation, pres_part: &Part, pres_el: &El, file_slide_ids: &HashMap<u32, SlideId>) {
+    let Some(ext) = pres_el.child("extLst") else { return };
+    if let Some(sl) = ext.find("sectionLst") {
+        for s in sl.children_named("section").take(10_000) {
+            let slides = s
+                .child("sldIdLst")
+                .map(|l| l.children_named("sldId").filter_map(|x| x.u32("id").and_then(|i| file_slide_ids.get(&i).copied())).collect())
                 .unwrap_or_default();
-            p.custom_shows.push(CustomShow { name: cs.attr("name").unwrap_or("").to_string(), slides });
+            p.sections.push(Section { name: s.attr("name").unwrap_or("").to_string(), slides });
         }
     }
-    // Drawing guides (eighths of a point).
+    let kept: String =
+        ext.children_named("ext").filter(|e| e.attr("uri") != Some(crate::SECTION_EXT_URI) && !has_rel_refs(e)).map(|e| pres_part.keep(e)).collect();
+    if !kept.is_empty() {
+        p.raw_ext = Some(kept);
+    }
+}
+
+fn read_custom_shows(p: &mut Presentation, imp: &Imp, pres_part: &Part, pres_el: &El) {
+    let Some(l) = pres_el.child("custShowLst") else { return };
+    for cs in l.children_named("custShow") {
+        let slides = cs
+            .child("sldLst")
+            .map(|l| {
+                l.children_named("sld")
+                    .filter_map(|s| pres_part.rels.target(s.attr("r:id").unwrap_or("")))
+                    .filter_map(|t| imp.slide_by_part.get(&opc::norm(t)).copied())
+                    .collect()
+            })
+            .unwrap_or_default();
+        p.custom_shows.push(CustomShow { name: cs.attr("name").unwrap_or("").to_string(), slides });
+    }
+}
+
+/// Drawing guides (eighths of a point) and slide show settings.
+fn read_guides_and_show(p: &mut Presentation, imp: &Imp, pres_part: &Part) {
+    let pkg = imp.pkg;
     if let Some(r) = pres_part.rels.first_of("viewProps")
         && let Some(d) = pkg.xml(&r.target)
         && let Some(lst) = d.root.find("slideViewPr").and_then(|v| v.find("guideLst"))
@@ -628,71 +895,76 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
             .take(1000)
             .collect();
     }
-    // Show settings.
     if let Some(r) = pres_part.rels.first_of("presProps")
         && let Some(d) = pkg.xml(&r.target)
         && let Some(sp) = d.root.child("showPr")
     {
         p.show = read_show(sp, &imp.custom_show_names);
     }
-    // Notes master.
-    if let Some(r) = pres_part.rels.first_of("notesMaster")
-        && let Some(d) = load(&pkg, &r.target)
-    {
-        let part = Part::new(&pkg, &r.target, &d);
-        let mut ctx = shapes::IdCtx::default();
-        let mut m = Master { id: MasterId(imp.alloc()), name: "Notes Master".into(), ..Default::default() };
-        if let Some(t) = part.rels.first_of("theme")
-            && let Some(td) = pkg.xml(&t.target)
-        {
-            let tp = Part::new(&pkg, &t.target, &td);
-            m.theme = theme::read_theme(&mut imp, &tp, &td.root);
+}
+
+/// Theme, background, shapes and colour map shared by the notes and handout masters.
+fn read_aux_master(imp: &mut Imp, part: &Part, doc: &Doc, m: &mut Master) {
+    let mut ctx = shapes::IdCtx::default();
+    if let Some(csld) = doc.root.child("cSld") {
+        m.background = background(imp, part, csld);
+        if let Some(tree) = csld.child("spTree") {
+            m.shapes = shapes::sp_tree(imp, part, &mut ctx, tree, 0);
         }
-        if let Some(csld) = d.root.child("cSld") {
-            m.background = background(&mut imp, &part, csld);
-            if let Some(tree) = csld.child("spTree") {
-                m.shapes = shapes::sp_tree(&mut imp, &part, &mut ctx, tree, 0);
-            }
-        }
-        if let Some(cm) = d.root.child("clrMap") {
-            m.color_map = color_map(cm);
-        }
-        // Notes text styles are the body's list style; slide masters use title/body/other instead.
-        if let Some(ns) = d.root.child("notesStyle") {
-            m.body_style = dml::list_style(&mut imp, &part, ns);
-        }
-        p.notes_master = Some(Arc::new(m));
     }
-    // Handout master (header, footer, date and slide number for printed handouts).
-    if let Some(r) = pres_part.rels.first_of("handoutMaster")
-        && let Some(d) = load(&pkg, &r.target)
-    {
-        let part = Part::new(&pkg, &r.target, &d);
-        let mut ctx = shapes::IdCtx::default();
-        let mut m = Master { id: MasterId(imp.alloc()), name: "Handout Master".into(), ..Default::default() };
-        if let Some(t) = part.rels.first_of("theme")
-            && let Some(td) = pkg.xml(&t.target)
-        {
-            let tp = Part::new(&pkg, &t.target, &td);
-            m.theme = theme::read_theme(&mut imp, &tp, &td.root);
-        } else if let Some(first) = p.masters.first() {
-            m.theme = first.theme.clone();
-        }
-        if let Some(csld) = d.root.child("cSld") {
-            if let Some(n) = csld.attr("name").filter(|s| !s.is_empty()) {
-                m.name = n.to_string();
-            }
-            m.background = background(&mut imp, &part, csld);
-            if let Some(tree) = csld.child("spTree") {
-                m.shapes = shapes::sp_tree(&mut imp, &part, &mut ctx, tree, 0);
-            }
-        }
-        if let Some(cm) = d.root.child("clrMap") {
-            m.color_map = color_map(cm);
-        }
-        p.handout_master = Some(Arc::new(m));
+    if let Some(cm) = doc.root.child("clrMap") {
+        m.color_map = color_map(cm);
     }
-    // Document properties.
+}
+
+/// Reads the part's own theme into the master, if it has one.
+fn read_master_theme(imp: &mut Imp, part: &Part, m: &mut Master) -> bool {
+    let pkg = imp.pkg;
+    if let Some(t) = part.rels.first_of("theme")
+        && let Some(td) = pkg.xml(&t.target)
+    {
+        let tp = Part::new(pkg, &t.target, &td);
+        m.theme = theme::read_theme(imp, &tp, &td.root);
+        return true;
+    }
+    false
+}
+
+fn read_notes_master(imp: &mut Imp, p: &mut Presentation, pres_part: &Part) {
+    let pkg = imp.pkg;
+    let Some(r) = pres_part.rels.first_of("notesMaster") else { return };
+    let Some(d) = load(pkg, &r.target) else { return };
+    let part = Part::new(pkg, &r.target, &d);
+    let mut m = Master { id: MasterId(imp.alloc()), name: "Notes Master".into(), ..Default::default() };
+    read_master_theme(imp, &part, &mut m);
+    read_aux_master(imp, &part, &d, &mut m);
+    // Notes text styles are the body's list style; slide masters use title/body/other instead.
+    if let Some(ns) = d.root.child("notesStyle") {
+        m.body_style = dml::list_style(imp, &part, ns);
+    }
+    p.notes_master = Some(Arc::new(m));
+}
+
+/// Handout master (header, footer, date and slide number for printed handouts).
+fn read_handout_master(imp: &mut Imp, p: &mut Presentation, pres_part: &Part) {
+    let pkg = imp.pkg;
+    let Some(r) = pres_part.rels.first_of("handoutMaster") else { return };
+    let Some(d) = load(pkg, &r.target) else { return };
+    let part = Part::new(pkg, &r.target, &d);
+    let mut m = Master { id: MasterId(imp.alloc()), name: "Handout Master".into(), ..Default::default() };
+    if !read_master_theme(imp, &part, &mut m)
+        && let Some(first) = p.masters.first()
+    {
+        m.theme = first.theme.clone();
+    }
+    if let Some(n) = d.root.child("cSld").and_then(|c| c.attr("name")).filter(|s| !s.is_empty()) {
+        m.name = n.to_string();
+    }
+    read_aux_master(imp, &part, &d, &mut m);
+    p.handout_master = Some(Arc::new(m));
+}
+
+fn read_document_properties(p: &mut Presentation, pkg: &Package, root_rels: &Rels) {
     if let Some(r) = root_rels.first_of("core-properties")
         && let Some(d) = pkg.xml(&r.target)
     {
@@ -703,17 +975,6 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     {
         p.props.company = d.root.child("Company").map(|c| c.text()).unwrap_or_default();
     }
-
-    p.kept_parts = kept_parts(&pkg, &pres_path);
-
-    inherit_placeholder_geometry(&mut p);
-    default_text_anchor(&mut p);
-    p.header_footer = header_footer(&p);
-    p.embedded_fonts = read_embedded_fonts(&mut imp, &pres_part, pres_el);
-    p.media = std::mem::take(&mut imp.media);
-    p.next_id = imp.next;
-    p.fix_next_id();
-    Ok((p, lost_slides))
 }
 
 /// Embedded font faces in one file. Past this, further typefaces are dropped.
@@ -1133,6 +1394,7 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
     }
     if let Some(t) = root.child("timing") {
         s.animations = timing::animations(imp, part, &ctx, t, &s.shapes);
+        timing::media_settings(t, &ctx, &mut s.shapes);
     }
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
         s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
@@ -1210,6 +1472,7 @@ fn read_show(sp: &El, shows: &HashMap<String, String>) -> ShowSettings {
         without_narration: sp.bool("showNarration") == Some(false),
         without_animation: sp.bool("showAnimation") == Some(false),
         use_timings: sp.bool("useTimings").unwrap_or(true),
+        show_media_controls: sp.find("showMediaCtrls").and_then(|e| e.bool("val")).unwrap_or(true),
         ..Default::default()
     };
     if sp.child("browse").is_some() {
@@ -1280,4 +1543,91 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
         }
     }
     hf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mc_branches_carry_only_the_declarations_their_content_uses() {
+        // 2,000 declarations on the branch and 2,000 children: each child gets the one it uses
+        // (and the default), not all 2,000.
+        let decls: String = (0..2000).map(|i| format!(r#" xmlns:n{i}="urn:n{i}""#)).collect();
+        let kids: String = (0..2000).map(|i| format!("<n{i}:x/>")).collect();
+        let x = format!(
+            r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns="urn:d"{decls}>{kids}</mc:Fallback></mc:AlternateContent></r>"#
+        );
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kids: Vec<&El> = d.root.elements().collect();
+        assert_eq!(kids.len(), 2000);
+        assert_eq!(kids[7].attrs, vec![("xmlns".to_string(), "urn:d".to_string()), ("xmlns:n7".to_string(), "urn:n7".to_string())]);
+    }
+
+    /// The branch's own declaration of a prefix wins over the `AlternateContent`'s; an oversized
+    /// one still shadows it (its content stays unbound); a child's own declaration is left alone.
+    #[test]
+    fn mc_branch_declarations_keep_their_precedence() {
+        let long = "u".repeat(MAX_NS_VALUE + 1);
+        let x = format!(
+            r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent xmlns:p="urn:ac" xmlns:q="urn:q-short"><mc:Fallback xmlns:p="urn:b" xmlns:q="{long}"><p:x/><q:y/><p:z xmlns:p="urn:own"/></mc:Fallback></mc:AlternateContent></r>"#
+        );
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kids: Vec<&El> = d.root.elements().collect();
+        let attrs = |i: usize| kids[i].attrs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
+        assert_eq!(attrs(0), ["xmlns:p=urn:b"]);
+        assert!(attrs(1).is_empty(), "{:?}", attrs(1));
+        assert_eq!(attrs(2), ["xmlns:p=urn:own"]);
+    }
+
+    #[test]
+    fn mc_branches_keep_prefixes_named_by_must_understand() {
+        let x = r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns:q="urn:q"><a mc:MustUnderstand="q"/></mc:Fallback></mc:AlternateContent></r>"#;
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kid = d.root.elements().next().unwrap();
+        assert!(kid.attrs.iter().any(|(k, v)| k == "xmlns:q" && v == "urn:q"), "{:?}", kid.attrs);
+    }
+
+    #[test]
+    fn mc_branches_keep_prefixes_used_in_qname_values() {
+        let x = r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns:q="urn:q" xmlns:z="urn:z"><n xmlns:xsi="urn:xsi" xsi:type="q:Item"/></mc:Fallback></mc:AlternateContent></r>"#;
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kid = d.root.elements().next().unwrap();
+        assert!(kid.attrs.iter().any(|(k, v)| k == "xmlns:q" && v == "urn:q"), "{:?}", kid.attrs);
+        assert!(!kid.attrs.iter().any(|(k, _)| k == "xmlns:z"), "unused declarations stay out: {:?}", kid.attrs);
+    }
+
+    #[test]
+    fn kept_fragments_skip_oversized_namespace_names() {
+        let big = "u".repeat(MAX_NS_VALUE + 1);
+        let ns = vec![("xmlns:a".to_string(), "urn:a".to_string()), ("xmlns:b".to_string(), big)];
+        let d = crate::xml::parse(br#"<a:x xmlns:a="urn:a" xmlns:b="urn:b"><b:y/></a:x>"#).unwrap();
+        let mut el = d.root.clone();
+        el.attrs.clear();
+        let out = keep_xml(&el, &ns);
+        assert!(out.contains(r#"xmlns:a="urn:a""#), "{out}");
+        assert!(!out.contains("uuuu"), "the oversized declaration is not copied");
+    }
+
+    #[test]
+    fn copied_namespace_bytes_are_budgeted_per_part() {
+        let d = crate::xml::parse(br#"<a:x xmlns:a="urn:a"><a:y/></a:x>"#).unwrap();
+        let mut el = d.root.clone();
+        el.attrs.clear();
+        let part = Part {
+            name: String::new(),
+            rels: Default::default(),
+            ns: vec![("xmlns:a".to_string(), "urn:a".to_string())],
+            inner_ns: vec![],
+            ns_budget: Cell::new(15),
+        };
+        assert!(part.keep(&el).contains(r#"xmlns:a="urn:a""#), "within budget");
+        assert!(part.ns_budget.get() < 15);
+        let again = part.keep(&el);
+        assert!(!again.contains("xmlns:a"), "budget spent, no further declarations: {again}");
+    }
 }

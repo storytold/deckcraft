@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Arc, Result, Session, Value, bad, builtin_color_schemes, builtin_font_schemes, builtin_format_schemes, json, master_index, ok, str_param,
+};
 
 pub(super) fn colors(s: &mut Session, p: &Value) -> Result<Value> {
     let name_v = p.get("name");

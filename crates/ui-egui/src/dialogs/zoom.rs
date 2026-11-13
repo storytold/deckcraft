@@ -1,4 +1,4 @@
-use super::*;
+use super::{Dialog, SlideApp, Ui, buttons};
 
 /// Preset percents in the Zoom dialog, largest first.
 const ZOOM_PRESETS: &[u32] = &[400, 200, 150, 100, 75, 66, 50, 33];

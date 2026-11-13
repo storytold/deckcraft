@@ -1,4 +1,4 @@
-use super::*;
+use super::{Hit, Point, PointerEvent, PointerKind, SlideApp, ToolKind, Ui, Xf, json, mods};
 
 /// A two-finger twist on the trackpad. macOS delivers it as [`egui::Event::Rotate`];
 /// other platforms leave the delta at zero.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{SlideApp, Tokens, Ui, json, run, theme};
 
 /// Review › Thesaurus: look a word up; clicking a synonym puts it in place of the selected word
 /// when editing text, otherwise looks that synonym up in turn.

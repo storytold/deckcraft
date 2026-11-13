@@ -1,4 +1,6 @@
-use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+use super::updates_ui;
+use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -18,6 +20,11 @@ impl SlideApp {
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
+        } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
+            // A page that keeps the files (`?host=parent`): Save by id (the command palette) goes
+            // to the page like Ctrl+S. The engine would write to the presentation's path, which a
+            // browser can't.
+            self.save_to_host(None).map(|name| json!({"path": name}))
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
         };
@@ -162,7 +169,17 @@ impl SlideApp {
                     self.start_show(from, false);
                 }
             }
-            "show.presenter" => self.ui.presenter_view = self.flag(p, self.ui.presenter_view),
+            "show.presenter" => {
+                self.ui.presenter_view = self.flag(p, self.ui.presenter_view);
+                // The browser build has one viewport: presenter view is drawn inside the page.
+                return Ok(json!({"on": self.ui.presenter_view, "window": !cfg!(target_arch = "wasm32")}));
+            }
+            "show.keepCursor" => {
+                self.ui.show_keep_cursor = self.flag(p, self.ui.show_keep_cursor);
+                if let Some(s) = self.show.as_mut() {
+                    s.keep_cursor = self.ui.show_keep_cursor;
+                }
+            }
             "show.end" => {
                 self.show = None;
                 self.media.stop_owned(media::Owner::Show);
@@ -266,7 +283,7 @@ impl SlideApp {
                 self.dialog = Some(dialogs::Dialog::new(d));
             }
             "app.links" => {
-                use deckcraft_engine::links::*;
+                use deckcraft_engine::links::{APP_PAGE, APPS, DISCORD, GITHUB, WEBSITE};
                 return Ok(json!({"discord": DISCORD, "website": WEBSITE, "apps": APPS, "appPage": APP_PAGE, "github": GITHUB}));
             }
             _ => return Err(format!("unknown UI command `{id}`")),

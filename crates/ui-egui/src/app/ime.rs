@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ImeCancelled, ImeComposition, ImeDescriptorKey, ImeDestination, ImeResetPhase, ImeTerminalPending, ImeTerminalStamp, SlideApp, Target, Value,
+    ViewMode, ime_in_ui_pass_key,
+};
 
 impl SlideApp {
     /// Borrow faces for interface text in scripts the interface fonts lack (#101): the open

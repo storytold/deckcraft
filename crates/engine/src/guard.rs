@@ -1,4 +1,4 @@
-//! Last-resort guard (craftrules `standards/never-crash.md`): a panic that escapes a command —
+//! Last-resort guard: a panic that escapes a command —
 //! any edit, import or export, from the UI, the CLI, MCP or the control channel — becomes an
 //! error, and the document is kept as it was before the command (and saved for crash recovery
 //! when a recovery directory is set). It is a safety net: commands still must not panic.

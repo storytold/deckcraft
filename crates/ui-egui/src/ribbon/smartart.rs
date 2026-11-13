@@ -1,6 +1,6 @@
 use super::arrange::arrange_group;
 use super::galleries::smartart_gallery;
-use super::*;
+use super::{Icon, SlideApp, Ui, Value, big_button, group, json, rows, run, small_button, small_button_ex, widgets};
 
 /// SmartArt Design: Create Graphic (Text Pane, Add Shape, Promote, Demote, Remove) and Layouts.
 pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
@@ -53,7 +53,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
         let outline = sel.as_ref().map(|(_, d)| d.nodes.clone());
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
-                smartart_gallery(app, ui, "smartArt.layout", json!({"id": gid}), &kind, &style, &colors, outline.as_deref());
+                smartart_gallery(app, ui, "smartArt.layout", json!({"id": gid}), &kind, (&style, &colors), outline.as_deref());
             });
         }
         let (main, arrow) = small_button_ex(ui, Icon::Layout, "Convert", gid.is_some(), false, true);

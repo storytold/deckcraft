@@ -1,5 +1,5 @@
 use super::paint::layout_items;
-use super::*;
+use super::{Diagram, DiagramNode, MAX_LEVEL, MAX_SHAPES, Shape, Xfrm};
 
 /// Nodes from text lines: each leading tab is one outline level.
 pub fn nodes_from_lines<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<DiagramNode> {

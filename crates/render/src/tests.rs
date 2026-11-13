@@ -1,7 +1,7 @@
 use super::{
     Ctx, Fields, Fill, Image, Opts, PathMorph, Point, RENDERER, Rect, Region, RenderOpts, Renderer, Rgba, ShapeState, SlideFields, TextMorph,
     crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, parse_path, pasteboard_region, place_slide,
-    render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
+    place_slide_with, render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
 };
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
@@ -516,6 +516,56 @@ fn glow_of_a_shape_with_no_fill_and_no_line_is_not_drawn() {
 }
 
 #[test]
+fn shadow_and_glow_keep_an_even_odd_shapes_hole() {
+    // #1596: a donut is one even-odd subpath — its hole exists only under the
+    // even-odd rule. The effects were cast from a merged silhouette filled
+    // NonZero, so the shadow and the glow filled the hole solid. The hole's
+    // centre must stay the slide's white in both, while the effects still draw.
+    let donut = |effects: deckcraft_model::Effects| {
+        let mut sh = Shape {
+            id: ShapeId(612),
+            xfrm: Some(Xfrm::new(50.0, 50.0, 200.0, 200.0)),
+            geom: Geom::preset("donut"),
+            fill: Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 160, 0)))),
+            ..Default::default()
+        };
+        sh.effects = Some(effects);
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let img = donut(deckcraft_model::Effects {
+        outer_shadow: Some(deckcraft_model::style::Shadow {
+            color: ColorRef::rgb(deckcraft_color::Rgba::BLACK),
+            blur: 8.0,
+            dist: 0.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "shadow in the hole: {hole:?}");
+    // The shadow still falls around the shape (just below its bottom edge).
+    let below = img.pixel(150, 251);
+    assert!(below[0] < 200 && below[0] == below[2], "no shadow below: {below:?}");
+
+    let img = donut(deckcraft_model::Effects {
+        glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)), radius: 8.0 }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "glow in the hole: {hole:?}");
+    // The ring itself is the shape's orange.
+    let ring = img.pixel(150, 75);
+    assert!(ring[0] > 200 && ring[1] > 100 && ring[2] < 100, "ring: {ring:?}");
+}
+
+#[test]
 fn placeholder_prompts_only_in_edit_view() {
     let p = Presentation::default();
     let edit = render_slide(&p, 0, &RenderOpts { scale: 0.5, edit: true, ..Default::default() });
@@ -616,14 +666,14 @@ fn blend_ends_match_the_slides_and_mixes_backdrops() {
     let o = RenderOpts { scale: 0.5, ..Default::default() };
     let shapes = vec![(sh, false)];
     // At the ends the frame is the slide itself; the shape stays opaque throughout.
-    assert_eq!(render_blend(&p, 0, 1, 1.0, &shapes, &[], &[], &o).pixels, render_slide(&p, 1, &o).pixels);
-    let mid = render_blend(&p, 0, 1, 0.5, &shapes, &[], &[], &o);
+    assert_eq!(render_blend(&p, (0, 1), 1.0, &shapes, &[], &[], &o).pixels, render_slide(&p, 1, &o).pixels);
+    let mid = render_blend(&p, (0, 1), 0.5, &shapes, &[], &[], &o);
     let px = mid.pixel(5, 5);
     assert!((px[0] as i32 - 128).abs() <= 3, "{px:?}");
     assert_eq!(mid.pixel(100, 75), render_slide(&p, 1, &o).pixel(100, 75));
     // Hostile input: bad indices and NaN never panic.
-    assert_eq!(render_blend(&p, 0, 9, 0.5, &shapes, &[], &[], &o).width, 0);
-    let _ = render_blend(&p, 0, 1, f64::NAN, &shapes, &[], &[], &o);
+    assert_eq!(render_blend(&p, (0, 9), 0.5, &shapes, &[], &[], &o).width, 0);
+    let _ = render_blend(&p, (0, 1), f64::NAN, &shapes, &[], &[], &o);
 }
 
 fn text_shape(id: u32, text: &str, x: f64, y: f64) -> Shape {
@@ -668,7 +718,7 @@ fn morph_text_ends_match_the_slides() {
         sb.xfrm = Some(x);
         sa.xfrm = Some(x);
         let tm = TextMorph { old: ShapeId(11), new: ShapeId(10), from, to, chars: false, t };
-        render_blend(&p, 0, 1, t, &[(sb, false), (sa, true)], &[tm], &[], &o)
+        render_blend(&p, (0, 1), t, &[(sb, false), (sa, true)], &[tm], &[], &o)
     };
     // Warm up: faces load lazily (a background scan runs), so the first render may still fall back.
     let _ = (render_slide(&p, 0, &o), render_slide(&p, 1, &o), frame(0.5));
@@ -781,7 +831,7 @@ fn morph_path_ends_match_the_slides() {
         let lerp = |a: f64, b: f64| a + (b - a) * t;
         let x = Xfrm::new(lerp(from.x, to.x), lerp(from.y, to.y), lerp(from.w, to.w), lerp(from.h, to.h));
         let pm = PathMorph { id: ShapeId(10), from: Geom::preset("ellipse"), from_box: from, to_box: to, t };
-        render_blend(&p, 0, 1, t, &[(form(10, "star5", x), false)], &[], &[pm], &o)
+        render_blend(&p, (0, 1), t, &[(form(10, "star5", x), false)], &[], &[pm], &o)
     };
     // The morph splits the outlines into more curves, which flatten slightly differently: edge pixels
     // may differ a little, a different shape differs a lot.
@@ -792,7 +842,7 @@ fn morph_path_ends_match_the_slides() {
     let d1 = differ(&frame(1.0), &render_slide(&p, 1, &o));
     assert!(d1 < 40, "end differs {d1}");
     // Without the morph the start would show the star.
-    let star = render_blend(&p, 0, 1, 0.0, &[(form(10, "star5", from), false)], &[], &[], &o);
+    let star = render_blend(&p, (0, 1), 0.0, &[(form(10, "star5", from), false)], &[], &[], &o);
     assert!(differ(&star, &render_slide(&p, 0, &o)) > 400);
     // Halfway the shape is filled around the middle of its box.
     let mid = frame(0.5);
@@ -818,7 +868,7 @@ fn morph_path_fades_a_fill_only_one_side_has() {
     let at = |t: f64| {
         let pm = PathMorph { id: ShapeId(10), from: Geom::preset("rect"), from_box: bx, to_box: bx, t };
         // A point near the line but not on it: inside the shape all the way.
-        render_blend(&p, 0, 1, t, &[(form(10, "line"), false)], &[], &[pm], &o).pixel(110, 90)
+        render_blend(&p, (0, 1), t, &[(form(10, "line"), false)], &[], &[pm], &o).pixel(110, 90)
     };
     let (full, half, none) = (at(0.0), at(0.5), at(1.0));
     assert_eq!(none, [255, 255, 255, 255]);
@@ -978,6 +1028,7 @@ fn a_linear_gradient_ramps_like_powerpoint() {
             stops: vec![stop(0.0, deckcraft_color::Rgba::rgb(0, 0, 0)), stop(1.0, deckcraft_color::Rgba::rgb(255, 255, 255))],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1003,6 +1054,7 @@ fn a_gradient_with_a_stop_off_the_end_stays_linear() {
             stops: vec![stop(0.2, deckcraft_color::Rgba::rgb(0, 0, 0)), stop(1.0, deckcraft_color::Rgba::rgb(255, 255, 255))],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1044,6 +1096,7 @@ fn a_shape_filled_with_the_background_shows_the_slide_background() {
             stops: vec![stop(0.0, 0), stop(0.5, 0), stop(1.0, 200)],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         }),
     });
     let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
@@ -1145,6 +1198,7 @@ fn a_text_gradient_starts_over_on_every_line() {
             stops: vec![stop(0.0, 0), stop(1.0, 255)],
             shape: GradientShape::Linear { angle: 90.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         }));
     }
     sh.text = Some(t);
@@ -1306,6 +1360,7 @@ fn rect_path_gradients_draw_x_shaped_contours() {
             stops: vec![stop(0.0, 0), stop(0.5, 128), stop(1.0, 255)],
             shape: GradientShape::Path { path: "rect".into(), focus: [0.5, 0.5, 0.5, 0.5] },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1777,6 +1832,28 @@ fn the_editor_pasteboard_draws_shapes_off_the_slide() {
 }
 
 #[test]
+fn animation_state_skips_layout_and_master_shapes_sharing_a_slide_shape_id() {
+    let mut p = Presentation::default();
+    let bar = |x| Shape {
+        id: ShapeId(77),
+        xfrm: Some(Xfrm::new(x, 400.0, 100.0, 60.0)),
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0)))),
+        ..Default::default()
+    };
+    let lid = p.slides[0].layout;
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    m.shapes.push(bar(100.0));
+    m.layouts.iter_mut().find(|l| l.id == lid).expect("layout").shapes.push(bar(400.0));
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes.push(bar(700.0));
+    let hide = |_: ShapeId| ShapeState { visible: false, ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, state: Some(&hide), ..Default::default() });
+    for x in [150, 450] {
+        assert_eq!(img.pixel(x, 430)[..3], [200, 0, 0], "the backdrop bar at x={x} stays");
+    }
+    assert_ne!(img.pixel(750, 430)[..3], [200, 0, 0], "the slide's own shape with that id is hidden");
+}
+
+#[test]
 fn master_graphics_off_the_slide_show_on_the_pasteboard() {
     let mut p = Presentation::default();
     let m = std::sync::Arc::make_mut(&mut p.masters[0]);
@@ -1883,6 +1960,70 @@ fn mf_ink(img: &image::RgbaImage) -> Option<(u32, u32, u32, u32)> {
         }
     }
     b
+}
+
+#[test]
+fn metafile_dashed_pen_leaves_gaps() {
+    // CREATEPENINDIRECT PS_DASH | PS_ENDCAP_FLAT, 40 units (4 px) wide, black, then a line across
+    // the picture at y = 72 px: 12 px dashes with 4 px gaps.
+    let mut pen = i16s(&[0x0201, 40, 0]);
+    pen.extend(0u32.to_le_bytes());
+    let recs = vec![(0x02FA, pen), (0x012D, i16s(&[0])), (0x0214, i16s(&[720, 100])), (0x0213, i16s(&[720, 2780]))];
+    let img = crate::metafile::rasterize(&wmf_with(2880, 1440, &recs), 288).expect("raster");
+    let ink: Vec<bool> = (20..260).map(|x| img.get_pixel(x, 72)[3] > 128).collect();
+    assert!(ink.iter().filter(|b| **b).count() > 120, "dashes are drawn");
+    assert!(ink.iter().filter(|b| !**b).count() > 30, "with gaps between them");
+}
+
+#[test]
+fn metafile_skewed_bitmap_is_drawn_with_its_transform() {
+    use craft_metafile::write::{Image as MetafileImage, Op, emf};
+    use kurbo::{Affine, Rect};
+
+    let image = std::sync::Arc::new(MetafileImage { width: 2, height: 2, rgba: [255, 0, 0, 255].repeat(4) });
+    let xf = Affine::translate((25.0, 25.0)) * Affine::new([1.0, 0.25, 0.2, 1.0, 0.0, 0.0]) * Affine::scale(24.0);
+    let bytes = emf(&[Op::Image { image, xf, opacity: 1.0 }], Rect::new(0.0, 0.0, 100.0, 100.0), "DeckCraft", "skewed bitmap").expect("EMF");
+    let img = crate::metafile::rasterize(&bytes, 160).expect("raster");
+    let red: Vec<_> = img.enumerate_pixels().filter(|(_, _, p)| p[0] > 180 && p[1] < 80 && p[3] > 128).collect();
+    assert!(red.len() > 100, "the transformed image is visible: {} red pixels", red.len());
+    let (min_x, max_x) = red.iter().fold((u32::MAX, 0), |(lo, hi), (x, _, _)| (lo.min(*x), hi.max(*x)));
+    let (min_y, max_y) = red.iter().fold((u32::MAX, 0), |(lo, hi), (_, y, _)| (lo.min(*y), hi.max(*y)));
+    assert!(max_x - min_x > 25 && max_y - min_y > 25, "the image keeps both transformed axes: x={min_x}..{max_x}, y={min_y}..{max_y}");
+}
+
+#[test]
+fn metafile_clip_path_and_nondefault_pen_geometry_are_applied() {
+    use craft_metafile::write::{Op, Pen, emf};
+    use craft_metafile::{Cap, Join};
+    use kurbo::{BezPath, Rect, Shape as _};
+
+    let mut triangle = BezPath::new();
+    triangle.move_to((10.0, 10.0));
+    triangle.line_to((90.0, 10.0));
+    triangle.line_to((50.0, 90.0));
+    triangle.close_path();
+
+    let mut bevel = BezPath::new();
+    bevel.move_to((15.0, 35.0));
+    bevel.line_to((50.0, 60.0));
+    bevel.line_to((85.0, 35.0));
+    let mut miter = BezPath::new();
+    miter.move_to((15.0, 45.0));
+    miter.line_to((50.0, 70.0));
+    miter.line_to((85.0, 45.0));
+    let pen = |join| Pen { rgb: [0, 0, 0], width: 5.0, cap: Cap::Square, join, miter: 4.0, dash: None };
+    let ops = [
+        Op::Clip { path: triangle, even_odd: false },
+        Op::Fill { path: Rect::new(0.0, 0.0, 100.0, 100.0).to_path(0.1), even_odd: false, rgb: [255, 0, 0] },
+        Op::Stroke { path: bevel, pen: pen(Join::Bevel) },
+        Op::Stroke { path: miter, pen: pen(Join::Miter) },
+        Op::Unclip,
+    ];
+    let bytes = emf(&ops, Rect::new(0.0, 0.0, 100.0, 100.0), "DeckCraft", "clipped strokes").expect("EMF");
+    let img = crate::metafile::rasterize(&bytes, 160).expect("raster");
+    assert!(img.get_pixel(80, 40)[0] > 180, "inside the clip path is filled");
+    assert_eq!(img.get_pixel(8, 80)[3], 0, "outside the clip path remains transparent");
+    assert!(img.pixels().any(|p| p[3] > 128 && p[0] < 80), "square capped bevel and miter strokes are rendered");
 }
 
 #[test]
@@ -2050,6 +2191,43 @@ fn group_child_scale_does_not_scale_line_widths() {
     }
 }
 
+/// #2067: a legend entry with its own text colour, size and weight (`c:legendEntry/c:txPr`) draws
+/// its name so; the other entries keep the legend's.
+#[test]
+fn a_legend_entry_draws_its_own_text_colour_and_size() {
+    let draw = |entry: Option<deckcraft_model::chart::LegendEntry>| {
+        let mut c = Chart::sample(ChartType::Line);
+        c.title = None;
+        c.legend = Some("r".into());
+        c.text_size = Some(10.0);
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(128, 128, 128)));
+        c.legend_entries = entry.into_iter().collect();
+        let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 480.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let green = |img: &Image| {
+        (0..480u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[1] > 150 && p[0] < 80 && p[2] < 80
+            })
+            .count()
+    };
+    let entry = |size: Option<f64>| deckcraft_model::chart::LegendEntry {
+        idx: 0,
+        size,
+        bold: Some(true),
+        color: Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 200, 0))),
+    };
+    let none = green(&draw(None));
+    let own = green(&draw(Some(entry(None))));
+    let big = green(&draw(Some(entry(Some(20.0)))));
+    assert_eq!(none, 0, "no green in a chart without the entry");
+    assert!(own > 40, "the first entry's name is drawn in its own colour ({own})");
+    assert!(big > own * 2, "and at its own size ({own} at 10 pt, {big} at 20 pt)");
+}
+
 #[test]
 fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_pixels() {
     // PowerPoint draws a picture's own fill behind its transparent pixels (and an old equation
@@ -2082,6 +2260,60 @@ fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_
             assert_eq!(img.pixel(200, 200)[..3], [0, 160, 60], "the tinted fill behind the clear half ({object})");
         } else {
             assert!(clear[..3].iter().all(|v| *v > 240), "no fill: the slide shows through: {clear:?}");
+        }
+    }
+}
+
+#[test]
+fn a_picture_in_a_placeholder_shows_the_layout_placeholders_fill_behind_transparent_pixels() {
+    // #2068: a slide picture with an empty `p:spPr` in a layout picture placeholder that sets a
+    // fill shows that fill behind its clear pixels. Its own fill (none included) and its own
+    // style still decide when it has them. The left half of the image is clear.
+    let png = {
+        let img = image::RgbaImage::from_fn(8, 4, |x, _| if x < 4 { image::Rgba([0, 0, 0, 0]) } else { image::Rgba([20, 20, 160, 255]) });
+        let mut out = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let orange = Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 153, 0)));
+    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 11, ..Default::default() });
+    let style = ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1);
+    // (layout fill, picture's own fill, picture's own style, the clear half shows orange)
+    let cases = [
+        (Some(orange.clone()), None, None, true),
+        (None, None, None, false),
+        (Some(orange.clone()), Some(Fill::None), None, false),
+        (Some(orange.clone()), None, Some(style), false),
+    ];
+    for (i, (layout_fill, own_fill, own_style, shows)) in cases.into_iter().enumerate() {
+        let mut p = Presentation::default();
+        let media = p.add_media("half.png", "image/png", png.clone()).expect("media");
+        let lid = p.slides[0].layout;
+        let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+        let layout = m.layouts.iter_mut().find(|l| l.id == lid).expect("layout");
+        layout.shapes.push(Shape {
+            id: ShapeId(2),
+            ph: ph(),
+            xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)),
+            fill: layout_fill,
+            ..Default::default()
+        });
+        let pic = Shape {
+            id: ShapeId(3),
+            ph: ph(),
+            kind: ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+            fill: own_fill,
+            style: own_style,
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![pic];
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let (clear, opaque) = (img.pixel(200, 200), img.pixel(400, 200));
+        assert!(opaque[2] > 140 && opaque[0] < 40, "case {i}: the picture's own pixels: {opaque:?}");
+        if shows {
+            assert_eq!(clear[..3], [255, 153, 0], "case {i}: the layout's fill behind the clear half");
+        } else {
+            assert!(clear[..3].iter().all(|v| *v > 240), "case {i}: the slide shows through: {clear:?}");
         }
     }
 }
@@ -2894,6 +3126,27 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
 }
 
+#[test]
+fn placed_text_holds_the_field_value_not_the_saved_placeholder() {
+    let mut p = deck_with(vec![field_shape(Some("slidenum"), "<#>")]);
+    let second = p.slides[0].clone();
+    p.slides.push(second);
+    let placed = place_slide(&p, 1);
+    assert_eq!(placed.texts.len(), 1);
+    assert_eq!(placed.texts[0].body.text(), "2");
+    // The layout was drawn from the same value, so the offsets agree with the body.
+    assert_eq!(placed.texts[0].layout.runs.iter().map(|r| r.chars.1).max(), Some(1));
+}
+
+#[test]
+fn placed_text_takes_its_date_from_the_given_render_options() {
+    use deckcraft_text::datetime::DateTime;
+    let p = deck_with(vec![field_shape(Some("datetime1"), "1/1/2000")]);
+    let at = |now: DateTime| place_slide_with(&p, 0, &RenderOpts { now: Some(now), ..Default::default() });
+    assert_eq!(at(DateTime::new(2026, 10, 9, 20, 5, 7)).texts[0].body.text(), "10/9/2026");
+    assert_eq!(at(DateTime::new(2027, 3, 4, 0, 0, 0)).texts[0].body.text(), "3/4/2027");
+}
+
 /// A chart that has no text colour of its own takes PowerPoint's default, the theme's text colour
 /// at 65 % plus 35 %: light on Nocturne's dark slides (it used to be a fixed grey, near-invisible
 /// there), 595959 grey on Harbor's light ones.
@@ -2950,4 +3203,60 @@ fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
     assert_eq!(count(&plain, &red), 0, "no red without a text colour");
     assert!(count(&coloured, &red) > 30, "the labels take the chart's red: {} red pixels", count(&coloured, &red));
     assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
+}
+
+/// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a
+/// buffer from its on-screen length and abort. It is skipped; the rest of the slide still draws.
+#[test]
+fn a_shape_far_larger_than_any_screen_is_skipped_not_flattened() {
+    let huge = Shape {
+        id: ShapeId(501),
+        geom: Geom::preset("ellipse"),
+        xfrm: Some(Xfrm::new(-5e17, -5e17, 1e18, 1e18)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent2)),
+        ..Default::default()
+    };
+    let normal = Shape {
+        id: ShapeId(502),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let p = deck_with(vec![huge, normal]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let accent = p.masters[0].theme.colors.get(deckcraft_color::SchemeSlot::Accent1);
+    let px = img.pixel(200, 150);
+    assert!((px[0] as i32 - accent.r as i32).abs() <= 2, "{px:?} vs {accent:?}");
+    assert_eq!(img.pixel(50, 50), [255, 255, 255, 255], "the huge ellipse is not drawn");
+}
+
+/// #1165: a path with a NaN point is not drawn, even when the shape's frame is finite and small
+/// (a bounding box, or a union with the frame, would hide the NaN).
+#[test]
+fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
+    let geo = |pts: &[(f64, f64)]| {
+        let mut path = kurbo::BezPath::new();
+        path.move_to(pts[0]);
+        for p in &pts[1..] {
+            path.line_to(*p);
+        }
+        deckcraft_geom::preset::Geometry {
+            paths: vec![deckcraft_geom::preset::SubPath { path, fill: deckcraft_geom::preset::FillMode::Norm, stroke: true, even_odd: false }],
+            text_rect: kurbo::Rect::ZERO,
+            handles: vec![],
+            sites: vec![],
+        }
+    };
+    let m = kurbo::Affine::IDENTITY;
+    assert!(crate::geometry::drawable(&geo(&[(0.0, 0.0), (100.0, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (f64::NAN, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (f64::INFINITY, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (1e18, 50.0)]), m, 100.0, 50.0));
+    // A quadratic whose extremum overflows kurbo's bounding box: its control point still counts.
+    let mut path = kurbo::BezPath::new();
+    path.move_to((0.0, 0.0));
+    path.quad_to((1e308, 0.0), (0.0, 0.0));
+    let mut quad = geo(&[(0.0, 0.0), (1.0, 1.0)]);
+    quad.paths[0].path = path;
+    assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }

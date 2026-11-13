@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Align2, AnimClass, AnimStart, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, animtimeline, icons, json, paint_anim_tile,
+    pos2, run, theme, vec2,
+};
 
 /// Render the animation pane and route its controls through the engine's animation commands.
 pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {

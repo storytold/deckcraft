@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Caps, ColorRef, ColorTransform, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or,
+    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_param, resolve, str_param,
+};
 
 pub(super) fn bold(s: &mut Session, p: &Value) -> Result<Value> {
     let v = on_param(p, current_run(s).bold);
@@ -52,12 +55,18 @@ pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.size = Some(v))
 }
 
-/// PowerPoint's font size list (grow/shrink steps through it).
-pub const SIZES: [f64; 20] = [8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 54.0, 60.0, 66.0];
+/// PowerPoint's font size list, as the Font Size box lists it (grow/shrink steps through it).
+pub const SIZES: [f64; 24] =
+    [8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 54.0, 60.0, 66.0, 72.0, 80.0, 88.0, 96.0];
 
+/// Grow steps up the list, then 8 points at a time past its top; shrink steps back down the same
+/// way. A size past the top used to shrink straight to 66 (#2059).
 fn step(cur: f64, up: bool) -> f64 {
+    let top = SIZES[SIZES.len() - 1];
     if up {
         SIZES.iter().copied().find(|v| *v > cur + 0.01).unwrap_or((cur + 8.0).min(4000.0))
+    } else if cur - 0.01 > top {
+        (cur - 8.0).max(top)
     } else {
         SIZES.iter().rev().copied().find(|v| *v < cur - 0.01).unwrap_or((cur - 1.0).max(1.0))
     }
@@ -69,10 +78,18 @@ fn grow_shrink(s: &mut Session, up: bool) -> Result<Value> {
     let ctx_sizes = current_run(s).size.unwrap_or(18.0);
     let _ = st;
     let base = ctx_sizes;
-    format_run(s, &move |r| {
-        let cur = r.size.unwrap_or(base);
-        r.size = Some(step(cur, up));
-    })
+    // A layout/master level steps from its own effective size, not the first run's.
+    format_run_levels(
+        s,
+        &move |r| {
+            let cur = r.size.unwrap_or(base);
+            r.size = Some(step(cur, up));
+        },
+        &move |r, eff| {
+            let cur = r.size.or(eff.size).unwrap_or(18.0);
+            r.size = Some(step(cur, up));
+        },
+    )
 }
 
 pub(super) fn grow(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -97,6 +114,7 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
             edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
                 if let ShapeKind::Chart(ch) = &mut sh.kind {
                     ch.text_color = Some(tc.clone());
+                    ch.legend_entries.iter_mut().for_each(|e| e.color = None);
                     ch.raw = None;
                 }
                 Ok(())
@@ -224,6 +242,9 @@ pub(super) fn language_all(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn highlight(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color");
+    if c.is_none() && p.get("color").is_some_and(|v| !v.is_null()) {
+        return Err(bad("format.highlight", "`color` is not a valid colour"));
+    }
     format_run(s, &move |r| r.highlight = c.clone())
 }
 

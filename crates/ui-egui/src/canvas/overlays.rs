@@ -1,4 +1,5 @@
-use super::*;
+use super::{Color32, CornerRadius, Point, Pos2, Rect, SlideApp, Stroke, Tokens, ToolKind, Ui, Xf, Xfrm, box_handles, pos2, theme};
+use deckcraft_engine::DocState;
 
 fn poly(p: &egui::Painter, pts: [Pos2; 4], stroke: Stroke) {
     for i in 0..4 {
@@ -6,16 +7,7 @@ fn poly(p: &egui::Painter, pts: [Pos2; 4], stroke: Stroke) {
     }
 }
 
-pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
-    // Spelling squiggles under misspelt words (checked in the background).
-    if let Some(st) = app.session.active() {
-        let lines = app.squiggles.update(st, Some(ui.ctx()));
-        let scale = (xf.to_screen(Point::new(1.0, 0.0)) - xf.to_screen(Point::new(0.0, 0.0))).length();
-        for (a, b) in lines {
-            crate::squiggles::paint(painter, xf.to_screen(a), xf.to_screen(b), scale);
-        }
-    }
-    let Some(st) = app.session.active() else { return };
+fn selection_handles(app: &SlideApp, st: &DocState, painter: &egui::Painter, xf: Xf, t: &Tokens) {
     let sel_stroke = Stroke::new(1.0, t.selection);
     let editing = st.selection.text.clone();
     for id in &st.selection.shapes {
@@ -104,6 +96,10 @@ pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf:
             }
         }
     }
+}
+
+fn text_overlays(st: &DocState, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
+    let editing = st.selection.text.clone();
     // Caret / text selection, in a shape or a table cell.
     if let Some(ts) = &editing {
         for quad in text_marks(st, ts).iter().flat_map(|m| &m.selection) {
@@ -148,6 +144,20 @@ pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf:
             painter.add(egui::Shape::convex_polygon(pts.iter().map(|q| xf.to_screen(f.affine * *q)).collect(), t.text_selection, Stroke::NONE));
         }
     }
+}
+
+pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
+    // Spelling squiggles under misspelt words (checked in the background).
+    if let Some(st) = app.session.active() {
+        let lines = app.squiggles.update(st, Some(ui.ctx()));
+        let scale = (xf.to_screen(Point::new(1.0, 0.0)) - xf.to_screen(Point::new(0.0, 0.0))).length();
+        for (a, b) in lines {
+            crate::squiggles::paint(painter, xf.to_screen(a), xf.to_screen(b), scale);
+        }
+    }
+    let Some(st) = app.session.active() else { return };
+    selection_handles(app, st, painter, xf, t);
+    text_overlays(st, ui, painter, xf, t);
     // Smart guides, marquee, previews.
     for g in &app.session.tool.guides {
         let (a, b) =

@@ -1,6 +1,8 @@
 use super::geometry::{blur, color, pre_translate, scale_of};
 use super::opts::ParaState;
-use super::*;
+use super::{
+    Affine, Arc, BezPath, Ctx, FontDb, HashMap, Opts, PhType, Rect, RenderContext, Rgba, Shape, TextBody, Vec2, colr, paint, peniko, resolve,
+};
 
 /// The prompt shown in an empty placeholder, formatted like its content would be.
 pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
@@ -33,30 +35,38 @@ pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
     t
 }
 
+/// Most path elements this thread's glyph cache retains. Its entries are shared with the font
+/// cache, but they stay alive here after that cache evicts them, so they are bounded by elements.
+const GLYPH_CACHE_MAX_ELEMENTS: usize = 1 << 22;
+
 thread_local! {
-    static GLYPH_CACHE: std::cell::RefCell<HashMap<(u32, u32), Arc<BezPath>>> = std::cell::RefCell::new(HashMap::new());
+    /// The cached outlines, and the path elements they hold.
+    static GLYPH_CACHE: std::cell::RefCell<(HashMap<(u32, u32), Arc<BezPath>>, usize)> = std::cell::RefCell::new((HashMap::new(), 0));
 }
 
 pub(crate) fn glyph(face: &deckcraft_fonts::FontFace, gid: u32) -> Arc<BezPath> {
     let key = (face.id(), gid);
-    if let Some(p) = GLYPH_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+    if let Some(p) = GLYPH_CACHE.with(|c| c.borrow().0.get(&key).cloned()) {
         return p;
     }
     let p = FontDb::global().outline(face, gid);
     GLYPH_CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() > 200_000 {
-            c.clear();
+        let n = p.elements().len();
+        if c.0.len() > 200_000 || c.1.saturating_add(n) > GLYPH_CACHE_MAX_ELEMENTS {
+            c.0.clear();
+            c.1 = 0;
         }
-        c.insert(key, p.clone());
+        c.1 += n;
+        c.0.insert(key, p.clone());
     });
     p
 }
 
-/// Draw a text body into shape space `m` within the text rect.
-pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody, tr: Rect, m: Affine, fields: &dyn Fields, prompt: Option<Rgba>) {
-    let l = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: prompt, no_shrink: false });
-    draw_layout(ctx, &l, tr, m);
+/// Draw a text body into shape space `m` within the text rect `opts.rect`.
+pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody, m: Affine, opts: &Opts) {
+    let l = deckcraft_text::layout(rctx, s, body, opts);
+    draw_layout(ctx, &l, opts.rect, m);
 }
 
 /// Add transient list markers to an editor layout, using the document's own bullet glyphs.
@@ -103,6 +113,7 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
+    let lines_of = LineIndex::new(l);
     let deco = |ctx: &mut RenderContext, d: &deckcraft_text::Deco| {
         let ps = para(d.para);
         if !ps.visible || ps.opacity <= 0.001 {
@@ -142,7 +153,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
                 draw_glyph(ctx, run, *gid, at, ps.opacity);
                 continue;
             };
-            let li = line_at(l, run.para, *y);
+            let li = lines_of.line_at(run.para, *y);
             if !grads.iter().any(|(i, _)| *i == li) {
                 let scheme = deckcraft_color::ColorScheme { name: String::new(), colors: [Rgba::BLACK; 12] };
                 let stops = g.stops.iter().map(|s| (s.pos, s.color.resolve(&scheme, None))).collect();
@@ -189,8 +200,78 @@ pub(crate) fn fill_deco(ctx: &mut RenderContext, d: &deckcraft_text::Deco) {
     }
 }
 
-/// The line of paragraph `para` holding a glyph on baseline `y` (the nearest baseline).
-fn line_at(l: &deckcraft_text::TextLayout, para: usize, y: f64) -> usize {
+/// Finds the line of a paragraph holding a glyph on baseline `y` without scanning the paragraph's
+/// lines for every glyph. A paragraph whose lines are ordered top to bottom (every layout the text
+/// crate produces) is searched by bisection; any other falls back to a scan with the same answer.
+pub(crate) struct LineIndex<'a> {
+    l: &'a deckcraft_text::TextLayout,
+    /// Per paragraph: its lines' tops, bottoms and baselines all rise with the line index.
+    ordered: Vec<bool>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub(crate) fn new(l: &'a deckcraft_text::TextLayout) -> Self {
+        let ordered = l
+            .para_lines
+            .iter()
+            .map(|&(first, count)| {
+                let end = first.saturating_add(count).min(l.lines.len());
+                l.lines.get(first..end).is_some_and(|ls| {
+                    ls.iter().all(|a| a.top <= a.bottom)
+                        && ls.windows(2).all(|w| w[0].top <= w[1].top && w[0].bottom <= w[1].bottom && w[0].baseline <= w[1].baseline)
+                })
+            })
+            .collect();
+        LineIndex { l, ordered }
+    }
+
+    /// The nearest line baseline to `y` among `lines` (the first of equals), as an index into `lines`.
+    fn nearest(lines: &[deckcraft_text::LineInfo], y: f64) -> Option<usize> {
+        let i = lines.partition_point(|li| li.baseline < y);
+        let best = match (i.checked_sub(1), lines.get(i)) {
+            (Some(p), Some(n)) => {
+                if (lines[p].baseline - y).abs() <= (n.baseline - y).abs() {
+                    p
+                } else {
+                    i
+                }
+            }
+            (Some(p), None) => p,
+            (None, Some(_)) => i,
+            (None, None) => return None,
+        };
+        let b = lines[best].baseline;
+        Some(lines.partition_point(|li| li.baseline < b))
+    }
+
+    /// The paragraph's lines when they are ordered, with the index of the first.
+    fn ordered_lines(&self, para: usize) -> Option<(usize, &[deckcraft_text::LineInfo])> {
+        let &(first, count) = self.l.para_lines.get(para)?;
+        let end = first.saturating_add(count).min(self.l.lines.len());
+        (self.ordered[para] && first < end).then(|| (first, &self.l.lines[first..end]))
+    }
+
+    /// The line of paragraph `para` holding a glyph on baseline `y` (the nearest baseline).
+    pub(crate) fn line_at(&self, para: usize, y: f64) -> usize {
+        if let Some((first, ls)) = self.ordered_lines(para) {
+            return Self::nearest(ls, y).map_or(0, |i| first + i);
+        }
+        line_at_scan(self.l, para, y)
+    }
+
+    /// The first line of paragraph `para` whose box holds `y`, else the nearest baseline's line.
+    pub(crate) fn line_of(&self, para: usize, y: f64) -> Option<usize> {
+        let Some((first, ls)) = self.ordered_lines(para) else { return crate::warp::line_of_scan(self.l, para, y) };
+        let i = ls.partition_point(|li| li.bottom + 0.01 < y);
+        if ls.get(i).is_some_and(|li| y >= li.top - 0.01) {
+            return Some(first + i);
+        }
+        Self::nearest(ls, y).map(|i| first + i)
+    }
+}
+
+/// The line of paragraph `para` holding a glyph on baseline `y` (the nearest baseline), by scanning.
+fn line_at_scan(l: &deckcraft_text::TextLayout, para: usize, y: f64) -> usize {
     if let Some(&(first, count)) = l.para_lines.get(para) {
         if count == 0 {
             return 0;
@@ -314,5 +395,40 @@ fn draw_glyph_with(
         ctx.set_paint(color(oc, opacity));
         ctx.set_stroke(kurbo::Stroke::new(ow / k.max(1e-9)).with_join(kurbo::Join::Round));
         ctx.stroke_path(&path);
+    }
+}
+
+#[cfg(test)]
+mod line_index_tests {
+    use super::*;
+    use deckcraft_text::{LineInfo, TextLayout};
+
+    fn layout(ordered: bool) -> TextLayout {
+        let line = |para, top: f64| LineInfo { para, top, baseline: top + 8.0, bottom: top + 10.0, ..Default::default() };
+        let mut lines: Vec<LineInfo> = (0..40).map(|i| line(usize::from(i >= 25), f64::from(i) * 10.0)).collect();
+        if !ordered {
+            lines.swap(3, 7);
+        }
+        TextLayout { lines, para_lines: vec![(0, 25), (25, 15)], ..Default::default() }
+    }
+
+    #[test]
+    fn bisection_matches_the_scan() {
+        for ordered in [true, false] {
+            let l = layout(ordered);
+            let idx = LineIndex::new(l_ref(&l));
+            assert_eq!(idx.ordered, vec![ordered, true]);
+            for para in 0..2 {
+                for k in -20..450 {
+                    let y = f64::from(k) * 0.9;
+                    assert_eq!(idx.line_at(para, y), line_at_scan(&l, para, y), "line_at {para} {y}");
+                    assert_eq!(idx.line_of(para, y), crate::warp::line_of_scan(&l, para, y), "line_of {para} {y}");
+                }
+            }
+        }
+    }
+
+    fn l_ref(l: &TextLayout) -> &TextLayout {
+        l
     }
 }

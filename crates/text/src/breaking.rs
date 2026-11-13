@@ -1,5 +1,5 @@
 use super::style::{Cell, ParaShaped};
-use super::*;
+use super::{FontFace, ParaProps};
 
 pub(crate) fn measure_str(face: &FontFace, size: f64, s: &str) -> (f64, Vec<(u32, f64)>) {
     let g = deckcraft_fonts::shape(face, s, &[], |c| c);
@@ -82,9 +82,18 @@ fn is_cj_nonstarter(c: char) -> bool {
     )
 }
 
+/// A character that continues a Latin-style word: a letter or digit that Unicode does not break
+/// between, as opposed to CJK ideographs, kana, spaces, punctuation and symbols such as `&` or `×`
+/// (which share the AL and AI line-break classes with letters).
+fn is_word_char(c: char) -> bool {
+    use unicode_linebreak::BreakClass::{Alphabetic, Ambiguous, HebrewLetter, Numeric};
+    matches!(unicode_linebreak::break_property(c as u32), Alphabetic | Ambiguous | HebrewLetter | Numeric) && c.is_alphanumeric()
+}
+
 /// Break opportunities: allowed[i] = a line may start at char i. Unicode line breaking, then
-/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/` or `\`, and
-/// Korean breaks only between words.
+/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/`, `\`, `?`, `!`, `}`
+/// or `+` inside a word (measured in PowerPoint 2016 for Windows; before an ideograph or a space
+/// the Unicode break stays), and Korean breaks only between words.
 pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, Vec<bool>) {
     let n = text.chars().count();
     let mut allowed = vec![false; n + 1];
@@ -113,7 +122,7 @@ pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, 
         let keep = if (is_hangul(prev) && is_hangul(next)) || prev == '\u{200B}' || next == '\u{2014}' || is_cj_nonstarter(next) {
             false
         } else {
-            latin_break || !matches!(prev, '/' | '\\') || next.is_whitespace()
+            latin_break || !matches!(prev, '/' | '\\' | '?' | '!' | '}' | '+') || !is_word_char(next)
         };
         if !keep
             && !mandatory.get(i + 1).copied().unwrap_or(false)
@@ -132,16 +141,19 @@ pub(crate) struct RawLine {
     next: usize,
 }
 
-pub(crate) fn break_lines(
-    p: &ParaShaped,
-    first_w: f64,
-    rest_w: f64,
-    wrap: bool,
-    tab_stops: &[Tab],
-    default_tab: f64,
-    x0_first: f64,
-    x0_rest: f64,
-) -> Vec<RawLine> {
+/// Wrapping geometry of one paragraph: line widths, start offsets, wrap flag and tab settings.
+pub(crate) struct BreakParams<'a> {
+    pub(crate) first_w: f64,
+    pub(crate) rest_w: f64,
+    pub(crate) wrap: bool,
+    pub(crate) tab_stops: &'a [Tab],
+    pub(crate) default_tab: f64,
+    pub(crate) x0_first: f64,
+    pub(crate) x0_rest: f64,
+}
+
+pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> {
+    let BreakParams { first_w, rest_w, wrap, tab_stops, default_tab, x0_first, x0_rest } = *params;
     let text: String = p.cells.iter().map(|c| c.ch).collect();
     let (allowed, _) = break_opportunities(&text, p.props.latin_line_break.unwrap_or(false));
     let hang = p.props.hanging_punct.unwrap_or(false);
@@ -248,12 +260,15 @@ pub(crate) struct Tab {
     align: TabAlign,
 }
 
+/// The paragraph's tab stops in position order (a stop at no finite position is left out), so
+/// [`tab_advance`] finds the next one by binary search instead of a scan per tab.
 pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
-    props
+    let mut tabs: Vec<Tab> = props
         .tabs
         .as_ref()
         .map(|t| {
             t.iter()
+                .filter(|s| s.pos.is_finite())
                 .map(|s| Tab {
                     pos: s.pos,
                     align: match s.align.as_str() {
@@ -265,7 +280,9 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    tabs.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    tabs
 }
 
 /// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
@@ -289,18 +306,30 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
 pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
-    for s in stops {
-        if s.pos > x + 0.5 {
-            let to = s.pos - x;
-            return match s.align {
-                TabAlign::Left => to,
-                TabAlign::Right => (to - seg.0).max(0.0),
-                TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
-                TabAlign::Decimal => (to - seg.1).max(0.0),
-            };
-        }
+    // `stops` is in position order (`tabs_of`): the next stop is the first past x.
+    // A NaN `x` (a NaN spacing upstream) skips the lookup and takes the finite default-stop path.
+    if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)).filter(|_| !x.is_nan()) {
+        let to = s.pos - x;
+        return match s.align {
+            TabAlign::Left => to,
+            TabAlign::Right => (to - seg.0).max(0.0),
+            TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
+            TabAlign::Decimal => (to - seg.1).max(0.0),
+        };
     }
     let d = if default_tab > 1.0 { default_tab } else { 72.0 };
     let next = ((x / d).floor() + 1.0) * d;
     (next - x).max(1.0)
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::*;
+
+    #[test]
+    fn a_nan_position_takes_the_finite_default_stop() {
+        let stops = [Tab { pos: 100.0, align: TabAlign::Left }];
+        assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0)).is_finite());
+        assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0)), 90.0);
+    }
 }

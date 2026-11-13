@@ -1,6 +1,9 @@
 use super::arrange::{arrange_group, size_group};
 use super::galleries::{cref_param, shapes_gallery};
-use super::*;
+use super::{
+    Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, Value, big, big_button, color_split, enabled, group, json, pos2, rows, run, scheme,
+    small, small_button_ex, theme, vec2, widgets,
+};
 
 /// Render the Picture Format tab's corrections, colour, artistic effects, transparency, styles,
 /// border, and picture actions.
@@ -97,15 +100,31 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         use deckcraft_engine::cmd::picture_style::{STYLES, look};
         let names: Vec<String> = STYLES.iter().map(|(_, l)| l.to_string()).collect();
-        if let Some(i) = widgets::gallery(
-            ui,
-            STYLES.len(),
-            vec2(56.0, 44.0),
-            None,
-            |p, r, i| paint_picture_style(p, r, STYLES.get(i).and_then(|(id, _)| look(id))),
-            |i| names.get(i).cloned().unwrap_or_default(),
-        ) && let Some((id, _)) = STYLES.get(i)
-        {
+        let tiles = |ui: &mut Ui, n: usize| {
+            widgets::gallery(
+                ui,
+                n,
+                STYLE_TILE,
+                None,
+                |p, r, i| paint_picture_style(p, r, STYLES.get(i).and_then(|(id, _)| look(id))),
+                |i| names.get(i).cloned().unwrap_or_default(),
+            )
+        };
+        let mut picked = tiles(ui, inline_styles(ui));
+        // Every style, in rows, behind the gallery's arrow (PowerPoint's More).
+        let more = widgets::drop_button(ui, "", vec2(14.0, 52.0), true);
+        more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "More Picture Styles"));
+        // Six to a row: the 24 styles in four rows.
+        egui::Popup::menu(&more).width(6.0 * (STYLE_TILE.x + 2.0) + 16.0).show(|ui| {
+            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+            ui.horizontal_wrapped(|ui| {
+                if let Some(i) = tiles(ui, STYLES.len()) {
+                    picked = Some(i);
+                    ui.close();
+                }
+            });
+        });
+        if let Some((id, _)) = picked.and_then(|i| STYLES.get(i)) {
             run(app, "picture.style", json!({"style": id}));
         }
     });
@@ -167,6 +186,32 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     size_group(app, ui);
+}
+
+const STYLE_TILE: egui::Vec2 = vec2(56.0, 44.0);
+/// Styles in the ribbon row before the tab has been measured once.
+const DEFAULT_INLINE_STYLES: usize = 6;
+const MIN_INLINE_STYLES: usize = 2;
+
+/// How many Picture Styles the ribbon row shows: as many as leave room for the groups after the
+/// gallery, never fewer than [`MIN_INLINE_STYLES`]. With all 24 in the row, Crop and Size sat
+/// past the ribbon's edge in any window narrower than about 2500 px.
+fn inline_styles(ui: &Ui) -> usize {
+    use deckcraft_engine::cmd::picture_style::STYLES;
+    // A tile plus the group's 1 pt spacing.
+    let step = STYLE_TILE.x + 1.0;
+    let id = egui::Id::unique("picture_styles_inline");
+    let last = ui.ctx().data(|d| d.get_temp::<usize>(id)).unwrap_or(DEFAULT_INLINE_STYLES);
+    let n = match super::spare_room(ui.ctx(), "Picture Format") {
+        // The groups around the gallery keep their width, so this settles in one frame.
+        Some(spare) if spare.is_finite() => (last as f32 + (spare / step).floor()).clamp(MIN_INLINE_STYLES as f32, STYLES.len() as f32) as usize,
+        _ => last,
+    };
+    if n != last {
+        ui.ctx().data_mut(|d| d.insert_temp(id, n));
+        ui.ctx().request_repaint();
+    }
+    n
 }
 
 /// A Picture Styles gallery tile: a landscape "picture" in the style's shape and frame.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, json, pos2, run, vec2};
 
 /// Design Ideas: offline suggestions — the current slide in each theme and layout variations.
 /// Rendered idea thumbnails, kept until the deck, slide or pane width changes (rendering eight

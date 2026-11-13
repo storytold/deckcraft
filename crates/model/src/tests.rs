@@ -73,8 +73,13 @@ fn a_gradient_without_stops_takes_them_from_its_style() {
     let p = Presentation::default();
     let s = &p.slides[0];
     let ctx = Ctx::for_slide(&p, s).unwrap();
-    let own =
-        style::Gradient { tile: [0.0; 4], stops: vec![], shape: style::GradientShape::Linear { angle: 45.0, scaled: true }, rotate_with_shape: true };
+    let own = style::Gradient {
+        tile: [0.0; 4],
+        stops: vec![],
+        shape: style::GradientShape::Linear { angle: 45.0, scaled: true },
+        rotate_with_shape: true,
+        flip: None,
+    };
     let mut st = ShapeStyle::accent(SchemeSlot::Accent2);
     st.fill_ref.0 = 3;
     let sh = Shape { style: Some(st.clone()), fill: Some(Fill::Gradient(own.clone())), ..Default::default() };
@@ -321,4 +326,16 @@ fn only_web_and_mail_links_are_safe_to_open() {
     for url in refused {
         assert!(!safe_url(url), "{url}");
     }
+}
+
+#[test]
+fn colour_alpha_follows_alpha_mod_and_off() {
+    use deckcraft_color::{ColorTransform, Rgba};
+    let base = || ColorRef::rgb(Rgba::rgb(1, 2, 3));
+    let mod_half = base().with(ColorTransform::AlphaMod(50000));
+    assert!((mod_half.alpha() - 0.5).abs() < 1e-9, "{}", mod_half.alpha());
+    let off = base().with(ColorTransform::AlphaOff(-50000));
+    assert!((off.alpha() - 0.5).abs() < 1e-9, "{}", off.alpha());
+    let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
+    assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
 }

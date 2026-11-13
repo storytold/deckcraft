@@ -39,6 +39,33 @@ pub(crate) fn rich_text(t: &El) -> Option<String> {
 /// Most category/value/size slots one chart may decode across all its series and caches, so
 /// sparse `ptCount`/`idx` declarations can't expand far beyond the XML they came from.
 pub(crate) const MAX_CHART_POINTS: usize = 1_000_000;
+/// Data slots (values and categories) the charts of one presentation may hold in all; a chart past
+/// it is read as a placeholder frame. Each frame that references a chart decodes its own copy.
+pub(crate) const MAX_PRESENTATION_CHART_POINTS: usize = 4_000_000;
+
+/// Chart part bytes all chart frames of a presentation may decode, counting every attempt: a
+/// chart that is rejected, or has no data slots, would otherwise be decoded again for each frame
+/// that shows it.
+pub(crate) const MAX_CHART_DECODE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Slots a decoded chart holds, counting the chart itself as at least one.
+pub(crate) fn point_count(c: &Chart) -> usize {
+    let series = |s: &deckcraft_model::chart::Series| {
+        let bars = s.error_bars.as_ref().map_or(0, |e| e.plus.len().saturating_add(e.minus.len()));
+        s.values.len().saturating_add(s.x_values.len()).saturating_add(s.sizes.len()).saturating_add(bars)
+    };
+    let levels: usize = c.category_levels.iter().map(Vec::len).sum();
+    1usize.saturating_add(c.categories.len()).saturating_add(levels).saturating_add(c.series.iter().map(series).fold(0, usize::saturating_add))
+}
+
+/// Bytes of the strings a kept relationship owns.
+fn part_bytes(p: &deckcraft_model::chart::ChartPart) -> usize {
+    p.bytes.len() + p.name.len() + p.content_type.len()
+}
+
+fn rel_bytes(r: &deckcraft_model::chart::ChartRel) -> usize {
+    r.id.len() + r.rel_type.len() + r.target.len() + r.part.len()
+}
 
 /// Most slots one cache may hold.
 const MAX_CACHE_POINTS: usize = 100_000;
@@ -103,6 +130,48 @@ pub fn read_chart_xml(bytes: &[u8]) -> Option<Chart> {
     Some(c)
 }
 
+/// The chart a graphic frame points at. A chart that would cross the presentation's point or
+/// decode limits is not modelled: it is kept as its original part with the relationships it
+/// reaches (`verbatim`), so a save writes it back whole instead of dropping it and its workbook.
+pub(crate) fn frame_chart(imp: &mut super::Imp, part: &super::Part, rid: &str, uri: &str) -> Option<Chart> {
+    let rel = part.rels.get(rid)?;
+    let chartex = uri.ends_with("/chartex");
+    let bytes = imp.pkg.xml_bytes(&rel.target)?;
+    if imp.chart_decode_bytes.saturating_add(bytes.len()) > MAX_CHART_DECODE_BYTES {
+        log::warn!("pptx: chart {} is past the presentation's chart decode limit and is not kept", rel.target);
+        return None;
+    }
+    imp.chart_decode_bytes += bytes.len();
+    let parsed = if imp.chart_points < imp.chart_points_cap {
+        let c = if chartex { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }?;
+        let n = point_count(&c);
+        if imp.chart_points.saturating_add(n) <= imp.chart_points_cap {
+            imp.chart_points = imp.chart_points.saturating_add(n);
+            let mut c = c;
+            c.kept = capture_kept(imp, &rel.target);
+            return Some(c);
+        }
+        Some(c)
+    } else {
+        None
+    };
+    // Past the limit: keep the part itself (charged to the sidecar budget) and show an empty chart.
+    if chartex || imp.kept_sidecar_bytes.saturating_add(bytes.len()) > MAX_KEPT_TOTAL_BYTES {
+        log::warn!("pptx: chart {} is past the presentation's chart limits and is not kept", rel.target);
+        return None;
+    }
+    imp.kept_sidecar_bytes += bytes.len();
+    log::warn!("pptx: chart {} is past the presentation's chart limits; shown empty and written back unchanged", rel.target);
+    let mut c = parsed.unwrap_or_default();
+    c.series.clear();
+    c.categories.clear();
+    c.category_levels.clear();
+    c.raw = Some(String::from_utf8_lossy(bytes).into_owned());
+    c.verbatim = true;
+    c.kept = capture_kept(imp, &rel.target);
+    Some(c)
+}
+
 pub(crate) fn chart_from(root: &El) -> Option<Chart> {
     chart_within(root, MAX_CHART_POINTS)
 }
@@ -121,6 +190,26 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     }
     c.legend = ch.child("legend").map(|l| l.child_val("legendPos").unwrap_or("r").to_string());
     c.legend_overlay = ch.child("legend").and_then(|l| l.child("overlay")).and_then(|o| o.bool("val")).unwrap_or(false);
+    // An entry's own text (`c:legendEntry/c:txPr`) over the legend's, as for any text.
+    c.legend_entries = ch
+        .child("legend")
+        .into_iter()
+        .flat_map(|l| l.children_named("legendEntry"))
+        .take(MAX_LEGEND_ENTRIES)
+        .filter_map(|e| {
+            // The paragraph's own run properties first, then the list style's defaults
+            // (`a:lstStyle` comes before `a:p`, and is the less specific of the two).
+            let tx = e.child("txPr");
+            let para = tx.and_then(|t| t.child("p"));
+            let entry = deckcraft_model::chart::LegendEntry {
+                idx: e.child("idx").and_then(|i| i.u32("val"))?,
+                size: text_size(para).or_else(|| text_size(tx)),
+                bold: text_bold(para).or_else(|| text_bold(tx)),
+                color: text_color(para).or_else(|| text_color(tx)),
+            };
+            (entry.size.is_some() || entry.bold.is_some() || entry.color.is_some()).then_some(entry)
+        })
+        .collect();
     c.chart_fill = simple_fill(root.child("spPr"));
     c.plot_fill = simple_fill(pa.child("spPr"));
 
@@ -129,167 +218,22 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     // (a combo chart's line on the right) is on the secondary axis.
     let val_map: std::collections::HashMap<&str, bool> =
         pa.children_named("valAx").filter_map(|a| Some((a.child_val("axId")?, matches!(a.child_val("axPos"), Some("l" | "r"))))).collect();
-    // A group's value axis: its vertical one when it has two (scatter), else its one.
-    let group_val_axis = |g: &El| {
-        let ids: Vec<(&str, bool)> =
-            g.children_named("axId").filter_map(|a| a.attr("val")).filter_map(|id| val_map.get(id).copied().map(|v| (id, v))).collect();
-        ids.iter().find(|(_, vertical)| *vertical).or(ids.first()).map(|(id, _)| id.to_string())
-    };
-    // The primary value axis is the one on the left (bottom for bar charts); the secondary one
-    // sits on the right or top, or crosses the category axis at its maximum.
-    let secondary_placed = |a: &El| a.child_val("crosses") == Some("max") || matches!(a.child_val("axPos"), Some("r" | "t"));
-    let val_axes_by_id: std::collections::HashMap<&str, &El> = pa.children_named("valAx").filter_map(|a| Some((a.child_val("axId")?, a))).collect();
-    let used: Vec<String> = pa.elements().filter(|g| g.local().ends_with("Chart")).filter_map(group_val_axis).collect();
-    let primary_val: Option<String> =
-        used.iter().find(|id| val_axes_by_id.get(id.as_str()).is_some_and(|a| !secondary_placed(a))).or(used.first()).cloned();
+    let primary_val = primary_value_axis(pa, &val_map);
     for g in pa.elements() {
         let name = g.local();
         if !name.ends_with("Chart") {
             continue;
         }
-        let grouping = g.child_val("grouping").unwrap_or("clustered");
-        let kind = match name {
-            "barChart" | "bar3DChart" => {
-                let bar = g.child_val("barDir") == Some("bar");
-                match (bar, grouping) {
-                    (false, "stacked") => ChartType::StackedColumn,
-                    (false, "percentStacked") => ChartType::PercentColumn,
-                    (false, _) => ChartType::Column,
-                    (true, "stacked") => ChartType::StackedBar,
-                    (true, "percentStacked") => ChartType::PercentBar,
-                    (true, _) => ChartType::Bar,
-                }
-            }
-            "lineChart" | "line3DChart" => {
-                let markers = g.child_val("marker").is_some_and(|v| v == "1" || v == "true")
-                    && g.children_named("ser").all(|s| s.path(&["marker", "symbol"]).and_then(|m| m.attr("val")) != Some("none"));
-                match grouping {
-                    "stacked" | "percentStacked" => ChartType::StackedLine,
-                    _ if markers => ChartType::LineMarkers,
-                    _ => ChartType::Line,
-                }
-            }
-            "areaChart" | "area3DChart" => {
-                if matches!(grouping, "stacked" | "percentStacked") {
-                    ChartType::StackedArea
-                } else {
-                    ChartType::Area
-                }
-            }
-            "pieChart" | "pie3DChart" | "ofPieChart" => ChartType::Pie,
-            "doughnutChart" => ChartType::Doughnut,
-            "scatterChart" => ChartType::Scatter,
-            "bubbleChart" => ChartType::Bubble,
-            "radarChart" => {
-                if g.child_val("radarStyle") == Some("filled") {
-                    ChartType::FilledRadar
-                } else {
-                    ChartType::Radar
-                }
-            }
-            "stockChart" => {
-                c.up_down_bars = g.child("upDownBars").is_some();
-                ChartType::Stock
-            }
-            "surfaceChart" | "surface3DChart" => ChartType::Surface,
-            _ => continue,
-        };
-        // A missing <c:varyColors> means "vary by point" (the schema default is true), as PowerPoint draws it.
-        c.vary_colors = g.child_val("varyColors").is_none_or(|v| v == "1" || v == "true");
-        // A bar group without c:gapWidth / c:overlap takes the schema's defaults (150 %, 0 %),
-        // not the 219 % / -27 % PowerPoint writes into its new charts.
-        let bar_group = g.is("barChart") || g.is("bar3DChart");
-        if let Some(v) = g.child_val("gapWidth").and_then(|v| v.parse::<f64>().ok()) {
-            c.gap_width = (v / 100.0).clamp(0.0, 5.0);
-        } else if bar_group {
-            c.gap_width = 1.5;
+        let Some(kind) = group_chart_type(name, g) else { continue };
+        if name == "stockChart" {
+            c.up_down_bars = g.child("upDownBars").is_some();
         }
-        if let Some(v) = g.child_val("overlap").and_then(|v| v.parse::<f64>().ok()) {
-            c.overlap = (v / 100.0).clamp(-1.0, 1.0);
-        } else if bar_group {
-            c.overlap = 0.0;
-        }
-        if let Some(v) = g.child_val("holeSize").and_then(|v| v.parse::<f64>().ok()) {
-            c.hole_size = (v / 100.0).clamp(0.0, 0.9);
-        }
-        // `<c:showVal/>` without a val attribute means true, as in the schema's default.
-        // The setting belongs to this plot group: a group that asks for no labels keeps them
-        // off, even when another group of a combo chart asks for them (#868).
-        let group_labels = g.path(&["dLbls", "showVal"]).map(|v| v.bool("val").unwrap_or(true));
-        if group_labels == Some(true) {
-            c.data_labels = true;
-        }
+        let group_labels = read_group_settings(g, &mut c);
         kinds.push(kind);
-        let val_axis = group_val_axis(g);
+        let val_axis = group_value_axis(&val_map, g);
         let secondary = val_axis.is_some() && val_axis != primary_val;
         for s in g.children_named("ser").take(1000) {
-            let mut ser = Series {
-                name: s.child("tx").map(|t| strings(t, &mut budget)).and_then(|v| v.into_iter().next()).unwrap_or_default(),
-                fill: simple_fill(s.child("spPr")),
-                line: simple_line(s.child("spPr")),
-                smooth: s.child("smooth").and_then(|v| v.bool("val")).unwrap_or(false),
-                marker: s.path(&["marker", "symbol"]).and_then(|m| m.attr("val")).filter(|m| *m != "none").map(String::from),
-                kind: Some(kind),
-                secondary_axis: secondary,
-                ..Default::default()
-            };
-            // `<c:showVal/>` without a val attribute means true, as in the schema's default.
-            if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
-                ser.data_labels = Some(d);
-            } else if let Some(false) = group_labels {
-                // The group asks for no labels and the series does not say otherwise.
-                ser.data_labels = Some(false);
-            }
-            for t in s.children_named("trendline").take(16) {
-                if let Some(t) = trendline(t) {
-                    ser.trendlines.push(t);
-                }
-            }
-            // Data labels' number format: the series' labels', the group's, else the source data's.
-            let label_fmt = |d: Option<&El>| {
-                d.and_then(|d| d.child("numFmt"))
-                    .filter(|n| n.attr("sourceLinked") != Some("1"))
-                    .and_then(|n| n.attr("formatCode"))
-                    .map(str::to_string)
-            };
-            let source =
-                s.child("val").or_else(|| s.child("yVal")).and_then(|v| v.find("numCache")).and_then(|c| c.child("formatCode")).map(|f| f.text());
-            ser.number_format = label_fmt(s.child("dLbls")).or_else(|| label_fmt(g.child("dLbls"))).or(source).filter(|f| !f.is_empty());
-            for dp in s.children_named("dPt") {
-                if let (Some(i), Some(f)) = (dp.child("idx").and_then(|i| i.u32("val")), simple_fill(dp.child("spPr"))) {
-                    ser.point_fills.push((i as usize, f));
-                }
-            }
-            if let Some(cat) = s.child("cat").or_else(|| s.child("xVal")) {
-                let cats = strings(cat, &mut budget);
-                if matches!(kind, ChartType::Scatter | ChartType::Bubble) {
-                    ser.x_values = cats.iter().map(|v| v.trim().parse::<f64>().ok()).collect();
-                }
-                if c.categories.is_empty() {
-                    c.categories = cats;
-                }
-            }
-            if let Some(v) = s.child("val").or_else(|| s.child("yVal")) {
-                ser.values = numbers(v, &mut budget);
-            }
-            // Error bars on the values: a scatter chart's y bars, any other chart's only ones.
-            if let Some(e) = s
-                .children_named("errBars")
-                .find(|e| e.child_val("errDir").is_none_or(|d| d == "y" || !matches!(kind, ChartType::Scatter | ChartType::Bubble)))
-            {
-                let d = ErrorBars::default();
-                ser.error_bars = Some(ErrorBars {
-                    bar_type: e.child_val("errBarType").unwrap_or("both").to_string(),
-                    val_type: e.child_val("errValType").unwrap_or("fixedVal").to_string(),
-                    value: e.child_val("val").and_then(|v| v.parse().ok()).filter(|v: &f64| v.is_finite()).unwrap_or(d.value),
-                    plus: e.child("plus").map(|p| numbers(p, &mut budget)).unwrap_or_default(),
-                    minus: e.child("minus").map(|p| numbers(p, &mut budget)).unwrap_or_default(),
-                    end_cap: e.child("noEndCap").and_then(|v| v.bool("val")) != Some(true),
-                });
-            }
-            if let Some(b) = s.child("bubbleSize") {
-                ser.sizes = numbers(b, &mut budget);
-            }
+            let ser = read_series(s, g, (kind, secondary, group_labels), &mut c.categories, &mut budget);
             c.series.push(ser);
         }
     }
@@ -305,11 +249,192 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
             s.secondary_axis = false;
         }
     }
-    // Axes.
     c.lang = root.child_val("lang").map(str::to_string);
+    let (val_ax, cat_ax) = read_axes(&mut c, pa, &primary_val);
+    read_text_styles(&mut c, root, ch, val_ax, cat_ax);
+    Some(c)
+}
+
+/// A group's value axis: its vertical one when it has two (scatter), else its one.
+fn group_value_axis(val_map: &std::collections::HashMap<&str, bool>, g: &El) -> Option<String> {
+    let ids: Vec<(&str, bool)> =
+        g.children_named("axId").filter_map(|a| a.attr("val")).filter_map(|id| val_map.get(id).copied().map(|v| (id, v))).collect();
+    ids.iter().find(|(_, vertical)| *vertical).or(ids.first()).map(|(id, _)| id.to_string())
+}
+
+/// The primary value axis is the one on the left (bottom for bar charts); the secondary one
+/// sits on the right or top, or crosses the category axis at its maximum.
+fn primary_value_axis(pa: &El, val_map: &std::collections::HashMap<&str, bool>) -> Option<String> {
+    let secondary_placed = |a: &El| a.child_val("crosses") == Some("max") || matches!(a.child_val("axPos"), Some("r" | "t"));
+    let val_axes_by_id: std::collections::HashMap<&str, &El> = pa.children_named("valAx").filter_map(|a| Some((a.child_val("axId")?, a))).collect();
+    let used: Vec<String> = pa.elements().filter(|g| g.local().ends_with("Chart")).filter_map(|g| group_value_axis(val_map, g)).collect();
+    used.iter().find(|id| val_axes_by_id.get(id.as_str()).is_some_and(|a| !secondary_placed(a))).or(used.first()).cloned()
+}
+
+/// The chart type of a plot group (`name` is its element name), or `None` for an unknown group.
+fn group_chart_type(name: &str, g: &El) -> Option<ChartType> {
+    let grouping = g.child_val("grouping").unwrap_or("clustered");
+    Some(match name {
+        "barChart" | "bar3DChart" => {
+            let bar = g.child_val("barDir") == Some("bar");
+            match (bar, grouping) {
+                (false, "stacked") => ChartType::StackedColumn,
+                (false, "percentStacked") => ChartType::PercentColumn,
+                (false, _) => ChartType::Column,
+                (true, "stacked") => ChartType::StackedBar,
+                (true, "percentStacked") => ChartType::PercentBar,
+                (true, _) => ChartType::Bar,
+            }
+        }
+        "lineChart" | "line3DChart" => {
+            let markers = g.child_val("marker").is_some_and(|v| v == "1" || v == "true")
+                && g.children_named("ser").all(|s| s.path(&["marker", "symbol"]).and_then(|m| m.attr("val")) != Some("none"));
+            match grouping {
+                "stacked" | "percentStacked" => ChartType::StackedLine,
+                _ if markers => ChartType::LineMarkers,
+                _ => ChartType::Line,
+            }
+        }
+        "areaChart" | "area3DChart" => {
+            if matches!(grouping, "stacked" | "percentStacked") {
+                ChartType::StackedArea
+            } else {
+                ChartType::Area
+            }
+        }
+        "pieChart" | "pie3DChart" | "ofPieChart" => ChartType::Pie,
+        "doughnutChart" => ChartType::Doughnut,
+        "scatterChart" => ChartType::Scatter,
+        "bubbleChart" => ChartType::Bubble,
+        "radarChart" => {
+            if g.child_val("radarStyle") == Some("filled") {
+                ChartType::FilledRadar
+            } else {
+                ChartType::Radar
+            }
+        }
+        "stockChart" => ChartType::Stock,
+        "surfaceChart" | "surface3DChart" => ChartType::Surface,
+        _ => return None,
+    })
+}
+
+/// Chart-wide settings a plot group carries (vary colours, gap, overlap, hole, data labels).
+/// Returns the group's own data-label setting.
+fn read_group_settings(g: &El, c: &mut Chart) -> Option<bool> {
+    // A missing <c:varyColors> means "vary by point" (the schema default is true), as PowerPoint draws it.
+    c.vary_colors = g.child_val("varyColors").is_none_or(|v| v == "1" || v == "true");
+    // A bar group without c:gapWidth / c:overlap takes the schema's defaults (150 %, 0 %),
+    // not the 219 % / -27 % PowerPoint writes into its new charts.
+    let bar_group = g.is("barChart") || g.is("bar3DChart");
+    if let Some(v) = g.child_val("gapWidth").and_then(|v| v.parse::<f64>().ok()) {
+        c.gap_width = (v / 100.0).clamp(0.0, 5.0);
+    } else if bar_group {
+        c.gap_width = 1.5;
+    }
+    if let Some(v) = g.child_val("overlap").and_then(|v| v.parse::<f64>().ok()) {
+        c.overlap = (v / 100.0).clamp(-1.0, 1.0);
+    } else if bar_group {
+        c.overlap = 0.0;
+    }
+    if let Some(v) = g.child_val("holeSize").and_then(|v| v.parse::<f64>().ok()) {
+        c.hole_size = (v / 100.0).clamp(0.0, 0.9);
+    }
+    // `<c:showVal/>` without a val attribute means true, as in the schema's default.
+    // The setting belongs to this plot group: a group that asks for no labels keeps them
+    // off, even when another group of a combo chart asks for them (#868).
+    let group_labels = g.path(&["dLbls", "showVal"]).map(|v| v.bool("val").unwrap_or(true));
+    if group_labels == Some(true) {
+        c.data_labels = true;
+    }
+    group_labels
+}
+
+/// Data labels' number format: the series' labels', the group's, else the source data's.
+fn label_number_format(s: &El, g: &El) -> Option<String> {
+    let label_fmt = |d: Option<&El>| {
+        d.and_then(|d| d.child("numFmt")).filter(|n| n.attr("sourceLinked") != Some("1")).and_then(|n| n.attr("formatCode")).map(str::to_string)
+    };
+    let source = s.child("val").or_else(|| s.child("yVal")).and_then(|v| v.find("numCache")).and_then(|c| c.child("formatCode")).map(|f| f.text());
+    label_fmt(s.child("dLbls")).or_else(|| label_fmt(g.child("dLbls"))).or(source).filter(|f| !f.is_empty())
+}
+
+/// Error bars on the values: a scatter chart's y bars, any other chart's only ones.
+fn read_error_bars(s: &El, kind: ChartType, budget: &mut usize) -> Option<ErrorBars> {
+    let e = s
+        .children_named("errBars")
+        .find(|e| e.child_val("errDir").is_none_or(|d| d == "y" || !matches!(kind, ChartType::Scatter | ChartType::Bubble)))?;
+    let d = ErrorBars::default();
+    Some(ErrorBars {
+        bar_type: e.child_val("errBarType").unwrap_or("both").to_string(),
+        val_type: e.child_val("errValType").unwrap_or("fixedVal").to_string(),
+        value: e.child_val("val").and_then(|v| v.parse().ok()).filter(|v: &f64| v.is_finite()).unwrap_or(d.value),
+        plus: e.child("plus").map(|p| numbers(p, budget)).unwrap_or_default(),
+        minus: e.child("minus").map(|p| numbers(p, budget)).unwrap_or_default(),
+        end_cap: e.child("noEndCap").and_then(|v| v.bool("val")) != Some(true),
+    })
+}
+
+/// One `c:ser` of group `g`. `group` is (chart type, on the secondary axis, the group's data-label
+/// setting); the first series with categories sets `categories`.
+fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categories: &mut Vec<String>, budget: &mut usize) -> Series {
+    let (kind, secondary, group_labels) = group;
+    let mut ser = Series {
+        name: s.child("tx").map(|t| strings(t, budget)).and_then(|v| v.into_iter().next()).unwrap_or_default(),
+        fill: simple_fill(s.child("spPr")),
+        line: simple_line(s.child("spPr")),
+        smooth: s.child("smooth").and_then(|v| v.bool("val")).unwrap_or(false),
+        marker: s.path(&["marker", "symbol"]).and_then(|m| m.attr("val")).filter(|m| *m != "none").map(String::from),
+        kind: Some(kind),
+        secondary_axis: secondary,
+        ..Default::default()
+    };
+    // `<c:dLbls><c:delete val="1"/>` hides every label of the series, whatever the group says.
+    if s.path(&["dLbls", "delete"]).map(|v| v.bool("val").unwrap_or(true)) == Some(true) {
+        ser.data_labels = Some(false);
+    // `<c:showVal/>` without a val attribute means true, as in the schema's default.
+    } else if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
+        ser.data_labels = Some(d);
+    } else if let Some(false) = group_labels {
+        // The group asks for no labels and the series does not say otherwise.
+        ser.data_labels = Some(false);
+    }
+    for t in s.children_named("trendline").take(16) {
+        if let Some(t) = trendline(t) {
+            ser.trendlines.push(t);
+        }
+    }
+    ser.number_format = label_number_format(s, g);
+    for dp in s.children_named("dPt") {
+        if let (Some(i), Some(f)) = (dp.child("idx").and_then(|i| i.u32("val")), simple_fill(dp.child("spPr"))) {
+            ser.point_fills.push((i as usize, f));
+        }
+    }
+    if let Some(cat) = s.child("cat").or_else(|| s.child("xVal")) {
+        let cats = strings(cat, budget);
+        if matches!(kind, ChartType::Scatter | ChartType::Bubble) {
+            ser.x_values = cats.iter().map(|v| v.trim().parse::<f64>().ok()).collect();
+        }
+        if categories.is_empty() {
+            *categories = cats;
+        }
+    }
+    if let Some(v) = s.child("val").or_else(|| s.child("yVal")) {
+        ser.values = numbers(v, budget);
+    }
+    ser.error_bars = read_error_bars(s, kind, budget);
+    if let Some(b) = s.child("bubbleSize") {
+        ser.sizes = numbers(b, budget);
+    }
+    ser
+}
+
+/// Axis scaling, titles, number formats and visibility. Returns the primary value axis and the
+/// category axis.
+fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Option<&'a El>, Option<&'a El>) {
     let vertical = |a: &&El| matches!(a.child_val("axPos"), Some("l" | "r"));
     let by_id = |id: &Option<String>| pa.children_named("valAx").find(|a| id.is_some() && a.child_val("axId") == id.as_deref());
-    let val_ax = by_id(&primary_val).or_else(|| pa.children_named("valAx").find(vertical)).or_else(|| pa.children_named("valAx").last());
+    let val_ax = by_id(primary_val).or_else(|| pa.children_named("valAx").find(vertical)).or_else(|| pa.children_named("valAx").last());
     let num = |a: &El, k: &str| a.child_val(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite());
     // An axis' number format: its own unless linked to the source (`sourceLinked="1"`, or no
     // c:numFmt at all), in which case the data's format of the first series plotted on it.
@@ -327,7 +452,11 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         Some(n) if n.attr("sourceLinked") != Some("1") => n.attr("formatCode").map(str::to_string),
         n => source_format(a).or_else(|| n.and_then(|n| n.attr("formatCode")).map(str::to_string)),
     };
-    let deleted = |a: &El| a.child("delete").and_then(|d| d.bool("val")) == Some(true);
+    // `c:tickLblPos val="none"` hides the labels just as `c:delete` does.
+    let deleted = |a: &El| a.child("delete").and_then(|d| d.bool("val")) == Some(true) || a.child_val("tickLblPos") == Some("none");
+    // A gridline whose `c:spPr/a:ln` has `a:noFill` is not drawn, though the element is there.
+    let grid =
+        |a: &El, k: &str| a.child(k).is_some_and(|g| !g.child("spPr").and_then(|p| p.child("ln")).is_some_and(|l| l.child("noFill").is_some()));
     if c.kind == ChartType::Combo && c.series.iter().any(|s| s.secondary_axis) {
         let primary_id = val_ax.and_then(|a| a.child_val("axId"));
         // The other vertical value axis is the secondary one.
@@ -342,8 +471,8 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     }
     let cat_ax = pa.child("catAx").or_else(|| pa.child("dateAx")).or_else(|| pa.children_named("valAx").find(|a| !vertical(a)));
     if let Some(v) = val_ax {
-        c.gridlines = v.child("majorGridlines").is_some();
-        c.minor_gridlines = v.child("minorGridlines").is_some();
+        c.gridlines = grid(v, "majorGridlines");
+        c.minor_gridlines = grid(v, "minorGridlines");
         let sc = v.child("scaling");
         c.y_min = sc.and_then(|s| s.child_val("min")).and_then(|v| v.parse().ok()).filter(|v: &f64| v.is_finite());
         c.y_max = sc.and_then(|s| s.child_val("max")).and_then(|v| v.parse().ok()).filter(|v: &f64| v.is_finite());
@@ -357,6 +486,11 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         c.cat_reversed = a.child("scaling").and_then(|s| s.child_val("orientation")).is_some_and(|o| o == "maxMin");
         c.axis_titles.0 = a.child("title").map(|t| rich_text(t).unwrap_or_else(|| "Axis Title".into()));
     }
+    (val_ax, cat_ax)
+}
+
+/// Text sizes and colours as the file sets them.
+fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_ax: Option<&El>) {
     // Text sizes as the file sets them (PowerPoint draws chart text at these sizes, not scaled to
     // the chart): the axes' and legend's, else the whole chart's; the title's own.
     let chart_size = text_size(root.child("txPr"));
@@ -364,7 +498,6 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     // Text colour likewise: the axes' and legend's, else the whole chart's.
     c.text_color = [val_ax, cat_ax, ch.child("legend"), Some(root)].into_iter().flatten().find_map(|e| text_color(e.child("txPr")));
     c.title_size = ch.child("title").and_then(|t| text_size(t.child("tx").and_then(|x| x.child("rich"))).or_else(|| text_size(t.child("txPr"))));
-    Some(c)
 }
 
 fn trend_num(e: &El, k: &str) -> Option<f64> {
@@ -425,9 +558,20 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
 
     let key = crate::opc::norm(chart_part);
     if let Some(cached) = imp.kept_charts.get(&key) {
+        // Every frame that shows this chart gets its own copy, so each copy is charged like the first.
+        let bytes: usize = cached.parts.iter().map(part_bytes).sum::<usize>() + cached.rels.iter().map(rel_bytes).sum::<usize>();
+        if imp.kept_sidecar_bytes.saturating_add(bytes) > MAX_KEPT_TOTAL_BYTES {
+            log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
+            return ChartKept::default();
+        }
+        imp.kept_sidecar_bytes += bytes;
         return cached.clone();
     }
 
+    let charged_before = imp.kept_sidecar_bytes;
+    if imp.rejected_kept.get(&key) == Some(&charged_before) {
+        return ChartKept::default();
+    }
     let mut kept = ChartKept::default();
     // The chart document itself is rewritten; don't store a second copy of it.
     let mut seen = std::collections::HashMap::from([(key.clone(), true)]);
@@ -444,6 +588,18 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: r.target, external: false });
         }
     }
+    // The first capture's relationship strings and the parts' names and content types are retained
+    // too (the part bytes were charged as copied).
+    let rel_total: usize =
+        kept.rels.iter().map(rel_bytes).sum::<usize>() + kept.parts.iter().map(|p| p.name.len() + p.content_type.len()).sum::<usize>();
+    if imp.kept_sidecar_bytes.saturating_add(rel_total) > MAX_KEPT_TOTAL_BYTES {
+        log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
+        // The dropped parts must not stay charged against later charts.
+        imp.kept_sidecar_bytes = charged_before;
+        imp.rejected_kept.insert(key, charged_before);
+        return ChartKept::default();
+    }
+    imp.kept_sidecar_bytes += rel_total;
     imp.kept_charts.insert(key, kept.clone());
     kept
 }
@@ -524,6 +680,30 @@ fn copy_part(
     true
 }
 
+/// Legend entries read from one chart; a legend lists at most one per series or category.
+const MAX_LEGEND_ENTRIES: usize = 1024;
+
+/// The weight (`b`) of the first `a:defRPr` or `a:rPr` that sets one under `e`.
+fn text_bold(e: Option<&El>) -> Option<bool> {
+    fn rec(e: &El, depth: usize) -> Option<bool> {
+        if depth > 8 {
+            return None;
+        }
+        for c in e.elements() {
+            if (c.is("defRPr") || c.is("rPr"))
+                && let Some(b) = c.bool("b")
+            {
+                return Some(b);
+            }
+            if let Some(v) = rec(c, depth + 1) {
+                return Some(v);
+            }
+        }
+        None
+    }
+    rec(e?, 0)
+}
+
 /// The size in points of the first `a:defRPr` or `a:rPr` with one under `e` (`sz` in hundredths).
 fn text_size(e: Option<&El>) -> Option<f64> {
     fn rec(e: &El, depth: usize) -> Option<f64> {
@@ -548,6 +728,16 @@ fn text_size(e: Option<&El>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn point_count_charges_every_retained_vector() {
+        let mut c = Chart { categories: vec!["a".into()], category_levels: vec![vec!["x".into(); 2], vec!["y".into(); 3]], ..Default::default() };
+        let mut s =
+            deckcraft_model::chart::Series { values: vec![Some(1.0); 4], x_values: vec![None; 5], sizes: vec![None; 6], ..Default::default() };
+        s.error_bars = Some(deckcraft_model::chart::ErrorBars { plus: vec![None; 7], minus: vec![None; 8], ..Default::default() });
+        c.series = vec![s];
+        assert_eq!(point_count(&c), 1 + 1 + 5 + 4 + 5 + 6 + 15);
+    }
 
     #[test]
     fn sparse_caches_share_one_chart_wide_budget() {
@@ -730,6 +920,26 @@ mod tests {
             r#"<c:chartSpace {ns}><c:chart><c:plotArea><c:barChart><c:barDir val="col"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#
         );
         assert_eq!(read_chart_xml(xml.as_bytes()).unwrap().text_size, None, "no sizes: the renderer picks one");
+    }
+
+    #[test]
+    fn hidden_labels_and_unfilled_gridlines_are_read() {
+        let xml = |ax: &str| {
+            format!(
+                r#"<c:chartSpace xmlns:c="{NS_C}" xmlns:a="{NS_A}"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/></c:catAx><c:valAx><c:axId val="2"/>{ax}</c:valAx></c:plotArea></c:chart></c:chartSpace>"#
+            )
+        };
+        let no_fill = r#"<c:spPr><a:ln w="9525"><a:noFill/></a:ln></c:spPr>"#;
+        let c = read_chart_xml(xml(r#"<c:majorGridlines/><c:minorGridlines/><c:tickLblPos val="nextTo"/>"#).as_bytes()).unwrap();
+        assert!(c.gridlines && c.minor_gridlines && !c.y_hidden);
+        let c = read_chart_xml(
+            xml(&format!(
+                r#"<c:majorGridlines>{no_fill}</c:majorGridlines><c:minorGridlines>{no_fill}</c:minorGridlines><c:tickLblPos val="none"/>"#
+            ))
+            .as_bytes(),
+        )
+        .unwrap();
+        assert!(!c.gridlines && !c.minor_gridlines && c.y_hidden);
     }
 
     #[test]

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ColorRef, Fill, Result, RunKind, SchemeSlot, Session, TextBody, Value, Xfrm, add_shape, bad, bool_or, bool_param, json, new_text_box, ok,
+    str_param, usize_param,
+};
 
 pub(super) fn word_art(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").unwrap_or("Your text here");
@@ -149,6 +152,11 @@ fn apply_date(s: &mut Session, o: &DateOpts) -> Result<Value> {
         }
         return Ok(json!({"where": "caret", "format": o.format, "update": o.update, "text": o.sample}));
     }
+    // Handout or Notes Master view: the master's date placeholder (the selected one, else the
+    // master's own), which every handout or notes page then shows.
+    if s.doc()?.selection.target.is_page_master() {
+        return write_master_date(s, o);
+    }
     // Not editing: the slide's date placeholder (this slide only). A layout with no date
     // placeholder gets a text box instead, so the chosen format is still inserted.
     s.execute("design.headerFooter", &json!({"date": true, "all": false}))?;
@@ -156,6 +164,49 @@ fn apply_date(s: &mut Session, o: &DateOpts) -> Result<Value> {
         return insert_date_box(s, o);
     }
     Ok(json!({"where": "footer", "format": o.format, "update": o.update, "text": o.sample}))
+}
+
+/// Put the date in the date placeholder of the handout or notes master being edited.
+fn write_master_date(s: &mut Session, o: &DateOpts) -> Result<Value> {
+    let (format, sample, lang, update) = (o.format.clone(), o.sample.clone(), o.lang.clone(), o.update);
+    let has_date = {
+        let st = s.doc()?;
+        crate::page_master(&st.doc, st.selection.target).is_some_and(|m| m.shapes.iter().any(|x| x.ph_type() == Some(deckcraft_model::PhType::Date)))
+    };
+    if !has_date {
+        return Err(bad(
+            "insert.dateTime",
+            "this master has no date placeholder; show it with handout.placeholders or notes.placeholders {date: true}",
+        ));
+    }
+    // The text the master holds afterwards, which the answer reports (it can differ from the
+    // caller's sample when the placeholder's own language formats a fixed date).
+    let mut written = o.sample.clone();
+    s.edit(|doc, sel| {
+        let Some(m) = crate::page_master_mut(doc, sel.target) else { return Ok(false) };
+        let m = std::sync::Arc::make_mut(m);
+        let date = |x: &deckcraft_model::Shape| x.ph_type() == Some(deckcraft_model::PhType::Date);
+        let chosen = sel.shapes.iter().find_map(|id| m.shapes.iter().position(|x| x.id == *id && date(x)));
+        let Some(i) = chosen.or_else(|| m.shapes.iter().position(date)) else { return Ok(false) };
+        let Some(sh) = m.shapes.get_mut(i) else { return Ok(false) };
+        let mut props = sh.text.as_ref().and_then(|t| t.paragraphs.first()).and_then(|p| p.runs.first()).map(|r| r.props.clone()).unwrap_or_default();
+        // A fixed date reads in the placeholder's own language when the caller named none.
+        let text = match (&lang, &props.lang) {
+            (None, Some(l)) if !update => date_sample(&format, Some(l)).unwrap_or_else(|_| sample.clone()),
+            _ => sample.clone(),
+        };
+        if let Some(lang) = lang {
+            props.lang = Some(lang);
+        }
+        let kind = if update { RunKind::Field { field: format } } else { RunKind::Text };
+        let body = sh.text.clone().unwrap_or_default();
+        let mut para = body.paragraphs.first().cloned().unwrap_or_default();
+        written.clone_from(&text);
+        para.runs = vec![deckcraft_model::Run { text, props, kind }];
+        sh.text = Some(TextBody { paragraphs: vec![para], ..body });
+        Ok(true)
+    })?;
+    Ok(json!({"where": "master", "format": o.format, "update": o.update, "text": written}))
 }
 
 /// Point the current slide's date placeholder at this format (a field, or the sample as plain text).

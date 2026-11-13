@@ -2,12 +2,18 @@ use super::clock::{monotonic_secs, now_ms};
 use super::ime_hooks::ime_in_ui_pass_key;
 use super::services::{InboxEvent, Services};
 use super::state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp, LocatedPlace, RECENT_MAX, UiState, ViewMode};
-use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+use super::updates_ui;
+use super::{
+    AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
+    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, dialogs, doc_window,
+    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
+};
 
 mod clipboard;
 mod commands;
 mod control;
-mod files;
+pub(crate) mod files;
 mod frame;
 mod ime;
 mod input;
@@ -24,6 +30,11 @@ pub use keys::key_name;
 const STATUS_LINGER_MS: f64 = 6000.0;
 
 impl SlideApp {
+    /// Remove temporary PDFs created for printing.
+    pub fn cleanup_print_previews(&mut self) {
+        self.print_previews.cleanup();
+    }
+
     /// Build application UI state, taking ownership of audio output and initialising media, dialogs,
     /// synthetic input, and timing fields.
     pub fn new(session: Session, mut services: Services) -> Self {
@@ -71,6 +82,7 @@ impl SlideApp {
             integrated_titlebar: false,
             backstage: None,
             pending_urls: vec![],
+            print_previews: files::PrintPreviews::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_copy: None,
@@ -94,6 +106,7 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            host_start: None,
             ime_tracker: egui::ime_context::ImeContextTracker::new(),
             ime_pending: None,
             ime_frame_viewport: None,
@@ -122,6 +135,14 @@ impl SlideApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn enable_update_checks(&mut self) {
         updates_ui::enable(self);
+    }
+
+    /// Start the helper of an update that is ready, so that it installs once the process has
+    /// exited. The desktop shell calls it in `on_exit`, which ends the process on macOS before the
+    /// app is dropped. Later calls do nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_pending_update(&mut self) {
+        updates_ui::start_pending_update(self);
     }
 
     /// A message that must be seen wherever the user is: a toast, which also shows over the start

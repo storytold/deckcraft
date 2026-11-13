@@ -88,7 +88,8 @@ fn a_gradient_without_stops_is_saved_without_stops() {
     let mut p = defaults::new_presentation(None);
     let id = ShapeId(p.alloc_id().expect("ids"));
     let first = p.slides[0].id;
-    let own = Gradient { tile: [0.0; 4], stops: vec![], shape: GradientShape::Linear { angle: 45.0, scaled: true }, rotate_with_shape: true };
+    let own =
+        Gradient { tile: [0.0; 4], stops: vec![], shape: GradientShape::Linear { angle: 45.0, scaled: true }, rotate_with_shape: true, flip: None };
     p.slide_mut(first).expect("slide").shapes.push(Shape {
         id,
         name: "Styled".into(),
@@ -119,6 +120,7 @@ fn a_fill_overlay_round_trips() {
             ],
             shape: GradientShape::Linear { angle: 4.5, scaled: true },
             rotate_with_shape: true,
+            flip: None,
         }),
     };
     p.slide_mut(first).expect("slide").shapes.push(Shape {
@@ -148,6 +150,7 @@ fn a_gradient_tile_rect_is_read_and_round_trips() {
         shape: GradientShape::Path { path: "circle".into(), focus: [0.0, 0.0, 1.0, 1.0] },
         rotate_with_shape: true,
         tile: [-1.0, -1.0, 0.0, 0.0],
+        flip: None,
     };
     let mut p = defaults::new_presentation(None);
     let id = ShapeId(p.alloc_id().expect("ids"));

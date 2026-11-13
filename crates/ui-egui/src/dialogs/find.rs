@@ -1,4 +1,4 @@
-use super::*;
+use super::{Dialog, SlideApp, Ui, Value, check, field, json, vec2};
 
 /// Home › Find / Replace: step through matches (slide text, table cells, notes) or replace them.
 pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {

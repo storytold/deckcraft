@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, FontFace, Point, Rect, Rgba};
 
 /// A run of glyphs in one face, size and colour.
 #[derive(Clone)]
@@ -22,7 +22,7 @@ pub struct GlyphRun {
     pub link: bool,
     /// Opacity of the fill on top of `color`'s own alpha (0 for no fill).
     pub alpha: f64,
-    pub gradient: Option<deckcraft_model::style::Gradient>,
+    pub gradient: Option<std::sync::Arc<deckcraft_model::style::Gradient>>,
     /// Shadow and glow behind the glyphs (`a:rPr/a:effectLst`).
     pub effects: Option<RunEffects>,
     /// East Asian vertical text (`eaVert`): each glyph stands upright, turned a quarter turn

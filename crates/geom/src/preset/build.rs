@@ -4,7 +4,24 @@ use super::builder::{
 };
 use super::catalog::{FillMode, Geometry, Handle, info};
 use super::shapes::{action_button, cloud, math, ribbon, scroll, wedge_rect};
-use super::*;
+use super::{Arc, BezPath, Point, Rect, Vec2, extra};
+
+/// Size and adjust values shared by every preset-shape builder.
+struct Ctx<'a> {
+    name: &'a str,
+    w: f64,
+    h: f64,
+    adj: &'a [f64],
+    defaults: &'a [f64],
+}
+
+impl Ctx<'_> {
+    /// Adjust value `i`: the caller's value, else the preset default, else 0 (non-finite values become 0).
+    fn a(&self, i: usize) -> f64 {
+        let v = self.adj.get(i).copied().or_else(|| self.defaults.get(i).copied()).unwrap_or(0.0);
+        if v.is_finite() { v } else { 0.0 }
+    }
+}
 
 /// Builds the geometry for preset `name` at size `w`×`h` with adjust values `adj` (missing
 /// values use the preset's defaults). Unknown names return `None`; the caller falls back to `rect`.
@@ -12,17 +29,25 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
     if !(w.is_finite() && h.is_finite()) {
         return None;
     }
-    let w = w.max(0.0);
-    let h = h.max(0.0);
     let defaults = info(name).map(|i| i.defaults).unwrap_or(&[]);
-    let a = |i: usize| -> f64 {
-        let v = adj.get(i).copied().or_else(|| defaults.get(i).copied()).unwrap_or(0.0);
-        if v.is_finite() { v } else { 0.0 }
-    };
-    let ss = w.min(h);
-    let full = Rect::new(0.0, 0.0, w, h);
+    let c = Ctx { name, w: w.max(0.0), h: h.max(0.0), adj, defaults };
+    rect_and_triangle_shapes(&c)
+        .or_else(|| polygon_and_symbol_shapes(&c))
+        .or_else(|| bracket_and_arrow_shapes(&c))
+        .or_else(|| flowchart_and_star_shapes(&c))
+        .or_else(|| callout_wave_and_connector_shapes(&c))
+        .or_else(|| extra::build(name, c.w, c.h, &|i| c.a(i)))
+}
+
+fn rect_and_triangle_shapes(c: &Ctx) -> Option<Geometry> {
+    let name = c.name;
+    let w = c.w;
+    let h = c.h;
+    let ss = c.w.min(c.h);
+    let full = Rect::new(0.0, 0.0, c.w, c.h);
+    let a = |i: usize| c.a(i);
     let mut b = Pb::new();
-    let g = match name {
+    let g = match c.name {
         "rect" | "textBox" | "flowChartProcess" => simple(corner_rect(w, h, [Corner::Square; 4]), full, w, h),
         "actionButtonBlank"
         | "actionButtonBackPrevious"
@@ -158,6 +183,20 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
                 sites: mid_sites(w, h),
             }
         }
+        _ => return None,
+    };
+    Some(g)
+}
+
+fn polygon_and_symbol_shapes(c: &Ctx) -> Option<Geometry> {
+    let name = c.name;
+    let w = c.w;
+    let h = c.h;
+    let ss = c.w.min(c.h);
+    let full = Rect::new(0.0, 0.0, c.w, c.h);
+    let a = |i: usize| c.a(i);
+    let mut b = Pb::new();
+    let g = match c.name {
         "pentagon" => simple(b.poly(&polygon_regular(5, w, h, -90.0)).take(), Rect::new(w * 0.2, h * 0.27, w * 0.8, h * 0.9), w, h),
         "heptagon" => simple(b.poly(&polygon_regular(7, w, h, -90.0)).take(), Rect::new(w * 0.16, h * 0.2, w * 0.84, h * 0.86), w, h),
         "decagon" => simple(b.poly(&polygon_regular(10, w, h, 0.0)).take(), Rect::new(w * 0.1, h * 0.17, w * 0.9, h * 0.83), w, h),
@@ -548,6 +587,20 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             let dy4 = (ss * ss - g13 * g13).max(0.0).sqrt() * (h / 2.0) / ssf;
             simple(b.take(), Rect::new(g12 * w / ssf, h / 2.0 - dy4, g0w, h / 2.0 + dy4), w, h)
         }
+        _ => return None,
+    };
+    Some(g)
+}
+
+fn bracket_and_arrow_shapes(c: &Ctx) -> Option<Geometry> {
+    let name = c.name;
+    let w = c.w;
+    let h = c.h;
+    let ss = c.w.min(c.h);
+    let full = Rect::new(0.0, 0.0, c.w, c.h);
+    let a = |i: usize| c.a(i);
+    let mut b = Pb::new();
+    let g = match c.name {
         "cloud" | "cloudCallout" => cloud(name, w, h, a(0), a(1)),
         "bracketPair" => {
             let r = ss * a(0).clamp(0.0, 50000.0) / 1e5;
@@ -826,6 +879,20 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             simple(b.poly(&pts).take(), Rect::from_points(Point::new(tr[0].0, tr[0].1), Point::new(tr[1].0, tr[1].1)).abs(), w, h)
         }
         "mathPlus" | "mathMinus" | "mathEqual" | "mathDivide" | "mathMultiply" | "mathNotEqual" => math(name, w, h, a(0), a(1), a(2)),
+        _ => return None,
+    };
+    Some(g)
+}
+
+fn flowchart_and_star_shapes(c: &Ctx) -> Option<Geometry> {
+    let name = c.name;
+    let w = c.w;
+    let h = c.h;
+    let ss = c.w.min(c.h);
+    let full = Rect::new(0.0, 0.0, c.w, c.h);
+    let a = |i: usize| c.a(i);
+    let mut b = Pb::new();
+    let g = match c.name {
         "flowChartPredefinedProcess" => {
             let r = Pb::new().poly(&[(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)]).take();
             let mut l = Pb::new();
@@ -1034,6 +1101,20 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             );
             simple(b.poly(&pts).take(), Rect::new(w * 5372.0 / 21600.0, h * 6382.0 / 21600.0, w * 14640.0 / 21600.0, h * 15935.0 / 21600.0), w, h)
         }
+        _ => return None,
+    };
+    Some(g)
+}
+
+fn callout_wave_and_connector_shapes(c: &Ctx) -> Option<Geometry> {
+    let name = c.name;
+    let w = c.w;
+    let h = c.h;
+    let ss = c.w.min(c.h);
+    let full = Rect::new(0.0, 0.0, c.w, c.h);
+    let a = |i: usize| c.a(i);
+    let mut b = Pb::new();
+    let g = match c.name {
         "ribbon" | "ribbon2" => ribbon(name == "ribbon2", w, h, a(0), a(1)),
         "verticalScroll" | "horizontalScroll" => scroll(name == "verticalScroll", w, h, a(0)),
         "wave" | "doubleWave" => {
@@ -1117,7 +1198,7 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             let l = Pb::new().m(0.0, 0.0).c(x / 2.0, 0.0, x, h / 4.0, x, h / 2.0).c(x, h * 0.75, (x + w) / 2.0, h, w, h).take();
             Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] }
         }
-        _ => return extra::build(name, w, h, &a),
+        _ => return None,
     };
     Some(g)
 }

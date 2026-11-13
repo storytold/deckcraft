@@ -1,4 +1,4 @@
-use super::*;
+use super::{DateTime, Fields, Rgba, ShapeId, Vec2, datetime};
 
 /// Animation state of one shape during a slide show or preview.
 #[derive(Clone, Debug)]
@@ -95,6 +95,7 @@ impl Default for RenderOpts<'_> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct SlideFields {
     pub(crate) num: u32,
     /// Text for every date field instead of the date ([`RenderOpts::date_text`]).
