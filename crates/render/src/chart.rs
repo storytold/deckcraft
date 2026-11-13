@@ -893,6 +893,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let any_x = s.x_values.iter().flatten().next().is_some();
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
+            let own = v;
             let v = if stacked {
                 let base_v = acc.get(i).copied().unwrap_or(0.0);
                 if let Some(a) = acc.get_mut(i) {
@@ -917,7 +918,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
             pts.push(Point::new(x, to_axis(sec, v)));
-            values.push(s.values.get(i).copied().flatten().unwrap_or(v));
+            values.push(own);
         }
         if pts.is_empty() {
             continue;
@@ -945,9 +946,10 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
             }
         }
-        // A series that asks for value labels (`c:dLbls/c:showVal`) shows each point's value just
-        // above it, as bars do theirs (#2066). Area series keep none: theirs sit inside the area.
-        if !area_kind && c.series_data_labels(s) {
+        // A line series that asks for value labels (`c:dLbls/c:showVal`) shows each point's value
+        // just above it, as bars do theirs (#2066). Area series keep none (theirs sit inside the
+        // area), and scatter and bubble series, which also come here, are left as they were.
+        if matches!(kind, ChartType::Line | ChartType::LineMarkers | ChartType::StackedLine) && c.series_data_labels(s) {
             let gap = base * 0.3 + 3.5;
             for (q, v) in pts.iter().zip(&values) {
                 label(

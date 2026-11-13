@@ -3083,8 +3083,82 @@ fn line_chart_value_labels_are_drawn_above_their_points() {
         let own = red(&draw(kind, true, true));
         assert!(own > off + 30, "{kind:?}: a series' own showVal shows its labels ({off} → {own})");
     }
-    let (off, on) = (red(&draw(ChartType::Area, false, false)), red(&draw(ChartType::Area, true, false)));
-    assert_eq!(on, off, "area series keep no point labels");
+    // Area series keep none, and scatter and bubble series (drawn by the same code) are unchanged.
+    for kind in [ChartType::Area, ChartType::Scatter, ChartType::Bubble] {
+        let (off, on) = (red(&draw(kind, false, false)), red(&draw(kind, true, false)));
+        assert_eq!(on, off, "{kind:?}: no point labels");
+    }
+}
+
+/// The magenta pixels the labels add to a line chart of two series, only the second labelled,
+/// with the chart's text magenta (no series, gridline or axis line is): its axis labels are
+/// magenta too, so they are what the unlabelled chart has.
+fn line_label_ink(kind: ChartType, first: f64, second: f64) -> (Image, Vec<(u32, u32)>) {
+    let off: std::collections::HashSet<_> = magenta_pixels(&line_label_render(kind, first, second, false)).into_iter().collect();
+    let img = line_label_render(kind, first, second, true);
+    let added = magenta_pixels(&img).into_iter().filter(|p| !off.contains(p)).collect();
+    (img, added)
+}
+
+fn line_label_render(kind: ChartType, first: f64, second: f64, labels: bool) -> Image {
+    let mut c = Chart::sample(ChartType::Line);
+    c.kind = kind;
+    c.title = None;
+    c.legend = None;
+    c.series.truncate(2);
+    c.series[0].values = vec![Some(first); 4];
+    c.series[1].values = vec![Some(second); 4];
+    c.series[1].data_labels = Some(labels);
+    c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 255)));
+    let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+}
+
+/// Magenta ink on white, its anti-aliased edges included.
+fn is_magenta(p: [u8; 4]) -> bool {
+    p[0] > 200 && p[2] > 200 && p[1] < 200
+}
+
+fn magenta_pixels(img: &Image) -> Vec<(u32, u32)> {
+    (0..img.width).flat_map(|x| (0..img.height).map(move |y| (x, y))).filter(|(x, y)| is_magenta(img.pixel(*x, *y))).collect()
+}
+
+/// #2066: in a stacked line chart a point's label is its own value, not the running total it is
+/// drawn at. The second series' 5s, stacked on 100s, are labels as wide as an unstacked series of
+/// 5s, and far narrower than one of 105s (the width: the pixel columns the label ink covers).
+#[test]
+fn a_stacked_line_labels_each_point_with_its_own_value() {
+    let width = |kind, second| line_label_ink(kind, 100.0, second).1.iter().map(|(x, _)| *x).collect::<std::collections::HashSet<_>>().len();
+    let (stacked, fives, totals) = (width(ChartType::StackedLine, 5.0), width(ChartType::Line, 5.0), width(ChartType::Line, 105.0));
+    assert!(stacked > 0 && fives > 0, "labels are drawn ({stacked}, {fives})");
+    assert!(stacked.abs_diff(fives) <= 4, "stacked 5s are labelled \"5\" ({stacked} columns vs {fives} for 5s)");
+    assert!(stacked * 2 < totals, "not with the total \"105\" ({stacked} columns vs {totals} for 105s)");
+}
+
+/// #2066: a line label sits just above its point: all its ink is above the series' line, and
+/// its lowest row is close to it.
+#[test]
+fn a_line_label_sits_just_above_its_point() {
+    let (img, ink) = line_label_ink(ChartType::Line, 20.0, 50.0);
+    assert!(!ink.is_empty(), "labels are drawn");
+    let cols: std::collections::HashSet<u32> = ink.iter().map(|(x, _)| *x).collect();
+    let (first, last) = (cols.iter().min().copied().unwrap(), cols.iter().max().copied().unwrap());
+    // The labelled series' flat line at 50: the topmost coloured pixel in the plot's columns
+    // between the labels (the other line is lower, at 20; the axis labels lie outside them).
+    let line_top = (first..last)
+        .filter(|x| !cols.iter().any(|c| c.abs_diff(*x) < 4))
+        .filter_map(|x| {
+            (0..img.height).find(|y| {
+                let p = img.pixel(x, *y);
+                let (hi, lo) = (p[0].max(p[1]).max(p[2]), p[0].min(p[1]).min(p[2]));
+                hi - lo > 80 && !is_magenta(p)
+            })
+        })
+        .min()
+        .unwrap();
+    let lowest = ink.iter().map(|(_, y)| *y).max().unwrap();
+    assert!(lowest < line_top, "the labels are above the line (lowest ink row {lowest}, line at {line_top})");
+    assert!(line_top - lowest < 20, "and just above it (lowest ink row {lowest}, line at {line_top})");
 }
 
 /// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a
