@@ -307,6 +307,7 @@ impl Textures {
             let opts = RenderOpts {
                 scale,
                 edit,
+                placeholder_prompt: Some(crate::i18n::placeholder_prompt),
                 gif_times,
                 threads: threads(),
                 offset: region.offset(),

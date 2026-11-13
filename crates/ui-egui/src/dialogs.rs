@@ -83,7 +83,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let mut window = egui::Window::new(crate::i18n::tr(title(&d.id)))
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)

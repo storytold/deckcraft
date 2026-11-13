@@ -135,14 +135,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut x = rect.min.x + 12.0;
         let y = rect.min.y + 2.0;
         {
-            let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(crate::i18n::tr("File").to_string(), theme::font(13.0), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "File"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("File")));
             if resp.hovered() {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "File", theme::font(13.0), t.text);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("File"), theme::font(13.0), t.text);
             if resp.on_hover_text("File (Alt+F)").clicked() {
                 app.open_backstage(crate::backstage::Page::Home);
             }

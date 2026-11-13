@@ -164,7 +164,7 @@ pub fn paint_theme_tile(p: &egui::Painter, r: Rect, th: &deckcraft_model::Theme)
     let bg = theme::to_color32(th.colors.get(deckcraft_color::SchemeSlot::Lt1));
     let fg = theme::to_color32(th.colors.get(deckcraft_color::SchemeSlot::Dk1));
     p.rect(r, CornerRadius::same(2), bg, Stroke::new(1.0, Color32::from_gray(200)), egui::StrokeKind::Inside);
-    p.text(r.min + vec2(8.0, r.height() * 0.42), Align2::LEFT_CENTER, crate::i18n::tr("Aa"), theme::font(r.height() * 0.38), fg);
+    p.text(r.min + vec2(8.0, r.height() * 0.42), Align2::LEFT_CENTER, "Aa", theme::font(r.height() * 0.38), fg);
     let w = (r.width() - 16.0) / 6.0;
     for k in 0..6 {
         let c = theme::to_color32(th.colors.colors.get(4 + k).copied().unwrap_or(deckcraft_color::Rgba::BLACK));

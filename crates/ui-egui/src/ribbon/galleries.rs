@@ -362,7 +362,7 @@ pub(super) fn quick_styles(app: &mut SlideApp, ui: &mut Ui) {
                     _ => (c, c.lerp_to_gamma(Color32::BLACK, 0.3), Color32::WHITE),
                 };
                 p.rect(rect.shrink(2.0), CornerRadius::same(3), fill, Stroke::new(1.5, stroke), egui::StrokeKind::Inside);
-                p.text(rect.center(), Align2::CENTER_CENTER, crate::i18n::tr("Abc"), theme::font(11.0), text);
+                p.text(rect.center(), Align2::CENTER_CENTER, "Abc", theme::font(11.0), text);
                 if resp.hovered() {
                     p.rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.5, Tokens::get(ui.ctx()).accent), egui::StrokeKind::Inside);
                 }

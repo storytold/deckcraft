@@ -482,7 +482,7 @@ fn draw_insert_to_design(p: &Pen<'_>, icon: Icon) -> bool {
         I::Themes => {
             p.rect((9.5, 2.5, 21.5, 14.5), 2.0, O, N);
             p.rect((2.5, 8.5, 15.0, 21.5), 2.0, B, N);
-            p.text(crate::i18n::tr("Aa"), (8.75, 15.0), 10.0, W);
+            p.text("Aa", (8.75, 15.0), 10.0, W);
         }
         I::Variants => {
             p.rect((8.0, 2.5, 21.5, 11.0), 1.2, t(PU), PU);

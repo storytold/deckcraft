@@ -1,4 +1,4 @@
-use super::{DateTime, Fields, Rgba, ShapeId, Vec2, datetime};
+use super::{DateTime, Fields, PhType, Rgba, ShapeId, Vec2, datetime};
 
 /// Animation state of one shape during a slide show or preview.
 #[derive(Clone, Debug)]
@@ -43,6 +43,10 @@ pub struct RenderOpts<'a> {
     pub scale: f64,
     /// Editor view: placeholder prompts and dashed placeholder outlines.
     pub edit: bool,
+    /// Optional interface prompt provider: an empty placeholder shows `placeholder_prompt(kind)`
+    /// (the UI passes its translation) instead of the English `PhType::prompt()`. Layout-supplied
+    /// custom prompt text and document text stay intact.
+    pub placeholder_prompt: Option<fn(PhType) -> &'static str>,
     /// Draw shapes marked hidden (Selection pane) — the editor hides them like the show does.
     pub show_hidden: bool,
     /// Per-shape animation state.
@@ -78,6 +82,7 @@ impl Default for RenderOpts<'_> {
         RenderOpts {
             scale: 1.0,
             edit: false,
+            placeholder_prompt: None,
             show_hidden: false,
             state: None,
             skip: &[],

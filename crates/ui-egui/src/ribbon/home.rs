@@ -67,6 +67,7 @@ pub(super) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
                         &deckcraft_render::RenderOpts {
                             scale: 192.0 / d.doc.slide_size.width.max(1.0),
                             edit: true,
+                            placeholder_prompt: Some(crate::i18n::placeholder_prompt),
                             size: Some((192, 108)),
                             ..Default::default()
                         },

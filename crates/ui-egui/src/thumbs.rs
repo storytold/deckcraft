@@ -278,6 +278,7 @@ fn master_list(app: &mut SlideApp, ui: &mut Ui) {
                     &deckcraft_render::RenderOpts {
                         scale: px as f64 / doc.slide_size.width.max(1.0),
                         edit: true,
+                        placeholder_prompt: Some(crate::i18n::placeholder_prompt),
                         size: Some((px, (px as f64 * doc.slide_size.height / doc.slide_size.width.max(1.0)) as u32)),
                         ..Default::default()
                     },

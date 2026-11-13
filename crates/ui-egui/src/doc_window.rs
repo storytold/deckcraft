@@ -155,7 +155,7 @@ fn ensure_texture(app: &mut SlideApp, ctx: &egui::Context, doc: &deckcraft_model
     let img = deckcraft_render::render_slide(
         doc,
         slide,
-        &RenderOpts { scale: w as f64 / doc.slide_size.width.max(1.0), size: Some((w, h)), edit: true, threads: 0, ..Default::default() },
+        &RenderOpts { scale: w as f64 / doc.slide_size.width.max(1.0), size: Some((w, h)), edit: true, placeholder_prompt: Some(crate::i18n::placeholder_prompt), threads: 0, ..Default::default() },
     );
     let tex = crate::textures::upload(ctx, "doc-window-slide", crate::textures::to_color_image(&img, grayscale));
     if let Some(win) = app.doc_window.as_mut() {
