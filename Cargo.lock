@@ -847,7 +847,7 @@ dependencies = [
 [[package]]
 name = "craft-audio"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=75895c0321d8cb6e175a42466cba050352b117c5#75895c0321d8cb6e175a42466cba050352b117c5"
+source = "git+https://github.com/storytold/craft-libs?rev=da3cd3b2ad5888d55ffb00595602f8b989f6c5bc#da3cd3b2ad5888d55ffb00595602f8b989f6c5bc"
 dependencies = [
  "craft-media",
  "thiserror 2.0.21",
@@ -884,7 +884,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=75895c0321d8cb6e175a42466cba050352b117c5#75895c0321d8cb6e175a42466cba050352b117c5"
+source = "git+https://github.com/storytold/craft-libs?rev=da3cd3b2ad5888d55ffb00595602f8b989f6c5bc#da3cd3b2ad5888d55ffb00595602f8b989f6c5bc"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -892,7 +892,7 @@ dependencies = [
 [[package]]
 name = "craft-metafile"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=8079878ae2b166c1ea8229e40eff7e08c916e532#8079878ae2b166c1ea8229e40eff7e08c916e532"
+source = "git+https://github.com/storytold/craft-libs?rev=da3cd3b2ad5888d55ffb00595602f8b989f6c5bc#da3cd3b2ad5888d55ffb00595602f8b989f6c5bc"
 dependencies = [
  "encoding_rs",
  "image",
@@ -954,6 +954,16 @@ dependencies = [
  "winreg",
  "winsafe",
  "zip 9.1.0",
+]
+
+[[package]]
+name = "craft-video"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=da3cd3b2ad5888d55ffb00595602f8b989f6c5bc#da3cd3b2ad5888d55ffb00595602f8b989f6c5bc"
+dependencies = [
+ "craft-media",
+ "rayon",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1079,22 +1089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deckcraft-av1"
-version = "0.18.1"
-dependencies = [
- "deckcraft-bitstream",
- "rayon",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "deckcraft-bitstream"
-version = "0.18.1"
-dependencies = [
- "craft-media",
-]
-
-[[package]]
 name = "deckcraft-cli"
 version = "0.18.1"
 dependencies = [
@@ -1169,24 +1163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deckcraft-h264"
-version = "0.18.1"
-dependencies = [
- "deckcraft-bitstream",
- "rayon",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "deckcraft-hevc"
-version = "0.18.1"
-dependencies = [
- "deckcraft-bitstream",
- "rayon",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "deckcraft-mcp"
 version = "0.18.1"
 dependencies = [
@@ -1202,10 +1178,7 @@ version = "0.18.1"
 dependencies = [
  "craft-audio",
  "craft-media",
- "deckcraft-av1",
- "deckcraft-h264",
- "deckcraft-hevc",
- "deckcraft-vp9",
+ "craft-video",
  "image",
  "log",
  "symphonia",
@@ -1315,15 +1288,6 @@ dependencies = [
  "skrifa 0.47.0",
  "toml",
  "web-time",
-]
-
-[[package]]
-name = "deckcraft-vp9"
-version = "0.18.1"
-dependencies = [
- "deckcraft-bitstream",
- "rayon",
- "thiserror 2.0.21",
 ]
 
 [[package]]
