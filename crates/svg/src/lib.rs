@@ -1,9 +1,11 @@
-//! SVG pictures (`image/svg+xml`) read into bezier geometry: shapes, paths, groups, transforms,
-//! solid and gradient fills, strokes, and `use`.
+//! SVG pictures (`image/svg+xml`) read into shapes, text runs and markers: paths, basic shapes,
+//! groups, transforms, `use`, solid and gradient paints, strokes, `text` with its `tspan`s, and
+//! `marker-start`/`-mid`/`-end`.
 //!
-//! What a picture needs is drawn; what a presentation cannot show is not read: text, filters,
-//! masks, clip paths, patterns, animation and scripting are skipped. A gradient keeps its stops and
-//! its own coordinate space, and the renderer draws the ramp.
+//! What a presentation cannot show is not read: filters (glow and shadow), masks, clip paths,
+//! patterns, animation and scripting are skipped. A gradient keeps its stops and its own
+//! coordinate space, and the renderer draws the ramp. Text is laid out by the renderer, which has
+//! the fonts; this reader records positions and styles.
 //!
 //! `display: none` hides a subtree and `visibility: hidden` one shape. An ancestor's `opacity`
 //! multiplies each shape it paints rather than compositing the group once, so overlapping shapes

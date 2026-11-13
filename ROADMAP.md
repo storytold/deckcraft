@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-13 | SVG pictures draw their text (`text`/`tspan`, font family, size, weight, style, `text-anchor`, letter spacing, whitespace as SVG reads it), real gradient ramps (stops, `objectBoundingBox`/`userSpaceOnUse`, `gradientTransform`, `spreadMethod`) and markers (`marker-start`/`-mid`/`-end`, `orient`, `markerUnits`, view box). Filters, masks and clip paths are still not read. Checklist Pictures 64%, unchanged |
 | 2026-11-13 | SVG pictures: `crates/svg` reads paths, basic shapes, groups, transforms, `use` and solid or gradient fills, and `crates/render/src/svg.rs` draws them as vectors, so SVG files insert at their own size and render; import takes `asvg:svgBlip` over the PNG fallback. Export still writes no raster fallback. Checklist Pictures 60 → 64% |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
@@ -343,6 +344,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | SVG pictures draw text, real gradient ramps and markers; Pictures 64%, unchanged |
 | 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from PowerPoint files; Pictures 60 → 64%, weighted breadth unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
