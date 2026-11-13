@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use deckcraft_color::Rgba;
 use dom::Node;
-use kurbo::{Affine, BezPath, Point, Shape as _};
+use kurbo::{Affine, BezPath, ParamCurve as _, Point, Shape as _};
 
 /// Most shapes read from one picture.
 pub const MAX_ITEMS: usize = 100_000;
@@ -40,8 +40,11 @@ const MAX_COORD: f64 = 1e5;
 const MAX_SEGMENTS: usize = 50_000;
 /// Deepest `use` chain followed.
 const MAX_USE_DEPTH: u32 = 8;
+/// Most characters read from one text element.
+const MAX_TEXT_CHARS: usize = 64 * 1024;
+
 /// Elements that only define something and are drawn through `use`.
-const DEFINITIONS: [&str; 16] = [
+const DEFINITIONS: [&str; 15] = [
     "defs",
     "symbol",
     "clipPath",
@@ -56,7 +59,6 @@ const DEFINITIONS: [&str; 16] = [
     "title",
     "desc",
     "metadata",
-    "text",
     "image",
 ];
 
@@ -71,13 +73,58 @@ pub struct Svg {
     pub items: Vec<Item>,
 }
 
-/// One filled and/or stroked shape.
+/// One filled and/or stroked shape, or a text element.
 #[derive(Clone, Debug)]
 pub struct Item {
     pub path: BezPath,
     pub even_odd: bool,
     pub fill: Option<Paint>,
     pub stroke: Option<(Paint, kurbo::Stroke)>,
+    /// Set when the item is a text element: `path` is empty and the runs are laid out by the
+    /// renderer, which has the fonts.
+    pub text: Option<Text>,
+}
+
+/// A text element: runs of characters on one or more baselines, with the transform the element
+/// sits under.
+#[derive(Clone, Debug)]
+pub struct Text {
+    pub runs: Vec<TextRun>,
+    pub transform: Affine,
+}
+
+/// Characters drawn with one style. A run without `at_x`/`at_y` continues the line where the run
+/// before it ended; the renderer knows the advances, this reader does not.
+#[derive(Clone, Debug)]
+pub struct TextRun {
+    /// The characters, with whitespace collapsed the way SVG lays text out.
+    pub text: String,
+    /// Absolute positions the run sets (`x`/`y` on a `text` or `tspan`).
+    pub at_x: Option<f64>,
+    pub at_y: Option<f64>,
+    /// Relative shift of the pen (`dx`/`dy`).
+    pub dx: f64,
+    pub dy: f64,
+    pub size: f64,
+    /// Families asked for, in order; the renderer picks the first it has.
+    pub families: Vec<String>,
+    pub bold: bool,
+    pub italic: bool,
+    pub anchor: Anchor,
+    /// Extra space after each character.
+    pub spacing: f64,
+    /// `xml:space="preserve"`: the whitespace at the element's ends stays.
+    pub preserve: bool,
+    pub fill: Option<Paint>,
+    pub stroke: Option<(Paint, kurbo::Stroke)>,
+}
+
+/// How a line of text is aligned on the position it starts at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anchor {
+    Start,
+    Middle,
+    End,
 }
 
 /// What a fill or a stroke paints.
@@ -213,7 +260,8 @@ fn collect_ids(node: &Node, out: &mut HashMap<String, Arc<Node>>) {
     }
 }
 
-/// Fill and stroke inherited down the tree, plus the opacity of the groups above.
+/// Fill, stroke and the text properties inherited down the tree, plus the opacity of the groups
+/// above.
 #[derive(Clone, Debug)]
 struct Style {
     fill: Option<Paint>,
@@ -232,6 +280,26 @@ struct Style {
     /// `display` is not inherited: `none` hides the whole subtree.
     display: bool,
     visibility: bool,
+    /// Text properties, inherited by `text` and `tspan`.
+    font: Font,
+    /// Marker definitions an element draws at its start, middle and end vertices.
+    marker_start: Option<String>,
+    marker_mid: Option<String>,
+    marker_end: Option<String>,
+}
+
+/// The text properties a `text` element inherits, with SVG's initial values.
+#[derive(Clone, Debug)]
+struct Font {
+    families: Vec<String>,
+    /// In user units.
+    size: f64,
+    bold: bool,
+    italic: bool,
+    anchor: Anchor,
+    spacing: f64,
+    /// `xml:space="preserve"` keeps whitespace as written.
+    preserve: bool,
 }
 
 impl Default for Style {
@@ -251,6 +319,10 @@ impl Default for Style {
             group_opacity: 1.0,
             display: true,
             visibility: true,
+            font: Font { families: Vec::new(), size: 16.0, bold: false, italic: false, anchor: Anchor::Start, spacing: 0.0, preserve: false },
+            marker_start: None,
+            marker_mid: None,
+            marker_end: None,
         }
     }
 }
@@ -319,6 +391,45 @@ impl Style {
             "opacity" => self.opacity = opacity(v).unwrap_or(1.0),
             "display" => self.display = !v.trim().eq_ignore_ascii_case("none"),
             "visibility" => self.visibility = !matches!(v.trim(), "hidden" | "collapse"),
+            "font-family" => {
+                let families: Vec<String> =
+                    v.split(',').map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"').to_string()).filter(|s| !s.is_empty()).collect();
+                if !families.is_empty() {
+                    self.font.families = families;
+                }
+            }
+            "font-size" => {
+                let v = v.trim();
+                let size = match v.strip_suffix('%') {
+                    Some(p) => p.trim().parse::<f64>().ok().map(|p| self.font.size * p / 100.0),
+                    None => attr::length(v),
+                };
+                if let Some(s) = size.filter(|s: &f64| s.is_finite() && *s > 0.0) {
+                    self.font.size = s.clamp(0.1, MAX_COORD);
+                }
+            }
+            "font-weight" => {
+                let v = v.trim().to_ascii_lowercase();
+                self.font.bold = match v.as_str() {
+                    "bold" | "bolder" => true,
+                    "normal" | "lighter" => false,
+                    _ => v.parse::<f64>().map(|w| w >= 600.0).unwrap_or(self.font.bold),
+                };
+            }
+            "font-style" => self.font.italic = matches!(v.trim(), "italic" | "oblique"),
+            "text-anchor" => {
+                self.font.anchor = match v.trim() {
+                    "middle" => Anchor::Middle,
+                    "end" => Anchor::End,
+                    _ => Anchor::Start,
+                }
+            }
+            "letter-spacing" => self.font.spacing = attr::length(v).filter(|v| v.is_finite()).map(|v| v.clamp(-1e3, 1e3)).unwrap_or(0.0),
+            // `xml:space`, whose namespace prefix this reader drops.
+            "space" => self.font.preserve = v.trim() == "preserve",
+            "marker-start" => self.marker_start = marker_ref(v),
+            "marker-mid" => self.marker_mid = marker_ref(v),
+            "marker-end" => self.marker_end = marker_ref(v),
             _ => {}
         }
     }
@@ -341,6 +452,13 @@ fn paint(v: &str, ids: &HashMap<String, Arc<Node>>) -> Option<Paint> {
         return Some(Paint::Solid(gradient_color(node, ids).unwrap_or(Rgba::BLACK)));
     }
     Some(Paint::Solid(attr::color(v).or_else(|| attr::named(v)).unwrap_or(Rgba::BLACK)))
+}
+
+/// The id a `marker-*` property names, or `None` for `none` and anything unreadable.
+fn marker_ref(v: &str) -> Option<String> {
+    let inner = v.trim().strip_prefix("url(")?.strip_suffix(')')?;
+    let id = inner.trim().trim_matches(|c| c == '\'' || c == '"').trim().strip_prefix('#')?;
+    (!id.is_empty()).then(|| id.to_string())
 }
 
 /// The gradient a `url(#…)` names, or `None` when the element is not a gradient this reader
@@ -542,12 +660,13 @@ impl Build {
         transform *= attr::transform(node.attr("transform").unwrap_or(""));
         let frame = Frame { transform, style };
         match node.name.as_str() {
-            "g" | "svg" | "symbol" | "a" | "switch" => {
+            "g" | "svg" | "symbol" | "a" | "switch" | "marker" => {
                 for k in &node.kids {
                     self.walk(k, &frame, depth + 1, false);
                 }
             }
             "use" => self.use_node(node, &frame, depth),
+            "text" => self.text(node, &frame),
             _ => self.shape(node, &frame),
         }
     }
@@ -589,6 +708,13 @@ impl Build {
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) {
             return;
         }
+        // Vertices are in user units, before the element transform, because a marker is placed
+        // there and the transform applies to it as well.
+        let verts = if f.style.marker_start.is_none() && f.style.marker_mid.is_none() && f.style.marker_end.is_none() {
+            Vec::new()
+        } else {
+            marker_vertices(&path)
+        };
         path.apply_affine(f.transform);
         // The pen is scaled with the shape; a non-uniform transform cannot scale it evenly, so the
         // mean of both axes stands in.
@@ -606,8 +732,142 @@ impl Build {
             return;
         }
         self.segments += segments;
-        self.items.push(Item { path, even_odd: f.style.even_odd, fill, stroke });
+        self.items.push(Item { path, even_odd: f.style.even_odd, fill, stroke, text: None });
+        if !verts.is_empty() {
+            self.markers(f, &verts);
+        }
     }
+
+    /// Draw the markers the shape's style names at its vertices, each turned to the path there.
+    fn markers(&mut self, f: &Frame, verts: &[Vertex]) {
+        for (at, id) in [(At::Start, &f.style.marker_start), (At::Mid, &f.style.marker_mid), (At::End, &f.style.marker_end)] {
+            let Some(marker) = id.as_deref().and_then(|id| self.ids.get(id)).cloned() else { continue };
+            if marker.name != "marker" {
+                continue;
+            }
+            let pen = f.style.width;
+            // The marker's own style, not the shape's: a definition inherits from where it sits.
+            let style = Style::default().resolve(&marker, &self.ids);
+            for (i, v) in verts.iter().enumerate() {
+                if !at.matches(i, verts.len()) {
+                    continue;
+                }
+                let Some(m) = marker_frame(&marker, v, pen) else { continue };
+                let frame = Frame { transform: f.transform * m, style: style.clone() };
+                self.walk(&marker, &frame, 0, true);
+            }
+        }
+    }
+
+    /// A `text` element: its own characters and every `tspan` under it, as runs the renderer lays
+    /// out. The reader has no fonts, so it records where each run starts and the renderer
+    /// advances the pen.
+    fn text(&mut self, node: &Node, f: &Frame) {
+        if !f.style.visibility {
+            return;
+        }
+        let mut runs = Vec::new();
+        self.text_runs(node, &f.style, true, &mut runs, f.transform.determinant().abs().sqrt());
+        // SVG drops the whitespace that starts and ends the element, unless it is preserved.
+        if let Some(first) = runs.iter_mut().find(|r| !r.text.is_empty()).filter(|r| !r.preserve) {
+            first.text = first.text.trim_start().to_string();
+        }
+        if let Some(last) = runs.iter_mut().rev().find(|r| !r.text.is_empty()).filter(|r| !r.preserve) {
+            last.text = last.text.trim_end().to_string();
+        }
+        runs.retain(|r| !r.text.is_empty());
+        if runs.is_empty() {
+            return;
+        }
+        self.items.push(Item { path: BezPath::new(), even_odd: false, fill: None, stroke: None, text: Some(Text { runs, transform: f.transform }) });
+    }
+
+    /// Append `node`'s characters and those of the `tspan`s under it. `parent` is the style in
+    /// force above the node, `root` tells whether the node is the `text` element itself.
+    fn text_runs(&mut self, node: &Node, parent: &Style, root: bool, out: &mut Vec<TextRun>, scale: f64) {
+        if out.iter().map(|r| r.text.len()).sum::<usize>() >= MAX_TEXT_CHARS || self.visits > MAX_VISITS {
+            return;
+        }
+        let style = if root { parent.clone() } else { parent.resolve(node, &self.ids) };
+        if !style.display || !style.visibility {
+            return;
+        }
+        let opacity = style.group_opacity * style.opacity;
+        let at = |k: &str| node.attr(k).and_then(attr::length).filter(|v| v.is_finite());
+        let rel = |k: &str| node.attr(k).and_then(attr::length).filter(|v| v.is_finite()).unwrap_or(0.0);
+        let (at_x, at_y) = if root { (Some(at("x").unwrap_or(0.0)), Some(at("y").unwrap_or(0.0))) } else { (at("x"), at("y")) };
+        let fill = style.fill.clone().map(|p| p.faded(style.fill_opacity * opacity));
+        let stroke = style.stroke.clone().filter(|_| style.width > 0.0).map(|p| {
+            let mut pen = kurbo::Stroke::new((style.width * scale).max(1e-4)).with_caps(style.cap).with_join(style.join);
+            if let Some(d) = &style.dash {
+                pen = pen.with_dashes(0.0, d.iter().map(|v| v * scale));
+            }
+            (p.faded(style.stroke_opacity * opacity), pen)
+        });
+        let start = out.len();
+        for kid in &node.kids {
+            match kid.name.as_str() {
+                "#text" => {
+                    let text = if style.font.preserve { kid.text.clone() } else { collapse(&kid.text) };
+                    if text.is_empty() {
+                        continue;
+                    }
+                    out.push(TextRun {
+                        text,
+                        at_x: None,
+                        at_y: None,
+                        dx: 0.0,
+                        dy: 0.0,
+                        size: style.font.size,
+                        families: style.font.families.clone(),
+                        bold: style.font.bold,
+                        italic: style.font.italic,
+                        anchor: style.font.anchor,
+                        spacing: style.font.spacing,
+                        preserve: style.font.preserve,
+                        fill: fill.clone(),
+                        stroke: stroke.clone(),
+                    });
+                }
+                "tspan" => self.text_runs(kid, &style, false, out, scale),
+                _ => {}
+            }
+        }
+        // `x`/`y`/`dx`/`dy` on the element place the first glyph it contributes.
+        if let Some(run) = out.get_mut(start) {
+            if at_x.is_some() {
+                run.at_x = at_x;
+            }
+            if at_y.is_some() {
+                run.at_y = at_y;
+            }
+            run.dx = rel("dx");
+            run.dy = rel("dy");
+        }
+    }
+}
+
+/// SVG's whitespace rule: runs of whitespace become one space, line breaks with them. A leading
+/// space survives here because it separates this run from the one before it; the element trims the
+/// spaces at its own ends.
+fn collapse(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut space = false;
+    for c in s.chars() {
+        if c.is_ascii_whitespace() {
+            space = true;
+            continue;
+        }
+        if space {
+            out.push(' ');
+        }
+        space = false;
+        out.push(c);
+    }
+    if space {
+        out.push(' ');
+    }
+    out
 }
 
 /// The `viewBox` of a `symbol` or nested `svg`, in user units.
@@ -627,6 +887,101 @@ fn fit(vb: [f64; 4], w: f64, h: f64) -> Affine {
         return Affine::IDENTITY;
     }
     Affine::translate(((w - vb[2] * s) / 2.0, (h - vb[3] * s) / 2.0)) * Affine::scale(s) * Affine::translate((-vb[0], -vb[1]))
+}
+
+/// Where a marker sits on a path: a vertex and the direction the path runs there, in degrees.
+struct Vertex {
+    point: Point,
+    angle: f64,
+    /// The first vertex of the path.
+    first: bool,
+    /// The last vertex of the path.
+    last: bool,
+}
+
+/// Which vertices a `marker-*` property paints.
+#[derive(Clone, Copy)]
+enum At {
+    Start,
+    Mid,
+    End,
+}
+
+impl At {
+    fn matches(self, i: usize, n: usize) -> bool {
+        match self {
+            At::Start => i == 0,
+            At::Mid => i > 0 && i + 1 < n,
+            At::End => n > 0 && i + 1 == n,
+        }
+    }
+}
+
+/// Most markers drawn on one shape; a path of thousands of points (a map outline) would otherwise
+/// fill the picture with arrowheads.
+const MAX_MARKERS: usize = 256;
+
+/// The vertices of a path with the direction of the segment that leaves each one.
+fn marker_vertices(path: &BezPath) -> Vec<Vertex> {
+    let segs: Vec<kurbo::PathSeg> = path.segments().collect();
+    let direction = |s: &kurbo::PathSeg| {
+        let d = s.end() - s.start();
+        if d.hypot() > 1e-12 { d.y.atan2(d.x).to_degrees() } else { 0.0 }
+    };
+    let mut out: Vec<Vertex> = Vec::with_capacity(segs.len().min(MAX_MARKERS) + 1);
+    for (i, s) in segs.iter().enumerate().take(MAX_MARKERS) {
+        let a = direction(s);
+        if i == 0 {
+            out.push(Vertex { point: s.start(), angle: a, first: true, last: false });
+        }
+        // An interior vertex points along the bisector of the segments it joins.
+        let angle = match segs.get(i + 1) {
+            Some(next) => {
+                let b = direction(next);
+                let (a, b) = (a.to_radians(), b.to_radians());
+                let half = ((b - a) / 2.0).rem_euclid(std::f64::consts::PI);
+                (a + half).to_degrees() % 360.0
+            }
+            None => a,
+        };
+        out.push(Vertex { point: s.end(), angle, first: false, last: false });
+    }
+    let single = out.len() == 1;
+    if let Some(last) = out.last_mut() {
+        last.last = true;
+        last.first |= single;
+    }
+    out
+}
+
+/// The place a marker sits: at the vertex, turned by `orient`, sized by `markerUnits` and its
+/// view box, with its reference point on the vertex.
+fn marker_frame(marker: &Node, v: &Vertex, pen: f64) -> Option<Affine> {
+    let orient = marker.attr("orient").unwrap_or("0").trim();
+    let angle = match orient {
+        "auto" => v.angle,
+        "auto-start-reverse" if v.first => v.angle + 180.0,
+        "auto-start-reverse" => v.angle,
+        other => other.parse::<f64>().ok().filter(|a: &f64| a.is_finite()).unwrap_or(0.0),
+    };
+    let size = |k: &str| marker.attr(k).and_then(attr::length).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(3.0).min(MAX_COORD);
+    let scale = match marker.attr("markerUnits").map(str::trim) {
+        Some("userSpaceOnUse") => 1.0,
+        _ => pen.clamp(1e-4, MAX_COORD),
+    };
+    let (w, h) = (size("markerWidth") * scale, size("markerHeight") * scale);
+    let at = |k: &str, d: f64| marker.attr(k).and_then(attr::length).filter(|v| v.is_finite()).unwrap_or(d);
+    let (rx, ry) = (at("refX", 0.0).clamp(-MAX_COORD, MAX_COORD), at("refY", 0.0).clamp(-MAX_COORD, MAX_COORD));
+    // A marker with no viewport paints nothing, as SVG says.
+    if !(w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let mut m = Affine::translate(v.point.to_vec2()) * Affine::rotate(angle.to_radians());
+    m *= match view_box_of(marker) {
+        Some(vb) => fit(vb, w, h),
+        None => Affine::scale(scale),
+    };
+    Some(m * Affine::translate((-rx, -ry)))
 }
 
 fn mul_alpha(a: u8, k: f64) -> u8 {
@@ -866,6 +1221,122 @@ mod tests {
     fn definitions_and_text_are_not_drawn() {
         let s = svg("<defs><rect width='4' height='4'/></defs><title>t</title>");
         assert!(s.items.is_empty());
+        // A text element inside a definition draws only where a `use` names it.
+        let s = svg("<defs><text id='t' x='1' y='2'>hi</text></defs>");
+        assert!(s.items.is_empty());
+    }
+
+    fn text_of(s: &Svg) -> &Text {
+        s.items.iter().find_map(|i| i.text.as_ref()).expect("a text item")
+    }
+
+    #[test]
+    fn a_text_element_becomes_a_run_with_its_position_and_style() {
+        let s =
+            svg("<text x='5' y='10' font-family='Arial, sans-serif' font-size='20' font-weight='700' text-anchor='middle' fill='#ff0000'>Hi</text>");
+        let t = text_of(&s);
+        assert_eq!(t.runs.len(), 1);
+        let r = &t.runs[0];
+        assert_eq!(r.text, "Hi");
+        assert_eq!((r.at_x, r.at_y), (Some(5.0), Some(10.0)));
+        assert_eq!(r.size, 20.0);
+        assert_eq!(r.families, vec!["Arial", "sans-serif"]);
+        assert!(r.bold && !r.italic);
+        assert_eq!(r.anchor, Anchor::Middle);
+        assert_eq!(r.fill, Some(Paint::Solid(Rgba::rgb(255, 0, 0))));
+    }
+
+    #[test]
+    fn tspans_keep_their_own_style_and_continue_the_line() {
+        let s = svg("<text x='0' y='10' font-size='20'>A<tspan font-size='8' fill='red' dx='2'>B</tspan>C</text>");
+        let t = text_of(&s);
+        assert_eq!(t.runs.len(), 3);
+        assert_eq!(t.runs[0].text, "A");
+        assert_eq!((t.runs[1].text.as_str(), t.runs[1].size, t.runs[1].dx), ("B", 8.0, 2.0));
+        assert_eq!(t.runs[2].text, "C");
+        // Only the first run is positioned; the others continue where the pen is.
+        assert!(t.runs[1].at_x.is_none() && t.runs[1].at_y.is_none());
+        assert!(t.runs[2].at_x.is_none());
+        assert_eq!(t.runs[2].size, 20.0);
+    }
+
+    #[test]
+    fn a_tspan_position_starts_a_new_chunk() {
+        let s = svg("<text x='0' y='10'>A<tspan x='30'>B</tspan></text>");
+        let t = text_of(&s);
+        assert_eq!((t.runs[1].at_x, t.runs[1].at_y), (Some(30.0), None));
+    }
+
+    #[test]
+    fn whitespace_collapses_and_the_ends_are_trimmed() {
+        let s = svg("<text x='0' y='10'>  Metric\n   One  </text>");
+        assert_eq!(text_of(&s).runs[0].text, "Metric One");
+        let s = svg("<text x='0' y='10' xml:space='preserve'> A  B </text>");
+        assert_eq!(text_of(&s).runs[0].text, " A  B ");
+    }
+
+    #[test]
+    fn a_space_between_two_tspans_survives() {
+        let s = svg("<text x='0' y='10'><tspan>A</tspan> <tspan>B</tspan></text>");
+        let t = text_of(&s);
+        let joined: String = t.runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(joined, "A B");
+    }
+
+    #[test]
+    fn a_marker_is_placed_at_the_end_of_its_path() {
+        let s = svg(
+            "<defs><marker id='ag' refX='8' refY='5' markerWidth='5' markerHeight='5' markerUnits='strokeWidth' orient='auto' viewBox='0 0 10 10'><path d='M0 0 10 5 0 10Z' fill='#ff0000'/></marker></defs><line x1='0' y1='0' x2='20' y2='0' stroke='black' stroke-width='2' marker-end='url(#ag)'/>",
+        );
+        assert_eq!(s.items.len(), 2, "the line and its arrowhead");
+        let b = s.items[1].path.bounding_box();
+        assert!((b.x0 - 12.0).abs() < 1e-6 && (b.x1 - 22.0).abs() < 1e-6, "{b:?}");
+        assert!((b.y0 + 5.0).abs() < 1e-6 && (b.y1 - 5.0).abs() < 1e-6, "{b:?}");
+    }
+
+    #[test]
+    fn a_marker_turns_with_the_path_it_ends() {
+        let s = svg(
+            "<defs><marker id='m' markerWidth='2' markerHeight='2' markerUnits='userSpaceOnUse' orient='auto' viewBox='0 0 10 10'><path d='M0 0 10 0 10 10Z' fill='black'/></marker></defs><line x1='0' y1='0' x2='0' y2='20' stroke='black' marker-end='url(#m)'/>",
+        );
+        let b = s.items[1].path.bounding_box();
+        assert!((b.x0 + 2.0).abs() < 1e-6 && b.x1.abs() < 1e-6, "{b:?}");
+        assert!((b.y0 - 20.0).abs() < 1e-6 && (b.y1 - 22.0).abs() < 1e-6, "{b:?}");
+    }
+
+    #[test]
+    fn a_marker_with_no_viewport_or_no_reference_paints_nothing() {
+        let s = svg(
+            "<defs><marker id='m' markerWidth='0' markerHeight='2'><path d='M0 0 10 0 10 10Z' fill='black'/></marker></defs><line x1='0' y1='0' x2='9' y2='0' stroke='black' marker-end='url(#m)'/>",
+        );
+        assert_eq!(s.items.len(), 1, "only the line");
+        let s = svg("<line x1='0' y1='0' x2='9' y2='0' stroke='black' marker-end='none'/>");
+        assert_eq!(s.items.len(), 1);
+        let s = svg("<line x1='0' y1='0' x2='9' y2='0' stroke='black' marker-end='url(#missing)'/>");
+        assert_eq!(s.items.len(), 1);
+    }
+
+    #[test]
+    fn markers_draw_at_the_start_middle_and_end_they_are_named_for() {
+        let marker = "<defs><marker id='m' markerWidth='1' markerHeight='1' markerUnits='userSpaceOnUse' viewBox='0 0 1 1'><path d='M0 0 1 0 1 1Z' fill='black'/></marker></defs>";
+        let s = svg(&format!("{marker}<path d='M0 0 L10 0 L10 10' fill='none' stroke='black' marker-mid='url(#m)'/>"));
+        assert_eq!(s.items.len(), 2, "one interior vertex");
+        let s = svg(&format!("{marker}<path d='M0 0 L10 0 L10 10' fill='none' stroke='black' marker-start='url(#m)' marker-end='url(#m)'/>"));
+        assert_eq!(s.items.len(), 3);
+    }
+
+    #[test]
+    fn text_properties_are_inherited_from_the_group_above() {
+        let s = svg("<g font-family='Georgia' font-size='12'><text x='0' y='10'>A</text></g>");
+        let r = &text_of(&s).runs[0];
+        assert_eq!(r.families, vec!["Georgia"]);
+        assert_eq!(r.size, 12.0);
+    }
+
+    #[test]
+    fn a_huge_font_size_is_clamped_instead_of_drawn() {
+        let s = svg("<text x='0' y='10' font-size='1e300'>A</text>");
+        assert!(text_of(&s).runs[0].size <= MAX_COORD);
     }
 
     #[test]

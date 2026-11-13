@@ -15,10 +15,12 @@ pub const MAX_NODES: usize = 200_000;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Node {
-    /// Local name (`rect`, `linearGradient`).
+    /// Local name (`rect`, `linearGradient`), or `#text` for characters inside a text element.
     pub name: String,
     pub attrs: Vec<(String, String)>,
     pub kids: Vec<Arc<Node>>,
+    /// The characters of a `#text` child, empty otherwise.
+    pub text: String,
 }
 
 impl Node {
@@ -33,7 +35,8 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
     let mut reader = quick_xml::Reader::from_reader(bytes);
     {
         let c = reader.config_mut();
-        c.trim_text(true);
+        // Whitespace inside text elements separates words, so it is read and collapsed later.
+        c.trim_text(false);
         c.check_end_names = false;
         c.allow_unmatched_ends = true;
         c.expand_empty_elements = false;
@@ -65,8 +68,20 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
                     push(&mut stack, &mut root, node);
                 }
             }
+            Event::Text(t) => {
+                // Only elements that lay characters out keep them, as `#text` children in the
+                // order they appear, so mixed content (`A<tspan>B</tspan>C`) stays in order.
+                if let Some(parent) = stack.last_mut().filter(|p| matches!(p.name.as_str(), "text" | "tspan")) {
+                    parent.kids.push(Arc::new(text_node(t.decode().map(|c| c.into_owned()).unwrap_or_default())));
+                }
+            }
+            Event::CData(c) => {
+                if let Some(parent) = stack.last_mut().filter(|p| matches!(p.name.as_str(), "text" | "tspan")) {
+                    parent.kids.push(Arc::new(text_node(String::from_utf8_lossy(&c).into_owned())));
+                }
+            }
             Event::Eof => break,
-            // Text, comments, declarations and processing instructions carry nothing we draw.
+            // Comments, declarations and processing instructions carry nothing we draw.
             _ => {}
         }
         buf.clear();
@@ -75,6 +90,12 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
         push(&mut stack, &mut root, node);
     }
     root.map(Arc::new)
+}
+
+/// A run of characters inside a text element, as a child node so its order is kept.
+fn text_node(raw: String) -> Node {
+    let text = quick_xml::escape::unescape(&raw).map(|c| c.into_owned()).unwrap_or(raw);
+    Node { name: "#text".to_string(), attrs: vec![], kids: vec![], text }
 }
 
 fn push(stack: &mut [Node], root: &mut Option<Node>, node: Node) {
@@ -105,7 +126,7 @@ fn element(b: &quick_xml::events::BytesStart, reader: &quick_xml::Reader<&[u8]>)
             .unwrap_or_else(|_| String::from_utf8_lossy(&a.value).into_owned());
         attrs.push((local, value));
     }
-    Some(Node { name, attrs, kids: vec![] })
+    Some(Node { name, attrs, kids: vec![], text: String::new() })
 }
 
 #[cfg(test)]

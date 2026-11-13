@@ -6,8 +6,10 @@
 //! does (centred, both sides visible). Other `preserveAspectRatio` values, filters, masks and clip
 //! paths are not applied.
 
-use deckcraft_svg::{Gradient, GradientKind, Paint, Spread, Svg, Units};
+use deckcraft_fonts::{FontDb, FontFace};
+use deckcraft_svg::{Anchor, Gradient, GradientKind, Paint, Spread, Svg, Text, TextRun, Units};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
+use std::sync::Arc;
 use vello_cpu::{RenderContext, Resources, peniko};
 
 /// Largest side drawn.
@@ -28,6 +30,10 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     ctx.push_clip_layer(&r.to_path(0.1));
     let k = m.determinant().abs().sqrt();
     for it in &svg.items {
+        if let Some(t) = &it.text {
+            draw_text(&mut ctx, t, m);
+            continue;
+        }
         let path: BezPath = m * it.path.clone();
         let bb = path.bounding_box();
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) || bb.width() > 1e6 || bb.height() > 1e6 {
@@ -132,6 +138,159 @@ fn peniko_gradient(g: &Gradient) -> Option<peniko::Gradient> {
     Some(grad)
 }
 
+/// Draw a text element: place its runs along the baselines they set, then draw the glyph outlines.
+/// The reader has no fonts, so advances and anchors are resolved here.
+fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
+    let to_device = m * t.transform;
+    // A run that sets x or y opens a chunk. SVG anchors align each positioned chunk, so a chunk
+    // is measured as a whole.
+    let mut i = 0;
+    while i < t.runs.len() {
+        let mut j = i + 1;
+        while j < t.runs.len() && t.runs[j].at_x.is_none() && t.runs[j].at_y.is_none() {
+            j += 1;
+        }
+        draw_chunk(ctx, &t.runs[i..j], to_device);
+        i = j;
+    }
+    ctx.set_transform(Affine::IDENTITY);
+    ctx.reset_paint_transform();
+}
+
+/// One placed glyph: its face, the size it is drawn at, and where on the baseline it sits.
+struct Placed {
+    face: Arc<FontFace>,
+    size: f64,
+    gid: u32,
+    x: f64,
+    y: f64,
+    run: usize,
+}
+
+/// Draw one chunk of runs, advancing the pen from run to run and aligning the chunk by its anchor.
+fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine) {
+    let (mut pen_x, mut pen_y) = (0.0, 0.0);
+    let mut placed: Vec<Placed> = Vec::new();
+    let mut widths: Vec<f64> = vec![0.0; runs.len()];
+    for (ri, r) in runs.iter().enumerate() {
+        if let Some(x) = r.at_x {
+            pen_x = x;
+        }
+        if let Some(y) = r.at_y {
+            pen_y = y;
+        }
+        pen_x += r.dx;
+        pen_y += r.dy;
+        let start = pen_x;
+        // Characters the run's face does not have are drawn by a fallback face, so a label keeps
+        // its whole text instead of losing the arrows and symbols in it.
+        for (face, segment) in segments(r, &face_for(r)) {
+            let k = r.size / face.upem.max(1.0);
+            let shaped = deckcraft_fonts::shape(&face, segment, &[], |c| c);
+            for g in &shaped {
+                // Letter spacing is charged per glyph; a glyph of a multi-glyph cluster shares its
+                // cluster's box and is only a fraction of an em out.
+                placed.push(Placed {
+                    face: face.clone(),
+                    size: r.size,
+                    gid: g.gid,
+                    x: pen_x + f64::from(g.x_offset) * k,
+                    y: pen_y - f64::from(g.y_offset) * k,
+                    run: ri,
+                });
+                pen_x += f64::from(g.x_advance) * k + r.spacing;
+            }
+        }
+        widths[ri] = pen_x - start;
+    }
+    let total: f64 = widths.iter().sum();
+    let shift = match runs.first().map(|r| r.anchor).unwrap_or(Anchor::Start) {
+        Anchor::Start => 0.0,
+        Anchor::Middle => -total / 2.0,
+        Anchor::End => -total,
+    };
+    for p in &placed {
+        let run = &runs[p.run];
+        let Some(fill) = &run.fill else { continue };
+        let Some(path) = glyph_path(&p.face, p.gid) else { continue };
+        let k = p.size / p.face.upem.max(1.0);
+        ctx.set_transform(to_device * Affine::translate((p.x + shift, p.y)) * Affine::scale(k));
+        // A gradient over glyphs has no box to measure here: its first stop stands in.
+        set_flat(ctx, fill);
+        ctx.fill_path(&path);
+        if let Some((paint, stroke)) = &run.stroke {
+            set_flat(ctx, paint);
+            ctx.set_stroke(kurbo::Stroke::new(stroke.width / k.max(1e-9)).with_caps(stroke.start_cap).with_join(stroke.join));
+            ctx.stroke_path(&path);
+        }
+    }
+}
+
+/// Paint with a solid colour; a gradient falls back to its first stop.
+fn set_flat(ctx: &mut RenderContext, paint: &Paint) {
+    let c = match paint {
+        Paint::Solid(c) => *c,
+        Paint::Gradient(g) => g.stops.first().map(|(_, c)| *c).unwrap_or(deckcraft_color::Rgba::BLACK),
+    };
+    ctx.set_paint(peniko::Color::from_rgba8(c.r, c.g, c.b, c.a));
+}
+
+/// Split a run's text where its face does not cover the characters, so each stretch is shaped by
+/// one face: the run's own, or the database's fallback for the character.
+fn segments<'a>(r: &'a TextRun, face: &Arc<FontFace>) -> Vec<(Arc<FontFace>, &'a str)> {
+    let db = FontDb::global();
+    let mut out: Vec<(Arc<FontFace>, &'a str)> = Vec::new();
+    let (mut start, mut current) = (0usize, face.clone());
+    for (i, c) in r.text.char_indices() {
+        let want = if face.covers(c) { face.clone() } else { db.fallback_for(c, face.id()).unwrap_or_else(|| face.clone()) };
+        if !Arc::ptr_eq(&want, &current) {
+            if start < i {
+                out.push((current, &r.text[start..i]));
+            }
+            start = i;
+            current = want;
+        }
+    }
+    if start < r.text.len() {
+        out.push((current, &r.text[start..]));
+    }
+    out
+}
+
+/// The outline of one glyph, or `None` when the face has none (a space, a missing glyph).
+fn glyph_path(face: &FontFace, gid: u32) -> Option<BezPath> {
+    let p = crate::glyph(face, gid);
+    (!p.elements().is_empty()).then(|| p.as_ref().clone())
+}
+
+/// The face a run asks for: the first family it names that is installed, then the closest style.
+fn face_for(r: &TextRun) -> Arc<FontFace> {
+    let db = FontDb::global();
+    let style = match (r.bold, r.italic) {
+        (true, true) => "Bold Italic",
+        (true, false) => "Bold",
+        (false, true) => "Italic",
+        (false, false) => "Regular",
+    };
+    for family in &r.families {
+        let family = generic_family(family);
+        if db.has_family(family) {
+            return db.face(family, style);
+        }
+    }
+    db.face("", style)
+}
+
+/// CSS's generic families, named by the families the font database knows.
+fn generic_family(name: &str) -> &str {
+    match name.to_ascii_lowercase().as_str() {
+        "sans-serif" | "cursive" | "fantasy" | "system-ui" => "Helvetica Neue",
+        "serif" => "Times New Roman",
+        "monospace" => "Courier New",
+        _ => name,
+    }
+}
+
 /// The pen at the layout scale (the picture scatters its own transforms into the geometry).
 fn pen_at(p: &kurbo::Stroke, k: f64, path: &BezPath) -> kurbo::Stroke {
     let mut s = kurbo::Stroke::new((p.width * k).max(1e-4)).with_caps(p.start_cap).with_join(p.join).with_miter_limit(p.miter_limit);
@@ -195,6 +354,38 @@ mod tests {
         assert!(left[0] > 200 && left[2] < 60, "left {left:?}");
         assert!(right[2] > 200 && right[0] < 60, "right {right:?}");
         assert!(mid[0] > 60 && mid[2] > 60, "mid {mid:?}");
+    }
+
+    #[test]
+    fn text_is_drawn_at_the_anchor_it_names() {
+        let ink = |img: &image::RgbaImage, x0: u32, x1: u32| {
+            (0..img.height()).flat_map(|y| (x0..x1).map(move |x| (x, y))).any(|(x, y)| img.get_pixel(x, y)[3] > 128)
+        };
+        let start = rasterize(
+            b"<svg width='100' height='40' viewBox='0 0 100 40'><text x='0' y='32' font-size='26' font-family='sans-serif' fill='#000000'>Hi</text></svg>",
+            100,
+        )
+        .expect("draws");
+        assert!(ink(&start, 0, 30), "the glyphs start at x = 0");
+        assert!(!ink(&start, 70, 100), "and nothing follows them on the right");
+        let end = rasterize(
+            b"<svg width='100' height='40' viewBox='0 0 100 40'><text x='100' y='32' font-size='26' font-family='sans-serif' text-anchor='end' fill='#000000'>Hi</text></svg>",
+            100,
+        )
+        .expect("draws");
+        assert!(ink(&end, 70, 100), "an end anchor puts the glyphs against x = 100");
+        assert!(!ink(&end, 0, 30), "and nothing at the left edge");
+    }
+
+    #[test]
+    fn a_text_only_picture_keeps_its_size_and_paints() {
+        let img = rasterize(
+            b"<svg width='60' height='20' viewBox='0 0 60 20'><text x='31' y='15' font-size='12' font-family='sans-serif' text-anchor='middle' fill='#000000'>ok</text></svg>",
+            60,
+        )
+        .expect("draws");
+        assert_eq!(img.dimensions(), (60, 20));
+        assert!(img.pixels().any(|p| p[3] > 0), "the label paints");
     }
 
     #[test]
