@@ -982,6 +982,44 @@ fn align_and_distribute_refuse_values_they_do_not_name() {
     assert!((pos(&mut s, ids[1], "y") - 105.0).abs() < 1e-6);
 }
 
+/// A `dir` or `to` that is present but is not a string (null, a number, a bool, an object or an
+/// array) is refused with the accepted values, and the shapes and the revision stay as they were.
+/// Before, such a value counted as left out: `dir` meant horizontal and `to` each command's
+/// default, so the call moved the selected shapes.
+#[test]
+fn align_and_distribute_refuse_dir_and_to_that_are_not_strings() {
+    let dirs = "`dir` must be horizontal or vertical";
+    let tos = "`to` must be slide or selection";
+    let mut failures = vec![];
+    for v in [json!(null), json!(123), json!(false), json!({}), json!([])] {
+        for (cmd, params, want) in [
+            ("arrange.distribute", json!({"dir": v.clone()}), dirs),
+            ("arrange.distribute", json!({"dir": "horizontal", "to": v.clone()}), tos),
+            ("arrange.align", json!({"edge": "left", "to": v.clone()}), tos),
+        ] {
+            let mut s = session();
+            let mut ids = vec![];
+            for (x, y) in [(10.0, 10.0), (200.0, 50.0), (500.0, 200.0)] {
+                ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 40, 40]})).unwrap()["id"].as_u64().unwrap());
+            }
+            s.execute("edit.select", &json!({"ids": ids})).unwrap();
+            let boxes = |s: &mut Session| -> Vec<Value> {
+                ids.iter().map(|id| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone()).collect()
+            };
+            let (rev, before) = (s.doc().unwrap().revision, boxes(&mut s));
+            match s.execute(cmd, &params) {
+                Ok(_) => failures.push(format!("{cmd} {params}: accepted")),
+                Err(e) if !e.to_string().contains(want) => failures.push(format!("{cmd} {params}: {e}")),
+                Err(_) => {}
+            }
+            if s.doc().unwrap().revision != rev || boxes(&mut s) != before {
+                failures.push(format!("{cmd} {params}: moved the shapes"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn pointer_draw_move_resize() {
     let mut s = session();

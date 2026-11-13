@@ -386,12 +386,12 @@ fn regroup(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 /// `to` of arrange.align and arrange.distribute: `Some(true)` for the slide, `Some(false)` for the
-/// selection, `None` when it is left out.
+/// selection, `None` when it is left out. Any other value, a non-string included, is refused.
 fn align_to(cmd: &str, p: &Value) -> Result<Option<bool>> {
-    match str_param(p, "to") {
+    match p.get("to").map(Value::as_str) {
         None => Ok(None),
-        Some("slide") => Ok(Some(true)),
-        Some("selection") => Ok(Some(false)),
+        Some(Some("slide")) => Ok(Some(true)),
+        Some(Some("selection")) => Ok(Some(false)),
         Some(_) => Err(bad(cmd, "`to` must be slide or selection")),
     }
 }
@@ -432,9 +432,9 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
-    let horiz = match str_param(p, "dir") {
-        None | Some("horizontal") => true,
-        Some("vertical") => false,
+    let horiz = match p.get("dir").map(Value::as_str) {
+        None | Some(Some("horizontal")) => true,
+        Some(Some("vertical")) => false,
         Some(_) => return Err(bad("arrange.distribute", "`dir` must be horizontal or vertical")),
     };
     let to = align_to("arrange.distribute", p)?;
