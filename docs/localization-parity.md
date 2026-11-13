@@ -13,9 +13,9 @@ not shown. Command ids, engine labels returned to scripts, the control channel, 
 English. Still English: slide placeholder prompts (drawn by the renderer), status messages from the
 engine, the native macOS menu bar and some dialog choice lists. Other requests: #30 and PR #34
 (Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as
-catalog-only PRs there. Dimension score: **~15% ready** (estimated: English complete, German
+catalog-only PRs there. Dimension score: **~18% ready** (estimated: English complete, German and French
 mostly, slide-text script
-support partly there), **45–80 h** to parity plus native-speaker review.
+support partly there), **40–75 h** to parity plus native-speaker review.
 
 ## How the numbers are measured
 
