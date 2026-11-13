@@ -139,7 +139,7 @@ fn options_close_button_restores_the_settings() {
 fn options_cancel_keeps_a_saved_language_this_build_does_not_offer() {
     crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n");
     let mut h = harness();
-    h.state_mut().ui.language = "fr".into();
+    h.state_mut().ui.language = "it".into();
     open_options(&mut h);
 
     h.state_mut().run("app.language", json!({"language": "de"})).expect("German is offered");
@@ -148,6 +148,6 @@ fn options_cancel_keeps_a_saved_language_this_build_does_not_offer() {
 
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
-    assert_eq!(h.state().ui.language, "fr", "Esc restores the saved code");
+    assert_eq!(h.state().ui.language, "it", "Esc restores the saved code");
     assert!(h.state().dialog.is_none(), "and the dialog closes");
 }

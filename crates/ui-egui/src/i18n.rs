@@ -58,8 +58,9 @@ pub const AUTO: &str = "auto";
 /// The languages DeckCraft offers, as lowercase BCP 47 codes (also the `language` setting's value
 /// and the craft-i18n locale), when their catalogs are embedded. English first: it is the source
 /// language and the fallback. German (`de`) is neutral across Germany, Austria and Switzerland:
-/// `de-DE`, `de-AT`, `de_CH.UTF-8` … resolve to it.
-pub static LANGUAGES: [&str; 2] = ["en", "de"];
+/// `de-DE`, `de-AT`, `de_CH.UTF-8` … resolve to it. French (`fr`) likewise for France, Canada,
+/// Belgium and Switzerland: `fr-FR`, `fr-CA`, `fr_BE.UTF-8` ….
+pub static LANGUAGES: [&str; 3] = ["en", "de", "fr"];
 
 /// A language the UI can be shown in: English, or an offered language whose catalogs are embedded.
 #[derive(Clone, Copy)]
