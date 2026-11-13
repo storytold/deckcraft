@@ -43,10 +43,10 @@ unicode-linebreak = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 # text / rendering / formats
-skrifa = "0.47"
-harfrust = "0.13"
-vello_cpu = "0.2"
-vello_common = { version = "0.2", default-features = false }
+skrifa = "0.49"
+harfrust = "0.15"
+vello_cpu = "0.3"
+vello_common = { version = "0.3", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 # craft-media, craft-audio and craft-video share types and stay on one rev.
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false }
@@ -60,8 +60,8 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "63196e66f3033a6623eb629af95a104d26986725", features = ["egui"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
 i_overlay = "9"
-quick-xml = "0.41"
-zip = { version = "3", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # ui
 egui = { version = "0.37", default-features = false }
@@ -69,7 +69,7 @@ egui_extras = { version = "0.37", default-features = false }
 eframe = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 web-time = "1.1"
-rfd = "0.17"
+rfd = "0.18"
 arboard = { version = "3.6", default-features = false }
 
 [workspace.lints.rust]
