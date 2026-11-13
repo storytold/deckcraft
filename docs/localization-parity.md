@@ -1,11 +1,12 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-31 · **Change:** minor (Turkish partial UI and language switch in Preferences; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+DeckCraft's interface is English by default, with an interface language switch in Preferences
+offering partial Turkish support (`tr` / Türkçe). Most other strings remain literals in the UI
+and engine code awaiting a full string catalog. Requests: #15 (follow the system language), #30 and PR #34
+(Ukrainian, open). Dimension score: **~9% ready** (estimated: English complete, partial Turkish UI,
+slide-text script support partly there), **55–90 h** to parity plus native-speaker review.
 
 ## How the numbers are measured
 
@@ -20,7 +21,7 @@ support partly there), **55–90 h** to parity plus native-speaker review.
   ru, sk, sv, th, tr, zh_CN, zh_TW (26 languages). PowerPoint for **Mac** has no Hindi or Vietnamese
   UI; PowerPoint for Windows has both.
 
-## The twelve key languages
+## The thirteen key languages
 
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support (slide text) | Native review | Status | PowerPoint for Mac UI | Hours to full |
 |---|---|---|---|---|---|---|---|---|
@@ -36,10 +37,11 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
+| Turkish | tr | ~150 / ~1,050 (14%) | ribbon, backstage, dialogs, panes, status bar | full (Latin) | yes | **partial** | yes | 3–5 |
 
-Other languages shipped: **0** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
-than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
-Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
+Other languages shipped: **0** (Ukrainian is in review as PR #34; Turkish partial UI in PR). PowerPoint for Mac ships 15 more
+than the thirteen above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
+Polish, Russian, Slovak, Swedish, Thai and Traditional Chinese.
 
 Per-language hours assume the infrastructure exists: **8–14 h** once for a string catalog (copy a
 sibling app's approach, e.g. EffectCraft's menu and panel catalogs), a language setting that follows

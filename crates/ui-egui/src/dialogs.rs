@@ -29,52 +29,8 @@ impl Dialog {
     }
 }
 
-fn title(id: &str) -> &'static str {
-    match id {
-        "table" => "Insert Table",
-        "slideSize" => "Slide Size",
-        "sizePosition" => "Size and Position",
-        "headerFooter" => "Header and Footer",
-        "hyperlink" => "Insert Hyperlink",
-        "setupShow" => "Set Up Slide Show",
-        "zoom" => "Zoom",
-        "comment" => "New Comment",
-        "altText" => "Alt Text",
-        "outline" => "Slides from Outline",
-        "renameSection" => "Rename Section",
-        "reuseSlides" => "Reuse Slides",
-        "renameShape" => "Rename",
-        "renameLayout" => "Rename Layout",
-        "paragraph" => "Paragraph",
-        "tabs" => "Tabs",
-        "font" => "Font",
-        "about" => "About DeckCraft",
-        "preferences" => "Preferences",
-        "autocorrect" => "AutoCorrect",
-        "gridOptions" => "Grid Options",
-        "columns" => "Columns",
-        "export" => "Export",
-        "symbol" => "Symbol",
-        "photoAlbum" => "Photo Album",
-        "replaceFonts" => "Replace Font",
-        "equation" => "Equation",
-        "dateTime" => "Date and Time",
-        "spelling" => "Spelling",
-        "pasteSpecial" => "Paste Special",
-        "find" => "Find and Replace",
-        "accessibility" => "Accessibility Checker",
-        "language" => "Language",
-        "customShow" => "Custom Shows",
-        "chartData" => "Chart Data",
-        "trim" => "Trim Media",
-        "smartart" => "Choose a SmartArt Graphic",
-        "bullets" => "Bullets and Numbering",
-        "action" => "Action Settings",
-        "quit" => "DeckCraft",
-        "themeColors" => "Create New Theme Colors",
-        "themeFonts" => "Create New Theme Fonts",
-        _ => "DeckCraft",
-    }
+fn title(id: &str, lang: crate::UiLanguage) -> &'static str {
+    lang.dialog_title(id)
 }
 
 /// Render the active dialog, clearing it when dismissed and preserving or restoring application
@@ -83,7 +39,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let mut window = egui::Window::new(title(&d.id, app.ui.language))
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
@@ -126,7 +82,11 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     }
 }
 
-fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+pub(super) fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+    buttons_ex(ui, ok_label, "Cancel")
+}
+
+pub(super) fn buttons_ex(ui: &mut Ui, ok_label: &str, cancel_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
     ui.add_space(8.0);
@@ -137,7 +97,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(cancel_label).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });
