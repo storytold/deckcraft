@@ -570,9 +570,12 @@ pub fn find_in(dirs: &[PathBuf], lang: &str) -> Option<(PathBuf, PathBuf)> {
     }
     // A tag's case carries no meaning (BCP 47) while file names are case-sensitive: `pt-pt`
     // names `pt_PT.aff`, and must not fall through to the language's other dictionaries below.
+    // Every case-insensitive match is tried: a stray `PT_PT.aff` without its `.dic` must not
+    // shadow the complete `pt_PT` pair.
     for d in dirs {
-        if let Some(p) = stems_in(d).into_iter().find(|s| s.eq_ignore_ascii_case(&full)).and_then(|s| pair(d, &s)) {
-            return Some(p);
+        let found = stems_in(d).into_iter().filter(|s| s.eq_ignore_ascii_case(&full)).find_map(|s| pair(d, &s));
+        if found.is_some() {
+            return found;
         }
     }
     for d in dirs {
@@ -1160,6 +1163,16 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         std::fs::create_dir_all(&encoded).unwrap();
         add(&encoded, "pt_PT.UTF-8");
         assert_eq!(stem(&[encoded], "pt-PT").as_deref(), Some("pt_PT.UTF-8"));
+        // A case-insensitive match with no complete pair does not shadow the requested locale's
+        // complete pair: `PT_PT` has only its `.aff`, so the search carries on instead of
+        // settling on it (or on `pt_BR`).
+        let partial = root.join("partial");
+        std::fs::create_dir_all(&partial).unwrap();
+        std::fs::write(partial.join("PT_PT.aff"), "").unwrap();
+        add(&partial, "pt_BR");
+        assert_eq!(stem(std::slice::from_ref(&partial), "pt-pt").as_deref(), Some("pt_BR"));
+        add(&partial, "pt_PT");
+        assert_eq!(stem(std::slice::from_ref(&partial), "pt-pt").as_deref(), Some("pt_PT"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
