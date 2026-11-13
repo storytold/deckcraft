@@ -190,6 +190,26 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     }
     c.legend = ch.child("legend").map(|l| l.child_val("legendPos").unwrap_or("r").to_string());
     c.legend_overlay = ch.child("legend").and_then(|l| l.child("overlay")).and_then(|o| o.bool("val")).unwrap_or(false);
+    // An entry's own text (`c:legendEntry/c:txPr`) over the legend's, as for any text.
+    c.legend_entries = ch
+        .child("legend")
+        .into_iter()
+        .flat_map(|l| l.children_named("legendEntry"))
+        .take(MAX_LEGEND_ENTRIES)
+        .filter_map(|e| {
+            // The paragraph's own run properties first, then the list style's defaults
+            // (`a:lstStyle` comes before `a:p`, and is the less specific of the two).
+            let tx = e.child("txPr");
+            let para = tx.and_then(|t| t.child("p"));
+            let entry = deckcraft_model::chart::LegendEntry {
+                idx: e.child("idx").and_then(|i| i.u32("val"))?,
+                size: text_size(para).or_else(|| text_size(tx)),
+                bold: text_bold(para).or_else(|| text_bold(tx)),
+                color: text_color(para).or_else(|| text_color(tx)),
+            };
+            (entry.size.is_some() || entry.bold.is_some() || entry.color.is_some()).then_some(entry)
+        })
+        .collect();
     c.chart_fill = simple_fill(root.child("spPr"));
     c.plot_fill = simple_fill(pa.child("spPr"));
 
@@ -369,8 +389,11 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
         secondary_axis: secondary,
         ..Default::default()
     };
+    // `<c:dLbls><c:delete val="1"/>` hides every label of the series, whatever the group says.
+    if s.path(&["dLbls", "delete"]).map(|v| v.bool("val").unwrap_or(true)) == Some(true) {
+        ser.data_labels = Some(false);
     // `<c:showVal/>` without a val attribute means true, as in the schema's default.
-    if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
+    } else if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
         ser.data_labels = Some(d);
     } else if let Some(false) = group_labels {
         // The group asks for no labels and the series does not say otherwise.
@@ -655,6 +678,30 @@ fn copy_part(
         }
     }
     true
+}
+
+/// Legend entries read from one chart; a legend lists at most one per series or category.
+const MAX_LEGEND_ENTRIES: usize = 1024;
+
+/// The weight (`b`) of the first `a:defRPr` or `a:rPr` that sets one under `e`.
+fn text_bold(e: Option<&El>) -> Option<bool> {
+    fn rec(e: &El, depth: usize) -> Option<bool> {
+        if depth > 8 {
+            return None;
+        }
+        for c in e.elements() {
+            if (c.is("defRPr") || c.is("rPr"))
+                && let Some(b) = c.bool("b")
+            {
+                return Some(b);
+            }
+            if let Some(v) = rec(c, depth + 1) {
+                return Some(v);
+            }
+        }
+        None
+    }
+    rec(e?, 0)
 }
 
 /// The size in points of the first `a:defRPr` or `a:rPr` with one under `e` (`sz` in hundredths).
