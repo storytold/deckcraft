@@ -163,3 +163,29 @@ fn embedded_catalogs_parse_cleanly() {
         }
     }
 }
+
+/// The status bar looks its message up as it draws it (#2110): the UI's own messages, a plain or
+/// an `@msg` row, and a language switch applies to a message already showing.
+#[test]
+fn status_messages_follow_the_interface_language() {
+    use_fixture(
+        "de",
+        "@id\tlanguage.name\tDeutsch\n\tCopied the path\tPfad kopiert\n@msg\tSaved\tGespeichert\n@plural\tInserted {n} slide|Inserted {n} slides\t{n} Folie eingefügt|{n} Folien eingefügt\n",
+    );
+    let mut h = harness(SlideApp::new(Session::with_new(), Services::default()));
+    h.state_mut().set_status("Copied the path");
+    h.run_steps(2);
+    h.get_by_value("Copied the path");
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.run_steps(2);
+    h.get_by_value("Pfad kopiert");
+    h.state_mut().set_status("Saved");
+    h.run_steps(2);
+    h.get_by_value("Gespeichert");
+    assert_eq!(tn(3, "Inserted {n} slide", "Inserted {n} slides"), "3 Folien eingefügt");
+    // A message without a row shows as the engine or the UI wrote it.
+    h.state_mut().set_status("Nothing to undo");
+    h.run_steps(2);
+    h.get_by_value("Nothing to undo");
+    set_current(Lang::EN);
+}
