@@ -3,6 +3,7 @@
 
 use crate::text::{Paragraph, Run, RunKind, RunProps, TextBody};
 use crate::words;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// (paragraph, char offset in the paragraph).
 pub type Pos = (usize, usize);
@@ -417,6 +418,21 @@ fn smart_space(body: &mut TextBody, at: Pos) -> Pos {
         }
     }
     at
+}
+
+/// The position after the grapheme cluster at `pos`, or the next paragraph's start at a paragraph end.
+pub fn cluster_end(body: &TextBody, pos: Pos) -> Pos {
+    let (pi, ch) = clamp(body, pos);
+    let text = body.paragraphs.get(pi).map(Paragraph::text).unwrap_or_default();
+    // Boundaries come from the whole paragraph, so a caret inside a cluster deletes only to its end.
+    let mut end = 0;
+    for g in text.graphemes(true) {
+        end += g.chars().count();
+        if end > ch {
+            return (pi, end);
+        }
+    }
+    char_move(body, pos, true)
 }
 
 /// One character left/right across paragraph boundaries.
