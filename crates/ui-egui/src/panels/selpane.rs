@@ -107,6 +107,7 @@ fn row_id(id: u32) -> Id {
 
 /// Draw a small labelled icon button and return its interaction response.
 fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egui::Response {
+    let label = crate::i18n::tr(label);
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, label));
@@ -118,12 +119,13 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
     resp.on_hover_text(label)
 }
 
+/// Draw the Selection Pane's top toolbar (Show All, Hide All, Send Backward, Bring Forward).
 fn toolbar(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, has_sel: bool) {
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(crate::i18n::tr("Show All")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.showAll", json!({}));
         }
-        if ui.add(egui::Button::new("Hide All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(crate::i18n::tr("Hide All")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.hideAll", json!({}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -205,8 +207,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let renaming = app.selpane.renaming.as_ref().filter(|(id, _)| *id == row.id).map(|(_, s)| s.clone());
         if let Some(mut buf) = renaming {
             let edit_id = ui.scope_id().with(("rename", row.id));
-            let out =
-                ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text("Name").font(theme::font(12.5)).margin(vec2(2.0, 1.0)));
+            let out = ui.put(
+                name_rect,
+                egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text(crate::i18n::tr("Name")).font(theme::font(12.5)).margin(vec2(2.0, 1.0)),
+            );
             if !app.selpane.rename_started {
                 out.request_focus();
                 if let Some(mut s) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -384,6 +388,7 @@ fn keys(app: &mut SlideApp, ui: &Ui, rows: &[Row], selected: &[u32], focused: u3
     }
 }
 
+/// Draw the right-click context menu for one Selection Pane row.
 fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
     resp.context_menu(|ui| {
         for (label, cmd) in [
@@ -392,22 +397,22 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
             ("Send Backward", "arrange.sendBackward"),
             ("Send to Back", "arrange.sendToBack"),
         ] {
-            if ui.button(label).clicked() {
+            if ui.button(crate::i18n::tr(label)).clicked() {
                 run(app, cmd, json!({"ids": [row.id]}));
                 ui.close();
             }
         }
         ui.separator();
-        if ui.button("Rename").clicked() {
+        if ui.button(crate::i18n::tr("Rename")).clicked() {
             app.selpane.renaming = Some((row.id, row.name.clone()));
             app.selpane.rename_started = false;
             ui.close();
         }
-        if ui.button(if row.hidden { "Show" } else { "Hide" }).clicked() {
+        if ui.button(crate::i18n::tr(if row.hidden { "Show" } else { "Hide" })).clicked() {
             run(app, "shape.visible", json!({"id": row.id, "visible": row.hidden}));
             ui.close();
         }
-        if ui.button(if row.locked { "Unlock" } else { "Lock" }).clicked() {
+        if ui.button(crate::i18n::tr(if row.locked { "Unlock" } else { "Lock" })).clicked() {
             run(app, "shape.lock", json!({"id": row.id}));
             ui.close();
         }

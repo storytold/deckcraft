@@ -199,7 +199,7 @@ impl SlideApp {
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
-                self.set_status(format!("DeckCraft can't export “{other}”"));
+                self.set_status(crate::i18n::format("DeckCraft can't export “{0}”", &[other]));
                 return false;
             }
         };
@@ -212,7 +212,7 @@ impl SlideApp {
             }
             return match self.run("file.export", params) {
                 Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
+                    self.set_status(crate::i18n::tr("Exported {path}").replace("{path}", &path));
                     true
                 }
                 Err(_) => false,
@@ -398,7 +398,12 @@ impl SlideApp {
         match result {
             Ok(()) => {
                 self.reuse_target = None;
-                self.set_status(format!("Inserted {} slides", picked.len()));
+                let msg = if picked.len() == 1 {
+                    crate::i18n::tr("Inserted 1 slide").to_string()
+                } else {
+                    crate::i18n::format("Inserted {} slides", &[&picked.len().to_string()])
+                };
+                self.set_status(msg);
                 true
             }
             Err(e) => {
@@ -455,7 +460,7 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status(crate::i18n::tr("Saved {path}").replace("{path}", &path));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }
@@ -525,7 +530,7 @@ impl SlideApp {
         });
         match saved {
             Ok(()) => {
-                self.set_status(format!("Saved {name}"));
+                self.set_status(crate::i18n::tr("Saved {path}").replace("{path}", &name));
                 Ok(name)
             }
             Err(e) => {
