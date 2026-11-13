@@ -1319,30 +1319,34 @@ impl FontDb {
         }
         let cp = u32::from(c);
         for path in paths {
-            let (coverage_gen, cached) = {
-                let coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                let hit = coverage.files.iter().find(|f| f.path == path).and_then(|f| f.ranges.as_deref().map(|r| !f.complete || ranges_hold(r, cp)));
-                (coverage.generation, hit)
-            };
-            if let Some(hit) = cached {
-                if hit {
-                    return true;
+            for _ in 0..2 {
+                let (coverage_gen, cached) = {
+                    let coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let hit =
+                        coverage.files.iter().find(|f| f.path == path).and_then(|f| f.ranges.as_deref().map(|r| !f.complete || ranges_hold(r, cp)));
+                    (coverage.generation, hit)
+                };
+                if let Some(hit) = cached {
+                    if hit {
+                        return true;
+                    }
+                    break;
                 }
-                continue;
-            }
-            let (ranges, complete) = coverage_ranges(&path);
-            let hit = !complete || ranges_hold(&ranges, cp);
-            let mut coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if coverage.generation == coverage_gen {
-                if let Some(file) = coverage.files.iter_mut().find(|f| f.path == path) {
-                    file.ranges = Some(ranges);
-                    file.complete = complete;
-                } else {
-                    coverage.files.push(CoverageFile { path, ranges: Some(ranges), complete });
+                let (ranges, complete) = coverage_ranges(&path);
+                let hit = !complete || ranges_hold(&ranges, cp);
+                let mut coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if coverage.generation == coverage_gen {
+                    if let Some(file) = coverage.files.iter_mut().find(|f| f.path == path) {
+                        file.ranges = Some(ranges);
+                        file.complete = complete;
+                    } else {
+                        coverage.files.push(CoverageFile { path: path.clone(), ranges: Some(ranges), complete });
+                    }
+                    if hit {
+                        return true;
+                    }
+                    break;
                 }
-            }
-            if hit {
-                return true;
             }
         }
         false
@@ -1518,82 +1522,38 @@ impl FontDb {
     /// First face (fallback family first, then load order) that covers `c`; on native, system
     /// fonts are cataloged and loaded lazily the first time no loaded face covers a character.
     pub fn fallback_for(&self, c: char, exclude: u32) -> Option<Arc<FontFace>> {
-        self.resolve_fallback_filtered(c, exclude, &|_| true, true)
+        if let Some(f) = self.loaded_fallback(c, exclude) {
+            return Some(f);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.system_fallback(c) {
+            return self.loaded_fallback(c, exclude);
+        }
+        None
     }
 
     /// A covering fallback accepted by the caller (for example, an interface that cannot use
     /// colour or very large faces). Rejected faces do not stop the search for another face.
     /// A policy-specific miss is not stored as a general document-font miss.
     pub fn fallback_for_filtered(&self, c: char, exclude: u32, accept: impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {
-        self.resolve_fallback_filtered(c, exclude, &accept, false)
-    }
-
-    fn resolve_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool, remember_miss: bool) -> Option<Arc<FontFace>> {
-        if let Some(f) = self.loaded_fallback_filtered(c, exclude, accept) {
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(pos) = self.tried_system_fallback_pos(&f.family)
-                && pos > 0
-                && self.load_earlier_system_fallback(c, pos, &|face| face.id != exclude && accept(face))
-            {
-                return self.loaded_fallback_filtered(c, exclude, accept);
-            }
+        if let Some(f) = self.loaded_fallback_filtered(c, exclude, &accept) {
             return Some(f);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if self.system_fallback_filtered(c, &|f| f.id != exclude && accept(f), remember_miss) {
-            return self.loaded_fallback_filtered(c, exclude, accept);
+        if self.system_fallback_filtered(c, &|f| f.id != exclude && accept(f), false) {
+            return self.loaded_fallback_filtered(c, exclude, &accept);
         }
-        #[cfg(target_arch = "wasm32")]
-        let _ = remember_miss;
         None
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn tried_system_fallback_pos(&self, family: &str) -> Option<usize> {
-        let sys = self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        sys.tried
-            .iter()
-            .any(|t| t.eq_ignore_ascii_case(family))
-            .then(|| SYSTEM_FALLBACKS.iter().position(|s| s.eq_ignore_ascii_case(family)))
-            .flatten()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn load_earlier_system_fallback(&self, c: char, before: usize, accept: &impl Fn(&FontFace) -> bool) -> bool {
-        if c.is_control() || c.is_whitespace() || !self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).enabled {
-            return false;
-        }
-        let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
-        let loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        for fam in &SYSTEM_FALLBACKS[..before] {
-            if self.is_loaded(fam) || !cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
-                continue;
-            }
-            if self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tried.contains(fam) {
-                continue;
-            }
-            if !self.family_covers(fam, c) {
-                continue;
-            }
-            if !self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tried.insert(fam) {
-                continue;
-            }
-            self.load_family(fam, &loading);
-            if self.read_faces().iter().any(|f| f.covers(c) && accept(f)) {
-                return true;
-            }
-        }
-        false
+    fn loaded_fallback(&self, c: char, exclude: u32) -> Option<Arc<FontFace>> {
+        self.loaded_fallback_filtered(c, exclude, &|_| true)
     }
 
     fn loaded_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {
         let faces = self.read_faces();
         let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
-        #[cfg(not(target_arch = "wasm32"))]
-        let sys_rank = |family: &str| self.tried_system_fallback_pos(family).map_or(0, |i| i + 1);
-        #[cfg(target_arch = "wasm32")]
-        let sys_rank = |_: &str| 0usize;
-        order.sort_by_key(|f| (!f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), sys_rank(&f.family), f.italic, (f.weight - 400.0).abs() as i32));
+        order.sort_by_key(|f| (!f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32));
         order.into_iter().find(|f| f.covers(c) && accept(f)).cloned()
     }
 
@@ -2006,6 +1966,8 @@ mod fallback_coverage_tests {
         assert!(!db.family_covers("Segoe UI Symbol", '\u{10348}'));
         assert!(db.family_covers("Segoe UI Symbol", 'A'));
         assert!(!db.is_loaded("Segoe UI Symbol"));
+        let _ = db.system_fallback_filtered('\u{10348}', &|_| true, true);
+        assert!(!db.sys.lock().unwrap().tried.contains("Segoe UI Symbol"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
