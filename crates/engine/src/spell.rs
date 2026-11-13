@@ -1138,31 +1138,34 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
             std::fs::write(dir.join(format!("{stem}.aff")), "").unwrap();
             std::fs::write(dir.join(format!("{stem}.dic")), "").unwrap();
         };
-        let stem = |dirs: &[PathBuf], l: &str| find_in(dirs, l).and_then(|(a, _)| a.file_stem().map(|s| s.to_string_lossy().into_owned()));
+        // Lowercased: a case-insensitive filesystem (macOS, Windows) resolves the constructed
+        // `pt_pt.aff` to the real `pt_PT.aff`, and its stem must still compare like the file name
+        // written here.
+        let stem = |dirs: &[PathBuf], l: &str| find_in(dirs, l).and_then(|(a, _)| a.file_stem().map(|s| s.to_string_lossy().to_lowercase()));
         let dirs = vec![root.clone()];
         // Only the Brazilian files are installed: the language fallback finds them (its
         // orthography differs, but `review.dictionary` names the file it chose).
         add(&root, "pt_BR");
-        assert_eq!(stem(&dirs, "pt-PT").as_deref(), Some("pt_BR"));
+        assert_eq!(stem(&dirs, "pt-PT").as_deref(), Some("pt_br"));
         // With the exact locale installed it wins, whichever of the two files is read first.
         add(&root, "pt_PT");
-        assert_eq!(stem(&dirs, "pt-PT").as_deref(), Some("pt_PT"));
-        assert_eq!(stem(&dirs, "pt-BR").as_deref(), Some("pt_BR"));
+        assert_eq!(stem(&dirs, "pt-PT").as_deref(), Some("pt_pt"));
+        assert_eq!(stem(&dirs, "pt-BR").as_deref(), Some("pt_br"));
         // A BCP 47 tag is case-insensitive; dictionary file names are not. Every spelling of
         // the tag finds the same files.
-        assert_eq!(stem(&dirs, "pt-pt").as_deref(), Some("pt_PT"));
-        assert_eq!(stem(&dirs, "PT-PT").as_deref(), Some("pt_PT"));
-        assert_eq!(stem(&dirs, "pt_PT").as_deref(), Some("pt_PT"));
+        assert_eq!(stem(&dirs, "pt-pt").as_deref(), Some("pt_pt"));
+        assert_eq!(stem(&dirs, "PT-PT").as_deref(), Some("pt_pt"));
+        assert_eq!(stem(&dirs, "pt_PT").as_deref(), Some("pt_pt"));
         // The exact locale wins even when another folder holds another of the language's pairs.
         let other = root.join("other");
         std::fs::create_dir_all(&other).unwrap();
         add(&other, "pt_BR");
-        assert_eq!(stem(&[other, root.clone()], "pt-PT").as_deref(), Some("pt_PT"));
+        assert_eq!(stem(&[other, root.clone()], "pt-PT").as_deref(), Some("pt_pt"));
         // A pair named with its encoding (`pt_PT.UTF-8.aff`/`.dic`) is still that language's.
         let encoded = root.join("encoded");
         std::fs::create_dir_all(&encoded).unwrap();
         add(&encoded, "pt_PT.UTF-8");
-        assert_eq!(stem(&[encoded], "pt-PT").as_deref(), Some("pt_PT.UTF-8"));
+        assert_eq!(stem(&[encoded], "pt-PT").as_deref(), Some("pt_pt.utf-8"));
         // A case-insensitive match with no complete pair does not shadow the requested locale's
         // complete pair: `PT_PT` has only its `.aff`, so the search carries on instead of
         // settling on it (or on `pt_BR`).
@@ -1170,9 +1173,9 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         std::fs::create_dir_all(&partial).unwrap();
         std::fs::write(partial.join("PT_PT.aff"), "").unwrap();
         add(&partial, "pt_BR");
-        assert_eq!(stem(std::slice::from_ref(&partial), "pt-pt").as_deref(), Some("pt_BR"));
+        assert_eq!(stem(std::slice::from_ref(&partial), "pt-pt").as_deref(), Some("pt_br"));
         add(&partial, "pt_PT");
-        assert_eq!(stem(std::slice::from_ref(&partial), "pt-pt").as_deref(), Some("pt_PT"));
+        assert_eq!(stem(std::slice::from_ref(&partial), "pt-pt").as_deref(), Some("pt_pt"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
