@@ -251,10 +251,7 @@ pub fn sidecar_part(name: &str) -> bool {
     let file = segs.last().copied().unwrap_or("");
     let stem = file.strip_prefix("chart").unwrap_or("");
     let num = stem.strip_suffix(".xml.rels").or_else(|| stem.strip_suffix(".xml")).unwrap_or("");
-    if stem != file && !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-    true
+    !(stem != file && !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub fn dir_of(part: &str) -> String {
