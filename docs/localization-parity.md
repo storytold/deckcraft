@@ -51,8 +51,11 @@ the next re-measure.
 ## Proofing languages
 
 PowerPoint checks spelling in dozens of languages and lets each run carry a proofing language.
-DeckCraft keeps `a:rPr/@lang` on round trip but its spelling check is a small English list of
-common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
+DeckCraft keeps `a:rPr/@lang` on round trip. Its spelling check reads the system word list for
+the run's language (`pt*` reads the Portuguese list or Hunspell's `pt_PT.dic`), and English text
+without a dictionary falls back to a small built-in list of common misspellings
+(`crates/engine/src/cmd/review.rs`); see
+[gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
 Review › Language sets the proofing language of the selected text or, with *Whole presentation*,
 of every text in the file and the default for new text (`format.languageAll`).
 
