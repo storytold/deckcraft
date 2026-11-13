@@ -163,3 +163,25 @@ fn embedded_catalogs_parse_cleanly() {
         }
     }
 }
+
+/// The renderer draws the placeholder prompts below the UI (#2107): the editor hands it the
+/// interface language's lookup, and a language switch re-renders the canvas.
+#[test]
+fn placeholder_prompts_follow_the_interface_language() {
+    let de = fixture_lang("de", "@id\tlanguage.name\tDeutsch\n\tClick to add title\tTitel durch Klicken hinzufügen\n");
+    set_current(de);
+    let prompts = prompts();
+    set_current(Lang::EN);
+    assert_eq!(prompts("Click to add title"), "Titel durch Klicken hinzufügen", "the language when the render started");
+    assert_eq!(prompts("Click to add text"), "Click to add text", "a prompt without a row stays English");
+
+    use_fixture("de", DE);
+    let mut h = harness(SlideApp::new(Session::with_new(), Services::default()));
+    h.run_steps(4);
+    let before = h.state().textures.canvas_renders;
+    h.run_steps(3);
+    assert_eq!(h.state().textures.canvas_renders, before, "an unchanged canvas isn't drawn again");
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.run_steps(3);
+    assert!(h.state().textures.canvas_renders > before, "switching the language redraws the prompts");
+}

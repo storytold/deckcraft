@@ -228,6 +228,13 @@ pub fn well_formed_code(code: &str) -> bool {
         && parts.all(|p| (1..=8).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
+/// The editor's placeholder prompts (`Click to add title`) in the current language, for
+/// `RenderOpts::prompt`: the renderer draws them below the UI, where `tl!` doesn't reach (#2107).
+pub fn prompts() -> impl Fn(&str) -> String {
+    let lang = current();
+    move |s| tr(lang, s).to_string()
+}
+
 /// A ribbon location (`Home › Font`) in the current language, segment by segment.
 pub fn location(loc: &str) -> String {
     loc.split(" › ").map(t).collect::<Vec<_>>().join(" › ")

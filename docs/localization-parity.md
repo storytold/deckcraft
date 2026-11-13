@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-28 · **Change:** major (interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (placeholder prompts on slides follow the interface language, #2107; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
@@ -9,8 +9,9 @@ UI is drawn (`tl!`, `crates/ui-egui/src/i18n.rs`); `build.rs` embeds them from `
 the commit in `craft-i18n.rev`, and a build without it is English only. The interface follows the
 system language (#15), or Preferences › Interface language and `app.language` (`auto`, `en`,
 `de`). Command ids, engine labels returned to scripts, the control channel, the CLI and MCP stay
-English. Still English: slide placeholder prompts (drawn by the renderer), status messages from the
-engine, the native macOS menu bar and some dialog choice lists. Other requests: #30 and PR #34
+English. The placeholder prompts on slides (`Click to add title`) are drawn in the interface
+language too: the renderer takes the UI's lookup (`RenderOpts::prompt`, #2107). Still English:
+status messages from the engine, the native macOS menu bar and some dialog choice lists. Other requests: #30 and PR #34
 (Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as
 catalog-only PRs there. Dimension score: **~15% ready** (estimated: English complete, German
 mostly, slide-text script
@@ -70,6 +71,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Placeholder prompts on slides follow the interface language (#2107); score unchanged until the catalogs have the rows |
 | 2026-10-28 | major | Interface catalogs from craft-i18n, system language and Preferences › Interface language (#15); German partial (~840 rows) |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |

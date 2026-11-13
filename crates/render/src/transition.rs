@@ -103,6 +103,7 @@ fn copy_opts<'a>(o: &RenderOpts<'a>) -> RenderOpts<'a> {
         edit: o.edit,
         show_hidden: o.show_hidden,
         state: o.state,
+        prompt: o.prompt,
         skip: o.skip,
         skip_text: o.skip_text,
         editing_text: o.editing_text,
