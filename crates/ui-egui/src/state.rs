@@ -51,6 +51,10 @@ pub enum ViewMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    /// Interface language setting: [`crate::i18n::AUTO`] follows the system, otherwise a language code
+    /// (`ja`, `en`). Menus, the ribbon, the status bar and the command labels are drawn in it;
+    /// command ids, the presentation and file names are not.
+    pub language: String,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -100,6 +104,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            language: crate::i18n::AUTO.into(),
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -155,6 +160,8 @@ impl UiState {
         if !short(&self.format_tab) {
             self.format_tab = d.format_tab;
         }
+        // A hand-edited or newer `language` value falls back to following the system.
+        self.language = crate::i18n::normalize_pref(&self.language).unwrap_or(crate::i18n::AUTO).to_string();
         self.pane = self.pane.filter(short);
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();

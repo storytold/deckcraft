@@ -25,7 +25,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         fams.insert(0, family.clone());
     }
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Font"));
+        let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tl!("Font")));
         let combo = craft_ui::ComboBox::from_id_salt("font_dialog_family")
             .selected_text(if family.is_empty() { " " } else { family.as_str() })
             .width(300.0)
@@ -47,7 +47,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         check(ui, d, "Italic", "italic", false);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Underline"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tl!("Underline")));
         choice(
             ui,
             d,
@@ -60,20 +60,20 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         let _ = labeled_text(ui, d, "Color", "color", 110.0);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Strikethrough"));
-        choice(ui, d, "font_dialog_strike", "Strikethrough", "strike", &[("none", "None"), ("sng", "Single"), ("dbl", "Double")]);
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tl!("Strikethrough")));
+        choice(ui, d, "font_dialog_strike", tl!("Strikethrough"), "strike", &[("none", "None"), ("sng", "Single"), ("dbl", "Double")]);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Baseline"));
-        choice(ui, d, "font_dialog_baseline", "Baseline", "baseline", &[("none", "None"), ("super", "Superscript"), ("sub", "Subscript")]);
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tl!("Baseline")));
+        choice(ui, d, "font_dialog_baseline", tl!("Baseline"), "baseline", &[("none", "None"), ("super", "Superscript"), ("sub", "Subscript")]);
         ui.add_space(8.0);
-        ui.label("Caps");
-        choice(ui, d, "font_dialog_caps", "Caps", "caps", &[("none", "None"), ("small", "Small caps"), ("all", "All caps")]);
+        ui.label(tl!("Caps"));
+        choice(ui, d, "font_dialog_caps", tl!("Caps"), "caps", &[("none", "None"), ("small", "Small caps"), ("all", "All caps")]);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Spacing"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tl!("Spacing")));
         let mut spacing = d.get("spacing", "0");
-        let edited = ui.add(egui::TextEdit::singleline(&mut spacing).desired_width(64.0).hint_text("pt"));
+        let edited = ui.add(egui::TextEdit::singleline(&mut spacing).desired_width(64.0).hint_text(tl!("pt")));
         let mut picked = None;
         let combo = craft_ui::ComboBox::from_id_salt("font_dialog_spacing")
             .selected_text(match spacing.as_str() {
@@ -105,7 +105,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     let underline = d.get("underline", "none");
     let strike = d.get("strike", "none");
     let shown = finite_pt(&d.get("size", "18")).unwrap_or(18.0).clamp(12.0, 28.0) as f32;
-    let mut sample = egui::RichText::new("AaBbCcDd").size(shown);
+    let mut sample = egui::RichText::new(tl!("AaBbCcDd")).size(shown);
     if bold {
         sample = sample.strong();
     }
@@ -125,15 +125,15 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         let family = d.get("family", "");
         let family = family.trim();
         if family.is_empty() {
-            app.set_status("Choose a font");
+            app.set_status(tl!("Choose a font"));
             return false;
         }
         let Some(size) = finite_pt(&d.get("size", "")) else {
-            app.set_status("Font size must be a number");
+            app.set_status(tl!("Font size must be a number"));
             return false;
         };
         let Some(spacing) = finite_pt(&d.get("spacing", "0")) else {
-            app.set_status("Character spacing must be a number");
+            app.set_status(tl!("Character spacing must be a number"));
             return false;
         };
         let mut params = json!({
