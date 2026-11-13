@@ -1,44 +1,57 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-12T23:38Z. Branch: `collab/pr15`. **The delivered head is PR #2012, and this
-file never names it as a bare commit**: the live value is what `gh pr view 2012 --json headRefOid`
-answers, and every hash in this file is the value of one dated measurement, not a standing fact.
-At 2026-11-12T23:38Z that command returned `4129405682569ec3fbd233492784bb530231eb20`, `git
-ls-remote fork refs/heads/collab/pr15` named the same commit, and `git rev-parse HEAD` was that
-commit too with a clean tree, so the PR head, the fork head and the local head are one commit,
-0 ahead / 0 behind. The pull request reads `mergeable: MERGEABLE` / `mergeStateStatus: UNSTABLE`,
-`state: OPEN`, `reviewDecision` empty.
-**`41294056` is docs-only, and it is the whole of what the push of 2026-11-12T23:20Z carried**: it
-is "the delivered head is `1227aa15` and its runs await approval" — the STATUS sync that named
-`1227aa15` the delivered head, recorded its four runs as awaiting approval, and added the last
-local commit the previous header listed (`docs/collab/STATUS.md`, +80/−41, no code). Nothing waits
-for a push above it any more. No code has changed since `c5c8f0cb`; `1227aa15`, `4ac9f44c` and the
-six commits below them are its ancestors, delivered by the 19:40Z and 17:09Z pushes.
-**No workflow run has executed on this head either**: the four runs created at 2026-11-12T23:20:15Z
-on `41294056` (CI, House rules, Nix, SonarCloud) are `completed / action_required`, and their
-`startedAt` equals their creation time, so no job started and `UNSTABLE` is the missing approval,
-not a red job. The rollup on the pull request holds nothing but CodeRabbit `skipping` — the
-`action_required` runs do not appear in it. Nothing was ever approved on this branch (`1227aa15`
-and `4ac9f44c` still read `action_required` too), and an approval covers the runs of the commit it
-was given on, so **a person must approve the four runs created on `41294056`** for CI to execute
-for the first time here; the earlier ask on `1227aa15` does not carry over, that head is an
-ancestor now.
-**What is left, and none of it is a push from an agent session**: that approval, and the
-maintainer's review and merge of #2012. #1975 (`8efe6cd8`) and #1998 (`d8850c74`) stay **open** as
-superseded — both still `MERGEABLE` / `UNSTABLE` at 23:38Z, neither to be closed from an agent
-session. The §8 gate is green on `1227aa15` itself, and every commit above it is docs-only: 8/8
-steps (fmt, pdf-deps, clippy, test, doctest, assets, layers, wasm), 2866 tests, run on the build
-host with the font and i18n pins of the CI workflow (`../.craft/reports/20261112-1950-pr-sweep.md`,
-log `gate-deckcraft-1227aa15-pin.log`). Nothing the 23:20Z push carried is still unpushed: it
-delivered everything above `1227aa15`, and nothing above `4ac9f44c` waits any more. This STATUS
-sync is now the only commit above `41294056`, it is docs-only and local, so `git log --oneline
-41294056..HEAD` is the authoritative list of what a further push would carry.
-**Rule of record.** The delivered head is named as **PR #2012 plus the command that reads it and
-the time of the reading** — `gh pr view 2012 --json headRefOid` at `<ISO time>`. A commit hash is
-allowed only as that reading's value, or as the history of an earlier reading; never as a standing
-"the delivered head is `<hash>`" claim, which the next push turns into a false statement — this
-file has had to catch up with exactly that repeatedly. In the same way, what a further push would
-carry is read rather than listed: `git log --oneline <measured head>..HEAD`.
+Updated: 2026-11-13T10:25Z. Branch: `collab/pr15`.
+
+**This page does not state the delivered head, the CI verdict or what is unpushed.** Those move
+without anyone touching this file, and a header that writes them down is false after the next
+push — which is what happened four times, each time costing a session that caught the page up by
+naming the new hash. The stable facts are the pull request and the commands that read the rest:
+
+- the pull request is **#2012 in `storytold/deckcraft`**, from branch `collab/pr15` of the fork
+  `copoka/deckcraft`;
+- the live values are read, never carried over from below:
+
+```bash
+gh pr view 2012 --json headRefOid,mergeable,mergeStateStatus,state,reviewDecision,updatedAt
+git ls-remote fork refs/heads/collab/pr15
+git rev-parse HEAD; git status --porcelain
+git log --oneline <headRefOid>..HEAD                 # what a further push would carry
+gh run list --commit <headRefOid> --json name,status,conclusion,createdAt
+```
+
+Every hash below is the value of one dated reading, printed with the time it was taken. Dated
+entries are **history**: they record what was true when written, not what is true now. Read them
+as such, and re-read the live values before acting on any of them.
+**Rule of record.** No paragraph in this file names a delivered head, a CI verdict or an unpushed
+commit as current. A reading is written as the command, the ISO time of the reading and the value
+it printed — `gh pr view 2012 --json headRefOid` at `<ISO time>` printed `<hash>`. Any other hash
+is either the identity of the commit being discussed or the value of an earlier reading kept as
+history; it is never a standing "the delivered head is `<hash>`" claim, which the next push turns
+into a false statement. In the same way, what a further push would carry is read rather than
+listed: `git log --oneline <headRefOid>..HEAD`.
+**The pushes of 2026-11-13T09:41Z merged `origin/main` into all three open pull requests** — the
+same upstream snapshot `18355eec` (the metafile→craft-metafile switch, the pinned shared PDF
+revision, the Sonar font pin and the nextest CLI path, the sidecar part predicate), delivered
+within seconds of each other: #2012 `e4ef9128` (workflow runs created 09:41:29Z), #1998 `5b67339e`
+(09:41:25Z) and #1975 `93089150` (09:41:23Z). The merge introduced 13 commits into `collab/pr15`
+and into `collab/pr11`, and 24 into `collab/pr10`, which had not yet merged the two earlier
+`origin/main` batches; no commit of this project's work was in them, they only carry the upstream
+tree each branch now builds on, and `git merge-tree` against `origin/main` `ef9ac9ac` (the merge of
+#2062 at 09:41:19Z) is clean for all three.
+**Reading at 2026-11-13T10:25Z** (history, not state). For #2012, #1998 and #1975,
+`gh pr view <N> --json headRefOid`, `git ls-remote fork refs/heads/collab/<branch>` and
+`git rev-parse HEAD` each named one and the same commit — `e4ef9128`, `5b67339e`, `93089150` —
+with clean trees and nothing ahead of the fork; all three read `state: OPEN`, `mergeable:
+MERGEABLE`, `mergeStateStatus: UNSTABLE`. The four runs created on each of those heads at
+09:41:23–29Z (CI, House rules, Nix, SonarCloud) are `completed / action_required` with `startedAt`
+equal to their creation time, so no job executed on any of them; the only executed check on the
+three heads was CodeRabbit `completed / success` on `5b67339e` (started 09:41:39Z, which is what
+updated #1998 at 09:48:07Z). An approval covers the runs of the commit it was given on, so an
+approve has to be made against whatever head #2012 reports at that moment; an approval given to an
+earlier head does not carry over.
+**This STATUS edit is local at 10:25Z**: one docs commit above `e4ef9128` on `collab/pr15`, not
+pushed — it travels with the next legitimate push, so the delivered head stays where the fork
+holds it until then, and `git log --oneline <headRefOid>..HEAD` is what that push would carry.
 **The push of 2026-11-12T17:09Z delivered the seven commits that waited above the previous
 delivered head `ceeada59`** — the four code/docs commits the earlier header listed as unpushed,
 plus the three docs commits on top of them: `f1d1cd6a` (a room that answers *below* the version a
@@ -98,7 +111,7 @@ sends exactly that range as one `TextDelete` (`NotesDelete` for notes, the cell 
 with the body before the step as its undo image. One operation carries one range: a non-empty
 selection with text deleted on both sides is two, and is still refused at the gate before the
 queue, with its reason. Details: §A composition is settled before anything leaves the client.
-**As of the push at 2026-11-12T03:13:50Z the delivered head is `5a105c61`** — the docs commit of
+**As of the push at 2026-11-12T03:13:50Z the delivered head was `5a105c61`** — the docs commit of
 the op_id slice, on top of the code commit `aaecc6db` (and of the `origin/main` merge `c9803277`).
 The fork (`copoka/deckcraft`) and PR #2012 hold exactly that commit: `gh pr view 2012 --json
 headRefOid` returned `5a105c61a48d1484d8693332f54e42f95112f759` with `MERGEABLE` / `UNSTABLE` and
@@ -463,8 +476,9 @@ head — is the owner's step (§PR publication); an agent does not push.
 `copoka/deckcraft:collab/pr15` into `storytold/deckcraft:main` and is **ready** (not a draft); its
 body is [`pr10.md`](pr10.md).
 
-**Current reading (2026-11-12T23:38Z).** The delivered head is whatever #2012 reports, read with
-`gh pr view 2012 --json headRefOid`; at 23:38Z that was `4129405682569ec3fbd233492784bb530231eb20`,
+**Reading at 2026-11-12T23:38Z (history).** No head is current here: the head is whatever #2012
+reports, read with `gh pr view 2012 --json headRefOid`. At that time it printed
+`4129405682569ec3fbd233492784bb530231eb20`;
 and `headRefOid`, the fork's `collab/pr15` and the local head were that commit (0/0, clean tree),
 `state` `OPEN`, `mergeable` `MERGEABLE`, `mergeStateStatus` `UNSTABLE`. No workflow run executed on
 it — the four runs created at 23:20:15Z are `completed / action_required` with `startedAt` equal to
@@ -474,13 +488,14 @@ docs-only STATUS sync above `1227aa15`, and the push of 17:09Z before it deliver
 commits above `ceeada59`: `f1d1cd6a` (the room behind its client rebuilds the replica from its
 base), `3b8ebaff` (a repeated `opId` is not journalled twice), `4e86a6e1` (docs), `c5c8f0cb` (a
 room forgets the seats of connections that ended and drops a silent peer), `95327b5f`,
-`b384d343` and `4ac9f44c` (docs). The only commit above the measured head is this STATUS sync.
+`b384d343` and `4ac9f44c` (docs). The only commit above the measured head at that reading was that
+STATUS sync.
 The §8 gate is green on the code at `c5c8f0cb` (§A connection that ended does not keep its
 seat: fmt and clippy clean, `collab` 308 + 2 + 8 + 20 + 5 + 6, `collab-server` 23) and on
-`1227aa15` itself; every commit above that is docs-only. **What remains is the approve of the four
-runs created on the measured head and the maintainer's review and merge — not a push**; #1998
-(`d8850c74`) and #1975 (`8efe6cd8`) are still `OPEN` (`MERGEABLE` / `UNSTABLE`) and are not closed
-from an agent session.
+`1227aa15` itself; every commit above that is docs-only. **What remained at that reading was the
+approve of the four runs created on that head, then the maintainer's review and merge — not a
+push**; an approve has to be given against whatever head the pull request reports at that moment,
+and #1998 / #1975 are not closed from an agent session.
 
 The paragraphs below are the earlier readings of the same pull request, kept as history.
 
@@ -525,15 +540,16 @@ and one Minor — triaged in §Fifth CodeRabbit review).
 
 Merging is a human step. Closing the superseded PRs is a human decision as well.
 
-**Three pull requests for one feature are open in `storytold/deckcraft`** (#1998, #1975 and #2012
-re-read 2026-11-12T23:38Z; a head is the value of that reading, re-read it with `gh pr view <N>
---json headRefOid`):
+**Three pull requests for one feature are open in `storytold/deckcraft`** (#1998, #1975 and #2012).
+The table holds no head, because a head written here is stale at the next push: read each of them
+with `gh pr view <N> --json headRefOid,mergeable,mergeStateStatus,state` — the dated readings are
+in the header (§ Reading at 2026-11-13T10:25Z) and in §Session log.
 
-| PR | Branch | Head (measured 2026-11-12T23:38Z) | GitHub state |
+| PR | Branch | How to read the head | What the pull request is |
 |---|---|---|---|
-| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `41294056` — fork = PR head = local head (0/0, clean tree); the whole of the 23:20Z push was the docs-only STATUS sync above `1227aa15` | leading PR; `MERGEABLE` / `UNSTABLE` (the four runs created 23:20:15Z are `action_required`, nothing executed; approving the runs of this head and the maintainer's merge are the next steps for a person); local §8 gate green on `1227aa15` itself — 8/8 steps, 2866 tests, every commit above it docs-only |
-| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `d8850c74` | `OPEN`, `MERGEABLE` / `UNSTABLE`, superseded; **no unique code** (`pr15...pr11` = 32/4, and its `picture_place` fix is already on pr15 at `crates/pptx/src/dgm.rs:528`) |
-| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `8efe6cd8` | `OPEN`, `MERGEABLE` / `UNSTABLE`, superseded |
+| [#2012](https://github.com/storytold/deckcraft/pull/2012) | `copoka/deckcraft:collab/pr15` | `gh pr view 2012 --json headRefOid`; `git ls-remote fork refs/heads/collab/pr15` | leading PR — the branch to build on; the maintainer's review and merge are the human steps, and the runs of whatever head it reports need one approve to execute |
+| [#1998](https://github.com/storytold/deckcraft/pull/1998) | `copoka/deckcraft:collab/pr11` | `gh pr view 1998 --json headRefOid` | superseded; **no unique code** (`pr15...pr11` = 32/4, and its `picture_place` fix is already on pr15 at `crates/pptx/src/dgm.rs:528`) |
+| [#1975](https://github.com/storytold/deckcraft/pull/1975) | `copoka/deckcraft:collab/pr10` | `gh pr view 1975 --json headRefOid` | superseded |
 
 #2012 is the top of the stack and supersedes the other two: #1998 carries the earlier
 `collab/pr11` head and #1975 the earlier `collab/pr10` head, both already contained in #2012's
@@ -1876,42 +1892,30 @@ token from the cabinet.
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr15` (or branch
    `collab/pr16` from it).
-2. **PR #2012 is open and ready from `copoka/deckcraft:collab/pr15`** — the delivered head is named
-   by the pull request, not by a commit: read it with `gh pr view 2012 --json headRefOid` (measured
-   2026-11-12T23:38Z: `41294056`, which was `headRefOid`, the fork's `collab/pr15` and the local
-   `HEAD` at once — 0/0, clean tree; `mergeable: MERGEABLE`, `mergeStateStatus: UNSTABLE`,
-   `state: OPEN`). **Everything that waited for a push is delivered**: the seven commits of the
-   17:09Z push — `f1d1cd6a` (a room that came back behind its client rebuilds the replica from its
-   base, a replacing base reports the edits it dropped, `rejected_total` counts real refusals),
-   `3b8ebaff` (a repeated `opId` answers the stored step and is not journalled twice), `4e86a6e1`
-   (docs for that incident, its fix and the production run), `c5c8f0cb` (a room forgets the seat of
-   a connection that ended and drops a peer that went silent), `95327b5f`, `b384d343` and
-   `4ac9f44c` (docs) — then `1227aa15`, the docs commit the 19:40Z push carried ("the delivered
-   head is `4ac9f44c` and the seven commits left the queue"), and then `41294056`, the docs commit
-   the 23:20Z push carried ("the delivered head is `1227aa15` and its runs await approval").
-   Nothing the push carried waits any more: this STATUS sync is the only local commit above the
-   measured head, and `git log --oneline 41294056..HEAD` names it.
-   **Still no workflow run has executed on the delivered head**: the four runs created on
-   `41294056` at 23:20:15Z (CI, House rules, Nix, SonarCloud) are `completed / action_required`
-   with `startedAt` equal to the creation time, the PR rollup holds only CodeRabbit
-   `skipping`, and the runs for the earlier heads waited for the same approval, which is why GitHub
-   answers `UNSTABLE`. **What is left is the approve, then review and merge — no push**: a person
-   approves the four runs of the measured head so CI executes, and the maintainer takes #2012. An
-   approval given to an earlier head's runs does not move to a new head, so the approval has to be
-   made against the head #2012 reports now.
-   The §8 gate is green on `1227aa15` itself — 8/8 steps (fmt, pdf-deps, clippy, test, doctest,
-   assets, layers, wasm), 2866 tests, on the build host with the CI font and i18n pins
-   (`../.craft/reports/20261112-1950-pr-sweep.md`, log `gate-deckcraft-1227aa15-pin.log`) — and
-   every commit above it is docs-only.
+2. **PR #2012 is the branch to continue on**, from `copoka/deckcraft:collab/pr15` into
+   `storytold/deckcraft:main`. The head is read from the pull request, not from this file:
+   `gh pr view 2012 --json headRefOid,mergeable,mergeStateStatus,state`, `git ls-remote fork
+   refs/heads/collab/pr15`, `git rev-parse HEAD`, and `git log --oneline <headRefOid>..HEAD` for
+   what a push would carry. The header holds those commands and one dated reading; §Session log
+   and §PR publication hold the earlier ones as history.
+   **No workflow run has executed on this branch yet**: the runs created when each recent head was
+   pushed are `completed / action_required` with `startedAt` equal to the creation time, so no job
+   started, the `UNSTABLE` verdict is the missing approval and not a red job, and the only
+   executed check on those heads is CodeRabbit's (which shows on the pull request rather than in
+   the rollup). **What is left is an approve, then review and merge — no push**: a person
+   approves the runs of whatever head #2012 reports, and the maintainer takes #2012. An approval
+   given to an earlier head's runs does not move to a new head, so it has to be given against the
+   head the pull request reports at that moment.
+   The §8 gate on the code was green at `1227aa15` — 8/8 steps (fmt, pdf-deps, clippy, test,
+   doctest, assets, layers, wasm), 2866 tests, on the build host with the CI font and i18n pins
+   (`../.craft/reports/20261112-1950-pr-sweep.md`, log `gate-deckcraft-1227aa15-pin.log`). Do not
+   inherit that verdict: `git log --oneline 1227aa15..<headRefOid> -- crates apps` names every code
+   change since, and a non-empty answer means the gate has to run again on the head.
    #1998 and #1975 are superseded by #2012 and stay open until a person closes them — **do not
    close them from an agent session**. Their heads and verdicts move without this project's
-   involvement: at 23:38Z #1998 read `d8850c74` and #1975 `8efe6cd8`, both `MERGEABLE` /
-   `UNSTABLE`, against `abffb229` / `CLEAN` and `6109fe1c` / `CONFLICTING` in the 05:44Z reading;
-   for `abffb229` the overlap with `pr15` measured 32/4 and its `picture_place` fix was already on
-   pr15 at `crates/pptx/src/dgm.rs:528`. Do not touch CI and do not mention agents.
-   The earlier readings of this PR are kept as history in §PR publication and in the header; the
-   live values are `gh pr view 2012 --json headRefOid,mergeable,mergeStateStatus`,
-   `git rev-parse HEAD` and `git ls-remote fork refs/heads/collab/pr15`.
+   involvement; the readings at 23:38Z and 05:44Z are history in §PR publication and §Session log,
+   and the live values are the same `gh pr view <N>` calls. Do not touch CI and do not mention
+   agents.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The desktop side is in too (`collab/pr14`): Save in a live
@@ -2202,6 +2206,37 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-13 — the header stops naming a head at all; the 09:41Z merges are recorded as history
+
+- **Measured at 2026-11-13T10:25Z.** `gh pr view <N> --json headRefOid` returned `e4ef9128` for
+  #2012, `5b67339e` for #1998 and `93089150` for #1975; `git ls-remote fork
+  refs/heads/collab/<branch>` named the same three, `git rev-parse HEAD` was `e4ef9128` with a
+  clean tree and nothing ahead of the fork on any of them. All three `state: OPEN`, `mergeable:
+  MERGEABLE`, `mergeStateStatus: UNSTABLE`. `git merge-tree` against `origin/main` `ef9ac9ac`
+  (the merge of #2062 at 09:41:19Z) is clean for all three.
+- **The pushes of 09:41Z.** Three `Merge remote-tracking branch 'origin/main'` commits landed
+  within seconds: `e4ef9128` (#2012, runs created 09:41:29Z), `5b67339e` (#1998, 09:41:25Z),
+  `93089150` (#1975, 09:41:23Z), each merging the same upstream snapshot `18355eec` (the
+  metafile→craft-metafile switch, the pinned shared PDF revision, the Sonar font pin and the
+  nextest CLI path, the sidecar part predicate). They introduced 13 upstream commits into
+  `collab/pr15` and `collab/pr11`, 24 into `collab/pr10`; no commit of this project's work was
+  carried by them.
+- **Checks.** The four runs created on each of the three heads (CI, House rules, Nix, SonarCloud)
+  are `completed / action_required` with `startedAt` equal to the creation time — 0 executed
+  jobs on all twelve. The only executed check on the three heads is CodeRabbit `completed /
+  success` on `5b67339e` (started 09:41:39Z), which is what moved #1998 at 09:48:07Z.
+- **What changed here.** The header named the delivered head as a dated reading for a fourth
+  cycle and was false four times, so the new header states **no** head, CI verdict or unpushed
+  count: it names PR #2012, gives the commands that read the rest (`gh pr view ... headRefOid`,
+  `git ls-remote fork refs/heads/collab/pr15`, `git log --oneline <headRefOid>..HEAD`,
+  `gh run list --commit ...`), and keeps the readings as dated history. The PR table lost its
+  head column for the same reason — a hash there goes stale at the next push. §Next session no
+  longer inherits the 23:38Z verdict: the §8 gate is tied to `1227aa15` and a code change since
+  it is read with `git log --oneline 1227aa15..<headRefOid> -- crates apps`.
+- **Not pushed.** This STATUS edit is one local docs commit above `e4ef9128`; it stays local so
+  that the fork head is unchanged and the head that needs the approve is the one on the pull
+  request. It travels with the next legitimate push. No code, no CI, no branch change.
 
 ### 2026-11-13 — the header names #2012, not a commit; the delivered head measured `41294056`
 
