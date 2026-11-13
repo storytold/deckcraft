@@ -11,14 +11,15 @@ use crate::{SlideApp, ViewMode};
 /// The status bar: slide counter, proofing language and status message on the left; notes,
 /// comments, views and zoom on the right.
 pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
+    let language = app.ui.interface_language;
     let t = Tokens::get(ui.ctx());
     egui::Panel::bottom("status").exact_size(28.0).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         let Some(st) = app.session.active() else { return };
         let n = st.doc.slides.len();
         let left = match st.selection.target {
-            deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
-            _ => "Slide Master".to_string(),
+            deckcraft_engine::Target::Slides => language.slide_position((st.selection.slide + 1).min(n.max(1)), n),
+            _ => language.text("Slide Master").to_string(),
         };
         let p = ui.painter();
         // Left to right: slide counter, language, status message. Each starts at its usual column, or
@@ -29,14 +30,14 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let right_x = rect.max.x - 560.0;
         // The selection's proofing language; a click opens Review › Language.
         let (lang, no_proof) = crate::dialogs::selected_language(app);
-        let name = crate::squiggles::display_lang_name(ui.ctx(), &lang) + if no_proof { " (not checked)" } else { "" };
+        let name = crate::squiggles::display_lang_name(ui.ctx(), &lang) + if no_proof { language.text(" (not checked)") } else { "" };
         let lx = (rect.min.x + 120.0).max(sr.max.x + 16.0);
         let lclip = Rect::from_min_max(pos2(lx - 3.0, rect.min.y), pos2(right_x.max(lx - 3.0), rect.max.y));
         let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
         let hit = lr.expand(3.0).intersect(lclip);
         if hit.is_positive() {
-            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text("Language");
-            resp.widget_info(|| named_with_value("Language", &name));
+            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text(language.text("Language"));
+            resp.widget_info(|| named_with_value(language.text("Language"), &name));
             if resp.clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("language"));
             }
@@ -55,16 +56,16 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 4.0;
-        if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
+        if small_icon(&mut right, Icon::FitSmall, language.text("Fit slide to current window"), false).clicked() {
             app.ui.zoom = None;
         }
         let pct = (app.canvas_scale * 100.0).round();
         let lbl = right.add(egui::Label::new(egui::RichText::new(format!("{pct}%")).size(12.0).color(t.text_dim)).sense(Sense::click()));
-        lbl.widget_info(|| named_with_value("Zoom level", &format!("{pct}%")));
+        lbl.widget_info(|| named_with_value(language.text("Zoom level"), &format!("{pct}%")));
         if lbl.clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
-        if small_icon(&mut right, Icon::ZoomIn, "Zoom In", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomIn, language.text("Zoom In"), false).clicked() {
             let _ = app.run("view.zoomIn", json!({}));
         }
         // Slider 10%–400% (log scale).
@@ -79,36 +80,39 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         // technology only, leaving its geometry unchanged. Its value is the percentage shown.
         let shown = format!("{}%", zp.round());
         let enabled = s.enabled();
-        s.widget_info(|| egui::WidgetInfo { current_text_value: Some(shown.clone()), ..egui::WidgetInfo::slider(enabled, f64::from(zp), "Zoom") });
+        s.widget_info(|| egui::WidgetInfo {
+            current_text_value: Some(shown.clone()),
+            ..egui::WidgetInfo::slider(enabled, f64::from(zp), language.text("Zoom"))
+        });
         if s.changed() {
             z = zp / 100.0;
             app.ui.zoom = Some(z);
         }
-        if small_icon(&mut right, Icon::ZoomOut, "Zoom Out", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomOut, language.text("Zoom Out"), false).clicked() {
             let _ = app.run("view.zoomOut", json!({}));
         }
         right.add_space(8.0);
         let view = app.ui.view;
-        if view_icon(&mut right, Icon::ViewShowSmall, "Slide Show", false).clicked() {
+        if view_icon(&mut right, Icon::ViewShowSmall, language.text("Slide Show"), false).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             app.start_show(i, false);
         }
-        if view_icon(&mut right, Icon::ViewReadingSmall, "Reading View", view == ViewMode::Reading).clicked() {
+        if view_icon(&mut right, Icon::ViewReadingSmall, language.text("Reading View"), view == ViewMode::Reading).clicked() {
             let _ = app.run("view.reading", json!({}));
         }
-        if view_icon(&mut right, Icon::ViewSorterSmall, "Slide Sorter", view == ViewMode::Sorter).clicked() {
+        if view_icon(&mut right, Icon::ViewSorterSmall, language.text("Slide Sorter"), view == ViewMode::Sorter).clicked() {
             app.ui.view = ViewMode::Sorter;
         }
-        if view_icon(&mut right, Icon::ViewNormalSmall, "Normal", view == ViewMode::Normal).clicked() {
+        if view_icon(&mut right, Icon::ViewNormalSmall, language.text("Normal"), view == ViewMode::Normal).clicked() {
             app.ui.view = ViewMode::Normal;
         }
         right.add_space(8.0);
         let c_on = app.ui.pane.as_deref() == Some("comments");
-        if labeled(&mut right, Icon::CommentsSmall, "Comments", c_on).clicked() {
+        if labeled(&mut right, Icon::CommentsSmall, language.text("Comments"), c_on).clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));
         }
         let n_on = app.ui.notes;
-        if labeled(&mut right, Icon::NotesSmall, "Notes", n_on).clicked() {
+        if labeled(&mut right, Icon::NotesSmall, language.text("Notes"), n_on).clicked() {
             app.ui.notes = !n_on;
         }
         let _ = Stroke::NONE;
@@ -176,6 +180,7 @@ fn notes_lang(s: &deckcraft_model::Slide) -> Option<String> {
 
 /// The speaker notes editor under the slide.
 pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
+    let language = app.ui.interface_language;
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     if st.selection.target != deckcraft_engine::Target::Slides {
@@ -215,7 +220,7 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text("Click to add notes").frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+                        e.id(id).hint_text(language.text("Click to add notes")).frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
                     })
                 })
                 .inner;
@@ -266,12 +271,12 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             .collect()
                     };
                     if let Some(from) = w.delete_from {
-                        if ui.button(egui::RichText::new("Delete Repeated Word").strong()).clicked() {
+                        if ui.button(egui::RichText::new(language.text("Delete Repeated Word")).strong()).clicked() {
                             changed = Some(splice(ls + from, ""));
                             ui.close();
                         }
                     } else if w.suggestions.is_empty() {
-                        ui.label(egui::RichText::new("(no spelling suggestions)").weak());
+                        ui.label(egui::RichText::new(language.text("(no spelling suggestions)")).weak());
                     }
                     for to in &w.suggestions {
                         if ui.button(egui::RichText::new(to).strong()).clicked() {
@@ -279,11 +284,11 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             ui.close();
                         }
                     }
-                    if ui.button("Ignore All").clicked() {
+                    if ui.button(language.text("Ignore All")).clicked() {
                         app.squiggles.ignore(&w.word);
                         ui.close();
                     }
-                    if w.delete_from.is_none() && ui.button("Add to Dictionary").clicked() {
+                    if w.delete_from.is_none() && ui.button(language.text("Add to Dictionary")).clicked() {
                         if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
                             app.set_status(e.to_string());
                         }
@@ -420,5 +425,27 @@ mod tests {
         h.state_mut().set_status("Saved a copy");
         h.run_steps(3);
         assert_eq!(h.get_by_value("Saved a copy").accesskit_node().role(), Role::Label);
+    }
+
+    #[test]
+    fn russian_status_controls_and_counter_are_visible() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.ui.interface_language = crate::i18n::Language::Russian;
+        let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1000.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        let _ = h.get_by_role_and_label(Role::Button, "Заметки");
+        let status_y = h.get_by_role_and_label(Role::Button, "Вписать слайд в окно").rect().center().y;
+        let comments_in_status =
+            h.get_all_by_role_and_label(Role::Button, "Комментарии").filter(|node| node.rect().y_range().contains(status_y)).count();
+        assert_eq!(comments_in_status, 1, "one Comments button in the status row");
+        let _ = h.get_by_role_and_label(Role::Slider, "Масштаб");
+        let _ = h.get_by_value("Слайд 1 из 1");
+        assert_eq!(h.state().session.active().map(|d| d.doc.slides.len()), Some(1));
     }
 }
