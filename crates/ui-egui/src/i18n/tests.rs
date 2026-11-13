@@ -142,7 +142,9 @@ fn preferences_cancel_restores_the_language() {
     assert_eq!(h.state().ui.language, AUTO);
 }
 
-/// The catalogs `build.rs` embedded parse without a problem, and every embedded locale is offered.
+/// The catalogs `build.rs` embedded parse without a problem. `build.rs` embeds every locale
+/// craft-i18n has a DeckCraft catalog for; one [`LANGUAGES`] doesn't list (yet) is embedded but
+/// not offered, so a new catalog there never fails a pin bump here.
 /// Skipped in a build without craft-i18n (`CRAFT_I18N_DIR`), which is English only.
 #[test]
 fn embedded_catalogs_parse_cleanly() {
@@ -155,6 +157,9 @@ fn embedded_catalogs_parse_cleanly() {
     let rows = i18n.check_all();
     assert!(rows.is_empty(), "{rows:#?}");
     for (code, ..) in CRAFT_I18N {
-        assert!(LANGUAGES.contains(code), "{code} is embedded but not offered");
+        if !LANGUAGES.contains(code) {
+            assert!(Lang::from_code(code).is_none(), "{code} is embedded but not offered");
+            assert!(Lang::all().all(|l| l.code() != *code), "{code} is not in the language list");
+        }
     }
 }
