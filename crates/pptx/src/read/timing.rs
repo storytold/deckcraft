@@ -126,7 +126,7 @@ fn flat_starts(anims: &[&Animation]) -> Vec<u32> {
 /// a click group listed out of time order, whose flat reading disagrees with the file, is sorted by
 /// start time and its starts and delays rewritten to land every effect where PowerPoint plays it.
 /// Every other group is left untouched.
-fn place_by_parent_delays(out: &mut [(Animation, u32, String, bool)], at: &[(Option<u32>, usize, u32)]) {
+fn place_by_parent_delays(out: &mut [(Animation, u32, String, bool, usize, u32)], at: &[(Option<u32>, usize, u32)]) {
     let mut groups: Vec<Vec<usize>> = vec![];
     let mut slot: std::collections::HashMap<(Option<u32>, usize), usize> = std::collections::HashMap::new();
     for (i, &(t, g, _)) in at.iter().enumerate() {
@@ -155,7 +155,7 @@ fn place_by_parent_delays(out: &mut [(Animation, u32, String, bool)], at: &[(Opt
         let had_click = out[idx[0]].0.start == AnimStart::OnClick;
         let mut order: Vec<usize> = (0..idx.len()).collect();
         order.sort_by_key(|&k| abs[k]);
-        let mut sorted: Vec<(Animation, u32, String, bool)> = order.iter().map(|&k| out[idx[k]].clone()).collect();
+        let mut sorted: Vec<(Animation, u32, String, bool, usize, u32)> = order.iter().map(|&k| out[idx[k]].clone()).collect();
         let (mut begin, mut end) = (0u32, 0u32);
         for (n, (&k, item)) in order.iter().zip(sorted.iter_mut()).enumerate() {
             let a = &mut item.0;
@@ -170,6 +170,7 @@ fn place_by_parent_delays(out: &mut [(Animation, u32, String, bool)], at: &[(Opt
                 a.start = AnimStart::WithPrevious;
                 a.delay_ms = t.saturating_sub(begin);
             }
+            item.5 = 0;
             end = end.max(t.saturating_add(span_ms(a)));
         }
         for (&i, item) in idx.iter().zip(sorted) {
@@ -239,17 +240,19 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
     collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
-    // Paragraph builds (`bldP build="p"`) by (spid, grpId).
-    let by_para: Vec<(u32, String)> = timing
+    // Paragraph builds (`bldP`) by (spid, grpId) -> whether `build="p"`.
+    let bld_p: std::collections::HashMap<(u32, String), bool> = timing
         .child("bldLst")
         .map(|b| {
             b.children_named("bldP")
-                .filter(|p| p.attr("build") == Some("p"))
-                .filter_map(|p| Some((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string())))
-                .collect()
+                .filter_map(|p| Some(((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string()), p.attr("build") == Some("p"))))
+                .fold(std::collections::HashMap::new(), |mut m, (k, v)| {
+                    m.entry(k).and_modify(|e| *e |= v).or_insert(v);
+                    m
+                })
         })
         .unwrap_or_default();
-    let mut out: Vec<(Animation, u32, String, bool)> = vec![];
+    let mut out: Vec<(Animation, u32, String, bool, usize, u32)> = vec![];
     let mut at: Vec<(Option<u32>, usize, u32)> = vec![];
     for f in found {
         let c = f.ctn;
@@ -314,23 +317,27 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             a.color = dml::color(clr);
         }
         let grp = c.attr("grpId").unwrap_or("0").to_string();
-        let build = paragraph.is_some() && by_para.iter().any(|(s, g)| *s == file_id && *g == grp);
-        out.push((a, file_id, grp, build));
+        let build = paragraph.is_some() && bld_p.get(&(file_id, grp.clone())) != Some(&false);
+        out.push((a, file_id, grp, build, f.group, f.offset));
         at.push((f.trigger, f.group, f.offset));
     }
     place_by_parent_delays(&mut out, &at);
     // A paragraph build's effects, one per paragraph, become one by-paragraph animation only when
     // the timeline plays that back exactly: PowerPoint lets each paragraph keep its own start and
     // effect, and other shapes' effects can sit between them (#844).
-    let same_build =
-        |x: &(Animation, u32, String, bool), y: &(Animation, u32, String, bool)| x.3 && y.3 && x.1 == y.1 && x.2 == y.2 && x.0.trigger == y.0.trigger;
+    let same_build = |x: &(Animation, u32, String, bool, usize, u32), y: &(Animation, u32, String, bool, usize, u32)| {
+        x.3 && y.3 && x.1 == y.1 && x.2 == y.2 && x.0.trigger == y.0.trigger
+    };
     let mut anims = Vec::with_capacity(out.len());
     for run in out.chunk_by(same_build) {
         let effects: Vec<&Animation> = run.iter().map(|(a, ..)| a).collect();
+        let offsets: Vec<u32> = run.iter().map(|r| r.5).collect();
         let build = run.first().is_some_and(|r| r.3);
+        let explicit_bld = run.first().is_some_and(|r| bld_p.get(&(r.1, r.2.clone())) == Some(&true));
+        let same_click_group = run.first().is_some_and(|first| first.0.start == AnimStart::OnClick || run.iter().all(|r| r.4 == first.4));
         let text = effects.first().and_then(|a| find_shape(shapes, a.shape)).and_then(|s| s.text.as_ref());
         match (effects.first(), text) {
-            (Some(first), Some(text)) if build && plays_as_build(&effects, text) => {
+            (Some(first), Some(text)) if build && (explicit_bld || same_click_group) && plays_as_build(&effects, &offsets, text, explicit_bld) => {
                 anims.push(Animation { text_build: TextBuild::ByParagraph, paragraph: None, ..(*first).clone() });
             }
             _ => anims.extend(effects.into_iter().cloned()),
@@ -343,7 +350,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
 /// first one plays: one effect per paragraph the build animates, in paragraph order, later top
 /// paragraphs on click (after previous when the build doesn't start on click), deeper ones with
 /// their parent, all with the same settings?
-fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
+fn plays_as_build(effects: &[&Animation], offsets: &[u32], text: &TextBody, explicit_bld: bool) -> bool {
     let roles = paragraph_build_roles(text);
     let expected = roles.iter().enumerate().filter(|(i, r)| match r {
         BuildRole::Top => true,
@@ -351,6 +358,16 @@ fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
         BuildRole::Unowned => false,
     });
     let Some(first) = effects.first() else { return false };
+    let off0 = offsets.first().copied().unwrap_or(0);
+    let flat = flat_starts(effects);
+    let parent_starts_match = offsets
+        .iter()
+        .zip(effects.iter())
+        .zip(flat.iter())
+        .all(|((&off, a), &ft)| off == off0 || off.saturating_add(a.delay_ms) == off0.saturating_add(ft));
+    if !explicit_bld && (!parent_starts_match || (first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0 || off0 != 0))) {
+        return false;
+    }
     let settings = |a: &Animation| Animation { start: AnimStart::OnClick, paragraph: None, ..a.clone() };
     let base = settings(first);
     let mut matched = 0;
