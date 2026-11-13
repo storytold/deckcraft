@@ -7012,6 +7012,219 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `ids: []` names nothing: a formatter given it acts on the selection, the selected text range
+/// included, instead of dropping the range and formatting the whole shape.
+#[test]
+fn an_empty_ids_list_formats_the_selected_text_range_like_no_ids() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60], "text": "Hello world"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 5]})).unwrap();
+    s.execute("format.bold", &json!({"on": true, "ids": []})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.selection.text.as_ref().is_some_and(|t| t.is_range()), "the text range stays selected");
+    let runs = &st.shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs;
+    assert!(runs.len() >= 2, "the range was split off: {runs:?}");
+    assert_eq!(runs[0].props.bold, Some(true), "{runs:?}");
+    assert_ne!(runs.last().unwrap().props.bold, Some(true), "the rest of the text is not bold: {runs:?}");
+}
+
+/// The text formatters that took only the selection take `ids` too, like `shape.fill`: the
+/// named shapes are formatted with nothing selected, and the selection is left as it was.
+#[test]
+fn format_color_and_friends_take_ids() {
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, p: serde_json::Value| s.execute("shape.insert", &p).unwrap()["id"].as_u64().unwrap();
+    let a = ins(&mut s, json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"}));
+    let b = ins(&mut s, json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"}));
+    let c = ins(&mut s, json!({"preset": "rect", "rect": [20, 180, 200, 60], "text": "C"}));
+    s.doc_mut().unwrap().selection.shapes.clear();
+    s.doc_mut().unwrap().selection.text = None;
+    s.execute("format.color", &json!({"ids": [a, b], "color": "#FF0000"})).unwrap();
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    let fill_of =
+        |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.fill.clone();
+    assert_eq!(fill_of(&s, a), red);
+    assert_eq!(fill_of(&s, b), red);
+    assert_ne!(fill_of(&s, c), red, "an unnamed shape is untouched");
+    assert!(s.doc().unwrap().selection.shapes.is_empty(), "the selection is left alone");
+    s.execute("format.font", &json!({"ids": [c], "family": "Lato"})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(ShapeId(c as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.font.as_deref(), Some("Lato"));
+    s.execute("format.highlight", &json!({"ids": [a], "color": "#FFFF00"})).unwrap();
+    let run = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    assert_eq!(run(&s, a).highlight, Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 255, 0))));
+    assert_eq!(run(&s, c).highlight, None, "an unnamed shape is untouched");
+    s.execute("format.textTransparency", &json!({"ids": [b], "value": 0.5})).unwrap();
+    let Some(Fill::Solid { color }) = run(&s, b).fill else { panic!("solid fill expected") };
+    assert!((color.alpha() - 0.5).abs() < 1e-9, "{color:?}");
+    assert_eq!(run(&s, a).fill, red, "an unnamed shape keeps its opacity");
+    // The Font and Tabs dialogs' settings go to the named shapes too; with nothing to set they
+    // would open on the selection, so `ids` alone is refused.
+    s.execute("format.fontDialog", &json!({"ids": [c], "size": 30, "bold": true})).unwrap();
+    assert_eq!((run(&s, c).size, run(&s, c).bold), (Some(30.0), Some(true)));
+    assert_eq!(run(&s, a).size, None, "an unnamed shape is untouched");
+    s.execute("format.tabs", &json!({"ids": [a], "defaultTab": 36})).unwrap();
+    let para = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].props.clone();
+    assert_eq!(para(&s, a).default_tab, Some(36.0));
+    assert_eq!(para(&s, b).default_tab, None, "an unnamed shape is untouched");
+    let dialogs = s.ui_requests.len();
+    assert!(s.execute("format.fontDialog", &json!({"ids": [c]})).is_err());
+    assert!(s.execute("format.tabs", &json!({"ids": [a]})).is_err());
+    assert_eq!(s.ui_requests.len(), dialogs, "no dialog opens for named shapes");
+    assert!(s.doc().unwrap().selection.shapes.is_empty(), "the selection is left alone");
+}
+
+/// MM1: a refused named `format.color` leaves the selection as it was.
+#[test]
+fn a_refused_named_format_color_restores_the_selection() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(b as u32)];
+    let before = s.doc().unwrap().selection.shapes.clone();
+    assert!(!before.is_empty());
+    assert!(s.execute("format.color", &json!({"ids": [a], "color": "nope"})).is_err());
+    assert_eq!(s.doc().unwrap().selection.shapes, before, "the refusal left the selection replaced");
+}
+
+/// A repeated id formats its shape once, and an `ids` that is not an array is refused rather than
+/// read as the selection.
+#[test]
+fn formatter_ids_are_deduplicated_and_must_be_an_array() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(b as u32)];
+    s.execute("format.indent", &json!({"ids": [a, a]})).unwrap();
+    let level = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].level;
+    assert_eq!(level(&s, a), 1, "a repeated id indented twice");
+    for ids in [json!("abc"), json!(5), json!({})] {
+        assert!(s.execute("format.indent", &json!({"ids": ids})).is_err(), "{ids}");
+    }
+    assert_eq!(level(&s, b), 0, "a malformed `ids` formatted the selection");
+}
+
+/// ZZ5: the paragraph and text formatters that acted only on the selection take `ids` too: the
+/// named shapes change with nothing selected, an unnamed shape and the selection stay as they were,
+/// and a refused call restores the selection.
+#[test]
+fn paragraph_and_text_formatters_take_ids() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, y: u32| {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, y, 200, 60], "text": "Alpha beta"})).unwrap()["id"].as_u64().unwrap()
+    };
+    let (a, b, c) = (ins(&mut s, 20), ins(&mut s, 100), ins(&mut s, 180));
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(c as u32)];
+    s.doc_mut().unwrap().selection.text = None;
+    let shape = |s: &Session, id: u64| serde_json::to_value(s.doc().unwrap().shape(ShapeId(id as u32)).unwrap()).unwrap();
+    let (a0, c0) = (shape(&s, a), shape(&s, c));
+    s.execute("format.columns", &json!({"ids": [a, b], "count": 2})).unwrap();
+    s.execute("format.lineSpacing", &json!({"ids": [a], "lines": 1.5})).unwrap();
+    s.execute("format.align", &json!({"ids": [a], "align": "right"})).unwrap();
+    s.execute("format.bold", &json!({"ids": [a], "on": true})).unwrap();
+    s.execute("format.indent", &json!({"ids": [b]})).unwrap();
+    s.execute("format.bullets", &json!({"ids": [b], "on": true})).unwrap();
+    let sh = s.doc().unwrap().shape(ShapeId(a as u32)).unwrap().clone();
+    let body = sh.text.as_ref().unwrap();
+    assert_eq!(body.paragraphs[0].props.align, Some(deckcraft_model::text::Align::Right));
+    assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true));
+    assert_ne!(shape(&s, a), a0);
+    assert_eq!(s.doc().unwrap().shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].level, 1);
+    assert_eq!(shape(&s, c), c0, "an unnamed shape is untouched");
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(c as u32)], "the selection is left alone");
+    assert!(s.execute("format.size", &json!({"ids": [a]})).is_err());
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(c as u32)], "a refusal restores the selection");
+    // With nothing selected, a named shape is enough; an empty or null list names nothing, so the
+    // command stays disabled.
+    s.doc_mut().unwrap().selection.shapes.clear();
+    s.execute("format.italic", &json!({"ids": [a], "on": true})).unwrap();
+    for ids in [json!([]), json!(null)] {
+        let e = s.execute("format.italic", &json!({"ids": ids, "on": true})).unwrap_err();
+        assert!(matches!(e, crate::EngineError::Disabled(..)), "{ids}: {e:?}");
+    }
+    // Group takes its members from `ids` too, with nothing selected.
+    let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    assert!(matches!(s.doc().unwrap().shape(ShapeId(g as u32)).unwrap().kind, deckcraft_model::ShapeKind::Group { .. }));
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.doc_mut().unwrap().selection.shapes.clear();
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(c as u32)];
+    for id in [
+        "bold",
+        "italic",
+        "underline",
+        "strikethrough",
+        "superscript",
+        "subscript",
+        "size",
+        "grow",
+        "shrink",
+        "case",
+        "caps",
+        "spacing",
+        "clear",
+        "textShadow",
+        "textOutline",
+        "textWarp",
+        "align",
+        "rtl",
+        "alignLeft",
+        "alignCenter",
+        "alignRight",
+        "justify",
+        "bullets",
+        "numbering",
+        "indent",
+        "outdent",
+        "lineSpacing",
+        "paragraph",
+        "anchor",
+        "direction",
+        "columns",
+        "autofit",
+        "wrap",
+        "margins",
+        "language",
+    ] {
+        let doc = command_specs().iter().find(|x| x.id == format!("format.{id}")).unwrap().params;
+        assert!(doc.contains("ids?: [shape ids] (default: the selection)"), "format.{id}: {doc}");
+    }
+}
+
+/// The text formatters take `ids` in place of the selection: `format.size` sizes the named shape
+/// only and puts the selection back, and an id the slide doesn't have is refused, naming it, with
+/// nothing changed.
+#[test]
+fn formatters_take_ids_and_refuse_an_unknown_one() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("insert.textBox", &json!({"rect": [50, 50, 200, 50], "text": "A"})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("insert.textBox", &json!({"rect": [50, 150, 200, 50], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    let sizes = |s: &Session, id: u64| -> Vec<Option<f64>> {
+        let sh = s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).cloned().unwrap();
+        sh.text.iter().flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.props.size))).collect()
+    };
+    s.execute("edit.select", &json!({"ids": [b]})).unwrap();
+    s.execute("format.size", &json!({"size": 30, "ids": [a]})).unwrap();
+    assert_eq!(sizes(&s, a), vec![Some(30.0)]);
+    assert_ne!(sizes(&s, b), vec![Some(30.0)]);
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![deckcraft_model::ShapeId(b as u32)], "the selection is put back");
+    for cmd in ["format.size", "format.bold", "format.align"] {
+        let p = match cmd {
+            "format.size" => json!({"size": 12, "ids": [a, 99999]}),
+            "format.bold" => json!({"on": true, "ids": [99999]}),
+            _ => json!({"align": "center", "ids": [99999]}),
+        };
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains("no shape 99999") && e.contains(&format!("`{cmd}`")), "the error names the id and the command: {e}");
+    }
+    assert_eq!(sizes(&s, a), vec![Some(30.0)], "nothing changed");
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,

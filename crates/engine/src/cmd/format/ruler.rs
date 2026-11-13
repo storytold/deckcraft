@@ -81,7 +81,10 @@ pub(super) fn tabs(s: &mut Session, p: &Value) -> Result<Value> {
     let default_tab = finite_key(p, CMD, "defaultTab")?.map(|v| v.clamp(1.0, 1584.0));
     let edits_stops = set.is_some() || add.is_some() || mv.is_some() || remove.is_some() || clear;
     if !edits_stops && default_tab.is_none() {
-        // No fields: open the Tabs dialog on the caret's paragraph.
+        // No fields: open the Tabs dialog on the caret's paragraph, so named shapes would be ignored.
+        if super::names_targets(p) {
+            return Err(bad(CMD, "`ids` needs a tab change to apply (set, add, move, remove, clear, defaultTab)"));
+        }
         s.ui_requests.push(crate::UiRequest::Dialog { id: "tabs".into(), params: tabs_params(s) });
         return ok();
     }
