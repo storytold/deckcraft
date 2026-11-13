@@ -241,6 +241,71 @@ fn clipboard_copy_paste_shapes_and_slides() {
     assert!(s.doc().unwrap().doc.validate().is_empty());
 }
 
+/// A shape copied or cut from inside a group pastes where it was drawn: on another slide in the
+/// same place, on its own slide offset as any paste there is. Its box is mapped out through each
+/// group around it, however the groups were moved, stretched, turned or flipped. Before, the
+/// clipboard kept the box inside the group, so the shape pasted where it had been before the group
+/// was moved or stretched.
+#[test]
+fn a_shape_copied_from_a_group_pastes_where_it_was_drawn() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let sites = |s: &Session, id: ShapeId| {
+        let st = s.doc().unwrap();
+        connect::sites_of(&st.doc, &st.selection, st.shapes(), id).unwrap()
+    };
+    type Edits<'a> = &'a [(&'a str, Value)];
+    let edit = |s: &mut Session, id: u64, edits: Edits<'_>| {
+        for (cmd, p) in edits {
+            let mut p = p.clone();
+            p["ids"] = json!([id]);
+            s.execute(cmd, &p).unwrap();
+        }
+    };
+    // Edits to the shape's group, then to a group around that one (none: no outer group).
+    let cases: [(Edits<'_>, Edits<'_>); 4] = [
+        (&[("shape.move", json!({"dx": 200}))], &[]),
+        (&[("shape.resize", json!({"w": 600}))], &[]),
+        (&[("shape.rotate", json!({"deg": 30})), ("shape.flip", json!({"axis": "vertical"})), ("shape.move", json!({"dx": 50, "dy": 20}))], &[]),
+        (&[("shape.move", json!({"dx": 200}))], &[("shape.resize", json!({"w": 450})), ("shape.move", json!({"dy": 60}))]),
+    ];
+    let off = session().prefs.duplicate_offset;
+    for (n, (inner_edits, outer_edits)) in cases.into_iter().enumerate() {
+        for (cmd, same_slide) in [("edit.copy", false), ("edit.cut", false), ("edit.copy", true)] {
+            let mut s = session();
+            s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+            let (a, b) = (rect(&mut s, 100.0, 100.0), rect(&mut s, 300.0, 100.0));
+            let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+            edit(&mut s, g, inner_edits);
+            if !outer_edits.is_empty() {
+                let c = rect(&mut s, 100.0, 300.0);
+                let outer = s.execute("arrange.group", &json!({"ids": [g, c]})).unwrap()["id"].as_u64().unwrap();
+                edit(&mut s, outer, outer_edits);
+            }
+            let was = sites(&s, sid(a));
+            s.doc_mut().unwrap().selection.shapes = vec![sid(a)];
+            s.execute(cmd, &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().shape(sid(a)).is_some(), cmd == "edit.copy", "case {n}: {cmd}");
+            if !same_slide {
+                s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+            }
+            let r = s.execute("edit.paste", &json!({})).unwrap();
+            let pasted = sid(r["ids"][0].as_u64().unwrap());
+            assert!(s.doc().unwrap().shapes().iter().any(|x| x.id == pasted), "case {n}: {cmd} pastes on the top level");
+            let d = if same_slide { off } else { 0.0 };
+            let now = sites(&s, pasted);
+            assert_eq!(was.len(), now.len(), "case {n}: {cmd}");
+            assert!(
+                was.iter().zip(&now).all(|(p, q)| (q.x - p.x - d).hypot(q.y - p.y - d) < 1e-6),
+                "case {n}: {cmd} on the same slide {same_slide}: drawn at {was:?}, pasted at {now:?}"
+            );
+            assert_eq!(s.doc().unwrap().doc.validate(), Vec::<String>::new());
+        }
+    }
+}
+
 /// The resolved look of every paragraph and run of shape `id` on the current slide: size, font,
 /// colour, bold, bullet, indent, alignment, and the box's insets and anchor.
 fn resolved_look(s: &Session, id: ShapeId) -> String {
