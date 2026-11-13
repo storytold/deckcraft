@@ -1,5 +1,5 @@
 //! Windows Metafile and Enhanced Metafile pictures (`image/x-wmf`, `image/x-emf`): parsed by
-//! `deckcraft-metafile` and drawn as vectors into a bitmap of the size the slide needs, so they go
+//! `craft-metafile` and drawn as vectors into a bitmap of the size the slide needs, so they go
 //! through the same crop, tile and recolour path as any other picture.
 //!
 //! Text items name the font the file asks for; they are drawn with the face slide text would use
@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use craft_metafile::{Cap, HAlign, Item, Join, LineStyle, PlacedClip, PlacedItem, Text, Tile, VAlign};
 use deckcraft_fonts::{FontDb, FontFace};
-use deckcraft_metafile::{HAlign, Item, PlacedItem, Text, Tile, VAlign};
 use kurbo::{Affine, BezPath, Rect, Shape as _};
 use skrifa::MetadataProvider as _;
 use vello_cpu::{Pixmap, RenderContext, Resources, peniko};
@@ -28,13 +28,13 @@ const DEFAULT_EM: f64 = 12.0;
 
 /// Is `bytes` a WMF or EMF file?
 pub fn is_metafile(bytes: &[u8]) -> bool {
-    deckcraft_metafile::is_metafile(bytes)
+    craft_metafile::is_metafile(bytes)
 }
 
 /// Draw the metafile `bytes` into straight RGBA with its longer side `side` px (transparent where
 /// it draws nothing). `None` when it doesn't parse or has no size.
 pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
-    let mut pic = deckcraft_metafile::parse(bytes).ok()?;
+    let mut pic = craft_metafile::parse(bytes).ok()?;
     if !pic.has_size() {
         return None;
     }
@@ -51,31 +51,39 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     ctx.push_clip_layer(&r.to_path(0.1));
     for it in pic.place(r, [0.0; 4]) {
         match it {
-            PlacedItem::Path { path, fill, stroke, even_odd, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
+            PlacedItem::Path { path, fill, stroke, line, even_odd, region, clips } => clipped(&mut ctx, region.as_deref(), &clips, |ctx| {
                 if let Some(f) = fill {
                     ctx.set_paint(rgba(f));
                     ctx.set_fill_rule(if even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
                     ctx.fill_path(&path);
                 }
-                // GDI pens: round caps and joins; a cosmetic (zero-width) pen is one pixel.
+                // The pen's caps, joins and dashes (GDI's default: round, solid); a cosmetic
+                // (zero-width) pen is one pixel.
                 if let Some((s, sw)) = stroke {
                     ctx.set_paint(rgba(s));
-                    ctx.set_stroke(kurbo::Stroke::new(sw.max(1.0)).with_caps(kurbo::Cap::Round).with_join(kurbo::Join::Round));
+                    ctx.set_stroke(pen(sw.max(1.0), &line));
                     ctx.stroke_path(&path);
                 }
             }),
-            PlacedItem::Bitmap { index, rect, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
+            PlacedItem::Bitmap { index, rect, transform, region, clips } => clipped(&mut ctx, region.as_deref(), &clips, |ctx| {
                 let Some(Some(pm)) = pixmaps.get(index) else { return };
                 let (bw, bh) = (pm.width().max(1) as f64, pm.height().max(1) as f64);
                 ctx.set_paint(vello_cpu::Image {
                     image: vello_cpu::ImageSource::Pixmap(pm.clone()),
                     sampler: peniko::ImageSampler::default().with_quality(peniko::ImageQuality::Medium),
                 });
-                ctx.set_paint_transform(Affine::translate((rect.x0, rect.y0)) * Affine::scale_non_uniform(rect.width() / bw, rect.height() / bh));
-                ctx.fill_rect(&rect);
+                let c = transform.as_coeffs();
+                if c[1] == 0.0 && c[2] == 0.0 {
+                    ctx.set_paint_transform(Affine::translate((rect.x0, rect.y0)) * Affine::scale_non_uniform(rect.width() / bw, rect.height() / bh));
+                    ctx.fill_rect(&rect);
+                } else {
+                    // A turned or skewed bitmap: `transform` maps the unit square onto its place.
+                    ctx.set_paint_transform(transform * Affine::scale_non_uniform(1.0 / bw, 1.0 / bh));
+                    ctx.fill_path(&(transform * Rect::new(0.0, 0.0, 1.0, 1.0).to_path(0.1)));
+                }
                 ctx.reset_paint_transform();
             }),
-            PlacedItem::Pattern { index, path, even_odd, tile, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
+            PlacedItem::Pattern { index, path, even_odd, tile, region, clips } => clipped(&mut ctx, region.as_deref(), &clips, |ctx| {
                 let Some(Item::Pattern { tile: t, .. }) = pic.items.get(index) else { return };
                 let key = Arc::as_ptr(t);
                 let (pm, avg) = tiles.entry(key).or_insert_with(|| (premul(t.width, t.height, &t.rgba), average(&t.rgba))).clone();
@@ -102,7 +110,7 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
                     }
                 }
             }),
-            PlacedItem::Text { index, transform, clip, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
+            PlacedItem::Text { index, transform, clip, region, clips } => clipped(&mut ctx, region.as_deref(), &clips, |ctx| {
                 let Some(Item::Text(t)) = pic.items.get(index) else { return };
                 if let Some(c) = clip {
                     ctx.push_clip_layer(&c.to_path(0.1));
@@ -133,15 +141,40 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     image::RgbaImage::from_raw(w as u32, h as u32, px)
 }
 
-/// Draws `draw` inside the device-context clip. No region is the default clip.
-fn clipped(ctx: &mut RenderContext, region: Option<&BezPath>, draw: impl FnOnce(&mut RenderContext)) {
+/// Draws `draw` inside the device-context clip and every clip path. No region is the default clip.
+fn clipped(ctx: &mut RenderContext, region: Option<&BezPath>, clips: &[Arc<PlacedClip>], draw: impl FnOnce(&mut RenderContext)) {
     if let Some(region) = region {
         ctx.push_clip_layer(region);
-        draw(ctx);
-        ctx.pop_layer();
-    } else {
-        draw(ctx);
     }
+    for c in clips {
+        ctx.set_fill_rule(if c.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+        ctx.push_clip_layer(&c.path);
+    }
+    if !clips.is_empty() {
+        ctx.set_fill_rule(peniko::Fill::NonZero);
+    }
+    draw(ctx);
+    for _ in 0..clips.len() + usize::from(region.is_some()) {
+        ctx.pop_layer();
+    }
+}
+
+/// A GDI pen as a stroke `width` wide (target units): its caps, joins, miter limit and dashes.
+fn pen(width: f64, line: &LineStyle) -> kurbo::Stroke {
+    let cap = match line.cap {
+        Cap::Round => kurbo::Cap::Round,
+        Cap::Square => kurbo::Cap::Square,
+        Cap::Flat => kurbo::Cap::Butt,
+    };
+    let join = match line.join {
+        Join::Round => kurbo::Join::Round,
+        Join::Bevel => kurbo::Join::Bevel,
+        Join::Miter => kurbo::Join::Miter,
+    };
+    let stroke = kurbo::Stroke::new(width).with_caps(cap).with_join(join).with_miter_limit(f64::from(line.miter_limit));
+    // A dash pattern with no length would never advance: such a pen draws solid.
+    let dash: Vec<f64> = line.dash.iter().map(|d| f64::from(*d)).collect();
+    if dash.iter().all(|d| d.is_finite() && *d >= 0.0) && dash.iter().sum::<f64>() > 0.0 { stroke.with_dashes(0.0, dash) } else { stroke }
 }
 
 /// One glyph placed in text space (x along the baseline from the string's start, font units at
