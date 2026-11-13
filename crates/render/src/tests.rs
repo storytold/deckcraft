@@ -2021,7 +2021,7 @@ fn metafile_clip_path_and_nondefault_pen_geometry_are_applied() {
     ];
     let bytes = emf(&ops, Rect::new(0.0, 0.0, 100.0, 100.0), "DeckCraft", "clipped strokes").expect("EMF");
     let img = crate::metafile::rasterize(&bytes, 160).expect("raster");
-    assert!(img.get_pixel(80, 12)[0] > 180, "inside the clip path is filled");
+    assert!(img.get_pixel(80, 40)[0] > 180, "inside the clip path is filled");
     assert_eq!(img.get_pixel(8, 80)[3], 0, "outside the clip path remains transparent");
     assert!(img.pixels().any(|p| p[3] > 128 && p[0] < 80), "square capped bevel and miter strokes are rendered");
 }
