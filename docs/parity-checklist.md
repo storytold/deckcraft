@@ -9,18 +9,18 @@
 > **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 
 The summary between `<!-- SUMMARY -->
-**Weighted breadth parity: 84%** over 191 features.
+**Weighted breadth parity: 84%** over 192 features.
 
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 24 | 12 | 56% |
+| P2 | 55 | 19 | 24 | 12 | 56% |
 
 | Area | Parity |
 |---|---|
 | Application shell | 81% |
-| Files | 76% |
+| Files | 77% |
 | Slides | 92% |
 | Views | 98% |
 | Masters & themes | 92% |
@@ -71,6 +71,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending) | P0 | P |
 | Files | Export slides as PNG/JPEG | P0 | D |
 | Files | Export outline / RTF | P2 | D |
+| Files | Save as Picture Presentation (.pptx where each slide is one picture) | P2 | D |
 | Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
 | Files | Print (slides, handouts, notes, outline) | P1 | M |
 | Files | Password protection | P2 | M |
