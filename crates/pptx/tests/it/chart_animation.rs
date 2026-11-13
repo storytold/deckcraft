@@ -290,3 +290,35 @@ fn chart_build_expansion_state_survives_two_saves() {
         }
     }
 }
+
+#[test]
+fn painter_does_not_reuse_chart_selectors_for_another_documents_matching_shape_id() {
+    let original = deckcraft_pptx::import(&fixture(true, false)).expect("import");
+    let source = original.slides[0].shapes[0].id;
+    let expected = original.slides[0].animations.clone();
+    let mut other = original.clone();
+    let slide = Arc::make_mut(&mut other.slides[0]);
+    slide.animations.clear();
+    if let ShapeKind::Chart(chart) = &mut slide.shapes[0].kind {
+        chart.series.truncate(1);
+    }
+    assert_eq!(slide.shapes[0].id, source, "different documents can allocate the same numeric shape id");
+    let mut session = deckcraft_engine::Session::new();
+    let original_index = session.add_document(deckcraft_engine::DocState::new(original, None, "Source".into()));
+    let source_uid = session.doc().expect("doc").uid;
+    let other_index = session.add_document(deckcraft_engine::DocState::new(other, None, "Other".into()));
+    assert_ne!(session.doc().expect("doc").uid, source_uid);
+    session.execute("window.next", &serde_json::json!({"index": original_index})).expect("activate source");
+    session.execute("animation.painter", &serde_json::json!({"id": source.0, "sticky": true})).expect("pick");
+    session.execute("window.next", &serde_json::json!({"index": other_index})).expect("activate other");
+    session.execute("animation.painterApply", &serde_json::json!({"ids": [source.0]})).expect("paint other document");
+    let other_animations = &session.doc().expect("doc").doc.slides[0].animations;
+    assert_eq!(other_animations.len(), expected.len());
+    for animation in other_animations {
+        assert_eq!(animation.chart_target, None, "matching numeric IDs in different documents are not the same chart");
+        assert_eq!(animation.chart_build, None, "build groups belong to the source document");
+    }
+    session.execute("window.next", &serde_json::json!({"index": original_index})).expect("return to source");
+    session.execute("animation.painterApply", &serde_json::json!({"ids": [source.0]})).expect("paint original chart");
+    assert_eq!(session.doc().expect("doc").doc.slides[0].animations, expected, "returning to the source chart retains its selectors");
+}

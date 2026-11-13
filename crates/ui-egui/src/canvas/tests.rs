@@ -562,7 +562,8 @@ fn animation_painter_sets_the_cursor() {
     h.run_steps(2);
     let before = h.output().platform_output.cursor_icon;
     assert_ne!(before, egui::CursorIcon::Copy, "no painter is armed yet");
-    h.state_mut().session.anim_painter = Some((vec![], false));
+    let source_uid = h.state_mut().session.doc().unwrap().uid;
+    h.state_mut().session.anim_painter = Some((source_uid, vec![], false));
     h.run_steps(3);
     let after = h.output().platform_output.cursor_icon;
     assert_eq!(after, egui::CursorIcon::Copy, "the animation painter arms the Copy cursor");

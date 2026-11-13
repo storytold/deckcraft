@@ -482,12 +482,12 @@ fn painter_pick(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let sticky = bool_or(p, "sticky", false);
     let count = anims.len();
-    s.anim_painter = Some((anims, sticky));
+    s.anim_painter = Some((st.uid, anims, sticky));
     Ok(json!({"armed": true, "count": count}))
 }
 
 fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
-    let Some((painted, sticky)) = s.anim_painter.clone() else {
+    let Some((source_uid, painted, sticky)) = s.anim_painter.clone() else {
         return Err(bad("animation.painterApply", "pick animations with the Animation Painter first"));
     };
     if !sticky {
@@ -497,6 +497,7 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
     if ids.is_empty() {
         return Err(bad("animation.painterApply", "no target shapes selected"));
     }
+    let same_document = s.doc()?.uid == source_uid;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.painterApply", "no slide"))?);
         // As in PowerPoint, painting replaces the target's own animations (painting a shape onto
@@ -509,8 +510,8 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
             for a in &painted {
                 let mut cloned = a.clone();
                 // Native chart selectors and build groups refer to the source chart's parts.
-                // Keep them only when painting the same shape, not a different chart or shape.
-                if cloned.shape != *id {
+                // Keep them only when painting the same shape in its source document.
+                if !same_document || cloned.shape != *id {
                     cloned.chart_target = None;
                     cloned.chart_build = None;
                 }
