@@ -12,7 +12,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::RemoveBackground, "Remove\nBackground", enabled(app, "picture.removeBackground"));
         egui::Popup::menu(&r).show(|ui| {
             for (label, tol) in [("Remove Background", 20.0), ("Remove More (looser)", 35.0), ("Remove Less (tighter)", 10.0)] {
-                if ui.button(label).clicked() {
+                if ui.button(tl!(label)).clicked() {
                     run(app, "picture.removeBackground", json!({"tolerance": tol}));
                 }
             }
@@ -142,14 +142,14 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            ui.menu_button("Weight", |ui| {
+            ui.menu_button(tl!("Weight"), |ui| {
                 for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
                     if ui.button(format!("{w} pt")).clicked() {
                         run(app, "shape.line", json!({"width": w}));
                     }
                 }
             });
-            ui.menu_button("Dashes", |ui| {
+            ui.menu_button(tl!("Dashes"), |ui| {
                 for (l, d) in [
                     ("Solid", "solid"),
                     ("Round Dot", "sysDot"),
@@ -158,7 +158,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                     ("Dash Dot", "dashDot"),
                     ("Long Dash", "lgDash"),
                 ] {
-                    if ui.button(l).clicked() {
+                    if ui.button(tl!(l)).clicked() {
                         run(app, "shape.line", json!({"dash": d}));
                     }
                 }
@@ -179,7 +179,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             for (l, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
-                if ui.button(l).clicked() {
+                if ui.button(tl!(l)).clicked() {
                     run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
                 }
             }
@@ -301,7 +301,7 @@ fn compress_menu(app: &mut SlideApp, ui: &mut Ui) {
         (150, "Web (150 ppi): good for web pages and projectors"),
         (96, "E-mail (96 ppi): minimise document size for sharing"),
     ] {
-        ui.radio_value(&mut ppi, v, label);
+        ui.radio_value(&mut ppi, v, tl!(label));
     }
     ui.data_mut(|d| d.insert_temp(id, (ppi, only_selected, delete_cropped)));
     ui.separator();

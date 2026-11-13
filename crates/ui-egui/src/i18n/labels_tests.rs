@@ -22,6 +22,7 @@ const DE: &str = "@id\tlanguage.name\tDeutsch
 \tWeb Page or File\tWebseite oder Datei
 \tThis Document\tDieses Dokument
 \tFind Next\tWeitersuchen
+\t▶ Play From\t▶ Wiedergabe ab hier
 \tDeckCraft can't find “{text}”.\tDeckCraft findet „{text}“ nicht.
 \tMatch {n} of {total} on slide {slide}.\tTreffer {n} von {total} auf Folie {slide}.
 @plural\t{n} Column|{n} Columns\t{n} Spalte|{n} Spalten
@@ -112,4 +113,24 @@ fn find_reports_in_the_interface_language() {
         h.run_steps(3);
         assert_eq!(status(&h).as_deref(), Some(want));
     }
+}
+
+/// Buttons and choices in panes and ribbon menus are looked up where they are drawn, also when
+/// their label comes from a table (the Animation Pane's Play From button).
+#[test]
+fn pane_buttons_are_drawn_in_the_interface_language() {
+    use_fixture("de", DE);
+    let mut s = Session::with_new();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 80, 150, 100]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.execute("animation.add", &json!({"effect": "fade"})).unwrap();
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("animation".into());
+    let mut h = harness(app);
+    h.run_steps(3);
+    assert!(h.query_by_label("▶ Play From").is_some());
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("▶ Play From").is_none());
+    assert!(h.query_by_label("▶ Wiedergabe ab hier").is_some());
 }

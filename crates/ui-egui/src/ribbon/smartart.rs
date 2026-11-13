@@ -26,7 +26,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                         ("Add Shape Below", "below"),
                         ("Add Assistant", "assistant"),
                     ] {
-                        if ui.button(label).clicked() {
+                        if ui.button(tl!(label)).clicked() {
                             let index = if n == 0 { Value::Null } else { json!(at) };
                             run(app, "smartArt.addNode", json!({"id": gid, "index": index, "position": pos}));
                         }
@@ -77,7 +77,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                         ui.separator();
                     }
                     let on = colors == k || (colors.is_empty() && k == "colorful");
-                    if ui.selectable_label(on, label).clicked() {
+                    if ui.selectable_label(on, tl!(label)).clicked() {
                         run(app, "smartArt.colors", json!({"id": gid, "colors": k}));
                     }
                 }
@@ -92,7 +92,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                         ui.label(tl!("3-D"));
                     }
                     let on = style == k || (style.is_empty() && k == "flat");
-                    if ui.selectable_label(on, label).clicked() {
+                    if ui.selectable_label(on, tl!(label)).clicked() {
                         run(app, "smartArt.style", json!({"id": gid, "style": k}));
                     }
                 }

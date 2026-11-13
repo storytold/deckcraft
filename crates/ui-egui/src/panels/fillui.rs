@@ -174,9 +174,9 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     };
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(70.0, 20.0), egui::Label::new(tl!("Type")));
-        let combo = craft_ui::ComboBox::from_id_salt((id, "kind")).selected_text(kind).width(120.0).show_ui(ui, |ui| {
+        let combo = craft_ui::ComboBox::from_id_salt((id, "kind")).selected_text(tl!(kind)).width(120.0).show_ui(ui, |ui| {
             for k in ["Linear", "Radial", "Rectangular", "Path"] {
-                if ui.selectable_label(kind == k, k).clicked() && kind != k {
+                if ui.selectable_label(kind == k, tl!(k)).clicked() && kind != k {
                     let focus = match &g.shape {
                         GradientShape::Path { focus, .. } => *focus,
                         _ => [0.5, 0.5, 0.5, 0.5],
@@ -199,7 +199,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             GradientShape::Linear { angle, .. } => {
                 for (l, a) in DIRECTIONS_LINEAR {
                     let on = (angle - a).abs() < 0.5;
-                    if ui.selectable_label(on, l).on_hover_text(format!("{a}°")).clicked() {
+                    if ui.selectable_label(on, tl!(l)).on_hover_text(format!("{a}°")).clicked() {
                         out = Some(Gradient { shape: GradientShape::Linear { angle: a, scaled: false }, ..g.clone() });
                     }
                 }

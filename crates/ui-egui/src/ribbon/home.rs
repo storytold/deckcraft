@@ -221,7 +221,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let r = icon_toggle(ui, Icon::CharSpacing, "Character Spacing", en, false);
                 egui::Popup::menu(&r).show(|ui| {
                     for (label, pt) in [("Very Tight", -3.0), ("Tight", -1.5), ("Normal", 0.0), ("Loose", 3.0), ("Very Loose", 6.0)] {
-                        if ui.button(label).clicked() {
+                        if ui.button(tl!(label)).clicked() {
                             run(app, "format.spacing", json!({"pt": pt}));
                         }
                     }
@@ -235,7 +235,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         ("Capitalize Each Word", "title"),
                         ("tOGGLE cASE", "toggle"),
                     ] {
-                        if ui.button(label).clicked() {
+                        if ui.button(tl!(label)).clicked() {
                             run(app, "format.case", json!({"mode": mode}));
                         }
                     }
@@ -371,7 +371,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         ("Rotate all text 270°", "rotate270"),
                         ("Stacked", "stacked"),
                     ] {
-                        if ui.button(l).clicked() {
+                        if ui.button(tl!(l)).clicked() {
                             run(app, "format.direction", json!({"dir": d}));
                         }
                     }
@@ -379,7 +379,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let r = icon_toggle(ui, Icon::AlignText, "Align Text", en, false);
                 egui::Popup::menu(&r).show(|ui| {
                     for (l, a) in [("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")] {
-                        if ui.button(l).clicked() {
+                        if ui.button(tl!(l)).clicked() {
                             run(app, "format.anchor", json!({"anchor": a}));
                         }
                     }

@@ -42,7 +42,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
             for (l, k) in
                 [("Content", "content"), ("Text", "text"), ("Picture", "picture"), ("Chart", "chart"), ("Table", "table"), ("Media", "media")]
             {
-                if ui.button(l).clicked() {
+                if ui.button(tl!(l)).clicked() {
                     run(app, "master.insertPlaceholder", json!({"kind": k}));
                 }
             }

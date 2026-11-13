@@ -76,7 +76,7 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     ui.label(egui::RichText::new(tl!("Reflection")).font(theme::bold(13.0)));
     ui.horizontal_wrapped(|ui| {
         for (l, v) in [("None", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
-            if ui.button(l).clicked() {
+            if ui.button(tl!(l)).clicked() {
                 run(app, "shape.effects", json!({"reflection": v}));
             }
         }
@@ -290,7 +290,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             });
             ui.horizontal_wrapped(|ui| {
                 for (l, m) in [("Do not Autofit", "none"), ("Shrink text on overflow", "shrink"), ("Resize shape to fit text", "resize")] {
-                    if ui.small_button(l).clicked() {
+                    if ui.small_button(tl!(l)).clicked() {
                         run(app, "format.autofit", json!({"mode": m}));
                     }
                 }
@@ -454,7 +454,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(8.0);
             ui.label(egui::RichText::new(tl!("Line")).font(theme::bold(13.0)));
             let none = matches!(sh.line.as_ref().and_then(|l| l.fill.as_ref()), Some(Fill::None));
-            if ui.radio(none, "No line").clicked() {
+            if ui.radio(none, tl!("No line")).clicked() {
                 run(app, "shape.line", json!({"none": true}));
             }
             if ui.radio(!none && sh.line.is_some(), "Solid line").clicked() {
@@ -493,7 +493,7 @@ fn line_choice(app: &mut SlideApp, ui: &mut Ui, label: &str, key: &str, current:
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
         let shown = items.iter().find(|(_, v)| *v == current).map_or(current, |(l, _)| *l);
-        let combo = craft_ui::ComboBox::from_id_salt(("fmt-line", key)).selected_text(shown).width(120.0).show_ui(ui, |ui| {
+        let combo = craft_ui::ComboBox::from_id_salt(("fmt-line", key)).selected_text(tl!(shown)).width(120.0).show_ui(ui, |ui| {
             for (l, v) in items {
                 if ui.selectable_label(*v == current, *l).clicked() {
                     run(app, "shape.line", json!({key: v}));
@@ -653,7 +653,7 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
                 ui.horizontal(|ui| {
                     let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
                     let shown = opts.iter().find(|(k, _)| k == cur).map_or(opts[0].1, |(_, l)| *l);
-                    let combo = craft_ui::ComboBox::from_id_salt(("picfill", id, key)).selected_text(shown).show_ui(ui, |ui| {
+                    let combo = craft_ui::ComboBox::from_id_salt(("picfill", id, key)).selected_text(tl!(shown)).show_ui(ui, |ui| {
                         for (k, l) in opts {
                             if ui.selectable_label(*k == cur.as_str(), *l).clicked() {
                                 run(app, "shape.fill", json!({"pictureProps": {key: k}}));

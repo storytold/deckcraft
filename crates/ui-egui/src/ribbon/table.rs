@@ -118,7 +118,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                 menu_item(app, ui, Icon::Borders, label, "table.borders", p);
             }
             ui.separator();
-            ui.menu_button("Pen Weight", |ui| {
+            ui.menu_button(tl!("Pen Weight"), |ui| {
                 for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
                     let cur = app.table_pen.get("width").and_then(Value::as_f64) == Some(w);
                     if ui.radio(cur, format!("{w} pt")).clicked() {
@@ -126,15 +126,15 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            ui.menu_button("Pen Style", |ui| {
+            ui.menu_button(tl!("Pen Style"), |ui| {
                 for (l, d) in [("Solid", "solid"), ("Dash", "dash"), ("Dot", "sysDot"), ("Dash Dot", "dashDot"), ("Long Dash", "lgDash")] {
                     let cur = app.table_pen.get("dash").and_then(Value::as_str).unwrap_or("solid") == d;
-                    if ui.radio(cur, l).clicked() {
+                    if ui.radio(cur, tl!(l)).clicked() {
                         app.table_pen["dash"] = json!(d);
                     }
                 }
             });
-            ui.menu_button("Pen Color", |ui| {
+            ui.menu_button(tl!("Pen Color"), |ui| {
                 let sc = scheme(app);
                 if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                     app.table_pen["color"] = cref_param(&c);
@@ -228,9 +228,9 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
                         run(app, "table.cellAlign", json!({"anchor": a}));
                     }
                 }
-                ui.menu_button("Cell Margins", |ui| {
+                ui.menu_button(tl!("Cell Margins"), |ui| {
                     for (l, preset) in [("Normal", "normal"), ("None", "none"), ("Narrow", "narrow"), ("Wide", "wide")] {
-                        if ui.button(l).clicked() {
+                        if ui.button(tl!(l)).clicked() {
                             run(app, "table.cellMargins", json!({"preset": preset}));
                             ui.close();
                         }

@@ -394,7 +394,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
             ("Send Backward", "arrange.sendBackward"),
             ("Send to Back", "arrange.sendToBack"),
         ] {
-            if ui.button(label).clicked() {
+            if ui.button(tl!(label)).clicked() {
                 run(app, cmd, json!({"ids": [row.id]}));
                 ui.close();
             }

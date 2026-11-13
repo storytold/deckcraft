@@ -156,6 +156,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-13 | Interface languages (#2112): ribbon menus (shape outline, effects, character spacing, change case, text direction, table pen and cell margins, picture borders and crop, volume, SmartArt), the canvas context menu and the panes' buttons and choices (Animation, Selection, Format Shape, fill) show in the interface language |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-10 | Interface languages (#2014): labels built from a number or a name (`Slide {n} of {total}`, `Accept All ({n})`, `{n} Columns`) are looked up before the value goes in, with plural forms, and dialog choice lists (Zoom, Insert Hyperlink, Font, Paragraph, Bullets and Numbering, Action Settings, Export, Language, SmartArt, Paste Special, File › Save As and About) show in the interface language |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |

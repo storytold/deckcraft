@@ -80,7 +80,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
                     ui.separator();
                 }
                 if let Some(k) = k
-                    && ui.button(k.label()).clicked()
+                    && ui.button(tl!(k.label())).clicked()
                 {
                     run(app, "insert.chart", json!({"type": format!("{k:?}")}));
                 }

@@ -223,7 +223,7 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
                 let _ = app.run("app.about", json!({}));
             }
             ui.hyperlink_to(tl!("Join our community on Discord"), deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+            ui.hyperlink_to(tl!("Source on GitHub"), deckcraft_engine::links::GITHUB);
         });
         ui.add_space(40.0);
         ui.vertical(|ui| {

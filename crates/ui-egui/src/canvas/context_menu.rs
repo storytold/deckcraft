@@ -64,7 +64,7 @@ fn edit_points_menu(app: &mut SlideApp, ui: &mut egui::Ui, sh: &deckcraft_model:
             Some(false) => ("Close Path", "shape.closePath", index),
             _ => ("Open Path", "shape.openPath", deckcraft_engine::cmd::points::segment_start_of(sh, path, index).unwrap_or(index)),
         };
-        if ui.button(label).clicked() {
+        if ui.button(tl!(label)).clicked() {
             let _ = app.run(id, json!({"path": path, "index": at}));
             app.session.tool.edit_segment = None;
             ui.close();
@@ -87,7 +87,7 @@ fn edit_points_menu(app: &mut SlideApp, ui: &mut egui::Ui, sh: &deckcraft_model:
             Some(false) => ("Close Path", "shape.closePath"),
             _ => ("Open Path", "shape.openPath"),
         };
-        if ui.button(label).clicked() {
+        if ui.button(tl!(label)).clicked() {
             let _ = app.run(id, json!({"path": path, "index": index}));
             // The points are numbered from the new start now.
             app.session.tool.edit_vertex = None;
@@ -213,15 +213,15 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
         let _ = app.run("format.paragraphDialog", json!({}));
         ui.close();
     }
-    ui.menu_button("Bring to Front", |ui| {
+    ui.menu_button(tl!("Bring to Front"), |ui| {
         crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringToFront, "Bring to Front", "arrange.bringToFront", json!({}));
         crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringForward, "Bring Forward", "arrange.bringForward", json!({}));
     });
-    ui.menu_button("Send to Back", |ui| {
+    ui.menu_button(tl!("Send to Back"), |ui| {
         crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendToBack, "Send to Back", "arrange.sendToBack", json!({}));
         crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendBackward, "Send Backward", "arrange.sendBackward", json!({}));
     });
-    ui.menu_button("Group", |ui| {
+    ui.menu_button(tl!("Group"), |ui| {
         crate::ribbon::menu_item(app, ui, crate::icons::Icon::Group, "Group", "arrange.group", json!({}));
         crate::ribbon::menu_item(app, ui, crate::icons::Icon::Ungroup, "Ungroup", "arrange.ungroup", json!({}));
     });
@@ -259,7 +259,7 @@ fn shape_items(app: &mut SlideApp, ui: &mut egui::Ui) {
 }
 
 fn slide_items(app: &mut SlideApp, ui: &mut egui::Ui) {
-    ui.menu_button("Layout", |ui| {
+    ui.menu_button(tl!("Layout"), |ui| {
         let layouts: Vec<(String, u32)> = app
             .session
             .active()
@@ -272,13 +272,13 @@ fn slide_items(app: &mut SlideApp, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.menu_button("Grid and Guides", |ui| {
+    ui.menu_button(tl!("Grid and Guides"), |ui| {
         let mut on = app.ui.guides;
         if ui.checkbox(&mut on, tl!("Guides")).clicked() {
             let _ = app.run("view.guides", json!({"on": on}));
         }
         for (label, vertical) in [("Add Vertical Guide", true), ("Add Horizontal Guide", false)] {
-            if ui.button(label).clicked() {
+            if ui.button(tl!(label)).clicked() {
                 let _ = app.run("guide.add", json!({"vertical": vertical}));
                 let _ = app.run("view.guides", json!({"on": true}));
                 ui.close();

@@ -29,7 +29,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             (false, Some(_)) => "▶ Play From",
             (false, None) => "▶ Play All",
         };
-        if ui.button(label).clicked() {
+        if ui.button(tl!(label)).clicked() {
             let p = match (playing, from) {
                 (false, Some(i)) => json!({"on": true, "from": i}),
                 _ => json!({"on": !playing}),

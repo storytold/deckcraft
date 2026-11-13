@@ -20,7 +20,7 @@ pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
     ui.separator();
     ui.label(egui::RichText::new(tl!("Position Objects")).font(theme::bold(12.0)));
     ui.menu_button("Align", |ui| align_menu(app, ui));
-    ui.menu_button("Rotate", |ui| {
+    ui.menu_button(tl!("Rotate"), |ui| {
         menu_item(app, ui, Icon::RotateRight, "Rotate Right 90°", "arrange.rotateRight", json!({}));
         menu_item(app, ui, Icon::RotateLeft, "Rotate Left 90°", "arrange.rotateLeft", json!({}));
         menu_item(app, ui, Icon::FlipV, "Flip Vertical", "arrange.flipVertical", json!({}));

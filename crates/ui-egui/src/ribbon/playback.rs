@@ -46,7 +46,7 @@ pub(super) fn playback(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::Volume, "Volume", m.is_some());
         egui::Popup::menu(&r).show(|ui| {
             for (l, v) in [("Low", 0.25), ("Medium", 0.5), ("High", 1.0), ("Mute", 0.0)] {
-                if ui.button(l).clicked() {
+                if ui.button(tl!(l)).clicked() {
                     run(app, "media.options", json!({"volume": v}));
                 }
             }

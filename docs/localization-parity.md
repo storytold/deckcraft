@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-10 · **Change:** minor (labels built from a number or a name and dialog choice lists go through the catalogs, #2014; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (ribbon menus and pane choices go through the catalogs, #2112; previous: minor, labels built from a number or a name and dialog choice lists go through the catalogs, #2014; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
@@ -12,8 +12,7 @@ system language (#15), or Preferences › Interface language and `app.language` 
 English. Labels built from a number or a name (`Slide {n} of {total}`, `{n} Columns`) are looked up
 with their placeholders before the value goes in, and counts take the language's plural form.
 Still English: slide placeholder prompts (drawn by the renderer), status messages from the engine,
-the native macOS menu bar and some choice lists outside dialogs (ribbon menus, panes, the File
-tab's Print page). Other requests: #30 and PR #34
+the native macOS menu bar and the File tab's Print page. Other requests: #30 and PR #34
 (Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as
 catalog-only PRs there. Dimension score: **~15% ready** (estimated: English complete, German
 mostly, slide-text script
@@ -73,6 +72,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Ribbon menus, the canvas context menu and pane choices go through the catalogs (#2112) |
 | 2026-11-10 | minor | Labels built with `format!` and dialog choice lists go through the catalogs (#2014); score unchanged |
 | 2026-10-28 | major | Interface catalogs from craft-i18n, system language and Preferences › Interface language (#15); German partial (~840 rows) |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |

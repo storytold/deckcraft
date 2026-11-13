@@ -136,7 +136,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::MergeShapes, "Merge\nShapes", can_merge).on_hover_text(tl!("Merge Shapes"));
         egui::Popup::menu(&r).show(|ui| {
             for (op, label) in deckcraft_engine::cmd::merge::OPS {
-                if ui.button(label).clicked() {
+                if ui.button(tl!(label)).clicked() {
                     run(app, "shape.merge", json!({"op": op}));
                     ui.close();
                 }
