@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-13T10:25Z. Branch: `collab/pr15`.
+Updated: 2026-11-13T13:58Z. Branch: `collab/pr15`.
 
 **This page does not state the delivered head, the CI verdict or what is unpushed.** Those move
 without anyone touching this file, and a header that writes them down is false after the next
@@ -29,6 +29,28 @@ is either the identity of the commit being discussed or the value of an earlier 
 history; it is never a standing "the delivered head is `<hash>`" claim, which the next push turns
 into a false statement. In the same way, what a further push would carry is read rather than
 listed: `git log --oneline <headRefOid>..HEAD`.
+**Reading at 2026-11-13T13:52Z** (history, not state). For #2012, `gh pr view 2012 --json
+headRefOid,mergeable,mergeStateStatus,state,updatedAt` printed
+`3095c6fedde3761fde48c3bb6ac46a8104ded0b8` / `MERGEABLE` / `UNSTABLE` / `OPEN` /
+`2026-11-13T13:20:06Z`; `git ls-remote fork refs/heads/collab/pr15` named the same commit, the
+local branch held it plus one docs commit (`7e569096`, `git log --oneline 3095c6fe..HEAD`) and the
+tree was clean. `gh run list --commit 3095c6fe --json name,status,conclusion,createdAt` printed
+`[]` at 13:52Z — **no workflow run exists for that head at all**, not even an unapproved one — and
+the rollup of #2012 holds only CodeRabbit `COMPLETED / SKIPPED` (13:20:54Z), so the `UNSTABLE`
+verdict is the absence of every job. That head is `3095c6fe` — "fix(collab): the lock names the
+0.18.1 collab crates", four `version` fields in `Cargo.lock` (`deckcraft-collab`,
+`-collab-proto`, `-collab-server` and `-collab-web`) from `0.18.0` to `0.18.1`, nothing else —
+pushed at 13:18–13:20Z by the repository's Cargo.lock sweep, **not by a session of this project**,
+so the approval asked for on the 09:41Z heads does not cover it. **The host gate on that commit is
+green**, re-run for this record: `cargo metadata --locked` returned 0 and left `git status
+--porcelain` empty (the lock is not rewritten), and `cargo xtask ci` passed all eight steps in
+3 m 20 s — `CI summary: all 8 steps passed (fmt, pdf-deps, clippy, test, doctest, assets, layers,
+wasm)`, 37 test binaries with 2743 passed / 0 failed / 5 ignored, doctests and the wasm32 check
+included, `EXIT=0` — on the build host with the `ci.yml` font pin
+(`CRAFT_FONTS_DIR=/home/markin/build/fonts-37827adc`), log
+`.craft/logs/gate-deckcraft-2012-3095c6fe.log`. So on the head read at 13:52Z the CI question is
+answered by the host and the missing item is the approve alone; the docs commit above it is not
+pushed, so the fork and the pull request still hold what they held at 13:20Z.
 **The pushes of 2026-11-13T09:41Z merged `origin/main` into all three open pull requests** — the
 same upstream snapshot `18355eec` (the metafile→craft-metafile switch, the pinned shared PDF
 revision, the Sonar font pin and the nextest CLI path, the sidecar part predicate), delivered
@@ -49,9 +71,11 @@ three heads was CodeRabbit `completed / success` on `5b67339e` (started 09:41:39
 updated #1998 at 09:48:07Z). An approval covers the runs of the commit it was given on, so an
 approve has to be made against whatever head #2012 reports at that moment; an approval given to an
 earlier head does not carry over.
-**This STATUS edit is local at 10:25Z**: one docs commit above `e4ef9128` on `collab/pr15`, not
-pushed — it travels with the next legitimate push, so the delivered head stays where the fork
-holds it until then, and `git log --oneline <headRefOid>..HEAD` is what that push would carry.
+**This STATUS edit is local at 13:58Z**: two docs commits above `3095c6fe`, the head the fork
+held at 13:20Z — `7e569096` (the header stops naming a head and records the 09:41Z merges as
+history) and this one — on `collab/pr15`, neither pushed. They travel with the next legitimate
+push, so the delivered head stays where the fork holds it until then, and `git log --oneline
+<headRefOid>..HEAD` is what such a push would carry.
 **The push of 2026-11-12T17:09Z delivered the seven commits that waited above the previous
 delivered head `ceeada59`** — the four code/docs commits the earlier header listed as unpushed,
 plus the three docs commits on top of them: `f1d1cd6a` (a room that answers *below* the version a
@@ -1252,6 +1276,7 @@ document as the editors.
 | after `c895183a`: `fmt --check` clean, clippy `--workspace --all-targets -D warnings` clean, `collab` 215 + 8, `collab-proto` 32, `collab-server` 10 unit + 4 commit + 4 gates (2.43 s, LibreOffice skipped on the build host) + 7 socket, `collab-web` 15, `deckcraft-web` 6, `ui-egui collab::` 20, `deckcraft-engine` 584 + 1 ignored, `xtask layers` 32 crates, wasm32 check of `deckcraft-web` ok; `cargo test --workspace --no-fail-fast` green except the two known host-without-`craft-fonts` failures (`ui-egui ime_tests::korean_composes_in_the_notes_pane`, `render tests::east_asian_vertical_text_stands_ideographs_upright`) |
 | after the merge of `origin/main` (`c9803277`): `fmt --check` clean, clippy `--workspace --all-targets -D warnings` EXIT=0, `collab-proto` 42, `collab` 288 + 8, `collab-server` 19 unit + 5 commit + 18 socket + 5 gates (19.1 s, LibreOffice skipped on the build host), `collab-web` 15, `engine` 612 + 1 ignored (+ 6 + 8 integration), `pptx` 70 + 5 + 146, `ui-egui --lib` 526 passed + 4 ignored with the one known host-font failure (`ime_tests::korean_composes_in_the_notes_pane`), `xtask` `pdf-deps`/`assets` (48 files)/`layers` (28 crates)/`wasm` (22 crates) all EXIT=0, `cargo test --workspace --doc` pass; `cargo xtask ci` as a whole stops only at its `test` step, which is the same workspace run and the same host-font failure |
 | after the second `origin/main` merge, head `1d92f763` (2026-11-12T13:00Z, build host `agents`): `cargo fmt --all -- --check` clean, `cargo clippy -j 4 -p deckcraft-collab -p deckcraft-ui-egui --all-targets -- -D warnings` clean, `collab` 305 lib + 8 `two_clients`, `ui-egui --lib collab::` 26 (the presence heartbeat test passes alone with `--exact`), `collab-server --test gates` **6 passed in 19.15 s** (the LibreOffice half skipped: no `soffice` on that host) — the §8 gate on the delivered head |
+| `cargo xtask ci` on the head read at 2026-11-13T13:52Z (`3095c6fe`, build host `agents`, `ci.yml` font pin, log `gate-deckcraft-2012-3095c6fe.log`): **EXIT=0**, `all 8 steps passed` (fmt, pdf-deps, clippy, test, doctest, assets, layers, wasm), 37 test binaries 2743 passed / 0 failed / 5 ignored, `cargo metadata --locked` rc=0 with the tree unchanged after it | the lock fix is built and tested as committed |
 
 Re-run on 2026-11-08 after `3ec81d70`: `fmt` clean, `collab-proto` 19, `collab` 113 + 7,
 `collab-server` 5 + 6, `ui-egui collab::` 17, `deckcraft-engine` 565 + 1 ignored; clippy over the
@@ -1911,6 +1936,12 @@ token from the cabinet.
    (`../.craft/reports/20261112-1950-pr-sweep.md`, log `gate-deckcraft-1227aa15-pin.log`). Do not
    inherit that verdict: `git log --oneline 1227aa15..<headRefOid> -- crates apps` names every code
    change since, and a non-empty answer means the gate has to run again on the head.
+   **The gate has since been re-run on the head read at 2026-11-13T13:52Z** — the lock fix
+   `3095c6fe`, which is a code change — and is green there: `cargo metadata --locked` leaves the
+   tree unchanged and `cargo xtask ci` passes 8/8 steps with 2743 tests, `EXIT=0`
+   (§Session log, 2026-11-13 — the lock fix is the head and its gate is green; log
+   `gate-deckcraft-2012-3095c6fe.log`). For any later head the same read decides: `git log --oneline
+   3095c6fe..<headRefOid> -- crates apps`.
    #1998 and #1975 are superseded by #2012 and stay open until a person closes them — **do not
    close them from an agent session**. Their heads and verdicts move without this project's
    involvement; the readings at 23:38Z and 05:44Z are history in §PR publication and §Session log,
@@ -2206,6 +2237,52 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-13 — the head changed to the lock fix `3095c6fe`; its gate is green, no run exists for it
+
+- **Measured at 2026-11-13T13:52Z (UTC).** `gh pr view 2012 --json
+  headRefOid,mergeable,mergeStateStatus,state,reviewDecision,updatedAt` printed
+  `3095c6fedde3761fde48c3bb6ac46a8104ded0b8`, `MERGEABLE`, `UNSTABLE`, `OPEN`, `reviewDecision`
+  empty, `updatedAt` `2026-11-13T13:20:06Z`; `git ls-remote fork refs/heads/collab/pr15` named the
+  same commit; `git rev-parse HEAD` printed `7e569096` and `git log --oneline 3095c6fe..HEAD` held
+  that one docs commit ("Stop naming a head in STATUS; record the 09:41Z merges as history"), tree
+  clean (`git status --porcelain` empty). `gh run list --commit 3095c6fe --json
+  name,status,conclusion,createdAt` printed `[]` — **no workflow run exists for the head**, and the
+  rollup of #2012 holds only CodeRabbit `COMPLETED / SKIPPED` (13:20:54Z).
+- **What the head is.** `3095c6fe` — "fix(collab): the lock names the 0.18.1 collab crates",
+  committed 13:18:44Z and pushed by the repository-wide Cargo.lock sweep at 13:18–13:20Z, not by a
+  session of this project (the last deckcraft session closed at 10:34Z). Its whole diff is four
+  `version` fields in `Cargo.lock` — `deckcraft-collab`, `-collab-proto`, `-collab-server`,
+  `-collab-web` — from `0.18.0` (what the lock carried) to the workspace's `0.18.1`. That is what
+  makes a `--locked` build of this branch possible at all: `cargo metadata --locked` had wanted to
+  rewrite the lock, which is why the shared `check-git-sources` job had no green `--locked` head to
+  run against. The commit replaced `e4ef9128`, so the approval asked for on the 09:41Z heads does
+  not cover it.
+- **Gate, re-run for this record on the build host `agents`** (20 cores, Ubuntu 24.04, rust
+  1.99.1, `umask 022`, `CRAFT_FONTS_DIR=/home/markin/build/fonts-37827adc` — the `ci.yml` pin —
+  `CARGO_BUILD_JOBS=12`). Two commands, log
+  `.craft/logs/gate-deckcraft-2012-3095c6fe.log` (started 13:52:38Z, finished 13:55:58Z):
+  1. `cargo metadata --locked` → `METADATA_LOCKED_RC=0`, and `TREE_AFTER_METADATA_LINES=0`: the
+     lock is **not** rewritten, so the check leaves the tree unchanged.
+  2. `cargo xtask ci` → `CI summary: all 8 steps passed (fmt, pdf-deps, clippy, test, doctest,
+     assets, layers, wasm)`, `XTASK_CI_RC=0`, `EXIT=0`. The `test` step ran `cargo test --workspace
+     --lib --bins --tests` (no `cargo-nextest` on that host): 37 binaries, **2743 passed, 0 failed,
+     5 ignored**; `doctest` EXIT=0; `assets` all 48 files attributed; `layers` 22 crates, no
+     violations; `wasm` ok. Nothing skipped and no host-only red: with the `ci.yml` font pin the two
+     font cases that used to fail on this host pass.
+- **What is left, and what is not.** Nothing is left on this project's side for the head
+  `3095c6fe`: the gate is green, the tree is clean, and the branch is pushed except for docs
+  commits, which a person may push or let travel with the next legitimate push (§PR publication).
+  The remaining items are human: an approve of the runs #2012 reports **at that moment** (there are
+  none for this head yet — an approve also creates them), the maintainer's review and merge, and,
+  if the maintainer wants it, closing #1998 / #1975. No push was made from this session and no CI
+  file was touched.
+- **What changed here.** This entry and the header reading above; the §Next session gate paragraph
+  now names this run instead of leaving the reader to inherit `1227aa15`; and
+  `deckcraft/AGENTS.md` no longer says "Phase 1, branch `collab/pr10`" — it names `collab/pr15` /
+  PR #2012, records that #1998 / #1975 are superseded and closed by a person, and states that the
+  head and the CI verdict are live values read with the commands in this file rather than carried
+  over from it. Docs only; no code, no CI, nothing pushed.
 
 ### 2026-11-13 — the header stops naming a head at all; the 09:41Z merges are recorded as history
 
