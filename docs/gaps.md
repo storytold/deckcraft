@@ -261,7 +261,8 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   whole presentation's (`format.languageAll`: every run, notes, masters, layouts and the default
   text style) (`lang`/`noProof` round-trip in PPTX). No grammar checking. The web build checks on the UI
   thread a few milliseconds per frame. No dictionaries ship with DeckCraft, so without one
-  installed (always on Windows and the web) only a short list of common misspellings is found.
+  installed (always on Windows and the web) only repeated words and, in English, a short list of
+  common misspellings are found.
   `review.thesaurus` looks up the selected word (checklist row partial). AutoCorrect has
   PowerPoint's options (two initial capitals, sentence and day capitals, caps lock, fractions, an
   editable replace list), and AutoFormat superscripts ordinals (1st) and starts bulleted and

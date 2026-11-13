@@ -533,9 +533,23 @@ fn names(lang: &str) -> (String, String) {
     (full, base)
 }
 
+/// Is `lang` English (any region, or none): `en`, `en-US`, `en_GB`, in any case?
+pub fn is_english(lang: &str) -> bool {
+    lang.split(['-', '_']).next().is_some_and(|l| l.eq_ignore_ascii_case("en"))
+}
+
 /// A language tag as dictionaries are named: 1–16 ASCII letters, digits, `-` or `_`.
 fn valid_lang(lang: &str) -> bool {
     (1..=16).contains(&lang.len()) && lang.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// The stems of the `.aff` files in `d`, sorted (a dictionary pair is named by its `.aff`).
+fn stems_in(d: &Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(d) else { return vec![] };
+    let mut stems: Vec<String> =
+        rd.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter_map(|n| n.strip_suffix(".aff").map(str::to_string)).collect();
+    stems.sort();
+    stems
 }
 
 /// The `.aff`/`.dic` pair for `lang` in `dirs`: the exact locale first, then any of its language.
@@ -554,19 +568,21 @@ pub fn find_in(dirs: &[PathBuf], lang: &str) -> Option<(PathBuf, PathBuf)> {
             return Some(p);
         }
     }
+    // A tag's case carries no meaning (BCP 47) while file names are case-sensitive: `pt-pt`
+    // names `pt_PT.aff`, and must not fall through to the language's other dictionaries below.
+    for d in dirs {
+        if let Some(p) = stems_in(d).into_iter().find(|s| s.eq_ignore_ascii_case(&full)).and_then(|s| pair(d, &s)) {
+            return Some(p);
+        }
+    }
     for d in dirs {
         if let Some(p) = pair(d, &base) {
             return Some(p);
         }
-        let Ok(rd) = std::fs::read_dir(d) else { continue };
-        let mut stems: Vec<String> = rd
-            .filter_map(|e| e.ok()?.file_name().into_string().ok())
-            .filter_map(|n| n.strip_suffix(".aff").map(str::to_string))
-            .filter(|n| n.to_lowercase().starts_with(&format!("{base}_")))
-            .collect();
-        stems.sort();
-        if let Some(p) = stems.iter().find_map(|s| pair(d, s)) {
-            return Some(p);
+        let prefix = format!("{base}_");
+        let found = stems_in(d).into_iter().filter(|n| n.to_lowercase().starts_with(&prefix)).find_map(|s| pair(d, &s));
+        if found.is_some() {
+            return found;
         }
     }
     None
@@ -859,6 +875,15 @@ pub fn install(lang: &str, d: Dictionary) {
     }
 }
 
+/// Remember that `lang` has no dictionary in this process (tests keep the built-in English list
+/// apart from whatever dictionaries the machine has installed).
+#[cfg(test)]
+pub(crate) fn install_no_dictionary(lang: &str) {
+    if let Ok(mut c) = cache().lock() {
+        c.insert(lang.to_string(), None);
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -919,6 +944,14 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(find_in(std::slice::from_ref(&inner), "en/../../evil").is_none());
         assert!(!valid_lang("") && !valid_lang("a".repeat(17).as_str()) && valid_lang("en-US") && valid_lang("pt_BR"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn english_is_the_language_and_any_region_of_it() {
+        assert!(is_english("en") && is_english("en-US") && is_english("EN_gb") && is_english("en-AU"));
+        for other in ["", "enx-US", "pt-PT", "pt_BR", "fr-FR", "eng"] {
+            assert!(!is_english(other), "{other}");
+        }
     }
 
     #[test]
@@ -1063,6 +1096,18 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(d.check("café"));
     }
 
+    /// A European Portuguese dictionary in UTF-8: accents are letters, plurals come from the
+    /// affix file, capitals pass, and the Brazilian spelling is corrected to the European one.
+    #[test]
+    fn a_portuguese_dictionary_checks_accented_words() {
+        let d = Dictionary::parse(b"SET UTF-8\nSFX S Y 1\nSFX S 0 s .\n", "2\ncontacto/S\necrã/S\n".as_bytes());
+        for w in ["contacto", "contactos", "ecrã", "ecrãs", "Contacto", "CONTACTO", "Ecrã"] {
+            assert!(d.check(w), "{w}");
+        }
+        assert!(!d.check("contato"));
+        assert!(d.suggest("contato", 3).contains(&"contacto".to_string()));
+    }
+
     #[test]
     fn dictionaries_are_found_by_locale_then_language() {
         let dir = std::env::temp_dir().join(format!("deckcraft-dict-{}", std::process::id()));
@@ -1077,5 +1122,44 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert_eq!(stem("en-US").as_deref(), Some("en_GB"));
         assert_eq!(stem("fr-FR"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `pt-PT` names `pt_PT.aff`/`.dic` before any other Portuguese dictionary, and the tag's
+    /// case does not decide which file is found: `pt-pt` must not fall through to `pt_BR`.
+    #[test]
+    fn a_portuguese_locale_prefers_its_own_dictionary_files() {
+        let root = std::env::temp_dir().join(format!("deckcraft-dict-pt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let add = |dir: &Path, stem: &str| {
+            std::fs::write(dir.join(format!("{stem}.aff")), "").unwrap();
+            std::fs::write(dir.join(format!("{stem}.dic")), "").unwrap();
+        };
+        let stem = |dirs: &[PathBuf], l: &str| find_in(dirs, l).and_then(|(a, _)| a.file_stem().map(|s| s.to_string_lossy().into_owned()));
+        let dirs = vec![root.clone()];
+        // Only the Brazilian files are installed: the language fallback finds them (its
+        // orthography differs, but `review.dictionary` names the file it chose).
+        add(&root, "pt_BR");
+        assert_eq!(stem(&dirs, "pt-PT").as_deref(), Some("pt_BR"));
+        // With the exact locale installed it wins, whichever of the two files is read first.
+        add(&root, "pt_PT");
+        assert_eq!(stem(&dirs, "pt-PT").as_deref(), Some("pt_PT"));
+        assert_eq!(stem(&dirs, "pt-BR").as_deref(), Some("pt_BR"));
+        // A BCP 47 tag is case-insensitive; dictionary file names are not. Every spelling of
+        // the tag finds the same files.
+        assert_eq!(stem(&dirs, "pt-pt").as_deref(), Some("pt_PT"));
+        assert_eq!(stem(&dirs, "PT-PT").as_deref(), Some("pt_PT"));
+        assert_eq!(stem(&dirs, "pt_PT").as_deref(), Some("pt_PT"));
+        // The exact locale wins even when another folder holds another of the language's pairs.
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        add(&other, "pt_BR");
+        assert_eq!(stem(&[other, root.clone()], "pt-PT").as_deref(), Some("pt_PT"));
+        // A pair named with its encoding (`pt_PT.UTF-8.aff`/`.dic`) is still that language's.
+        let encoded = root.join("encoded");
+        std::fs::create_dir_all(&encoded).unwrap();
+        add(&encoded, "pt_PT.UTF-8");
+        assert_eq!(stem(&[encoded], "pt-PT").as_deref(), Some("pt_PT.UTF-8"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

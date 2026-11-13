@@ -46,6 +46,29 @@ fn spelling_dialog_changes_and_ignores_words() {
     assert!(h.query_by_label_contains("No issues found").is_some());
 }
 
+/// Without a dictionary, the dialog says what is checked: the built-in list is English, so other
+/// languages get repeated words only.
+#[test]
+fn spelling_dialog_says_what_a_missing_dictionary_checks() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let r = app.session.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 500, 120], "text": "teh palavra"})).unwrap();
+    app.session.execute("edit.select", &json!({"ids": [r["id"]]})).unwrap();
+    // No machine has a dictionary for this language.
+    app.session.execute("format.language", &json!({"lang": "xx-MISSING"})).unwrap();
+    app.dialog = Some(crate::dialogs::Dialog::new("spelling"));
+    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("No xx-MISSING dictionary is installed").is_some());
+    assert!(h.query_by_label_contains("only repeated words are reported").is_some());
+}
+
 /// Misspelt words on the slide get squiggles from the background check; not the word being
 /// typed; the context menu's correction and Add to Dictionary clear them.
 #[test]

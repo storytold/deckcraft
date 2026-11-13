@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| neighbour(s, p, false)
         ),
         cmd!(query "review.accessibility", "Check Accessibility", ["Review", "Accessibility"], None, "{} → [{slide, shape, issue}]", has_doc, accessibility),
-        cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}] (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; Hunspell dictionaries installed on the system, else a built-in list of common misspellings)", has_doc, spelling),
+        cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}] (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; Hunspell dictionaries installed on the system, else, in English, a built-in list of common misspellings)", has_doc, spelling),
         cmd!(
             "review.spellingChange",
             "Change Spelling",
@@ -303,7 +303,9 @@ fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(Value::Array(out))
 }
 
-/// Frequent misspellings, used when no dictionary for the language is installed.
+/// Frequent misspellings in English, used when no English dictionary is installed.
+/// Another language's text is not judged by them: none of its own typos are listed, and its
+/// words are no business of an English list.
 const COMMON: &[&str] = &[
     "teh",
     "recieve",
@@ -375,7 +377,7 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             let dict = dicts.entry(w.lang.clone()).or_insert_with(|| crate::spell::dictionary(&w.lang)).clone();
             let bad = match &dict {
                 Some(d) => !crate::spell::is_correct(d, &w.text),
-                None => COMMON.contains(&w.text.to_lowercase().as_str()),
+                None => crate::spell::is_english(&w.lang) && COMMON.contains(&w.text.to_lowercase().as_str()),
             };
             if bad {
                 let sug = dict.as_ref().map(|d| d.suggest(&w.text, 5)).unwrap_or_default();
