@@ -24,7 +24,7 @@ mod text_effects;
 
 pub use font::SIZES;
 use font::{
-    bold, caps, clear, color, font, font_dialog, grow, highlight, italic, language, language_all, shrink, size, spacing, strike, subscript,
+    bold, caps, clear, color, font, font_dialog, grow, highlight, italic, kumimoji, language, language_all, shrink, size, spacing, strike, subscript,
     superscript, text_transparency, underline,
 };
 pub use painter::Painted;
@@ -113,6 +113,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{pt} (veryTight -3, tight -1.5, normal 0, loose 3, veryLoose 6)",
             has_text_or_shapes,
             spacing
+        ),
+        cmd!(
+            "format.kumimoji",
+            "Combine Characters (Kumimoji)",
+            [],
+            None,
+            "{on?: bool} — numbers stand upright in East Asian vertical text (eaVert) instead of lying on their side",
+            has_text_or_shapes,
+            kumimoji
         ),
         cmd!("format.clear", "Clear All Formatting", ["Home", "Font"], Some("Cmd+Space"), "{}", has_text_or_shapes, clear),
         cmd!(

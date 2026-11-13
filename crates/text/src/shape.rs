@@ -237,10 +237,16 @@ fn shape_cells(
         })
         .collect();
     // In East Asian vertical text, ideographs, kana, Hangul, full-width forms and the like stand
-    // upright (a whole grapheme at a time); other text lies on its side.
+    // upright (a whole grapheme at a time); other text lies on its side. A run with
+    // `a:rPr/@kumimoji` (組み文字) stands its numbers upright too.
     if vertical != Upright::None {
+        let kumimoji = |i: usize| styles.get(char_style.get(i).copied().unwrap_or(0)).is_some_and(|st| st.kumimoji);
         for &(a, b) in &graphemes {
-            let up = chars.get(a).is_some_and(|c| if vertical == Upright::All { !c.is_whitespace() } else { is_upright(*c) });
+            let up = chars.get(a).is_some_and(|c| match vertical {
+                Upright::All => !c.is_whitespace(),
+                Upright::Cjk => is_upright(*c) || kumimoji(a),
+                Upright::None => false,
+            });
             for c in cells.get_mut(a..b).into_iter().flatten() {
                 c.upright = up;
             }
