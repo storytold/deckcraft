@@ -20,6 +20,7 @@ pub mod inkshape;
 pub mod io;
 pub mod keys;
 pub mod links;
+pub mod math_gallery;
 pub mod media_refs;
 pub mod recovery;
 pub mod sample;
@@ -143,6 +144,16 @@ pub fn page_master_mut(doc: &mut Presentation, t: Target) -> Option<&mut Arc<dec
     }
 }
 
+/// Active equation editing state inside the edited text body.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MathEdit {
+    /// `(paragraph, char_start)` of the `RunKind::Math` run in the active text body.
+    pub pos: (usize, usize),
+    /// Caret inside the equation AST.
+    pub caret: deckcraft_model::math_edit::MathPos,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Selection {
@@ -153,6 +164,9 @@ pub struct Selection {
     /// Selected shapes on the current slide (top-level or inside groups).
     pub shapes: Vec<ShapeId>,
     pub text: Option<TextSel>,
+    /// Equation currently being edited inside `text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub math: Option<MathEdit>,
     /// Selected table cells: (table, (r0, c0), (r1, c1)).
     pub cells: Option<(ShapeId, (usize, usize), (usize, usize))>,
     /// Slide-list range last made with Shift-click: `(anchor, end)`. A further Shift-click extends from
@@ -517,6 +531,10 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// Equation › Conversions › LaTeX vs UnicodeMath input format.
+    pub math_latex: bool,
+    /// Equation › Tools › Text (normal text inside equation).
+    pub math_normal_text: bool,
 }
 
 impl Default for Session {
@@ -551,6 +569,8 @@ impl Session {
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            math_latex: false,
+            math_normal_text: false,
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
@@ -808,6 +828,14 @@ fn clamp_selection(st: &mut DocState) {
         && st.shape(t.shape).is_none()
     {
         st.selection.text = None;
+    }
+    if st.selection.text.is_none() {
+        st.selection.math = None;
+    } else if let (Some(t), Some(m)) = (&st.selection.text, &st.selection.math) {
+        let still_math = cmd::text::body_of(st, t).and_then(|b| cmd::equation::find_math_run_at(b, m.pos)).is_some();
+        if !still_math {
+            st.selection.math = None;
+        }
     }
     let slides: Vec<SlideId> = st.selection.slides.iter().copied().filter(|id| st.doc.slide(*id).is_some()).collect();
     st.selection.slides = slides;

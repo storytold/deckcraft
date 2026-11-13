@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use craft_pdf::write::{self, Metadata, Writer, backend as krilla};
 
@@ -178,7 +179,7 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     let pdf = writer.document_mut();
 
     let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
-    let mut ex = Exporter { pres, opts, fonts: HashMap::new(), backdrops: Backdrops::default() };
+    let mut ex = Exporter { pres, opts, fonts: HashMap::new(), cmaps: HashMap::new(), backdrops: Backdrops::default() };
     // Page plan: per page, the slides on it with their boxes (page points).
     let pages = plan_pages(pres, opts, &slides, sw, sh);
     // Bookmarks and slide → page lookup for internal links.
@@ -387,6 +388,7 @@ struct Exporter<'a> {
     pres: &'a Presentation,
     opts: &'a PdfOptions,
     fonts: HashMap<u32, Font>,
+    cmaps: HashMap<u32, Arc<HashMap<u32, char>>>,
     backdrops: Backdrops,
 }
 
@@ -514,6 +516,19 @@ impl Exporter<'_> {
         Ok(font)
     }
 
+    fn cmap(&mut self, face: &deckcraft_fonts::FontFace) -> Arc<HashMap<u32, char>> {
+        self.cmaps
+            .entry(face.id())
+            .or_insert_with(|| {
+                let mut m = HashMap::new();
+                for (c, g) in face.chars() {
+                    m.entry(g).or_insert(c);
+                }
+                Arc::new(m)
+            })
+            .clone()
+    }
+
     /// Slide `i` drawn into `b` (page points).
     fn slide(&mut self, s: &mut Surface, i: usize, b: Rect) -> Result<()> {
         let pres = self.pres;
@@ -615,6 +630,134 @@ impl Exporter<'_> {
             s.draw_glyphs(Point::from_xy(0.0, 0.0), &kg, font, &text, run.size as f32, false);
             s.set_fill(None);
             s.pop();
+        }
+        for eq in &pt.layout.equations {
+            self.equation_layer(s, eq, view * pt.transform, visible)?;
+        }
+        Ok(())
+    }
+
+    /// Draws the glyphs and vector rules of an equation onto the PDF surface.
+    fn equation_layer(&mut self, s: &mut Surface, eq: &deckcraft_text::PlacedEquation, m: Affine, visible: bool) -> Result<()> {
+        use deckcraft_text::math::MItem;
+        for it in &eq.math.items {
+            match it {
+                MItem::Glyphs { face, size, color: c, synth_bold, synth_italic, glyphs, text } => {
+                    if glyphs.is_empty() || *size <= 0.0 {
+                        continue;
+                    }
+                    let font = self.font(face.get())?;
+                    let (mapped_text, ranges) = if !text.is_empty() && text.chars().count() == glyphs.len() {
+                        let chars: Vec<(usize, char)> = text.char_indices().collect();
+                        let ranges: Vec<std::ops::Range<usize>> = (0..glyphs.len())
+                            .map(|i| {
+                                let start = chars[i].0;
+                                let end = chars.get(i + 1).map(|c| c.0).unwrap_or(text.len());
+                                start..end
+                            })
+                            .collect();
+                        (text.clone(), ranges)
+                    } else if !text.is_empty() {
+                        let ranges = vec![0..text.len(); glyphs.len()];
+                        (text.clone(), ranges)
+                    } else {
+                        let cmap = self.cmap(face.get());
+                        let mut t = String::new();
+                        let mut ranges = Vec::with_capacity(glyphs.len());
+                        for (gid, _, _) in glyphs {
+                            let start = t.len();
+                            t.push(cmap.get(gid).copied().unwrap_or(' '));
+                            ranges.push(start..t.len());
+                        }
+                        (t, ranges)
+                    };
+                    if mapped_text.trim().is_empty() {
+                        continue;
+                    }
+                    let upem = face.upem.max(1.0);
+                    let sz = f64::from(*size);
+                    let (x0, y0) = (f64::from(glyphs[0].1), f64::from(glyphs[0].2));
+                    let kg: Vec<KrillaGlyph> = glyphs
+                        .iter()
+                        .enumerate()
+                        .map(|(gi, &(gid, gx, gy))| {
+                            let (gx, gy) = (f64::from(gx), f64::from(gy));
+                            let next = glyphs.get(gi + 1).map_or(gx + face.advance(gid) * sz / upem, |nx| f64::from(nx.1));
+                            let range = ranges.get(gi).cloned().unwrap_or(mapped_text.len()..mapped_text.len());
+                            KrillaGlyph::new(GlyphId::new(gid), ((next - gx) / sz) as f32, 0.0, ((y0 - gy) / sz) as f32, 0.0, range, None)
+                        })
+                        .collect();
+                    let skew = if *synth_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
+                    s.push_transform(&tf(m * Affine::translate((eq.x + x0, eq.base - y0)) * skew));
+                    s.set_fill(Some(if visible {
+                        let rgba = c.to_rgba();
+                        Fill {
+                            paint: krilla::color::rgb::Color::new(rgba.r, rgba.g, rgba.b).into(),
+                            opacity: NormalizedF32::new(f64::from(rgba.a) as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+                            ..Default::default()
+                        }
+                    } else {
+                        grey(0, 0.0)
+                    }));
+                    if visible && *synth_bold {
+                        let rgba = c.to_rgba();
+                        s.set_stroke(Some(krilla::paint::Stroke {
+                            paint: krilla::color::rgb::Color::new(rgba.r, rgba.g, rgba.b).into(),
+                            width: *size * 0.03,
+                            ..Default::default()
+                        }));
+                    }
+                    s.draw_glyphs(Point::from_xy(0.0, 0.0), &kg, font, &mapped_text, *size, false);
+                    s.set_fill(None);
+                    s.set_stroke(None);
+                    s.pop();
+                }
+                MItem::Rect { x, y, w, h, color: c } => {
+                    if visible && *w > 0.0 && *h > 0.0 {
+                        let rgba = c.to_rgba();
+                        let rx0 = eq.x + f64::from(*x);
+                        let ry0 = eq.base - f64::from(y + h);
+                        let p = kurbo::Shape::to_path(&kurbo::Rect::new(rx0, ry0, rx0 + f64::from(*w), ry0 + f64::from(*h)), 0.1);
+                        if let Some(path) = to_path(&p) {
+                            s.push_transform(&tf(m));
+                            s.set_fill(Some(Fill {
+                                paint: krilla::color::rgb::Color::new(rgba.r, rgba.g, rgba.b).into(),
+                                opacity: NormalizedF32::new(f64::from(rgba.a) as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+                                ..Default::default()
+                            }));
+                            s.draw_path(&path);
+                            s.set_fill(None);
+                            s.pop();
+                        }
+                    }
+                }
+                MItem::Line { x0, y0, x1, y1, width, color: c, dotted } => {
+                    if visible && *width > 0.0 {
+                        let rgba = c.to_rgba();
+                        let lx0 = eq.x + f64::from(*x0);
+                        let ly0 = eq.base - f64::from(*y0);
+                        let lx1 = eq.x + f64::from(*x1);
+                        let ly1 = eq.base - f64::from(*y1);
+                        let mut p = kurbo::BezPath::new();
+                        p.move_to((lx0, ly0));
+                        p.line_to((lx1, ly1));
+                        if let Some(path) = to_path(&p) {
+                            s.push_transform(&tf(m));
+                            let stroke = krilla::paint::Stroke {
+                                paint: krilla::color::rgb::Color::new(rgba.r, rgba.g, rgba.b).into(),
+                                width: *width,
+                                dash: if *dotted { Some(krilla::paint::StrokeDash { array: vec![1.0, 2.0], offset: 0.0 }) } else { None },
+                                ..Default::default()
+                            };
+                            s.set_stroke(Some(stroke));
+                            s.draw_path(&path);
+                            s.set_stroke(None);
+                            s.pop();
+                        }
+                    }
+                }
+                MItem::ScreenOnly(_) => {}
+            }
         }
         Ok(())
     }

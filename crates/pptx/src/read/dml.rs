@@ -693,7 +693,8 @@ fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
         let mut text = String::new();
         outer_t(e, 0, &mut text);
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
-        para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
+        let (math, display) = crate::read::math::read_math_container(e);
+        para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml, math, display } });
     }
 }
 

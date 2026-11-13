@@ -25,6 +25,11 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
             }
         }
         ui.separator();
+        let in_math = app.session.active().is_some_and(|d| d.selection.math.is_some());
+        if in_math {
+            equation_items(app, ui);
+            ui.separator();
+        }
         // Right-clicking the text being edited keeps it (`PointerKind::ContextClick`): text items.
         let editing = app.session.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| !t.notes));
         if editing {
@@ -35,6 +40,56 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
             slide_items(app, ui);
         }
     });
+}
+
+/// Adds equation context menu items for structure actions, display mode, justification, and conversions.
+pub(super) fn equation_items(app: &mut SlideApp, ui: &mut egui::Ui) {
+    let actions: Vec<(usize, String, String)> = app
+        .session
+        .execute("equation.structureActions", &json!({}))
+        .ok()
+        .and_then(|v| v.get("actions").and_then(|a| a.as_array()).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|a| {
+            let level = a.get("level").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+            let act = a.get("action")?.as_str()?.to_string();
+            let label = a.get("label")?.as_str()?.to_string();
+            Some((level, act, label))
+        })
+        .collect();
+    if !actions.is_empty() {
+        for (level, act, label) in actions {
+            if ui.button(label).clicked() {
+                let _ = app.run("equation.structure", json!({"action": act, "level": level}));
+                ui.close();
+            }
+        }
+        ui.separator();
+    }
+    let display = app.session.execute("equation.get", &json!({})).ok().and_then(|v| v.get("display").and_then(|v| v.as_bool())).unwrap_or(false);
+    let label = if display { "Change to Inline" } else { "Change to Display" };
+    if ui.button(label).clicked() {
+        let _ = app.run("equation.display", json!({"value": !display}));
+        ui.close();
+    }
+    if ui.button("Professional").clicked() {
+        let _ = app.run("equation.convert", json!({"to": "professional"}));
+        ui.close();
+    }
+    if ui.button("Linear").clicked() {
+        let _ = app.run("equation.convert", json!({"to": "linear"}));
+        ui.close();
+    }
+    if ui.button("Equation Number").clicked() {
+        let _ = app.run("equation.number", json!({}));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("Close Equation").clicked() {
+        let _ = app.run("equation.exit", json!({}));
+        ui.close();
+    }
 }
 
 fn edit_points_menu(app: &mut SlideApp, ui: &mut egui::Ui, sh: &deckcraft_model::Shape) {
