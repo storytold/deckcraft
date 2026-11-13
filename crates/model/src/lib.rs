@@ -1112,11 +1112,13 @@ impl Presentation {
     pub fn validate(&self) -> Vec<String> {
         let mut out = vec![];
         let mut seen = std::collections::HashSet::new();
+        // Indexed once: a per-slide scan of every layout is slides × layouts work.
+        let layouts: std::collections::HashSet<_> = self.masters.iter().flat_map(|m| m.layouts.iter().map(|l| l.id)).collect();
         for s in &self.slides {
             if !seen.insert(s.id) {
                 out.push(format!("duplicate slide id {}", s.id));
             }
-            if self.layout(s.layout).is_none() {
+            if !layouts.contains(&s.layout) {
                 out.push(format!("slide {} uses missing layout {}", s.id, s.layout));
             }
             let mut ids = std::collections::HashSet::new();

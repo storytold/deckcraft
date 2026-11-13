@@ -3,6 +3,7 @@
 
 use crate::text::{Paragraph, Run, RunKind, RunProps, TextBody};
 use crate::words;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// (paragraph, char offset in the paragraph).
 pub type Pos = (usize, usize);
@@ -78,45 +79,57 @@ pub fn insert(body: &mut TextBody, pos: Pos, text: &str, props: Option<RunProps>
     if body.paragraphs.is_empty() {
         body.paragraphs.push(Paragraph::default());
     }
-    let (mut pi, mut ch) = clamp(body, pos);
-    let props = props.unwrap_or_else(|| props_at(body, (pi, ch)));
+    let (pi0, mut ch) = clamp(body, pos);
+    let props = props.unwrap_or_else(|| props_at(body, (pi0, ch)));
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    // Work on the paragraph being edited apart from the body, so each new paragraph is pushed to a
+    // list and the body's vector is spliced once instead of shifted for every `\n`.
+    let Some(slot) = body.paragraphs.get_mut(pi0) else { return (pi0, ch) };
+    let mut cur = std::mem::take(slot);
+    let mut done: Vec<Paragraph> = Vec::new();
     let mut first = true;
     for part in text.split('\n') {
         if !first {
-            // Split paragraph pi at ch.
-            let Some(p) = body.paragraphs.get_mut(pi) else { break };
-            let idx = split_at(p, ch);
-            let tail: Vec<Run> = p.runs.drain(idx..).collect();
-            let newp =
-                Paragraph { level: p.level, props: p.props.clone(), runs: tail, def_props: p.def_props.clone(), end_props: p.end_props.clone() };
-            p.end_props = props.clone();
-            body.paragraphs.insert(pi + 1, newp);
-            pi += 1;
+            // Split the current paragraph at ch.
+            let idx = split_at(&mut cur, ch);
+            let tail: Vec<Run> = cur.runs.drain(idx..).collect();
+            let newp = Paragraph {
+                level: cur.level,
+                props: cur.props.clone(),
+                runs: tail,
+                def_props: cur.def_props.clone(),
+                end_props: cur.end_props.clone(),
+            };
+            cur.end_props = props.clone();
+            done.push(std::mem::replace(&mut cur, newp));
             ch = 0;
         }
         first = false;
+        // The run index just after the last insertion: the next one lands there with no rescan.
+        let mut next: Option<usize> = None;
         for (k, seg) in part.split('\u{b}').enumerate() {
-            let Some(p) = body.paragraphs.get_mut(pi) else { break };
             if k > 0 {
-                let idx = split_at(p, ch);
-                p.runs.insert(idx, Run { text: String::new(), props: props.clone(), kind: RunKind::Break });
+                let idx = next.unwrap_or_else(|| split_at(&mut cur, ch));
+                cur.runs.insert(idx, Run { text: String::new(), props: props.clone(), kind: RunKind::Break });
                 ch += 1;
+                next = Some(idx + 1);
             }
             if seg.is_empty() {
                 continue;
             }
-            let idx = split_at(p, ch);
-            p.runs.insert(idx, Run::with(seg, props.clone()));
+            let idx = next.unwrap_or_else(|| split_at(&mut cur, ch));
+            cur.runs.insert(idx, Run::with(seg, props.clone()));
             ch += seg.chars().count();
+            next = Some(idx + 1);
         }
-        if let Some(p) = body.paragraphs.get_mut(pi) {
-            p.normalize();
-            if p.runs.is_empty() {
-                p.end_props = props.clone();
-            }
+        cur.normalize();
+        if cur.runs.is_empty() {
+            cur.end_props = props.clone();
         }
     }
+    let pi = pi0 + done.len();
+    done.push(cur);
+    body.paragraphs.splice(pi0..=pi0, done);
     (pi, ch)
 }
 
@@ -252,8 +265,16 @@ pub fn slice(body: &TextBody, a: Pos, b: Pos) -> TextBody {
 /// Insert a formatted body at `pos` (paste): first paragraph merges into the current one.
 pub fn insert_body(body: &mut TextBody, pos: Pos, src: &TextBody) -> Pos {
     let mut caret = clamp(body, pos);
+    // Plain text runs go straight in at the run index after the previous one and the paragraph is
+    // normalized once, not rescanned and merged for every source run.
+    let mut next: Option<usize> = None;
+    let mut dirty = false;
     for (k, sp) in src.paragraphs.iter().enumerate() {
         if k > 0 {
+            if let (true, Some(p)) = (dirty, body.paragraphs.get_mut(caret.0)) {
+                p.normalize();
+            }
+            (next, dirty) = (None, false);
             caret = insert(body, caret, "\n", None);
             if let Some(p) = body.paragraphs.get_mut(caret.0) {
                 p.level = sp.level;
@@ -261,6 +282,22 @@ pub fn insert_body(body: &mut TextBody, pos: Pos, src: &TextBody) -> Pos {
             }
         }
         for r in &sp.runs {
+            if r.kind == RunKind::Text
+                && !r.text.is_empty()
+                && !r.text.contains(['\n', '\r', '\u{b}'])
+                && let Some(p) = body.paragraphs.get_mut(caret.0)
+            {
+                let idx = next.unwrap_or_else(|| split_at(p, caret.1));
+                p.runs.insert(idx, Run::with(&r.text, r.props.clone()));
+                caret.1 += r.text.chars().count();
+                (next, dirty) = (Some(idx + 1), true);
+                continue;
+            }
+            // Anything else takes the general path, after the pending runs are merged.
+            if let (true, Some(p)) = (dirty, body.paragraphs.get_mut(caret.0)) {
+                p.normalize();
+            }
+            (next, dirty) = (None, false);
             match r.kind {
                 RunKind::Text => caret = insert(body, caret, &r.text, Some(r.props.clone())),
                 RunKind::Break => caret = insert(body, caret, "\u{b}", Some(r.props.clone())),
@@ -273,6 +310,9 @@ pub fn insert_body(body: &mut TextBody, pos: Pos, src: &TextBody) -> Pos {
                 }
             }
         }
+    }
+    if let (true, Some(p)) = (dirty, body.paragraphs.get_mut(caret.0)) {
+        p.normalize();
     }
     caret
 }
@@ -380,6 +420,21 @@ fn smart_space(body: &mut TextBody, at: Pos) -> Pos {
     at
 }
 
+/// The position after the grapheme cluster at `pos`, or the next paragraph's start at a paragraph end.
+pub fn cluster_end(body: &TextBody, pos: Pos) -> Pos {
+    let (pi, ch) = clamp(body, pos);
+    let text = body.paragraphs.get(pi).map(Paragraph::text).unwrap_or_default();
+    // Boundaries come from the whole paragraph, so a caret inside a cluster deletes only to its end.
+    let mut end = 0;
+    for g in text.graphemes(true) {
+        end += g.chars().count();
+        if end > ch {
+            return (pi, end);
+        }
+    }
+    char_move(body, pos, true)
+}
+
 /// One character left/right across paragraph boundaries.
 pub fn char_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     let (pi, ch) = clamp(body, pos);
@@ -459,6 +514,11 @@ pub fn next_case(s: &str) -> &'static str {
     }
 }
 
+/// Whether the `.` at `i` sits between two ASCII digits (a decimal point or version number).
+fn is_decimal_point(all: &[char], i: usize) -> bool {
+    i > 0 && all[i - 1].is_ascii_digit() && all.get(i + 1).is_some_and(|n| n.is_ascii_digit())
+}
+
 /// Change case: `upper`, `lower`, `sentence`, `title`, `toggle`.
 pub fn change_case(s: &str, mode: &str) -> String {
     change_case_parts(&[s], mode).concat()
@@ -493,7 +553,7 @@ pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
                     } else {
                         out.extend(c.to_lowercase());
                     }
-                    if (title && c.is_whitespace()) || (!title && matches!(c, '.' | '!' | '?')) {
+                    if (title && c.is_whitespace()) || (!title && matches!(c, '.' | '!' | '?') && !(c == '.' && is_decimal_point(&all, i))) {
                         start = true;
                     }
                 }
@@ -517,6 +577,13 @@ mod tests {
         assert_eq!(change_case("ΟΔΟΣ", "title"), "Οδος");
         assert_eq!(change_case("ΟΔΟΣ ΜΟΥ.", "sentence"), "Οδος μου.");
         assert_eq!(change_case("ΟΔΟΣ", "lower"), "οδος");
+    }
+
+    #[test]
+    fn sentence_case_decimal_point_is_not_a_boundary() {
+        assert_eq!(change_case("I HAVE 3.5 APPLES", "sentence"), "I have 3.5 apples");
+        assert_eq!(change_case_parts(&["V 1.", "2 BETA"], "sentence").concat(), "V 1.2 beta");
+        assert_eq!(change_case("HELLO. WORLD", "sentence"), "Hello. World");
     }
 
     #[test]
@@ -566,6 +633,74 @@ mod tests {
         let caret = insert_body(&mut c, (0, 1), &s);
         assert_eq!(c.text(), "XbcdeY");
         assert_eq!(caret, (0, 5));
+    }
+
+    /// The paste as it ran before the fast path: one `insert` (and normalize) per source run.
+    fn insert_body_by_runs(body: &mut TextBody, pos: Pos, src: &TextBody) -> Pos {
+        let mut caret = clamp(body, pos);
+        for (k, sp) in src.paragraphs.iter().enumerate() {
+            if k > 0 {
+                caret = insert(body, caret, "\n", None);
+                if let Some(p) = body.paragraphs.get_mut(caret.0) {
+                    p.level = sp.level;
+                    p.props = sp.props.clone();
+                }
+            }
+            for r in &sp.runs {
+                match r.kind {
+                    RunKind::Text => caret = insert(body, caret, &r.text, Some(r.props.clone())),
+                    RunKind::Break => caret = insert(body, caret, "\u{b}", Some(r.props.clone())),
+                    _ => {
+                        if let Some(p) = body.paragraphs.get_mut(caret.0) {
+                            let idx = split_at(p, caret.1);
+                            p.runs.insert(idx, r.clone());
+                            caret.1 += r.char_len();
+                        }
+                    }
+                }
+            }
+        }
+        caret
+    }
+
+    #[test]
+    fn paste_matches_inserting_run_by_run() {
+        let bold = |t: &str| Run::with(t, RunProps { bold: Some(true), ..Default::default() });
+        let mut src = body("");
+        src.paragraphs = vec![
+            Paragraph {
+                runs: vec![Run::with("ab", RunProps::default()), Run::with("cd", RunProps::default()), bold("ef"), bold("g")],
+                ..Default::default()
+            },
+            Paragraph {
+                runs: vec![
+                    bold("h"),
+                    Run { text: String::new(), props: RunProps::default(), kind: RunKind::Break },
+                    Run::with("i", RunProps::default()),
+                ],
+                level: 1,
+                ..Default::default()
+            },
+            Paragraph { runs: vec![Run::with("jk", RunProps::default())], ..Default::default() },
+        ];
+        for at in [0, 1, 3, 6] {
+            let mut dest = body("XYZabc");
+            format(&mut dest, (0, 2), (0, 4), &|p| p.italic = Some(true));
+            let mut want = dest.clone();
+            let want_caret = insert_body_by_runs(&mut want, (0, at), &src);
+            let caret = insert_body(&mut dest, (0, at), &src);
+            assert_eq!(caret, want_caret, "caret at {at}");
+            assert_eq!(format!("{:?}", dest.paragraphs), format!("{:?}", want.paragraphs), "paste at {at}");
+        }
+    }
+
+    #[test]
+    fn multiline_insert_splits_into_paragraphs() {
+        let mut b = body("abcd");
+        let c = insert(&mut b, (0, 2), "x\ny\u{b}z\n\nw", None);
+        assert_eq!(c, (3, 1));
+        let texts: Vec<String> = b.paragraphs.iter().map(Paragraph::text).collect();
+        assert_eq!(texts, ["abx", "y\u{b}z", "", "wcd"]);
     }
 
     #[test]

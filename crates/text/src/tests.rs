@@ -1446,6 +1446,16 @@ fn a_hanging_indents_margin_is_an_implicit_first_tab_stop() {
 }
 
 #[test]
+fn many_tabs_over_many_stops_lay_out_by_position() {
+    // 20,000 stops given out of order, and 2,000 tabs: each tab finds the next stop by position.
+    let mut stops: Vec<(f64, &str)> = (1..=20_000).rev().map(|k| (k as f64 * 0.05 + 30.0, "l")).collect();
+    stops.push((f64::NAN, "l"));
+    let text = "a\t".repeat(2_000);
+    let l = tabbed(&text, &stops, 1.0e6);
+    assert!((l.lines[0].edges[2].0 - l.inner.x0 - 30.05).abs() < 0.01, "{:?}", &l.lines[0].edges[..3]);
+}
+
+#[test]
 fn a_tab_past_the_end_moves_to_the_next_line() {
     // PowerPoint: "abcdefghij\tk\tl\tm…" in a narrow box puts the tab that doesn't fit on the next
     // line, so the text after it lands on that line's first stop.
