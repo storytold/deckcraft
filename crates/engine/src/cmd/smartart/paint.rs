@@ -260,7 +260,8 @@ pub(super) fn picture_shape(d: &Diagram, preset: &str, x: Xfrm, i: usize, node: 
     let mut sh = Shape { name: "SmartArt picture".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() };
     paint(d, &mut sh, i, true);
     if let Some(m) = d.nodes.get(node).and_then(|n| n.picture) {
-        sh.fill = Some(Fill::Picture(deckcraft_model::style::PictureFill { media: m, ..Default::default() }));
+        let place = d.nodes.get(node).and_then(|n| n.picture_place.clone()).unwrap_or_default();
+        sh.fill = Some(Fill::Picture(deckcraft_model::style::PictureFill { media: m, crop: place.crop, alpha: place.alpha, ..Default::default() }));
         sh.line = Some(Line::solid(ColorRef::scheme(SchemeSlot::Lt1), 1.5));
     }
     sh

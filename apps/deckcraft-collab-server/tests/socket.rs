@@ -1,0 +1,1178 @@
+//! A real socket test: HTTP session control, two WebSocket clients, a viewer, and metrics.
+//!
+//! The server is started on an ephemeral loopback port; nothing here touches the network beyond
+//! localhost.
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+
+use base64::Engine as _;
+use deckcraft_collab_proto::{
+    ChangeKind, ClientInfo, ClientMsg, Hello, MediaKind, ModelCamera, OpEnvelope, OpKind, PROTO_VERSION, Payload, PicturePlace, ServerMsg,
+    SmartArtPictureMedia, Target, decode_server, encode_client,
+};
+use deckcraft_collab_server::{Config, Handle, TokenClaims, serve_ephemeral};
+use tungstenite::stream::MaybeTlsStream;
+
+type Client = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
+use jsonwebtoken::{Algorithm, EncodingKey, Header};
+
+const SECRET: &[u8] = b"test-secret-for-deckcraft-collab";
+
+fn start() -> Handle {
+    serve_ephemeral(Config::for_tests(SECRET, "service-token")).expect("server")
+}
+
+fn http(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str>, body: &str) -> (u16, String) {
+    let mut stream = TcpStream::connect(addr).expect("connect");
+    let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: test\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).expect("write");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read");
+    let status = response.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
+    (status, body)
+}
+
+/// An HTTP request with binary bodies on either side (media upload and fetch).
+fn http_bytes(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str>, body: &[u8]) -> (u16, Vec<u8>) {
+    let (status, _, body) = http_parts(addr, method, path, token, body);
+    (status, body)
+}
+
+/// The same request, with the response head kept so a test can read the declared content type.
+fn http_parts(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str>, body: &[u8]) -> (u16, String, Vec<u8>) {
+    let mut stream = TcpStream::connect(addr).expect("connect");
+    let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: test\r\n{auth}Content-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).expect("write head");
+    stream.write_all(body).expect("write body");
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).expect("read");
+    let split = response.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(response.len());
+    let head = String::from_utf8_lossy(&response[..split]).to_string();
+    let status = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (status, head, response[split..].to_vec())
+}
+
+/// The same request with extra headers (an `Origin`, and the preflight's request headers).
+fn http_extra(addr: std::net::SocketAddr, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> (u16, String, Vec<u8>) {
+    let mut stream = TcpStream::connect(addr).expect("connect");
+    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: test\r\nContent-Length: {}\r\nConnection: close\r\n", body.len());
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("\r\n");
+    stream.write_all(head.as_bytes()).expect("write head");
+    stream.write_all(body).expect("write body");
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).expect("read");
+    let split = response.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(response.len());
+    let head = String::from_utf8_lossy(&response[..split]).to_string();
+    let status = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (status, head, response[split..].to_vec())
+}
+
+/// One response header's value, case-insensitive in the name, `None` when absent.
+fn header_of<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim().eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}
+
+fn token(actor: &str, role: &str, file: &str) -> String {
+    let claims = TokenClaims {
+        sub: actor.into(),
+        role: role.into(),
+        file_id: Some(file.into()),
+        app: Some("deckcraft".into()),
+        session_id: Some(file.into()),
+        aud: Some("office-sync".into()),
+        exp: Some(now() + 300),
+    };
+    jsonwebtoken::encode(&Header::new(Algorithm::HS256), &claims, &EncodingKey::from_secret(SECRET)).expect("token")
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn join(addr: std::net::SocketAddr, id: &str, actor: &str, role: &str) -> Client {
+    let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/v1/sessions/{id}/ws")).expect("ws");
+    let hello = ClientMsg::Hello(Hello {
+        v: PROTO_VERSION,
+        app: "deckcraft".into(),
+        doc: id.into(),
+        jwt: token(actor, role, id),
+        client: ClientInfo { name: actor.into(), ver: "1".into() },
+        last_version: Some(0),
+    });
+    ws.send(tungstenite::Message::Text(encode_client(&hello).expect("encode").into())).expect("send hello");
+    match read(&mut ws) {
+        ServerMsg::Welcome(w) => assert_eq!(w.actor_id, actor),
+        other => panic!("expected welcome, got {other:?}"),
+    }
+    ws
+}
+
+fn read(ws: &mut Client) -> ServerMsg {
+    loop {
+        match ws.read().expect("read") {
+            tungstenite::Message::Text(text) => return decode_server(text.as_str()).expect("decode"),
+            tungstenite::Message::Ping(_) | tungstenite::Message::Pong(_) => {}
+            other => panic!("unexpected frame {other:?}"),
+        }
+    }
+}
+
+fn native_deck() -> Vec<u8> {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.apply_remote("shape.insert", &serde_json::json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("shape");
+    deckcraft_format::save(s.doc().expect("doc").doc.as_ref()).expect("save")
+}
+
+/// 8×8 red PNG.
+fn png() -> Vec<u8> {
+    vec![
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73, 68,
+        65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+        130,
+    ]
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A minimal binary glTF: the magic, version 2 and a declared length, then an empty chunk.
+fn glb() -> Vec<u8> {
+    let mut bytes = b"glTF".to_vec();
+    bytes.extend(2u32.to_le_bytes());
+    bytes.extend(20u32.to_le_bytes());
+    bytes.extend([0u8; 8]);
+    bytes
+}
+
+/// The slide key a client derives for the first slide of `native_deck()` (ADR 0002).
+fn first_slide_key(file_id: &str) -> deckcraft_collab_proto::SlideKey {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.apply_remote("shape.insert", &serde_json::json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("shape");
+    let doc = s.doc().expect("doc").doc.as_ref().clone();
+    let mut map = deckcraft_collab::KeyMap::new();
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{file_id}-"));
+    map.sync(&doc, &mut issuer);
+    map.slide_key(doc.slides[0].id).expect("slide key").clone()
+}
+
+#[test]
+fn a_session_accepts_two_editors_and_refuses_a_viewer() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = base64::engine::general_purpose::STANDARD.encode(native_deck());
+    let body = serde_json::json!({
+        "fileId": "file-1",
+        "app": "deckcraft",
+        "initialBytes": bytes,
+        "expectedVersion": "etag-0",
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut b = join(addr, &id, "bob", "editor");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "op-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Default::default(),
+        payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
+    let applied_a = read(&mut a);
+    let applied_b = read(&mut b);
+    match (&applied_a, &applied_b) {
+        (ServerMsg::Applied(x), ServerMsg::Applied(y)) => {
+            assert_eq!(x.version, 1);
+            assert_eq!(y.version, 1);
+            assert_eq!(x.op_id, "op-1");
+        }
+        other => panic!("expected applied on both sides, got {other:?}"),
+    }
+
+    let mut viewer = join(addr, &id, "victor", "viewer");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "op-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Command,
+        target: Default::default(),
+        payload: Payload::ShapeMove { x: 1.0, y: 2.0 },
+        history: None,
+    });
+    viewer.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
+    match read(&mut viewer) {
+        ServerMsg::Rejected(r) => assert_eq!(r.code, deckcraft_collab_proto::RejectCode::Forbidden),
+        other => panic!("expected forbidden, got {other:?}"),
+    }
+
+    let (status, health) = http(addr, "GET", "/healthz", None, "");
+    assert_eq!(status, 200);
+    assert!(health.contains("\"ok\":true"), "{health}");
+    let (status, metrics) = http(addr, "GET", "/metrics", None, "");
+    assert_eq!(status, 200);
+    assert!(metrics.contains("deckcraft_collab_ops_total 2"), "both operations reached the hub: {metrics}");
+    assert!(metrics.contains("deckcraft_collab_rooms 1"), "{metrics}");
+
+    // Session control fails closed without the service token.
+    let (status, _) = http(addr, "GET", "/v1/sessions/file-1", None, "");
+    assert_eq!(status, 200, "read-only session info is public to the service network");
+    handle.shutdown();
+}
+
+#[test]
+fn a_picture_is_uploaded_once_and_reaches_a_second_editor() {
+    let handle = start();
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-m", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+
+    let editor = token("alice", "editor", "file-m");
+    let viewer = token("victor", "viewer", "file-m");
+    let picture = png();
+    let sha = sha256(&picture);
+    let upload = format!("/v1/sessions/file-m/media/{sha}");
+
+    // A picture is not public and a viewer cannot add one.
+    let (status, _) = http_bytes(addr, "GET", &format!("/media/{sha}"), None, b"");
+    assert_eq!(status, 401);
+    let (status, _) = http_bytes(addr, "PUT", &upload, Some(&viewer), &picture);
+    assert_eq!(status, 403);
+    let (status, _) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-m/media/{}", "0".repeat(64)), Some(&editor), &picture);
+    assert_eq!(status, 400, "the path must name the body's digest");
+
+    let (status, uploaded) = http_bytes(addr, "PUT", &upload, Some(&editor), &picture);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    let (status, fetched) = http_bytes(addr, "GET", &format!("/media/{sha}"), Some(&editor), b"");
+    assert_eq!(status, 200);
+    assert_eq!(fetched, picture, "the bytes come back unchanged");
+
+    // Two editors; the picture arrives as a reference, not as bytes in the operation.
+    let mut a = join(addr, "file-m", "alice", "editor");
+    let mut b = join(addr, "file-m", "bob", "editor");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "pic-1".into(),
+        doc: "file-m".into(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(first_slide_key("file-m")), ..Target::default() },
+        payload: Payload::PictureInsert { sha256: sha.clone(), name: "red.png".into(), rect: Some([80.0, 80.0, 120.0, 120.0]) },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
+    let applied_a = read(&mut a);
+    let applied_b = read(&mut b);
+    for applied in [&applied_a, &applied_b] {
+        match applied {
+            ServerMsg::Applied(applied) => {
+                assert_eq!(applied.version, 1);
+                assert!(applied.delta.changes.iter().any(|c| c.shape.is_some()), "a shape was inserted: {applied:?}");
+            }
+            other => panic!("expected applied, got {other:?}"),
+        }
+    }
+    let (_, metrics) = http(addr, "GET", "/metrics", None, "");
+    assert!(metrics.contains("deckcraft_collab_media_uploads_total 1"), "{metrics}");
+    assert!(metrics.contains(&format!("deckcraft_collab_media_bytes_total {}", picture.len())), "{metrics}");
+    handle.shutdown();
+}
+
+#[test]
+fn audio_and_video_use_the_same_media_channel_with_their_own_allowlist() {
+    let handle = start();
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-a", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let editor = token("alice", "editor", "file-a");
+
+    let wav = b"RIFF\x24\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0\x44\xac\0\0\x88\x58\x01\0\x02\0\x10\0data\0\0\0\0".to_vec();
+    let sha = sha256(&wav);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-a/media/{sha}"), Some(&editor), &wav);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    let (status, fetched) = http_bytes(addr, "GET", &format!("/media/{sha}"), Some(&editor), b"");
+    assert_eq!(status, 200);
+    assert_eq!(fetched, wav);
+
+    // Not a picture, video or audio signature: the channel refuses it by name.
+    let text = b"not media at all".to_vec();
+    let sha = sha256(&text);
+    let (status, _) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-a/media/{sha}"), Some(&editor), &text);
+    assert_eq!(status, 400, "an arbitrary file is refused");
+    handle.shutdown();
+}
+
+#[test]
+fn a_font_face_uses_the_media_channel_and_lands_in_the_committed_file() {
+    let handle = start();
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-f", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let editor = token("alice", "editor", "file-f");
+    let viewer = token("victor", "viewer", "file-f");
+
+    // A font face is a media object like a picture: the writer stores it as `fntdata`.
+    let face = include_bytes!("../../../crates/render/tests/fixtures/colr-squares.ttf").to_vec();
+    let sha = sha256(&face);
+    let upload = format!("/v1/sessions/file-f/media/{sha}");
+    let (status, _) = http_bytes(addr, "PUT", &upload, Some(&viewer), &face);
+    assert_eq!(status, 403, "a viewer cannot upload media");
+    let (status, uploaded) = http_bytes(addr, "PUT", &upload, Some(&editor), &face);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    let (status, fetched) = http_bytes(addr, "GET", &format!("/media/{sha}"), Some(&editor), b"");
+    assert_eq!(status, 200);
+    assert_eq!(fetched, face, "the font bytes come back unchanged");
+
+    // The operation names the digest and no slide: a document font belongs to the presentation.
+    let mut a = join(addr, "file-f", "alice", "editor");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "font-1".into(),
+        doc: "file-f".into(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target: Target::default(),
+        payload: Payload::FontCreate {
+            typeface: "Deck Test Face".into(),
+            face: deckcraft_collab_proto::FontFace::Regular,
+            sha256: sha.clone(),
+            name: "DeckFace.ttf".into(),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
+    match read(&mut a) {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, 1),
+        other => panic!("expected applied, got {other:?}"),
+    }
+
+    // The commit reimports with the entry, so the face really travelled through the room.
+    let (status, committed) = http(addr, "POST", "/v1/sessions/file-f/commit", Some("service-token"), "");
+    assert_eq!(status, 200, "{committed}");
+    let value: serde_json::Value = serde_json::from_str(&committed).expect("json");
+    let bytes = base64::engine::general_purpose::STANDARD.decode(value["bytes"].as_str().expect("inline bytes")).expect("base64");
+    let (deck, _lost) = deckcraft_pptx::import_checked(&bytes).expect("reimport");
+    assert_eq!(deck.embedded_fonts.len(), 1, "the file carries the embedded font");
+    assert_eq!(deck.embedded_fonts[0].typeface, "Deck Test Face");
+    assert!(deck.embedded_fonts[0].regular.is_some());
+    handle.shutdown();
+}
+
+#[test]
+fn a_3d_model_goes_through_the_channel_and_fetches_by_its_signature() {
+    let handle = start();
+    let addr = handle.addr;
+    let body = serde_json::json!({"fileId": "file-3d", "app": "deckcraft"}).to_string();
+    let (status, _) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201);
+    let editor = token("alice", "editor", "file-3d");
+
+    // A binary glTF is a media object like a picture: uploaded once under its digest.
+    let model = glb();
+    let sha = sha256(&model);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-3d/media/{sha}"), Some(&editor), &model);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+
+    // The path is normalised and the content type comes from the signature, not the name: the
+    // same object answers to its digest, with an extension a client may add, and with a query.
+    for path in [format!("/media/{sha}"), format!("/media/{sha}.glb"), format!("/media/{sha}?v=2")] {
+        let (status, head, fetched) = http_parts(addr, "GET", &path, Some(&editor), b"");
+        assert_eq!(status, 200, "{path}: {head}");
+        assert_eq!(fetched, model, "{path}: the bytes come back unchanged");
+        assert!(head.to_ascii_lowercase().contains("content-type: model/gltf-binary"), "{path}: {head}");
+    }
+    // A name is not an object: another segment or a non-digest path is not found.
+    let (status, _) = http_bytes(addr, "GET", &format!("/media/{sha}/x"), Some(&editor), b"");
+    assert_eq!(status, 404);
+
+    // The allowlist is the signature, not the extension: a `.glb` name with other bytes is refused.
+    let fake = b"not a model at all".to_vec();
+    let fake_sha = sha256(&fake);
+    let (status, _) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-3d/media/{fake_sha}"), Some(&editor), &fake);
+    assert_eq!(status, 400, "the body is not a binary glTF");
+    handle.shutdown();
+}
+
+#[test]
+fn the_desktop_link_uploads_and_fetches_pictures_over_http() {
+    use deckcraft_collab::Transport as _;
+    let handle = start();
+    let addr = handle.addr;
+    let body = serde_json::json!({"fileId": "file-l", "app": "deckcraft"}).to_string();
+    let (status, _) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201);
+
+    let editor = token("alice", "editor", "file-l");
+    let picture = png();
+    let sha = sha256(&picture);
+    let hello = ClientMsg::Hello(Hello {
+        v: PROTO_VERSION,
+        app: "deckcraft".into(),
+        doc: "file-l".into(),
+        jwt: editor.clone(),
+        client: ClientInfo { name: "alice".into(), ver: "1".into() },
+        last_version: None,
+    });
+    let mut link = deckcraft_collab::WsTransport::start(format!("ws://{addr}/v1/sessions/file-l/ws"), hello);
+    link.put_media(&sha, &picture).expect("the link uploads the picture");
+
+    let fetch = deckcraft_collab::WsTransport::media_fetcher(&format!("ws://{addr}"), &editor).expect("a plain ws:// link has a fetcher");
+    assert_eq!(fetch(&sha).expect("fetched"), picture);
+    drop(link);
+    handle.shutdown();
+}
+
+#[test]
+fn a_restart_replays_the_journal_into_the_same_version() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-collab-restart-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut config = Config::for_tests(SECRET, "service-token");
+    config.store_dir = Some(dir.clone());
+    config.snapshot_every = 100;
+    let handle = serve_ephemeral(config.clone()).expect("server");
+    let addr = handle.addr;
+    let bytes = base64::engine::general_purpose::STANDARD.encode(native_deck());
+    let body = serde_json::json!({"fileId": "file-r", "app": "deckcraft", "initialBytes": bytes}).to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let mut editor = join(addr, "file-r", "alice", "editor");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "restart-1".into(),
+        doc: "file-r".into(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Default::default(),
+        payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+        history: None,
+    });
+    editor.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send");
+    match read(&mut editor) {
+        ServerMsg::Applied(a) => assert_eq!(a.version, 1),
+        other => panic!("{other:?}"),
+    }
+    drop(editor);
+    handle.shutdown();
+
+    let handle = serve_ephemeral(config).expect("restart");
+    let (status, info) = http(handle.addr, "POST", "/v1/sessions", Some("service-token"), "{\"fileId\":\"file-r\",\"app\":\"deckcraft\"}");
+    assert_eq!(status, 201, "a restored room is created in this process: {info}");
+    let info: serde_json::Value = serde_json::from_str(&info).expect("json");
+    assert_eq!(info["version"], 1, "the journal moved the version across the restart");
+    handle.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_invalid_token_never_reaches_a_room() {
+    let handle = start();
+    let addr = handle.addr;
+    let body = serde_json::json!({"fileId": "file-2", "app": "deckcraft"}).to_string();
+    let (status, _) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201);
+    let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/v1/sessions/file-2/ws")).expect("ws");
+    let hello = ClientMsg::Hello(Hello {
+        v: PROTO_VERSION,
+        app: "deckcraft".into(),
+        doc: "file-2".into(),
+        jwt: "not-a-token".into(),
+        client: ClientInfo { name: "x".into(), ver: "1".into() },
+        last_version: None,
+    });
+    ws.send(tungstenite::Message::Text(encode_client(&hello).expect("encode").into())).expect("send");
+    // The connection closes without a welcome; a read yields an error or a close frame.
+    match ws.read() {
+        Ok(tungstenite::Message::Close(_)) | Err(_) => {}
+        Ok(other) => panic!("expected the connection to close, got {other:?}"),
+    }
+    handle.shutdown();
+}
+
+const CORS_ORIGIN: &str = "https://cabinet.example";
+
+fn cors_server() -> Handle {
+    let mut config = Config::for_tests(SECRET, "service-token");
+    config.cors_origins = vec![CORS_ORIGIN.to_string()];
+    serve_ephemeral(config).expect("server")
+}
+
+/// A room with one uploaded picture, for the media-channel CORS tests.
+fn room_with_picture(addr: std::net::SocketAddr, file: &str) -> (String, Vec<u8>, String) {
+    let body =
+        serde_json::json!({"fileId": file, "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let editor = token("alice", "editor", file);
+    let picture = png();
+    let sha = sha256(&picture);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/{file}/media/{sha}"), Some(&editor), &picture);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    (sha, picture, editor)
+}
+
+#[test]
+fn a_cors_preflight_names_the_methods_and_headers_of_an_allowed_origin() {
+    let handle = cors_server();
+    let addr = handle.addr;
+    // The browser sends no token on a preflight; the answer names the methods and headers only.
+    let (status, head, _) = http_extra(
+        addr,
+        "OPTIONS",
+        "/media/0000000000000000000000000000000000000000000000000000000000000000",
+        &[("Origin", CORS_ORIGIN), ("Access-Control-Request-Method", "PUT"), ("Access-Control-Request-Headers", "authorization, content-type")],
+        b"",
+    );
+    assert_eq!(status, 204, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), Some(CORS_ORIGIN), "{head}");
+    let methods = header_of(&head, "access-control-allow-methods").unwrap_or_default();
+    for method in ["GET", "POST", "PUT", "OPTIONS"] {
+        assert!(methods.contains(method), "the preflight names {method}: {head}");
+    }
+    let headers = header_of(&head, "access-control-allow-headers").unwrap_or_default();
+    assert!(headers.contains("Authorization"), "{head}");
+    assert!(headers.contains("Content-Type"), "{head}");
+    assert_eq!(header_of(&head, "vary"), Some("Origin"), "{head}");
+
+    // A method the server does not answer is refused without an allow-origin header.
+    let (status, head, _) = http_extra(addr, "OPTIONS", "/media/x", &[("Origin", CORS_ORIGIN), ("Access-Control-Request-Method", "DELETE")], b"");
+    assert_eq!(status, 405, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    handle.shutdown();
+}
+
+#[test]
+fn a_cors_get_from_an_allowed_origin_carries_the_origin_and_vary() {
+    let handle = cors_server();
+    let addr = handle.addr;
+    let (sha, picture, editor) = room_with_picture(addr, "file-cors-get");
+    let (status, head, body) =
+        http_extra(addr, "GET", &format!("/media/{sha}"), &[("Origin", CORS_ORIGIN), ("Authorization", &format!("Bearer {editor}"))], b"");
+    assert_eq!(status, 200, "{head}");
+    assert_eq!(body, picture, "the bytes come back unchanged");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), Some(CORS_ORIGIN), "{head}");
+    assert_eq!(header_of(&head, "vary"), Some("Origin"), "{head}");
+    handle.shutdown();
+}
+
+#[test]
+fn a_foreign_origin_gets_no_cors_headers() {
+    let handle = cors_server();
+    let addr = handle.addr;
+    let (sha, _, editor) = room_with_picture(addr, "file-cors-foreign");
+    let foreign = "https://elsewhere.example";
+
+    let (status, head, _) =
+        http_extra(addr, "GET", &format!("/media/{sha}"), &[("Origin", foreign), ("Authorization", &format!("Bearer {editor}"))], b"");
+    assert_eq!(status, 200, "the bytes are still served; the browser is the one to refuse them: {head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "vary"), Some("Origin"), "the answer still depends on the origin: {head}");
+
+    // The preflight from a foreign origin names no method and no header.
+    let (status, head, _) =
+        http_extra(addr, "OPTIONS", &format!("/media/{sha}"), &[("Origin", foreign), ("Access-Control-Request-Method", "GET")], b"");
+    assert_eq!(status, 204, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-methods"), None, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-headers"), None, "{head}");
+    handle.shutdown();
+}
+
+#[test]
+fn a_smartart_insertion_and_its_nodes_query_travel_over_the_socket() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = native_deck();
+    let body = serde_json::json!({
+        "fileId": "file-sa",
+        "app": "deckcraft",
+        "initialBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    // The session keys are derived from the same document and prefix the server used.
+    let doc = deckcraft_format::load(&bytes).expect("load");
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{id}-"));
+    let mut keys = deckcraft_collab::KeyMap::new();
+    keys.sync(&doc, &mut issuer);
+    let slide = keys.slide_key(doc.slides[0].id).expect("slide key").clone();
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut viewer = join(addr, &id, "victor", "viewer");
+    let insert = ClientMsg::Op(OpEnvelope {
+        op_id: "sa-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::SmartArtInsert {
+            diagram: serde_json::json!({"kind": "hierarchy", "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}]}),
+            rect: Some([40.0, 50.0, 400.0, 300.0]),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
+    let applied = match read(&mut a) {
+        ServerMsg::Applied(applied) => applied,
+        other => panic!("expected applied, got {other:?}"),
+    };
+    assert_eq!(applied.version, 1);
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 1),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+    let group = applied
+        .delta
+        .changes
+        .iter()
+        .find_map(|change| matches!(change.kind, deckcraft_collab_proto::ChangeKind::Inserted).then(|| change.shape.clone()).flatten())
+        .expect("the insertion names a shape");
+
+    // A viewer asks the authoritative server for the outline of the group it just saw inserted.
+    let query = ClientMsg::Query {
+        id: "q-1".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&query).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { id, version, result: Some(result), error: None } => {
+            assert_eq!((id.as_str(), version), ("q-1", 1));
+            assert_eq!(result["kind"], "hierarchy");
+            let texts: Vec<&str> = result["nodes"].as_array().expect("nodes").iter().map(|n| n["text"].as_str().unwrap()).collect();
+            assert_eq!(texts, ["CEO", "CTO"]);
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+
+    // A hostile tree is refused as an operation: no version moves and the graphic stays as it was.
+    let bad = ClientMsg::Op(OpEnvelope {
+        op_id: "sa-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::SmartArtInsert { diagram: serde_json::json!({"kind": "nope", "nodes": []}), rect: None },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
+        other => panic!("expected invalid, got {other:?}"),
+    }
+    let after = ClientMsg::Query {
+        id: "q-2".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide), shape: Some(group), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&after).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { version, result: Some(result), error: None, .. } => {
+            assert_eq!(version, 1, "the refusal moved no version");
+            assert_eq!(result["kind"], "hierarchy", "the document did not change");
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+    handle.shutdown();
+}
+
+#[test]
+fn a_smartart_node_picture_travels_over_the_socket_and_a_viewer_is_refused() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = native_deck();
+    let body = serde_json::json!({
+        "fileId": "file-sa-picture",
+        "app": "deckcraft",
+        "initialBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let doc = deckcraft_format::load(&bytes).expect("load");
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{id}-"));
+    let mut keys = deckcraft_collab::KeyMap::new();
+    keys.sync(&doc, &mut issuer);
+    let slide = keys.slide_key(doc.slides[0].id).expect("slide key").clone();
+
+    // The picture's bytes go to the media channel first; the operation names only the digest.
+    let picture = png();
+    let sha = sha256(&picture);
+    let editor = token("alice", "editor", &id);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/{id}/media/{sha}"), Some(&editor), &picture);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut viewer = join(addr, &id, "victor", "viewer");
+    let insert = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::SmartArtInsert {
+            diagram: serde_json::json!({"kind": "pictureList", "nodes": [{"text": "A", "level": 0}, {"text": "B", "level": 0}]}),
+            rect: Some([40.0, 50.0, 400.0, 300.0]),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
+    let applied = match read(&mut a) {
+        ServerMsg::Applied(applied) => applied,
+        other => panic!("expected applied, got {other:?}"),
+    };
+    assert_eq!(applied.version, 1);
+    let group = applied
+        .delta
+        .changes
+        .iter()
+        .find_map(|change| matches!(change.kind, deckcraft_collab_proto::ChangeKind::Inserted).then(|| change.shape.clone()).flatten())
+        .expect("the insertion names a shape");
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 1),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+
+    // One node's picture: the digest, the node and its place, as one final value.
+    let put = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Command,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtPicture {
+            node: 0,
+            media: Some(SmartArtPictureMedia {
+                sha256: sha.clone(),
+                name: "red.png".into(),
+                place: PicturePlace { crop: [0.1, 0.0, 0.2, 0.0], alpha: None },
+            }),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&put).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, 2),
+        other => panic!("expected applied, got {other:?}"),
+    }
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 2),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+
+    // The authoritative outline now carries the picture, and the layout did not change.
+    let query = ClientMsg::Query {
+        id: "q-1".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&query).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { version, result: Some(result), error: None, .. } => {
+            assert_eq!(version, 2);
+            assert_eq!(result["kind"], "pictureList", "the layout did not change");
+            assert!(result["nodes"][0]["picture"].is_number(), "{result}");
+            assert!(result["nodes"][1]["picture"].is_null(), "{result}");
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+
+    // A viewer's picture step is refused by the server before the engine: no version moves.
+    let viewer_put = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-3".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Command,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtPicture { node: 0, media: None },
+        history: None,
+    });
+    viewer.send(tungstenite::Message::Text(encode_client(&viewer_put).expect("encode").into())).expect("send");
+    match read(&mut viewer) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Forbidden),
+        other => panic!("expected forbidden, got {other:?}"),
+    }
+
+    // A place that leaves no visible area is refused as invalid, and the version stays put.
+    let bad = ClientMsg::Op(OpEnvelope {
+        op_id: "sp-4".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Command,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtPicture {
+            node: 0,
+            media: Some(SmartArtPictureMedia {
+                sha256: sha,
+                name: "red.png".into(),
+                place: PicturePlace { crop: [0.9, 0.0, 0.9, 0.0], alpha: None },
+            }),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
+        other => panic!("expected invalid, got {other:?}"),
+    }
+    let after = ClientMsg::Query {
+        id: "q-2".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide), shape: Some(group), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&after).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { version, result: Some(result), error: None, .. } => {
+            assert_eq!(version, 2, "the refusals moved no version");
+            assert!(result["nodes"][0]["picture"].is_number(), "the document did not change");
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+    handle.shutdown();
+}
+
+#[test]
+fn a_smartart_conversion_travels_over_the_socket_and_a_viewer_is_refused() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = native_deck();
+    let body = serde_json::json!({
+        "fileId": "file-sa-convert",
+        "app": "deckcraft",
+        "initialBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let doc = deckcraft_format::load(&bytes).expect("load");
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{id}-"));
+    let mut keys = deckcraft_collab::KeyMap::new();
+    keys.sync(&doc, &mut issuer);
+    let slide = keys.slide_key(doc.slides[0].id).expect("slide key").clone();
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut viewer = join(addr, &id, "victor", "viewer");
+    let insert = ClientMsg::Op(OpEnvelope {
+        op_id: "sc-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::SmartArtInsert {
+            diagram: serde_json::json!({"kind": "blockList", "nodes": [{"text": "Plan", "level": 0}, {"text": "Build", "level": 0}]}),
+            rect: Some([40.0, 50.0, 400.0, 300.0]),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
+    let applied = match read(&mut a) {
+        ServerMsg::Applied(applied) => applied,
+        other => panic!("expected applied, got {other:?}"),
+    };
+    assert_eq!(applied.version, 1);
+    let group = applied
+        .delta
+        .changes
+        .iter()
+        .find_map(|change| matches!(change.kind, deckcraft_collab_proto::ChangeKind::Inserted).then(|| change.shape.clone()).flatten())
+        .expect("the insertion names a shape");
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 1),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+
+    // Convert to Shapes: one structural step, no value, broadcast to the viewer.
+    let convert = ClientMsg::Op(OpEnvelope {
+        op_id: "sc-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtToShapes {},
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&convert).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, 2),
+        other => panic!("expected applied, got {other:?}"),
+    }
+    match read(&mut viewer) {
+        ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 2),
+        other => panic!("expected the broadcast, got {other:?}"),
+    }
+
+    // A viewer's conversion is refused before the engine and moves no version.
+    let viewer_convert = ClientMsg::Op(OpEnvelope {
+        op_id: "sc-3".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtToShapes {},
+        history: None,
+    });
+    viewer.send(tungstenite::Message::Text(encode_client(&viewer_convert).expect("encode").into())).expect("send");
+    match read(&mut viewer) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Forbidden),
+        other => panic!("expected forbidden, got {other:?}"),
+    }
+
+    // A hostile text body is refused by the server's engine check, and the version stays put.
+    let bad = ClientMsg::Op(OpEnvelope {
+        op_id: "sc-4".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), shape: Some(group.clone()), ..Target::default() },
+        payload: Payload::SmartArtToText { body: serde_json::json!({"paragraphs": "nope"}), rect: [0.0, 0.0, 100.0, 100.0] },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&bad).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
+        other => panic!("expected invalid, got {other:?}"),
+    }
+    let after = ClientMsg::Query {
+        id: "q-1".into(),
+        cmd: "smartArt.nodes".into(),
+        target: Target { slide: Some(slide), shape: Some(group), ..Target::default() },
+        params: serde_json::json!({}),
+    };
+    viewer.send(tungstenite::Message::Text(encode_client(&after).expect("encode").into())).expect("send query");
+    match read(&mut viewer) {
+        ServerMsg::QueryResult { version, result: _, error: Some(error), .. } => {
+            assert_eq!(version, 2, "the refusal moved no version");
+            assert!(!error.message.is_empty());
+        }
+        other => panic!("expected the query answer, got {other:?}"),
+    }
+    handle.shutdown();
+}
+
+#[test]
+fn without_a_cors_allowlist_no_cors_header_is_sent() {
+    let handle = start();
+    let addr = handle.addr;
+    // The default configuration is the pre-CORS behaviour: no `Access-Control-*`, no `Vary`.
+    let (status, head, _) = http_extra(addr, "GET", "/healthz", &[("Origin", CORS_ORIGIN)], b"");
+    assert_eq!(status, 200, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "vary"), None, "{head}");
+
+    let (status, head, _) = http_extra(
+        addr,
+        "OPTIONS",
+        "/media/0000000000000000000000000000000000000000000000000000000000000000",
+        &[("Origin", CORS_ORIGIN), ("Access-Control-Request-Method", "GET")],
+        b"",
+    );
+    assert_eq!(status, 404, "an empty allowlist keeps the old routing: {head}");
+    assert_eq!(header_of(&head, "access-control-allow-origin"), None, "{head}");
+    assert_eq!(header_of(&head, "access-control-allow-methods"), None, "{head}");
+    handle.shutdown();
+}
+
+#[test]
+fn a_model_camera_travels_over_the_socket_and_a_viewer_is_refused() {
+    let handle = start();
+    let addr = handle.addr;
+    let bytes = native_deck();
+    let body = serde_json::json!({
+        "fileId": "file-3d-camera",
+        "app": "deckcraft",
+        "initialBytes": base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+    .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let id = serde_json::from_str::<serde_json::Value>(&created).expect("json")["sessionId"].as_str().expect("id").to_string();
+
+    let doc = deckcraft_format::load(&bytes).expect("load");
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{id}-"));
+    let mut keys = deckcraft_collab::KeyMap::new();
+    keys.sync(&doc, &mut issuer);
+    let slide = keys.slide_key(doc.slides[0].id).expect("slide key").clone();
+
+    // The model's bytes go to the media channel first; the operation names only the digest.
+    let model = glb();
+    let sha = sha256(&model);
+    let editor = token("alice", "editor", &id);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/{id}/media/{sha}"), Some(&editor), &model);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+
+    let mut a = join(addr, &id, "alice", "editor");
+    let mut b = join(addr, &id, "bob", "editor");
+    let mut viewer = join(addr, &id, "victor", "viewer");
+
+    // The model itself: one structural step on both editors and on the viewer.
+    let insert = ClientMsg::Op(OpEnvelope {
+        op_id: "mc-1".into(),
+        doc: id.clone(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide.clone()), ..Target::default() },
+        payload: Payload::MediaInsert {
+            kind: MediaKind::Model,
+            sha256: sha.clone(),
+            name: "block.glb".into(),
+            rect: Some([120.0, 90.0, 320.0, 240.0]),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&insert).expect("encode").into())).expect("send");
+    let applied = match read(&mut a) {
+        ServerMsg::Applied(applied) => applied,
+        other => panic!("expected applied, got {other:?}"),
+    };
+    assert_eq!(applied.version, 1);
+    let model_key = applied
+        .delta
+        .changes
+        .iter()
+        .find_map(|change| matches!(change.kind, ChangeKind::Inserted).then(|| change.shape.clone()).flatten())
+        .expect("the insertion names the model");
+    for ws in [&mut b, &mut viewer] {
+        match read(ws) {
+            ServerMsg::Applied(broadcast) => assert_eq!(broadcast.version, 1),
+            other => panic!("expected the broadcast, got {other:?}"),
+        }
+    }
+
+    // The view is one final value: position, target, up and the field of view.
+    let target = Target { slide: Some(slide.clone()), shape: Some(model_key.clone()), ..Target::default() };
+    let camera = ModelCamera { position: [0.0, 0.0, 11_713_743.0], target: [0.0, 0.0, 0.0], up: [0.0, 36_000_000.0, 0.0], fov: 45.0 };
+    let step = ClientMsg::Op(OpEnvelope {
+        op_id: "mc-2".into(),
+        doc: id.clone(),
+        base_version: 1,
+        kind: OpKind::Command,
+        target: target.clone(),
+        payload: Payload::Model3dCamera { camera: Some(camera) },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&step).expect("encode").into())).expect("send");
+    for ws in [&mut a, &mut b, &mut viewer] {
+        match read(ws) {
+            ServerMsg::Applied(applied) => assert_eq!(applied.version, 2),
+            other => panic!("expected applied at version 2, got {other:?}"),
+        }
+    }
+
+    // The authoritative file carries the view: the development-mode commit returns the bytes and
+    // the reimported model has the camera the operation stated.
+    let (status, committed) = http(addr, "POST", &format!("/v1/sessions/{id}/commit"), Some("service-token"), "");
+    assert_eq!(status, 200, "{committed}");
+    let value: serde_json::Value = serde_json::from_str(&committed).expect("json");
+    let bytes = base64::engine::general_purpose::STANDARD.decode(value["bytes"].as_str().expect("bytes")).expect("decode");
+    let committed_doc = deckcraft_pptx::import(&bytes).expect("the committed file");
+    let shape = committed_doc.slides[0].shapes.iter().find(|s| matches!(s.kind, deckcraft_model::ShapeKind::Model3d { .. })).expect("the model");
+    match &shape.kind {
+        deckcraft_model::ShapeKind::Model3d { camera: Some(saved), .. } => {
+            assert_eq!(saved.fov, 45.0);
+            assert_eq!(saved.position, [0.0, 0.0, 11_713_743.0]);
+            assert_eq!(saved.up, [0.0, 36_000_000.0, 0.0]);
+        }
+        other => panic!("the committed model has no camera: {other:?}"),
+    }
+
+    // A viewer's camera step is refused before the engine: no version moves.
+    let viewer_step = ClientMsg::Op(OpEnvelope {
+        op_id: "mc-3".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Command,
+        target: target.clone(),
+        payload: Payload::Model3dCamera { camera: None },
+        history: None,
+    });
+    viewer.send(tungstenite::Message::Text(encode_client(&viewer_step).expect("encode").into())).expect("send");
+    match read(&mut viewer) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Forbidden),
+        other => panic!("expected forbidden, got {other:?}"),
+    }
+
+    // A relative edit is not a frame this build decodes (the camera refuses unknown fields), so
+    // it never becomes an operation; the version stays where it was.
+    let hostile = serde_json::json!({
+        "type": "op",
+        "opId": "mc-4",
+        "doc": id,
+        "baseVersion": 2,
+        "kind": "command",
+        "target": {"slide": slide, "shape": model_key},
+        "payload": {"cmd": "model3d_camera", "camera": {
+            "position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0, "dx": 10.0
+        }},
+    })
+    .to_string();
+    a.send(tungstenite::Message::Text(hostile.into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Error(error) => assert_eq!(error.code, "invalid", "{error:?}"),
+        other => panic!("expected the frame to be refused, got {other:?}"),
+    }
+
+    // A camera that cannot be projected is refused by the engine as invalid, again with no write.
+    let degenerate = ClientMsg::Op(OpEnvelope {
+        op_id: "mc-5".into(),
+        doc: id.clone(),
+        base_version: 2,
+        kind: OpKind::Command,
+        target,
+        payload: Payload::Model3dCamera {
+            camera: Some(ModelCamera { position: [0.0, 0.0, 0.0], target: [0.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], fov: 45.0 }),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&degenerate).expect("encode").into())).expect("send");
+    match read(&mut a) {
+        ServerMsg::Rejected(rejected) => assert_eq!(rejected.code, deckcraft_collab_proto::RejectCode::Invalid),
+        other => panic!("expected invalid, got {other:?}"),
+    }
+    let (status, committed) = http(addr, "POST", &format!("/v1/sessions/{id}/commit"), Some("service-token"), "");
+    assert_eq!(status, 200, "{committed}");
+    let value: serde_json::Value = serde_json::from_str(&committed).expect("json");
+    assert_eq!(value["version"], 2, "the refusals moved no version");
+    handle.shutdown();
+}

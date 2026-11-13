@@ -1776,6 +1776,40 @@ fn an_object_deckcraft_doesnt_model_shows_its_preview_picture() {
     }
 }
 
+#[test]
+fn a_3d_model_draws_its_poster_or_a_placeholder_cube() {
+    // A model DeckCraft cannot tessellate still draws something: its `mc:Fallback` poster when
+    // the file carries one, else a stand-in cube on the frame — never an empty box, and never
+    // anything outside the frame.
+    let png = {
+        let mut out = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(4, 2, image::Rgb([200, 20, 20])))
+            .write_to(&mut out, image::ImageFormat::Png)
+            .unwrap();
+        out.into_inner()
+    };
+    for with_poster in [true, false] {
+        let mut p = Presentation::default();
+        let poster = with_poster.then(|| p.add_media("poster.png", "image/png", png.clone()).expect("media"));
+        let model = p.add_media("block.glb", "model/gltf-binary", b"glTF\x02\0\0\0\x0c\0\0\0".to_vec()).expect("media");
+        let sh = Shape {
+            id: ShapeId(600),
+            xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)),
+            kind: ShapeKind::Model3d { media: model, poster, camera: None },
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let px = img.pixel(300, 200);
+        if with_poster {
+            assert!(px[0] > 180 && px[1] < 60 && px[2] < 60, "the poster covers the frame: {px:?}");
+        } else {
+            assert!(px[2] > px[0].saturating_add(40), "the stand-in cube is drawn on the frame: {px:?}");
+        }
+        assert!(img.pixel(520, 200)[1] > 200, "nothing outside the frame");
+    }
+}
+
 /// #270: a filled shape half off the slide's left edge, and one wholly below it.
 fn off_slide_deck() -> Presentation {
     let half = Shape {

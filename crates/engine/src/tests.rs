@@ -11,6 +11,29 @@ fn session() -> Session {
 }
 
 #[test]
+fn a_base_transfer_replaces_the_active_document_in_place() {
+    let mut s = session();
+    let uid = s.doc().unwrap().uid;
+    let revision = s.doc().unwrap().revision;
+    let before = s.doc().unwrap().doc.slides[0].shapes.len();
+    let mut source = Session::with_new();
+    source.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50], "text": "base"})).unwrap();
+    let doc = source.doc().unwrap().doc.as_ref().clone();
+
+    s.replace_active_document(doc).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.uid, uid, "the window keeps its document slot");
+    assert!(st.revision > revision, "caches see a new revision");
+    assert_eq!(st.doc.slides.len(), 1);
+    assert_eq!(st.doc.slides[0].shapes.len(), before + 1);
+    assert!(!st.is_dirty(), "the server's base is the saved state");
+
+    // The undo history described the old document and does not bring it back.
+    let _ = s.execute("edit.undo", &json!({}));
+    assert_eq!(s.doc().unwrap().doc.slides[0].shapes.len(), before + 1);
+}
+
+#[test]
 fn new_presentation_and_slides() {
     let mut s = session();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 1);
@@ -1488,6 +1511,36 @@ fn double_click_in_table_uses_grown_row_heights() {
     let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
     s.pointer(ev(PointerKind::DoubleClick, 120.0, 106.0)).unwrap();
     assert_eq!(s.doc().unwrap().selection.text.as_ref().and_then(|t| t.cell), Some((0, 0)));
+}
+
+#[test]
+fn table_options_apply_final_booleans_and_refuse_an_unknown_flag() {
+    let mut s = session();
+    let id = s.execute("insert.table", &json!({"rows": 2, "cols": 2})).unwrap()["id"].clone();
+    let options = |s: &Session| {
+        let id = deckcraft_model::ShapeId(id.as_u64().unwrap() as u32);
+        match &s.doc().unwrap().shape(id).unwrap().kind {
+            deckcraft_model::ShapeKind::Table(t) => (t.first_row, t.last_row, t.band_row, t.first_col, t.last_col, t.band_col),
+            other => panic!("not a table: {other:?}"),
+        }
+    };
+    // A new table has a header row and banded rows; the other four options are off.
+    assert_eq!(options(&s), (true, false, true, false, false, false));
+    s.execute("table.options", &json!({"id": id, "headerRow": false, "totalRow": true, "bandedColumns": true})).unwrap();
+    assert_eq!(options(&s), (false, true, true, false, false, true));
+
+    // A misspelt or unknown flag, a value that is not a boolean and a call that names nothing are
+    // refused before the table is touched, so a typo cannot look like a successful no-op.
+    let before = options(&s);
+    for params in [
+        json!({"id": id, "headerRow": false, "bandedRow": true}),
+        json!({"id": id, "headerRow": "yes"}),
+        json!({"id": id, "totalRow": null}),
+        json!({"id": id}),
+    ] {
+        assert!(s.execute("table.options", &params).is_err(), "{params} was accepted");
+        assert_eq!(options(&s), before, "{params} changed the table");
+    }
 }
 
 #[test]
@@ -4383,6 +4436,183 @@ fn smartart_text_pane_edits_regenerate_the_diagram() {
 }
 
 #[test]
+fn a_smartart_edit_is_one_whole_value_and_its_exact_restore_brings_the_group_back() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).unwrap();
+    let gid = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(gid).unwrap().clone();
+    let outline = |s: &Session| match s.doc().unwrap().shape(gid).map(|x| &x.diagram) {
+        Some(Some(d)) => d.nodes.iter().map(|n| (n.text.clone(), n.level)).collect::<Vec<_>>(),
+        _ => panic!("the graphic is gone"),
+    };
+    assert_eq!(outline(&s), [("Plan".to_string(), 0), ("Scope".to_string(), 1), ("Build".to_string(), 0)]);
+
+    // A user edit changes the value and regenerates the children with fresh ids.
+    s.execute("smartArt.setNodes", &json!({"id": gid.0, "lines": ["Plan", "\tScope", "\tRisks", "Ship"]})).unwrap();
+    assert_eq!(outline(&s).len(), 4);
+    assert_ne!(s.doc().unwrap().shape(gid).unwrap(), &before);
+
+    // The exact image of the group puts the outline and the generated shapes back with their own
+    // ids and text: an undo must not lose the typed bullets or an imported drawing.
+    let image = serde_json::to_value(&before).unwrap();
+    s.execute("shape.setField", &json!({"ids": [gid.0], "field": "smartArt", "value": image})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(gid).unwrap(), &before);
+
+    // A whole final diagram value changes the layout, the style and the colours in one step.
+    let d =
+        json!({"kind": "hierarchy", "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}], "style": "intense", "colors": "accent3"});
+    s.execute("smartArt.setDiagram", &json!({"id": gid.0, "diagram": d})).unwrap();
+    let g = s.doc().unwrap().shape(gid).unwrap().clone();
+    let d = g.diagram.as_ref().unwrap();
+    assert_eq!((d.kind.as_str(), d.style.as_str(), d.colors.as_str()), ("hierarchy", "intense", "accent3"));
+    assert_eq!(d.nodes.len(), 2);
+
+    // Hostile values are refused before anything is written.
+    let refuse = |s: &mut Session, p: serde_json::Value| {
+        let e = s.execute("smartArt.setDiagram", &p).unwrap_err().to_string();
+        assert!(e.contains("smartArt.setDiagram"), "{e}");
+    };
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "nope", "nodes": []}}));
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "list", "nodes": [], "style": "nope"}}));
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "list", "nodes": [], "colors": "accent9"}}));
+    let many: Vec<_> = (0..5000).map(|i| json!({"text": format!("n{i}"), "level": 0})).collect();
+    refuse(&mut s, json!({"id": gid.0, "diagram": {"kind": "list", "nodes": many}}));
+    refuse(&mut s, json!({"id": gid.0, "diagram": "not a diagram"}));
+    assert_eq!(s.doc().unwrap().shape(gid).unwrap().diagram.as_ref().unwrap().kind, "hierarchy", "a refusal writes nothing");
+
+    // A group image that names another shape cannot replace this one.
+    let other = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).unwrap()["id"].as_u64().unwrap();
+    let mut wrong = before.clone();
+    wrong.id = deckcraft_model::ShapeId(other as u32);
+    let e = s
+        .execute("shape.setField", &json!({"ids": [gid.0], "field": "smartArt", "value": serde_json::to_value(&wrong).unwrap()}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("another shape"), "{e}");
+}
+
+#[test]
+fn a_smartart_insertion_from_a_whole_value_is_exact_and_refuses_a_hostile_tree() {
+    let mut s = session();
+    let shapes_before = s.doc().unwrap().doc.slides[0].shapes.len();
+    let diagram = json!({
+        "kind": "hierarchy",
+        "nodes": [{"text": "CEO", "level": 0}, {"text": "CTO", "level": 1}, {"text": "Dev", "level": 2}],
+        "style": "intense",
+        "colors": "accent3",
+    });
+    let r = s.execute("insert.smartArt", &json!({"diagram": diagram, "rect": [40, 50, 400, 300]})).unwrap();
+    let gid = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let group = s.doc().unwrap().shape(gid).unwrap().clone();
+    let d = group.diagram.as_ref().expect("a graphic");
+    assert_eq!((d.kind.as_str(), d.style.as_str(), d.colors.as_str()), ("hierarchy", "intense", "accent3"));
+    let texts: Vec<&str> = d.nodes.iter().map(|n| n.text.as_str()).collect();
+    assert_eq!(texts, ["CEO", "CTO", "Dev"]);
+    let xfrm = group.xfrm.expect("box");
+    assert_eq!((xfrm.x, xfrm.y, xfrm.w, xfrm.h), (40.0, 50.0, 400.0, 300.0));
+    match &group.kind {
+        deckcraft_model::ShapeKind::Group { children, .. } => assert!(!children.is_empty(), "the drawing was generated"),
+        other => panic!("not a group: {other:?}"),
+    }
+
+    // The same command without a whole value still builds the same outline from its parameters.
+    let r = s.execute("insert.smartArt", &json!({"kind": "hierarchy", "items": ["CEO", "\tCTO", "\t\tDev"]})).unwrap();
+    let from_params = s.doc().unwrap().shape(deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32)).unwrap().clone();
+    let planned = from_params.diagram.as_ref().expect("a graphic");
+    assert_eq!(planned.kind, group.diagram.as_ref().expect("diagram").kind);
+    let texts: Vec<&str> = planned.nodes.iter().map(|n| n.text.as_str()).collect();
+    assert_eq!(texts, ["CEO", "CTO", "Dev"], "the normaliser and the command build one outline");
+
+    // Hostile trees are refused before the first write; no shape is added and no history step is
+    // recorded.
+    let slides = s.doc().unwrap().doc.slides.len();
+    let undo = s.doc().unwrap().history.undo.len();
+    let count = s.doc().unwrap().doc.slides[0].shapes.len();
+    let refuse = |s: &mut Session, diagram: serde_json::Value| {
+        let e = s.execute("insert.smartArt", &json!({"diagram": diagram})).unwrap_err().to_string();
+        assert!(e.contains("insert.smartArt"), "{e}");
+    };
+    refuse(&mut s, json!({"kind": "nope", "nodes": []}));
+    refuse(&mut s, json!({"kind": "list", "nodes": [], "style": "nope"}));
+    refuse(&mut s, json!({"kind": "list", "nodes": [], "colors": "accent9"}));
+    let many: Vec<_> = (0..5000).map(|i| json!({"text": format!("n{i}"), "level": 0})).collect();
+    refuse(&mut s, json!({"kind": "list", "nodes": many}));
+    refuse(&mut s, json!("not a diagram"));
+    assert_eq!(s.doc().unwrap().doc.slides.len(), slides);
+    assert_eq!(s.doc().unwrap().doc.slides[0].shapes.len(), count, "a refusal inserts nothing");
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "a refusal records no step");
+    assert!(shapes_before > 0);
+}
+
+#[test]
+fn a_chart_edit_is_one_whole_value_and_its_exact_restore_brings_the_chart_back() {
+    let mut s = session();
+    let r = s
+        .execute("insert.chart", &json!({"type": "column", "categories": ["Q1", "Q2"], "series": [{"name": "Sales", "values": [4.0, 5.0]}]}))
+        .unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(id).unwrap().clone();
+    let chart_of = |s: &Session| match &s.doc().unwrap().shape(id).unwrap().kind {
+        deckcraft_model::ShapeKind::Chart(c) => (**c).clone(),
+        _ => panic!("the shape is not a chart"),
+    };
+    let c = chart_of(&s);
+    assert_eq!(c.kind, deckcraft_model::chart::ChartType::Column);
+    assert_eq!(c.categories, ["Q1", "Q2"]);
+    assert_eq!(c.series[0].values, [Some(4.0), Some(5.0)]);
+
+    // A user edit changes one field; a whole value replaces type, data and options in one write.
+    s.execute("chart.type", &json!({"id": id.0, "type": "pie"})).unwrap();
+    assert_eq!(chart_of(&s).kind, deckcraft_model::chart::ChartType::Pie);
+    let value = json!({
+        "kind": "line",
+        "categories": ["A", "B", "C"],
+        "series": [{"name": "S", "values": [1.0, 2.0, 3.0]}],
+        "title": "Revenue",
+        "legend": "b",
+    });
+    s.execute("chart.setWhole", &json!({"id": id.0, "chart": value})).unwrap();
+    let after = s.doc().unwrap().shape(id).unwrap().clone();
+    let c = chart_of(&s);
+    assert_eq!(c.kind, deckcraft_model::chart::ChartType::Line);
+    assert_eq!(c.categories, ["A", "B", "C"]);
+    assert_eq!(c.title.as_deref(), Some("Revenue"));
+    assert_ne!(after, before);
+
+    // The exact image of the shape puts the whole chart back: an undo must not lose the type the
+    // chart had or a kept part the chart commands cannot replay.
+    let image = serde_json::to_value(&before).unwrap();
+    s.execute("shape.setField", &json!({"ids": [id.0], "field": "chart", "value": image})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(id).unwrap(), &before);
+
+    // Hostile values are refused before anything is written.
+    let refuse = |s: &mut Session, p: serde_json::Value| {
+        let e = s.execute("chart.setWhole", &p).unwrap_err().to_string();
+        assert!(e.contains("chart.setWhole"), "{e}");
+    };
+    refuse(&mut s, json!({"id": id.0, "chart": {"kind": "nope"}}));
+    refuse(&mut s, json!({"id": id.0, "chart": "not a chart"}));
+    let many: Vec<_> = (0..5000).map(|_| json!({"name": "S", "values": [1.0]})).collect();
+    refuse(&mut s, json!({"id": id.0, "chart": {"kind": "column", "series": many}}));
+    let big = "x".repeat(200 * 1024);
+    refuse(&mut s, json!({"id": id.0, "chart": {"kind": "column", "title": big}}));
+    assert_eq!(chart_of(&s).kind, deckcraft_model::chart::ChartType::Column, "a refusal writes nothing");
+
+    // A chart value cannot be set on a plain shape, and a shape image that names another shape
+    // cannot replace this chart.
+    let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("chart.setWhole", &json!({"ids": [rect], "chart": {"kind": "column"}})).unwrap_err().to_string();
+    assert!(e.contains("not a chart"), "{e}");
+    let mut wrong = before.clone();
+    wrong.id = deckcraft_model::ShapeId(rect as u32);
+    let e = s
+        .execute("shape.setField", &json!({"ids": [id.0], "field": "chart", "value": serde_json::to_value(&wrong).unwrap()}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("another shape"), "{e}");
+}
+
+#[test]
 fn smartart_round_trips_through_pptx_as_a_diagram() {
     let mut s = session();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
@@ -4471,6 +4701,76 @@ fn smartart_pictures_3d_styles_and_colour_variants() {
         let d = back.slides[1].shapes.iter().find_map(|x| x.diagram.clone()).unwrap();
         assert_eq!((d.style.as_str(), d.colors.as_str()), (style, colors));
     }
+}
+
+#[test]
+fn a_smartart_node_picture_is_one_final_value_with_a_checked_place() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let gid = ShapeId(s.execute("insert.smartArt", &json!({"kind": "pictureList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap() as u32);
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let diagram = |s: &Session| -> deckcraft_model::Diagram { s.doc().unwrap().doc.slides[1].shapes.iter().find_map(|x| x.diagram.clone()).unwrap() };
+    let group =
+        |s: &Session| -> deckcraft_model::Shape { s.doc().unwrap().doc.slides[1].shapes.iter().find(|x| x.diagram.is_some()).unwrap().clone() };
+    let place = json!({"crop": [0.1, 0.0, 0.2, 0.0], "alpha": 0.8});
+
+    // The confirmed command sets the node's picture and its place; the layout stays.
+    s.execute("smartArt.setPicture", &json!({"id": gid.0, "index": 0, "name": "p.png", "data": png, "place": place})).unwrap();
+    let d = diagram(&s);
+    assert_eq!(d.kind, "pictureList", "the layout did not change");
+    assert!(d.nodes[0].picture.is_some(), "the first node got the picture");
+    assert!(d.nodes[1].picture.is_none());
+    let got = d.nodes[0].picture_place.clone().expect("the place is kept");
+    assert_eq!(got.crop, [0.1, 0.0, 0.2, 0.0]);
+    assert_eq!(got.alpha, Some(0.8));
+    let child = group(&s).children().iter().find(|c| c.name == "SmartArt picture").expect("the placeholder").clone();
+    match child.fill {
+        Some(deckcraft_model::Fill::Picture(fill)) => {
+            assert_eq!(fill.crop, [0.1, 0.0, 0.2, 0.0], "the placeholder draws the place");
+            assert_eq!(fill.alpha, Some(0.8));
+        }
+        other => panic!("not a picture fill: {other:?}"),
+    }
+
+    // The place round-trips through the data model's source rectangle.
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(s.doc().unwrap().doc.as_ref()).unwrap()).unwrap();
+    let bd = back.slides[1].shapes.iter().find_map(|x| x.diagram.clone()).unwrap();
+    assert_eq!(bd.nodes[0].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+
+    // One undo puts the node (no picture, no place) back; the redo returns the exact result.
+    s.execute("edit.undo", &json!({})).unwrap();
+    let d = diagram(&s);
+    assert!(d.nodes[0].picture.is_none() && d.nodes[0].picture_place.is_none());
+    s.execute("edit.redo", &json!({})).unwrap();
+    let d = diagram(&s);
+    assert!(d.nodes[0].picture.is_some());
+    assert_eq!(d.nodes[0].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+
+    // Hostile input is refused before the first write and leaves the graphic as it was.
+    let before = serde_json::to_value(group(&s)).unwrap();
+    let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 80]})).unwrap()["id"].as_u64().unwrap();
+    for bad in [
+        json!({"id": rect, "index": 0, "name": "p.png", "data": png}),
+        json!({"id": gid.0, "index": 9, "name": "p.png", "data": png}),
+        json!({"id": gid.0, "index": 0, "name": "a.txt", "data": "AAAA"}),
+        json!({"id": gid.0, "index": 0, "name": "p.png", "data": png, "place": {"crop": [0.9, 0.0, 0.9, 0.0]}}),
+        json!({"id": gid.0, "index": 0, "name": "p.png", "data": png, "place": {"alpha": 2.0}}),
+    ] {
+        assert!(s.execute("smartArt.setPicture", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(serde_json::to_value(group(&s)).unwrap(), before, "a refusal wrote nothing");
+
+    // A nested graphic is not a top-level target.
+    let rect = ShapeId(rect as u32);
+    s.execute("arrange.group", &json!({"ids": [gid.0, rect.0]})).unwrap();
+    assert!(s.execute("smartArt.setPicture", &json!({"id": gid.0, "index": 0, "name": "p.png", "data": png})).is_err());
+
+    // The single-user command keeps the same place when it is given one.
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("smartArt.picture", &json!({"id": gid.0, "index": 1, "name": "p.png", "data": png, "place": place})).unwrap();
+    let d = diagram(&s);
+    assert_eq!(d.nodes[1].picture_place.as_ref().map(|p| p.crop), Some([0.1, 0.0, 0.2, 0.0]));
+    assert!(d.nodes[1].picture.is_some());
 }
 
 #[test]
@@ -7483,4 +7783,92 @@ fn shape_adjust_and_quick_style_reject_invalid_index() {
     assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, before.geom);
     assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
     s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
+}
+
+#[test]
+fn a_model_camera_is_one_final_view_and_a_relative_edit_is_refused() {
+    let mut s = session();
+    let data = cmd::base64_encode(b"glTF\x02\0\0\0\x0c\0\0\0");
+    let r = s.execute("insert.model3d", &json!({"name": "block.glb", "data": data, "rect": [10.0, 10.0, 320.0, 240.0]})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let camera = |s: &mut Session| {
+        let st = s.doc().unwrap();
+        let sh = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(id as u32)).unwrap();
+        match &sh.kind {
+            deckcraft_model::ShapeKind::Model3d { camera, .. } => *camera,
+            other => panic!("not a 3-D model: {other:?}"),
+        }
+    };
+    assert_eq!(camera(&mut s), None, "an inserted model has no view of its own");
+
+    // The whole final view, in EMU and degrees.
+    let view = json!({
+        "camera": {"position": [0.0, 0.0, 11713743.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 36000000.0, 0.0], "fov": 45.0},
+        "ids": [id],
+    });
+    s.execute("model3d.camera", &view).unwrap();
+    let set = camera(&mut s).expect("a camera");
+    assert_eq!(set.position, [0.0, 0.0, 11_713_743.0]);
+    assert_eq!(set.up, [0.0, 36_000_000.0, 0.0]);
+    assert_eq!(set.fov, 45.0);
+
+    // A relative edit, a degenerate view and a field of view outside the range are refused before
+    // the first write: the view on the model does not move.
+    for bad in [
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0, "dx": 10.0}}),
+        json!({"camera": {"orbit": 15.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 0.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 0.0, 1.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 0.0, 0.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 0.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 180.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1e12], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0}}),
+        json!({"camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 45.0, "zoom": 2.0}}),
+        json!({}),
+    ] {
+        let mut params = bad.clone();
+        params["ids"] = json!([id]);
+        assert!(s.execute("model3d.camera", &params).is_err(), "refused: {bad}");
+        assert_eq!(camera(&mut s).expect("the view is unchanged").fov, 45.0, "the refusal wrote nothing");
+    }
+
+    // A plain shape is not a model, and an unknown id changes nothing either.
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).unwrap();
+    let rect = r["id"].as_u64().unwrap();
+    assert!(s.execute("model3d.camera", &json!({"camera": null, "ids": [rect]})).is_err());
+    assert!(s.execute("model3d.camera", &json!({"camera": null, "ids": [9999]})).is_err());
+
+    // `null` is the reader's default view again, and the command is in the registry.
+    s.execute("model3d.camera", &json!({"camera": null, "ids": [id]})).unwrap();
+    assert_eq!(camera(&mut s), None);
+    assert!(find_command("model3d.camera").is_some(), "the command is registered");
+}
+
+#[test]
+fn a_whole_model_restore_is_checked_before_it_is_written() {
+    let mut s = session();
+    let data = cmd::base64_encode(b"glTF\x02\0\0\0\x0c\0\0\0");
+    let r = s.execute("insert.model3d", &json!({"name": "block.glb", "data": data})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let model = {
+        let st = s.doc().unwrap();
+        deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(id as u32)).unwrap().clone()
+    };
+    let mut value = serde_json::to_value(&model).unwrap();
+    value["kind"]["camera"] = json!({"position": [0.0, 0.0, 5.0], "target": [0.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fov": 30.0});
+    s.execute("shape.setField", &json!({"field": "model3d", "value": value, "ids": [id]})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(id as u32)).unwrap();
+    assert!(matches!(&sh.kind, deckcraft_model::ShapeKind::Model3d { camera: Some(c), .. } if c.fov == 30.0));
+
+    // A value that is not a model, and a value naming another shape, are refused before the write.
+    let plain = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).unwrap()["id"].as_u64().unwrap();
+    let rect = {
+        let st = s.doc().unwrap();
+        serde_json::to_value(deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(plain as u32)).unwrap()).unwrap()
+    };
+    assert!(s.execute("shape.setField", &json!({"field": "model3d", "value": rect, "ids": [id]})).is_err());
+    let mut other = serde_json::to_value(&model).unwrap();
+    other["id"] = json!(plain);
+    assert!(s.execute("shape.setField", &json!({"field": "model3d", "value": other, "ids": [id]})).is_err());
 }

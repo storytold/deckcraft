@@ -25,12 +25,20 @@ deckcraft-anim = { path = "crates/anim" }
 deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
+deckcraft-collab-proto = { path = "crates/collab-proto" }
+deckcraft-collab = { path = "crates/collab" }
+# The browser's collaboration link: the cabinet's session over the page's WebSocket.
+deckcraft-collab-web = { path = "crates/collab-web" }
 deckcraft-media = { path = "crates/media" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
+sha2 = "0.10"
+base64 = "0.22"
+tungstenite = "0.30"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto", "use_pem"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 proptest = "1"

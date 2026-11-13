@@ -297,6 +297,10 @@ fn main() -> eframe::Result {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
             load_prefs(&mut app);
+            // Real-time collaboration is opt-in: the single-user editor is the default.
+            if deckcraft_ui_egui::collab::enabled_from_env() {
+                app.enable_collab();
+            }
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
             if std::env::var_os("DECKCRAFT_NO_RECOVERY").is_none() {
@@ -318,6 +322,22 @@ fn main() -> eframe::Result {
             // A .ppsx opened last starts its slide show (#862).
             for (f, e) in app.open_from_system(&files) {
                 log::error!("{f}: {e}");
+            }
+            // Real-time collaboration is opt-in: a session URL and the cabinet's short-lived
+            // token, or the flag alone for an offline indicator (edits are refused when the flag
+            // is on without a link).
+            match (std::env::var("DECKCRAFT_COLLAB_URL"), std::env::var("DECKCRAFT_COLLAB_TOKEN")) {
+                (Ok(url), Ok(jwt)) => {
+                    let id = std::env::var("DECKCRAFT_COLLAB_SESSION").unwrap_or_else(|_| "deck".into());
+                    if let Err(e) = app.start_collab_native(&id, &url, &jwt) {
+                        log::error!("collaboration: {e}");
+                    }
+                }
+                _ => {
+                    if deckcraft_ui_egui::collab::enabled_from_env() {
+                        app.enable_collab();
+                    }
+                }
             }
             if show {
                 app.start_show(0, false);

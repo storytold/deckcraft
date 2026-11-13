@@ -310,8 +310,30 @@ fn content_part(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<S
     if let Some(x) = e.child("xfrm") {
         s.xfrm = Some(dml::xfrm(x).0);
     }
-    s.kind = ShapeKind::Model3d { media, poster: None };
+    let camera = model_camera(e);
+    s.kind = ShapeKind::Model3d { media, poster: None, camera };
     Some(s)
+}
+
+/// The camera of a 3-D model: `am3d:camera` in the slide part next to the content part. A camera
+/// with a missing or malformed member is dropped whole rather than half-read, so a view this
+/// build cannot reproduce is never written back as a different one.
+fn model_camera(e: &El) -> Option<deckcraft_model::ModelCamera> {
+    let cam = e.child("camera")?;
+    let vec3 = |name: &str, keys: [&str; 3]| -> Option<[f64; 3]> {
+        let el = cam.child(name)?;
+        let mut v = [0.0; 3];
+        for (i, k) in keys.iter().enumerate() {
+            v[i] = el.attr(k)?.parse::<f64>().ok()?;
+        }
+        Some(v)
+    };
+    let position = vec3("pos", ["x", "y", "z"])?;
+    let target = vec3("lookAt", ["x", "y", "z"])?;
+    let up = vec3("up", ["dx", "dy", "dz"])?;
+    // Office writes the perspective's field of view in 1/60000 degree.
+    let fov = cam.child("perspective")?.attr("fov")?.parse::<f64>().ok()? / 60_000.0;
+    (fov.is_finite() && fov > 0.0).then_some(deckcraft_model::ModelCamera { position, target, up, fov })
 }
 
 /// A 3-D model wrapped in `mc:AlternateContent`: the model choice, plus the fallback picture.
@@ -325,8 +347,8 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
             fb.find_all("blip", &mut pics);
             pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
         });
-        if let ShapeKind::Model3d { media, .. } = s.kind {
-            s.kind = ShapeKind::Model3d { media, poster };
+        if let ShapeKind::Model3d { media, camera, .. } = s.kind {
+            s.kind = ShapeKind::Model3d { media, poster, camera };
         }
         return Some(s);
     }
@@ -588,11 +610,12 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {
         let rels = imp.pkg.rels(&dm.target);
-        for (k, rid) in crate::dgm::node_pictures(&data.root) {
+        for (k, rid, crop) in crate::dgm::node_pictures(&data.root) {
             let Some(target) = rels.get(&rid).filter(|r| !r.external).map(|r| r.target.clone()) else { continue };
             let media = imp.media_for(&target);
             if let Some(n) = d.nodes.get_mut(k) {
                 n.picture = media;
+                n.picture_place = crop.map(|crop| deckcraft_model::PicturePlace { crop, alpha: None });
             }
         }
     }
