@@ -167,6 +167,48 @@ fn inline_commands_keep_their_existing_syntax_and_errors() {
     assert!(stderr(&cli(&["run", "--cmd", "no.such.command"])).contains("unknown command `no.such.command`"));
 }
 
+/// `app --params-file -` reads PARAMS from stdin, so a payload too large for the command line
+/// (font.add's font data) still reaches the app (#2094).
+#[test]
+fn app_reads_params_from_stdin_and_checks_them_before_connecting() {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::process::Stdio;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(&stream).read_line(&mut line).unwrap();
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        stream.write_all(format!("{}\n", serde_json::json!({"id": request["id"], "ok": true, "result": "ok"})).as_bytes()).unwrap();
+        request["params"].clone()
+    });
+    let mut child = Command::new(crate::deckcraft_cli())
+        .args(["app", "--port", &port, "font.add", "--params-file", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all("{\"data\":\"from stdin\"}".as_bytes()).unwrap();
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(stdout(&o).trim(), "\"ok\"");
+    assert_eq!(peer.join().unwrap(), serde_json::json!({"command": "font.add", "params": {"data": "from stdin"}}));
+
+    // A bad params file is named before any connection is tried.
+    let dir = command_file_dir("app-params");
+    let file = dir.join("params.json");
+    std::fs::write(&file, "{}").unwrap();
+    let err = stderr(&cli(&["app", "font.add", "{}", "--params-file", &file.to_string_lossy()]));
+    assert!(err.contains("not both"), "{err}");
+    let missing = dir.join("missing.json");
+    let err = stderr(&cli(&["app", "font.add", "--params-file", &missing.to_string_lossy()]));
+    assert!(err.contains(&missing.display().to_string()), "{err}");
+    std::fs::remove_dir_all(dir).unwrap();
+    assert!(stderr(&cli(&["app", "font.add", "--params-file"])).contains("--params-file needs a file"));
+    assert!(stdout(&cli(&["app", "--help"])).contains("--params-file FILE"));
+}
+
 #[test]
 fn an_unknown_subcommand_is_named_before_the_overview() {
     for args in [vec!["frobnicate"], vec!["help", "frobnicate"], vec!["--info", "--help"]] {
