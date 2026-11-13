@@ -1095,6 +1095,17 @@ impl FontDb {
         let _ = on;
     }
 
+    /// Whether automatic system-font lookups (fallback by character, symbol and script families)
+    /// may touch installed fonts. Lookups of a family the document or host names are not gated.
+    pub(crate) fn system_fallback_enabled(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).enabled
+        }
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// Process-wide database: the bundled fonts, then the installed system fonts, cataloged the
     /// first time a lookup by family name needs them (or ahead of time by
     /// [`FontDb::scan_in_background`]).
@@ -1458,7 +1469,7 @@ impl FontDb {
         Some(f)
     }
 
-    fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+    pub(crate) fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         if style.contains('{') {
             {
                 let faces = self.read_faces();
@@ -1698,7 +1709,8 @@ impl FontDb {
         };
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
+            let cataloged: Vec<String> =
+                if self.system_fallback_enabled() { self.read_catalog().iter().map(|e| e.family.clone()).collect() } else { Vec::new() };
             for fam in SYSTEM_FALLBACKS.iter().filter(|f| f.contains("Symbol")) {
                 if !self.is_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
                     self.load_cataloged(fam);
