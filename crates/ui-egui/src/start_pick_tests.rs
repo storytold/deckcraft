@@ -103,6 +103,20 @@ fn a_sheet_that_cannot_start_says_so() {
     assert_eq!(app.status.as_ref().map(|s| s.0.as_str()), Some("The file dialog could not be opened"));
 }
 
+/// A sheet whose answer never comes (its thread ended) runs nothing, and the status line says so.
+#[test]
+fn a_sheet_that_ends_without_an_answer_says_so() {
+    let (tx, rx) = mpsc::channel();
+    let rx = Rc::new(Cell::new(Some(rx)));
+    let services = Services { start_pick: Some(Box::new(move |_, _| rx.take())), ..Services::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    app.pick_free("open", |_, _| panic!("no answer"));
+    drop(tx);
+    app.drain_picks();
+    assert!(!app.file_dialog_open());
+    assert_eq!(app.status.as_ref().map(|s| s.0.as_str()), Some("The file dialog could not be opened"));
+}
+
 /// Inserting a file into a presentation with no slide to select binds to the presentation, so the
 /// answer runs instead of being refused as a moved selection.
 #[test]

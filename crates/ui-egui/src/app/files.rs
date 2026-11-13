@@ -370,6 +370,10 @@ impl SlideApp {
                 Err(TryRecvError::Empty) => i += 1,
                 answer => {
                     let pick = self.pending_picks.remove(i);
+                    // The thread waiting for the dialog ended without an answer: not a cancel.
+                    if answer == Err(TryRecvError::Disconnected) {
+                        self.set_status("The file dialog could not be opened");
+                    }
                     if let Ok(Some(path)) = answer
                         && self.return_to(&pick.bind)
                     {
