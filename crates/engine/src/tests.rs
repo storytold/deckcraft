@@ -6686,6 +6686,66 @@ fn duplicating_a_moved_copy_repeats_the_move() {
     assert_eq!(s.doc().unwrap().doc.validate(), Vec::<String>::new());
 }
 
+/// Duplicating a shape inside a group puts the copy in that group, last among its children, and
+/// selects it. The copy is offset on the slide as a top-level copy is, however the group is moved,
+/// stretched or turned, and duplicating a moved copy repeats the move (#966). A shape whose group is
+/// duplicated as well goes along with the group's copy. Before, Duplicate looked only at the slide's
+/// top level: it answered `{ids: []}` and changed nothing.
+#[test]
+fn duplicating_a_shape_in_a_group_copies_it_into_the_group() {
+    fn rect(s: &mut Session, x: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    // How far shape `to` is drawn from shape `from` on the slide, the same for each of its sites.
+    let offset = |s: &Session, from: u64, to: u64| {
+        let st = s.doc().unwrap();
+        let sites = |id| connect::sites_of(&st.doc, &st.selection, st.shapes(), sid(id)).unwrap();
+        let (p, q) = (sites(from), sites(to));
+        assert_eq!(p.len(), q.len(), "{p:?} {q:?}");
+        let d = q[0] - p[0];
+        assert!(p.iter().zip(&q).all(|(p, q)| (*q - *p - d).hypot() < 1e-6), "{p:?} {q:?}");
+        (d.x, d.y)
+    };
+    let grouped = |edit: &str, p: Value| {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let (a, b) = (rect(&mut s, 100.0), rect(&mut s, 300.0));
+        let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+        let mut p = p;
+        p["ids"] = json!([g]);
+        s.execute(edit, &p).unwrap();
+        (s, a, b, g)
+    };
+    for (edit, p) in [("shape.move", json!({"dx": 200})), ("shape.resize", json!({"w": 600})), ("shape.rotate", json!({"deg": 90}))] {
+        let (mut s, a, b, g) = grouped(edit, p);
+        let off = s.prefs.duplicate_offset;
+        let r = s.execute("edit.duplicate", &json!({"ids": [a]})).unwrap();
+        assert_eq!(r["ids"].as_array().map(Vec::len), Some(1), "{edit}: {r}");
+        let c = r["ids"][0].as_u64().unwrap();
+        assert_eq!(s.doc().unwrap().selection.shapes, [sid(c)]);
+        let st = s.doc().unwrap();
+        let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(g)).unwrap().children().iter().map(|x| x.id).collect();
+        assert_eq!(order, [sid(a), sid(b), sid(c)], "{edit}");
+        let (dx, dy) = offset(&s, a, c);
+        assert!((dx - off).abs() < 1e-6 && (dy - off).abs() < 1e-6, "{edit}: the copy is drawn ({dx}, {dy}) from the original");
+        // Moved, then duplicated again: the next copy is drawn as far from it again.
+        s.execute("shape.move", &json!({"ids": [c], "dx": 30})).unwrap();
+        let (mx, my) = offset(&s, a, c);
+        let d = s.execute("edit.duplicate", &json!({"ids": [c]})).unwrap()["ids"][0].as_u64().unwrap();
+        let (nx, ny) = offset(&s, c, d);
+        assert!((nx - mx).abs() < 1e-6 && (ny - my).abs() < 1e-6, "{edit}: moved ({mx}, {my}), then ({nx}, {ny})");
+        assert_eq!(s.doc().unwrap().doc.validate(), Vec::<String>::new());
+    }
+    let (mut s, a, _, g) = grouped("shape.move", json!({"dx": 200}));
+    let r = s.execute("edit.duplicate", &json!({"ids": [a, g]})).unwrap();
+    assert_eq!(r["ids"].as_array().map(Vec::len), Some(1), "{r}");
+    let st = s.doc().unwrap();
+    let count = |id: u64| deckcraft_model::find_shape(st.shapes(), sid(id)).unwrap().children().len();
+    assert_eq!((count(g), count(r["ids"][0].as_u64().unwrap())), (2, 2));
+    assert_eq!(st.shapes().len(), 2);
+}
+
 fn chart_of(s: &Session, id: u64) -> deckcraft_model::Chart {
     match &s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().kind {
         deckcraft_model::ShapeKind::Chart(c) => (**c).clone(),
