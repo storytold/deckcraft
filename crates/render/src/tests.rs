@@ -2545,6 +2545,77 @@ fn metafile_intersect_clip_rect_hides_the_rest_of_the_picture() {
 }
 
 #[test]
+fn emf_plus_only_dual_and_plain_metafiles_match_their_pixel_references() {
+    fn record(kind: u32, payload: &[u8]) -> Vec<u8> {
+        let mut data = payload.to_vec();
+        while !data.len().is_multiple_of(4) {
+            data.push(0);
+        }
+        [kind.to_le_bytes().as_slice(), ((8 + data.len()) as u32).to_le_bytes().as_slice(), &data].concat()
+    }
+    fn plus_record(kind: u16, flags: u16, payload: &[u8]) -> Vec<u8> {
+        let mut data = payload.to_vec();
+        while !data.len().is_multiple_of(4) {
+            data.push(0);
+        }
+        [
+            kind.to_le_bytes().as_slice(),
+            flags.to_le_bytes().as_slice(),
+            ((12 + data.len()) as u32).to_le_bytes().as_slice(),
+            (data.len() as u32).to_le_bytes().as_slice(),
+            &data,
+        ]
+        .concat()
+    }
+    fn emf(records: &[Vec<u8>]) -> Vec<u8> {
+        let body: Vec<u8> = records.concat();
+        let eof = record(14, &[0; 12]);
+        let total = 88 + body.len() + eof.len();
+        let mut header = vec![0u8; 88];
+        header[0..4].copy_from_slice(&1u32.to_le_bytes());
+        header[4..8].copy_from_slice(&88u32.to_le_bytes());
+        header[8..24].copy_from_slice(&[0i32, 0, 10, 10].into_iter().flat_map(i32::to_le_bytes).collect::<Vec<_>>());
+        header[40..44].copy_from_slice(&0x464D_4520u32.to_le_bytes());
+        header[44..48].copy_from_slice(&0x0001_0000u32.to_le_bytes());
+        header[48..52].copy_from_slice(&(total as u32).to_le_bytes());
+        header[52..56].copy_from_slice(&((records.len() + 1) as u32).to_le_bytes());
+        header[56..58].copy_from_slice(&1u16.to_le_bytes());
+        [header, body, eof].concat()
+    }
+    fn emf_plus(dual: bool) -> Vec<u8> {
+        let h32 = |v: u32| v.to_le_bytes().to_vec();
+        let header = plus_record(0x4001, u16::from(dual), &[h32(0xDBC0_1002), h32(0), h32(96), h32(96)].concat());
+        let fill = plus_record(
+            0x400A,
+            0x8000,
+            &[
+                h32(0xFFFF_0000),
+                h32(1),
+                0.0f32.to_le_bytes().to_vec(),
+                0.0f32.to_le_bytes().to_vec(),
+                9.0f32.to_le_bytes().to_vec(),
+                9.0f32.to_le_bytes().to_vec(),
+            ]
+            .concat(),
+        );
+        let body = [header, fill].concat();
+        let mut payload = ((body.len() + 4) as u32).to_le_bytes().to_vec();
+        payload.extend(0x2B46_4D45u32.to_le_bytes());
+        payload.extend(body);
+        record(70, &payload)
+    }
+    let gdi_white = record(43, &[0i32, 0, 9, 9].into_iter().flat_map(i32::to_le_bytes).collect::<Vec<_>>());
+    let pixel = |bytes: &[u8]| {
+        let image = crate::metafile::rasterize(bytes, 32).expect("raster");
+        *image.get_pixel(image.width() / 2, image.height() / 2)
+    };
+
+    assert_eq!(pixel(&emf(&[emf_plus(false)])), image::Rgba([255, 0, 0, 255]), "EMF+-only");
+    assert_eq!(pixel(&emf(&[emf_plus(true), gdi_white.clone()])), image::Rgba([255, 0, 0, 255]), "dual file uses EMF+");
+    assert_eq!(pixel(&emf(&[gdi_white])), image::Rgba([255, 255, 255, 255]), "plain EMF");
+}
+
+#[test]
 fn tiny_chart_does_not_blank_the_slide() {
     // A chart a few points wide used to panic in `f64::clamp` (gutter min above max), and the
     // panic guard then blanked the whole slide. Render directly, without the guard.
