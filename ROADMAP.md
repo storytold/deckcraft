@@ -61,7 +61,7 @@ Calibration is the same as for the full number (see [docs/target-app-parity.md](
 transitions, animations, media and presenter view, export PDF), but depth, fidelity and polish
 have known gaps, and PPTX has never been tested on a corpus of real decks. Beta needs ~75% ready
 and no blocking gap in `.pptx`: the real-deck corpus, the round-trip losses (#70, #74),
-EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the beta list in
+EMF/SVG picture fidelity, the data-loss and startup-crash bugs (#60, #40, #59) and the beta list in
 [docs/roadmap.md](docs/roadmap.md).
 
 ## By dimension
@@ -95,7 +95,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Tables | 97% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
 | SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
-| Pictures | 60% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
+| Pictures | 64% | ~45% | 8–16 | [file formats](docs/file-format-parity.md) |
 | Media | 67% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
 | Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
 | Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
@@ -138,7 +138,7 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
    shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
    and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records,
-   MicroType Express font subsets and SVG. 36–64 h.
+   MicroType Express font subsets and the SVG export fallback. 36–64 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-13 | SVG pictures: `crates/svg` reads paths, basic shapes, groups, transforms, `use` and solid or gradient fills, and `crates/render/src/svg.rs` draws them as vectors, so SVG files insert at their own size and render; import takes `asvg:svgBlip` over the PNG fallback. Export still writes no raster fallback. Checklist Pictures 60 → 64% |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
@@ -342,6 +343,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from PowerPoint files; Pictures 60 → 64%, weighted breadth unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |

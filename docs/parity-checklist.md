@@ -2,7 +2,9 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-03 · Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
+> **Last updated:** 2026-11-13 · SVG pictures insert, draw as vectors and import their vector original from PowerPoint files; the row moves from Missing to Partial (text, filters, masks and clip paths are not read, gradients draw as average stops, export has no raster fallback). Pictures 60 → 64%, weighted breadth unchanged.
+>
+> **Previously (2026-11-03):** Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
 >
 > **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
 >
@@ -14,7 +16,7 @@ The summary between `<!-- SUMMARY -->
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 65 | 45 | 16 | 4 | 82% |
+| P1 | 65 | 45 | 17 | 3 | 82% |
 | P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
@@ -31,7 +33,7 @@ The summary between `<!-- SUMMARY -->
 | Tables | 97% |
 | Charts | 65% |
 | SmartArt | 50% |
-| Pictures | 60% |
+| Pictures | 64% |
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
@@ -185,7 +187,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | SmartArt | Insert SmartArt (lists, processes, cycles, hierarchy) | P1 | P |
 | SmartArt | Text pane and layout switching | P2 | P |
 | Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
-| Pictures | SVG pictures | P1 | M |
+| Pictures | SVG pictures (paths, shapes, groups, transforms, `use`, solid and gradient fills drawn as average stops; text, filters, masks, clip paths and patterns not read; export has no raster fallback) | P1 | P |
 | Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
 | Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
 | Pictures | Artistic effects | P2 | P |
@@ -244,6 +246,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original; row Missing → Partial, Pictures 60 → 64%, weighted breadth unchanged |
 | 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
 | 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |
