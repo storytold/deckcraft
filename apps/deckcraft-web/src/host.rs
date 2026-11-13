@@ -37,6 +37,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use craft_web_host::web::{FileData, Host, Message};
+use deckcraft_engine::MAX_AUTHOR_CHARS;
 use deckcraft_ui_egui::{Services, SlideApp};
 
 /// The app id in the host messages (`deckcraft:ready`).
@@ -50,9 +51,6 @@ const NAMELESS: &str = "document";
 /// On wasm32 a `Vec` cannot hold 2 GiB (`isize::MAX` is one byte less), so a file of exactly
 /// 2 GiB is refused too, before its bytes are copied.
 const MAX_OPEN_BYTES: f64 = 2_147_483_648.0;
-
-/// The longest user name taken from `?author=` (the preferences' own limit).
-const MAX_AUTHOR_CHARS: usize = 256;
 
 #[derive(Clone)]
 pub struct Bridge {

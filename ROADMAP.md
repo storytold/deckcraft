@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-11 | A first start takes the operating system account's name as Preferences ▸ "Your name (comments)" instead of the placeholder "Presenter": the account's first and last name on Windows, the full name in its `/etc/passwd` entry on Linux and the BSDs, Directory Services' name (`/usr/bin/id -F`) on macOS, else the logon name. The system is asked once at start-up, only while the name is still the placeholder, never by a `DECKCRAFT_NO_PREFS` run; a name set in the dialog always wins and a name cleared there stays cleared (storytold/wordcraft#2209, the same change as in WordCraft) |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
@@ -341,6 +342,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | trivial | Progress log: a first start takes the system account's name as the comment author; parity scores and milestone names unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
