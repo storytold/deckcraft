@@ -223,6 +223,8 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
         }
+        // The show opens on the first slide's transition, from black (#2085).
+        show.opening_transition(doc, now);
         show.after_enter(doc, now);
     }
 }
