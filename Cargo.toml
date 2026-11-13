@@ -50,8 +50,6 @@ vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 resvg = { version = "0.47", default-features = false, features = ["text"] }
-craft-media = { git = "https://github.com/storytold/craft-libs", rev = "1b34eba41e62138fc2438d2734523b302840b45d", version = "=0.1.0", default-features = false }
-craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "1b34eba41e62138fc2438d2734523b302840b45d", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-media, craft-audio and craft-video share types and stay on one rev.
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "09dcbc225b95232998498a40ca56e24716571d53", version = "=0.1.0", default-features = false }
 craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "09dcbc225b95232998498a40ca56e24716571d53", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
