@@ -320,6 +320,10 @@ impl SlideApp {
         let mut failed = Vec::new();
         let mut last = None;
         for p in paths {
+            if self.open_in_own_window(std::slice::from_ref(p)) {
+                self.note_recent(p);
+                continue;
+            }
             match self.open_path(p) {
                 Ok(()) => last = Some(p),
                 Err(e) => failed.push((p.clone(), e)),

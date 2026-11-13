@@ -83,6 +83,9 @@ Today it can:
   by-paragraph builds, full-screen slide show, presenter view, pen, rehearse timings, media playback.
 - **Exchange files**: open and save .pptx presentations, export PDF (slides, notes pages, handouts
   with selectable text), PNG/JPEG, an animated GIF of the deck and outlines. Unsaved work is kept by AutoRecover.
+  On the desktop, File › New, File › Open, Open Recent and a presentation dropped on the window open
+  in a window of their own while the current one is in use (Preferences can keep them in one
+  window), and shapes and slides copy and paste between windows.
 - **Automate**: 200+ commands with undo, all scriptable from the CLI, a JSON control channel and an
   MCP server for AI agents.
 

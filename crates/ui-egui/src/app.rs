@@ -106,6 +106,7 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            shared_clip: Default::default(),
             host_start: None,
             ime_tracker: egui::ime_context::ImeContextTracker::new(),
             ime_pending: None,
@@ -218,6 +219,7 @@ impl SlideApp {
             return;
         }
         self.tick_hidden_show(ctx, web_time::Instant::now());
+        self.sync_shared_clipboard(crate::clock::now_ms());
         // `raw_input_hook` runs before `App::logic`. In a full pass egui has already built
         // `PointerState` and `keys_down` from every injected event, so retracting the events after
         // this pass would not stop the derived click or key from reaching the UI. Defer instead:

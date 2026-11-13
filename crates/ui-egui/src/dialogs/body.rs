@@ -1346,6 +1346,10 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if ui.checkbox(&mut dark, "Dark appearance").changed() {
         let _ = app.run("view.dark", json!({"on": dark}));
     }
+    // Where the app can start a window: New and Open make one per presentation (see `own_window`).
+    if app.services.spawn_window.is_some() {
+        ui.checkbox(&mut app.ui.window_per_presentation, "Open each presentation in its own window");
+    }
     // While the pointer holds the slider its value only waits in the dialog: applying it
     // would rescale the slider under the pointer and run it to an end (#767). It applies
     // on release, and at once from the keyboard.

@@ -106,6 +106,19 @@ fn save_prefs(app: &SlideApp) {
     }
 }
 
+/// Start another DeckCraft window: this program again, with `args` (a file to open, or none for a
+/// new presentation). The control port is not passed on, so the new window doesn't fight for it.
+fn spawn_window(args: &[String]) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    std::process::Command::new(exe)
+        .args(args)
+        .env_remove("DECKCRAFT_CONTROL_PORT")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| log::warn!("another window: {e}"))
+        .is_ok()
+}
+
 /// The desktop services. `native_wayland`: the window is a Wayland client (not Xwayland).
 fn services(native_wayland: bool) -> Services {
     // On native Wayland, egui-winit owns the clipboard through winit's data device, which carries
@@ -138,6 +151,8 @@ fn services(native_wayland: bool) -> Services {
         clipboard_image: pasteboard.then(|| Box::new(pasteboard::image_png) as Box<dyn FnMut() -> Option<Vec<u8>>>),
         clipboard_html: pasteboard.then(|| Box::new(pasteboard::html) as Box<dyn FnMut() -> Option<String>>),
         clipboard_set_html: pasteboard.then(|| Box::new(pasteboard::set_html) as Box<dyn FnMut(&str, &str) -> bool>),
+        spawn_window: Some(Box::new(spawn_window)),
+        shared_clipboard_dir: config_dir().map(|d| d.join("Clipboard")),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()

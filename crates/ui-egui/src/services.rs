@@ -69,6 +69,13 @@ pub struct Services {
     pub clipboard_html: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Put HTML and its plain-text alternative on the system clipboard. `true` when it landed.
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
+    /// Start another DeckCraft window with these arguments (a file to open, or none for a new
+    /// presentation); `true` when it started. Desktop only: without it everything opens in the
+    /// current window.
+    pub spawn_window: Option<Box<dyn FnMut(&[String]) -> bool>>,
+    /// A folder every window shares, where copies are left for the other windows (see
+    /// [`crate::clipboard_bridge`]). Desktop only.
+    pub shared_clipboard_dir: Option<std::path::PathBuf>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.

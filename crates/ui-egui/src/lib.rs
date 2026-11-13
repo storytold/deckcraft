@@ -18,6 +18,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 pub mod backstage;
 pub mod canvas;
 pub mod capture;
+pub mod clipboard_bridge;
 pub mod control;
 pub mod dialogs;
 pub mod doc_window;
@@ -26,6 +27,7 @@ pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod opening;
+pub mod own_window;
 pub mod presenter;
 pub mod ribbon;
 pub mod settings;
@@ -335,6 +337,8 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// Copy and paste between windows (see [`clipboard_bridge`]).
+    pub(crate) shared_clip: clipboard_bridge::State,
     /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
     /// first file the page sends takes its place.
     host_start: Option<u64>,

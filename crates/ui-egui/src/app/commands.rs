@@ -18,6 +18,9 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if id == "file.new" && params.as_object().is_none_or(|o| o.is_empty()) && self.open_in_own_window(&[]) {
+            return Ok(json!({"window": true}));
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
