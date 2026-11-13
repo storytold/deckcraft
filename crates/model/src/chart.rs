@@ -1342,6 +1342,7 @@ impl Chart {
                     .collect(),
                 kind: Some(ChartType::Line),
                 secondary_axis: true,
+                data_labels: Some(false),
                 ..Default::default()
             });
             v.y2_min = Some(0.0);
