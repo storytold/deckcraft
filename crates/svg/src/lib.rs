@@ -381,10 +381,14 @@ impl Build {
         let Some(target) = self.ids.get(id).cloned() else { return };
         let at = |k: &str| node.attr(k).and_then(attr::length).unwrap_or(0.0);
         let mut transform = f.transform * Affine::translate((at("x"), at("y")));
-        // A `symbol` (or nested `svg`) maps its own `viewBox` into the `use`'s width and height.
+        // A `symbol` (or nested `svg`) maps its own `viewBox` into the `use`'s width and height;
+        // a zero-sized viewport paints nothing.
         if let Some(vb) = view_box_of(&target) {
             let w = node.attr("width").and_then(attr::length).unwrap_or(vb[2]);
             let h = node.attr("height").and_then(attr::length).unwrap_or(vb[3]);
+            if !(w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()) {
+                return;
+            }
             transform *= fit(vb, w, h);
         }
         let frame = Frame { transform, style: f.style.clone() };
@@ -570,6 +574,14 @@ mod tests {
         );
         let b = s.items[0].path.bounding_box();
         assert!((b.width() - 100.0).abs() < 1e-6 && (b.height() - 100.0).abs() < 1e-6, "{b:?}");
+    }
+
+    #[test]
+    fn a_zero_sized_use_viewport_paints_nothing() {
+        let s = svg(
+            "<defs><symbol id='s' viewBox='0 0 10 10'><rect width='10' height='10' fill='black'/></symbol></defs><use href='#s' width='0' height='10'/>",
+        );
+        assert!(s.items.is_empty());
     }
 
     #[test]

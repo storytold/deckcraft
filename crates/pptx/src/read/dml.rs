@@ -207,12 +207,12 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
 }
 
 /// The SVG original of a picture (`a:extLst/a:ext/…/asvg:svgBlip`), when the file has one.
-/// The extension list may hold others first (`a14:useLocalDpi`), and a linked SVG carries no bytes,
-/// so it must fall back to the embedded picture.
+/// The extension list may hold others first (`a14:useLocalDpi`), a linked SVG carries no bytes, and
+/// unreadable bytes would only lose the raster fallback, so all three keep the fallback.
 fn svg_blip(imp: &mut Imp, part: &Part, blip: &El) -> Option<deckcraft_model::MediaId> {
     let svg = blip.child("extLst")?.find("svgBlip")?;
     let id = media_ref(imp, part, svg)?;
-    imp.media.iter().any(|m| m.id == id && m.content_type == "image/svg+xml" && !m.data.is_empty()).then_some(id)
+    imp.media.iter().any(|m| m.id == id && m.content_type == "image/svg+xml" && deckcraft_svg::parse(&m.data).is_some()).then_some(id)
 }
 
 /// Media for an element with `r:embed` (or `r:link`).

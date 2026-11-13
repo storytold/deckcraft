@@ -27,7 +27,12 @@ enum Vector {
     Embedded,
     /// An SVG outside the package (`r:link`): no bytes to draw.
     Linked,
+    /// A part declared as SVG whose bytes do not parse.
+    Broken,
 }
+
+/// Broken SVG bytes: an `svg` root that never closes.
+const BROKEN: &[u8] = b"<svg";
 
 fn deck() -> Presentation {
     let mut p = defaults::new_presentation(None);
@@ -76,14 +81,14 @@ fn patched(vector: Vector) -> Vec<u8> {
             "ppt/slides/_rels/slide1.xml.rels" if vector != Vector::None => {
                 let xml = String::from_utf8(data).expect("rels");
                 let rel = match vector {
-                    Vector::Embedded => {
+                    Vector::Embedded | Vector::Broken => {
                         format!("<Relationship Id=\"rIdSvg\" Type=\"{IMAGE}\" Target=\"../media/image2.svg\"/>")
                     }
                     _ => format!("<Relationship Id=\"rIdSvg\" Type=\"{IMAGE}\" Target=\"https://example.com/i.svg\" TargetMode=\"External\"/>"),
                 };
                 data = xml.replacen("</Relationships>", &format!("{rel}</Relationships>"), 1).into_bytes();
             }
-            "[Content_Types].xml" if vector == Vector::Embedded => {
+            "[Content_Types].xml" if matches!(vector, Vector::Embedded | Vector::Broken) => {
                 let xml = String::from_utf8(data).expect("types");
                 let ct = "<Default Extension=\"svg\" ContentType=\"image/svg+xml\"/>";
                 data = xml.replacen("</Types>", &format!("{ct}</Types>"), 1).into_bytes();
@@ -92,9 +97,9 @@ fn patched(vector: Vector) -> Vec<u8> {
         }
         out.start_file(&name, opts).expect("start");
         out.write_all(&data).expect("write");
-        if name == "ppt/slides/slide1.xml" && vector == Vector::Embedded {
+        if name == "ppt/slides/slide1.xml" && matches!(vector, Vector::Embedded | Vector::Broken) {
             out.start_file("ppt/media/image2.svg", opts).expect("start svg");
-            out.write_all(SVG).expect("write svg");
+            out.write_all(if vector == Vector::Broken { BROKEN } else { SVG }).expect("write svg");
         }
     }
     out.finish().expect("finish").into_inner()
@@ -127,6 +132,14 @@ fn the_vector_original_wins_over_the_raster_fallback() {
     let (ct, data) = picture_media(&p);
     assert_eq!(ct, "image/svg+xml");
     assert_eq!(data, SVG);
+}
+
+#[test]
+fn unreadable_svg_bytes_leave_the_raster_fallback_in_place() {
+    let p = deckcraft_pptx::import(&patched(Vector::Broken)).expect("import");
+    let (ct, data) = picture_media(&p);
+    assert_eq!(ct, "image/png");
+    assert_eq!(data, PNG);
 }
 
 #[test]
