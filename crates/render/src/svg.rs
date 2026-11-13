@@ -6,8 +6,8 @@
 //! does (centred, both sides visible). Other `preserveAspectRatio` values, filters, masks and clip
 //! paths are not applied.
 
-use deckcraft_svg::Svg;
-use kurbo::{Affine, BezPath, Rect, Shape as _};
+use deckcraft_svg::{Gradient, GradientKind, Paint, Spread, Svg, Units};
+use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use vello_cpu::{RenderContext, Resources, peniko};
 
 /// Largest side drawn.
@@ -33,15 +33,17 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) || bb.width() > 1e6 || bb.height() > 1e6 {
             continue;
         }
-        if let Some(f) = it.fill {
-            ctx.set_paint(peniko::Color::from_rgba8(f.r, f.g, f.b, f.a));
+        if let Some(f) = &it.fill {
+            set_paint(&mut ctx, f, it.path.bounding_box(), m);
             ctx.set_fill_rule(if it.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
             ctx.fill_path(&path);
+            ctx.reset_paint_transform();
         }
         if let Some((c, pen)) = &it.stroke {
-            ctx.set_paint(peniko::Color::from_rgba8(c.r, c.g, c.b, c.a));
+            set_paint(&mut ctx, c, it.path.bounding_box(), m);
             ctx.set_stroke(pen_at(pen, k, &path));
             ctx.stroke_path(&path);
+            ctx.reset_paint_transform();
         }
     }
     ctx.set_fill_rule(peniko::Fill::NonZero);
@@ -74,6 +76,60 @@ fn layout(svg: &Svg, side: u32) -> (u16, u16, Affine) {
     let tx = (f64::from(w) - uw * s) / 2.0 - x * s;
     let ty = (f64::from(h) - uh * s) / 2.0 - y * s;
     (w, h, Affine::translate((tx, ty)) * Affine::scale(s))
+}
+
+/// Paint one shape's fill or stroke: a solid colour, or a gradient laid out the way the picture
+/// declared it. `m` maps user units to pixels and `bbox` is the shape's box in user units, which an
+/// `objectBoundingBox` gradient takes as its unit square.
+fn set_paint(ctx: &mut RenderContext, paint: &Paint, bbox: Rect, m: Affine) {
+    match paint {
+        Paint::Solid(c) => ctx.set_paint(peniko::Color::from_rgba8(c.r, c.g, c.b, c.a)),
+        Paint::Gradient(g) => {
+            let Some(grad) = peniko_gradient(g) else { return };
+            // The gradient's own coordinates → user units → pixels.
+            let to_user = match g.units {
+                Units::ObjectBoundingBox => {
+                    Affine::translate(bbox.origin().to_vec2())
+                        * Affine::scale_non_uniform(bbox.width().max(1e-9), bbox.height().max(1e-9))
+                        * g.transform
+                }
+                Units::UserSpace => g.transform,
+            };
+            ctx.set_paint(grad);
+            ctx.set_paint_transform(m * to_user);
+        }
+    }
+}
+
+/// The peniko gradient for a parsed one. A single stop is doubled, so the ramp is solid instead of
+/// empty, and the spread pads, repeats or reflects as the picture asks.
+fn peniko_gradient(g: &Gradient) -> Option<peniko::Gradient> {
+    let mut stops: Vec<peniko::ColorStop> =
+        g.stops.iter().map(|(o, c)| peniko::ColorStop { offset: *o as f32, color: peniko::Color::from_rgba8(c.r, c.g, c.b, c.a).into() }).collect();
+    let last = *stops.last()?;
+    if stops.len() == 1 {
+        stops.push(last);
+    }
+    let mut grad = match g.kind {
+        GradientKind::Linear { x1, y1, x2, y2 } => peniko::Gradient::new_linear(Point::new(x1, y1), Point::new(x2, y2)).with_stops(stops.as_slice()),
+        GradientKind::Radial { cx, cy, r, fx, fy } => {
+            let (c, r) = (Point::new(cx, cy), r.max(1e-6) as f32);
+            let f = Point::new(fx, fy);
+            // A focus off the centre is a two-point ramp; outside the circle it cannot be, so the
+            // circle's own centre stands in rather than a point that would draw nothing.
+            if f != c && (f - c).hypot() < f64::from(r) {
+                peniko::Gradient::new_two_point_radial(f, 0.0, c, r).with_stops(stops.as_slice())
+            } else {
+                peniko::Gradient::new_radial(c, r).with_stops(stops.as_slice())
+            }
+        }
+    };
+    grad.extend = match g.spread {
+        Spread::Pad => peniko::Extend::Pad,
+        Spread::Reflect => peniko::Extend::Reflect,
+        Spread::Repeat => peniko::Extend::Repeat,
+    };
+    Some(grad)
 }
 
 /// The pen at the layout scale (the picture scatters its own transforms into the geometry).
@@ -124,5 +180,32 @@ mod tests {
     fn broken_documents_draw_nothing() {
         assert!(rasterize(b"not xml", 64).is_none());
         assert!(rasterize(b"<svg", 64).is_none());
+    }
+
+    #[test]
+    fn a_gradient_fill_ramps_across_the_shape() {
+        let img = rasterize(
+            b"<svg width='100' height='20' viewBox='0 0 100 20'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='0'><stop stop-color='#ff0000'/><stop offset='1' stop-color='#0000ff'/></linearGradient></defs><rect width='100' height='20' fill='url(#g)'/></svg>",
+            100,
+        )
+        .expect("draws");
+        let left = img.get_pixel(3, 10);
+        let mid = img.get_pixel(50, 10);
+        let right = img.get_pixel(96, 10);
+        assert!(left[0] > 200 && left[2] < 60, "left {left:?}");
+        assert!(right[2] > 200 && right[0] < 60, "right {right:?}");
+        assert!(mid[0] > 60 && mid[2] > 60, "mid {mid:?}");
+    }
+
+    #[test]
+    fn a_gradient_in_user_space_follows_its_own_coordinates() {
+        // The ramp runs over the first ten of a hundred units, then pads.
+        let img = rasterize(
+            b"<svg width='100' height='20' viewBox='0 0 100 20'><defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='10' y2='0'><stop stop-color='#00ff00'/><stop offset='1' stop-color='#000000'/></linearGradient></defs><rect width='100' height='20' fill='url(#g)'/></svg>",
+            100,
+        )
+        .expect("draws");
+        assert!(img.get_pixel(2, 10)[1] > 180, "{:?}", img.get_pixel(2, 10));
+        assert!(img.get_pixel(80, 10)[1] < 20, "{:?}", img.get_pixel(80, 10));
     }
 }

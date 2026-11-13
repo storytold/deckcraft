@@ -2,8 +2,8 @@
 //! solid and gradient fills, strokes, and `use`.
 //!
 //! What a picture needs is drawn; what a presentation cannot show is not read: text, filters,
-//! masks, clip paths, patterns, animation and scripting are skipped. Gradients become the average
-//! of their stops (a `shortcut:` the renderer can replace with real gradients).
+//! masks, clip paths, patterns, animation and scripting are skipped. A gradient keeps its stops and
+//! its own coordinate space, and the renderer draws the ramp.
 //!
 //! `display: none` hides a subtree and `visibility: hidden` one shape. An ancestor's `opacity`
 //! multiplies each shape it paints rather than compositing the group once, so overlapping shapes
@@ -76,8 +76,78 @@ pub struct Svg {
 pub struct Item {
     pub path: BezPath,
     pub even_odd: bool,
-    pub fill: Option<Rgba>,
-    pub stroke: Option<(Rgba, kurbo::Stroke)>,
+    pub fill: Option<Paint>,
+    pub stroke: Option<(Paint, kurbo::Stroke)>,
+}
+
+/// What a fill or a stroke paints.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Paint {
+    Solid(Rgba),
+    Gradient(Gradient),
+}
+
+impl Paint {
+    /// The paint with every colour's alpha multiplied by `k`.
+    fn faded(self, k: f64) -> Paint {
+        match self {
+            Paint::Solid(c) => Paint::Solid(c.with_alpha(mul_alpha(c.a, k))),
+            Paint::Gradient(mut g) => {
+                for (_, c) in &mut g.stops {
+                    *c = c.with_alpha(mul_alpha(c.a, k));
+                }
+                Paint::Gradient(g)
+            }
+        }
+    }
+}
+
+/// A gradient with the stops and coordinate space it was declared in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gradient {
+    pub kind: GradientKind,
+    /// Stops by offset, ascending, each offset clamped to the one before it as SVG reads them.
+    pub stops: Vec<(f64, Rgba)>,
+    pub units: Units,
+    /// `gradientTransform`, applied in the gradient's own space.
+    pub transform: Affine,
+    pub spread: Spread,
+}
+
+/// Where a gradient ramps, in the space [`Units`] names.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GradientKind {
+    Linear {
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+    },
+    /// A circle at `(cx, cy)` of radius `r`, its first stop at `(fx, fy)`.
+    Radial {
+        cx: f64,
+        cy: f64,
+        r: f64,
+        fx: f64,
+        fy: f64,
+    },
+}
+
+/// What a gradient's coordinates mean.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Units {
+    /// Fractions of the painted shape's bounding box, SVG's default.
+    ObjectBoundingBox,
+    /// User units, as the geometry is.
+    UserSpace,
+}
+
+/// What a gradient paints outside its last stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Spread {
+    Pad,
+    Reflect,
+    Repeat,
 }
 
 /// Does `bytes` look like an SVG picture? The root may carry a namespace prefix (`<s:svg>`).
@@ -146,8 +216,8 @@ fn collect_ids(node: &Node, out: &mut HashMap<String, Arc<Node>>) {
 /// Fill and stroke inherited down the tree, plus the opacity of the groups above.
 #[derive(Clone, Debug)]
 struct Style {
-    fill: Option<Rgba>,
-    stroke: Option<Rgba>,
+    fill: Option<Paint>,
+    stroke: Option<Paint>,
     width: f64,
     cap: kurbo::Cap,
     join: kurbo::Join,
@@ -168,7 +238,7 @@ impl Default for Style {
     fn default() -> Self {
         // SVG's initial values: a black fill, no stroke, a one-unit miter-joined pen.
         Style {
-            fill: Some(Rgba::BLACK),
+            fill: Some(Paint::Solid(Rgba::BLACK)),
             stroke: None,
             width: 1.0,
             cap: kurbo::Cap::Butt,
@@ -254,19 +324,128 @@ impl Style {
     }
 }
 
-/// A paint value. Gradients become the average of their stops; anything unreadable is black, as an
-/// unreadable colour name is in a browser.
-fn paint(v: &str, ids: &HashMap<String, Arc<Node>>) -> Option<Rgba> {
+/// A paint value: solid, or a gradient whose stops the renderer ramps between. A reference to
+/// anything else (a pattern, a filter) falls back to the average of its stops, and an unreadable
+/// colour is black, as an unreadable colour name is in a browser.
+fn paint(v: &str, ids: &HashMap<String, Arc<Node>>) -> Option<Paint> {
     let v = v.trim();
     if v.eq_ignore_ascii_case("none") {
         return None;
     }
     if let Some(inner) = v.strip_prefix("url(").and_then(|r| r.strip_suffix(')')) {
         let id = inner.trim().trim_matches(|c| c == '\'' || c == '"').trim().strip_prefix('#').unwrap_or(inner.trim());
-        let c = ids.get(id).and_then(|n| gradient_color(n, ids)).unwrap_or(Rgba::BLACK);
-        return Some(c);
+        let Some(node) = ids.get(id) else { return Some(Paint::Solid(Rgba::BLACK)) };
+        if let Some(g) = gradient_of(node, ids) {
+            return Some(Paint::Gradient(g));
+        }
+        return Some(Paint::Solid(gradient_color(node, ids).unwrap_or(Rgba::BLACK)));
     }
-    Some(attr::color(v).or_else(|| attr::named(v)).unwrap_or(Rgba::BLACK))
+    Some(Paint::Solid(attr::color(v).or_else(|| attr::named(v)).unwrap_or(Rgba::BLACK)))
+}
+
+/// The gradient a `url(#…)` names, or `None` when the element is not a gradient this reader
+/// understands (or has no usable stops).
+fn gradient_of(node: &Node, ids: &HashMap<String, Arc<Node>>) -> Option<Gradient> {
+    let linear = match node.name.as_str() {
+        "linearGradient" => true,
+        "radialGradient" => false,
+        _ => return None,
+    };
+    // A gradient takes the attributes and stops it does not set itself from the one its `href`
+    // names, which is how an exporter writes a family of gradients that differ in their stops.
+    let chain = href_chain(node, ids);
+    let stops = stops_of(&chain);
+    if stops.is_empty() {
+        return None;
+    }
+    let units = match chain_attr(&chain, "gradientUnits").map(str::trim) {
+        Some("userSpaceOnUse") => Units::UserSpace,
+        _ => Units::ObjectBoundingBox,
+    };
+    let spread = match chain_attr(&chain, "spreadMethod").map(str::trim) {
+        Some("reflect") => Spread::Reflect,
+        Some("repeat") => Spread::Repeat,
+        _ => Spread::Pad,
+    };
+    let transform = attr::transform(chain_attr(&chain, "gradientTransform").unwrap_or(""));
+    let kind = if linear {
+        GradientKind::Linear {
+            x1: coord(&chain, "x1", 0.0),
+            y1: coord(&chain, "y1", 0.0),
+            x2: coord(&chain, "x2", 1.0),
+            y2: coord(&chain, "y2", 0.0),
+        }
+    } else {
+        let (cx, cy) = (coord(&chain, "cx", 0.5), coord(&chain, "cy", 0.5));
+        GradientKind::Radial { cx, cy, r: coord(&chain, "r", 0.5).clamp(0.0, MAX_COORD), fx: coord(&chain, "fx", cx), fy: coord(&chain, "fy", cy) }
+    };
+    Some(Gradient { kind, stops, units, transform, spread })
+}
+
+/// `node` and the gradients its `href` names, outermost first.
+fn href_chain<'a>(node: &'a Node, ids: &'a HashMap<String, Arc<Node>>) -> Vec<&'a Node> {
+    let mut out = vec![node];
+    let mut cur = node;
+    // Four links is what a generator writes at most; a longer chain would only repeat itself.
+    for _ in 0..4 {
+        let Some(next) = k_href(cur).and_then(|h| ids.get(h)).map(Arc::as_ref) else { break };
+        if out.iter().any(|n| std::ptr::eq(*n, next)) {
+            break;
+        }
+        out.push(next);
+        cur = next;
+    }
+    out
+}
+
+fn chain_attr<'a>(chain: &[&'a Node], key: &str) -> Option<&'a str> {
+    chain.iter().find_map(|n| n.attr(key))
+}
+
+/// A gradient coordinate: `50%` is half the box, a bare number keeps the units it names.
+fn coord(chain: &[&Node], key: &str, default: f64) -> f64 {
+    let Some(v) = chain_attr(chain, key).map(str::trim) else { return default };
+    let v = match v.strip_suffix('%') {
+        Some(p) => p.trim().parse::<f64>().ok().map(|p| p / 100.0),
+        None => attr::length(v),
+    };
+    v.filter(|v: &f64| v.is_finite()).map(|v| v.clamp(-MAX_COORD, MAX_COORD)).unwrap_or(default)
+}
+
+/// The stops of the first gradient in `chain` that has any, by offset, each offset at least the
+/// one before it.
+fn stops_of(chain: &[&Node]) -> Vec<(f64, Rgba)> {
+    for n in chain {
+        let mut out: Vec<(f64, Rgba)> = Vec::new();
+        for k in n.kids.iter().filter(|k| k.name == "stop").take(MAX_STOPS) {
+            let offset = k.attr("offset").map(str::to_string).or_else(|| style_value(k, "offset"));
+            let offset = offset.as_deref().map(str::trim).and_then(|v| match v.strip_suffix('%') {
+                Some(p) => p.trim().parse::<f64>().ok().map(|p| p / 100.0),
+                None => v.parse::<f64>().ok(),
+            });
+            let offset = offset.filter(|o: &f64| o.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0);
+            let declared = k.attr("stop-color").map(str::to_string).or_else(|| style_value(k, "stop-color"));
+            let c = declared.as_deref().and_then(|v| attr::color(v).or_else(|| attr::named(v))).unwrap_or(Rgba::BLACK);
+            let a = k
+                .attr("stop-opacity")
+                .map(str::to_string)
+                .or_else(|| style_value(k, "stop-opacity"))
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0);
+            out.push((offset, c.with_alpha(mul_alpha(c.a, a))));
+        }
+        if !out.is_empty() {
+            out.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut last = 0.0;
+            for (o, _) in &mut out {
+                last = o.max(last);
+                *o = last;
+            }
+            return out;
+        }
+    }
+    Vec::new()
 }
 
 /// The average colour of a gradient's stops.
@@ -415,14 +594,13 @@ impl Build {
         // mean of both axes stands in.
         let scale = f.transform.determinant().abs().sqrt();
         let opacity = f.style.group_opacity * f.style.opacity;
-        let fill = f.style.fill.map(|c| c.with_alpha(mul_alpha(c.a, f.style.fill_opacity * opacity)));
-        let stroke = f.style.stroke.filter(|_| f.style.width > 0.0).map(|c| {
-            let color = c.with_alpha(mul_alpha(c.a, f.style.stroke_opacity * opacity));
+        let fill = f.style.fill.clone().map(|p| p.faded(f.style.fill_opacity * opacity));
+        let stroke = f.style.stroke.clone().filter(|_| f.style.width > 0.0).map(|p| {
             let mut pen = kurbo::Stroke::new((f.style.width * scale).max(1e-4)).with_caps(f.style.cap).with_join(f.style.join);
             if let Some(d) = &f.style.dash {
                 pen = pen.with_dashes(0.0, d.iter().map(|v| v * scale));
             }
-            (color, pen)
+            (p.faded(f.style.stroke_opacity * opacity), pen)
         });
         if fill.is_none() && stroke.is_none() {
             return;
@@ -524,9 +702,9 @@ mod tests {
         let s = svg("<path d='M0 0 L10 0 L10 10 Z' fill='#ff0000' stroke='#0000ff' stroke-width='2'/>");
         assert_eq!(s.items.len(), 1);
         let it = &s.items[0];
-        assert_eq!(it.fill, Some(Rgba::rgb(255, 0, 0)));
+        assert_eq!(it.fill, Some(Paint::Solid(Rgba::rgb(255, 0, 0))));
         let (c, pen) = it.stroke.as_ref().expect("stroked");
-        assert_eq!(*c, Rgba::rgb(0, 0, 255));
+        assert_eq!(*c, Paint::Solid(Rgba::rgb(0, 0, 255)));
         assert_eq!(pen.width, 2.0);
         assert!(!it.even_odd);
     }
@@ -541,22 +719,22 @@ mod tests {
     #[test]
     fn a_style_attribute_wins_over_presentation_attributes() {
         let s = svg("<rect width='4' height='4' fill='red' style='fill:#00ff00;stroke:none'/>");
-        assert_eq!(s.items[0].fill, Some(Rgba::rgb(0, 255, 0)));
+        assert_eq!(s.items[0].fill, Some(Paint::Solid(Rgba::rgb(0, 255, 0))));
         assert!(s.items[0].stroke.is_none());
     }
 
     #[test]
     fn groups_pass_their_fill_and_opacity_down() {
         let s = svg("<g fill='blue' fill-opacity='0.5'><rect width='4' height='4'/></g>");
-        assert_eq!(s.items[0].fill, Some(Rgba::rgba(0, 0, 255, 128)));
+        assert_eq!(s.items[0].fill, Some(Paint::Solid(Rgba::rgba(0, 0, 255, 128))));
     }
 
     #[test]
     fn a_child_opacity_does_not_replace_its_groups() {
         let s = svg("<g opacity='0.5'><rect width='4' height='4' opacity='0.5' fill='black'/></g>");
-        assert_eq!(s.items[0].fill, Some(Rgba::rgba(0, 0, 0, 64)));
+        assert_eq!(s.items[0].fill, Some(Paint::Solid(Rgba::rgba(0, 0, 0, 64))));
         let s = svg("<g opacity='0.5'><rect width='4' height='4' fill='black'/></g>");
-        assert_eq!(s.items[0].fill, Some(Rgba::rgba(0, 0, 0, 128)));
+        assert_eq!(s.items[0].fill, Some(Paint::Solid(Rgba::rgba(0, 0, 0, 128))));
     }
 
     #[test]
@@ -606,11 +784,64 @@ mod tests {
     }
 
     #[test]
-    fn a_gradient_fill_is_the_average_of_its_stops() {
+    fn a_gradient_fill_keeps_its_stops_and_its_box() {
         let s = svg(
-            "<defs><linearGradient id='g'><stop stop-color='#000000'/><stop stop-color='#ffffff'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)'/>",
+            "<defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#000000'/><stop offset='100%' stop-color='#ffffff'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)'/>",
         );
-        assert_eq!(s.items[0].fill, Some(Rgba::rgb(127, 127, 127)));
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.units, Units::ObjectBoundingBox);
+        assert_eq!(g.spread, Spread::Pad);
+        assert_eq!(g.kind, GradientKind::Linear { x1: 0.0, y1: 0.0, x2: 0.0, y2: 1.0 });
+        assert_eq!(g.stops, vec![(0.0, Rgba::rgb(0, 0, 0)), (1.0, Rgba::rgb(255, 255, 255))]);
+    }
+
+    #[test]
+    fn a_radial_gradient_defaults_to_the_middle_of_the_box() {
+        let s = svg(
+            "<defs><radialGradient id='g'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></radialGradient></defs><circle r='4' fill='url(#g)'/>",
+        );
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.kind, GradientKind::Radial { cx: 0.5, cy: 0.5, r: 0.5, fx: 0.5, fy: 0.5 });
+        // An offset the document leaves out is 0, as SVG reads it.
+        assert_eq!(g.stops[0].0, 0.0);
+    }
+
+    #[test]
+    fn a_gradient_takes_missing_stops_from_the_gradient_its_href_names() {
+        let s = svg("<defs><linearGradient id='base'><stop stop-color='#ff0000'/><stop offset='1' stop-color='#0000ff'/></linearGradient>\
+             <linearGradient id='g' href='#base' x1='0' x2='1'/></defs><rect width='4' height='4' fill='url(#g)'/>");
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.stops, vec![(0.0, Rgba::rgb(255, 0, 0)), (1.0, Rgba::rgb(0, 0, 255))]);
+        assert_eq!(g.kind, GradientKind::Linear { x1: 0.0, y1: 0.0, x2: 1.0, y2: 0.0 });
+    }
+
+    #[test]
+    fn a_gradient_reads_its_units_space_and_transform() {
+        let s = svg(
+            "<defs><linearGradient id='g' gradientUnits='userSpaceOnUse' spreadMethod='reflect' gradientTransform='rotate(90)'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)'/>",
+        );
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.units, Units::UserSpace);
+        assert_eq!(g.spread, Spread::Reflect);
+        assert!((g.transform.as_coeffs()[1] - 1.0).abs() < 1e-9, "{:?}", g.transform);
+    }
+
+    #[test]
+    fn a_gradient_stop_opacity_and_the_shape_opacity_reach_the_stops() {
+        let s = svg(
+            "<defs><linearGradient id='g'><stop stop-color='#ffffff' stop-opacity='0.5'/><stop offset='1' stop-color='#000000'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)' fill-opacity='0.5'/>",
+        );
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("a gradient") };
+        assert_eq!(g.stops[0].1, Rgba::rgba(255, 255, 255, 64));
+        assert_eq!(g.stops[1].1, Rgba::rgba(0, 0, 0, 128));
+    }
+
+    #[test]
+    fn a_reference_to_something_that_is_not_a_gradient_still_paints() {
+        let s = svg("<defs><pattern id='p'><rect width='2' height='2'/></pattern></defs><rect width='4' height='4' fill='url(#p)'/>");
+        assert!(matches!(s.items[0].fill, Some(Paint::Solid(_))));
+        let s = svg("<rect width='4' height='4' fill='url(#missing)'/>");
+        assert_eq!(s.items[0].fill, Some(Paint::Solid(Rgba::BLACK)));
     }
 
     #[test]
@@ -633,7 +864,7 @@ mod tests {
 
     #[test]
     fn definitions_and_text_are_not_drawn() {
-        let s = svg("<defs><rect width='4' height='4'/></defs><text x='0' y='10'>hi</text><title>t</title>");
+        let s = svg("<defs><rect width='4' height='4'/></defs><title>t</title>");
         assert!(s.items.is_empty());
     }
 
