@@ -271,6 +271,7 @@ struct FontEdits {
     underline: Option<String>,
     color: Option<deckcraft_model::ColorRef>,
     strike: Option<Strike>,
+    shadow: Option<bool>,
     baseline: Option<f64>,
     caps: Option<Caps>,
     spacing: Option<f64>,
@@ -285,6 +286,7 @@ impl FontEdits {
             && self.underline.is_none()
             && self.color.is_none()
             && self.strike.is_none()
+            && self.shadow.is_none()
             && self.baseline.is_none()
             && self.caps.is_none()
             && self.spacing.is_none()
@@ -311,6 +313,10 @@ impl FontEdits {
         }
         if let Some(v) = self.strike {
             r.strike = Some(v);
+        }
+        if let Some(v) = self.shadow {
+            r.shadow = if v { Some(super::text_effects::default_text_shadow()) } else { None };
+            r.no_shadow = !v;
         }
         if let Some(v) = self.baseline {
             r.baseline = Some(v);
@@ -404,7 +410,20 @@ fn font_edits(p: &Value) -> Result<FontEdits> {
             Some(n.clamp(-100.0, 400.0))
         }
     };
-    Ok(FontEdits { family, size, bold: font_bool(p, "bold")?, italic: font_bool(p, "italic")?, underline, color, strike, baseline, caps, spacing })
+    let shadow = font_bool(p, "shadow")?;
+    Ok(FontEdits {
+        family,
+        size,
+        bold: font_bool(p, "bold")?,
+        italic: font_bool(p, "italic")?,
+        underline,
+        color,
+        strike,
+        shadow,
+        baseline,
+        caps,
+        spacing,
+    })
 }
 
 /// A colour as a `format.fontDialog` / `format.color` parameter, including transforms.
@@ -442,6 +461,7 @@ fn font_dialog_params(s: &Session) -> Value {
         "bold": r.bold.unwrap_or(false),
         "italic": r.italic.unwrap_or(false),
         "underline": r.underline.as_deref().filter(|u| *u != "none").unwrap_or("none"),
+        "shadow": r.shadow.is_some(),
         "strike": match r.strike {
             Some(Strike::Double) => "dbl",
             Some(Strike::Single) => "sng",

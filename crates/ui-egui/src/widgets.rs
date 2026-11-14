@@ -270,7 +270,7 @@ pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) 
     }
     icons::paint(&painter, rect.shrink(3.0), icon, t.text, !enabled);
     // Named for screen readers (and tests) by its tooltip.
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, tip));
     resp.on_hover_text(tip)
 }
 

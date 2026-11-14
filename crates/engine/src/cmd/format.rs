@@ -34,6 +34,7 @@ use paragraph::{
     align, align_to, anchor, autofit, bullets, columns, direction, level, line_spacing, margins, numbering, paragraph, paragraph_dialog, rtl, wrap,
 };
 use ruler::{ruler, tabs};
+pub use text_effects::default_text_shadow;
 use text_effects::{case, text_outline, text_shadow, text_warp};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -120,7 +121,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font…",
             ["Home", "Font"],
             Some("Cmd+T"),
-            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
+            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, shadow?: bool, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
             has_text_or_shapes,
             font_dialog
         ),
@@ -339,6 +340,130 @@ mod tests {
             .clone()
     }
 
+    fn assert_shadow_state(s: &mut Session, on: bool) {
+        assert_eq!(s.execute("format.state", &json!({})).unwrap()["shadow"], on);
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({})).unwrap();
+        let UiRequest::Dialog { params, .. } = s.ui_requests.last().unwrap() else { panic!("expected Font dialog") };
+        assert_eq!(params["shadow"], on);
+        assert_eq!(current_run(s).shadow.is_some(), on);
+    }
+
+    #[test]
+    fn inherited_shadow_off_survives_native_and_pptx_roundtrips() {
+        use deckcraft_model::text::LevelStyle;
+        use std::sync::Arc;
+
+        for local_style in [false, true] {
+            for (command, params) in [("format.textShadow", json!({})), ("format.fontDialog", json!({"shadow": false}))] {
+                let mut s = shape();
+                let id = s.doc().unwrap().selection.shapes[0];
+                let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+                let level = LevelStyle { run: RunProps { shadow: Some(default_text_shadow()), ..Default::default() }, ..Default::default() };
+                if local_style {
+                    let sh = Arc::make_mut(&mut doc.slides[0]).shape_mut(id).unwrap();
+                    sh.text.as_mut().unwrap().list_style.set(0, level);
+                } else {
+                    doc.default_text_style.set(0, level);
+                }
+                assert_shadow_state(&mut s, true);
+                let before = s.doc().unwrap().history.undo.len();
+                s.execute(command, &params).unwrap();
+                assert_eq!(s.doc().unwrap().history.undo.len(), before + 1);
+                assert!(props(&s).no_shadow);
+                assert_shadow_state(&mut s, false);
+
+                let doc = &s.doc().unwrap().doc;
+                let native = deckcraft_format::load(&deckcraft_format::save(doc).unwrap()).unwrap();
+                let pptx = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
+                for reopened in [native, pptx] {
+                    let id = reopened.slides[0].shapes.iter().find(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Hello")).unwrap().id;
+                    let mut loaded = shape();
+                    let st = loaded.doc_mut().unwrap();
+                    st.doc = Arc::new(reopened);
+                    st.selection.shapes = vec![id];
+                    assert!(props(&loaded).no_shadow);
+                    assert_shadow_state(&mut loaded, false);
+                    loaded.execute("format.textShadow", &json!({})).unwrap();
+                    assert!(!props(&loaded).no_shadow);
+                    assert_shadow_state(&mut loaded, true);
+                }
+
+                s.execute("edit.undo", &json!({})).unwrap();
+                assert!(!props(&s).no_shadow);
+                assert_shadow_state(&mut s, true);
+            }
+        }
+    }
+
+    /// A run's own `a:effectLst` replaces the inherited list, so turning off an inherited shadow
+    /// must restate the other inherited effects: PowerPoint would drop the glow otherwise.
+    #[test]
+    fn inherited_shadow_off_keeps_the_inherited_glow_in_pptx() {
+        use deckcraft_model::style::Glow;
+        use deckcraft_model::text::LevelStyle;
+        use deckcraft_model::{ColorRef, Rgba};
+        use std::sync::Arc;
+
+        let glow = Glow { color: ColorRef::rgb(Rgba::rgb(255, 0, 0)), radius: 6.0 };
+        for editing_text in [false, true] {
+            let mut s = shape();
+            let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let run = RunProps { shadow: Some(default_text_shadow()), glow: Some(glow.clone()), ..Default::default() };
+            doc.default_text_style.set(0, LevelStyle { run, ..Default::default() });
+            if editing_text {
+                let id = s.doc().unwrap().selection.shapes[0];
+                s.execute("text.edit", &json!({"id": id})).unwrap();
+                s.execute("text.selectAll", &json!({})).unwrap();
+            }
+            s.execute("format.textShadow", &json!({})).unwrap();
+            if editing_text {
+                s.execute("text.exit", &json!({})).unwrap();
+            }
+
+            let doc = &s.doc().unwrap().doc;
+            let reopened = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
+            let sh = reopened.slides[0].shapes.iter().find(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Hello")).unwrap();
+            let r = &sh.text.as_ref().unwrap().paragraphs[0].runs[0].props;
+            assert!(r.no_shadow && r.shadow.is_none(), "editing text: {editing_text}");
+            assert_eq!(r.glow.as_ref(), Some(&glow), "editing text: {editing_text}");
+        }
+    }
+
+    /// Table text inherits from the master's other-text style: a selected table keeps that glow
+    /// in PPTX when its inherited shadow is turned off.
+    #[test]
+    fn inherited_shadow_off_keeps_a_table_cells_inherited_glow_in_pptx() {
+        use deckcraft_model::style::Glow;
+        use deckcraft_model::text::LevelStyle;
+        use deckcraft_model::{ColorRef, Rgba, ShapeKind};
+        use std::sync::Arc;
+
+        let glow = Glow { color: ColorRef::rgb(Rgba::rgb(255, 0, 0)), radius: 6.0 };
+        let mut s = Session::with_new();
+        s.execute("insert.table", &json!({"rows": 1, "cols": 2, "rect": [40.0, 40.0, 300.0, 60.0], "data": [["a", "b"]]})).unwrap();
+        let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let run = RunProps { shadow: Some(default_text_shadow()), glow: Some(glow.clone()), ..Default::default() };
+        Arc::make_mut(&mut doc.masters[0]).other_style.set(0, LevelStyle { run, ..Default::default() });
+        s.execute("format.textShadow", &json!({"on": false})).unwrap();
+
+        let doc = &s.doc().unwrap().doc;
+        let reopened = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
+        let table = reopened.slides[0]
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Table(t) => Some(t),
+                _ => None,
+            })
+            .unwrap();
+        for cell in &table.rows[0].cells {
+            let r = &cell.text.paragraphs[0].runs[0].props;
+            assert!(r.no_shadow && r.shadow.is_none());
+            assert_eq!(r.glow.as_ref(), Some(&glow));
+        }
+    }
+
     #[test]
     fn font_dialog_applies_character_formatting_in_one_undo() {
         let mut s = shape();
@@ -353,6 +478,7 @@ mod tests {
                 "underline": "wavy",
                 "color": "#112233",
                 "strike": "dbl",
+                "shadow": true,
                 "baseline": "super",
                 "caps": "small",
                 "spacing": 3
@@ -369,12 +495,13 @@ mod tests {
         assert_eq!(r.underline.as_deref(), Some("wavy"));
         assert!(matches!(r.fill, Some(Fill::Solid { color }) if matches!(color.base, ColorBase::Rgb { .. })));
         assert_eq!(r.strike, Some(Strike::Double));
+        assert!(r.shadow.is_some());
         assert_eq!(r.baseline, Some(0.3));
         assert_eq!(r.caps, Some(Caps::Small));
         assert_eq!(r.spacing, Some(3.0));
         s.execute("edit.undo", &json!({})).unwrap();
         let r = props(&s);
-        assert!(r.font.is_none() && r.size.is_none() && r.bold.is_none() && r.underline.is_none() && r.fill.is_none());
+        assert!(r.font.is_none() && r.size.is_none() && r.bold.is_none() && r.underline.is_none() && r.fill.is_none() && r.shadow.is_none());
         assert_eq!(r.strike, None);
         assert_eq!(r.caps, None);
     }
@@ -411,8 +538,19 @@ mod tests {
         assert_eq!(id, "font");
         assert_eq!(params["italic"], true);
         assert_eq!(params["bold"], false);
+        assert_eq!(params["shadow"], false);
         assert!(params["family"].as_str().is_some_and(|f| !f.is_empty()));
         assert!(params["size"].as_f64().is_some_and(|n| n > 0.0));
+    }
+
+    #[test]
+    fn font_dialog_with_spacing_applies_without_opening_dialog() {
+        let mut s = shape();
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({"spacing": 3.0})).unwrap();
+        assert!(s.ui_requests.is_empty(), "spacing edit must not open dialog");
+        let r = props(&s);
+        assert_eq!(r.spacing, Some(3.0));
     }
 
     #[test]

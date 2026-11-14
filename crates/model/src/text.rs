@@ -511,6 +511,10 @@ pub struct RunProps {
     #[serde(deserialize_with = "bounded_language")]
     pub alt_lang: Option<String>,
     pub shadow: Option<crate::style::Shadow>,
+    /// Explicit no-shadow override, distinct from an unset (inherited) `shadow`.
+    /// Kept separately so existing native shadow objects retain their representation.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_shadow: bool,
     /// `a:innerShdw` on the run. Outer shadow stays in `shadow`.
     pub inner_shadow: Option<crate::style::Shadow>,
     pub glow: Option<crate::style::Glow>,
@@ -556,7 +560,6 @@ impl RunProps {
             hover,
             lang,
             alt_lang,
-            shadow,
             inner_shadow,
             glow,
             reflection,
@@ -564,6 +567,10 @@ impl RunProps {
             no_proof,
             normalize_height
         );
+        if self.shadow.is_none() && !self.no_shadow {
+            self.shadow.clone_from(&p.shadow);
+            self.no_shadow = p.no_shadow && self.shadow.is_none();
+        }
     }
 }
 
@@ -758,6 +765,20 @@ impl TextBody {
 mod tests {
     use super::*;
     use deckcraft_color::Rgba;
+
+    #[test]
+    fn explicit_no_shadow_inherits_as_an_override() {
+        let parent = RunProps { no_shadow: true, ..Default::default() };
+        let mut child = RunProps::default();
+        child.inherit(&parent);
+        assert!(child.no_shadow);
+        assert!(child.shadow.is_none());
+        let saved = serde_json::to_vec(&child).unwrap();
+        let reopened: RunProps = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(reopened, child);
+        let legacy: RunProps = serde_json::from_str("{}").unwrap();
+        assert!(!legacy.no_shadow);
+    }
 
     #[test]
     fn alternate_language_inherits_and_native_input_is_bounded() {
