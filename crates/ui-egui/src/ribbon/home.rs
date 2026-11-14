@@ -30,8 +30,16 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
             });
         }
         rows(ui, |ui| {
-            small(app, ui, Icon::Cut, "Cut", "edit.cut", json!({}));
-            small(app, ui, Icon::Copy, "Copy", "edit.copy", json!({}));
+            // Clicking the ribbon moves focus off the thumbnails; retain the selected content's
+            // scope, but never mistake a master/layout selection for presentation slides.
+            let slides = app.session.active().is_some_and(|d| {
+                d.selection.target == deckcraft_engine::Target::Slides
+                    && d.selection.shapes.is_empty()
+                    && d.selection.text.is_none()
+                    && !d.selection.slides.is_empty()
+            });
+            small(app, ui, Icon::Cut, "Cut", "edit.cut", if slides { json!({"scope": "slides"}) } else { json!({}) });
+            small(app, ui, Icon::Copy, "Copy", "edit.copy", if slides { json!({"scope": "slides"}) } else { json!({}) });
             let on = app.session.painter.is_some();
             let en = enabled(app, "format.painter");
             let r = small_button(ui, Icon::FormatPainter, "Format", en, on).on_hover_text("Format Painter (double-click to keep it on)");

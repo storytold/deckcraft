@@ -70,9 +70,8 @@ fn redo(s: &mut Session, _p: &Value) -> Result<Value> {
     restore(s, true)
 }
 
-fn slides_scope(s: &Session, p: &Value) -> bool {
+fn slides_scope(_s: &Session, p: &Value) -> bool {
     str_param(p, "scope") == Some("slides")
-        || s.active().is_some_and(|d| d.selection.shapes.is_empty() && d.selection.text.is_none() && !d.selection.slides.is_empty())
 }
 
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {

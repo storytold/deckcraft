@@ -892,6 +892,99 @@ fn copy_and_cut_commands_reach_the_system_clipboard() {
     assert!(harness.state().session.active().unwrap().doc.slides[0].shapes.iter().all(|s| s.id.0 != title), "and removes the shape");
 }
 
+#[test]
+fn ribbon_copy_and_cut_preserve_slide_selection_scope() {
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    harness.run_steps(2);
+    let id = harness.state().session.active().unwrap().doc.slides[0].id;
+    {
+        let app = harness.state_mut();
+        app.session
+            .select(|_, sel| {
+                sel.slides = vec![id];
+                sel.shapes.clear();
+                sel.text = None;
+            })
+            .unwrap();
+        // The engine deliberately does not infer slide scope from selection alone.
+        app.session.execute("edit.copy", &json!({})).unwrap();
+        assert!(app.session.clipboard.slides.is_empty());
+        app.session.execute("edit.cut", &json!({})).unwrap();
+        app.session.execute("edit.delete", &json!({})).unwrap();
+        assert_eq!(app.session.doc().unwrap().doc.slides.len(), 1);
+    }
+    harness.run_steps(1);
+    harness.get_by_label("Copy").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().session.clipboard.slides[0].id, id);
+    assert_eq!(harness.state().session.doc().unwrap().doc.slides.len(), 1);
+    harness.get_by_label("Cut").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().session.clipboard.slides[0].id, id);
+    assert!(harness.state().session.doc().unwrap().doc.slides.is_empty());
+}
+
+#[test]
+fn master_thumbnail_clipboard_shortcuts_never_copy_or_cut_slides() {
+    for params in [json!({"master": 0}), json!({"master": 0, "layout": 0})] {
+        let mut session = Session::with_new();
+        session.execute("view.slideMaster", &params).unwrap();
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, Services::default()),
+        );
+        harness.run_steps(2);
+        for event in [egui::Event::Copy, egui::Event::Cut] {
+            harness.state_mut().slides_focused = true;
+            harness.event(event);
+            harness.run_steps(2);
+            assert!(harness.state().session.clipboard.slides.is_empty());
+            assert_eq!(harness.state().session.doc().unwrap().doc.slides.len(), 1);
+        }
+    }
+}
+
+#[test]
+fn delete_slides_requires_thumbnail_focus_and_plain_delete() {
+    for (focused, key, modifiers, removed) in [
+        (false, egui::Key::Delete, egui::Modifiers::NONE, false),
+        (true, egui::Key::Backspace, egui::Modifiers::NONE, false),
+        (true, egui::Key::Delete, egui::Modifiers::SHIFT, false),
+        (true, egui::Key::Delete, egui::Modifiers::NONE, true),
+    ] {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let app = harness.state_mut();
+        let id = app.session.doc().unwrap().doc.slides[0].id;
+        app.session
+            .select(|_, sel| {
+                sel.slides = vec![id];
+                sel.shapes.clear();
+                sel.text = None;
+            })
+            .unwrap();
+        app.slides_focused = focused;
+        harness.key_press_modifiers(modifiers, key);
+        harness.run_steps(2);
+        assert_eq!(harness.state().session.doc().unwrap().doc.slides.is_empty(), removed);
+    }
+}
+
 /// #182: Ctrl+C then Ctrl+V did nothing for objects without text (a rectangle), because
 /// egui-winit drops Ctrl+V when the system clipboard is empty; the context menu worked.
 #[test]
