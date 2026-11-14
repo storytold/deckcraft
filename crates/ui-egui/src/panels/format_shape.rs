@@ -1,3 +1,6 @@
+use deckcraft_color::ColorTransform;
+use deckcraft_model::ColorBase;
+
 use super::effect_presets;
 use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, json, run, scheme, theme, vec2, widgets};
 
@@ -9,6 +12,68 @@ pub(super) fn solid_fill_transparency_percent(fill: Option<&Fill>) -> f32 {
         return 0.0;
     };
     ((1.0 - color.alpha()) * 100.0) as f32
+}
+
+/// Percent transparency (0 = opaque) of the line a shape draws: its own fill when it has one,
+/// otherwise `effective` (the line resolved to RGBA, inherited or not). `None` when that line is
+/// not solid, so Format Shape ▸ Line shows no Transparency row.
+fn line_transparency_percent(own: Option<&Fill>, effective: Option<&Fill>) -> Option<f32> {
+    let Some(Fill::Solid { color }) = own.or(effective) else {
+        return None;
+    };
+    let rgba_alpha = |c: &deckcraft_model::ColorRef| match &c.base {
+        ColorBase::Rgb { rgb } => f64::from(rgb.a) / 255.0,
+        _ => 1.0,
+    };
+    let set = color.mods.iter().any(|m| matches!(m, ColorTransform::Alpha(_)));
+    let relative = color.mods.iter().any(|m| matches!(m, ColorTransform::AlphaMod(_) | ColorTransform::AlphaOff(_)));
+    let alpha = if set && !relative {
+        color.alpha()
+    } else {
+        // `alphaMod`, `alphaOff` and the alpha of the style color `phClr` takes apply only in
+        // the resolved color.
+        let resolved = match effective {
+            Some(Fill::Solid { color: c }) => c,
+            _ => color,
+        };
+        rgba_alpha(resolved)
+    };
+    Some(((1.0 - alpha) * 100.0) as f32)
+}
+
+/// The value a slider shows: the value it holds while it is being changed, or `seed` once the
+/// document has changed since that value was held (an undo, or a command run from the ribbon or
+/// the Quick Access Toolbar), so leaving the slider does not write the held value back.
+fn held_value<T: Clone + Send + Sync + 'static>(ui: &Ui, id: egui::Id, revision: u64, seed: T) -> T {
+    ui.data_mut(|d| d.get_temp::<(u64, T)>(id)).filter(|(held_at, _)| *held_at == revision).map_or(seed, |(_, v)| v)
+}
+
+/// The active document's revision, which every edit, undo and selection change increases.
+fn doc_revision(app: &SlideApp) -> u64 {
+    app.session.active().map_or(0, |d| d.revision)
+}
+
+/// Format Shape ▸ Line's Transparency row. `shape.line {transparency}` changes a solid line (an
+/// automatic one through its effective color).
+fn line_transparency_row(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, effective_line: Option<&Fill>, revision: u64) {
+    let line_fill = sh.line.as_ref().and_then(|l| l.fill.as_ref());
+    let Some(seed) = line_transparency_percent(line_fill, effective_line) else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        let label = ui.label("Transparency");
+        let id = ui.scope_id().with(("ltr", sh.id.0));
+        let mut v = held_value(ui, id, revision, seed);
+        let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%")).labelled_by(label.id);
+        if r.drag_stopped() || r.lost_focus() {
+            if let Some(t) = fill_transparency_to_apply(v, seed) {
+                run(app, "shape.line", json!({"transparency": t}));
+            }
+            ui.data_mut(|d| d.remove::<(u64, f32)>(id));
+        } else if r.dragged() || r.changed() {
+            ui.data_mut(|d| d.insert_temp(id, (revision, v)));
+        }
+    });
 }
 
 /// Fraction to pass to `shape.fill` when the slider moved. An unchanged value (a focus
@@ -263,9 +328,11 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         return;
     };
     let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
+    let effective_line = deckcraft_engine::cmd::shape::effective_line_fill(&st.doc, &st.selection, &sh);
     // Scale and a centre origin work from the shown shape's size, so they need a single shape.
     let single = st.selected_shapes().len() == 1;
     let uid = st.uid;
+    let revision = st.revision;
     format_tabs(app, ui, &sh);
     ui.separator();
     match app.ui.format_tab.as_str() {
@@ -418,15 +485,15 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     fill => solid_fill_transparency_percent(fill.as_ref()),
                 };
                 let id = ui.scope_id().with(("ftr", sh.id.0));
-                let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(seed));
+                let mut v = held_value(ui, id, revision, seed);
                 let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%")).labelled_by(label.id);
                 if r.drag_stopped() || r.lost_focus() {
                     if let Some(t) = fill_transparency_to_apply(v, seed) {
                         let _ = app.run("shape.fill", json!({"transparency": t}));
                     }
-                    ui.data_mut(|d| d.remove::<f32>(id));
+                    ui.data_mut(|d| d.remove::<(u64, f32)>(id));
                 } else if r.dragged() || r.changed() {
-                    ui.data_mut(|d| d.insert_temp(id, v));
+                    ui.data_mut(|d| d.insert_temp(id, (revision, v)));
                 }
             });
             // A group that keeps a fill for its pictures shows no editor for that fill while its
@@ -467,6 +534,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 Some(c) => ("shape.line".into(), json!({"color": cref_param(&c)})),
                 None => ("shape.line".into(), json!({"none": true})),
             });
+            line_transparency_row(app, ui, &sh, effective_line.as_ref(), revision);
             ui.horizontal(|ui| {
                 ui.label("Width");
                 let w = sh.line.as_ref().and_then(|l| l.width).unwrap_or(0.75);
@@ -567,12 +635,13 @@ fn fx_slider(
         let label = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
         // Hold the value while dragging; otherwise follow the shape.
         let sid = ui.scope_id().with(id);
-        let mut v: f64 = ui.data_mut(|d| d.get_temp(sid)).unwrap_or(value);
+        let revision = doc_revision(app);
+        let mut v = held_value(ui, sid, revision, value);
         let r = ui.add(egui::Slider::new(&mut v, range).suffix(suffix).max_decimals(0)).labelled_by(label.id);
         if r.dragged() || r.has_focus() {
-            ui.data_mut(|d| d.insert_temp(sid, v));
+            ui.data_mut(|d| d.insert_temp(sid, (revision, v)));
         } else {
-            ui.data_mut(|d| d.remove::<f64>(sid));
+            ui.data_mut(|d| d.remove::<(u64, f64)>(sid));
         }
         // `changed()` also fires when the slider only rounds the value it shows (55.000000000000007 to 55,
         // or 0.5 to 1 on focus, which re-added a reflection the pane had just cleared): only a move to
@@ -582,13 +651,13 @@ fn fx_slider(
         // must not commit its stale value: only an edit the user made is committed on losing focus.
         let edited_id = sid.with("edited");
         if shown_changed {
-            ui.data_mut(|d| d.insert_temp(edited_id, true));
+            ui.data_mut(|d| d.insert_temp(edited_id, revision));
         }
-        let edited = ui.data_mut(|d| d.get_temp::<bool>(edited_id)).unwrap_or(false);
+        let edited = ui.data_mut(|d| d.get_temp::<u64>(edited_id)) == Some(revision);
         if r.drag_stopped() || (r.lost_focus() && edited) || (shown_changed && !r.dragged()) {
             ui.data_mut(|d| {
-                d.remove::<f64>(sid);
-                d.remove::<bool>(edited_id);
+                d.remove::<(u64, f64)>(sid);
+                d.remove::<u64>(edited_id);
             });
             run(app, "shape.effects", json!({key: {prop: v * scale}}));
         }
@@ -775,13 +844,14 @@ pub(crate) fn text_transparency_slider(app: &mut SlideApp, ui: &mut Ui, sh: &dec
         let label = ui.label("Transparency");
         let id = ui.scope_id().with(("text-transparency", sh.id));
         let stored = (text_transparency_of(sh) * 100.0) as f32;
-        let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(stored));
+        let revision = doc_revision(app);
+        let mut v = held_value(ui, id, revision, stored);
         let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%")).labelled_by(label.id);
         if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
             let _ = app.run("format.textTransparency", json!({"value": v as f64 / 100.0}));
-            ui.data_mut(|d| d.remove::<f32>(id));
+            ui.data_mut(|d| d.remove::<(u64, f32)>(id));
         } else if r.dragged() {
-            ui.data_mut(|d| d.insert_temp(id, v));
+            ui.data_mut(|d| d.insert_temp(id, (revision, v)));
         }
     });
 }

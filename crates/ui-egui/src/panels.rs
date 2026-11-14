@@ -214,11 +214,172 @@ mod tests {
         // 0.37 exposes the slider's numeric entry as a SpinButton with the same name; target the
         // Slider itself so the click lands on the slider, not its text field. A click at its
         // middle is a real edit (50%), not a side effect of opening the pane or selecting b.
-        h.get_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").click();
+        // The Fill section's slider comes before the Line section's.
+        h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").next().unwrap().click();
         h.run_steps(2);
         assert_eq!(solid_alpha(h.state(), b), Some(50_000));
         let changed: Vec<f64> = slider_values(&h);
         assert!(changed.iter().any(|v| (*v - 50.0).abs() < 0.5), "the changed slider shows 50%, got {changed:?}");
+    }
+
+    /// Format Shape ▸ Line ▸ Transparency shows a solid line's transparency and sets it in one
+    /// undo step; No line has no Transparency row.
+    #[test]
+    fn line_transparency_slider_shows_and_sets_the_lines_transparency() {
+        let mut h = fill_pane(Some(json!({"none": true})));
+        let line_alpha = |h: &Harness<'_, SlideApp>| {
+            let doc = h.state().session.active().unwrap();
+            match doc.selected_shapes()[0].line.as_ref().and_then(|l| l.fill.as_ref()) {
+                Some(Fill::Solid { color }) => color.mods.iter().find_map(|m| match m {
+                    ColorTransform::Alpha(v) => Some(*v),
+                    _ => None,
+                }),
+                other => panic!("expected a solid line, got {other:?}"),
+            }
+        };
+        h.state_mut().session.execute("shape.line", &json!({"color": "#ff0000", "transparency": 0.4})).unwrap();
+        h.run_steps(3);
+        let rows = || h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count();
+        assert_eq!(rows(), 1, "no fill, so the one Transparency row is the line's");
+        let shown = slider_values(&h);
+        assert!(shown.iter().any(|v| (*v - 40.0).abs() < 0.5), "a 40% transparent line should show 40%, got {shown:?}");
+
+        h.get_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").click();
+        h.run_steps(2);
+        assert_eq!(line_alpha(&h), Some(50_000));
+        h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
+        h.run_steps(2);
+        assert_eq!(line_alpha(&h), Some(60_000));
+
+        h.state_mut().session.execute("shape.line", &json!({"none": true})).unwrap();
+        h.run_steps(3);
+        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 0, "No line");
+    }
+
+    /// A Transparency slider changed from the keyboard holds its value until it loses the focus.
+    /// When an undo or a command run outside the pane changes the shape first, the slider shows
+    /// the new value, and leaving it does not write the held one back.
+    #[test]
+    fn transparency_sliders_drop_a_held_value_when_the_document_changes() {
+        let alpha = |fill: Option<&Fill>| match fill {
+            Some(Fill::Solid { color }) => color.mods.iter().find_map(|m| match m {
+                ColorTransform::Alpha(v) => Some(*v),
+                _ => None,
+            }),
+            other => panic!("expected a solid fill, got {other:?}"),
+        };
+        for (slider, cmd) in [(0, "shape.fill"), (1, "shape.line")] {
+            let mut h = fill_pane(Some(json!({"color": "#00ff00"})));
+            h.state_mut().session.execute("shape.line", &json!({"color": "#ff0000"})).unwrap();
+            h.state_mut().session.execute(cmd, &json!({"transparency": 0.4})).unwrap();
+            h.run_steps(3);
+            let read = |h: &Harness<'_, SlideApp>| {
+                let doc = h.state().session.active().unwrap();
+                let sh = doc.selected_shapes()[0];
+                if slider == 0 { alpha(sh.fill.as_ref()) } else { alpha(sh.line.as_ref().and_then(|l| l.fill.as_ref())) }
+            };
+            let value = |h: &Harness<'_, SlideApp>| {
+                h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency")
+                    .nth(slider)
+                    .unwrap()
+                    .accesskit_node()
+                    .numeric_value()
+                    .unwrap()
+            };
+            h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").nth(slider).unwrap().focus();
+            h.run_steps(2);
+            h.key_press(egui::Key::ArrowRight);
+            h.run_steps(2);
+            assert!(value(&h) > 40.5, "{cmd}: the arrow key moves the slider, got {}", value(&h));
+            assert_eq!(read(&h), Some(60_000), "{cmd}: nothing is written while the slider keeps the focus");
+
+            h.state_mut().session.execute(cmd, &json!({"transparency": 0.1})).unwrap();
+            h.run_steps(3);
+            assert!((value(&h) - 10.0).abs() < 0.5, "{cmd}: the slider shows the new 10%, got {}", value(&h));
+            h.key_press(egui::Key::Tab);
+            h.run_steps(3);
+            assert_eq!(read(&h), Some(90_000), "{cmd}: leaving the slider keeps the 10% the command set");
+        }
+    }
+
+    /// An effect slider that has the focus holds its value; a command run outside the pane
+    /// replaces it, and leaving the slider does not write the held value back.
+    #[test]
+    fn effect_sliders_drop_a_held_value_when_the_document_changes() {
+        let mut h = fill_pane(None);
+        h.state_mut().session.execute("shape.effects", &json!({"shadow": "outer"})).unwrap();
+        h.state_mut().session.execute("shape.effects", &json!({"shadowProps": {"blur": 4.0}})).unwrap();
+        h.state_mut().ui.format_tab = "effects".into();
+        h.run_steps(3);
+        let blur = |h: &Harness<'_, SlideApp>| {
+            let doc = h.state().session.active().unwrap();
+            doc.selected_shapes()[0].effects.as_ref().and_then(|e| e.outer_shadow.as_ref()).map(|s| s.blur)
+        };
+        let value =
+            |h: &Harness<'_, SlideApp>| h.get_by_role_and_label(egui::accesskit::Role::Slider, "Blur").accesskit_node().numeric_value().unwrap();
+        h.get_by_role_and_label(egui::accesskit::Role::Slider, "Blur").focus();
+        h.run_steps(2);
+        assert!((value(&h) - 4.0).abs() < 0.5, "the slider shows 4 pt, got {}", value(&h));
+        h.key_press(egui::Key::ArrowRight);
+        h.run_steps(2);
+        assert!(value(&h) > 4.5, "the arrow key moves the slider, got {}", value(&h));
+        assert_eq!(blur(&h), Some(5.0), "the keyboard edit is committed immediately");
+
+        h.state_mut().session.execute("shape.effects", &json!({"shadowProps": {"blur": 10.0}})).unwrap();
+        h.run_steps(3);
+        assert!((value(&h) - 10.0).abs() < 0.5, "the slider shows the new 10 pt, got {}", value(&h));
+        h.key_press(egui::Key::Tab);
+        h.run_steps(3);
+        assert_eq!(blur(&h), Some(10.0), "leaving the slider keeps the 10 pt the command set");
+    }
+
+    /// An automatic line shows the transparency it inherits from the theme's line style.
+    #[test]
+    fn line_transparency_slider_shows_an_inherited_lines_transparency() {
+        let mut h = fill_pane(Some(json!({"none": true})));
+        h.state_mut()
+            .session
+            .edit(|doc, _| {
+                for l in &mut std::sync::Arc::make_mut(&mut doc.masters[0]).theme.format.lines {
+                    l.fill = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 255)).with(ColorTransform::Alpha(50_000))));
+                }
+                Ok(())
+            })
+            .unwrap();
+        h.run_steps(3);
+        assert!(h.state().session.active().unwrap().selected_shapes()[0].line.is_none(), "the line is automatic");
+        let shown = slider_values(&h);
+        assert!(shown.iter().any(|v| (*v - 50.0).abs() < 0.5), "a line inheriting 50% should show 50%, got {shown:?}");
+
+        // A line's own `alphaMod` shows as the transparency it draws with.
+        h.state_mut()
+            .session
+            .edit(|doc, sel| {
+                let id = sel.shapes[0];
+                let sh = std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shape_mut(id).unwrap();
+                let color = ColorRef::scheme(SchemeSlot::Accent1).with(ColorTransform::AlphaMod(30_000));
+                sh.line = Some(deckcraft_model::Line { fill: Some(Fill::solid(color)), ..Default::default() });
+                Ok(())
+            })
+            .unwrap();
+        h.run_steps(3);
+        let shown = slider_values(&h);
+        assert!(shown.iter().any(|v| (*v - 70.0).abs() < 0.5), "alphaMod 30% should show 70%, got {shown:?}");
+
+        // A `phClr` line shows the alpha of the style color it takes.
+        h.state_mut()
+            .session
+            .edit(|doc, sel| {
+                let id = sel.shapes[0];
+                let sh = std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shape_mut(id).unwrap();
+                sh.line = Some(deckcraft_model::Line { fill: Some(Fill::solid(ColorRef::scheme(SchemeSlot::PhClr))), ..Default::default() });
+                sh.style.as_mut().unwrap().line_ref.1 = ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 255)).with(ColorTransform::Alpha(25_000));
+                Ok(())
+            })
+            .unwrap();
+        h.run_steps(3);
+        let shown = slider_values(&h);
+        assert!(shown.iter().any(|v| (*v - 75.0).abs() < 0.5), "a phClr line on a 25% opaque style color should show 75%, got {shown:?}");
     }
 
     /// A blank slide with one selected rectangle, its fill set by `fill` (none for an automatic fill),
@@ -260,12 +421,13 @@ mod tests {
     fn fill_color_and_transparency_show_only_where_they_change_the_fill() {
         let gradient = json!({"gradient": {"stops": [[0, "accent1"], [1, "accent2"]], "angle": 90}});
         for (name, fill, color, transparency) in [
-            ("automatic", None, true, 1),
-            ("solid", Some(json!({"color": "accent2"})), true, 1),
-            ("no fill", Some(json!({"none": true})), false, 0),
-            // The one Transparency row left is the selected gradient stop's.
-            ("gradient", Some(gradient), false, 1),
-            ("picture", Some(picture_fill(0.0)), false, 1),
+            // Each count includes the Line section's row for the rectangle's automatic line.
+            ("automatic", None, true, 2),
+            ("solid", Some(json!({"color": "accent2"})), true, 2),
+            ("no fill", Some(json!({"none": true})), false, 1),
+            // The other Transparency row is the selected gradient stop's.
+            ("gradient", Some(gradient), false, 2),
+            ("picture", Some(picture_fill(0.0)), false, 2),
         ] {
             let h = fill_pane(fill);
             let fill_color = color_buttons(&h) == 2;
@@ -306,7 +468,7 @@ mod tests {
     }
 
     /// Slide background fill is one of the Fill options. It has no Color button or Transparency
-    /// slider of its own.
+    /// slider of its own; the line keeps its Transparency slider.
     #[test]
     fn slide_background_fill_is_a_fill_option() {
         let mut h = fill_pane(None);
@@ -318,7 +480,7 @@ mod tests {
         assert_eq!(h.state().session.active().unwrap().history.undo.len(), undo + 1, "one undo step");
         assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
         assert_eq!(color_buttons(&h), 1, "only the line's Color button");
-        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 0);
+        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 1);
         // A shape that already has the background fill shows this option chosen, not Automatic.
         let h = fill_pane(Some(json!({"background": true})));
         assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
