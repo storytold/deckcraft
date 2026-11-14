@@ -1,6 +1,6 @@
 use super::{
-    Arc, Caps, ColorRef, ColorTransform, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or,
-    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_param, resolve, str_param,
+    Arc, Caps, ColorRef, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or, bool_param,
+    color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_param, resolve, str_param,
 };
 
 pub(super) fn bold(s: &mut Session, p: &Value) -> Result<Value> {
@@ -129,10 +129,7 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// `a:alpha` for `transparency` (0–1) on `c`, replacing any alpha it had; fully opaque drops it.
 fn with_transparency(c: &mut ColorRef, transparency: f64) {
-    c.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_)));
-    if transparency > 0.0 {
-        c.mods.push(ColorTransform::Alpha(((1.0 - transparency) * 100_000.0).round() as i32));
-    }
+    c.set_alpha(1.0 - transparency);
 }
 
 /// Text Fill › Transparency: the text keeps its colour and gets an alpha. A run without its own

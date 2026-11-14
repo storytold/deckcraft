@@ -338,4 +338,38 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     assert!((off.alpha() - 0.5).abs() < 1e-9, "{}", off.alpha());
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
+    let byte = ColorRef::rgb(Rgba::rgba(1, 2, 3, 51)).with(ColorTransform::AlphaMod(50000));
+    assert!((byte.alpha() - 0.1).abs() < 1e-9, "{}", byte.alpha());
+}
+
+/// `set_alpha` replaces every alpha a color has, for each kind of base. A base other than RGB
+/// can resolve to a color with its own alpha, so it keeps an explicit `alpha` transform even when
+/// opaque.
+#[test]
+fn set_alpha_replaces_every_alpha_of_a_color() {
+    use deckcraft_color::{ColorScheme, ColorTransform, Rgba};
+    let half = Rgba::rgba(10, 20, 30, 128);
+    let scheme = ColorScheme { name: "Test".into(), colors: [half; 12] };
+    let bases = [
+        ColorRef::rgb(half),
+        ColorRef::scheme(SchemeSlot::Accent1),
+        ColorRef::scheme(SchemeSlot::PhClr),
+        ColorRef { base: style::ColorBase::Preset { name: "red".into() }, mods: vec![] },
+        ColorRef { base: style::ColorBase::System { name: "window".into(), last: half }, mods: vec![] },
+    ];
+    for base in bases {
+        for mods in [vec![], vec![ColorTransform::Alpha(30000)], vec![ColorTransform::AlphaMod(50000), ColorTransform::AlphaOff(-10000)]] {
+            let mut c = base.clone();
+            c.mods.extend(mods.iter().cloned());
+            for (a, want) in [(1.0, 255), (0.25, 64)] {
+                let mut set = c.clone();
+                set.set_alpha(a);
+                assert_eq!(set.resolve(&scheme, Some(half)).a, want, "{c:?} at {a}");
+                assert!((set.alpha() - a).abs() < 1e-9, "{c:?} at {a}: {}", set.alpha());
+            }
+        }
+    }
+    let mut plain = ColorRef::rgb(half);
+    plain.set_alpha(1.0);
+    assert_eq!(plain, ColorRef::rgb(Rgba::rgb(10, 20, 30)), "an opaque RGB color gets no transform");
 }

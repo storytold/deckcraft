@@ -55,14 +55,38 @@ impl ColorRef {
         };
         deckcraft_color::apply(base, &self.mods)
     }
-    /// Alpha (0–1) from the `alpha`, `alphaMod` and `alphaOff` transforms, applied in order.
+    /// Alpha (0–1): the alpha of an RGB or system base, then the `alpha`, `alphaMod` and `alphaOff`
+    /// transforms, applied in order. A theme or preset base counts as opaque.
     pub fn alpha(&self) -> f64 {
-        self.mods.iter().fold(1.0, |a, m| match m {
+        let base = match &self.base {
+            ColorBase::Rgb { rgb } | ColorBase::System { last: rgb, .. } => f64::from(rgb.a) / 255.0,
+            ColorBase::Scheme { .. } | ColorBase::Preset { .. } => 1.0,
+        };
+        self.mods.iter().fold(base, |a, m| match m {
             ColorTransform::Alpha(v) => (*v as f64 / 100_000.0).clamp(0.0, 1.0),
             ColorTransform::AlphaMod(v) => (a * *v as f64 / 100_000.0).clamp(0.0, 1.0),
             ColorTransform::AlphaOff(v) => (a + *v as f64 / 100_000.0).clamp(0.0, 1.0),
             _ => a,
         })
+    }
+    /// Sets the alpha to `a` (0–1), replacing every alpha the color had: the `alpha`, `alphaMod`
+    /// and `alphaOff` transforms and the alpha of an RGB base. An RGB color that ends up fully
+    /// opaque gets no transform. A color with any other base (a theme color, `phClr`, a preset or
+    /// a system color) always gets an `alpha` transform, which also replaces the alpha that base
+    /// resolves to.
+    pub fn set_alpha(&mut self, a: f64) {
+        self.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_) | ColorTransform::AlphaMod(_) | ColorTransform::AlphaOff(_)));
+        let rgb = match &mut self.base {
+            ColorBase::Rgb { rgb } => {
+                rgb.a = 255;
+                true
+            }
+            ColorBase::Scheme { .. } | ColorBase::Preset { .. } | ColorBase::System { .. } => false,
+        };
+        let a = if a.is_finite() { a.clamp(0.0, 1.0) } else { 1.0 };
+        if a < 1.0 || !rgb {
+            self.mods.push(ColorTransform::Alpha((a * 100_000.0).round() as i32));
+        }
     }
 }
 
