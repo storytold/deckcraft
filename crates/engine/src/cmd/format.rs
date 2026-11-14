@@ -31,7 +31,8 @@ pub use painter::Painted;
 pub(crate) use painter::apply_painted;
 use painter::{font_add, font_rescan, painter_apply, painter_pick, state};
 use paragraph::{
-    align, align_to, anchor, autofit, bullets, columns, direction, level, line_spacing, margins, numbering, paragraph, paragraph_dialog, rtl, wrap,
+    align, align_to, anchor, autofit, bullets, columns, direction, east_asian_line_break, hanging_punctuation, latin_line_break, level, line_spacing,
+    margins, numbering, paragraph, paragraph_dialog, rtl, wrap,
 };
 use ruler::{ruler, tabs};
 use text_effects::{case, text_outline, text_shadow, text_warp};
@@ -161,6 +162,33 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             rtl
         ),
+        cmd!(
+            "format.eastAsianLineBreak",
+            "East Asian Line Breaking",
+            [],
+            None,
+            "{on?: bool} (禁則処理: PowerPoint's `eaLnBrk`)",
+            has_text_or_shapes,
+            east_asian_line_break
+        ),
+        cmd!(
+            "format.hangingPunctuation",
+            "Hang Punctuation",
+            [],
+            None,
+            "{on?: bool} (句読点のぶら下げ: PowerPoint's `hangingPunct`)",
+            has_text_or_shapes,
+            hanging_punctuation
+        ),
+        cmd!(
+            "format.latinLineBreak",
+            "Allow Latin Text to Wrap Mid-word",
+            [],
+            None,
+            "{on?: bool} (英単語の途中で改行を許可: PowerPoint's `latinLnBrk`)",
+            has_text_or_shapes,
+            latin_line_break
+        ),
         cmd!("format.alignLeft", "Align Left", ["Home", "Paragraph"], Some("Cmd+L"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Left)),
         cmd!("format.alignCenter", "Center", ["Home", "Paragraph"], Some("Cmd+E"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Center)),
         cmd!("format.alignRight", "Align Right", ["Home", "Paragraph"], Some("Cmd+R"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Right)),
@@ -209,7 +237,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph…",
             ["Home", "Paragraph"],
             None,
-            "{align?: left|center|right|justify|justLow|distributed, indentLeft?: pt, indentRight?: pt, special?: none|first|hanging, specialBy?: pt, indentFirst?: pt, spaceBefore?: pt, spaceAfter?: pt, spaceBeforeKind?: pts|pct, spaceAfterKind?: pts|pct, lineSpacing?: lines, lineSpacingPt?: pt} — with none of these, opens the Paragraph dialog",
+            "{align?: left|center|right|justify|justLow|distributed, indentLeft?: pt, indentRight?: pt, special?: none|first|hanging, specialBy?: pt, indentFirst?: pt, spaceBefore?: pt, spaceAfter?: pt, spaceBeforeKind?: pts|pct, spaceAfterKind?: pts|pct, lineSpacing?: lines, lineSpacingPt?: pt, eastAsianLineBreak?: bool, hangingPunctuation?: bool, latinLineBreak?: bool} — with none of these, opens the Paragraph dialog",
             has_text_or_shapes,
             paragraph_dialog
         ),
@@ -591,5 +619,120 @@ mod tests {
         assert!(s.execute("format.tabs", &json!({"set": [{"pos": 10.0, "align": "sparkle"}]})).is_err());
         assert!(s.execute("format.tabs", &json!({"set": "nope"})).is_err());
         assert_eq!(s.doc().unwrap().history.undo.len(), n);
+    }
+
+    /// The three Asian typography paragraph properties as `format.*` sets them.
+    const ASIAN_PARA_COMMANDS: [(&str, fn(&ParaProps) -> Option<bool>); 3] = [
+        ("format.eastAsianLineBreak", |p| p.east_asian_line_break),
+        ("format.hangingPunctuation", |p| p.hanging_punct),
+        ("format.latinLineBreak", |p| p.latin_line_break),
+    ];
+
+    #[test]
+    fn asian_paragraph_commands_set_clear_and_toggle_the_selection() {
+        for (cmd, field) in ASIAN_PARA_COMMANDS {
+            let mut s = shape();
+            assert_eq!(field(&para(&s)), None, "{cmd} starts unset");
+            // Absent `eaLnBrk` means on, so its first bare toggle turns the rule off; the other
+            // two start off and their first toggle turns them on.
+            s.execute(cmd, &json!({})).unwrap();
+            let first = if cmd == "format.eastAsianLineBreak" { Some(false) } else { Some(true) };
+            assert_eq!(field(&para(&s)), first, "{cmd} toggles from the effective default");
+            let mut s = shape();
+            s.execute(cmd, &json!({"on": true})).unwrap();
+            assert_eq!(field(&para(&s)), Some(true), "{cmd} on");
+            s.execute(cmd, &json!({"on": false})).unwrap();
+            assert_eq!(field(&para(&s)), Some(false), "{cmd} off");
+            // No `on`: toggle the value the caret's paragraph shows. A hostile `on` is ignored
+            // and toggles too, the way every other toggle command behaves.
+            for hostile in [json!({}), json!({"on": "yes"})] {
+                s.execute(cmd, &hostile).unwrap();
+                assert_eq!(field(&para(&s)), Some(true), "{cmd} toggled on");
+                s.execute(cmd, &hostile).unwrap();
+                assert_eq!(field(&para(&s)), Some(false), "{cmd} toggled off");
+            }
+            // Undo takes the command back to no explicit value.
+            let mut s = shape();
+            s.execute(cmd, &json!({"on": true})).unwrap();
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(field(&para(&s)), None, "undo clears what {cmd} set");
+            // The command touched only its own property.
+            let mut s = shape();
+            s.execute(cmd, &json!({"on": true})).unwrap();
+            let p = para(&s);
+            assert_eq!(field(&p), Some(true));
+            let set = [p.east_asian_line_break, p.hanging_punct, p.latin_line_break].iter().filter(|v| v.is_some()).count();
+            assert_eq!(set, 1, "{cmd} left the other two properties alone");
+        }
+    }
+
+    #[test]
+    fn asian_paragraph_commands_reach_every_selected_paragraph() {
+        let mut s = Session::with_new();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, 40.0, 240.0, 80.0], "text": "一つ目\n二つ目"})).unwrap();
+        let id = s.doc().unwrap().selected_shapes().first().map(|sh| sh.id.0).unwrap();
+        s.execute("text.edit", &json!({"id": id})).unwrap();
+        s.execute("text.selectAll", &json!({})).unwrap();
+        s.execute("format.hangingPunctuation", &json!({"on": true})).unwrap();
+        let props: Vec<Option<bool>> = s
+            .doc()
+            .unwrap()
+            .shape(deckcraft_model::ShapeId(id))
+            .and_then(|sh| sh.text.as_ref())
+            .map(|t| t.paragraphs.iter().map(|p| p.props.hanging_punct).collect())
+            .unwrap_or_default();
+        assert_eq!(props, vec![Some(true), Some(true)], "both selected paragraphs");
+    }
+
+    #[test]
+    fn asian_paragraph_options_survive_a_save_and_reopen() {
+        let mut s = shape();
+        for (cmd, _) in ASIAN_PARA_COMMANDS {
+            s.execute(cmd, &json!({"on": true})).unwrap();
+        }
+        let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["data"].as_str().unwrap().to_string();
+        let reopened = deckcraft_pptx::import(&crate::cmd::base64_decode(&saved).unwrap()).unwrap();
+        let p = reopened.slides[0]
+            .shapes
+            .iter()
+            .filter_map(|sh| sh.text.as_ref())
+            .flat_map(|t| t.paragraphs.iter())
+            .find(|p| p.text() == "Hello")
+            .map(|p| p.props.clone())
+            .unwrap();
+        assert_eq!(p.east_asian_line_break, Some(true));
+        assert_eq!(p.hanging_punct, Some(true));
+        assert_eq!(p.latin_line_break, Some(true));
+    }
+
+    #[test]
+    fn paragraph_dialog_sets_asian_options_in_the_same_undo() {
+        let mut s = shape();
+        let before = s.doc().unwrap().history.undo.len();
+        s.execute("format.paragraphDialog", &json!({"align": "justify", "hangingPunctuation": true, "latinLineBreak": true})).unwrap();
+        assert_eq!(s.doc().unwrap().history.undo.len(), before + 1);
+        assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Paragraph…");
+        let p = para(&s);
+        assert_eq!(p.align, Some(Align::Justify));
+        assert_eq!(p.hanging_punct, Some(true));
+        assert_eq!(p.latin_line_break, Some(true));
+        assert_eq!(p.east_asian_line_break, None, "an absent key leaves its property alone");
+        s.execute("edit.undo", &json!({})).unwrap();
+        let p = para(&s);
+        assert_eq!(p.hanging_punct, None);
+        assert_eq!(p.latin_line_break, None);
+        assert_eq!(p.align, Some(Align::Center), "undo restores the alignment shape.insert wrote");
+    }
+
+    #[test]
+    fn paragraph_dialog_rejects_a_hostile_asian_option_without_editing() {
+        let mut s = shape();
+        let n = s.doc().unwrap().history.undo.len();
+        assert!(s.execute("format.paragraphDialog", &json!({"hangingPunctuation": 1})).is_err());
+        assert!(s.execute("format.paragraphDialog", &json!({"eastAsianLineBreak": "on"})).is_err());
+        assert!(s.execute("format.paragraphDialog", &json!({"latinLineBreak": null})).is_err());
+        assert_eq!(s.doc().unwrap().history.undo.len(), n);
+        let p = para(&s);
+        assert!(p.east_asian_line_break.is_none() && p.hanging_punct.is_none() && p.latin_line_break.is_none());
     }
 }
