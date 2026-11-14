@@ -438,6 +438,9 @@ mod master_layout_tests;
 mod icons_popup_tests;
 
 #[cfg(test)]
+mod generated_tests;
+
+#[cfg(test)]
 mod add_animation_menu_tests;
 
 #[cfg(test)]

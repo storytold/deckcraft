@@ -1,8 +1,11 @@
+use deckcraft_model::{Generated, ShapeId};
+
 use super::arrange::{arrange_group, size_group};
 use super::galleries::{cref_param, effects_menu, outline_menu, quick_styles, shapes_gallery};
+use super::insert::{CHECK_STATES, paint_checkbox, paint_harvey_ball, picture_row};
 use super::{
     Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, enabled, group, json, pos2, rows, run, scheme,
-    small_button, small_button_ex, theme, vec2, widgets,
+    small_button, small_button_ex, small_button_named, theme, vec2, widgets,
 };
 
 // ---------- contextual tabs ----------
@@ -109,6 +112,9 @@ fn stroke_guide(p: &egui::Painter, g: &deckcraft_geom::warp::Guide, color: Color
 /// Render the Shape Format tab's shape, fill, outline, effects, text, arrange, and size controls.
 pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
+    if let Some((gid, g)) = app.session.active().and_then(deckcraft_engine::cmd::generated::selected) {
+        generated_group(app, ui, gid, &g, &sc);
+    }
     let sel = enabled(app, "shape.fill");
     group(ui, |ui| {
         let r = big_button(ui, Icon::Shapes, "Shapes", true);
@@ -224,6 +230,87 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::FormatBackground, "Format\nPane", "view.pane", json!({"pane": "format"}));
     });
+}
+
+/// The ways `harveyBall.set` divides a ball, as the `of` drop-down lists them.
+const HARVEY_PARTS: [u16; 6] = [2, 3, 4, 5, 8, 10];
+
+/// Shape Format ▸ Harvey Ball or Checkbox, shown while the selection is one (or one of its parts):
+/// the ball's value, parts and colours, or the checkbox's state and colour.
+fn generated_group(app: &mut SlideApp, ui: &mut Ui, gid: ShapeId, g: &Generated, sc: &deckcraft_color::ColorScheme) {
+    match g {
+        Generated::HarveyBall(b) => group(ui, |ui| {
+            rows(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let (less, _) = small_button_named(ui, Icon::Minus, "", "Fill Less", b.value > 0, false, false);
+                    if less.on_hover_text("One part less").clicked() {
+                        run(app, "harveyBall.set", json!({"id": gid, "value": b.value.saturating_sub(1)}));
+                    }
+                    let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                    paint_harvey_ball(ui.painter(), rect, b.value, b.of, Tokens::get(ui.ctx()).text);
+                    ui.label(format!("{}/{}", b.value, b.of));
+                    let (more, _) = small_button_named(ui, Icon::Plus, "", "Fill More", b.value < b.of, false, false);
+                    if more.on_hover_text("One part more").clicked() {
+                        run(app, "harveyBall.set", json!({"id": gid, "value": b.value.saturating_add(1).min(b.of)}));
+                    }
+                });
+                widgets::dropdown(ui, "Parts", &format!("Parts: {}", b.of), 96.0, true, |ui| {
+                    for n in HARVEY_PARTS {
+                        let label = format!("{}/{n}", b.value.min(n));
+                        if picture_row(ui, &label, b.of == n, |p, r, ink| paint_harvey_ball(p, r, b.value.min(n), n, ink)) {
+                            // The value is kept within the new number of parts.
+                            run(app, "harveyBall.set", json!({"id": gid, "of": n, "value": b.value.min(n)}));
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            rows(ui, |ui| {
+                colour_menu(app, ui, sc, (Icon::ShapeFill, "Ball Fill"), None, |c| ("harveyBall.set", json!({"id": gid, "fill": c})));
+                colour_menu(app, ui, sc, (Icon::FormatBackground, "Ball Background"), Some("No Fill"), |c| {
+                    ("harveyBall.set", json!({"id": gid, "background": c}))
+                });
+                colour_menu(app, ui, sc, (Icon::ShapeOutline, "Ball Outline"), Some("No Outline"), |c| {
+                    ("harveyBall.set", json!({"id": gid, "outline": c}))
+                });
+            });
+        }),
+        Generated::Checkbox(c) => group(ui, |ui| {
+            rows(ui, |ui| {
+                let current = CHECK_STATES.iter().find(|(k, _)| *k == c.state.name()).map_or("", |(_, l)| *l);
+                widgets::dropdown(ui, "Checkbox State", current, 110.0, true, |ui| {
+                    for (state, label) in CHECK_STATES {
+                        if picture_row(ui, label, c.state.name() == state, |p, r, ink| paint_checkbox(p, r, state, ink)) {
+                            run(app, "checkbox.set", json!({"id": gid, "state": state}));
+                            ui.close();
+                        }
+                    }
+                });
+                colour_menu(app, ui, sc, (Icon::ShapeOutline, "Checkbox Color"), None, |col| ("checkbox.set", json!({"id": gid, "color": col})));
+            });
+        }),
+    }
+}
+
+/// A colour menu (`icon`, `label`) that runs the command and params `set` makes of the colour
+/// picked; with `none`, that entry gives `null`.
+fn colour_menu(
+    app: &mut SlideApp,
+    ui: &mut Ui,
+    sc: &deckcraft_color::ColorScheme,
+    (icon, label): (Icon, &str),
+    none: Option<&str>,
+    set: impl Fn(serde_json::Value) -> (&'static str, serde_json::Value),
+) {
+    let (main, arrow) = small_button_ex(ui, icon, label, true, false, true);
+    if let Some(arrow) = arrow {
+        widgets::split_color_popup(&main, &arrow).show(|ui| {
+            if let Some(c) = widgets::color_grid(ui, sc, none) {
+                let (cmd, p) = set(c.map_or(serde_json::Value::Null, |c| cref_param(&c)));
+                run(app, cmd, p);
+            }
+        });
+    }
 }
 
 /// Edit Shape ▸ Smooth Corners (#286): a slider that smooths a rectangle's corners into a
