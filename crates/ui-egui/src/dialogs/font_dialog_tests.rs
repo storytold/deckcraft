@@ -63,3 +63,36 @@ fn command_t_opens_the_font_dialog_and_cancel_keeps_the_text() {
     assert!(h.state().dialog.is_none());
     assert_eq!(bold_of(&h), None);
 }
+
+#[test]
+fn preset_and_system_colors_show_in_the_dialog_and_ok_keeps_them() {
+    for (color, shown) in [
+        (json!({"preset": "red", "lumMod": 50000}), "red"),
+        (json!({"system": "windowText", "last": "#123456", "alpha": 60000}), "#123456"),
+        (json!({"preset": "red", "mods": [{"op": "inv"}, {"op": "inv"}]}), "red"),
+        (json!({"scheme": "accent2", "mods": [{"op": "lumOff", "val": 20000}, {"op": "lumMod", "val": 50000}]}), "accent2"),
+    ] {
+        let mut h = harness();
+        h.state_mut().session.execute("format.fontDialog", &json!({ "color": color })).unwrap();
+        let before = fill_of(&h);
+        assert!(before.is_some());
+        h.get_by_label("Font…").click();
+        h.run_steps(2);
+        let d = h.state().dialog.as_ref().expect("font dialog");
+        assert_eq!(d.fields.get("color").map(String::as_str), Some(shown));
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(1);
+        assert!(h.state().dialog.is_none(), "status {:?}", h.state().status);
+        assert_eq!(fill_of(&h), before, "{shown}");
+    }
+}
+
+fn fill_of(h: &Harness<'_, SlideApp>) -> Option<deckcraft_model::Fill> {
+    let st = h.state().session.active().unwrap();
+    st.selected_shapes()
+        .first()
+        .and_then(|sh| sh.text.as_ref())
+        .and_then(|t| t.paragraphs.first())
+        .and_then(|p| p.runs.first())
+        .and_then(|r| r.props.fill.clone())
+}

@@ -377,11 +377,16 @@ pub(crate) fn ok() -> Result<Value> {
 
 /// Parse a colour param: `"#RRGGBB"`, `"accent1"`…, or `{"scheme":"accent2","lumMod":75000}`.
 /// A preset or system colour keeps its base: `{"preset":"red"}`,
-/// `{"system":"windowText","last":"#000000"}`.
+/// `{"system":"windowText","last":"#000000"}`. `"mods"` lists transforms in order:
+/// `{"preset":"red","mods":[{"op":"inv"},{"op":"inv"}]}`. A list longer than [`MAX_COLOR_MODS`]
+/// makes the color invalid.
 pub(crate) fn color_param(p: &Value, key: &str) -> Option<deckcraft_model::ColorRef> {
     let v = p.get(key)?;
     color_value(v)
 }
+
+/// Most transforms a color param's `"mods"` list may hold.
+pub(crate) const MAX_COLOR_MODS: usize = 256;
 
 pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
     use deckcraft_model::ColorRef;
@@ -415,6 +420,16 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
             for (k, val) in o {
                 if let Some(t) = deckcraft_color::ColorTransform::from_xml(k, val.as_i64().and_then(|x| i32::try_from(x).ok())) {
                     c.mods.push(t);
+                }
+            }
+            // `mods` lists transforms in order, repeats included: `[{"op":"inv"},{"op":"lumMod","val":50000}]`.
+            if let Some(list) = o.get("mods") {
+                let list = list.as_array()?;
+                if list.len() > MAX_COLOR_MODS {
+                    return None;
+                }
+                for m in list {
+                    c.mods.push(<deckcraft_color::ColorTransform as serde::Deserialize>::deserialize(m).ok()?);
                 }
             }
             Some(c)
@@ -692,5 +707,40 @@ mod tests {
             assert!(color_value(&json!({"preset": name})).is_some(), "{name}");
         }
         assert!(color_value(&json!({"system": "3dDkShadow", "last": "#000000"})).is_some());
+        let listed = color_value(&json!({"preset": "red", "mods": [{"op": "inv"}, {"op": "lumOff", "val": 20_000}, {"op": "inv"}]}));
+        let mods = vec![ColorTransform::Inv, ColorTransform::LumOff(20_000), ColorTransform::Inv];
+        assert_eq!(listed, Some(ColorRef { base: ColorBase::Preset { name: "red".into() }, mods }));
+        assert_eq!(color_value(&json!({"preset": "red", "mods": [{"op": "notATransform"}]})), None);
+    }
+
+    #[test]
+    fn color_mods_lists_follow_keyed_transforms() {
+        use deckcraft_color::{ColorTransform, SchemeSlot};
+        use deckcraft_model::{ColorBase, ColorRef};
+        use serde_json::json;
+        let red = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![] };
+        assert_eq!(color_value(&json!({"preset": "red", "mods": []})), Some(red.clone()), "an empty list adds no transforms");
+        let two = color_value(&json!({"preset": "red", "mods": [{"op": "lumMod", "val": 75_000}, {"op": "lumOff", "val": 10_000}]}));
+        assert_eq!(two, Some(red.with(ColorTransform::LumMod(75_000)).with(ColorTransform::LumOff(10_000))));
+        // The keyed `lumMod` comes first, then the list in order.
+        let both =
+            color_value(&json!({"scheme": "accent2", "lumMod": 75_000, "mods": [{"op": "lumOff", "val": 10_000}, {"op": "lumMod", "val": 50_000}]}));
+        let want = ColorRef::scheme(SchemeSlot::Accent2)
+            .with(ColorTransform::LumMod(75_000))
+            .with(ColorTransform::LumOff(10_000))
+            .with(ColorTransform::LumMod(50_000));
+        assert_eq!(both, Some(want));
+        // An unknown op anywhere in the list, or a `mods` value that is not a list, makes the color invalid.
+        assert_eq!(color_value(&json!({"scheme": "accent2", "lumMod": 75_000, "mods": [{"op": "lumOff", "val": 10_000}, {"op": "sparkle"}]})), None);
+        assert_eq!(color_value(&json!({"preset": "red", "mods": {"op": "inv"}})), None);
+    }
+
+    #[test]
+    fn color_mods_lists_longer_than_the_cap_are_invalid() {
+        use deckcraft_color::ColorTransform;
+        use serde_json::json;
+        let at_cap = color_value(&json!({"preset": "red", "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS]}));
+        assert_eq!(at_cap.map(|c| c.mods), Some(vec![ColorTransform::Inv; MAX_COLOR_MODS]));
+        assert_eq!(color_value(&json!({"preset": "red", "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS + 1]})), None);
     }
 }
