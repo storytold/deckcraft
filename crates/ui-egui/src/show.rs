@@ -73,6 +73,12 @@ pub struct Show {
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
+    /// The screens the slides and Presenter View fill, when DeckCraft placed them (two screens
+    /// or more); otherwise the slides fill the window's screen.
+    pub screens: Option<(usize, usize)>,
+    /// Where the window was (outside and inside, in points) before the slides were sent to
+    /// another screen, to put it back after the show: X11 brings it back on the slides' screen.
+    pub(crate) window_before: Option<(Rect, Rect)>,
     /// The current slide's backdrop, under its animation frames.
     backdrop: Option<Backdrop>,
     blank: Option<Color32>,
@@ -215,6 +221,14 @@ pub(crate) fn viewport_visible(ctx: &egui::Context) -> bool {
 }
 
 impl Show {
+    /// Swap the slides' and Presenter View's screens; the new (slides, presenter) pair, or
+    /// `None` when DeckCraft didn't place them. A show restarted later keeps the swap.
+    pub(crate) fn swap_screens(&mut self) -> Option<(usize, usize)> {
+        let (slides, presenter) = self.screens?;
+        self.screens = Some((presenter, slides));
+        self.screens
+    }
+
     /// Initialise show state at the requested slide with reading/presenter modes; an out-of-range
     /// slide starts an ended show.
     pub fn new(doc: &Presentation, from: usize, reading: bool, presenter: bool) -> Self {
@@ -244,6 +258,8 @@ impl Show {
             remote_sent: f64::NEG_INFINITY,
             remote_opened: false,
             prefetch: None,
+            screens: None,
+            window_before: None,
             backdrop: None,
             blank: None,
             grid: false,
@@ -612,7 +628,7 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
 }
 
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.
-fn show_fills_screen(reading: bool, show_type: &str) -> bool {
+pub(crate) fn show_fills_screen(reading: bool, show_type: &str) -> bool {
     !reading && show_type != "browsed"
 }
 

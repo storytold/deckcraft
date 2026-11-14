@@ -453,6 +453,33 @@ fn the_prefetched_frame_is_the_frame_shown_on_entry() {
     assert_eq!(got.pixels, want.pixels);
 }
 
+/// As in PowerPoint: with two screens the slides go to the other screen and Presenter View
+/// stays with the presenter; with one screen there is no Presenter View.
+#[test]
+fn presenter_view_gets_a_screen_of_its_own() {
+    use crate::Screens;
+    let one = Screens { list: vec![0], current: Some(0), primary: Some(0) };
+    assert_eq!(one.for_presenter_view(), None);
+    // A screen Wayland lists twice reaches here once (the host merges them): still one.
+    let listed_twice = Screens { list: vec![0], current: Some(0), primary: None };
+    assert_eq!(listed_twice.for_presenter_view(), None);
+    let two = |current, primary| Screens { list: vec![0, 1], current, primary };
+    assert_eq!(two(Some(1), None).for_presenter_view(), Some((0, 1)), "Presenter View where DeckCraft is");
+    assert_eq!(two(Some(0), Some(1)).for_presenter_view(), Some((1, 0)));
+    assert_eq!(two(None, Some(1)).for_presenter_view(), Some((0, 1)), "else the main screen");
+    assert_eq!(two(None, None).for_presenter_view(), Some((1, 0)));
+    // A screen number that isn't listed is ignored.
+    assert_eq!(two(Some(7), None).for_presenter_view(), Some((1, 0)));
+    assert_eq!(two(Some(7), Some(1)).for_presenter_view(), Some((0, 1)), "an unlisted current falls back to the main screen");
+    let three = Screens { list: vec![0, 2, 3], current: Some(2), primary: None };
+    assert_eq!(three.for_presenter_view(), Some((0, 2)));
+    // A chosen slide show screen: Presenter View stays where DeckCraft is, unless that is it.
+    assert_eq!(three.for_presenter_view_on(Some(3)), Some((3, 2)));
+    assert_eq!(three.for_presenter_view_on(Some(2)), Some((2, 0)));
+    assert_eq!(three.for_presenter_view_on(Some(9)), Some((0, 2)), "a disconnected screen means automatic");
+    assert_eq!(one.for_presenter_view_on(Some(0)), None);
+}
+
 /// A glowing full-slide picture in a layout made every animation frame re-render (and re-blur)
 /// the backdrop: 2–3 frames a second. Frames now draw the slide's shapes over the kept
 /// backdrop, and must look the same as a whole-slide render.
@@ -1334,6 +1361,75 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     }
     let tex = harness.state().1.next_tex.as_ref().map(|(d, k, _)| (std::sync::Arc::ptr_eq(d, &edited), *k));
     assert_eq!(tex, Some((true, 1)), "the preview comes from the edited presentation");
+}
+
+/// An app whose computer has `screens` and whose window is on `current`.
+fn app_on_screens(list: Vec<usize>, current: usize) -> SlideApp {
+    let screens = Some(Box::new(move || Some(crate::Screens { list: list.clone(), current: Some(current), primary: None }))
+        as Box<dyn FnMut() -> Option<crate::Screens>>);
+    let services = crate::Services { screens, ..Default::default() };
+    SlideApp::new(deckcraft_engine::Session::with_new(), services)
+}
+
+/// Starting a show over a running one must not swap the audience's and the presenter's screens:
+/// the window is then on the slides' screen, which would be taken for the presenter's.
+#[test]
+fn a_show_started_over_a_running_one_keeps_its_screens() {
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.start_show(0, false);
+    let first = app.show.as_ref().unwrap().screens;
+    assert_eq!(first, Some((1, 0)), "slides on the other screen, Presenter View here");
+    let before = Some((Rect::from_min_size(pos2(5.0, 6.0), vec2(100.0, 80.0)), Rect::from_min_size(pos2(7.0, 8.0), vec2(90.0, 70.0))));
+    app.show.as_mut().unwrap().window_before = before;
+    // The window moved to the slides' screen with the first show.
+    app.services.screens = Some(Box::new(|| Some(crate::Screens { list: vec![0, 1], current: Some(1), primary: None })));
+    app.start_show(0, false);
+    let second = app.show.as_ref().unwrap();
+    assert_eq!(second.screens, first, "the same screens, not swapped");
+    assert_eq!(second.window_before, before, "the window still goes back to where it was before the first show");
+}
+
+/// A show in a window (browsed) has no screen to place: Presenter View would open full screen
+/// over it.
+#[test]
+fn a_browsed_show_is_not_placed_on_screens() {
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.session.execute("show.setup", &json!({"type": "browsed"})).unwrap();
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, None);
+    app.session.execute("show.setup", &json!({"type": "speaker"})).unwrap();
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((1, 0)));
+}
+
+/// Swap Displays puts the slides on Presenter View's screen and the other way round, and a show
+/// restarted afterwards keeps the swap. Without placed screens there is nothing to swap.
+#[test]
+fn swapping_displays_exchanges_the_screens_and_survives_a_restart() {
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.start_show(0, false);
+    assert_eq!(app.show.as_mut().unwrap().swap_screens(), Some((0, 1)));
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((0, 1)));
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((0, 1)), "the restarted show keeps the swap");
+    assert_eq!(app.show.as_mut().unwrap().swap_screens(), Some((1, 0)), "and swaps back");
+    let mut one = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    one.start_show(0, false);
+    assert_eq!(one.show.as_mut().unwrap().swap_screens(), None);
+}
+
+/// The slide show monitor chosen in Set Up Slide Show decides where the slides go; a saved
+/// screen that is gone means automatic.
+#[test]
+fn the_chosen_slide_show_monitor_gets_the_slides() {
+    let mut app = app_on_screens(vec![0, 1, 2], 0);
+    app.ui.show_display = Some(2);
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((2, 0)));
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.ui.show_display = Some(5);
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((1, 0)));
 }
 
 /// #1654: Preview on the Transitions ribbon plays the current slide's transition from the
