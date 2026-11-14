@@ -52,6 +52,7 @@ mod app;
 mod clock;
 mod ime_hooks;
 pub mod panels;
+mod report_issue;
 mod services;
 mod state;
 
@@ -139,6 +140,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("app.about", "About DeckCraft", None, "{}"),
     ("app.checkUpdates", "Check for Updates…", None, "{}"),
+    ("app.reportIssue", "Report an Issue…", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
