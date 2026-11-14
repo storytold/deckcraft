@@ -110,7 +110,7 @@ impl SlideApp {
                 ui.label(crate::i18n::fmt(tl!("Opening {name}…"), &[("name", name.as_str())]));
             });
             ui.add_space(6.0);
-            ui.weak(format!("Reading the file: {secs:.0} s"));
+            ui.weak(crate::i18n::fmt(tl!("Reading the file: {seconds} s"), &[("seconds", &format!("{secs:.0}"))]));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 cancel = ui.button(tl!("Cancel")).clicked();

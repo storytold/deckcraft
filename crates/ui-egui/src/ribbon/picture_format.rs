@@ -20,13 +20,13 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::Corrections, "Corrections", true);
         egui::Popup::menu(&r).show(|ui| {
             for b in [-0.4, -0.2, 0.0, 0.2, 0.4] {
-                if ui.button(crate::i18n::fmt(tl!("Brightness {pct}"), &[("pct", &format!("{:+}%", (b * 100.0) as i32))])).clicked() {
+                if ui.button(crate::i18n::fmt(tl!("Brightness {pct}%"), &[("pct", &format!("{:+}", (b * 100.0) as i32))])).clicked() {
                     run(app, "picture.adjust", json!({"brightness": b}));
                 }
             }
             ui.separator();
             for c in [-0.4, -0.2, 0.0, 0.2, 0.4] {
-                if ui.button(crate::i18n::fmt(tl!("Contrast {pct}"), &[("pct", &format!("{:+}%", (c * 100.0) as i32))])).clicked() {
+                if ui.button(crate::i18n::fmt(tl!("Contrast {pct}%"), &[("pct", &format!("{:+}", (c * 100.0) as i32))])).clicked() {
                     run(app, "picture.adjust", json!({"contrast": c}));
                 }
             }
@@ -34,7 +34,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::ColorAdjust, "Color", true);
         egui::Popup::menu(&r).show(|ui| {
             for s in [0.0, 0.33, 0.66, 1.0, 1.5, 2.0, 3.0] {
-                if ui.button(crate::i18n::fmt(tl!("Saturation {pct}"), &[("pct", &format!("{}%", (s * 100.0) as i32))])).clicked() {
+                if ui.button(crate::i18n::fmt(tl!("Saturation {pct}%"), &[("pct", &((s * 100.0) as i32).to_string())])).clicked() {
                     run(app, "picture.adjust", json!({"saturation": s}));
                 }
             }
