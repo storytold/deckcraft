@@ -2947,6 +2947,71 @@ mod copy_remap {
     }
 
     #[test]
+    fn a_pasted_picture_brings_its_svg_along() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (pa, ..) = populate(&mut a, b"raster");
+        populate(&mut b, b"deck b picture");
+        {
+            let doc = Arc::make_mut(&mut a.doc_mut().unwrap().doc);
+            let svg = doc.add_media("p.svg", "image/svg+xml", b"<svg/>".to_vec()).expect("media");
+            let slide = Arc::make_mut(&mut doc.slides[0]);
+            let Some(Shape { kind: ShapeKind::Picture { fill }, .. }) = slide.shapes.iter_mut().find(|x| x.id == pa) else { panic!() };
+            fill.svg = Some(svg);
+        }
+        select(&mut a, &[pa]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let new = shape(&b, 0, ShapeId(r["ids"][0].as_u64().unwrap() as u32));
+        let ShapeKind::Picture { fill } = &new.kind else { panic!("not a picture") };
+        let svg = fill.svg.and_then(|m| b.doc().unwrap().doc.media(m)).map(|m| m.data.as_ref().clone());
+        assert_eq!(svg.as_deref(), Some(&b"<svg/>"[..]));
+    }
+
+    /// A linked SVG has no bytes: pasted into a deck whose own linked SVG has the same id, it
+    /// keeps its link under a fresh id, and the deck's own link is untouched.
+    #[test]
+    fn a_pasted_linked_svg_keeps_its_link_on_an_id_collision() {
+        let link = |s: &mut Session, url: &str, picture: Option<ShapeId>| {
+            let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let id = MediaId(doc.alloc_id().expect("id"));
+            doc.media.push(deckcraft_model::MediaItem {
+                id,
+                name: "p.svg".into(),
+                content_type: "image/svg+xml".into(),
+                data: Arc::new(Vec::new()),
+                link: Some(url.into()),
+            });
+            if let Some(p) = picture {
+                let slide = Arc::make_mut(&mut doc.slides[0]);
+                let Some(Shape { kind: ShapeKind::Picture { fill }, .. }) = slide.shapes.iter_mut().find(|x| x.id == p) else { panic!() };
+                fill.svg = Some(id);
+            }
+            id
+        };
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (pa, ..) = populate(&mut a, b"raster");
+        populate(&mut b, b"raster");
+        let ida = link(&mut a, "https://example.com/a.svg", Some(pa));
+        let idb = link(&mut b, "https://example.com/b.svg", None);
+        assert_eq!(ida, idb, "the two decks' linked SVGs must share an id for this test");
+        select(&mut a, &[pa]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let new = shape(&b, 0, ShapeId(r["ids"][0].as_u64().unwrap() as u32));
+        let ShapeKind::Picture { fill } = &new.kind else { panic!("not a picture") };
+        let doc = &b.doc().unwrap().doc;
+        let pasted = fill.svg.and_then(|m| doc.media(m)).and_then(|m| m.link.clone());
+        assert_eq!(pasted.as_deref(), Some("https://example.com/a.svg"));
+        assert_eq!(doc.media(idb).and_then(|m| m.link.clone()).as_deref(), Some("https://example.com/b.svg"));
+    }
+
+    #[test]
     fn copied_connectors_follow_copied_ends_and_detach_from_the_rest() {
         let mut s = Session::with_new();
         let (p, b, c) = populate(&mut s, b"x");
@@ -4583,6 +4648,57 @@ fn artistic_effects_apply_change_remove_and_round_trip() {
     s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur"})).unwrap();
     s.execute("picture.reset", &json!({})).unwrap();
     assert_eq!((fill(&s).media, fill(&s).artistic), (original, None));
+}
+
+/// An artistic effect is drawn on the raster picture, so a picture's SVG is set aside while the
+/// effect is applied; undo, removing the effect and Reset Picture each give the SVG back.
+#[test]
+fn an_artistic_effect_sets_a_pictures_svg_aside_and_gives_it_back() {
+    use deckcraft_model::{Shape, ShapeKind};
+    use std::sync::Arc;
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(8, 6, image::Rgba([200, 30, 30, 255])))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.picture", &json!({"name": "a.png", "data": cmd::base64_encode(&png)})).unwrap();
+    let fill = |s: &Session| match &s.doc().unwrap().selected_shapes()[0].kind {
+        ShapeKind::Picture { fill } => fill.clone(),
+        k => panic!("{k:?}"),
+    };
+    // Give the picture an SVG, as Office's SVG extension (`asvg:svgBlip`) does.
+    let picture = s.doc().unwrap().selected_shapes()[0].id;
+    let svg = {
+        let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let svg = doc.add_media("a.svg", "image/svg+xml", br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec()).unwrap();
+        for slide in &mut doc.slides {
+            if let Some(Shape { kind: ShapeKind::Picture { fill }, .. }) = Arc::make_mut(slide).shapes.iter_mut().find(|x| x.id == picture) {
+                fill.svg = Some(svg);
+            }
+        }
+        svg
+    };
+    let original = fill(&s).media;
+    assert_eq!(fill(&s).svg, Some(svg));
+    // Applying an effect sets the SVG aside with the original picture.
+    s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur"})).unwrap();
+    let f = fill(&s);
+    assert_eq!((f.svg, f.artistic.as_ref().and_then(|a| a.svg)), (None, Some(svg)));
+    // Undo gives it back; redo sets it aside again.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((fill(&s).media, fill(&s).svg, fill(&s).artistic), (original, Some(svg), None));
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(fill(&s).artistic.as_ref().and_then(|a| a.svg), Some(svg));
+    // Changing the effect keeps it aside; removing the effect restores the original and its SVG.
+    s.execute("picture.artisticEffect", &json!({"effect": "artisticPencilGrayscale"})).unwrap();
+    assert_eq!((fill(&s).svg, fill(&s).artistic.as_ref().and_then(|a| a.svg)), (None, Some(svg)));
+    s.execute("picture.artisticEffect", &json!({"effect": "none"})).unwrap();
+    assert_eq!((fill(&s).media, fill(&s).svg, fill(&s).artistic), (original, Some(svg), None));
+    // So does Reset Picture.
+    s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur"})).unwrap();
+    s.execute("picture.reset", &json!({})).unwrap();
+    assert_eq!((fill(&s).media, fill(&s).svg, fill(&s).artistic), (original, Some(svg), None));
 }
 
 #[test]

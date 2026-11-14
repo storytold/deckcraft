@@ -175,6 +175,7 @@ fn remove_background(s: &mut Session, p: &Value) -> Result<Value> {
                 && let ShapeKind::Picture { fill } = &mut sh.kind
             {
                 fill.media = media;
+                fill.svg = None;
             }
         }
         Ok(())

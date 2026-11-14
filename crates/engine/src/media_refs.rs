@@ -30,6 +30,12 @@ macro_rules! walkers {
             f(&$($m)? p.media);
             if let Some(a) = &$($m)? p.artistic {
                 f(&$($m)? a.original);
+                if let Some(s) = &$($m)? a.svg {
+                    f(s);
+                }
+            }
+            if let Some(s) = &$($m)? p.svg {
+                f(s);
             }
         }
 
@@ -337,7 +343,7 @@ mod tests {
         let mut s = (*p.slides.first().cloned().unwrap_or_default()).clone();
         let pic = Shape {
             kind: ShapeKind::Picture {
-                fill: PictureFill { artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002) }), ..pf(9001) },
+                fill: PictureFill { artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002), svg: None }), ..pf(9001) },
             },
             ..Default::default()
         };
@@ -392,6 +398,14 @@ mod tests {
         let mut got = slide_media(&s);
         got.sort();
         assert_eq!(got, (9101..=9108).map(MediaId).collect::<Vec<_>>());
+    }
+
+    /// An artistic effect's set-aside SVG is a reference too: copy, paste and cleanup keep it.
+    #[test]
+    fn an_artistic_effects_set_aside_svg_is_a_reference() {
+        let artistic = Artistic { effect: "artisticBlur".into(), original: MediaId(9202), svg: Some(MediaId(9203)) };
+        let pic = Shape { kind: ShapeKind::Picture { fill: PictureFill { artistic: Some(artistic), ..pf(9201) } }, ..Default::default() };
+        assert_eq!(shapes_media(std::slice::from_ref(&pic)), vec![MediaId(9201), MediaId(9202), MediaId(9203)]);
     }
 
     /// SmartArt and OLE objects keep their parts as media items (#209); those count as used.
