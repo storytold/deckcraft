@@ -109,7 +109,7 @@ pub fn place_master_texts(pres: &Presentation, master: &deckcraft_model::Master,
 /// shapes (recorded in `out.shapes`), false for the layout's and master's.
 #[allow(clippy::too_many_arguments)]
 fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: Affine, depth: usize, group: Option<usize>, own: bool) {
-    if depth > 32 || s.hidden {
+    if depth > crate::MAX_DRAW_DEPTH || s.hidden {
         return;
     }
     let x = resolve::xfrm(rctx, s);

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use deckcraft_geom::Xfrm;
 use deckcraft_model::style::Fill;
 use deckcraft_model::table::Table;
-use deckcraft_model::{Geom, PhType, Shape, ShapeId, ShapeKind, ShapeStyle, walk};
+use deckcraft_model::{Geom, MAX_DRAW_DEPTH, PhType, Shape, ShapeId, ShapeKind, ShapeStyle, walk};
 
 use super::dml::{self, emu, emu_pos};
 use super::{Exp, Out};
@@ -266,7 +266,7 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
 
 /// Write the children of a shape tree.
 pub fn shapes(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, list: &[Shape], depth: usize) {
-    if depth > 32 {
+    if depth > MAX_DRAW_DEPTH {
         return;
     }
     for s in list {
@@ -315,7 +315,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             w.close("p:pic");
         }
-        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < 32 => {
+        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < MAX_DRAW_DEPTH => {
             if let Some(d) = &s.diagram {
                 diagram(w, x, o, cx, s, d, children, child);
             }
