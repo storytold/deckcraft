@@ -180,7 +180,7 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     seed_size_position(app, d);
-    ui.label(egui::RichText::new("Size").strong());
+    ui.label(egui::RichText::new(tl!("Size")).strong());
     text_row(ui, d, "Height (in):", "h");
     text_row(ui, d, "Width (in):", "w");
     text_row(ui, d, "Rotation (°):", "rot");
@@ -188,8 +188,8 @@ pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dial
     text_row(ui, d, "Scale width (%):", "scaleW");
     check(ui, d, "Lock aspect ratio", "lock", false);
     ui.add_space(8.0);
-    ui.label(egui::RichText::new("Position").strong());
-    ui.label("From the top-left corner of the slide");
+    ui.label(egui::RichText::new(tl!("Position")).strong());
+    ui.label(tl!("From the top-left corner of the slide"));
     text_row(ui, d, "Horizontal (in):", "x");
     text_row(ui, d, "Vertical (in):", "y");
     reconcile_size_fields(d);
