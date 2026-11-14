@@ -57,7 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Picture from File…",
             ["Insert", "Images", "Pictures"],
             None,
-            "{path? | data: base64, name?, rect?: [x,y,w,h]}",
+            "{path? | data: base64, name?, rect?: [x,y,w,h], fit?: stretch|contain|cover (how the picture fills its box: stretch fills it, the default; contain shrinks the box to the picture's aspect, centred; cover keeps the box and crops the picture to its aspect, the default for a selected empty placeholder filled without rect; contain and cover need an image that states its pixel size, which SVG doesn't)}",
             has_slide,
             picture
         ),
@@ -577,3 +577,5 @@ mod tests {
 
 #[cfg(test)]
 mod icon_and_picture_tests;
+#[cfg(test)]
+mod picture_facts_tests;

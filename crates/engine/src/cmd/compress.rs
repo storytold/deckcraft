@@ -129,17 +129,13 @@ fn pictures_mut<'a>(
     }
     for sh in shapes {
         let Some(xfrm) = sh.xfrm else { continue };
-        let local_to_slide = to_slide * xfrm.affine();
         if matches!(&sh.kind, ShapeKind::Picture { .. }) && want(sh.id) {
-            let origin = local_to_slide * deckcraft_geom::Point::ZERO;
-            let across = local_to_slide * deckcraft_geom::Point::new(xfrm.w, 0.0);
-            let down = local_to_slide * deckcraft_geom::Point::new(0.0, xfrm.h);
-            out.push((sh, (across - origin).hypot(), (down - origin).hypot()));
+            let (w, h) = super::picture_facts::displayed_size(to_slide, &xfrm);
+            out.push((sh, w, h));
             continue;
         }
         if let ShapeKind::Group { children, child } = &mut sh.kind {
-            let child_rect = deckcraft_geom::Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
-            let child_to_slide = to_slide * deckcraft_geom::group_child_affine(&xfrm, child_rect);
+            let child_to_slide = super::picture_facts::child_space_to_slide(to_slide, &xfrm, child);
             pictures_mut(children, want, out, child_to_slide, depth + 1);
         }
     }
