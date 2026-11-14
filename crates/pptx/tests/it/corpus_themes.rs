@@ -268,3 +268,23 @@ fn themes_masters_and_layouts_survive_a_round_trip() {
     let twice = deckcraft_pptx::export(&deckcraft_pptx::import(&once).expect("import")).expect("export");
     assert_eq!(names(&once), names(&twice));
 }
+
+/// A theme saved by PowerPoint under a dark or high-contrast Windows theme records the system
+/// colours it saw: `windowText` white and `window` dark grey. PowerPoint still draws them black and
+/// white, so the theme's text stays dark on a light slide.
+#[test]
+fn theme_system_colours_ignore_a_dark_saved_value() {
+    let base = deckcraft_pptx::export(&defaults::new_presentation(None)).expect("export");
+    let swap = |xml: &str, tag: &str, color: &str| {
+        let start = xml.find(&format!("<a:{tag}>")).expect(tag);
+        let end = xml.find(&format!("</a:{tag}>")).expect(tag);
+        format!("{}<a:{tag}>{color}{}", &xml[..start], &xml[end..])
+    };
+    let theme = part(&base, "ppt/theme/theme1.xml");
+    let theme = swap(&theme, "dk1", r#"<a:sysClr val="windowText" lastClr="FFFFFF"/>"#);
+    let theme = swap(&theme, "lt1", r#"<a:sysClr val="window" lastClr="2D3236"/>"#);
+    let p = deckcraft_pptx::import(&repack(&base, &[("ppt/theme/theme1.xml", theme)])).expect("import");
+    let colors = &p.masters[0].theme.colors;
+    assert_eq!(colors.get(deckcraft_color::SchemeSlot::Dk1), deckcraft_color::Rgba::BLACK);
+    assert_eq!(colors.get(deckcraft_color::SchemeSlot::Lt1), deckcraft_color::Rgba::WHITE);
+}

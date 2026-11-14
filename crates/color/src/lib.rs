@@ -754,9 +754,29 @@ pub fn is_system_name(name: &str) -> bool {
     SYSTEM_NAMES.contains(&name)
 }
 
+/// The colour a system colour draws with. Office themes write their dark and light colours (`dk1`,
+/// `lt1`) as `windowText` and `window`, and PowerPoint draws those black and white whatever
+/// `lastClr` says: a deck saved under a dark or high-contrast Windows theme records white text and a
+/// dark window, which would draw the theme's text white on a white slide. Other names keep the value
+/// they had when saved.
+pub fn system_color(name: &str, last: Rgba) -> Rgba {
+    match name {
+        "windowText" => Rgba::BLACK,
+        "window" => Rgba::WHITE,
+        _ => last,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_colours_ignore_the_saved_value() {
+        assert_eq!(system_color("windowText", Rgba::WHITE), Rgba::BLACK);
+        assert_eq!(system_color("window", Rgba::rgb(0x2D, 0x32, 0x36)), Rgba::WHITE);
+        assert_eq!(system_color("btnFace", Rgba::rgb(0x12, 0x34, 0x56)), Rgba::rgb(0x12, 0x34, 0x56));
+    }
 
     #[test]
     fn from_hex_rejects_multiple_hashes() {
