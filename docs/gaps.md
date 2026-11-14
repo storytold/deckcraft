@@ -1,5 +1,8 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File page, screen and ribbon tab transitions; feathered ribbon group hover; reduced motion; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
+
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -293,6 +296,12 @@ agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D mode
 
 ## UI/UX
 
+File navigation now fades/lifts pages and crossfades screen paint, with inert outgoing controls
+and system reduced-motion support. Ribbon tabs fade/slide their incoming controls and slide the
+active underline, following WordCraft. Ribbon group hover has a soft accent glow. Cosmetic changes
+do not alter the remaining UI gaps or readiness estimates.
+
+
 Detail in [ui-parity.md](ui-parity.md).
 
 - **No native macOS menu bar.** `menus::menu_tree()` exists but nothing installs it. 3–5 h. **Beta
@@ -368,6 +377,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | trivial | File/editor crossfade, page fade/lift, sliding ribbon tab content and underline, animated side-menu feedback and feathered ribbon hover; system reduced motion; parity scores unchanged. |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

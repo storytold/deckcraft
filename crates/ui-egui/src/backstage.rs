@@ -21,6 +21,10 @@ use crate::theme::{self, Tokens};
 mod files;
 mod info;
 mod print;
+mod shell;
+mod transition;
+pub(crate) use shell::{paint as paint_transition, reset as reset_shell, shape_count};
+pub(crate) use transition::reset as reset_transition;
 
 pub use files::split_path;
 use files::{home, new_page, open_page};
@@ -384,6 +388,13 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(page_bg)).show(ui, |ui| {
+        let now = ui.input(|i| i.time);
+        let progress = transition::progress(ui.ctx(), bs.page.id(), now, app.animations_on(ui.ctx()));
+        let mut content =
+            ui.new_child(egui::UiBuilder::new().id_salt("backstage_content").max_rect(ui.max_rect().translate(vec2(0.0, (1.0 - progress) * 10.0))));
+        content.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+        content.multiply_opacity(0.3 + 0.7 * progress);
+        let ui = &mut content;
         // Fields, boxes and buttons sit on the page's own colour: outline them, as PowerPoint does.
         ui.visuals_mut().text_edit_bg_color = Some(t.field_bg);
         let w = &mut ui.visuals_mut().widgets;
@@ -443,8 +454,11 @@ fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> 
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));
-    if resp.hovered() {
-        p.rect_filled(row, CornerRadius::same(2), t.hover);
+    let animate = ui.style().animation_time > 0.0;
+    let hover = ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered(), if animate { 0.15 } else { 0.0 });
+    let selection = ui.ctx().animate_bool_with_time(resp.id.with("selected"), selected, if animate { 0.15 } else { 0.0 });
+    if hover > 0.0 || selection > 0.0 {
+        p.rect_filled(row, CornerRadius::same(2), t.hover.gamma_multiply(hover.max(selection * 0.5)));
     }
     if bs.focus == Some(index) || selected {
         // The current page (and the keyboard focus) is outlined, as in PowerPoint.

@@ -21,6 +21,17 @@ impl SlideApp {
             theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
             self.restyle = false;
         }
+        let enabled = self.services.animations_enabled.as_ref().and_then(|ask| ask()).unwrap_or(true);
+        let id = egui::Id::unique("host_animation_time");
+        let current = ctx.global_style().animation_time;
+        if !enabled {
+            ctx.data_mut(|d| {
+                d.get_temp_mut_or_insert_with(id, || current);
+            });
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
+        } else if let Some(normal) = ctx.data_mut(|d| d.remove_temp::<f32>(id)) {
+            ctx.global_style_mut(|style| style.animation_time = normal);
+        }
         self.fonts_ready = true;
         true
     }
