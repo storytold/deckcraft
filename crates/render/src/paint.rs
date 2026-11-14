@@ -94,7 +94,11 @@ pub fn fill_path(
                         fill_tiled(ctx, position, &expanded, tile, extend, path, m, alpha);
                     }
                     GradientShape::Path { focus, .. } => {
-                        let Some((f, c, r)) = circle_ends(*focus, bounds, tile) else { return };
+                        // An unusable focus centers the circle in the tile, as `circle_gradient` does.
+                        let (f, c, r) = circle_ends(*focus, bounds, tile).unwrap_or_else(|| {
+                            let c = tile.center();
+                            (c, c, (tile.width().hypot(tile.height()) / 2.0).max(1e-6))
+                        });
                         fill_tiled(ctx, |p| circle_position(f, c, r, p), &expanded, tile, extend, path, m, alpha);
                     }
                 }

@@ -388,6 +388,18 @@ fn a_circle_gradient_repeats_its_tile_rect() {
 }
 
 #[test]
+fn a_tiled_circle_gradient_with_a_focus_that_is_not_a_number_centers_in_its_tile() {
+    // As the untiled gradient does: the circle is centered in the tile, light there and dark at the seam.
+    let mut sh = radial([f64::NAN, 0.5, 0.75, 0.5]);
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.tile = [0.0, 0.0, 0.5, 0.0];
+    }
+    let img = render(vec![sh]);
+    let (middle, seam) = (img.pixel(200, 200)[0], img.pixel(298, 200)[0]);
+    assert!(middle > 230 && i32::from(middle) > i32::from(seam) + 80, "middle {middle}, seam {seam}");
+}
+
+#[test]
 fn a_tile_wider_than_its_raster_keeps_a_hard_seam() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
     // A 1000 pt tile at 2.5x spans 2500 output pixels, more than the tile raster holds: the seam at
