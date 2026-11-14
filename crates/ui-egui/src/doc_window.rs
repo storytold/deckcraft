@@ -96,10 +96,10 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                             ui.add_space(16.0);
                             ui.label(RichText::new(format!("Slide {} of {n}", slide + 1)).color(t.text_dim).font(crate::theme::font(13.0)));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.add_enabled(slide + 1 < n, egui::Button::new("Next")).clicked() {
+                                if ui.add_enabled(slide + 1 < n, egui::Button::new(tl!("Next"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": 1}));
                                 }
-                                if ui.add_enabled(slide > 0, egui::Button::new("Previous")).clicked() {
+                                if ui.add_enabled(slide > 0, egui::Button::new(tl!("Previous"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": -1}));
                                 }
                             });
@@ -108,7 +108,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                 egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
                     let avail = ui.available_rect_before_wrap();
                     let (w, h) = pixel_size(&doc, avail.width());
-                    let tex = ensure_texture(app, ui.ctx(), &doc, (uid, revision, slide, w, h, grayscale));
+                    let tex = ensure_texture(app, ui.ctx(), &doc, (uid, revision, slide, w, h, grayscale, crate::i18n::current().code()));
                     if let Some(tex) = tex {
                         let fitted = fit_rect(avail, w, h);
                         ui.painter().rect_filled(fitted, CornerRadius::ZERO, Color32::WHITE);
@@ -142,10 +142,11 @@ fn fit_rect(avail: Rect, w: u32, h: u32) -> Rect {
 }
 
 /// What a cached slide texture was drawn from: document, revision, slide, pixel size, grayscale.
-type TexKey = (u64, u64, usize, u32, u32, bool);
+/// (document, revision, slide, width, height, grayscale, interface language of the prompts).
+type TexKey = (u64, u64, usize, u32, u32, bool, &'static str);
 
 fn ensure_texture(app: &mut SlideApp, ctx: &egui::Context, doc: &deckcraft_model::Presentation, key: TexKey) -> Option<egui::TextureHandle> {
-    let (_, _, slide, w, h, grayscale) = key;
+    let (_, _, slide, w, h, grayscale, _) = key;
     if let Some(win) = app.doc_window.as_ref()
         && win.key == Some(key)
         && let Some(tex) = win.tex.clone()
@@ -155,7 +156,14 @@ fn ensure_texture(app: &mut SlideApp, ctx: &egui::Context, doc: &deckcraft_model
     let img = deckcraft_render::render_slide(
         doc,
         slide,
-        &RenderOpts { scale: w as f64 / doc.slide_size.width.max(1.0), size: Some((w, h)), edit: true, threads: 0, ..Default::default() },
+        &RenderOpts {
+            scale: w as f64 / doc.slide_size.width.max(1.0),
+            size: Some((w, h)),
+            edit: true,
+            prompt: Some(&crate::i18n::prompts()),
+            threads: 0,
+            ..Default::default()
+        },
     );
     let tex = crate::textures::upload(ctx, "doc-window-slide", crate::textures::to_color_image(&img, grayscale));
     if let Some(win) = app.doc_window.as_mut() {
