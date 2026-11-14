@@ -5,8 +5,8 @@ use egui::Ui;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::SlideApp;
 use crate::icons::Icon;
+use crate::{SlideApp, i18n};
 
 /// One toolbar button: a command, its parameters, and how it looks.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -120,15 +120,29 @@ pub fn run_index(app: &mut SlideApp, index: usize) -> bool {
     true
 }
 
-fn tip(q: &QatItem, index: usize, mac: bool) -> String {
+/// Translate only stock captions: a user-provided toolbar label is document-independent data.
+fn localized_label(lang: i18n::Resolved, q: &QatItem) -> &str {
+    let key = match (q.id.as_str(), q.label.as_str()) {
+        ("app.home", "Home") => Some("title.home"),
+        ("file.save", "Save") => Some("title.save"),
+        ("edit.undo", "Undo") => Some("title.undo"),
+        ("edit.redo", "Redo") => Some("title.redo"),
+        ("show.fromStart", "Start from Beginning") if lang == i18n::Resolved::Ja => Some("title.play"),
+        _ => None,
+    };
+    key.map_or(q.label.as_str(), |key| i18n::text(lang, key))
+}
+
+/// Combine a display caption with the existing command and toolbar shortcuts.
+fn tip(q: &QatItem, label: &str, index: usize, mac: bool) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));
     let qat_sc = if !mac && index < 9 { Some(format!("Alt+{}", index + 1)) } else { None };
     match (sc, qat_sc) {
-        (Some(s), Some(qsc)) => format!("{} ({}, {})", q.label, crate::ribbon::pretty_shortcut(s), qsc),
-        (Some(s), None) => format!("{} ({})", q.label, crate::ribbon::pretty_shortcut(s)),
-        (None, Some(qsc)) => format!("{} ({})", q.label, qsc),
-        (None, None) => q.label.clone(),
+        (Some(s), Some(qsc)) => format!("{} ({}, {})", label, crate::ribbon::pretty_shortcut(s), qsc),
+        (Some(s), None) => format!("{} ({})", label, crate::ribbon::pretty_shortcut(s)),
+        (None, Some(qsc)) => format!("{} ({})", label, qsc),
+        (None, None) => label.to_owned(),
     }
 }
 
@@ -139,7 +153,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     for (i, q) in items.iter().enumerate() {
         let on = q.id == "app.home" && app.backstage_open();
         let en = is_enabled(app, &q.id);
-        let r = crate::widgets::icon_toggle(ui, q.icon(), &tip(q, i, mac), en, on);
+        let r = crate::widgets::icon_toggle(ui, q.icon(), &tip(q, localized_label(app.lang(), q), i, mac), en, on);
         if r.clicked() {
             run(app, q);
         }

@@ -1,11 +1,14 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-09 · **Change:** minor (partial Japanese proposal integrated; coverage and mechanism review pending; parity scores unchanged); previous: minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+This branch adds a partial Japanese interface with a 402-entry English/Japanese catalog and
+a System / English / Japanese setting, continuing #543. Shell, Home controls and selected dialog
+and pane captions use it; newer dialog fields, other ribbon controls and engine messages still
+fall back to English. The catalog count is not a measured percentage of current UI coverage.
+Requests #15 and #30 remain open; #1119/#1125 propose another language mechanism, and maintainer
+selection and native-speaker wording review remain pending. The existing **~8% ready** score and
+**55–90 h** estimate have not been reassessed by this change.
 
 ## How the numbers are measured
 
@@ -32,7 +35,7 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | French | fr | 0 (0%) | no | full (Latin) | no | none | yes (fr, fr-CA) | 3–5 |
 | Portuguese | pt | 0 (0%) | no | full (Latin) | no | none | yes (pt-BR, pt-PT) | 3–5 |
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
-| Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
+| Japanese | ja | partial; 402 catalog entries, not all current controls | selected controls / tooltips; no help | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
@@ -60,6 +63,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-09 | minor | Partial Japanese proposal integrated with current UI modules; original catalog and language choice retained. Coverage, shared mechanism and native review remain open; parity scores unchanged. |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |

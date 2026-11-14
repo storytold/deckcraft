@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
 use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
+use crate::i18n;
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -43,10 +44,16 @@ impl SlideApp {
         r
     }
 
+    /// The language the shell is drawn in.
+    pub fn lang(&self) -> i18n::Resolved {
+        self.ui.language.resolve(i18n::system_tag().as_deref())
+    }
+
     fn flag(&mut self, params: &Value, cur: bool) -> bool {
         params.get("on").and_then(Value::as_bool).unwrap_or(!cur)
     }
 
+    /// Execute application commands, including validated interface-language changes.
     fn run_ui(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         match id {
             "view.normal" => self.ui.view = ViewMode::Normal,
@@ -234,6 +241,13 @@ impl SlideApp {
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
+            "app.language" => {
+                let code = p.get("language").and_then(Value::as_str).ok_or("missing `language`")?;
+                let choice = i18n::LanguageChoice::parse(code).ok_or_else(|| format!("unknown language `{code}`; use system, en or ja"))?;
+                self.ui.language = choice;
+                let resolved = choice.resolve(i18n::system_tag().as_deref());
+                return Ok(json!({"language": choice.code(), "resolved": resolved.code()}));
+            }
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {

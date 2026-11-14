@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (partial Japanese proposal retained with current Diagram naming; coverage and mechanism review pending; parity scores unchanged); previous: trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -107,7 +107,9 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+Partial Japanese interface on this branch: 402 catalog entries and a System / English / Japanese
+setting, with English fallback for untranslated controls. Shared mechanism selection and native
+wording review remain open; parity scores and effort estimates are unchanged. Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
@@ -120,13 +122,13 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | French | fr | 0% | none | 3–5 |
 | Portuguese | pt | 0% | none | 3–5 |
 | Indonesian | id | 0% | none | 3–5 |
-| Japanese | ja | 0% | none | 4–7 |
+| Japanese | ja | partial (402 catalog entries; coverage not measured) | partial; native review pending | 4–7 |
 | German | de | 0% | none | 3–5 |
 | Korean | ko | 0% | none | 4–7 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
-ships 26.
+The earlier 8–14 h infrastructure estimate has not been reassessed for this partial proposal.
+Other languages shipped: none. PowerPoint for Mac ships 26.
 
 ## Upcoming
 
@@ -160,6 +162,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
+| 2026-11-09 | Partial Japanese proposal integrated with current UI modules: original 402-entry catalog and language choice retained; current Comments layout preserved. Maintainer mechanism choice and native wording review remain open; no parity score change. |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
 | 2026-11-02 | Deleting slides removes their IDs from every custom show; the cleanup is undoable and survives native save/reopen |

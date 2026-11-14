@@ -5,8 +5,8 @@ use deckcraft_color::SchemeSlot;
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
-use crate::SlideApp;
 use crate::theme::{self, Tokens};
+use crate::{SlideApp, i18n};
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Dialog {
@@ -29,45 +29,46 @@ impl Dialog {
     }
 }
 
-fn title(id: &str) -> &'static str {
+/// Resolve supported dialog captions without changing the dialog identifier.
+fn title(lang: i18n::Resolved, id: &str) -> &'static str {
     match id {
-        "table" => "Insert Table",
-        "slideSize" => "Slide Size",
+        "table" => i18n::text(lang, "dialog.table.title"),
+        "slideSize" => i18n::text(lang, "dialog.slide_size.title"),
         "sizePosition" => "Size and Position",
-        "headerFooter" => "Header and Footer",
-        "hyperlink" => "Insert Hyperlink",
-        "setupShow" => "Set Up Slide Show",
-        "zoom" => "Zoom",
-        "comment" => "New Comment",
-        "altText" => "Alt Text",
-        "outline" => "Slides from Outline",
-        "renameSection" => "Rename Section",
+        "headerFooter" => i18n::text(lang, "dialog.header_footer.title"),
+        "hyperlink" => i18n::text(lang, "dialog.hyperlink.title"),
+        "setupShow" => i18n::text(lang, "dialog.setup_show.title"),
+        "zoom" => i18n::text(lang, "dialog.zoom.title"),
+        "comment" => i18n::text(lang, "dialog.comment.title"),
+        "altText" => i18n::text(lang, "dialog.alt_text.title"),
+        "outline" => i18n::text(lang, "dialog.outline.title"),
+        "renameSection" => i18n::text(lang, "dialog.rename_section.title"),
         "reuseSlides" => "Reuse Slides",
-        "renameShape" => "Rename",
-        "renameLayout" => "Rename Layout",
-        "paragraph" => "Paragraph",
+        "renameShape" => i18n::text(lang, "dialog.rename.title"),
+        "renameLayout" => i18n::text(lang, "dialog.rename_layout.title"),
+        "paragraph" => i18n::text(lang, "dialog.paragraph.title"),
         "tabs" => "Tabs",
         "font" => "Font",
-        "about" => "About DeckCraft",
-        "preferences" => "Preferences",
+        "about" => i18n::text(lang, "dialog.about.title"),
+        "preferences" => i18n::text(lang, "pref.title"),
         "autocorrect" => "AutoCorrect",
         "gridOptions" => "Grid Options",
         "columns" => "Columns",
-        "export" => "Export",
-        "symbol" => "Symbol",
+        "export" => i18n::text(lang, "nav.export"),
+        "symbol" => i18n::text(lang, "dialog.symbol.title"),
         "photoAlbum" => "Photo Album",
         "replaceFonts" => "Replace Font",
-        "equation" => "Equation",
+        "equation" => i18n::text(lang, "dialog.equation.title"),
         "dateTime" => "Date and Time",
-        "spelling" => "Spelling",
+        "spelling" => i18n::text(lang, "dialog.spelling.title"),
         "pasteSpecial" => "Paste Special",
         "find" => "Find and Replace",
-        "accessibility" => "Accessibility Checker",
-        "language" => "Language",
-        "customShow" => "Custom Shows",
-        "chartData" => "Chart Data",
-        "trim" => "Trim Media",
-        "smartart" => "Choose a Diagram Graphic",
+        "accessibility" => i18n::text(lang, "dialog.accessibility.title"),
+        "language" => i18n::text(lang, "dialog.language.title"),
+        "customShow" => i18n::text(lang, "dialog.custom_show.title"),
+        "chartData" => i18n::text(lang, "dialog.chart.title"),
+        "trim" => i18n::text(lang, "dialog.trim.title"),
+        "smartart" => i18n::text(lang, "dialog.smartart.title"),
         "bullets" => "Bullets and Numbering",
         "action" => "Action Settings",
         "quit" => "DeckCraft",
@@ -83,7 +84,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let mut window = egui::Window::new(title(app.lang(), &d.id))
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
@@ -126,7 +127,18 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     }
 }
 
+/// Draw the default confirmation row with an English Cancel caption.
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+    buttons_labeled(ui, ok_label, "Cancel")
+}
+
+/// Translate Cancel while retaining the caller's confirmation caption.
+fn localized_buttons(ui: &mut Ui, lang: i18n::Resolved, ok_label: &str) -> (bool, bool) {
+    buttons_labeled(ui, ok_label, i18n::text(lang, "pref.cancel"))
+}
+
+/// Lay out confirmation and cancellation actions and report which was activated.
+fn buttons_labeled(ui: &mut Ui, ok_label: &str, cancel_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
     ui.add_space(8.0);
@@ -137,7 +149,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(cancel_label).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });

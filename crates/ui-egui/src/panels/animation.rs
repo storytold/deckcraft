@@ -2,9 +2,11 @@ use super::{
     Align2, AnimClass, AnimStart, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, animtimeline, icons, json, paint_anim_tile,
     pos2, run, theme, vec2,
 };
+use crate::i18n;
 
 /// Render the animation pane and route its controls through the engine's animation commands.
 pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
+    let lang = app.lang();
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let Some(slide) = st.current_slide() else { return };
@@ -27,7 +29,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
         let label = match (playing, from) {
             (true, _) => "■ Stop",
             (false, Some(_)) => "▶ Play From",
-            (false, None) => "▶ Play All",
+            (false, None) => i18n::text(lang, "pane.animation.play_all"),
         };
         if ui.button(label).clicked() {
             let p = match (playing, from) {
@@ -39,7 +41,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.separator();
     if anims.is_empty() {
-        ui.label(egui::RichText::new("Select an object on the slide and add an animation from the Animations tab.").color(t.text_dim));
+        ui.label(egui::RichText::new(i18n::text(lang, "pane.animation.description")).color(t.text_dim));
         return;
     }
     let bars = animtimeline::bars(anims.len(), &effects);
@@ -51,7 +53,11 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
         if a.start == AnimStart::OnClick {
             click += 1;
         }
-        let name = names.iter().find(|(id, _)| *id == a.shape.0).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("Shape {}", a.shape));
+        let name = names
+            .iter()
+            .find(|(id, _)| *id == a.shape.0)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| i18n::fill(i18n::text(lang, "pane.animation.shape"), &[("id", &a.shape.to_string())]));
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
         let sel = selected.contains(&a.shape.0);
         if sel || resp.hovered() {
@@ -145,24 +151,28 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "edit.select", json!({"ids": [a.shape.0]}));
         }
         resp.context_menu(|ui| {
-            for (l, v) in [("Start On Click", "onClick"), ("Start With Previous", "withPrevious"), ("Start After Previous", "afterPrevious")] {
+            for (l, v) in [
+                (i18n::text(lang, "pane.animation.on_click"), "onClick"),
+                (i18n::text(lang, "pane.animation.with_previous"), "withPrevious"),
+                (i18n::text(lang, "pane.animation.after_previous"), "afterPrevious"),
+            ] {
                 if ui.button(l).clicked() {
                     run(app, "animation.timing", json!({"index": i, "start": v}));
                     ui.close();
                 }
             }
             ui.separator();
-            if ui.button("Move Up").clicked() {
+            if ui.button(i18n::text(lang, "pane.animation.move_up")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i.saturating_sub(1)}));
                 ui.close();
             }
-            if ui.button("Move Down").clicked() {
+            if ui.button(i18n::text(lang, "pane.animation.move_down")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i + 1}));
                 ui.close();
             }
-            if ui.button("Remove").clicked() {
+            if ui.button(i18n::text(lang, "pane.animation.remove")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.remove", json!({"index": i}));
                 ui.close();

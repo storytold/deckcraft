@@ -1,4 +1,5 @@
 use super::{Align2, Color32, CornerRadius, Sense, SlideApp, Stroke, Tokens, Ui, Value, json, run, theme, vec2};
+use crate::i18n;
 
 /// Review › Compare: the revised copy's slide-level changes; click to go there, Accept to take it,
 /// Reject to drop it.
@@ -64,9 +65,11 @@ pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
+/// Draw cross-slide comment threads with translated actions and unchanged thread identities.
 pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
+    let lang = app.lang();
     let t = Tokens::get(ui.ctx());
-    if ui.button("+ New Comment").clicked() {
+    if ui.button(i18n::text(lang, "pane.comments.new")).clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("comment"));
     }
     ui.separator();
@@ -76,7 +79,7 @@ pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
         .map(|st| st.doc.slides.iter().enumerate().filter(|(_, sl)| !sl.comments.is_empty()).map(|(i, sl)| (i, sl.comments.clone())).collect())
         .unwrap_or_default();
     if threads.is_empty() {
-        ui.label(egui::RichText::new("No comments.").color(t.text_dim));
+        ui.label(egui::RichText::new(i18n::text(lang, "pane.comments.empty")).color(t.text_dim));
         return;
     }
     let focus = app.ui.comment_focus;
@@ -97,6 +100,7 @@ fn focus_comment(app: &mut SlideApp, slide: usize, index: usize) {
 
 /// Render one comment card, preserving its slide/index identity and focus state through actions.
 fn comment_card(app: &mut SlideApp, ui: &mut Ui, slide: usize, index: usize, c: &deckcraft_model::Comment, focused: bool) {
+    let lang = app.lang();
     let t = Tokens::get(ui.ctx());
     let stroke = if focused { Stroke::new(2.0, t.accent) } else { Stroke::NONE };
     let shown = egui::Frame::NONE
@@ -144,13 +148,18 @@ fn comment_card(app: &mut SlideApp, ui: &mut Ui, slide: usize, index: usize, c: 
                             _ => {}
                         }
                     }
-                    if ui.small_button(if c.resolved { "Reopen" } else { "Resolve" }).clicked() {
+                    if ui
+                        .small_button(if c.resolved { i18n::text(lang, "pane.comments.reopen") } else { i18n::text(lang, "pane.comments.resolve") })
+                        .clicked()
+                    {
                         focus_comment(app, slide, index);
                         run(app, "comment.resolve", json!({"index": index, "resolved": !c.resolved}));
                     }
                     let id = ui.scope_id().with(("reply", slide, index));
                     let mut txt: String = ui.data_mut(|d| d.get_temp(id).unwrap_or_default());
-                    let r = ui.add(egui::TextEdit::singleline(&mut txt).hint_text("Reply…").desired_width(ui.available_width()));
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut txt).hint_text(i18n::text(lang, "pane.comments.reply")).desired_width(ui.available_width()),
+                    );
                     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !txt.trim().is_empty() {
                         focus_comment(app, slide, index);
                         run(app, "comment.reply", json!({"index": index, "text": txt}));

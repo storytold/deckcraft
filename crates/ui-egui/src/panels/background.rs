@@ -1,6 +1,9 @@
 use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
+use crate::i18n;
 
+/// Edit slide backgrounds with supported localized captions and existing color commands.
 pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
+    let lang = app.lang();
     let sc = scheme(app);
     let bg = app.session.active().and_then(|d| d.current_slide().and_then(|s| s.background.clone()));
     let fill = match &bg {
@@ -16,13 +19,13 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     };
     // What "Apply to All" re-applies: the current slide's background as command params.
     let mut current: Option<Value> = None;
-    ui.label(egui::RichText::new("Fill").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(i18n::text(lang, "pane.format.fill")).font(theme::bold(13.0)));
     for (l, k) in [
-        ("Solid fill", "solid"),
-        ("Gradient fill", "gradient"),
-        ("Picture or texture fill", "picture"),
-        ("Pattern fill", "pattern"),
-        ("Follow the layout", "auto"),
+        (i18n::text(lang, "pane.format.solid_fill"), "solid"),
+        (i18n::text(lang, "pane.format.gradient"), "gradient"),
+        (i18n::text(lang, "pane.format.picture_fill"), "picture"),
+        (i18n::text(lang, "pane.format.pattern"), "pattern"),
+        (i18n::text(lang, "pane.background.follow_layout"), "auto"),
     ] {
         if ui.radio(kind == k, l).clicked() && kind != k {
             match k {
@@ -50,8 +53,8 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
         Some(Fill::Solid { color }) => {
             current = Some(json!({"color": cref_param(color)}));
             ui.horizontal(|ui| {
-                ui.label("Color");
-                let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
+                ui.label(i18n::text(lang, "pane.format.color"));
+                let r = widgets::drop_button(ui, i18n::text(lang, "pane.format.color"), vec2(70.0, 20.0), true);
                 widgets::color_popup(&r).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                         run(app, "design.background", json!({"color": cref_param(&c)}));
@@ -59,7 +62,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
             let mut tr = ((1.0 - color.alpha()) * 100.0) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("Transparency").suffix("%")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text(i18n::text(lang, "pane.format.transparency")).suffix("%")).drag_stopped() {
                 run(app, "design.background", json!({"transparency": (f64::from(tr) / 100.0).clamp(0.0, 1.0)}));
             }
         }
@@ -76,7 +79,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         Some(Fill::Picture(pf)) => {
-            if ui.button("Insert picture from file…").clicked()
+            if ui.button(i18n::text(lang, "pane.background.insert_picture")).clicked()
                 && let Some(pick) = app.services.pick_open.as_mut()
                 && let Some(path) = pick("picture")
                 && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
@@ -90,13 +93,13 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     ui.add_space(4.0);
     let hide = app.session.active().and_then(|d| d.current_slide().map(|s| !s.show_master_shapes)).unwrap_or(false);
     let mut h = hide;
-    if ui.checkbox(&mut h, "Hide background graphics").changed() {
+    if ui.checkbox(&mut h, i18n::text(lang, "pane.background.hide_graphics")).changed() {
         run(app, "design.hideBackgroundGraphics", json!({"hide": h}));
     }
     ui.add_space(8.0);
     let picture = matches!(fill, Some(Fill::Picture(_)));
     ui.horizontal(|ui| {
-        if ui.add_enabled(current.is_some() || picture, egui::Button::new("Apply to All")).clicked() {
+        if ui.add_enabled(current.is_some() || picture, egui::Button::new(i18n::text(lang, "action.apply_all"))).clicked() {
             if let Some(Value::Object(mut o)) = current.clone() {
                 o.insert("all".into(), json!(true));
                 run(app, "design.background", Value::Object(o));
@@ -104,7 +107,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "design.background", json!({"copy": true}));
             }
         }
-        if ui.button("Reset Background").clicked() {
+        if ui.button(i18n::text(lang, "pane.background.reset")).clicked() {
             run(app, "design.background", json!({"reset": true}));
         }
     });
@@ -113,10 +116,11 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
 /// Render picture-fill background controls and route transparency, tiling, and tile geometry
 /// changes through the engine.
 fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_model::style::PictureFill) {
+    let lang = app.lang();
     use deckcraft_model::style::PictureMode;
     let alpha = pf.alpha.unwrap_or(1.0);
     let mut tr = ((1.0 - alpha) * 100.0) as f32;
-    if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("Transparency").suffix("%")).drag_stopped() {
+    if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text(i18n::text(lang, "pane.format.transparency")).suffix("%")).drag_stopped() {
         run(app, "design.background", json!({"transparency": (f64::from(tr) / 100.0).clamp(0.0, 1.0)}));
     }
     let mut tile = matches!(pf.mode, PictureMode::Tile { .. });
@@ -144,13 +148,13 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
         });
     }
     let align_name = match align.as_str() {
-        "t" => "Top",
+        "t" => i18n::text(lang, "pane.format.top"),
         "tr" => "Top Right",
-        "l" => "Left",
-        "ctr" => "Center",
-        "r" => "Right",
+        "l" => i18n::text(lang, "pane.format.left"),
+        "ctr" => i18n::text(lang, "pane.format.center"),
+        "r" => i18n::text(lang, "pane.format.right"),
         "bl" => "Bottom Left",
-        "b" => "Bottom",
+        "b" => i18n::text(lang, "pane.format.bottom"),
         "br" => "Bottom Right",
         _ => "Top Left",
     };
@@ -159,13 +163,13 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
         let combo = craft_ui::ComboBox::from_id_salt("bg-align").selected_text(align_name).width(140.0).show_ui(ui, |ui| {
             for (k, l) in [
                 ("tl", "Top Left"),
-                ("t", "Top"),
+                ("t", i18n::text(lang, "pane.format.top")),
                 ("tr", "Top Right"),
-                ("l", "Left"),
-                ("ctr", "Center"),
-                ("r", "Right"),
+                ("l", i18n::text(lang, "pane.format.left")),
+                ("ctr", i18n::text(lang, "pane.format.center")),
+                ("r", i18n::text(lang, "pane.format.right")),
                 ("bl", "Bottom Left"),
-                ("b", "Bottom"),
+                ("b", i18n::text(lang, "pane.format.bottom")),
                 ("br", "Bottom Right"),
             ] {
                 if ui.selectable_label(align == k, l).clicked() {
@@ -176,15 +180,20 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
         let _ = combo.response.labelled_by(field.id);
     });
     let mirror_name = match flip.as_str() {
-        "x" => "Horizontal",
-        "y" => "Vertical",
+        "x" => i18n::text(lang, "pane.format.horizontal"),
+        "y" => i18n::text(lang, "pane.format.vertical"),
         "xy" => "Both",
-        _ => "None",
+        _ => i18n::text(lang, "pane.format.none"),
     };
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(72.0, 20.0), egui::Label::new("Mirror"));
         let combo = craft_ui::ComboBox::from_id_salt("bg-mirror").selected_text(mirror_name).width(140.0).show_ui(ui, |ui| {
-            for (k, l) in [("none", "None"), ("x", "Horizontal"), ("y", "Vertical"), ("xy", "Both")] {
+            for (k, l) in [
+                ("none", i18n::text(lang, "pane.format.none")),
+                ("x", i18n::text(lang, "pane.format.horizontal")),
+                ("y", i18n::text(lang, "pane.format.vertical")),
+                ("xy", "Both"),
+            ] {
                 if ui.selectable_label(flip == k, l).clicked() {
                     run(app, "design.background", json!({"pictureProps": {"mirror": k}}));
                 }

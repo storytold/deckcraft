@@ -1,4 +1,4 @@
-use super::{Deserialize, LayoutId, MasterId, Serialize, SlideId, Target, qat, theme};
+use super::{Deserialize, LayoutId, MasterId, Serialize, SlideId, Target, i18n, qat, theme};
 
 /// The operation the user asked for. Kept with the request so a late completion does not
 /// guess a command from the file name.
@@ -89,6 +89,8 @@ pub struct UiState {
     /// The Text Pane's line drafts, for the SmartArt group they were read from.
     pub smartart_drafts: (u32, Vec<String>),
     pub grayscale: bool,
+    /// Interface language; older preferences keep following the system locale.
+    pub language: i18n::LanguageChoice,
     /// Comment the Review Previous/Next buttons last landed on: `(slide, index)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment_focus: Option<(usize, usize)>,
@@ -97,6 +99,7 @@ pub struct UiState {
 }
 
 impl Default for UiState {
+    /// Construct initial interface state with system language and stock toolbar commands.
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
@@ -125,6 +128,7 @@ impl Default for UiState {
             smartart_focus: None,
             smartart_drafts: (0, vec![]),
             grayscale: false,
+            language: i18n::LanguageChoice::System,
             comment_focus: None,
             qat: qat::defaults(),
         }

@@ -9,6 +9,7 @@ use super::font::font_dialog;
 use super::grid_options::grid_options;
 use super::hyperlink::{hyperlink_command, hyperlink_seed_of, hyperlink_should_apply};
 use super::language::selected_language;
+use super::localized_buttons;
 use super::paragraph::paragraph_dialog;
 use super::photo_album::photo_album_dialog;
 use super::preferences::{preferences_snapshot, restore_preferences};
@@ -20,6 +21,7 @@ use super::theme_fonts::theme_fonts_dialog;
 use super::trim::{seconds_text_to_ms, trim_seed};
 use super::zoom::zoom_dialog;
 use super::{Dialog, SlideApp, Tokens, Ui, Value, buttons, check, field, field_of, json, num, theme, vec2};
+use crate::i18n;
 
 /// Returns true when the dialog should close.
 pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -66,7 +68,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "themeFonts" => theme_fonts_dialog(app, ui, d),
         "dateTime" => date_time_dialog(app, ui, d),
         _ => {
-            ui.label(format!("“{}” is not available yet.", d.id));
+            ui.label(i18n::fill(i18n::text(app.lang(), "dialog.unavailable"), &[("id", &d.id)]));
             let (ok, cancel) = buttons(ui, "OK");
             ok || cancel
         }
@@ -77,10 +79,12 @@ fn run(app: &mut SlideApp, id: &str, p: Value) {
     let _ = app.run(id, p);
 }
 
+/// Insert a table from the stable row/column fields behind translated captions.
 fn dlg_table(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    field(ui, d, "Number of columns:", "cols", "5");
-    field(ui, d, "Number of rows:", "rows", "2");
-    let (ok, cancel) = buttons(ui, "Insert");
+    let lang = app.lang();
+    field(ui, d, i18n::text(lang, "dialog.table.columns"), "cols", "5");
+    field(ui, d, i18n::text(lang, "dialog.table.rows"), "rows", "2");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "tab.insert"));
     if ok {
         let (r, c) = (num(d, "rows", 2.0) as usize, num(d, "cols", 5.0) as usize);
         run(app, "insert.table", json!({"rows": r, "cols": c}));
@@ -88,7 +92,9 @@ fn dlg_table(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Edit exact slide dimensions and display localized preset names without changing preset identities.
 fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let cur = app.session.active().map(|s| s.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
     let len = app.session.prefs.units;
     let ppu = len.points_per_unit();
@@ -99,17 +105,19 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         put_slide_dim(d, "w", cur.width, ppu);
         put_slide_dim(d, "h", cur.height, ppu);
     }
-    let label = ui.label("Slides sized for:");
+    let label = ui.label(i18n::text(lang, "dialog.slide_size.preset"));
     let preset = d.get("preset", "");
-    let combo = craft_ui::ComboBox::from_id_salt("sizes").selected_text(if preset.is_empty() { "Custom" } else { &preset }).show_ui(ui, |ui| {
-        for (label, w, h) in deckcraft_model::defaults::SLIDE_SIZES {
-            if ui.selectable_label(preset == *label, *label).clicked() {
-                d.fields.insert("preset".into(), label.to_string());
-                put_slide_dim(d, "w", *w, ppu);
-                put_slide_dim(d, "h", *h, ppu);
+    let combo = craft_ui::ComboBox::from_id_salt("sizes")
+        .selected_text(if preset.is_empty() { i18n::text(lang, "dialog.slide_size.custom") } else { i18n::slide_size_label(lang, &preset) })
+        .show_ui(ui, |ui| {
+            for (label, w, h) in deckcraft_model::defaults::SLIDE_SIZES {
+                if ui.selectable_label(preset == *label, i18n::slide_size_label(lang, label)).clicked() {
+                    d.fields.insert("preset".into(), label.to_string());
+                    put_slide_dim(d, "w", *w, ppu);
+                    put_slide_dim(d, "h", *h, ppu);
+                }
             }
-        }
-    });
+        });
     let _ = combo.response.labelled_by(label.id);
     let abbr = unit_abbr(len);
     let (w_seed, h_seed) = (field_of(d, "w"), field_of(d, "h"));
@@ -126,8 +134,8 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             put_slide_dim(d, "h", w, ppu);
         }
     });
-    let maximize = check(ui, d, "Maximize content (else ensure fit)", "max", false);
-    let (ok, cancel) = buttons(ui, "OK");
+    let maximize = check(ui, d, i18n::text(lang, "dialog.slide_size.maximize"), "max", false);
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     if ok {
         let (w, h) = (slide_dim_points(d, "w", ppu, cur.width), slide_dim_points(d, "h", ppu, cur.height));
         run(app, "design.slideSize", json!({"w": w, "h": h, "scale": if maximize { "maximize" } else { "ensureFit" }}));
@@ -135,10 +143,12 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Apply header/footer choices without rewriting untouched date-format values.
 fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let hf = app.session.active().map(|s| s.doc.header_footer.clone()).unwrap_or_default();
-    let date = check(ui, d, "Date and time", "date", hf.date);
-    field(ui, d, "  Fixed date (empty = update automatically):", "dateText", &hf.date_text);
+    let date = check(ui, d, i18n::text(lang, "dialog.header_footer.date"), "date", hf.date);
+    field(ui, d, i18n::text(lang, "dialog.header_footer.auto_date"), "dateText", &hf.date_text);
     // The format applies to an automatic date; a fixed one is the text as typed.
     let automatic = d.get("dateText", &hf.date_text).is_empty();
     let fmt_now = if hf.date_format.is_empty() { "datetime1".to_string() } else { hf.date_format.clone() };
@@ -158,17 +168,17 @@ fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             });
         });
     });
-    let num_on = check(ui, d, "Slide number", "num", hf.slide_number);
-    let foot = check(ui, d, "Footer", "footer", hf.footer);
-    field(ui, d, "  Footer text:", "footerText", &hf.footer_text);
-    let hide = check(ui, d, "Don't show on title slide", "hide", hf.hide_on_title);
+    let num_on = check(ui, d, i18n::text(lang, "dialog.header_footer.number"), "num", hf.slide_number);
+    let foot = check(ui, d, i18n::text(lang, "dialog.header_footer.footer"), "footer", hf.footer);
+    field(ui, d, i18n::text(lang, "dialog.header_footer.footer_text"), "footerText", &hf.footer_text);
+    let hide = check(ui, d, i18n::text(lang, "dialog.header_footer.hide_title"), "hide", hf.hide_on_title);
     ui.add_space(6.0);
     let mut apply_all = false;
     let mut apply = false;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        apply_all = ui.button("Apply to All").clicked();
-        apply = ui.button("Apply").clicked();
-        if ui.button("Cancel").clicked() {
+        apply_all = ui.button(i18n::text(lang, "action.apply_all")).clicked();
+        apply = ui.button(i18n::text(lang, "action.apply")).clicked();
+        if ui.button(i18n::text(lang, "pref.cancel")).clicked() {
             d.fields.insert("cancel".into(), "1".into());
         }
     });
@@ -193,18 +203,20 @@ fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     apply || apply_all || d.fields.contains_key("cancel")
 }
 
+/// Edit hyperlink display fields while preserving stored link kinds and target parameters.
 fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let seed = hyperlink_seed_of(app.session.active());
     let slide_default = seed.slide.to_string();
     let mode = d.get("mode", seed.mode);
     ui.horizontal(|ui| {
-        if ui.selectable_label(mode == "url", "Web Page or File").clicked() {
+        if ui.selectable_label(mode == "url", i18n::text(lang, "dialog.hyperlink.web")).clicked() {
             d.fields.insert("mode".into(), "url".into());
         }
-        if ui.selectable_label(mode == "slide", "This Document").clicked() {
+        if ui.selectable_label(mode == "slide", i18n::text(lang, "dialog.hyperlink.document")).clicked() {
             d.fields.insert("mode".into(), "slide".into());
         }
-        if ui.selectable_label(mode == "email", "Email Address").clicked() {
+        if ui.selectable_label(mode == "email", i18n::text(lang, "dialog.hyperlink.email")).clicked() {
             d.fields.insert("mode".into(), "email".into());
         }
     });
@@ -224,11 +236,11 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
             });
         }
-        "email" => field(ui, d, "Email address:", "email", &seed.email),
-        _ => field(ui, d, "Address:", "url", &seed.url),
+        "email" => field(ui, d, i18n::text(lang, "dialog.hyperlink.email_field"), "email", &seed.email),
+        _ => field(ui, d, i18n::text(lang, "dialog.hyperlink.address"), "url", &seed.url),
     }
-    field(ui, d, "ScreenTip:", "tip", &seed.tip);
-    let (ok, cancel) = buttons(ui, "OK");
+    field(ui, d, i18n::text(lang, "dialog.hyperlink.tip"), "tip", &seed.tip);
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     if ok {
         let mode_now = d.get("mode", seed.mode);
         let url = d.get("url", &seed.url);
@@ -242,23 +254,25 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Configure playback options with translated captions and the existing show values.
 fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let sh = app.session.active().map(|s| s.doc.show.clone()).unwrap_or_default();
     let ty = d.get("type", &sh.show_type);
-    ui.label("Show type");
+    ui.label(i18n::text(lang, "dialog.setup_show.type"));
     for (l, v) in [
-        ("Presented by a speaker (full screen)", "speaker"),
-        ("Browsed by an individual (window)", "browsed"),
-        ("Browsed at a kiosk (full screen)", "kiosk"),
+        (i18n::text(lang, "dialog.setup_show.speaker"), "speaker"),
+        (i18n::text(lang, "dialog.setup_show.browsed"), "browsed"),
+        (i18n::text(lang, "dialog.setup_show.kiosk"), "kiosk"),
     ] {
         if ui.radio(ty == v, l).clicked() {
             d.fields.insert("type".into(), v.into());
         }
     }
-    let lp = check(ui, d, "Loop continuously until 'Esc'", "loop", sh.loop_until_esc);
-    let nn = check(ui, d, "Show without narration", "nn", sh.without_narration);
-    let na = check(ui, d, "Show without animation", "na", sh.without_animation);
-    let ut = check(ui, d, "Use timings, if present", "ut", sh.use_timings);
+    let lp = check(ui, d, i18n::text(lang, "dialog.setup_show.loop"), "loop", sh.loop_until_esc);
+    let nn = check(ui, d, i18n::text(lang, "dialog.setup_show.narration"), "nn", sh.without_narration);
+    let na = check(ui, d, i18n::text(lang, "dialog.setup_show.animation"), "na", sh.without_animation);
+    let ut = check(ui, d, i18n::text(lang, "dialog.setup_show.timings"), "ut", sh.use_timings);
     let kc = check(ui, d, "Keep mouse cursor visible", "kc", app.ui.show_keep_cursor);
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
@@ -275,7 +289,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let _ = combo.response.labelled_by(field.id);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     if ok {
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
@@ -285,28 +299,36 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Resolve save/discard/cancel decisions for dirty presentations before application exit.
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
     if names.is_empty() {
         app.quit_confirmed = true;
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         return true;
     }
-    let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
-    ui.label(egui::RichText::new(format!("Do you want to save the changes you made to {what}?")).strong());
-    ui.label("Your changes will be lost if you don't save them.");
+    let what = if names.len() == 1 {
+        format!("“{}”", names[0])
+    } else {
+        i18n::fill(i18n::text(lang, "dialog.save.many"), &[("n", &names.len().to_string())])
+    };
+    ui.label(egui::RichText::new(i18n::fill(i18n::text(lang, "dialog.save.question"), &[("what", &what)])).strong());
+    ui.label(i18n::text(lang, "dialog.save.warning"));
     ui.add_space(8.0);
     let mut done = false;
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(i18n::text(lang, "action.dont_save")).min_size(vec2(84.0, 24.0))).clicked() {
             let _ = app.session.execute("file.recovery.discard", &json!({}));
             app.quit_confirmed = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             done = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
+            let save = ui.add(
+                egui::Button::new(egui::RichText::new(i18n::text(lang, "nav.save")).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)),
+            );
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 if app.save_all() {
                     app.quit_confirmed = true;
@@ -314,7 +336,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new(i18n::text(lang, "pref.cancel")).min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
@@ -322,21 +344,25 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     done
 }
 
+/// Resolve save/discard/cancel for the active presentation.
 fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
+    let lang = app.lang();
     // File › Close and Ctrl+W on a presentation with unsaved changes.
     let Some(name) = app.session.active().map(|d| d.title()) else { return true };
-    ui.label(egui::RichText::new(format!("Do you want to save the changes you made to “{name}”?")).strong());
-    ui.label("Your changes will be lost if you don't save them.");
+    ui.label(egui::RichText::new(i18n::fill(i18n::text(lang, "dialog.save.close_question"), &[("name", &name)])).strong());
+    ui.label(i18n::text(lang, "dialog.save.warning"));
     ui.add_space(8.0);
     let mut done = false;
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(i18n::text(lang, "action.dont_save")).min_size(vec2(84.0, 24.0))).clicked() {
             run(app, "file.close", json!({}));
             done = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
+            let save = ui.add(
+                egui::Button::new(egui::RichText::new(i18n::text(lang, "nav.save")).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)),
+            );
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 app.save();
                 // In the browser a save is a download: the presentation stays "unsaved". A page
@@ -347,7 +373,7 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new(i18n::text(lang, "pref.cancel")).min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
@@ -355,11 +381,13 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     done
 }
 
+/// Post nonempty user-authored comment text through the existing comment command.
 fn dlg_comment(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let mut v = d.get("text", "");
     ui.add(egui::TextEdit::multiline(&mut v).hint_text("Comment").desired_rows(4).desired_width(320.0));
     d.fields.insert("text".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Post");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "action.post"));
     if ok && !v.trim().is_empty() {
         run(app, "comment.add", json!({"text": v}));
         app.ui.pane = Some("comments".into());
@@ -470,7 +498,9 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel || none
 }
 
+/// Edit shape interaction settings while retaining their stored action kinds and targets.
 fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     use deckcraft_model::text::Action;
     let tab = d.get("tab", "click");
     // Start from the selected shape's current setting for this tab.
@@ -547,7 +577,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     });
     let kind = d.get("kind", cur_kind);
     match kind.as_str() {
-        "url" => field(ui, d, "Address:", "arg", if cur_kind == "url" { &cur_arg } else { "https://" }),
+        "url" => field(ui, d, i18n::text(lang, "dialog.hyperlink.address"), "arg", if cur_kind == "url" { &cur_arg } else { "https://" }),
         "slide" => {
             let sel = d.get("arg", if cur_kind == "slide" { &cur_arg } else { "0" }).parse::<usize>().unwrap_or(0);
             egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
@@ -577,7 +607,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     pick(d, ui, "playMedia", "Play the shape's media");
     let hl = check(ui, d, "Highlight click", "highlight", cur.as_ref().is_none_or(|h| h.highlight_click));
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     if ok {
         let kind = d.get("kind", cur_kind);
         let arg = d.get("arg", &cur_arg);
@@ -594,7 +624,9 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Edit descriptive text and the decorative flag without translating user-authored content.
 fn dlg_alt_text(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let (cur, deco_now) = app
         .session
         .active()
@@ -605,31 +637,35 @@ fn dlg_alt_text(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             (cur, deco)
         })
         .unwrap_or_default();
-    ui.label("How would you describe this object and its context to someone who is blind or has low vision?");
+    ui.label(i18n::text(lang, "dialog.alt_text.description"));
     let mut v = d.get("text", &cur);
     ui.add(egui::TextEdit::multiline(&mut v).hint_text("Alt text").desired_rows(4).desired_width(340.0));
     d.fields.insert("text".into(), v.clone());
     let deco = check(ui, d, "Mark as decorative", "deco", deco_now);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     if ok {
         run(app, "shape.altText", json!({"text": v, "decorative": deco}));
     }
     ok || cancel
 }
 
+/// Insert slides from the entered outline, keeping the outline text literal.
 fn dlg_outline(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Paste or type an outline. Unindented lines become slide titles; tab-indented lines become bullets.");
+    let lang = app.lang();
+    ui.label(i18n::text(lang, "dialog.outline.description"));
     let mut v = d.get("text", "");
     ui.add(egui::TextEdit::multiline(&mut v).hint_text("Outline").desired_rows(10).desired_width(380.0).code_editor());
     d.fields.insert("text".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "tab.insert"));
     if ok {
         run(app, "slide.fromOutline", json!({"text": v}));
     }
     ok || cancel
 }
 
+/// Choose source slides for reuse while preserving presentation names and command parameters.
 fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let path = d.params.get("path").and_then(Value::as_str).unwrap_or("").to_string();
     let slides: Vec<(usize, String)> = d
         .params
@@ -679,7 +715,7 @@ fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         o.insert("keep".into(), json!(keep));
     }
     let picked: Vec<usize> = slides.iter().map(|(i, _)| *i).filter(|i| !off(d, *i)).collect();
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "tab.insert"));
     if ok {
         if picked.is_empty() {
             app.set_status("Tick at least one slide to insert".to_string());
@@ -692,10 +728,12 @@ fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     cancel
 }
 
+/// Rename a section, shape or layout while preserving its target identity.
 fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let cur = d.params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-    field(ui, d, "Name:", "name", &cur);
-    let (ok, cancel) = buttons(ui, "Rename");
+    field(ui, d, i18n::text(lang, "dialog.rename.name"), "name", &cur);
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "dialog.rename.title"));
     if ok {
         let name = d.get("name", "");
         match d.id.as_str() {
@@ -707,16 +745,18 @@ fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Choose an export action using localized captions and the existing export parameters.
 fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Export the presentation as:");
+    let lang = app.lang();
+    ui.label(i18n::text(lang, "dialog.export.description"));
     let fmt = d.get("fmt", "pdf");
     for (l, f) in [
-        ("PDF document (.pdf)", "pdf"),
-        ("PNG images (current slide)", "png"),
-        ("PNG images (all slides)", "pngAll"),
-        ("JPEG image (current slide)", "jpeg"),
-        ("PowerPoint Presentation (.pptx)", "pptx"),
-        ("Outline (.txt)", "outline"),
+        (i18n::text(lang, "dialog.export.pdf"), "pdf"),
+        (i18n::text(lang, "dialog.export.png"), "png"),
+        (i18n::text(lang, "dialog.export.png_all"), "pngAll"),
+        (i18n::text(lang, "dialog.export.jpeg"), "jpeg"),
+        (i18n::text(lang, "dialog.export.pptx"), "pptx"),
+        (i18n::text(lang, "dialog.export.outline"), "outline"),
         ("Animated GIF (.gif)", "gif"),
         ("Outline/RTF (.rtf)", "rtf"),
     ] {
@@ -728,28 +768,28 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if fmt == "pdf" {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let field = ui.label("Print layout:");
+            let field = ui.label(i18n::text(lang, "dialog.export.layout"));
             let combo = craft_ui::ComboBox::from_id_salt("pdf_layout")
                 .selected_text(match pdf_layout.as_str() {
-                    "notes" => "Notes Pages",
-                    "h1" => "Handouts (1 slide per page)",
-                    "h2" => "Handouts (2 slides per page)",
-                    "h3" => "Handouts (3 slides per page)",
-                    "h4" => "Handouts (4 slides per page)",
-                    "h6" => "Handouts (6 slides per page)",
-                    "h9" => "Handouts (9 slides per page)",
-                    _ => "Full Page Slides",
+                    "notes" => i18n::text(lang, "dialog.export.notes"),
+                    "h1" => i18n::text(lang, "dialog.export.handout_1"),
+                    "h2" => i18n::text(lang, "dialog.export.handout_2"),
+                    "h3" => i18n::text(lang, "dialog.export.handout_3"),
+                    "h4" => i18n::text(lang, "dialog.export.handout_4"),
+                    "h6" => i18n::text(lang, "dialog.export.handout_6"),
+                    "h9" => i18n::text(lang, "dialog.export.handout_9"),
+                    _ => i18n::text(lang, "dialog.export.full_page"),
                 })
                 .show_ui(ui, |ui| {
                     for (k, l) in [
-                        ("slides", "Full Page Slides"),
-                        ("notes", "Notes Pages"),
-                        ("h1", "Handouts (1 slide per page)"),
-                        ("h2", "Handouts (2 slides per page)"),
-                        ("h3", "Handouts (3 slides per page)"),
-                        ("h4", "Handouts (4 slides per page)"),
-                        ("h6", "Handouts (6 slides per page)"),
-                        ("h9", "Handouts (9 slides per page)"),
+                        ("slides", i18n::text(lang, "dialog.export.full_page")),
+                        ("notes", i18n::text(lang, "dialog.export.notes")),
+                        ("h1", i18n::text(lang, "dialog.export.handout_1")),
+                        ("h2", i18n::text(lang, "dialog.export.handout_2")),
+                        ("h3", i18n::text(lang, "dialog.export.handout_3")),
+                        ("h4", i18n::text(lang, "dialog.export.handout_4")),
+                        ("h6", i18n::text(lang, "dialog.export.handout_6")),
+                        ("h9", i18n::text(lang, "dialog.export.handout_9")),
                     ] {
                         if ui.selectable_label(pdf_layout == k, l).clicked() {
                             d.fields.insert("pdfLayout".into(), k.into());
@@ -759,7 +799,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let _ = combo.response.labelled_by(field.id);
         });
         let mut hidden = d.get("pdfHidden", "false") == "true";
-        if ui.checkbox(&mut hidden, "Include hidden slides").changed() {
+        if ui.checkbox(&mut hidden, i18n::text(lang, "dialog.export.hidden")).changed() {
             d.fields.insert("pdfHidden".into(), hidden.to_string());
         }
     }
@@ -787,7 +827,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         };
         json!({"layout": layout, "perPage": per, "includeHidden": d.get("pdfHidden", "false") == "true"})
     };
-    let (ok, cancel) = buttons(ui, "Export");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "nav.export"));
     if ok {
         let gif_params = match gif_params {
             Ok(v) => v,
@@ -852,15 +892,17 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     cancel
 }
 
+/// Display localized symbol-group captions and insert the selected original character.
 fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
-    ui.label("Click a symbol to insert it at the insertion point.");
+    let lang = app.lang();
+    ui.label(i18n::text(lang, "dialog.symbol.description"));
     let groups: [(&str, &str); 6] = [
-        ("Punctuation", "–—‘’“”…•·§¶†‡‰′″‹›«»¡¿"),
-        ("Currency", "$€£¥¢₹₩₽₺₿"),
-        ("Math", "±×÷≠≈≤≥∞√∑∏∫∂∆∇∈∉∩∪⊂⊃∀∃¬∧∨⇒⇔°′"),
-        ("Greek", "αβγδεζηθικλμνξοπρστυφχψωΓΔΘΛΞΠΣΦΨΩ"),
-        ("Arrows", "←↑→↓↔↕⇐⇑⇒⇓↖↗↘↙⟵⟶"),
-        ("Shapes", "■□▪▫▲△▶▷▼▽◀◁◆◇○●◎★☆✓✔✗✘♠♣♥♦"),
+        (i18n::text(lang, "dialog.symbol.punctuation"), "–—‘’“”…•·§¶†‡‰′″‹›«»¡¿"),
+        (i18n::text(lang, "dialog.symbol.currency"), "$€£¥¢₹₩₽₺₿"),
+        (i18n::text(lang, "dialog.symbol.math"), "±×÷≠≈≤≥∞√∑∏∫∂∆∇∈∉∩∪⊂⊃∀∃¬∧∨⇒⇔°′"),
+        (i18n::text(lang, "dialog.symbol.greek"), "αβγδεζηθικλμνξοπρστυφχψωΓΔΘΛΞΠΣΦΨΩ"),
+        (i18n::text(lang, "dialog.symbol.arrows"), "←↑→↓↔↕⇐⇑⇒⇓↖↗↘↙⟵⟶"),
+        (i18n::text(lang, "dialog.symbol.shapes"), "■□▪▫▲△▶▷▼▽◀◁◆◇○●◎★☆✓✔✗✘♠♣♥♦"),
     ];
     for (g, chars) in groups {
         ui.label(egui::RichText::new(g).font(theme::bold(12.0)));
@@ -875,16 +917,18 @@ fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             }
         });
     }
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "nav.close"));
     ok || cancel
 }
 
+/// Insert an equation from literal user input behind localized dialog captions.
 fn dlg_equation(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).");
+    let lang = app.lang();
+    ui.label(i18n::text(lang, "dialog.equation.description"));
     let mut v = d.get("eq", "");
-    ui.add(egui::TextEdit::singleline(&mut v).hint_text("Equation").desired_width(340.0).font(theme::font(15.0)));
+    ui.add(egui::TextEdit::singleline(&mut v).hint_text(i18n::text(lang, "dialog.equation.title")).desired_width(340.0).font(theme::font(15.0)));
     d.fields.insert("eq".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "tab.insert"));
     if ok && !v.is_empty() {
         let pretty = pretty_equation(&v);
         let size = app.session.active().map(|s| s.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
@@ -919,7 +963,9 @@ fn dlg_paste_special(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Review spelling results and route actions to their original slide and shape identifiers.
 fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     // Words skipped with Ignore All while the dialog is open, one per line.
     let ignored = d.get("ignore", "");
     let ignore: Vec<&str> = ignored.lines().filter(|l| !l.is_empty()).collect();
@@ -947,7 +993,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ),
     };
     if list.is_empty() {
-        ui.label("The spelling check is complete. No issues found.");
+        ui.label(i18n::text(lang, "dialog.review.spelling_complete"));
     }
     let mut add_ignore = None;
     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
@@ -956,8 +1002,8 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let slide = item.get("slide").cloned().unwrap_or_default();
             let shape = item.get("shape").cloned().unwrap_or_default();
             ui.horizontal(|ui| {
-                ui.label(format!("Slide {}: “{w}”", slide.as_u64().unwrap_or(0) + 1));
-                if ui.small_button("Go to").clicked() {
+                ui.label(i18n::fill(i18n::text(lang, "dialog.review.word"), &[("n", &(slide.as_u64().unwrap_or(0) + 1).to_string()), ("word", w)]));
+                if ui.small_button(i18n::text(lang, "action.go_to")).clicked() {
                     let _ = app.run("slide.go", json!({"index": slide}));
                     let _ = app.run("edit.select", json!({"ids": [shape]}));
                 }
@@ -1058,15 +1104,17 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if let Some(w) = add_ignore {
         d.fields.insert("ignore".into(), format!("{ignored}{w}\n"));
     }
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "nav.close"));
     ok || cancel
 }
 
+/// Display accessibility results and navigate to the original reported object.
 fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let v = app.session.execute("review.accessibility", &json!({})).unwrap_or_default();
     let list = v.as_array().cloned().unwrap_or_default();
     if list.is_empty() {
-        ui.label("No accessibility issues found. People with disabilities should not have difficulty reading this document.");
+        ui.label(i18n::text(lang, "dialog.review.accessibility_complete"));
     }
     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
         for item in &list {
@@ -1077,7 +1125,7 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                     item.get("issue").and_then(Value::as_str).unwrap_or(""),
                     item.get("name").and_then(Value::as_str).map(|n| format!(" — {n}")).unwrap_or_default()
                 ));
-                if ui.small_button("Go to").clicked() {
+                if ui.small_button(i18n::text(lang, "action.go_to")).clicked() {
                     let _ = app.run("slide.go", json!({"index": item.get("slide").cloned().unwrap_or_default()}));
                     if let Some(id) = item.get("shape") {
                         let _ = app.run("edit.select", json!({"ids": [id]}));
@@ -1086,11 +1134,13 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             });
         }
     });
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "nav.close"));
     ok || cancel
 }
 
+/// Set text proofing language independently of the interface-language choice.
 fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let ui_lang = app.lang();
     // Starts from the selected text's language and Do Not Check Spelling.
     let (cur, np) = selected_language(app);
     let lang = d.get("lang", &cur);
@@ -1109,7 +1159,7 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             all = true;
         }
     });
-    ui.label(if all { "Mark all text in the presentation as:" } else { "Mark selected text as:" });
+    ui.label(if all { "Mark all text in the presentation as:" } else { i18n::text(ui_lang, "dialog.language.description") });
     egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
         // The selection's own language first when the list doesn't have it.
         let own = (!crate::squiggles::LANGS.iter().any(|(_, t)| t.eq_ignore_ascii_case(&cur))).then(|| (cur.clone(), cur.clone()));
@@ -1130,7 +1180,7 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if ui.checkbox(&mut no_proof, "Do not check spelling or grammar").changed() {
         d.fields.insert("noProof".into(), if no_proof { "1".into() } else { String::new() });
     }
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = localized_buttons(ui, ui_lang, "OK");
     if ok {
         let lang = d.get("lang", &cur);
         run(app, if all { "format.languageAll" } else { "format.language" }, json!({"lang": lang, "noProof": no_proof}));
@@ -1138,17 +1188,19 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Manage custom shows without translating their names or stored slide lists.
 fn dlg_custom_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let shows = app.session.active().map(|s| s.doc.custom_shows.clone()).unwrap_or_default();
     let mut started = false;
     for s in &shows {
         ui.horizontal(|ui| {
-            ui.label(format!("{} ({} slides)", s.name, s.slides.len()));
+            ui.label(i18n::fill(i18n::text(lang, "dialog.custom_show.summary"), &[("name", &s.name), ("n", &s.slides.len().to_string())]));
             if ui.small_button("Show").clicked() {
                 run(app, "show.start", json!({"custom": s.name}));
                 started = true;
             }
-            if ui.small_button("Delete").clicked() {
+            if ui.small_button(i18n::text(lang, "action.delete")).clicked() {
                 let _ = app.run("show.customShow", json!({"name": s.name, "delete": true}));
             }
         });
@@ -1156,9 +1208,9 @@ fn dlg_custom_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if started {
         return true;
     }
-    field(ui, d, "New show name:", "name", "Custom Show 1");
-    field(ui, d, "Slides (e.g. 1,3,5):", "slides", "1");
-    let (ok, cancel) = buttons(ui, "Create");
+    field(ui, d, i18n::text(lang, "dialog.custom_show.name"), "name", "Custom Show 1");
+    field(ui, d, i18n::text(lang, "dialog.custom_show.slides"), "slides", "1");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "action.create"));
     if ok {
         let idx: Vec<usize> =
             d.get("slides", "").split(',').filter_map(|s| s.trim().parse::<usize>().ok()).filter(|v| *v > 0).map(|v| v - 1).collect();
@@ -1167,18 +1219,20 @@ fn dlg_custom_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Edit literal chart data behind localized controls and retain the existing grid format.
 fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let ch = app.session.active().and_then(|s| {
         s.selected_shapes()
             .into_iter()
             .find_map(|x| if let deckcraft_model::ShapeKind::Chart(c) = &x.kind { Some(((**c).clone(), x.id)) } else { None })
     });
     let Some((c, id)) = ch else {
-        ui.label("Select a chart first.");
-        let (ok, cancel) = buttons(ui, "Close");
+        ui.label(i18n::text(lang, "dialog.chart.select"));
+        let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "nav.close"));
         return ok || cancel;
     };
-    ui.label("Edit the data: first row = series names, first column = categories.");
+    ui.label(i18n::text(lang, "dialog.chart.description"));
     let mut grid: Vec<Vec<String>> = d.params.get("grid").and_then(|g| serde_json::from_value(g.clone()).ok()).unwrap_or_else(|| {
         let mut g = vec![std::iter::once(String::new()).chain(c.series.iter().map(|s| s.name.clone())).collect::<Vec<_>>()];
         for (i, cat) in c.categories.iter().enumerate() {
@@ -1199,18 +1253,18 @@ fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     ui.horizontal(|ui| {
-        if ui.button("+ Row").clicked() {
+        if ui.button(i18n::text(lang, "dialog.chart.add_row")).clicked() {
             let n = grid.first().map(Vec::len).unwrap_or(2);
             grid.push(vec![String::new(); n]);
         }
-        if ui.button("+ Series").clicked() {
+        if ui.button(i18n::text(lang, "dialog.chart.add_series")).clicked() {
             for r in grid.iter_mut() {
                 r.push(String::new());
             }
         }
     });
     d.params = json!({"grid": grid});
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     if ok {
         let names: Vec<String> = grid.first().map(|r| r.iter().skip(1).cloned().collect()).unwrap_or_default();
         let cats: Vec<String> = grid.iter().skip(1).map(|r| r.first().cloned().unwrap_or_default()).collect();
@@ -1220,13 +1274,15 @@ fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Apply media trimming and fade values through the existing command fields.
 fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let seed = trim_seed(app.session.active());
-    field(ui, d, "Start time (s):", "start", &seed.start);
-    field(ui, d, "End trim (s):", "end", &seed.end);
-    field(ui, d, "Fade in (s):", "fin", &seed.fade_in);
-    field(ui, d, "Fade out (s):", "fout", &seed.fade_out);
-    let (ok, cancel) = buttons(ui, "OK");
+    field(ui, d, i18n::text(lang, "dialog.trim.start"), "start", &seed.start);
+    field(ui, d, i18n::text(lang, "dialog.trim.end"), "end", &seed.end);
+    field(ui, d, i18n::text(lang, "dialog.trim.fade_in"), "fin", &seed.fade_in);
+    field(ui, d, i18n::text(lang, "dialog.trim.fade_out"), "fout", &seed.fade_out);
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     if ok {
         run(
             app,
@@ -1242,17 +1298,19 @@ fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Insert the chosen SmartArt kind with literal user-authored item text.
 fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Pick a graphic; type one item per line.");
+    let lang = app.lang();
+    ui.label(i18n::text(lang, "dialog.smartart.description"));
     let kind = d.get("kind", "process");
     ui.horizontal_wrapped(|ui| {
         for (k, l) in [
-            ("list", "Basic List"),
-            ("process", "Basic Process"),
-            ("cycle", "Basic Cycle"),
-            ("hierarchy", "Hierarchy"),
-            ("pyramid", "Pyramid"),
-            ("matrix", "Matrix"),
+            ("list", i18n::text(lang, "dialog.smartart.list")),
+            ("process", i18n::text(lang, "dialog.smartart.process")),
+            ("cycle", i18n::text(lang, "dialog.smartart.cycle")),
+            ("hierarchy", i18n::text(lang, "dialog.smartart.hierarchy")),
+            ("pyramid", i18n::text(lang, "dialog.smartart.pyramid")),
+            ("matrix", i18n::text(lang, "dialog.smartart.matrix")),
         ] {
             if ui.selectable_label(kind == k, l).clicked() {
                 d.fields.insert("kind".into(), k.into());
@@ -1262,7 +1320,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut v = d.get("text", "Plan\nBuild\nLaunch");
     ui.add(egui::TextEdit::multiline(&mut v).hint_text("Diagram items").desired_rows(5).desired_width(320.0));
     d.fields.insert("text".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "tab.insert"));
     if ok {
         run(app, "insert.smartArt", json!({"kind": kind, "items": v.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>()}));
         app.ui.pane = Some("smartart".into());
@@ -1270,10 +1328,16 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Switch credit sections by stable keys while localizing their visible captions.
 fn dlg_about(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let tab = d.get("tab", "about");
     ui.horizontal(|ui| {
-        for (k, l) in [("about", "About"), ("contributors", "Contributors"), ("models", "Models")] {
+        for (k, l) in [
+            ("about", i18n::text(lang, "dialog.about.tab")),
+            ("contributors", i18n::text(lang, "dialog.about.contributors")),
+            ("models", i18n::text(lang, "dialog.about.models")),
+        ] {
             if ui.selectable_label(tab == k, l).clicked() {
                 d.fields.insert("tab".into(), k.into());
             }
@@ -1286,11 +1350,13 @@ fn dlg_about(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
         _ => about(app, ui),
     }
-    let (ok, cancel) = buttons(ui, "Close");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "nav.close"));
     ok || cancel
 }
 
+/// Edit autocorrection preferences without translating user-defined replacements.
 fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     let pr = &mut app.session.prefs;
     ui.checkbox(&mut pr.ac_two_initials, "Correct TWo INitial CApitals");
     ui.checkbox(&mut pr.ac_sentence_caps, "Capitalize first letter of sentences");
@@ -1324,26 +1390,40 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             for (k, v) in entries.iter().filter(|(k, _)| q.is_empty() || k.to_lowercase().starts_with(&q)) {
                 ui.label(k);
                 ui.label(v);
-                if ui.small_button("Delete").clicked() {
+                if ui.small_button(i18n::text(lang, "action.delete")).clicked() {
                     run(app, "text.autocorrect", json!({"remove": k}));
                 }
                 ui.end_row();
             }
         });
     });
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = localized_buttons(ui, lang, "OK");
     ok || cancel
 }
 
+/// Preview preferences and restore the opening snapshot, including language, on cancellation.
 fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     // The controls apply as they change, so the dialog remembers what it opened with and
     // Cancel (or Esc, or the close button: see `show`) puts that back.
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
-    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(i18n::text(lang, "pref.general")).font(theme::bold(13.0)));
+    ui.horizontal(|ui| {
+        let label = ui.label(i18n::text(lang, "pref.language"));
+        let current = app.ui.language;
+        let combo = craft_ui::ComboBox::from_id_salt("interface_language").selected_text(i18n::choice_label(lang, current)).show_ui(ui, |ui| {
+            for choice in i18n::LanguageChoice::ALL {
+                if ui.selectable_label(current == choice, i18n::choice_label(lang, choice)).clicked() {
+                    let _ = app.run("app.language", json!({"language": choice.code()}));
+                }
+            }
+        });
+        let _ = combo.response.labelled_by(label.id);
+    });
     let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
+    if ui.checkbox(&mut dark, i18n::text(lang, "pref.dark")).changed() {
         let _ = app.run("view.dark", json!({"on": dark}));
     }
     // While the pointer holds the slider its value only waits in the dialog: applying it
@@ -1354,7 +1434,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
     // No visible label here (the row is laid out to fit); the accessible name only.
     let enabled = r.enabled();
-    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
+    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), i18n::text(lang, "pref.size")));
     if r.is_pointer_button_down_on() {
         if r.changed() || pending.is_some() {
             d.fields.insert("uiScale".into(), scale.to_string());
@@ -1372,12 +1452,12 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
         ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
     });
-    ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+    ui.label(egui::RichText::new(i18n::text(lang, "pref.editing")).font(theme::bold(13.0)));
+    ui.checkbox(&mut app.session.prefs.smart_guides, i18n::text(lang, "pref.smart_guides"));
+    ui.checkbox(&mut app.session.prefs.snap_to_grid, i18n::text(lang, "pref.snap"));
+    ui.checkbox(&mut app.session.prefs.smart_quotes, i18n::text(lang, "pref.quotes"));
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
+        ui.checkbox(&mut app.session.prefs.autocorrect, i18n::text(lang, "pref.autocorrect"));
         if ui.button("AutoCorrect Options…").clicked() {
             *d = Dialog::new("autocorrect");
         }
@@ -1386,12 +1466,12 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         return false;
     }
     ui.horizontal(|ui| {
-        let label = ui.label("Your name (comments):");
+        let label = ui.label(i18n::text(lang, "pref.author"));
         // Name the field for assistive technology; a bare text edit next to a label is an
         // unnamed input in egui 0.37's accessibility tree.
         let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
     });
-    let (ok, cancel) = buttons(ui, "Done");
+    let (ok, cancel) = localized_buttons(ui, lang, i18n::text(lang, "pref.done"));
     if cancel {
         restore_preferences(app, d);
     }

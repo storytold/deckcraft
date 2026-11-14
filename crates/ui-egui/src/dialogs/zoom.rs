@@ -1,4 +1,5 @@
 use super::{Dialog, SlideApp, Ui, buttons};
+use crate::i18n;
 
 /// Preset percents in the Zoom dialog, largest first.
 const ZOOM_PRESETS: &[u32] = &[400, 200, 150, 100, 75, 66, 50, 33];
@@ -15,6 +16,7 @@ pub fn parse_zoom_percent(text: &str) -> Option<f32> {
 
 /// Zoom dialog: a percent or Fit. Nothing changes until OK.
 pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let lang = app.lang();
     if !d.fields.contains_key("mode") {
         let shown = app.ui.zoom.unwrap_or(app.canvas_scale);
         let pct = if shown.is_finite() { (shown * 100.0).round().clamp(10.0, 400.0) } else { 100.0 };
@@ -24,7 +26,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     let mut mode = d.get("mode", "percent");
     let mut percent = d.get("percent", "100");
     ui.label("Zoom to");
-    if ui.radio(mode == "fit", "Fit").clicked() {
+    if ui.radio(mode == "fit", i18n::text(lang, "dialog.zoom.fit")).clicked() {
         mode = "fit".into();
     }
     for pct in ZOOM_PRESETS {
