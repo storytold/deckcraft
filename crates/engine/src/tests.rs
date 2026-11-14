@@ -1507,6 +1507,46 @@ fn double_click_edits_text_inside_group() {
 }
 
 #[test]
+fn second_click_on_a_selected_group_selects_the_member() {
+    // Like PowerPoint: the first click selects the group, a second click on it selects the member
+    // under the pointer, whose handles then resize only that member.
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100.0, 100.0, 100.0, 80.0]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [300.0, 200.0, 60.0, 60.0]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    let g = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let (a, b, g) = (ShapeId(a as u32), ShapeId(b as u32), ShapeId(g as u32));
+    let box_of = |s: &Session, id| {
+        let st = s.doc().unwrap();
+        cmd::xfrm_of(&st.doc, &st.selection, st.shape(id).unwrap())
+    };
+
+    click_at(&mut s, (150.0, 140.0));
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![g]);
+    click_at(&mut s, (150.0, 140.0));
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![a]);
+    assert!(st.selection.text.is_none());
+    // Clicking the selected member again keeps it selected.
+    click_at(&mut s, (150.0, 140.0));
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![a]);
+
+    let (ra, rb) = (box_of(&s, a), box_of(&s, b));
+    let undo_before = s.doc().unwrap().history.undo.len();
+    let down = drag_gesture(&mut s, (200.0, 180.0), (240.0, 220.0));
+    assert_eq!(down["hit"]["kind"], json!("resize"));
+    assert_eq!(down["hit"]["id"], json!(a.0));
+    let na = box_of(&s, a);
+    // Grows by the drag, give or take snapping; the top-left corner stays put.
+    assert!((na.w - (ra.w + 40.0)).abs() < 5.0 && (na.h - (ra.h + 40.0)).abs() < 5.0, "{na:?}");
+    assert_eq!((na.x, na.y), (ra.x, ra.y));
+    assert_eq!(box_of(&s, b), rb);
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo_before + 1);
+}
+
+#[test]
 fn grown_table_frame_covers_its_drawn_rows() {
     // Rows stored 4 pt tall are drawn taller: the box, its handles and hit tests follow the drawn rows.
     let mut s = session();

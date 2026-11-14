@@ -1,4 +1,4 @@
-use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
+use super::hit::{EditZone, contains_rect, edit_zone, edited_box, group_member_to_select, hit_shape, in_table_cell, is_text_first, shape_in_front};
 use super::{
     Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind, TABLE_ERASER,
     TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
@@ -373,8 +373,15 @@ impl Session {
                 }
             }
             Some(Hit::Shape { id, text }) => {
-                let selected = st.selection.shapes.contains(&id);
                 let toggle = mods.shift || mods.cmd;
+                // A click on a selected group (or on a group whose member is selected) selects the
+                // member under the pointer, as PowerPoint does, so it can be moved or resized alone.
+                let member = (!toggle)
+                    .then(|| st.shape(id).and_then(|sh| group_member_to_select(st, sh, p, tol)))
+                    .flatten()
+                    .and_then(|m| st.shape(m).map(|sh| (m, matches!(hit_shape(st, sh, p, tol), Some(Hit::Shape { text: true, .. })))));
+                let (id, text) = member.unwrap_or((id, text));
+                let selected = st.selection.shapes.contains(&id);
                 let ids: Vec<ShapeId> = if toggle {
                     let mut v = st.selection.shapes.clone();
                     if selected {
