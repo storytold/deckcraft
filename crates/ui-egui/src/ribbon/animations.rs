@@ -15,8 +15,8 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let playing = app.anim_preview_active();
-        let (resp, _) = big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
-        if resp.on_hover_text("Play this slide's animations on the canvas").clicked() {
+        let (resp, _) = big_button_ex(ui, Icon::Preview, crate::i18n::tr("Preview"), true, false, playing);
+        if resp.on_hover_text(crate::i18n::tr("Play this slide's animations on the canvas")).clicked() {
             run(app, "animation.preview", json!({}));
         }
     });
@@ -83,7 +83,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let effect = cur.as_ref().map(|c| c.effect.as_str()).unwrap_or_default();
         let build = cur.as_ref().map(|c| text_build_id(c.text_build));
         let build_rows = marked_options(&["asOne", "byParagraph"], build);
-        let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty());
+        let r = big_button(ui, Icon::EffectOptions, crate::i18n::tr("Effect\nOptions"), !effect_rows.is_empty());
         egui::Popup::menu(&r).show(|ui| {
             for &(o, on) in &effect_rows {
                 if ui.selectable_label(on, animation_option_label(effect, o)).clicked() {
@@ -102,7 +102,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
+        let r = big_button(ui, Icon::AddAnimation, crate::i18n::tr("Add\nAnimation"), has_sel);
         // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
         // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
         let max_h = (r.ctx.viewport_rect().height() - 160.0).max(120.0);
@@ -128,9 +128,9 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             });
         });
         big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
-        let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
+        let r = big_button(ui, Icon::Trigger, crate::i18n::tr("Trigger"), cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
-            if ui.button("On Click of… (none)").clicked() {
+            if ui.button(crate::i18n::tr("On Click of… (none)")).clicked() {
                 run(app, "animation.timing", json!({"trigger": null}));
             }
             let shapes: Vec<(u32, String)> =
@@ -144,7 +144,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let on = app.session.anim_painter.is_some();
         let en = enabled(app, "animation.painter");
         let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
-        let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
+        let r = r.on_hover_text(crate::i18n::tr("Animation Painter (double-click to keep it on)"));
         if r.double_clicked() {
             run(app, "animation.painter", json!({"sticky": true}));
         } else if r.clicked() {
@@ -158,13 +158,13 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Start:");
+                ui.label(crate::i18n::tr("Start:"));
                 let s = cur.as_ref().map(|c| match c.start {
                     deckcraft_model::AnimStart::OnClick => "On Click",
                     deckcraft_model::AnimStart::WithPrevious => "With Previous",
                     deckcraft_model::AnimStart::AfterPrevious => "After Previous",
                 });
-                dropdown(ui, "Start", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
+                dropdown(ui, crate::i18n::tr("Start"), s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
                     for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
                         if ui.button(l).clicked() {
                             run(app, "animation.timing", json!({"start": v}));
@@ -174,17 +174,17 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
             ui.horizontal(|ui| {
-                ui.label("Duration:");
+                ui.label(crate::i18n::tr("Duration:"));
                 if let Some(v) =
-                    widgets::spinner(ui, "adur", "Duration", cur.as_ref().map(|c| c.duration_ms as f64 / 1000.0).unwrap_or(0.5), 0.25, "", 46.0)
+                    widgets::spinner(ui, "adur", crate::i18n::tr("Duration"), cur.as_ref().map(|c| c.duration_ms as f64 / 1000.0).unwrap_or(0.5), 0.25, "", 46.0)
                 {
                     run(app, "animation.timing", json!({"duration": (v.max(0.0) * 1000.0).round() as u64}));
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Delay:");
+                ui.label(crate::i18n::tr("Delay:"));
                 if let Some(v) =
-                    widgets::spinner(ui, "adelay", "Delay", cur.as_ref().map(|c| c.delay_ms as f64 / 1000.0).unwrap_or(0.0), 0.25, "", 46.0)
+                    widgets::spinner(ui, "adelay", crate::i18n::tr("Delay"), cur.as_ref().map(|c| c.delay_ms as f64 / 1000.0).unwrap_or(0.0), 0.25, "", 46.0)
                 {
                     run(app, "animation.timing", json!({"delay": (v.max(0.0) * 1000.0).round() as u64}));
                 }

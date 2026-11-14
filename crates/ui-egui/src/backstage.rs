@@ -333,7 +333,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Back"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Back")));
             let hovered = resp.hovered();
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
@@ -345,7 +345,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text,
                 false,
             );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            if resp.on_hover_text(crate::i18n::tr("Back (Esc)")).clicked() {
                 out.close = true;
             }
         } else {

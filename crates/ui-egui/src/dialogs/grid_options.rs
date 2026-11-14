@@ -10,20 +10,20 @@ fn format_spacing(v: f64) -> String {
 /// Grid Options: spacing, snap and whether the grid and guides are drawn. OK applies one
 /// `view.gridOptions` call; Cancel leaves the presentation as it was.
 pub(super) fn grid_options(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label(egui::RichText::new("Snap").font(theme::bold(13.0)));
-    let snap = check(ui, d, "Snap objects to grid", "snap", app.session.prefs.snap_to_grid);
-    let smart = check(ui, d, "Snap objects to other objects", "smart", app.session.prefs.smart_guides);
+    ui.label(egui::RichText::new(crate::i18n::tr("Snap")).font(theme::bold(13.0)));
+    let snap = check(ui, d, crate::i18n::tr("Snap objects to grid"), "snap", app.session.prefs.snap_to_grid);
+    let smart = check(ui, d, crate::i18n::tr("Snap objects to other objects"), "smart", app.session.prefs.smart_guides);
     let spacing_default = format_spacing(app.session.prefs.grid_spacing);
-    field(ui, d, "Spacing (pt):", "spacing", &spacing_default);
+    field(ui, d, crate::i18n::tr("Spacing (pt):"), "spacing", &spacing_default);
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Display").font(theme::bold(13.0)));
-    let gridlines = check(ui, d, "Display grid on screen", "gridlines", app.ui.gridlines);
-    let guides = check(ui, d, "Display drawing guides on screen", "guides", app.ui.guides);
+    ui.label(egui::RichText::new(crate::i18n::tr("Display")).font(theme::bold(13.0)));
+    let gridlines = check(ui, d, crate::i18n::tr("Display grid on screen"), "gridlines", app.ui.gridlines);
+    let guides = check(ui, d, crate::i18n::tr("Display drawing guides on screen"), "guides", app.ui.guides);
     if let Some(err) = d.fields.get("error").cloned().filter(|s| !s.is_empty()) {
         ui.add_space(4.0);
         ui.label(egui::RichText::new(err).color(Color32::from_rgb(0xB0, 0x30, 0x30)));
     }
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, crate::i18n::tr("OK"));
     if ok {
         let spacing = num(d, "spacing", app.session.prefs.grid_spacing);
         match app.run("view.gridOptions", json!({"spacing": spacing, "snap": snap, "smartGuides": smart, "gridlines": gridlines, "guides": guides})) {

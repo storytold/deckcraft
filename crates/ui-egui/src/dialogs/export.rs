@@ -15,7 +15,7 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
     };
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Size:"));
+        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(crate::i18n::tr("Size:")));
         let combo = craft_ui::ComboBox::from_id_salt("gif_size").selected_text(size_label(&size)).show_ui(ui, |ui| {
             for k in SIZE_PRESETS.iter().map(|(k, _)| *k).chain(["custom"]) {
                 if ui.selectable_label(size == k, size_label(k)).clicked() {
@@ -26,14 +26,14 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
         let _ = combo.response.labelled_by(field.id);
     });
     if size == "custom" {
-        field(ui, d, "Width (pixels):", "gifWidth", "960");
+        field(ui, d, crate::i18n::tr("Width (pixels):"), "gifWidth", "960");
     }
-    field(ui, d, "Seconds per slide:", "gifSeconds", "5");
+    field(ui, d, crate::i18n::tr("Seconds per slide:"), "gifSeconds", "5");
     let n_text = n.max(1).to_string();
-    field(ui, d, "From slide:", "gifFrom", "1");
-    field(ui, d, "To slide:", "gifTo", &n_text);
-    let forever = check(ui, d, "Loop forever", "gifLoop", true);
-    let hidden = check(ui, d, "Include hidden slides", "gifHidden", false);
+    field(ui, d, crate::i18n::tr("From slide:"), "gifFrom", "1");
+    field(ui, d, crate::i18n::tr("To slide:"), "gifTo", &n_text);
+    let forever = check(ui, d, crate::i18n::tr("Loop forever"), "gifLoop", true);
+    let hidden = check(ui, d, crate::i18n::tr("Include hidden slides"), "gifHidden", false);
 
     let width = if size == "custom" {
         let w = num(d, "gifWidth", 960.0).round();

@@ -217,6 +217,8 @@ impl SlideApp {
             log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
             return;
         }
+        // The interface language the UI paints with follows the preference (or the desktop locale).
+        crate::i18n::set_current(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
         self.tick_hidden_show(ctx, web_time::Instant::now());
         // `raw_input_hook` runs before `App::logic`. In a full pass egui has already built
         // `PointerState` and `keys_down` from every injected event, so retracting the events after

@@ -381,7 +381,7 @@ fn master_tex(
         doc,
         master,
         layout,
-        &deckcraft_render::RenderOpts { scale, edit: true, editing_text, offset: region.offset(), size: Some(region.size()), ..Default::default() },
+        &deckcraft_render::RenderOpts { scale, edit: true, placeholder_prompt: Some(crate::i18n::placeholder_prompt), editing_text, offset: region.offset(), size: Some(region.size()), ..Default::default() },
     );
     Some((crate::textures::upload_editor(ctx, "master-canvas", crate::textures::to_color_image(&img, false)), region))
 }

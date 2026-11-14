@@ -180,20 +180,20 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     seed_size_position(app, d);
-    ui.label(egui::RichText::new("Size").strong());
-    text_row(ui, d, "Height (in):", "h");
-    text_row(ui, d, "Width (in):", "w");
-    text_row(ui, d, "Rotation (°):", "rot");
+    ui.label(egui::RichText::new(crate::i18n::tr("Size")).strong());
+    text_row(ui, d, crate::i18n::tr("Height (in):"), "h");
+    text_row(ui, d, crate::i18n::tr("Width (in):"), "w");
+    text_row(ui, d, crate::i18n::tr("Rotation (°):"), "rot");
     text_row(ui, d, "Scale height (%):", "scaleH");
     text_row(ui, d, "Scale width (%):", "scaleW");
-    check(ui, d, "Lock aspect ratio", "lock", false);
+    check(ui, d, crate::i18n::tr("Lock aspect ratio"), "lock", false);
     ui.add_space(8.0);
-    ui.label(egui::RichText::new("Position").strong());
-    ui.label("From the top-left corner of the slide");
-    text_row(ui, d, "Horizontal (in):", "x");
-    text_row(ui, d, "Vertical (in):", "y");
+    ui.label(egui::RichText::new(crate::i18n::tr("Position")).strong());
+    ui.label(crate::i18n::tr("From the top-left corner of the slide"));
+    text_row(ui, d, crate::i18n::tr("Horizontal (in):"), "x");
+    text_row(ui, d, crate::i18n::tr("Vertical (in):"), "y");
     reconcile_size_fields(d);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, crate::i18n::tr("OK"));
     if ok {
         match size_position_value(d) {
             Ok(p) => return app.run("shape.sizePosition", p).is_ok(),

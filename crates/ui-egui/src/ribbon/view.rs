@@ -18,30 +18,30 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
-        if big_button_ex(ui, Icon::SlideMaster, "Slide\nMaster", true, false, in_master).0.clicked() {
+        if big_button_ex(ui, Icon::SlideMaster, crate::i18n::tr("Slide\nMaster"), true, false, in_master).0.clicked() {
             let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
         }
         let in_handout = app.session.active().is_some_and(|d| d.selection.target == Target::Handout);
-        if big_button_ex(ui, Icon::HandoutMaster, "Handout\nMaster", true, false, in_handout).0.clicked() {
+        if big_button_ex(ui, Icon::HandoutMaster, crate::i18n::tr("Handout\nMaster"), true, false, in_handout).0.clicked() {
             let _ = app.run(if in_handout { "view.closeMaster" } else { "view.handoutMaster" }, json!({}));
         }
         let in_notes = app.session.active().is_some_and(|d| d.selection.target == Target::NotesMaster);
-        if big_button_ex(ui, Icon::NotesMaster, "Notes\nMaster", true, false, in_notes).0.clicked() {
+        if big_button_ex(ui, Icon::NotesMaster, crate::i18n::tr("Notes\nMaster"), true, false, in_notes).0.clicked() {
             let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
         }
     });
     group(ui, |ui| {
         rows(ui, |ui| {
             let mut r = app.ui.ruler;
-            if ui.checkbox(&mut r, "Ruler").changed() {
+            if ui.checkbox(&mut r, crate::i18n::tr("Ruler")).changed() {
                 app.ui.ruler = r;
             }
             let mut g = app.ui.gridlines;
-            if ui.checkbox(&mut g, "Gridlines").changed() {
+            if ui.checkbox(&mut g, crate::i18n::tr("Gridlines")).changed() {
                 app.ui.gridlines = g;
             }
             let mut gd = app.ui.guides;
-            if ui.checkbox(&mut gd, "Guides").changed() {
+            if ui.checkbox(&mut gd, crate::i18n::tr("Guides")).changed() {
                 app.ui.guides = gd;
             }
         });
@@ -49,13 +49,13 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             let _ = app.run("view.gridOptions", json!({}));
         }
         let n = app.ui.notes;
-        if big_button_ex(ui, Icon::Notes, "Notes", true, false, n).0.clicked() {
+        if big_button_ex(ui, Icon::Notes, crate::i18n::tr("Notes"), true, false, n).0.clicked() {
             app.ui.notes = !n;
         }
     });
     group(ui, |ui| {
-        let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, "Zoom", true, true, false);
-        if main.on_hover_text("Zoom").clicked() {
+        let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, crate::i18n::tr("Zoom"), true, true, false);
+        if main.on_hover_text(crate::i18n::tr("Zoom")).clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
         if let Some(a) = arrow {
@@ -66,13 +66,13 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
                         ui.close();
                     }
                 }
-                if ui.button("Fit").clicked() {
+                if ui.button(crate::i18n::tr("Fit")).clicked() {
                     let _ = app.run("view.fit", json!({}));
                     ui.close();
                 }
             });
         }
-        if big_button(ui, Icon::FitToWindow, "Fit to\nWindow", true).clicked() {
+        if big_button(ui, Icon::FitToWindow, crate::i18n::tr("Fit to\nWindow"), true).clicked() {
             app.ui.zoom = None;
         }
     });
@@ -80,17 +80,17 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
         let has = app.session.active().is_some();
         let on = app.doc_window.is_some();
         let resp = big_button_ex(ui, Icon::NewWindow, "New\nWindow", has, false, on).0;
-        if resp.on_hover_text("Open another window on this presentation").clicked() {
+        if resp.on_hover_text(crate::i18n::tr("Open another window on this presentation")).clicked() {
             let _ = app.run("view.newWindow", json!({}));
         }
     });
     group(ui, |ui| {
         let gs = app.ui.grayscale;
-        if big_button_ex(ui, Icon::Grayscale, "Grayscale", true, false, gs).0.clicked() {
+        if big_button_ex(ui, Icon::Grayscale, crate::i18n::tr("Grayscale"), true, false, gs).0.clicked() {
             app.ui.grayscale = !gs;
         }
         let dark = app.ui.brightness == theme::Brightness::Dark;
-        if big_button_ex(ui, Icon::Palette, "Dark\nMode", true, false, dark).0.clicked() {
+        if big_button_ex(ui, Icon::Palette, crate::i18n::tr("Dark\nMode"), true, false, dark).0.clicked() {
             let _ = app.run("view.dark", json!({}));
         }
     });
@@ -140,7 +140,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.data_mut(|d| d.insert_temp(id, (kind, picked.clone())));
     ui.separator();
-    if ui.add_enabled(!picked.is_empty(), egui::Button::new("Insert")).clicked() {
+    if ui.add_enabled(!picked.is_empty(), egui::Button::new(crate::i18n::tr("Insert"))).clicked() {
         let mut v = picked.clone();
         v.sort_unstable();
         let p = match kind {

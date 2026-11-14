@@ -51,6 +51,8 @@ pub enum ViewMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    /// Interface language preference; `System` follows the desktop locale until one is chosen.
+    pub interface_language: crate::i18n::Language,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -100,6 +102,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            interface_language: crate::i18n::Language::System,
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,

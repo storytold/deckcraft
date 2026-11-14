@@ -1,0 +1,1234 @@
+# Ukrainian interface catalog. English source<TAB>translation; \n denotes a line break.
+# Contributor-original translation, MIT OR Apache-2.0.
+  Fixed date (empty = update automatically):	  Фіксована дата (порожнє поле = автоматичне оновлення):
+  Footer text:	  Текст нижнього колонтитула:
+  Present  	  Показати
+ pt	 пт
+ — Edited	 — Змінено
+"Not Allowed" Symbol	Знак «Не дозволено»
+% of all commits	% усіх комітів
++ New Comment	+ Новий коментар
++ New Slide	+ Новий слайд
++ Row	+ Рядок
++ Series	+ Ряд даних
++Bin	+Бін
+100% Stacked Bar	Нормована лінійчата з накопиченням
+100% Stacked Column	Нормована стовпчаста з накопиченням
+35mm Slides	Слайди 35 мм
+@ribbon:Home	Основне
+@ribbon:Insert	Вставлення
+@{}: {} PRs, {} commits, +{} / −{} lines (Δ {}), +{} / −{} binary assets, {} – {}	@{}: запити на злиття: {}, коміти: {}, рядки: +{} / −{} (Δ {}), двійкові ресурси: +{} / −{}, {} – {}
+A3 Paper (297x420 mm)	Папір A3 (297×420 мм)
+A4 Paper (210x297 mm)	Папір A4 (210×297 мм)
+Aa	Aa
+Abc	Abc
+About	Про програму
+About DeckCraft	Про DeckCraft
+Accent 1	Акцент 1
+Accent 2	Акцент 2
+Accent 3	Акцент 3
+Accent 4	Акцент 4
+Accent 5	Акцент 5
+Accent 6	Акцент 6
+Accessibility Checker	Перевірка доступності
+Across	Поперек
+Action	Дія
+Action Button: Custom	Кнопка дії: Власна
+Action Button: Document	Кнопка дії: Документ
+Action Button: Get Information	Кнопка дії: Отримати відомості
+Action Button: Go Back	Кнопка дії: Повернутися
+Action Button: Go Back or Previous	Кнопка дії: Назад або до попереднього
+Action Button: Go Forward or Next	Кнопка дії: Уперед або до наступного
+Action Button: Go Home	Кнопка дії: На початок
+Action Button: Go to Beginning	Кнопка дії: До початку
+Action Button: Go to End	Кнопка дії: До кінця
+Action Button: Help	Кнопка дії: Довідка
+Action Button: Sound	Кнопка дії: Звук
+Action Button: Video	Кнопка дії: Відео
+Action Button: {k}	Кнопка дії: {k}
+Action Buttons	Кнопки дій
+Add Animation	Додати анімацію
+Add Section	Додати розділ
+Add\nAnimation	Додати анімацію
+Address:	Адреса:
+Adjust Shape	Змінити фігуру
+After Previous	Після попереднього
+After:	Після:
+Airplane	Літак
+Align	Вирівняти
+Align Bottom	Вирівняти за нижнім краєм
+Align Center	Вирівняти по центру
+Align Left	Вирівняти за лівим краєм
+Align Middle	Вирівняти посередині
+Align Right	Вирівняти за правим краєм
+Align Text	Вирівняти текст
+Align Top	Вирівняти за верхнім краєм
+Alt Text	Альтернативний текст
+Alt+	Alt+
+Alt+F9	Alt+F9
+Alt\nText	Альтернативний текст
+An open-source, clean-room project. Not affiliated with Microsoft.	Незалежний проєкт із відкритим кодом. Не пов’язаний із Microsoft.
+Angle	Кут
+Animation Gallery	Галерея анімації
+Animation Pane	Панель анімації
+Animation Styles	Стилі анімації
+Animation\nPane	Панель анімації
+Animations	Анімації
+Animation Painter	Копіювання анімації
+Apply Animation	Застосувати анімацію
+Play/Pause GIF	Відтворити/призупинити GIF
+Animations on Slide	Анімації на слайді
+Appear	Поява
+Apply	Застосувати
+Apply To All	Застосувати до всіх
+Apply to All	Застосувати до всіх
+Apply\nTo All	Застосувати до всіх
+Arc	Дуга
+Arcs	Дуги
+Area	З областями
+Arrange	Упорядкувати
+Arrow	Стрілка
+Arrow at end	Стрілка в кінці
+Arrow at start	Стрілка на початку
+Arrow: Bent	Стрілка: Зігнута
+Arrow: Bent-Up	Стрілка: Зігнута вгору
+Arrow: Chevron	Стрілка: Шеврон
+Arrow: Down	Стрілка: Униз
+Arrow: Left	Стрілка: Ліворуч
+Arrow: Left-Right	Стрілка: Ліворуч і праворуч
+Arrow: Left-Right-Up	Стрілка: Ліворуч, праворуч і вгору
+Arrow: Left-Up	Стрілка: Ліворуч і вгору
+Arrow: Notched Right	Стрілка: Праворуч із вирізом
+Arrow: Pentagon	Стрілка: П’ятикутник
+Arrow: Quad	Стрілка: У чотири боки
+Arrow: Right	Стрілка: Праворуч
+Arrow: Striped Right	Стрілка: Смугаста праворуч
+Arrow: U-Turn	Стрілка: Розворот
+Arrow: Up	Стрілка: Угору
+Arrow: Up-Down	Стрілка: Угору й униз
+Arrows	Стрілки
+Arrows at both ends	Стрілки на обох кінцях
+As One Object	Як один об’єкт
+Audio	Аудіо
+Audio from File…	Аудіо з файлу…
+AutoCorrect as you type	Автовиправлення під час введення
+Autofit	Автоматичний добір
+Automatic	Автоматично
+B4 (ISO) Paper (250x353 mm)	Папір B4 (ISO) (250×353 мм)
+B5 (ISO) Paper (176x250 mm)	Папір B5 (ISO) (176×250 мм)
+Background	Тло
+Background Styles	Стилі тла
+Background\nStyles	Стилі тла
+Backspace	Backspace
+Banded Columns	Смугасті стовпці
+Banded Rows	Смугасті рядки
+Banner	Стрічка
+Basic Cycle	Простий цикл
+Basic List	Простий список
+Basic Process	Простий процес
+Basic Shapes	Основні фігури
+Before text (in):	Перед текстом (дюйми):
+Bevel	Скіс
+Binary assets added	Додані двійкові ресурси
+Binary assets removed	Видалені двійкові ресурси
+Black Left	Через чорний ліворуч
+Black Pen	Чорне перо
+Black Right	Через чорний праворуч
+Blinds	Жалюзі
+Block Arc	Блокова дуга
+Block Arrows	Блокові стрілки
+Blue	Синій
+Blue Pen	Синє перо
+Bold	Напівжирний
+Bold Flash	Спалах напівжирного
+Both	Обидва
+Bottom	Низ
+Bounce	Відскок
+Box	Коробка
+Box In	Коробка всередину
+Box Out	Коробка назовні
+Box and Whisker	Ящик із вусами
+Brightness	Яскравість
+Brightness {:+}%	Яскравість {:+}%
+Bring Forward	Перемістити вперед
+Bring to Front	На передній план
+Bring\nForward	Перемістити вперед
+Browsed at a kiosk (full screen)	Перегляд у кіоску (повноекранний)
+Browsed by an individual (window)	Індивідуальний перегляд (у вікні)
+Bubble	Бульбашкова
+Bullets	Маркери
+Burst	Спалах
+By Paragraph	За абзацами
+Callout: Down Arrow	Виноска: Стрілка вниз
+Callout: Left Arrow	Виноска: Стрілка ліворуч
+Callout: Line	Виноска: Лінія
+Callout: Right Arrow	Виноска: Стрілка праворуч
+Callout: Up Arrow	Виноска: Стрілка вгору
+Callouts	Виноски
+Cameo	Камео
+Camera capture is not available yet	Захоплення з камери ще недоступне
+Cancel	Скасувати
+Capitalize Each Word	Кожне слово з великої літери
+Caps	Великі літери
+Center	По центру
+Centered	По центру
+Change Case	Змінити регістр
+Change Chart Type	Змінити тип діаграми
+Change Picture	Змінити зображення
+Change Shape	Змінити фігуру
+Change\nChart Type	Змінити тип діаграми
+Character Spacing	Міжсимвольний інтервал
+Characters	Символи
+Chart	Діаграма
+Chart Data	Дані діаграми
+Chart Design	Оформлення діаграми
+Chart Elements	Елементи діаграми
+Chart…	Діаграма…
+Check Accessibility	Перевірити доступність
+Check\nAccessibility	Перевірити доступність
+Checkerboard	Шахова дошка
+Chevron	Шеврон
+Choose a SmartArt Graphic	Виберіть графіку SmartArt
+Chord	Хорда
+Circle	Коло
+Circle In	Коло всередину
+Circle Out	Коло назовні
+Clear All Formatting	Очистити все форматування
+Click a symbol to insert it at the insertion point.	Натисніть символ, щоб вставити його в позиції курсора.
+Click icon to add SmartArt graphic	Натисніть піктограму, щоб додати графіку SmartArt
+Click icon to add chart	Натисніть піктограму, щоб додати діаграму
+Click icon to add media	Натисніть піктограму, щоб додати медіа
+Click icon to add picture	Натисніть піктограму, щоб додати зображення
+Click icon to add table	Натисніть піктограму, щоб додати таблицю
+Click to add first slide	Натисніть, щоб додати перший слайд
+Click to add notes	Натисніть, щоб додати примітки
+Click to add subtitle	Натисніть, щоб додати підзаголовок
+Click to add text	Натисніть, щоб додати текст
+Click to add title	Натисніть, щоб додати заголовок
+Click to edit Master text styles	Натисніть, щоб змінити стилі тексту зразка
+Click to edit Master title style	Натисніть, щоб змінити стиль заголовка зразка
+Clock	Годинник
+Clockwise	За годинниковою стрілкою
+Close	Закрити
+Close Master View	Закрити режим зразка
+Close\nMaster View	Закрити режим зразка
+Cloud	Хмара
+Clustered Bar	Групована лінійчата
+Clustered Column	Групована стовпчаста
+Cmd+	Cmd+
+Cmd+,	Cmd+,
+Cmd+-	Cmd+-
+Cmd+=	Cmd+=
+Cmd+F1	Cmd+F1
+Cmd+Shift+P	Cmd+Shift+P
+Collapse the Ribbon	Згорнути стрічку
+Color	Колір
+Color Pulse	Пульсація кольору
+Colors	Кольори
+Columns	Стовпці
+Comb	Гребінка
+Combo	Комбінована
+Command Palette	Палітра команд
+Comment	Коментар
+Comments	Коментарі
+Commits	Коміти
+Community Links	Посилання спільноти
+Company	Компанія
+Complementary Color	Доповняльний колір
+Connect Shapes	З’єднати фігури
+Connection Sites	Точки з’єднання
+Connector: Curved	З’єднувач: кривий
+Connector: Elbow	З’єднувач: кутовий
+Connector: Elbow (one bend)	З’єднувач: кутовий (один згин)
+Content	Вміст
+Contrast	Контрастність
+Contrast {:+}%	Контраст {:+}%
+Contributors	Учасники
+Conveyor	Конвеєр
+Copy	Копіювати
+Corrections	Корекція
+Couldn't save AutoRecover information: {e}	Не вдалося зберегти дані автоматичного відновлення: {e}
+Counter Clockwise	Проти годинникової стрілки
+Cover	Накриття
+Create	Створити
+Crop	Обітнути
+Crop 10% each side	Обітнути на 10% з кожного боку
+Crop 20% each side	Обітнути на 20% з кожного боку
+Crop to Shape	Обітнути за фігурою
+Cross	Хрест
+Crush	Зминання
+Ctrl+	Ctrl+
+Cube	Куб
+Currency	Валюта
+Curtains	Штори
+Custom	Довільний
+Custom Path	Власний шлях
+Custom Show	Власний показ
+Custom Show 1	Власний показ 1
+Custom Shows	Власні покази
+Custom Slide Show	Власний показ слайдів
+Custom\nShow	Власний показ
+Cut	Вирізати
+Cylinder	Циліндр
+Dark Blue	Темно-синій
+Dark Mode	Темний режим
+Dark Red	Темно-червоний
+Dark appearance	Темне оформлення
+Dark\nMode	Темний режим
+Darken	Затемнення
+Dash	Штрих
+Dash Dot	Штрих і крапка
+Dashes	Штрихи
+Database	База даних
+Date	Дата
+Date & Time	Дата й час
+Date &\nTime	Дата й час
+Date and Time	Дата й час
+Date and time	Дата й час
+Decagon	Десятикутник
+Decision	Рішення
+DeckCraft	DeckCraft
+Decrease Font Size	Зменшити розмір шрифту
+Decrease List Level	Знизити рівень списку
+Delay:	Затримка:
+Delete	Видалити
+Delete Columns	Видалити стовпці
+Delete Comment	Видалити коментар
+Delete Layout	Видалити макет
+Delete Rows	Видалити рядки
+Delete Slide	Видалити слайд
+Delete Table	Видалити таблицю
+Delete Text	Видалити текст
+Desaturate	Знебарвити
+Deselect	Скасувати вибір
+Design	Оформлення
+Design Ideas	Ідеї оформлення
+Design\nIdeas	Ідеї оформлення
+Deutsch	Deutsch
+Diagonal Stripe	Діагональна смуга
+Diamond	Ромб
+Diamond In	Ромб усередину
+Diamond Out	Ромб назовні
+Direction	Напрямок
+Disappear	Зникнення
+Discard Recovered Presentations	Відкинути відновлені презентації
+Display name	Відображуване ім'я
+Dissolve	Розчинення
+Dissolve In	Поступова поява
+Dissolve Out	Поступове зникнення
+Distribute	Розподілити
+Distribute Columns	Розподілити стовпці
+Distribute Horizontally	Розподілити горизонтально
+Distribute Rows	Розподілити рядки
+Distribute Vertically	Розподілити вертикально
+Division Sign	Знак ділення
+Do not Autofit	Без автоматичного добору
+Do you want to save the changes you made to {what}?	Зберегти зміни, внесені до {what}?
+Document	Документ
+Dodecagon	Дванадцятикутник
+Don't Save	Не зберігати
+Don't show on title slide	Не показувати на титульному слайді
+Done	Готово
+Donut	Кільце
+Doors	Двері
+Double Brace	Подвійна фігурна дужка
+Double Bracket	Подвійна квадратна дужка
+Double Wave	Подвійна хвиля
+Doughnut	Кільцева
+Down	Униз
+Drape	Завіса
+Draw	Малювання
+Drop Shadow Rectangle	Прямокутник із тінню
+Duplicate	Дублювати
+Duplicate Selected Slides	Дублювати вибрані слайди
+Duplicate Slide	Дублювати слайд
+Duration:	Тривалість:
+Dynamic Content	Динамічний вміст
+Edit	Редагування
+Edit Alt Text…	Змінити альтернативний текст…
+Edit Data	Змінити дані
+Edit Shape	Змінити фігуру
+Edit Text	Редагувати текст
+Edit the data: first row = series names, first column = categories.	Змініть дані: перший рядок — назви рядів, перший стовпець — категорії.
+Edit\nData	Змінити дані
+Edit\nShape	Змінити фігуру
+Editing	Редагування
+Effect Options	Параметри ефекту
+Effect\nOptions	Параметри ефекту
+Effects	Ефекти
+Email Address	Адреса електронної пошти
+Email address:	Адреса електронної пошти:
+Emphasis	Виділення
+End	Кінець
+End Show	Завершити показ
+End of slide show	Кінець показу слайдів
+End of slide show, click to exit.	Кінець показу слайдів. Натисніть, щоб вийти.
+End trim (s):	Обрізання в кінці (с):
+English (United Kingdom)	Англійська (Велика Британія)
+English (United States)	Англійська (США)
+Enter	Enter
+Entrance	Поява
+Equals	Дорівнює
+Equation	Рівняння
+Equation Shapes	Фігури рівнянь
+Eraser	Гумка
+Escape	Escape
+Español	Español
+Exciting	Виразні
+Exit	Зникнення
+Expand	Розгорнути
+Explosion: 14 Points	Спалах: 14 променів
+Explosion: 8 Points	Спалах: 8 променів
+Export	Експорт
+Export the presentation as:	Експортувати презентацію як:
+Exported {path}	Експортовано: {path}
+Export…	Експортувати…
+Fade	Послабити
+Fade in (s):	Поступова поява (с):
+Fade out (s):	Поступове зникнення (с):
+Fall Over	Падіння
+Ferris Wheel	Оглядове колесо
+File	Файл
+Fill	Заливка
+Fill & Line	Заливка й лінія
+Fill Color	Колір заливки
+Filled Radar	Заповнена пелюсткова
+Find…	Знайти…
+First	Перший
+First Column	Перший стовпець
+First Slide	Перший слайд
+First commit	Перший коміт
+Fit	Умістити
+Fit slide to current window	Підігнати слайд до поточного вікна
+Fit to Window	Умістити у вікні
+Fit to\nWindow	Умістити у вікні
+Flash	Спалах
+Flip	Віддзеркалити
+Flip Horizontal	Віддзеркалити горизонтально
+Flip Vertical	Віддзеркалити вертикально
+Float In	Плавна поява
+Float Out	Плавне зникнення
+Flowchart	Блок-схема
+Flowchart: Alternate Process	Блок-схема: Альтернативний процес
+Flowchart: Card	Блок-схема: Картка
+Flowchart: Collate	Блок-схема: Зіставлення
+Flowchart: Connector	Блок-схема: З’єднувач
+Flowchart: Data	Блок-схема: Дані
+Flowchart: Decision	Блок-схема: Рішення
+Flowchart: Delay	Блок-схема: Затримка
+Flowchart: Direct Access Storage	Блок-схема: Сховище прямого доступу
+Flowchart: Display	Блок-схема: Екран
+Flowchart: Document	Блок-схема: Документ
+Flowchart: Extract	Блок-схема: Видобування
+Flowchart: Internal Storage	Блок-схема: Внутрішнє сховище
+Flowchart: Magnetic Disk	Блок-схема: Магнітний диск
+Flowchart: Manual Input	Блок-схема: Ручне введення
+Flowchart: Manual Operation	Блок-схема: Ручна операція
+Flowchart: Merge	Блок-схема: Об’єднання
+Flowchart: Multidocument	Блок-схема: Кілька документів
+Flowchart: Off-page Connector	Блок-схема: З’єднувач між сторінками
+Flowchart: Or	Блок-схема: Або
+Flowchart: Predefined Process	Блок-схема: Визначений процес
+Flowchart: Preparation	Блок-схема: Підготовка
+Flowchart: Process	Блок-схема: Процес
+Flowchart: Punched Tape	Блок-схема: Перфострічка
+Flowchart: Sequential Access Storage	Блок-схема: Сховище послідовного доступу
+Flowchart: Sort	Блок-схема: Сортування
+Flowchart: Stored Data	Блок-схема: Збережені дані
+Flowchart: Summing Junction	Блок-схема: Вузол підсумовування
+Flowchart: Terminator	Блок-схема: Початок/кінець
+Fly In	Влітати
+Fly Out	Вилітання
+Fly Through	Пролітання
+Folded Corner	Загнутий кут
+Follow the layout	Відповідно до макета
+Followed Hyperlink	Відвідане гіперпосилання
+Font	Шрифт
+Font Color	Колір шрифту
+Font Size	Розмір шрифту
+Fonts	Шрифти
+Footer	Нижній колонтитул
+Foreground	Передній план
+Format	Формат
+Format Background	Формат тла
+Format Background…	Формат тла…
+Format Painter	Копіювання формату
+Format Painter (double-click to keep it on)	Копіювання формату (подвійне натискання для постійного застосування)
+Format Pane	Панель форматування
+Format Shape	Формат фігури
+Format Shape…	Формат фігури…
+Format\nBackground	Формат тла
+Format\nPane	Панель форматування
+Formatting State	Стан форматування
+Fracture	Розлом
+Frame	Рамка
+Français	Français
+Freeform	Довільна фігура
+From 	Від
+From Beginning	Від початку
+From Bottom	Знизу
+From Bottom Left	Знизу ліворуч
+From Bottom Right	Знизу праворуч
+From Current Slide	Від поточного слайда
+From Left	Зліва
+From Right	Справа
+From Top	Згори
+From Top Left	Згори ліворуч
+From Top Right	Згори праворуч
+From bottom left	Знизу ліворуч
+From bottom right	Знизу праворуч
+From center	Від центра
+From top left	Згори ліворуч
+From top right	Згори праворуч
+From\nBeginning	Від початку
+From\nCurrent Slide	Від поточного слайда
+Full	Повна
+Full Page Slides	Слайди на всю сторінку
+Funnel	Лійкова
+Gallery	Галерея
+General	Загальні
+Get Text	Отримати текст
+Glitter	Блиск
+Glow	Світіння
+Go to	Перейти
+Go to Slide	Перейти до слайда
+Grab bag	Випадкова добірка
+Gradient fill	Градієнтна заливка
+Gradient stops	Опорні точки градієнта
+Gradient…	Градієнт…
+Grayscale	Градації сірого
+Greek	Грецька
+Green	Зелений
+Gridlines	Лінії сітки
+Group	Згрупувати
+Group Objects	Згрупувати об’єкти
+Grow & Turn	Збільшення й обертання
+Grow/Shrink	Збільшення/зменшення
+Guides	Напрямні
+Half	Половина
+Half Frame	Половина рамки
+Handout Master	Зразок видачі
+Handout Master (coming soon)	Зразок видачі (незабаром)
+Handout\nMaster	Зразок видачі
+Handouts (1 slide per page)	Видача (1 слайд на сторінку)
+Handouts (2 slides per page)	Видача (2 слайди на сторінку)
+Handouts (3 slides per page)	Видача (3 слайди на сторінку)
+Handouts (4 slides per page)	Видача (4 слайди на сторінку)
+Handouts (6 slides per page)	Видача (6 слайдів на сторінку)
+Handouts (9 slides per page)	Видача (9 слайдів на сторінку)
+Header	Верхній колонтитул
+Header & Footer	Колонтитули
+Header &\nFooter	Колонтитули
+Header Row	Рядок заголовка
+Header and Footer	Колонтитули
+Header and Footer…	Колонтитули…
+Heart	Серце
+Height	Висота
+Height (in):	Висота (дюйми):
+Height:	Висота:
+Help	Довідка
+Heptagon	Семикутник
+Hexagon	Шестикутник
+Hide All	Приховати все
+Hide Background Graphics	Приховати графіку тла
+Hide During Show	Приховати під час показу
+Hide Slide	Приховати слайд
+Hide background graphics	Приховати графіку тла
+Hide\nSlide	Приховати слайд
+Hierarchy	Ієрархія
+High	Висока
+Highlighter	Маркер виділення
+Histogram	Гістограма
+Home	Початковий екран
+Honeycomb	Стільники
+Horizontal	Горизонтально
+Horz In	Горизонтально всередину
+Horz Out	Горизонтально назовні
+How would you describe this object and its context to someone who is blind or has low vision?	Як би ви описали цей об’єкт та його контекст людині з порушенням зору?
+Hyperlink	Гіперпосилання
+Icons	Піктограми
+In	Усередину
+In Bounce	Усередину з відскоком
+Include hidden slides	Включити приховані слайди
+Increase Font Size	Збільшити розмір шрифту
+Increase List Level	Підвищити рівень списку
+Ink to Math	Рукописне введення в рівняння
+Ink to Math (coming soon)	Рукописне введення в рівняння (незабаром)
+Ink to Shape	Рукописне введення у фігуру
+Ink to Shape (coming soon)	Рукописне введення у фігуру (незабаром)
+Ink to Text	Рукописне введення в текст
+Ink to Text (coming soon)	Рукописне введення в текст (незабаром)
+Ink to\nMath	Рукописне введення в рівняння
+Ink to\nShape	Рукописне введення у фігуру
+Ink to\nText	Рукописне введення в текст
+Inner	Внутрішня
+Insert	Вставити
+Insert Above	Вставити вище
+Insert Below	Вставити нижче
+Insert Hyperlink	Вставити гіперпосилання
+Insert Layout	Вставити макет
+Insert Left	Вставити ліворуч
+Insert Placeholder	Вставити заповнювач
+Insert Right	Вставити праворуч
+Insert Table	Вставити таблицю
+Insert Table…	Вставити таблицю…
+Insert picture from file…	Вставити зображення з файлу…
+Insert\nAbove	Вставити вище
+Insert\nBelow	Вставити нижче
+Insert\nLayout	Вставити макет
+Insert\nLeft	Вставити ліворуч
+Insert\nPlaceholder	Вставити заповнювач
+Insert\nRight	Вставити праворуч
+Inspect Presentation	Переглянути дані презентації
+Inspect Shape	Переглянути дані фігури
+Inspect Slide	Переглянути дані слайда
+Interface Language	Мова інтерфейсу
+Interface language:	Мова інтерфейсу:
+Interface size	Розмір інтерфейсу
+Isosceles Triangle	Рівнобедрений трикутник
+Italiano	Italiano
+Italic	Курсивний
+JPEG image (current slide)	Зображення JPEG (поточний слайд)
+Join our community on Discord	Приєднуйтеся до нашої спільноти в Discord
+Join the ArtCraft community on Discord	Приєднуйтеся до спільноти ArtCraft у Discord
+Justify	По ширині
+L-Shape	Г-подібна фігура
+Language	Мова
+Last	Останній
+Last Column	Останній стовпець
+Last Slide	Останній слайд
+Last commit	Останній коміт
+Layout	Макет
+Learn More	Докладніше
+Learn\nMore	Докладніше
+Ledger Paper (11x17 in)	Папір Ledger (11×17 дюймів)
+Left	Ліворуч
+Left Brace	Ліва фігурна дужка
+Left Bracket	Ліва квадратна дужка
+Letter Paper (8.5x11 in)	Папір Letter (8,5×11 дюймів)
+Liberation Serif	Liberation Serif
+Light Blue	Світло-синій
+Light Green	Світло-зелений
+Light/Dark appearance	Світле/темне оформлення
+Lighten	Освітлення
+Lightning	Блискавка
+Lightning Bolt	Блискавка
+Line	Лінія
+Line Color	Колір лінії
+Line Spacing	Міжрядковий інтервал
+Line Spacing Options…	Параметри міжрядкового інтервалу…
+Line delta	Різниця рядків
+Line spacing (lines):	Міжрядковий інтервал (рядки):
+Line with Markers	Лінійна з маркерами
+Linear	Лінійний
+Lines	Лінії
+Lines +/−	Рядки +/−
+Lines added	Додані рядки
+Lines deleted	Видалені рядки
+Link	Посилання
+Link…	Посилання…
+List Commands	Список команд
+Lock	Заблокувати
+Long Dash	Довгий штрих
+Long Dash Dot	Довгий штрих і крапка
+Loop continuously until 'Esc'	Повторювати безперервно до натискання «Esc»
+Loop until Stopped	Повторювати до зупинки
+Loops	Петлі
+Loose	Розріджений
+Low	Низька
+MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors	MIT OR Apache-2.0 · © 2026 Команда ArtCraft та учасники DeckCraft
+Margins (pt)	Поля (пт)
+Mark as decorative	Позначити як декоративний
+Mark selected text as:	Позначити вибраний текст як:
+Math	Математика
+Matrix	Матриця
+Maximize content (else ensure fit)	Збільшити вміст (інакше вмістити)
+Media	Медіа
+Media Info	Відомості про медіа
+Medium	Середній
+Merge Cells	Об’єднати клітинки
+Merge Shapes	Об’єднати фігури
+Merge\nCells	Об’єднати клітинки
+Merge\nShapes	Об’єднати фігури
+Merged PRs	Об’єднані запити на злиття
+Middle	Посередині
+Minus Sign	Знак мінуса
+Model	Модель
+Models	Моделі
+Moon	Місяць
+More Colors… #	Інші кольори… #
+Morph	Трансформація
+Motion	Рух
+Motion Paths	Шляхи переміщення
+Move	Переміщення
+Move Down	Перемістити вниз
+Move Insertion Point	Перемістити курсор введення
+Move Section	Перемістити розділ
+Move Section Down	Перемістити розділ униз
+Move Section Up	Перемістити розділ угору
+Move Slide	Перемістити слайд
+Move Up	Перемістити вгору
+Multiplication Sign	Знак множення
+Multiply	Множення
+Mute	Вимкнути звук
+Name	Ім’я
+Name (A–Z)	Ім'я (А–Я)
+Name:	Назва:
+New Comment	Новий коментар
+New Presentation	Нова презентація
+New Slide	Новий слайд
+New Slide (⇧⌘N)	Новий слайд (⇧⌘N)
+New presentation	Нова презентація
+New show name:	Назва нового показу:
+New\nComment	Новий коментар
+New\nSlide	Новий слайд
+Next	Далі
+Next Slide	Наступний слайд
+Next Window	Наступне вікно
+Next ▶	Далі ▶
+No Color	Без кольору
+No Fill	Без заливки
+No Glow	Без світіння
+No Outline	Без обведення
+No Reflection	Без відбиття
+No Shadow	Без тіні
+No Soft Edges	Без розмиття країв
+No accessibility issues found. People with disabilities should not have difficulty reading this document.	Проблем доступності не виявлено. Люди з інвалідністю не повинні мати труднощів із читанням цього документа.
+No comments on this slide.	На цьому слайді немає коментарів.
+No contributor data was built into this copy.	У цю копію не вбудовано дані про учасників.
+No fill	Без заливки
+No line	Без лінії
+No model credits were built into this copy.	У цю копію не вбудовано дані про використані моделі.
+No notes.	Немає приміток.
+No sound: {err}	Немає звуку: {err}
+None	Немає
+Normal	Звичайний
+Not Equal	Не дорівнює
+Not allowed	Не дозволено
+Notes	Примітки
+Notes Master	Зразок приміток
+Notes Master (coming soon)	Зразок приміток (незабаром)
+Notes Page	Сторінка приміток
+Notes Pages	Сторінки приміток
+Notes\nMaster	Зразок приміток
+Notes\nPage	Сторінка приміток
+Nudge	Зсунути
+Number of columns:	Кількість стовпців:
+Number of rows:	Кількість рядків:
+Numbering	Нумерація
+Object Color	Колір об’єкта
+Objects	Об’єкти
+Octagon	Восьмикутник
+On Click	Після натискання
+On Click of {name}	Після натискання на {name}
+On Click of… (none)	Після натискання на… (немає)
+On Mouse Click	Після натискання мишею
+On-screen Show (16:10)	Екранний показ (16:10)
+Open Data	Відкрити дані
+Open Dialog	Відкрити діалог
+Open Recovered Presentations	Відкрити відновлені презентації
+Open the sample deck	Відкрити зразок презентації
+Open…	Відкрити…
+Orange	Помаранчевий
+Orbit	Орбіта
+Order Objects	Порядок об’єктів
+Origami	Оригамі
+Out	Назовні
+Out Bounce	Назовні з відскоком
+Outer	Зовнішня
+Outline	Структура
+Outline (.txt)	Структура (.txt)
+Outline View	Режим структури
+Outline\nView	Режим структури
+Oval	Овал
+Oval ends	Овальні кінці
+Overhead	Діапроєктор
+PDF document (.pdf)	Документ PDF (.pdf)
+PNG images (all slides)	Зображення PNG (усі слайди)
+PNG images (current slide)	Зображення PNG (поточний слайд)
+PRs	Запити на злиття
+Page Curl	Завертання сторінки
+Page Setup…	Параметри сторінки…
+PageDown	PageDown
+PageUp	PageUp
+Pan	Панорамування
+Pane	Панель
+Paragraph	Абзац
+Paragraph…	Абзац…
+Parallelogram	Паралелограм
+Pareto	Парето
+Partial Circle	Частина кола
+Particles	Частинки
+Paste	Вставити
+Paste (⌘V)	Вставити (⌘V)
+Paste Formatting	Вставити форматування
+Paste and Match Formatting	Вставити з відповідним форматуванням
+Paste or type an outline. Unindented lines become slide titles; tab-indented lines become bullets.	Вставте або введіть структуру. Рядки без відступу стають заголовками слайдів; рядки з відступом табуляції — пунктами списку.
+Pasted image.png	Вставлене зображення.png
+Path	Контур
+Pattern fill	Візерункова заливка
+Pause	Пауза
+Peek In	Визирання
+Peel Off	Відшарування
+Pencil	Олівець
+Pentagon	П’ятикутник
+Perspective	Перспектива
+Pick a graphic; type one item per line.	Виберіть графіку; введіть по одному елементу в рядку.
+Pick a look for your slides. Ideas are generated on your device.	Виберіть оформлення слайдів. Ідеї створюються на вашому пристрої.
+Picture	Зображення
+Picture Format	Формат зображення
+Picture Styles	Стилі зображення
+Picture from File…	Зображення з файлу…
+Picture or texture fill	Заливка зображенням або текстурою
+Picture\nStyles	Стилі зображення
+Pictures	Зображення
+Pie	Секторна
+Pin	Прикріпити
+Placeholder colour	Колір заповнювача
+Plan\nBuild\nLaunch	Планування\nСтворення\nЗапуск
+Plaque	Табличка
+Play	Відтворити
+Play Across Slides	Відтворювати на кількох слайдах
+Play Full Screen	Відтворювати на весь екран
+Play Narrations	Відтворювати звуковий супровід
+Play from Current Slide	Відтворити з поточного слайда
+Play from Start	Відтворити від початку
+Play from Start (F5)	Відтворити від початку (F5)
+Play from\nCurrent Slide	Відтворити з поточного слайда
+Play from\nStart	Відтворити від початку
+Play/Pause	Відтворити/призупинити
+Playback	Відтворення
+Plus	Плюс
+Plus In	Плюс усередину
+Plus Out	Плюс назовні
+Plus Sign	Знак плюса
+Portrait (9:16)	Портретний (9:16)
+Português	Português
+Position	Положення
+Position Objects	Позиція об’єктів
+Position and Size	Позиція та розмір
+Post	Надіслати
+Poster Frame	Кадр афіші
+PowerPoint Presentation (.pptx)	Презентація PowerPoint (.pptx)
+Preferences	Налаштування
+Preferences…	Налаштування…
+Presentation	Презентація
+Presentations	Презентації
+Presentations and slide shows, rebuilt from scratch in pure Rust.	Презентації та покази слайдів, створені з нуля мовою Rust.
+Presented by a speaker (full screen)	Доповідачем (повноекранний режим)
+Presenter View	Режим доповідача
+Presenter View — DeckCraft	Режим доповідача — DeckCraft
+Presenter\nView	Режим доповідача
+Preset gradients	Готові градієнти
+Prestige	Престиж
+Preview	Попередній перегляд
+Previous Slide	Попередній слайд
+Print layout:	Макет друку:
+Properties	Властивості
+Pulse	Пульсація
+Punctuation	Пунктуація
+Purple	Фіолетовий
+Push	Зсув
+Pyramid	Піраміда
+Quick Styles	Експрес-стилі
+Quick\nStyles	Експрес-стилі
+Radar	Пелюсткова
+Radial	Радіальний
+Random	Випадковий
+Random Bars	Випадкові смуги
+Reading View	Режим читання
+Reading\nView	Режим читання
+Real name	Справжнє ім'я
+Recent	Нещодавні
+Record	Запис
+Recording narration needs audio capture (coming soon)	Для запису звукового супроводу потрібне захоплення аудіо (незабаром)
+Recovered Presentations	Відновлені презентації
+Recovered {} from the last session	Відновлено {} з попереднього сеансу
+Rectangle	Прямокутник
+Rectangle: Diagonal Corners Rounded	Прямокутник: заокруглені діагональні кути
+Rectangle: Diagonal Corners Snipped	Прямокутник: зрізані діагональні кути
+Rectangle: Rounded Corners	Прямокутник: заокруглені кути
+Rectangle: Single Corner Rounded	Прямокутник: один заокруглений кут
+Rectangle: Single Corner Snipped	Прямокутник: один зрізаний кут
+Rectangle: Top Corners One Rounded and One Snipped	Прямокутник: один верхній кут заокруглений, інший зрізаний
+Rectangle: Top Corners Rounded	Прямокутник: заокруглені верхні кути
+Rectangle: Top Corners Snipped	Прямокутник: зрізані верхні кути
+Rectangles	Прямокутники
+Rectangular	Прямокутний
+Red	Червоний
+Red Pen	Червоне перо
+Redo	Повторити
+Redo (⌘Y)	Повторити (⌘Y)
+Reflected Rounded Rectangle	Заокруглений прямокутник із відбиттям
+Reflection	Відбиття
+Regroup	Перегрупувати
+Regular Pentagon	Правильний п’ятикутник
+Rehearse Timings	Репетиція часу показу
+Rehearse\nTimings	Репетиція часу показу
+Remove	Вилучити
+Remove All Animations	Видалити всі анімації
+Remove All Sections	Видалити всі розділи
+Remove Animation	Видалити анімацію
+Remove Background	Видалити тло
+Remove Background (coming soon)	Видалення тла (незабаром)
+Remove Section	Видалити розділ
+Remove Section & Slides	Видалити розділ і слайди
+Remove stop	Видалити опорну точку
+Remove\nBackground	Видалити тло
+Rename	Перейменувати
+Rename Layout	Перейменувати макет
+Rename Section	Перейменувати розділ
+Rename Section…	Перейменувати розділ…
+Rename Slide	Перейменувати слайд
+Rename…	Перейменувати…
+Render Slide	Візуалізувати слайд
+Reopen	Відкрити знову
+Reorder Animation	Змінити порядок анімації
+Reorder Objects	Змінити порядок об’єктів
+Replace straight quotes with smart quotes	Замінювати прямі лапки типографськими
+Reply	Відповісти
+Reply…	Відповісти…
+Reset	Скинути
+Reset Background	Скинути тло
+Reset Crop	Скинути обтинання
+Reset Effects	Скинути ефекти
+Reset Picture	Скинути зображення
+Reset Slide	Скинути слайд
+Reset Slide Background	Скинути тло слайда
+Resize shape to fit text	Змінити розмір фігури за текстом
+Resolve	Позначити як вирішений
+Resolve Thread	Завершити обговорення
+Return	Повернутися
+Reveal	Відкриття
+Reverse the order	Зворотний порядок
+Revert	Повернути попередню версію
+Review	Рецензування
+Rewind after Playing	Перемотати після відтворення
+Ribbon Tab	Вкладка стрічки
+Ribbon: Tilted Down	Стрічка: нахил униз
+Ribbon: Tilted Up	Стрічка: нахил угору
+Right	Праворуч
+Right Brace	Права фігурна дужка
+Right Bracket	Права квадратна дужка
+Right Triangle	Прямокутний трикутник
+Right-to-Left Text Direction	Напрямок тексту справа наліво
+Ring	Кільце
+Ripple	Брижі
+Rise Up	Підняття
+Rotate	Повернути
+Rotate Left 90°	Повернути ліворуч на 90°
+Rotate Right 90°	Повернути праворуч на 90°
+Rotate all text 270°	Повернути весь текст на 270°
+Rotate all text 90°	Повернути весь текст на 90°
+Rotate with shape	Повертати разом із фігурою
+Rotation	Обертання
+Round Dot	Кругла крапка
+Rounded Diagonal Corner	Заокруглений діагональний кут
+Ruler	Лінійка
+Saturation	Насиченість
+Saturation {}%	Насиченість {}%
+Save	Зберегти
+Save (⌘S)	Зберегти (⌘S)
+Save As…	Зберегти як…
+Save AutoRecover Information	Зберегти дані автоматичного відновлення
+Save as Template…	Зберегти як шаблон…
+Save to Data	Зберегти в дані
+Saved	Збережено
+Saved {path}	Збережено: {path}
+Scatter	Точкова
+ScreenTip:	Підказка:
+Screenshot	Знімок екрана
+Screenshot (not available yet)	Знімок екрана (ще недоступно)
+Scroll: Horizontal	Сувій: горизонтальний
+Scroll: Vertical	Сувій: вертикальний
+Search commands (⇧⌘P)	Пошук команд (⇧⌘P)
+Search commands…	Пошук команд…
+Section	Розділ
+Seek	Перейти до позиції
+Select	Виділення
+Select All	Виділити все
+Select All Text	Вибрати весь текст
+Select Cells	Вибрати клітинки
+Select Objects	Вибрати об’єкти
+Select Paragraph	Вибрати абзац
+Select Slides	Вибрати слайди
+Select Text	Вибрати текст
+Select Word	Вибрати слово
+Select a chart first.	Спочатку виберіть діаграму.
+Select a shape to format it.	Виберіть фігуру для форматування.
+Select an object on the slide and add an animation from the Animations tab.	Виберіть об’єкт на слайді та додайте анімацію на вкладці «Анімації».
+Selection	Виділення
+Selection Pane	Панель вибору
+Selection Pane…	Панель вибору…
+Selection\nPane	Панель вибору
+Send Backward	Перемістити назад
+Send to Back	На задній план
+Send\nBackward	Перемістити назад
+Sentence case.	Як у реченні.
+Set Text	Задати текст
+Set Up Show…	Налаштувати показ…
+Set Up Slide Show	Налаштувати показ слайдів
+Set Up Slide Show…	Налаштувати показ слайдів…
+Set Up\nSlide Show	Налаштувати показ слайдів
+Set as Default Shape	Установити як стандартну фігуру
+Shading	Затінення
+Shadow	Тінь
+Shape	Фігура
+Shape Effects	Ефекти фігури
+Shape Fill	Заливка фігури
+Shape Format	Формат фігури
+Shape Gallery	Галерея фігур
+Shape Outline	Обведення фігури
+Shape Styles	Стилі фігур
+Shape {}	Фігура {}
+Shape\nStyles	Стилі фігур
+Shapes	Фігури
+Shift+	Shift+
+Shift+F9	Shift+F9
+Show	Показати
+Show All	Показати всі
+Show Comments	Показати коментарі
+Show Media Controls	Показати елементи керування медіа
+Show Slide	Показати слайд
+Show smart guides	Показувати розумні напрямні
+Show type	Тип показу
+Show without animation	Показ без анімації
+Show without narration	Показ без звукового супроводу
+Show/Hide	Показати/приховати
+Show\nComments	Показати коментарі
+Shred	Подрібнення
+Shrink & Turn	Зменшення й обертання
+Shrink text on overflow	Зменшувати текст у разі переповнення
+Simple Frame, White	Проста біла рамка
+Size	Розмір
+Size & Properties	Розмір і властивості
+Slide Master	Зразок слайдів
+Slide Number	Номер слайда
+Slide Show	Показ слайдів
+Slide Size	Розмір слайда
+Slide Sorter	Сортувальник слайдів
+Slide number	Номер слайда
+Slide timings recorded.	Час показу слайдів записано.
+Slide {:02}:{:04.1}   Total {:02}:{:02}	Слайд {:02}:{:04.1}   Загалом {:02}:{:02}
+Slide {} of {}	Слайд {} з {}
+Slide {}: {}{}	Слайд {}: {}{}
+Slide {}: “{w}”	Слайд {}: «{w}»
+Slide\nMaster	Зразок слайдів
+Slide\nNumber	Номер слайда
+Slide\nSize	Розмір слайда
+Slide\nSorter	Сортувальник слайдів
+Slides (e.g. 1,3,5):	Слайди (наприклад, 1,3,5):
+Slides from Outline	Слайди зі структури
+Slides from Outline…	Слайди зі структури…
+Slides sized for:	Розмір слайдів для:
+SmartArt	SmartArt
+Smile	Усмішка
+Smiley Face	Усміхнене обличчя
+Smoothly	Плавно
+Smoothly Left	Плавно ліворуч
+Smoothly Right	Плавно праворуч
+Snap objects to grid	Прив’язувати об’єкти до сітки
+Soft Edge Rectangle	Прямокутник із розмитими краями
+Soft Edges	Розмиті краї
+Solid	Суцільний
+Solid fill	Суцільна заливка
+Solid line	Суцільна лінія
+Sort	Сортування
+Source on GitHub	Вихідний код на GitHub
+Space	Space
+Spacing after (pt):	Інтервал після (пт):
+Spacing before (pt):	Інтервал перед (пт):
+Special — hanging (in):	Спеціальний — виступ (дюйми):
+Speech	Мовлення
+Speech Bubble: Oval	Овальна мовна бульбашка
+Speech Bubble: Rectangle	Прямокутна мовна бульбашка
+Speech Bubble: Rectangle with Corners Rounded	Мовна бульбашка: прямокутник із заокругленими кутами
+Spelling	Орфографія
+Spin	Обертання
+Spinner	Кругове обертання
+Split	Розділення
+Split Cells	Розділити клітинки
+Split\nCells	Розділити клітинки
+Square	Квадрат
+Square (1:1)	Квадратний (1:1)
+Square Dot	Квадратна крапка
+Stacked	Накопичувальна
+Stacked Area	З областями з накопиченням
+Stacked Bar	Лінійчата з накопиченням
+Stacked Column	Стовпчаста з накопиченням
+Stacked Line	Лінійна з накопиченням
+Standard (4:3)	Стандартний (4:3)
+Standard Colors	Стандартні кольори
+Star	Зірка
+Star: 10 Points	Зірка: 10 променів
+Star: 12 Points	Зірка: 12 променів
+Star: 16 Points	Зірка: 16 променів
+Star: 24 Points	Зірка: 24 промені
+Star: 32 Points	Зірка: 32 промені
+Star: 4 Points	Зірка: 4 промені
+Star: 5 Points	Зірка: 5 променів
+Star: 6 Points	Зірка: 6 променів
+Star: 7 Points	Зірка: 7 променів
+Star: 8 Points	Зірка: 8 променів
+Stars and Banners	Зірки та стрічки
+Start After Previous	Почати після попереднього
+Start Automatically	Почати автоматично
+Start On Click	Почати після натискання
+Start With Previous	Почати разом із попереднім
+Start a conversation	Почніть розмову
+Start time (s):	Час початку (с):
+Start:	Початок:
+Stealth end	Вістря
+Stock	Біржова
+Stop	Зупинити
+Stop Editing Text	Завершити редагування тексту
+Strikethrough	Закреслення
+Strips	Смуги
+Style {i}	Стиль {i}
+Subscript	Підрядковий
+Subtle	Стримані
+Sun	Сонце
+Sunburst	Сонячні промені
+Superscript	Надрядковий
+Surface	Поверхнева
+Switch	Перемикання
+Swivel	Обертання
+Symbol	Символ
+System language	Мова системи
+Tab	Табуляція
+Table	Таблиця
+Table Design	Оформлення таблиці
+Table Style Options	Параметри стилю таблиці
+Table Styles	Стилі таблиці
+Table…	Таблиця…
+Task Pane	Панель завдань
+Teardrop	Крапля
+Teeter	Хитання
+Text	Текст
+Text Box	Текстове поле
+Text Box Margins	Поля текстового блока
+Text Direction	Напрямок тексту
+Text Effects	Текстові ефекти
+Text Fill	Заливка тексту
+Text Highlight Color	Колір виділення тексту
+Text Options	Параметри тексту
+Text Outline	Обведення тексту
+Text Shadow	Тінь тексту
+Text/Background - Dark 1	Текст/тло — темний 1
+Text/Background - Dark 2	Текст/тло — темний 2
+Text/Background - Light 1	Текст/тло — світлий 1
+Text/Background - Light 2	Текст/тло — світлий 2
+Text\nBox	Текстове поле
+The spelling check is complete. No issues found.	Перевірку правопису завершено. Помилок не виявлено.
+Theme Colors	Кольори теми
+Theme Gallery	Галерея тем
+Themes	Теми
+Thesaurus	Тезаурус
+Thesaurus (coming soon)	Тезаурус (незабаром)
+This Document	Цей документ
+Thought	Думка
+Thought Bubble: Cloud	Бульбашка думки: хмара
+Through Black	Через чорний
+Tight	Ущільнений
+Timing	Час показу
+Top	Верх
+Total Row	Рядок підсумку
+Transition	Перехід
+Transition Gallery	Галерея переходів
+Transitions	Переходи
+Translate	Перекласти
+Translation needs a language model (not bundled)	Для перекладу потрібна мовна модель (не входить до комплекту)
+Transparency	Прозорість
+Trapezoid	Трапеція
+Treemap	Деревоподібна
+Triangle	Трикутник
+Trigger	Умова запуску
+Trim	Обрізати
+Trim Media	Обрізати медіа
+Turns	Повороти
+Type	Тип
+Type Text	Ввести текст
+Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).	Введіть рівняння в лінійному вигляді (наприклад, a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).
+Uncover	Відкривання
+Underline	Підкреслення
+Undo	Скасувати
+Undo (⌘Z)	Скасувати (⌘Z)
+Ungroup	Розгрупувати
+Up	Угору
+Use Timings	Використовувати час показу
+Use timings, if present	Використовувати час показу, якщо задано
+Username	Ім'я користувача
+Version	Версія
+Version {}	Версія {}
+Vert In	Вертикально всередину
+Vert Out	Вертикально назовні
+Vertical	Вертикально
+Vertical alignment	Вертикальне вирівнювання
+Very Loose	Дуже розріджений
+Very Tight	Дуже ущільнений
+Video	Відео
+Video from File…	Відео з файлу…
+View	Перегляд
+Volume	Гучність
+Vortex	Вихор
+Waterfall	Водоспадна
+Wave	Хвиля
+Web Page or File	Вебсторінка або файл
+Wedge	Клин
+Weight	Товщина
+Wheel	Колесо
+Widescreen (13.333x7.5 in)	Широкоекранний (13,333×7,5 дюймів)
+Widescreen (16:9)	Широкоекранний (16:9)
+Width	Ширина
+Width (in):	Ширина (дюйми):
+Width:	Ширина:
+Width: 	Ширина:
+Wind	Вітер
+Window	Вікно
+Wipe	Витирання
+With Previous	Разом із попереднім
+WordArt	WordArt
+WordArt style {}	Стиль WordArt {}
+Words	Слова
+Wrap Text in Shape	Переносити текст у фігурі
+Wrap text in shape	Переносити текст у фігурі
+Yellow	Жовтий
+Your changes will be lost if you don't save them.	Якщо не зберегти, зміни будуть втрачені.
+Your name (comments):	Ваше ім’я (коментарі):
+Zoom	Масштаб
+Zoom In	Збільшити
+Zoom Out	Зменшити
+Zoom…	Масштаб…
+a) b) c)	a) b) c)
+a. b. c.	a. b. c.
+dropped file	перетягнутий файл
+i. ii. iii.	i. ii. iii.
+no presentation open	Немає відкритої презентації
+no slides	Немає слайдів
+no text insertion point	Немає позиції введення тексту
+nothing selected	Нічого не вибрано
+nothing to redo	Немає дій для повторення
+nothing to undo	Немає дій для скасування
+select text or a shape	Виберіть текст або фігуру
+select two or more objects	Виберіть два або більше об’єктів
+size (pt)	розмір (пт)
+tOGGLE cASE	tOGGLE cASE
+unknown interface language	Невідома мова інтерфейсу
+{ch}  Bullet	{ch}  Маркер
+{f} (Body)	{f} (Основний текст)
+{f} (Headings)	{f} (Заголовки)
+{name}: DeckCraft can't open this kind of file	{name}: DeckCraft не може відкрити файл цього типу
+{n} Column{}	{n} Стовпець{}
+{r} pt	{r} пт
+{r} pt glow	світіння {r} пт
+{w} pt	{w} пт
+{} ({} slides)	{} ({} слайдів)
+{} Slide Master	{} Зразок слайдів
+{} contributors · {} commits	Учасники: {} · Коміти: {}
+{} presentations	{} презентацій
+{}x{} Table	Таблиця {}×{}
+“{}” is not available yet.	«{}» ще недоступно.
+−Bin	−Бін
+▶ Play All	▶ Відтворити все
+◀ Previous	◀ Назад
+✏ on	✏ увімкнено

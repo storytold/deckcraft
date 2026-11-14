@@ -6,7 +6,7 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     // "Find what:" has the keyboard when the dialog opens, so Ctrl+F and typing finds (#951).
     let mut what = d.get("text", "");
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Find what:"));
+        ui.add_sized(vec2(120.0, 20.0), egui::Label::new(crate::i18n::tr("Find what:")));
         let r = ui.add(egui::TextEdit::singleline(&mut what).desired_width(180.0));
         // Enter finds the next match and leaves the keyboard here, so the search can be changed.
         if !d.fields.contains_key("focused") || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
@@ -16,10 +16,10 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     });
     d.fields.insert("text".into(), what);
     if replace_mode {
-        field(ui, d, "Replace with:", "with", "");
+        field(ui, d, crate::i18n::tr("Replace with:"), "with", "");
     }
-    let case = check(ui, d, "Match case", "matchCase", false);
-    let whole = check(ui, d, "Find whole words only", "wholeWords", false);
+    let case = check(ui, d, crate::i18n::tr("Match case"), "matchCase", false);
+    let whole = check(ui, d, crate::i18n::tr("Find whole words only"), "wholeWords", false);
     let text = d.get("text", "");
     let q = json!({"text": text, "matchCase": case, "wholeWords": whole});
     let mut close = false;
@@ -27,11 +27,11 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let has = !text.is_empty();
-        if ui.add_enabled(has, egui::Button::new("Find Next")).clicked() || (has && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+        if ui.add_enabled(has, egui::Button::new(crate::i18n::tr("Find Next"))).clicked() || (has && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
             find_next = true;
         }
         if replace_mode {
-            if ui.add_enabled(has, egui::Button::new("Replace")).clicked() {
+            if ui.add_enabled(has, egui::Button::new(crate::i18n::tr("Replace"))).clicked() {
                 let cur: Option<Value> = serde_json::from_str(&d.get("cur", "")).ok();
                 if let Some(at) = cur {
                     let mut p = q.clone();
@@ -44,7 +44,7 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
                 }
                 find_next = true;
             }
-            if ui.add_enabled(has, egui::Button::new("Replace All")).clicked() {
+            if ui.add_enabled(has, egui::Button::new(crate::i18n::tr("Replace All"))).clicked() {
                 let mut p = q.clone();
                 p["with"] = json!(d.get("with", ""));
                 let msg = match app.session.execute("text.replace", &p) {
@@ -54,10 +54,10 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
                 d.fields.insert("status".into(), msg);
                 d.fields.remove("cur");
             }
-        } else if ui.button("Replace…").clicked() {
+        } else if ui.button(crate::i18n::tr("Replace…")).clicked() {
             d.fields.insert("replace".into(), "1".into());
         }
-        if ui.button("Close").clicked() {
+        if ui.button(crate::i18n::tr("Close")).clicked() {
             close = true;
         }
     });

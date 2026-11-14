@@ -561,7 +561,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
     // Time label on the right, timeline between.
     let label = clock(pos);
     let label_w = 64.0;
-    painter.text(pos2(rect.max.x - 6.0, rect.center().y), Align2::RIGHT_CENTER, label, egui::FontId::monospace(11.0), white);
+    painter.text(pos2(rect.max.x - 6.0, rect.center().y), Align2::RIGHT_CENTER, &label, egui::FontId::monospace(11.0), white);
     let track = Rect::from_min_max(pos2(x + 6.0, rect.center().y - 3.0), pos2(rect.max.x - label_w - 6.0, rect.center().y + 3.0));
     if track.width() > 10.0 {
         painter.rect_filled(track, CornerRadius::same(3), Color32::from_gray(90));
@@ -583,7 +583,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
         painter.circle_filled(pos2(done.max.x, track.center().y), 5.0, white);
         let hit = track.expand2(vec2(4.0, 8.0));
         let resp = ui.interact(hit, ui.scope_id().with("media_bar_track"), Sense::click_and_drag());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Media position"));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, crate::i18n::tr("Media position")));
         if (resp.clicked() || resp.dragged())
             && duration > 0.0
             && let Some(p) = resp.interact_pointer_pos()
@@ -596,7 +596,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
         painter.text(
             pos2(rect.min.x, rect.max.y + 3.0),
             Align2::LEFT_TOP,
-            format!("No sound: {err}"),
+            crate::i18n::format("No sound: {err}", std::slice::from_ref(err)),
             egui::FontId::proportional(10.0),
             Color32::from_rgb(0xC0, 0x40, 0x40),
         );

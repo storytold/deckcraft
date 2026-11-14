@@ -15,31 +15,31 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
             let flags = tbl.as_ref().map(|t| (t.first_row, t.last_row, t.band_row, t.first_col, t.last_col, t.band_col)).unwrap_or_default();
             ui.horizontal(|ui| {
                 let mut a = flags.0;
-                if ui.checkbox(&mut a, "Header Row").changed() {
+                if ui.checkbox(&mut a, crate::i18n::tr("Header Row")).changed() {
                     run(app, "table.options", json!({"headerRow": a}));
                 }
                 let mut d = flags.3;
-                if ui.checkbox(&mut d, "First Column").changed() {
+                if ui.checkbox(&mut d, crate::i18n::tr("First Column")).changed() {
                     run(app, "table.options", json!({"firstColumn": d}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut b = flags.1;
-                if ui.checkbox(&mut b, "Total Row").changed() {
+                if ui.checkbox(&mut b, crate::i18n::tr("Total Row")).changed() {
                     run(app, "table.options", json!({"totalRow": b}));
                 }
                 let mut e = flags.4;
-                if ui.checkbox(&mut e, "Last Column").changed() {
+                if ui.checkbox(&mut e, crate::i18n::tr("Last Column")).changed() {
                     run(app, "table.options", json!({"lastColumn": e}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut c = flags.2;
-                if ui.checkbox(&mut c, "Banded Rows").changed() {
+                if ui.checkbox(&mut c, crate::i18n::tr("Banded Rows")).changed() {
                     run(app, "table.options", json!({"bandedRows": c}));
                 }
                 let mut f = flags.5;
-                if ui.checkbox(&mut f, "Banded Columns").changed() {
+                if ui.checkbox(&mut f, crate::i18n::tr("Banded Columns")).changed() {
                     run(app, "table.options", json!({"bandedColumns": f}));
                 }
             });
@@ -96,7 +96,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Borders, "Borders", true);
+        let r = big_button(ui, Icon::Borders, crate::i18n::tr("Borders"), true);
         egui::Popup::menu(&r).show(|ui| {
             let pen = app.table_pen.clone();
             for (label, which) in [
@@ -118,7 +118,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                 menu_item(app, ui, Icon::Borders, label, "table.borders", p);
             }
             ui.separator();
-            ui.menu_button("Pen Weight", |ui| {
+            ui.menu_button(crate::i18n::tr("Pen Weight"), |ui| {
                 for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
                     let cur = app.table_pen.get("width").and_then(Value::as_f64) == Some(w);
                     if ui.radio(cur, format!("{w} pt")).clicked() {
@@ -126,7 +126,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            ui.menu_button("Pen Style", |ui| {
+            ui.menu_button(crate::i18n::tr("Pen Style"), |ui| {
                 for (l, d) in [("Solid", "solid"), ("Dash", "dash"), ("Dot", "sysDot"), ("Dash Dot", "dashDot"), ("Long Dash", "lgDash")] {
                     let cur = app.table_pen.get("dash").and_then(Value::as_str).unwrap_or("solid") == d;
                     if ui.radio(cur, l).clicked() {
@@ -134,7 +134,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            ui.menu_button("Pen Color", |ui| {
+            ui.menu_button(crate::i18n::tr("Pen Color"), |ui| {
                 let sc = scheme(app);
                 if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                     app.table_pen["color"] = cref_param(&c);
@@ -190,11 +190,11 @@ pub fn paint_table_style(p: &egui::Painter, r: Rect, id: &str, sc: &deckcraft_co
 
 pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let r = big_button(ui, Icon::DeleteTable, "Delete", true);
+        let r = big_button(ui, Icon::DeleteTable, crate::i18n::tr("Delete"), true);
         egui::Popup::menu(&r).show(|ui| {
-            menu_item(app, ui, Icon::DeleteTable, "Delete Columns", "table.deleteColumn", json!({}));
-            menu_item(app, ui, Icon::DeleteTable, "Delete Rows", "table.deleteRow", json!({}));
-            menu_item(app, ui, Icon::DeleteTable, "Delete Table", "edit.delete", json!({}));
+            menu_item(app, ui, Icon::DeleteTable, crate::i18n::tr("Delete Columns"), "table.deleteColumn", json!({}));
+            menu_item(app, ui, Icon::DeleteTable, crate::i18n::tr("Delete Rows"), "table.deleteRow", json!({}));
+            menu_item(app, ui, Icon::DeleteTable, crate::i18n::tr("Delete Table"), "edit.delete", json!({}));
         });
         big(app, ui, Icon::InsertAbove, "Insert\nAbove", "table.insertRowAbove", json!({}));
         big(app, ui, Icon::InsertBelow, "Insert\nBelow", "table.insertRowBelow", json!({}));
@@ -207,16 +207,16 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         rows(ui, |ui| {
-            small(app, ui, Icon::DistributeV, "Distribute Rows", "table.distributeRows", json!({}));
-            small(app, ui, Icon::DistributeH, "Distribute Columns", "table.distributeColumns", json!({}));
+            small(app, ui, Icon::DistributeV, crate::i18n::tr("Distribute Rows"), "table.distributeRows", json!({}));
+            small(app, ui, Icon::DistributeH, crate::i18n::tr("Distribute Columns"), "table.distributeColumns", json!({}));
         });
     });
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                toggle(app, ui, Icon::AlignLeft, "Align Left", "format.alignLeft", false);
-                toggle(app, ui, Icon::AlignCenter, "Center", "format.alignCenter", false);
-                toggle(app, ui, Icon::AlignRight, "Align Right", "format.alignRight", false);
+                toggle(app, ui, Icon::AlignLeft, crate::i18n::tr("Align Left"), "format.alignLeft", false);
+                toggle(app, ui, Icon::AlignCenter, crate::i18n::tr("Center"), "format.alignCenter", false);
+                toggle(app, ui, Icon::AlignRight, crate::i18n::tr("Align Right"), "format.alignRight", false);
             });
             ui.horizontal(|ui| {
                 for (l, a) in [("Top", "top"), ("Center", "middle"), ("Bottom", "bottom")] {
@@ -224,7 +224,7 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
                         run(app, "table.cellAlign", json!({"anchor": a}));
                     }
                 }
-                ui.menu_button("Cell Margins", |ui| {
+                ui.menu_button(crate::i18n::tr("Cell Margins"), |ui| {
                     for (l, preset) in [("Normal", "normal"), ("None", "none"), ("Narrow", "narrow"), ("Wide", "wide")] {
                         if ui.button(l).clicked() {
                             run(app, "table.cellMargins", json!({"preset": preset}));

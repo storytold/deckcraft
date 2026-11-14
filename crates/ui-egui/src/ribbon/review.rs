@@ -26,8 +26,8 @@ pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::Accessibility, "Check\nAccessibility", "app.dialog", json!({"id": "accessibility"}));
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Translate, "Translate", false);
-        let _ = r.on_hover_text("Translation needs a language model (not bundled)");
+        let r = big_button(ui, Icon::Translate, crate::i18n::tr("Translate"), false);
+        let _ = r.on_hover_text(crate::i18n::tr("Translation needs a language model (not bundled)"));
         big(app, ui, Icon::Language, "Language", "app.dialog", json!({"id": "language"}));
     });
     group(ui, |ui| {
@@ -51,7 +51,7 @@ pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
         });
         big(app, ui, Icon::DeleteComment, "Delete", "comment.delete", json!({}));
         let show = app.ui.pane.as_deref() == Some("comments");
-        if big_button_ex(ui, Icon::ShowComments, "Show\nComments", true, false, show).0.clicked() {
+        if big_button_ex(ui, Icon::ShowComments, crate::i18n::tr("Show\nComments"), true, false, show).0.clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));
         }
     });

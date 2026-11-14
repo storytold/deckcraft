@@ -233,6 +233,17 @@ impl SlideApp {
                 return Err("updates are handled by the browser: reload the page".into());
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
+            "app.language" => {
+                let language = p.get("language").and_then(Value::as_str).unwrap_or("system");
+                self.ui.interface_language = match language {
+                    "system" => crate::i18n::Language::System,
+                    "en" => crate::i18n::Language::En,
+                    "uk" => crate::i18n::Language::Uk,
+                    "pt-BR" => crate::i18n::Language::PtBr,
+                    _ => return Err("unknown interface language".into()),
+                };
+                crate::i18n::set_current(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
+            }
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),

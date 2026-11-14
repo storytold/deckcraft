@@ -10,8 +10,8 @@ use super::{
 /// Shape Format ▸ Text Effects ▸ Transform: No Transform, Follow Path, then the other presets.
 fn transform_gallery(app: &mut SlideApp, ui: &mut Ui) {
     let current = selected_warp(app);
-    ui.label(egui::RichText::new("Transform").font(theme::bold(12.0)));
-    ui.label("Follow Path");
+    ui.label(egui::RichText::new(crate::i18n::tr("Transform")).font(theme::bold(12.0)));
+    ui.label(crate::i18n::tr("Follow Path"));
     let mut picked = false;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
@@ -22,11 +22,11 @@ fn transform_gallery(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    ui.label("Warp");
+    ui.label(crate::i18n::tr("Warp"));
     egui::ScrollArea::vertical().max_height(220.0).id_salt("text_warp_gallery").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
-            if warp_tile(ui, "", "No Transform", current.is_none()) {
+            if warp_tile(ui, "", crate::i18n::tr("No Transform"), current.is_none()) {
                 run(app, "format.textWarp", json!({"preset": "none"}));
                 picked = true;
             }
@@ -111,21 +111,21 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
     let sel = enabled(app, "shape.fill");
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Shapes, "Shapes", true);
+        let r = big_button(ui, Icon::Shapes, crate::i18n::tr("Shapes"), true);
         egui::Popup::menu(&r).show(|ui| {
             if let Some(p) = shapes_gallery(ui) {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
             }
         });
         big(app, ui, Icon::TextBox, "Text\nBox", "insert.textBox", json!({}));
-        let r = big_button(ui, Icon::EditShape, "Edit\nShape", sel);
+        let r = big_button(ui, Icon::EditShape, crate::i18n::tr("Edit\nShape"), sel);
         egui::Popup::menu(&r).show(|ui| {
-            ui.label("Change Shape");
+            ui.label(crate::i18n::tr("Change Shape"));
             if let Some(p) = shapes_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));
             }
             ui.separator();
-            if ui.add_enabled(enabled(app, "shape.editPoints"), egui::Button::new("Edit Points")).clicked() {
+            if ui.add_enabled(enabled(app, "shape.editPoints"), egui::Button::new(crate::i18n::tr("Edit Points"))).clicked() {
                 run(app, "shape.editPoints", json!({"on": true}));
                 ui.close();
             }
@@ -133,7 +133,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
             smooth_corners_row(app, ui);
         });
         let can_merge = enabled(app, "shape.merge");
-        let r = big_button(ui, Icon::MergeShapes, "Merge\nShapes", can_merge).on_hover_text("Merge Shapes");
+        let r = big_button(ui, Icon::MergeShapes, crate::i18n::tr("Merge\nShapes"), can_merge).on_hover_text(crate::i18n::tr("Merge Shapes"));
         egui::Popup::menu(&r).show(|ui| {
             for (op, label) in deckcraft_engine::cmd::merge::OPS {
                 if ui.button(label).clicked() {
@@ -144,10 +144,10 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::QuickStyles, "Shape\nStyles", sel);
+        let r = big_button(ui, Icon::QuickStyles, crate::i18n::tr("Shape\nStyles"), sel);
         egui::Popup::menu(&r).width(330.0).show(|ui| quick_styles(app, ui));
         rows(ui, |ui| {
-            let (m, a) = small_button_ex(ui, Icon::ShapeFill, "Shape Fill", sel, false, true);
+            let (m, a) = small_button_ex(ui, Icon::ShapeFill, crate::i18n::tr("Shape Fill"), sel, false, true);
             if m.clicked() {
                 let c = app.last_fill.clone();
                 run(app, "shape.fill", json!({"color": c}));
@@ -163,13 +163,13 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
                             None => run(app, "shape.fill", json!({"none": true})),
                         }
                     }
-                    if ui.button("Gradient…").clicked() {
+                    if ui.button(crate::i18n::tr("Gradient…")).clicked() {
                         let _ = app.run("view.pane", json!({"pane": "format", "tab": "fill"}));
                         ui.close();
                     }
                 });
             }
-            let (m, a) = small_button_ex(ui, Icon::ShapeOutline, "Shape Outline", sel, false, true);
+            let (m, a) = small_button_ex(ui, Icon::ShapeOutline, crate::i18n::tr("Shape Outline"), sel, false, true);
             if m.clicked() {
                 let c = app.last_outline.clone();
                 run(app, "shape.line", json!({"color": c}));
@@ -177,7 +177,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
             if let Some(a) = a {
                 widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc));
             }
-            let (main, arrow) = small_button_ex(ui, Icon::ShapeEffects, "Shape Effects", sel, false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::ShapeEffects, crate::i18n::tr("Shape Effects"), sel, false, true);
             if let Some(arrow) = arrow {
                 widgets::split_menu(&main, &arrow, |ui| effects_menu(app, ui));
             }
@@ -185,7 +185,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         rows(ui, |ui| {
-            let (main, arrow) = small_button_ex(ui, Icon::TextFill, "Text Fill", sel, false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::TextFill, crate::i18n::tr("Text Fill"), sel, false, true);
             if let Some(arrow) = arrow {
                 widgets::split_color_popup(&main, &arrow).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
@@ -197,7 +197,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 });
             }
-            let (main, arrow) = small_button_ex(ui, Icon::TextOutline, "Text Outline", sel, false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::TextOutline, crate::i18n::tr("Text Outline"), sel, false, true);
             if let Some(arrow) = arrow {
                 widgets::split_color_popup(&main, &arrow).show(|ui| {
                     if let Some(c) = widgets::color_grid(ui, &sc, Some("No Outline")) {
@@ -205,9 +205,9 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 });
             }
-            let r = small_button(ui, Icon::TextEffects, "Text Effects", sel, false);
+            let r = small_button(ui, Icon::TextEffects, crate::i18n::tr("Text Effects"), sel, false);
             egui::Popup::menu(&r).width(312.0).show(|ui| {
-                if ui.button("Shadow").clicked() {
+                if ui.button(crate::i18n::tr("Shadow")).clicked() {
                     run(app, "format.textShadow", json!({}));
                     ui.close();
                 }
@@ -253,7 +253,7 @@ fn smooth_corners_row(app: &mut SlideApp, ui: &mut egui::Ui) {
     }
     let usable = radius.is_some() || ui.data(|d| d.get_temp::<(f64, f64)>(key)).is_some();
     ui.horizontal(|ui| {
-        let label = ui.label("Smooth Corners");
+        let label = ui.label(crate::i18n::tr("Smooth Corners"));
         let mut pct = state.1;
         let resp = ui.add_enabled(usable, egui::Slider::new(&mut pct, 0.0..=100.0).suffix("%").integer()).labelled_by(label.id);
         let resp = if usable { resp } else { resp.on_disabled_hover_text("For rectangles and rounded rectangles") };

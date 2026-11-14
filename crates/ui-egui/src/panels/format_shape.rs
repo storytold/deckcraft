@@ -39,7 +39,7 @@ fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             }
         }
         if matches!(sh.kind, ShapeKind::Picture { .. })
-            && widgets::icon_toggle(ui, Icon::Picture, "Picture", true, app.ui.format_tab == "picture").clicked()
+            && widgets::icon_toggle(ui, Icon::Picture, crate::i18n::tr("Picture"), true, app.ui.format_tab == "picture").clicked()
         {
             app.ui.format_tab = "picture".into();
         }
@@ -47,14 +47,14 @@ fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
 }
 
 fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
-    ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Shadow")).font(theme::bold(13.0)));
     let fx = sh.effects.clone().unwrap_or_default();
     if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
         run(app, "shape.effects", json!({"shadow": v}));
     }
     let shadow = fx.inner_shadow.as_ref().or(fx.outer_shadow.as_ref());
     if let Some(sw) = shadow {
-        color_button(app, ui, "Color", None, |c| ("shape.effects".into(), json!({"shadowProps": {"color": c.as_ref().map(cref_param)}})));
+        color_button(app, ui, crate::i18n::tr("Color"), None, |c| ("shape.effects".into(), json!({"shadowProps": {"color": c.as_ref().map(cref_param)}})));
         fx_slider(
             app,
             ui,
@@ -67,13 +67,13 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             "transparency",
             0.01,
         );
-        fx_slider(app, ui, ("shadow", sh.id.0, "s"), "Size", sw.sx * 100.0, 1.0..=200.0, "%", "shadowProps", "size", 0.01);
-        fx_slider(app, ui, ("shadow", sh.id.0, "b"), "Blur", sw.blur, 0.0..=100.0, " pt", "shadowProps", "blur", 1.0);
-        fx_slider(app, ui, ("shadow", sh.id.0, "a"), "Angle", sw.dir, 0.0..=359.0, "°", "shadowProps", "dir", 1.0);
-        fx_slider(app, ui, ("shadow", sh.id.0, "d"), "Distance", sw.dist, 0.0..=200.0, " pt", "shadowProps", "dist", 1.0);
+        fx_slider(app, ui, ("shadow", sh.id.0, "s"), crate::i18n::tr("Size"), sw.sx * 100.0, 1.0..=200.0, "%", "shadowProps", "size", 0.01);
+        fx_slider(app, ui, ("shadow", sh.id.0, "b"), crate::i18n::tr("Blur"), sw.blur, 0.0..=100.0, crate::i18n::tr(" pt"), "shadowProps", "blur", 1.0);
+        fx_slider(app, ui, ("shadow", sh.id.0, "a"), crate::i18n::tr("Angle"), sw.dir, 0.0..=359.0, "°", "shadowProps", "dir", 1.0);
+        fx_slider(app, ui, ("shadow", sh.id.0, "d"), crate::i18n::tr("Distance"), sw.dist, 0.0..=200.0, crate::i18n::tr(" pt"), "shadowProps", "dist", 1.0);
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Reflection").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Reflection")).font(theme::bold(13.0)));
     ui.horizontal_wrapped(|ui| {
         for (l, v) in [("None", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
             if ui.button(l).clicked() {
@@ -94,19 +94,19 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             "transparency",
             0.01,
         );
-        fx_slider(app, ui, ("refl", sh.id.0, "s"), "Size", r.end_pos * 100.0, 0.0..=100.0, "%", "reflectionProps", "size", 0.01);
-        fx_slider(app, ui, ("refl", sh.id.0, "d"), "Distance", r.dist, 0.0..=100.0, " pt", "reflectionProps", "dist", 1.0);
-        fx_slider(app, ui, ("refl", sh.id.0, "b"), "Blur", r.blur, 0.0..=100.0, " pt", "reflectionProps", "blur", 1.0);
+        fx_slider(app, ui, ("refl", sh.id.0, "s"), crate::i18n::tr("Size"), r.end_pos * 100.0, 0.0..=100.0, "%", "reflectionProps", "size", 0.01);
+        fx_slider(app, ui, ("refl", sh.id.0, "d"), crate::i18n::tr("Distance"), r.dist, 0.0..=100.0, crate::i18n::tr(" pt"), "reflectionProps", "dist", 1.0);
+        fx_slider(app, ui, ("refl", sh.id.0, "b"), crate::i18n::tr("Blur"), r.blur, 0.0..=100.0, crate::i18n::tr(" pt"), "reflectionProps", "blur", 1.0);
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Glow").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Glow")).font(theme::bold(13.0)));
     let radius = fx.glow.as_ref().map_or(0.0, |g| g.radius);
     if let Some(r) = effect_presets::glow_row(ui, radius) {
         run(app, "shape.effects", json!({"glowProps": {"radius": r}}));
     }
-    fx_slider(app, ui, ("glow", sh.id.0, "r"), "Size", radius, 0.0..=150.0, " pt", "glowProps", "radius", 1.0);
+    fx_slider(app, ui, ("glow", sh.id.0, "r"), crate::i18n::tr("Size"), radius, 0.0..=150.0, crate::i18n::tr(" pt"), "glowProps", "radius", 1.0);
     if let Some(g) = &fx.glow {
-        color_button(app, ui, "Color", None, |c| ("shape.effects".into(), json!({"glowProps": {"color": c.as_ref().map(cref_param)}})));
+        color_button(app, ui, crate::i18n::tr("Color"), None, |c| ("shape.effects".into(), json!({"glowProps": {"color": c.as_ref().map(cref_param)}})));
         fx_slider(
             app,
             ui,
@@ -120,17 +120,17 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             0.01,
         );
     }
-    ui.label(egui::RichText::new("Soft Edges").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Soft Edges")).font(theme::bold(13.0)));
     let mut s = sh.effects.as_ref().and_then(|e| e.soft_edge).unwrap_or(0.0);
     if let Some(r) = effect_presets::soft_edge_row(ui, s) {
         run(app, "shape.effects", json!({"softEdges": r}));
     }
-    if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("size (pt)")).drag_stopped() {
+    if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text(crate::i18n::tr("size (pt)"))).drag_stopped() {
         run(app, "shape.effects", json!({"softEdges": s}));
     }
     let raw3d = sh.effects.as_ref().and_then(|e| e.raw3d.clone());
     three_d_options(app, ui, sh.id.0, raw3d.as_deref());
-    if ui.button("Reset Effects").clicked() {
+    if ui.button(crate::i18n::tr("Reset Effects")).clicked() {
         run(app, "shape.effects", json!({"reset": true}));
     }
 }
@@ -188,7 +188,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
             }
         });
     };
-    ui.label(egui::RichText::new("Size").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Size")).font(theme::bold(13.0)));
     fields(ui, "Height", "fh", x.h, "h", "shape.resize", false);
     fields(ui, "Width", "fw", x.w, "w", "shape.resize", false);
     fields(ui, "Rotation", "fr", x.rot, "deg", "shape.rotate", true);
@@ -209,20 +209,20 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
             })
         });
     }
-    if ui.checkbox(&mut lock, "Lock aspect ratio").changed() {
+    if ui.checkbox(&mut lock, crate::i18n::tr("Lock aspect ratio")).changed() {
         ui.data_mut(|d| d.insert_temp(lock_id, lock));
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Position").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Position")).font(theme::bold(13.0)));
     ui.add_enabled_ui(single, |ui| {
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(90.0, 20.0), egui::Label::new("From"));
+            ui.add_sized(vec2(90.0, 20.0), egui::Label::new(crate::i18n::tr("From")));
             let combo =
                 craft_ui::ComboBox::from_id_salt("fmt-origin").selected_text(if center { "Center" } else { "Top Left Corner" }).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut center, false, "Top Left Corner");
-                    ui.selectable_value(&mut center, true, "Center");
+                    ui.selectable_value(&mut center, false, crate::i18n::tr("Top Left Corner"));
+                    ui.selectable_value(&mut center, true, crate::i18n::tr("Center"));
                 });
-            combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "From"));
+            combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::tr("From")));
         })
     });
     if single {
@@ -243,11 +243,11 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     pos(ui, "Horizontal", "fx", px, dx, "x");
     pos(ui, "Vertical", "fy", py, dy, "y");
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Alt Text").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Alt Text")).font(theme::bold(13.0)));
     let id = ui.scope_id().with(("alt", uid, sh.id.0));
     let stored: Option<(String, String)> = ui.data_mut(|d| d.get_temp(id));
     let mut alt = widgets::text_draft(stored, &sh.descr);
-    let r = ui.add(egui::TextEdit::multiline(&mut alt).hint_text("Alt text").desired_rows(3).desired_width(f32::INFINITY));
+    let r = ui.add(egui::TextEdit::multiline(&mut alt).hint_text(crate::i18n::tr("Alt text")).desired_rows(3).desired_width(f32::INFINITY));
     if r.lost_focus() && alt != sh.descr {
         run(app, "shape.altText", json!({"text": alt}));
     }
@@ -259,7 +259,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let Some(sh) = st.selected_shapes().first().map(|s| (*s).clone()) else {
-        ui.label(egui::RichText::new("Select a shape to format it.").color(t.text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr("Select a shape to format it.")).color(t.text_dim));
         return;
     };
     let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
@@ -272,16 +272,16 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         "effects" => effects_tab(app, ui, &sh),
         "size" => size_tab(app, ui, &sh, x, single, uid),
         "text" => {
-            ui.label(egui::RichText::new("Text Fill").font(theme::bold(13.0)));
-            color_button(app, ui, "Color", None, |c| match c {
+            ui.label(egui::RichText::new(crate::i18n::tr("Text Fill")).font(theme::bold(13.0)));
+            color_button(app, ui, crate::i18n::tr("Color"), None, |c| match c {
                 Some(c) => ("format.color".into(), json!({"color": cref_param(&c)})),
                 None => ("format.color".into(), json!({"color": "tx1"})),
             });
             text_transparency_slider(app, ui, &sh);
             ui.add_space(6.0);
-            ui.label(egui::RichText::new("Text Box").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(crate::i18n::tr("Text Box")).font(theme::bold(13.0)));
             ui.horizontal(|ui| {
-                ui.label("Vertical alignment");
+                ui.label(crate::i18n::tr("Vertical alignment"));
                 for (l, a) in [("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")] {
                     if ui.small_button(l).clicked() {
                         run(app, "format.anchor", json!({"anchor": a}));
@@ -297,10 +297,10 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             });
             let wrap = sh.text.as_ref().and_then(|t| t.body.wrap).unwrap_or(true);
             let mut w = wrap;
-            if ui.checkbox(&mut w, "Wrap text in shape").changed() {
+            if ui.checkbox(&mut w, crate::i18n::tr("Wrap text in shape")).changed() {
                 run(app, "format.wrap", json!({"on": w}));
             }
-            ui.label("Margins (pt)");
+            ui.label(crate::i18n::tr("Margins (pt)"));
             let b = sh.text.as_ref().map(|t| t.body.clone()).unwrap_or_default();
             for (l, k, v) in [
                 ("Left", "left", b.inset_l.unwrap_or(7.2)),
@@ -310,19 +310,19 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             ] {
                 ui.horizontal(|ui| {
                     ui.add_sized(vec2(60.0, 20.0), egui::Label::new(l));
-                    if let Some(nv) = widgets::spinner(ui, &format!("m{k}"), l, v, 1.0, " pt", 60.0) {
+                    if let Some(nv) = widgets::spinner(ui, &format!("m{k}"), l, v, 1.0, crate::i18n::tr(" pt"), 60.0) {
                         run(app, "format.margins", json!({k: nv.max(0.0)}));
                     }
                 });
             }
             ui.horizontal(|ui| {
-                ui.label("Columns");
+                ui.label(crate::i18n::tr("Columns"));
                 for n in 1..=3 {
                     if ui.small_button(n.to_string()).clicked() {
                         run(app, "format.columns", json!({"count": n, "spacing": 18}));
                     }
                 }
-                if ui.small_button("Columns…").clicked() {
+                if ui.small_button(crate::i18n::tr("Columns…")).clicked() {
                     run(app, "format.columns", json!({}));
                 }
             });
@@ -330,29 +330,29 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         "picture" => {
             let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
             let mut b = adj.brightness as f32;
-            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text(crate::i18n::tr("Brightness"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"brightness": b}));
             }
             let mut c = adj.contrast as f32;
-            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text(crate::i18n::tr("Contrast"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"contrast": c}));
             }
             let mut s = adj.saturation.unwrap_or(1.0) as f32;
-            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text(crate::i18n::tr("Saturation"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"saturation": s}));
             }
             let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
             let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text(crate::i18n::tr("Transparency"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"transparency": tr}));
             }
-            if ui.button("Reset Picture").clicked() {
+            if ui.button(crate::i18n::tr("Reset Picture")).clicked() {
                 run(app, "picture.reset", json!({}));
             }
         }
         _ => {
             // Fill & Line.
-            ui.label(egui::RichText::new("Fill").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(crate::i18n::tr("Fill")).font(theme::bold(13.0)));
             let members_background = members_have_background_fill(&sh);
             let kind = match &sh.fill {
                 _ if members_background => "background",
@@ -398,7 +398,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             // gradient takes its colors from its stops, and a pattern takes them from its Foreground
             // and Background menus below.
             if matches!(kind, "solid" | "auto") {
-                color_button(app, ui, "Color", Some("No Fill"), |c| match c {
+                color_button(app, ui, crate::i18n::tr("Color"), Some(crate::i18n::tr("No Fill")), |c| match c {
                     Some(c) => ("shape.fill".into(), json!({"color": cref_param(&c)})),
                     None => ("shape.fill".into(), json!({"none": true})),
                 });
@@ -410,7 +410,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 if !transparency {
                     return;
                 }
-                let label = ui.label("Transparency");
+                let label = ui.label(crate::i18n::tr("Transparency"));
                 // Seed from this shape. A shared temp defaulted to 0, so a shape that was
                 // already 40% transparent showed as opaque, and leaving the slider wrote 0.
                 let seed = match &sh.fill {
@@ -441,7 +441,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "shape.fill", json!({"gradient": crate::fillui::gradient_json(&ng)}));
                 }
                 let mut rot = g.rotate_with_shape;
-                if ui.checkbox(&mut rot, "Rotate with shape").changed() {
+                if ui.checkbox(&mut rot, crate::i18n::tr("Rotate with shape")).changed() {
                     let ng = deckcraft_model::style::Gradient { rotate_with_shape: rot, ..g.clone() };
                     run(app, "shape.fill", json!({"gradient": crate::fillui::gradient_json(&ng)}));
                 }
@@ -452,30 +452,30 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "shape.fill", json!({"pattern": crate::fillui::pattern_json(&np)}));
             }
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("Line").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(crate::i18n::tr("Line")).font(theme::bold(13.0)));
             let none = matches!(sh.line.as_ref().and_then(|l| l.fill.as_ref()), Some(Fill::None));
-            if ui.radio(none, "No line").clicked() {
+            if ui.radio(none, crate::i18n::tr("No line")).clicked() {
                 run(app, "shape.line", json!({"none": true}));
             }
-            if ui.radio(!none && sh.line.is_some(), "Solid line").clicked() {
+            if ui.radio(!none && sh.line.is_some(), crate::i18n::tr("Solid line")).clicked() {
                 run(app, "shape.line", json!({"color": "tx1", "width": 1}));
             }
-            if ui.radio(sh.line.is_none(), "Automatic").clicked() {
+            if ui.radio(sh.line.is_none(), crate::i18n::tr("Automatic")).clicked() {
                 run(app, "shape.line", json!({"reset": true}));
             }
-            color_button(app, ui, "Color", Some("No Outline"), |c| match c {
+            color_button(app, ui, crate::i18n::tr("Color"), Some(crate::i18n::tr("No Outline")), |c| match c {
                 Some(c) => ("shape.line".into(), json!({"color": cref_param(&c)})),
                 None => ("shape.line".into(), json!({"none": true})),
             });
             ui.horizontal(|ui| {
-                ui.label("Width");
+                ui.label(crate::i18n::tr("Width"));
                 let w = sh.line.as_ref().and_then(|l| l.width).unwrap_or(0.75);
-                if let Some(v) = widgets::spinner(ui, "lw", "Width", w, 0.25, " pt", 60.0) {
+                if let Some(v) = widgets::spinner(ui, "lw", crate::i18n::tr("Width"), w, 0.25, crate::i18n::tr(" pt"), 60.0) {
                     run(app, "shape.line", json!({"width": v.max(0.0)}));
                 }
             });
             ui.horizontal_wrapped(|ui| {
-                ui.label("Dash");
+                ui.label(crate::i18n::tr("Dash"));
                 for (l, d) in [("—", "solid"), ("···", "sysDot"), ("- -", "dash"), ("-·-", "dashDot"), ("— —", "lgDash")] {
                     if ui.small_button(l).clicked() {
                         run(app, "shape.line", json!({"dash": d}));
@@ -529,13 +529,13 @@ fn line_details(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
         LineCap::Round => "round",
         LineCap::Square => "square",
     };
-    line_choice(app, ui, "Cap type", "cap", cap, &[("Flat", "flat"), ("Round", "round"), ("Square", "square")]);
+    line_choice(app, ui, crate::i18n::tr("Cap type"), "cap", cap, &[(crate::i18n::tr("Flat"), "flat"), (crate::i18n::tr("Round"), "round"), (crate::i18n::tr("Square"), "square")]);
     let join = match l.join.unwrap_or_default() {
         LineJoin::Round => "round",
         LineJoin::Bevel => "bevel",
         LineJoin::Miter => "miter",
     };
-    line_choice(app, ui, "Join type", "join", join, &[("Round", "round"), ("Bevel", "bevel"), ("Miter", "miter")]);
+    line_choice(app, ui, crate::i18n::tr("Join type"), "join", join, &[(crate::i18n::tr("Round"), "round"), (crate::i18n::tr("Bevel"), "bevel"), (crate::i18n::tr("Miter"), "miter")]);
     let arrows = [("None", "none"), ("Arrow", "triangle"), ("Open Arrow", "arrow"), ("Stealth", "stealth"), ("Diamond", "diamond"), ("Oval", "oval")];
     let sizes = [("Small", "sm"), ("Medium", "med"), ("Large", "lg")];
     for (label, key, size_label, size_key, end) in
@@ -622,13 +622,13 @@ fn pic_drag(app: &mut SlideApp, ui: &mut Ui, label: &str, value: f64, suffix: &s
 fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft_model::style::PictureFill) {
     use deckcraft_model::style::PictureMode;
     ui.horizontal(|ui| {
-        ui.label("Picture source");
-        if ui.button("Insert…").clicked() {
+        ui.label(crate::i18n::tr("Picture source"));
+        if ui.button(crate::i18n::tr("Insert…")).clicked() {
             pick_fill_picture(app);
         }
     });
     let mut tile = matches!(pf.mode, PictureMode::Tile { .. });
-    if ui.checkbox(&mut tile, "Tile picture as texture").changed() {
+    if ui.checkbox(&mut tile, crate::i18n::tr("Tile picture as texture")).changed() {
         run(app, "shape.fill", json!({"pictureProps": {"tile": tile}}));
     }
     match &pf.mode {
@@ -680,7 +680,7 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
         }
     }
     let mut rot = !pf.upright;
-    if ui.checkbox(&mut rot, "Rotate with shape").changed() {
+    if ui.checkbox(&mut rot, crate::i18n::tr("Rotate with shape")).changed() {
         run(app, "shape.fill", json!({"pictureProps": {"rotateWithShape": rot}}));
     }
 }
@@ -734,7 +734,7 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     let s3 = raw.map(Shape3d::parse).unwrap_or_default();
     let with_none: Vec<&str> = std::iter::once("none").chain(BEVELS.iter().copied()).collect();
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("3-D Format").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("3-D Format")).font(theme::bold(13.0)));
     for (label, key, b) in [("Top bevel", "bevelTop", &s3.top), ("Bottom bevel", "bevelBottom", &s3.bottom)] {
         three_d_combo(app, ui, id, label, key, b.as_ref().map_or("none", |b| b.preset.as_str()), &with_none);
         if let Some(b) = b {
@@ -744,17 +744,17 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     }
     three_d_drag(app, ui, "Depth", s3.depth, " pt", "depth");
     three_d_drag(app, ui, "Contour", s3.contour, " pt", "contour");
-    three_d_combo(app, ui, id, "Material", "material", &s3.material, MATERIALS);
-    three_d_combo(app, ui, id, "Lighting", "lighting", &s3.light, LIGHTS);
+    three_d_combo(app, ui, id, crate::i18n::tr("Material"), "material", &s3.material, MATERIALS);
+    three_d_combo(app, ui, id, crate::i18n::tr("Lighting"), "lighting", &s3.light, LIGHTS);
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("3-D Rotation").font(theme::bold(13.0)));
-    three_d_combo(app, ui, id, "Presets", "camera", &s3.camera, CAMERAS);
+    ui.label(egui::RichText::new(crate::i18n::tr("3-D Rotation")).font(theme::bold(13.0)));
+    three_d_combo(app, ui, id, crate::i18n::tr("Presets"), "camera", &s3.camera, CAMERAS);
     let (rx, ry, rz) = s3.rot.unwrap_or((0.0, 0.0, 0.0));
     three_d_drag(app, ui, "X Rotation", rx, "°", "rotX");
     three_d_drag(app, ui, "Y Rotation", ry, "°", "rotY");
     three_d_drag(app, ui, "Z Rotation", rz, "°", "rotZ");
     three_d_drag(app, ui, "Distance from ground", s3.z, " pt", "z");
-    if ui.add_enabled(raw.is_some(), egui::Button::new("Reset 3-D")).clicked() {
+    if ui.add_enabled(raw.is_some(), egui::Button::new(crate::i18n::tr("Reset 3-D"))).clicked() {
         run(app, "shape.effects", json!({"threeD": {"reset": true}}));
     }
 }
@@ -772,7 +772,7 @@ pub(crate) fn text_transparency_of(sh: &deckcraft_model::Shape) -> f64 {
 /// Text Fill › Transparency, as in PowerPoint's Format Shape › Text Options (#32).
 pub(crate) fn text_transparency_slider(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     ui.horizontal(|ui| {
-        let label = ui.label("Transparency");
+        let label = ui.label(crate::i18n::tr("Transparency"));
         let id = ui.scope_id().with(("text-transparency", sh.id));
         let stored = (text_transparency_of(sh) * 100.0) as f32;
         let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(stored));

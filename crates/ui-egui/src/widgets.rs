@@ -49,6 +49,7 @@ fn big_button_width(text_w: f32, split: bool) -> f32 {
 /// response). Like Office's split buttons, the icon and the label text run the main command; only
 /// the chevron at the end of the label row opens the menu.
 pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split: bool, selected: bool) -> (Response, Option<Response>) {
+    let label = crate::i18n::tr(label);
     let t = Tokens::get(ui.ctx());
     let font = theme::font(11.0);
     let lines: Vec<&str> = wrap_label(label);
@@ -185,7 +186,13 @@ pub fn small_button_named(
     }
     icons::paint(&painter, Rect::from_center_size(pos2(rect.min.x + 12.0, rect.center().y), vec2(17.0, 17.0)), icon, t.text, !enabled);
     if !label.is_empty() {
-        painter.text(pos2(rect.min.x + 24.0, rect.center().y), Align2::LEFT_CENTER, label, font, if enabled { t.text } else { t.text_faint });
+        painter.text(
+            pos2(rect.min.x + 24.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            crate::i18n::tr(label),
+            font,
+            if enabled { t.text } else { t.text_faint },
+        );
     }
     if split {
         chevron(&painter, pos2(rect.max.x - 6.0, rect.center().y), 2.8, t.text_dim);
@@ -300,7 +307,7 @@ pub fn color_split(ui: &mut Ui, icon: Icon, tip: &str, color: Color32, enabled: 
         if enabled { color } else { t.text_faint },
     );
     chevron(&painter, pos2(rect.max.x - 5.5, rect.center().y), 2.6, t.text_dim);
-    (main.on_hover_text(tip), arrow)
+    (main.on_hover_text(crate::i18n::tr(tip)), arrow)
 }
 
 /// A ribbon group: contents, then a thin vertical separator.
@@ -388,7 +395,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     let t = Tokens::get(ui.ctx());
     let mut out = None;
     ui.set_min_width(220.0);
-    ui.label(egui::RichText::new("Theme Colors").font(theme::bold(12.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Theme Colors")).font(theme::bold(12.0)));
     let slots = [
         SchemeSlot::Lt1,
         SchemeSlot::Dk1,
@@ -411,7 +418,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
             Stroke::new(if resp.hovered() { 2.0 } else { 1.0 }, if resp.hovered() { t.accent } else { t.border }),
             egui::StrokeKind::Inside,
         );
-        resp.on_hover_text(tip).clicked()
+        resp.on_hover_text(crate::i18n::tr(tip)).clicked()
     };
     egui::Grid::new("theme_colors").spacing(vec2(3.0, 1.0)).show(ui, |ui| {
         for slot in slots {
@@ -450,7 +457,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         }
     });
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("Standard Colors").font(theme::bold(12.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("Standard Colors")).font(theme::bold(12.0)));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         for (c, name) in deckcraft_color::STANDARD_COLORS {
@@ -461,7 +468,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     });
     ui.separator();
     if let Some(n) = none_label
-        && ui.button(n).clicked()
+        && ui.button(crate::i18n::tr(n)).clicked()
     {
         out = Some(None);
     }
@@ -469,8 +476,8 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     let id = ui.scope_id().with("hex");
     let mut hex: String = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_default());
     ui.horizontal(|ui| {
-        ui.label("More Colors… #");
-        let r = ui.add(egui::TextEdit::singleline(&mut hex).desired_width(70.0).hint_text("RRGGBB"));
+        ui.label(crate::i18n::tr("More Colors… #"));
+        let r = ui.add(egui::TextEdit::singleline(&mut hex).desired_width(70.0).hint_text(crate::i18n::tr("RRGGBB")));
         if r.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter))
             && let Some(c) = Rgba::from_hex(&hex)
@@ -479,7 +486,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         }
     });
     ui.data_mut(|d| d.insert_temp(id, hex));
-    if ui.button("Eyedropper").on_hover_text("Click the slide to take the colour under the pointer").clicked() {
+    if ui.button(crate::i18n::tr("Eyedropper")).on_hover_text(crate::i18n::tr("Click the slide to take the colour under the pointer")).clicked() {
         crate::eyedropper::request(ui.ctx());
         ui.close();
     }
@@ -511,7 +518,8 @@ pub fn gallery(
         if sel {
             painter.rect_stroke(rect.expand(1.0), CornerRadius::same(4), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
         }
-        if resp.on_hover_text(tip(i)).clicked() {
+        let caption = tip(i);
+        if resp.on_hover_text(crate::i18n::tr(&caption)).clicked() {
             clicked = Some(i);
         }
     }

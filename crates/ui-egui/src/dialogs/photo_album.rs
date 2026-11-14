@@ -154,13 +154,13 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
     ui.set_min_width(440.0);
     egui::ScrollArea::vertical().max_height(520.0).id_salt("album_body").show(ui, |ui| {
         ui.set_min_width(420.0);
-        ui.label("Pictures in album");
+        ui.label(crate::i18n::tr("Pictures in album"));
         let items = album_items(d).unwrap_or_default();
         let mut sel = d.get("sel", "0").parse::<usize>().unwrap_or(0);
         // Fixed height so adding pictures does not push Create past the window.
         egui::ScrollArea::vertical().max_height(120.0).min_scrolled_height(120.0).auto_shrink([false, false]).id_salt("album_list").show(ui, |ui| {
             if items.is_empty() {
-                ui.label(egui::RichText::new("No pictures yet").color(Tokens::get(ui.ctx()).text_dim));
+                ui.label(egui::RichText::new(crate::i18n::tr("No pictures yet")).color(Tokens::get(ui.ctx()).text_dim));
             }
             for (i, item) in items.iter().enumerate() {
                 if ui.selectable_label(sel == i, album_item_label(item)).clicked() {
@@ -170,7 +170,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
         });
         d.fields.insert("sel".into(), sel.to_string());
         ui.horizontal(|ui| {
-            if ui.button("Add Pictures…").clicked()
+            if ui.button(crate::i18n::tr("Add Pictures…")).clicked()
                 && let Some(item) = pick_album_picture(app)
             {
                 match album_items(d) {
@@ -184,7 +184,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                     None => app.set_status("The picture list is invalid"),
                 }
             }
-            if ui.button("New Text Box").clicked() {
+            if ui.button(crate::i18n::tr("New Text Box")).clicked() {
                 let text = d.get("boxText", "Text Box");
                 let text = text.trim();
                 if text.is_empty() {
@@ -202,7 +202,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                     }
                 }
             }
-            if ui.button("Remove").clicked()
+            if ui.button(crate::i18n::tr("Remove")).clicked()
                 && let Some(mut list) = album_items(d)
                 && let Some(i) = d.get("sel", "0").parse::<usize>().ok()
                 && i < list.len()
@@ -213,41 +213,41 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                 d.fields.insert("sel".into(), next.to_string());
             }
         });
-        field(ui, d, "Text box:", "boxText", "Text Box");
+        field(ui, d, crate::i18n::tr("Text box:"), "boxText", crate::i18n::tr("Text Box"));
         let picture = selected_album_picture(d, &items);
         ui.label(album_picture_status(&items, sel));
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(picture, |ui| {
-                if ui.button("Rotate Left").clicked() {
+                if ui.button(crate::i18n::tr("Rotate Left")).clicked() {
                     with_selected_picture(d, |obj| {
                         let cur = obj.get("rot").and_then(Value::as_f64).unwrap_or(0.0);
                         let next = ((cur - 90.0) % 360.0 + 360.0) % 360.0;
                         obj.insert("rot".into(), json!(next));
                     });
                 }
-                if ui.button("Rotate Right").clicked() {
+                if ui.button(crate::i18n::tr("Rotate Right")).clicked() {
                     with_selected_picture(d, |obj| {
                         let cur = obj.get("rot").and_then(Value::as_f64).unwrap_or(0.0);
                         let next = ((cur + 90.0) % 360.0 + 360.0) % 360.0;
                         obj.insert("rot".into(), json!(next));
                     });
                 }
-                if ui.button("More Brightness").clicked() {
+                if ui.button(crate::i18n::tr("More Brightness")).clicked() {
                     nudge_picture(d, "brightness", 0.1);
                 }
-                if ui.button("Less Brightness").clicked() {
+                if ui.button(crate::i18n::tr("Less Brightness")).clicked() {
                     nudge_picture(d, "brightness", -0.1);
                 }
-                if ui.button("More Contrast").clicked() {
+                if ui.button(crate::i18n::tr("More Contrast")).clicked() {
                     nudge_picture(d, "contrast", 0.1);
                 }
-                if ui.button("Less Contrast").clicked() {
+                if ui.button(crate::i18n::tr("Less Contrast")).clicked() {
                     nudge_picture(d, "contrast", -0.1);
                 }
             });
         });
         ui.add_space(4.0);
-        ui.label("Picture layout");
+        ui.label(crate::i18n::tr("Picture layout"));
         album_choice(
             ui,
             d,
@@ -265,7 +265,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                 ("4title", "4 pictures with title"),
             ],
         );
-        ui.label("Frame shape");
+        ui.label(crate::i18n::tr("Frame shape"));
         album_choice(
             ui,
             d,
@@ -275,10 +275,10 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
             "rect",
             &[("none", "None"), ("rect", "Rectangle"), ("rounded", "Rounded"), ("simple", "Simple, white")],
         );
-        check(ui, d, "Captions under pictures", "captions", false);
-        check(ui, d, "ALL pictures black and white", "grayscale", false);
-        ui.label("Album theme");
-        album_choice(ui, d, "album_theme", "Album theme", "theme", "DeckCraft", &ALBUM_THEMES.iter().map(|n| (*n, *n)).collect::<Vec<_>>());
+        check(ui, d, crate::i18n::tr("Captions under pictures"), "captions", false);
+        check(ui, d, crate::i18n::tr("ALL pictures black and white"), "grayscale", false);
+        ui.label(crate::i18n::tr("Album theme"));
+        album_choice(ui, d, "album_theme", crate::i18n::tr("Album theme"), "theme", crate::i18n::tr("DeckCraft"), &ALBUM_THEMES.iter().map(|n| (*n, *n)).collect::<Vec<_>>());
     });
     let captions = d.fields.get("captions").is_some_and(|v| v == "1");
     let grayscale = d.fields.get("grayscale").is_some_and(|v| v == "1");

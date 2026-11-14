@@ -23,21 +23,21 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
         rows(ui, |ui| {
             let (preserve, title, footers) = master_checks(app);
             let mut on = preserve;
-            if ui.checkbox(&mut on, "Preserve").changed() {
+            if ui.checkbox(&mut on, crate::i18n::tr("Preserve")).changed() {
                 run(app, "master.preserve", json!({"preserve": on}));
             }
             let mut on = title;
-            if ui.checkbox(&mut on, "Title").changed() {
+            if ui.checkbox(&mut on, crate::i18n::tr("Title")).changed() {
                 run(app, "master.placeholders", json!({"title": on}));
             }
             let mut on = footers;
-            if ui.checkbox(&mut on, "Footers").changed() {
+            if ui.checkbox(&mut on, crate::i18n::tr("Footers")).changed() {
                 run(app, "master.placeholders", json!({"footers": on}));
             }
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Table, "Insert\nPlaceholder", true);
+        let r = big_button(ui, Icon::Table, crate::i18n::tr("Insert\nPlaceholder"), true);
         egui::Popup::menu(&r).show(|ui| {
             for (l, k) in
                 [("Content", "content"), ("Text", "text"), ("Picture", "picture"), ("Chart", "chart"), ("Table", "table"), ("Media", "media")]
@@ -49,7 +49,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Themes, "Themes", true);
+        let r = big_button(ui, Icon::Themes, crate::i18n::tr("Themes"), true);
         egui::Popup::menu(&r).show(|ui| {
             for th in deckcraft_model::theme::builtin_themes() {
                 if ui.button(&th.name).clicked() {
@@ -57,14 +57,14 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Browse for Themes…").clicked() {
+            if ui.button(crate::i18n::tr("Browse for Themes…")).clicked() {
                 run(app, "app.browseThemeDialog", json!({}));
             }
         });
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
     group(ui, |ui| {
-        if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
+        if big_button(ui, Icon::Close, crate::i18n::tr("Close\nMaster View"), true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
     });
@@ -94,7 +94,7 @@ pub(super) fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
     group(ui, |ui| {
-        if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
+        if big_button(ui, Icon::Close, crate::i18n::tr("Close\nMaster View"), true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
     });
@@ -134,7 +134,7 @@ pub(super) fn handout_master(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
     group(ui, |ui| {
-        if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
+        if big_button(ui, Icon::Close, crate::i18n::tr("Close\nMaster View"), true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
     });

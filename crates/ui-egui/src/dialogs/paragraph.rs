@@ -58,7 +58,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     ui.set_min_width(460.0);
     seed_paragraph_fields(d);
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Alignment"));
+        ui.add_sized(vec2(110.0, 20.0), egui::Label::new(crate::i18n::tr("Alignment")));
         choice(
             ui,
             d,
@@ -75,7 +75,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
             ],
         );
     });
-    ui.label(egui::RichText::new("Indentation").strong());
+    ui.label(egui::RichText::new(crate::i18n::tr("Indentation")).strong());
     ui.horizontal(|ui| {
         let _ = labeled_text(ui, d, "Before text", "before", 64.0);
         ui.label("in");
@@ -84,13 +84,13 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
         ui.label("in");
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Special"));
-        choice(ui, d, "paragraph_special", "Special", "special", &[("none", "None"), ("first", "First line"), ("hanging", "Hanging")]);
+        ui.add_sized(vec2(110.0, 20.0), egui::Label::new(crate::i18n::tr("Special")));
+        choice(ui, d, "paragraph_special", crate::i18n::tr("Special"), "special", &[("none", crate::i18n::tr("None")), ("first", crate::i18n::tr("First line")), ("hanging", crate::i18n::tr("Hanging"))]);
         ui.add_space(8.0);
         let _ = labeled_text(ui, d, "By", "by", 64.0);
         ui.label("in");
     });
-    ui.label(egui::RichText::new("Spacing").strong());
+    ui.label(egui::RichText::new(crate::i18n::tr("Spacing")).strong());
     ui.horizontal(|ui| {
         let _ = labeled_text(ui, d, "Spacing before", "spaceBefore", 64.0);
         ui.label("pt");
@@ -100,7 +100,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     });
     let mut picked: Option<(&'static str, Option<&'static str>)> = None;
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Line spacing"));
+        let field = ui.add_sized(vec2(110.0, 20.0), egui::Label::new(crate::i18n::tr("Line spacing")));
         let kind = d.get("lineKind", "multiple");
         let value = d.get("lineValue", "1");
         let combo =
@@ -133,11 +133,11 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     }
     let mut open_tabs = false;
     ui.horizontal(|ui| {
-        if ui.button("Tabs…").clicked() {
+        if ui.button(crate::i18n::tr("Tabs…")).clicked() {
             open_tabs = true;
         }
     });
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, crate::i18n::tr("OK"));
     if open_tabs {
         let mut tabs = Dialog::new("tabs");
         tabs.params = json!({

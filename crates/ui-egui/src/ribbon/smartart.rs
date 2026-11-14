@@ -16,7 +16,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "view.pane", json!({"pane": "smartart", "toggle": true}));
         }
         rows(ui, |ui| {
-            let (main, arrow) = small_button_ex(ui, Icon::Plus, "Add Shape", gid.is_some(), false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::Plus, crate::i18n::tr("Add Shape"), gid.is_some(), false, true);
             if let Some(arrow) = arrow {
                 widgets::split_menu(&main, &arrow, |ui| {
                     for (label, pos) in [
@@ -33,43 +33,43 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 });
             }
-            if small_button(ui, Icon::DecreaseIndent, "Promote", n > 0, false).clicked() {
+            if small_button(ui, Icon::DecreaseIndent, crate::i18n::tr("Promote"), n > 0, false).clicked() {
                 run(app, "smartArt.promote", json!({"id": gid, "index": at}));
             }
-            if small_button(ui, Icon::IncreaseIndent, "Demote", n > 0, false).clicked() {
+            if small_button(ui, Icon::IncreaseIndent, crate::i18n::tr("Demote"), n > 0, false).clicked() {
                 run(app, "smartArt.demote", json!({"id": gid, "index": at}));
             }
         });
         let pictures = kind.starts_with("picture");
         if small_button(ui, Icon::Picture, "Insert Picture", pictures && n > 0, false)
-            .on_hover_text("Put a picture in the selected node's picture placeholder")
+            .on_hover_text(crate::i18n::tr("Put a picture in the selected node's picture placeholder"))
             .clicked()
         {
             run(app, "app.smartArtPictureDialog", json!({"id": gid, "index": at}));
         }
     });
     group(ui, |ui| {
-        let (main, arrow) = small_button_ex(ui, Icon::Layout, "Layouts", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::Layout, crate::i18n::tr("Layouts"), gid.is_some(), false, true);
         let outline = sel.as_ref().map(|(_, d)| d.nodes.clone());
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
                 smartart_gallery(app, ui, "smartArt.layout", json!({"id": gid}), &kind, (&style, &colors), outline.as_deref());
             });
         }
-        let (main, arrow) = small_button_ex(ui, Icon::Layout, "Convert", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::Layout, crate::i18n::tr("Convert"), gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
-                if ui.button("Convert to Text").clicked() {
+                if ui.button(crate::i18n::tr("Convert to Text")).clicked() {
                     run(app, "smartArt.toText", json!({"id": gid}));
                 }
-                if ui.button("Convert to Shapes").clicked() {
+                if ui.button(crate::i18n::tr("Convert to Shapes")).clicked() {
                     run(app, "smartArt.toShapes", json!({"id": gid}));
                 }
             });
         }
     });
     group(ui, |ui| {
-        let (main, arrow) = small_button_ex(ui, Icon::ChangeChartType, "Change Colors", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::ChangeChartType, crate::i18n::tr("Change Colors"), gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
                 for (k, label) in deckcraft_engine::cmd::smartart::COLORS {
@@ -83,7 +83,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         }
-        let (main, arrow) = small_button_ex(ui, Icon::SmartArt, "SmartArt Styles", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::SmartArt, crate::i18n::tr("SmartArt Styles"), gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
                 for (k, label) in deckcraft_engine::cmd::smartart::STYLES {

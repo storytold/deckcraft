@@ -7,11 +7,11 @@ pub(super) fn draw(app: &mut SlideApp, ui: &mut Ui) {
     let cur = app.session.tool.kind.clone();
     group(ui, |ui| {
         let sel = matches!(cur, ToolKind::Select);
-        if big_button_ex(ui, Icon::LassoSelect, "Select", true, false, sel).0.clicked() {
+        if big_button_ex(ui, Icon::LassoSelect, crate::i18n::tr("Select"), true, false, sel).0.clicked() {
             app.session.set_tool(ToolKind::Select);
         }
         let er = matches!(&cur, ToolKind::Ink { mode, .. } if mode == "eraser");
-        if big_button_ex(ui, Icon::Eraser, "Eraser", true, false, er).0.clicked() {
+        if big_button_ex(ui, Icon::Eraser, crate::i18n::tr("Eraser"), true, false, er).0.clicked() {
             app.session.set_tool(ToolKind::Ink { mode: "eraser".into(), color: deckcraft_color::Rgba::BLACK, width: 2.0 });
         }
     });
@@ -32,14 +32,14 @@ pub(super) fn draw(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let has_ink = app.session.doc().is_ok_and(|d| d.shapes().iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Ink { .. })));
-        let r = big_button(ui, Icon::InkToShape, "Ink to\nShape", has_ink);
-        if r.on_hover_text("Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes").clicked() {
+        let r = big_button(ui, Icon::InkToShape, crate::i18n::tr("Ink to\nShape"), has_ink);
+        if r.on_hover_text(crate::i18n::tr("Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes")).clicked() {
             app.session.set_tool(ToolKind::Select);
             run(app, "draw.inkToShape", json!({}));
         }
-        let r = big_button(ui, Icon::InkToText, "Ink to\nText", false);
-        let _ = r.on_hover_text("Ink to Text (coming soon)");
-        let r = big_button(ui, Icon::InkToMath, "Ink to\nMath", false);
-        let _ = r.on_hover_text("Ink to Math (coming soon)");
+        let r = big_button(ui, Icon::InkToText, crate::i18n::tr("Ink to\nText"), false);
+        let _ = r.on_hover_text(crate::i18n::tr("Ink to Text (coming soon)"));
+        let r = big_button(ui, Icon::InkToMath, crate::i18n::tr("Ink to\nMath"), false);
+        let _ = r.on_hover_text(crate::i18n::tr("Ink to Math (coming soon)"));
     });
 }

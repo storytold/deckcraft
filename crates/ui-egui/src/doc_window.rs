@@ -96,10 +96,10 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                             ui.add_space(16.0);
                             ui.label(RichText::new(format!("Slide {} of {n}", slide + 1)).color(t.text_dim).font(crate::theme::font(13.0)));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.add_enabled(slide + 1 < n, egui::Button::new("Next")).clicked() {
+                                if ui.add_enabled(slide + 1 < n, egui::Button::new(crate::i18n::tr("Next"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": 1}));
                                 }
-                                if ui.add_enabled(slide > 0, egui::Button::new("Previous")).clicked() {
+                                if ui.add_enabled(slide > 0, egui::Button::new(crate::i18n::tr("Previous"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": -1}));
                                 }
                             });
@@ -155,7 +155,7 @@ fn ensure_texture(app: &mut SlideApp, ctx: &egui::Context, doc: &deckcraft_model
     let img = deckcraft_render::render_slide(
         doc,
         slide,
-        &RenderOpts { scale: w as f64 / doc.slide_size.width.max(1.0), size: Some((w, h)), edit: true, threads: 0, ..Default::default() },
+        &RenderOpts { scale: w as f64 / doc.slide_size.width.max(1.0), size: Some((w, h)), edit: true, placeholder_prompt: Some(crate::i18n::placeholder_prompt), threads: 0, ..Default::default() },
     );
     let tex = crate::textures::upload(ctx, "doc-window-slide", crate::textures::to_color_image(&img, grayscale));
     if let Some(win) = app.doc_window.as_mut() {

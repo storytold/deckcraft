@@ -42,13 +42,13 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     if let Some(p) = &path {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Copy path").clicked() {
+            if ui.button(crate::i18n::tr("Copy path")).clicked() {
                 ui.ctx().copy_text(p.clone());
                 app.set_status("Copied the path");
             }
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(dir) = std::path::Path::new(p).parent().and_then(std::path::Path::to_str)
-                && ui.button("Open file location").clicked()
+                && ui.button(crate::i18n::tr("Open file location")).clicked()
             {
                 app.open_url(&format!("file:///{}", dir.replace('\\', "/").trim_start_matches('/')));
             }
@@ -89,10 +89,10 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     ui.end_row();
                 };
                 if let Some(s) = size {
-                    row(ui, "Size", s);
+                    row(ui, crate::i18n::tr("Size"), s);
                 }
-                row(ui, "Slides", v.get("slides").and_then(Value::as_u64).unwrap_or(0).to_string());
-                row(ui, "Hidden slides", v.get("hiddenSlides").and_then(Value::as_u64).unwrap_or(0).to_string());
+                row(ui, crate::i18n::tr("Slides"), v.get("slides").and_then(Value::as_u64).unwrap_or(0).to_string());
+                row(ui, crate::i18n::tr("Hidden slides"), v.get("hiddenSlides").and_then(Value::as_u64).unwrap_or(0).to_string());
                 for (i, (key, label, hint)) in PROPERTIES.iter().enumerate() {
                     let saved = props.get(*key).and_then(Value::as_str).unwrap_or("").to_string();
                     let Some(draft) = bs.props.get_mut(i) else { continue };
@@ -111,7 +111,7 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     }
                     ui.end_row();
                 }
-                row(ui, "Location", path.clone().unwrap_or_else(|| "Not saved yet".into()));
+                row(ui, crate::i18n::tr("Location"), path.clone().unwrap_or_else(|| "Not saved yet".into()));
             });
         });
     });
@@ -165,7 +165,7 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
                 }
             })
             .response
-            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Save as type"));
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::tr("Save as type")));
         // A page that keeps the files (`host_save`) saves; plain web downloads.
         let web = app.services.pick_save.is_none() && app.services.host_save.is_none();
         let label = if web { "Download" } else { "Save" };
@@ -214,7 +214,7 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
                 crate::dialogs::paint_logo(ui.painter(), r);
-                ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
+                ui.label(RichText::new(crate::i18n::tr("DeckCraft")).font(theme::bold(24.0)).color(t.text));
             });
             dim(ui, &crate::dialogs::version_line());
             dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
@@ -241,7 +241,7 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 })
                 .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::tr("Appearance")));
         });
     });
 }

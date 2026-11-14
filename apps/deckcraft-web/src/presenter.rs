@@ -278,12 +278,12 @@ impl eframe::App for Popup {
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         if self.opener.closed().unwrap_or(true) {
-            ui.heading("The audience window has closed.");
+            ui.heading(deckcraft_ui_egui::i18n::tr("The audience window has closed."));
             return;
         }
         if js_sys::Date::now() - *self.last_received.borrow() > 10_000.0 {
-            ui.heading("The audience window is not responding.");
-            ui.label("Return to the audience window to resume the connection.");
+            ui.heading(deckcraft_ui_egui::i18n::tr("The audience window is not responding."));
+            ui.label(deckcraft_ui_egui::i18n::tr("Return to the audience window to resume the connection."));
             return;
         }
         egui::CentralPanel::default().show(ui, |ui| {
@@ -292,7 +292,7 @@ impl eframe::App for Popup {
                     let _ = send(&self.opener, &self.origin, serde_json::json!({"kind":"command","token":self.token,"command":command}));
                 }
             } else {
-                ui.label("Waiting for the audience window…");
+                ui.label(deckcraft_ui_egui::i18n::tr("Waiting for the audience window…"));
             }
         });
     }

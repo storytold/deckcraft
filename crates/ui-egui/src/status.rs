@@ -17,8 +17,10 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let Some(st) = app.session.active() else { return };
         let n = st.doc.slides.len();
         let left = match st.selection.target {
-            deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
-            _ => "Slide Master".to_string(),
+            deckcraft_engine::Target::Slides => {
+                crate::i18n::format("Slide {} of {}", &[((st.selection.slide + 1).min(n.max(1))).to_string(), (n).to_string()])
+            }
+            _ => crate::i18n::tr("Slide Master").to_string(),
         };
         let p = ui.painter();
         // Left to right: slide counter, language, status message. Each starts at its usual column, or
@@ -35,8 +37,8 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
         let hit = lr.expand(3.0).intersect(lclip);
         if hit.is_positive() {
-            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text("Language");
-            resp.widget_info(|| named_with_value("Language", &name));
+            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text(crate::i18n::tr("Language"));
+            resp.widget_info(|| named_with_value(crate::i18n::tr("Language"), &name));
             if resp.clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("language"));
             }
@@ -60,7 +62,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         }
         let pct = (app.canvas_scale * 100.0).round();
         let lbl = right.add(egui::Label::new(egui::RichText::new(format!("{pct}%")).size(12.0).color(t.text_dim)).sense(Sense::click()));
-        lbl.widget_info(|| named_with_value("Zoom level", &format!("{pct}%")));
+        lbl.widget_info(|| named_with_value(crate::i18n::tr("Zoom level"), &format!("{pct}%")));
         if lbl.clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
@@ -79,7 +81,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         // technology only, leaving its geometry unchanged. Its value is the percentage shown.
         let shown = format!("{}%", zp.round());
         let enabled = s.enabled();
-        s.widget_info(|| egui::WidgetInfo { current_text_value: Some(shown.clone()), ..egui::WidgetInfo::slider(enabled, f64::from(zp), "Zoom") });
+        s.widget_info(|| egui::WidgetInfo { current_text_value: Some(shown.clone()), ..egui::WidgetInfo::slider(enabled, f64::from(zp), crate::i18n::tr("Zoom")) });
         if s.changed() {
             z = zp / 100.0;
             app.ui.zoom = Some(z);
@@ -155,6 +157,7 @@ fn shown_text(ui: &Ui, rect: Rect, id: &str, text: &str) {
 /// Draw a labelled status icon, painting the text directly and exposing the toggle state as its
 /// accessible selected state.
 fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
+    let label = crate::i18n::tr(label);
     let t = Tokens::get(ui.ctx());
     let w = 22.0 + ui.fonts_mut(|f| f.layout_no_wrap(label.into(), theme::font(12.0), t.text).size().x) + 8.0;
     let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
@@ -215,7 +218,7 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text("Click to add notes").frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+                        e.id(id).hint_text(crate::i18n::tr("Click to add notes")).frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
                     })
                 })
                 .inner;
@@ -266,12 +269,12 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             .collect()
                     };
                     if let Some(from) = w.delete_from {
-                        if ui.button(egui::RichText::new("Delete Repeated Word").strong()).clicked() {
+                        if ui.button(egui::RichText::new(crate::i18n::tr("Delete Repeated Word")).strong()).clicked() {
                             changed = Some(splice(ls + from, ""));
                             ui.close();
                         }
                     } else if w.suggestions.is_empty() {
-                        ui.label(egui::RichText::new("(no spelling suggestions)").weak());
+                        ui.label(egui::RichText::new(crate::i18n::tr("(no spelling suggestions)")).weak());
                     }
                     for to in &w.suggestions {
                         if ui.button(egui::RichText::new(to).strong()).clicked() {
@@ -279,11 +282,11 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             ui.close();
                         }
                     }
-                    if ui.button("Ignore All").clicked() {
+                    if ui.button(crate::i18n::tr("Ignore All")).clicked() {
                         app.squiggles.ignore(&w.word);
                         ui.close();
                     }
-                    if w.delete_from.is_none() && ui.button("Add to Dictionary").clicked() {
+                    if w.delete_from.is_none() && ui.button(crate::i18n::tr("Add to Dictionary")).clicked() {
                         if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
                             app.set_status(e.to_string());
                         }
