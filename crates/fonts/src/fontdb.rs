@@ -371,6 +371,8 @@ pub struct FontDb {
     outlines: Mutex<OutlineCache>,
     #[cfg(not(target_arch = "wasm32"))]
     catalog: RwLock<Vec<CatalogEntry>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    coverage: Mutex<CoverageIndex>,
     /// The folders the system font scan reads (the platform's font folders for [`FontDb::global`]).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     font_dirs: Vec<std::path::PathBuf>,
@@ -395,9 +397,124 @@ pub struct FontDb {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
+struct CoverageIndex {
+    generation: u64,
+    files: Vec<CoverageFile>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct CoverageFile {
+    path: std::path::PathBuf,
+    ranges: Option<Box<[(u32, u32)]>>,
+    complete: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
 struct SysFallback {
     enabled: bool,
     misses: std::collections::HashSet<char>,
+    tried: std::collections::HashSet<&'static str>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ranges_hold(ranges: &[(u32, u32)], cp: u32) -> bool {
+    let i = ranges.partition_point(|r| r.1 < cp);
+    ranges.get(i).is_some_and(|r| r.0 <= cp)
+}
+
+/// Read only each face's `cmap` table from `path` so checking fallback coverage on a multi-face
+/// collection never reads the full glyph/bitmap payload into memory.
+#[cfg(not(target_arch = "wasm32"))]
+fn coverage_ranges(path: &std::path::Path) -> (Box<[(u32, u32)]>, bool) {
+    use std::io::{Read, Seek, SeekFrom};
+    const MAX_CMAP_TABLE: u32 = 4 << 20;
+    const MAX_MAPPINGS: usize = 4 * 0x11_0000;
+    const MAX_RANGES: usize = 1 << 17;
+    // Checked before opening: opening a FIFO named like a font blocks.
+    if !std::fs::metadata(path).is_ok_and(|m| font_file_ok(&m)) {
+        return (Box::new([]), true);
+    }
+    let Ok(mut file) = std::fs::File::open(path) else { return (Box::new([]), true) };
+    let mut read_at = |offset: u64, len: usize| -> Option<Vec<u8>> {
+        let mut buf = vec![0; len];
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        file.read_exact(&mut buf).ok()?;
+        Some(buf)
+    };
+    let be32 = |b: &[u8], at: usize| b.get(at..at + 4).and_then(|s| s.try_into().ok()).map(u32::from_be_bytes);
+    let Some(head) = read_at(0, 12) else { return (Box::new([]), true) };
+    let starts: Vec<u32> = if head.starts_with(b"ttcf") {
+        let n = be32(&head, 8).unwrap_or(0).min(MAX_COLLECTION_ENTRIES_SCANNED) as usize;
+        let raw = read_at(12, n * 4).map(|b| b.as_chunks::<4>().0.iter().map(|c| u32::from_be_bytes(*c)).collect::<Vec<_>>()).unwrap_or_default();
+        let mut seen = std::collections::HashSet::new();
+        raw.into_iter().filter(|s| seen.insert(*s)).take(MAX_ENUMERATED_FACES).collect()
+    } else {
+        vec![0]
+    };
+    let mut ranges = Vec::new();
+    let mut budget = MAX_MAPPINGS;
+    let mut complete = true;
+    let mut seen_cmaps = std::collections::HashSet::new();
+    'faces: for start in starts {
+        let Some(dir) = read_at(start.into(), 12) else { continue };
+        let Some(tables) = dir.get(4..6).and_then(|s| s.try_into().ok()).map(u16::from_be_bytes) else { continue };
+        let Some(records) = read_at(u64::from(start) + 12, usize::from(tables) * 16) else { continue };
+        let Some(rec) = records.as_chunks::<16>().0.iter().find(|r| r.starts_with(b"cmap")) else { continue };
+        let (Some(offset), Some(len)) = (be32(rec, 8), be32(rec, 12)) else { continue };
+        if !seen_cmaps.insert((offset, len)) {
+            continue;
+        }
+        if len > MAX_CMAP_TABLE {
+            complete = false;
+            continue;
+        }
+        let Some(table) = read_at(offset.into(), len as usize) else {
+            complete = false;
+            continue;
+        };
+        let mut font = Vec::with_capacity(28 + table.len());
+        font.extend_from_slice(&0x0001_0000_u32.to_be_bytes());
+        font.extend_from_slice(&[0, 1, 0, 16, 0, 0, 0, 0]);
+        font.extend_from_slice(b"cmap");
+        for v in [0, 28, len] {
+            font.extend_from_slice(&u32::to_be_bytes(v));
+        }
+        font.extend_from_slice(&table);
+        let Ok(f) = skrifa::FontRef::new(&font) else {
+            complete = false;
+            continue;
+        };
+        for (cp, _) in f.charmap().mappings() {
+            budget = match budget.checked_sub(1) {
+                Some(v) => v,
+                None => {
+                    complete = false;
+                    break 'faces;
+                }
+            };
+            match ranges.last_mut() {
+                Some((_, end)) if *end == cp.saturating_sub(1) => *end = cp,
+                Some((start, end)) if *start <= cp && cp <= *end => {}
+                _ => {
+                    if ranges.len() >= MAX_RANGES {
+                        complete = false;
+                        break 'faces;
+                    }
+                    ranges.push((cp, cp));
+                }
+            }
+        }
+    }
+    ranges.sort_unstable();
+    let mut compact: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        match compact.last_mut() {
+            Some((_, prior_end)) if start <= prior_end.saturating_add(1) => *prior_end = (*prior_end).max(end),
+            _ => compact.push((start, end)),
+        }
+    }
+    (compact.into_boxed_slice(), complete)
 }
 
 /// Does face `index` of `data` carry colour glyph tables?
@@ -953,6 +1070,8 @@ impl FontDb {
             outlines: Mutex::new(OutlineCache::default()),
             #[cfg(not(target_arch = "wasm32"))]
             catalog: RwLock::new(Vec::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            coverage: Mutex::new(CoverageIndex::default()),
             font_dirs,
             #[cfg(not(target_arch = "wasm32"))]
             cataloged: std::sync::OnceLock::new(),
@@ -1096,12 +1215,23 @@ impl FontDb {
     /// Returns the number of faces cataloged.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_system_fonts(&self) -> usize {
-        // Families load again from the new catalog when next looked up.
-        self.loaded_families.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
         // The first scan, or a rescan once it is done (never both at once).
         let mut first = None;
         self.cataloged.get_or_init(|| first = Some(self.scan_font_dirs()));
-        first.unwrap_or_else(|| self.scan_font_dirs())
+        let count = first.unwrap_or_else(|| self.scan_font_dirs());
+        // Families load again from the new catalog when next looked up.
+        self.loaded_families.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+        {
+            let mut sys = self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            sys.tried.clear();
+            sys.misses.clear();
+        }
+        {
+            let mut coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            coverage.generation = coverage.generation.wrapping_add(1);
+            coverage.files.clear();
+        }
+        count
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1175,6 +1305,51 @@ impl FontDb {
         };
         self.add_fonts(paths.iter().filter(|p| std::fs::metadata(p).is_ok_and(|m| font_file_ok(&m))).filter_map(|p| std::fs::read(p).ok()).collect());
         self.is_loaded(family)
+    }
+
+    /// Could an installed file of `family` map `c`? Reads only `cmap` tables, cached per file until the next rescan; a file whose coverage could not be read in full counts as covering.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn family_covers(&self, family: &str, c: char) -> bool {
+        let mut paths: Vec<std::path::PathBuf> =
+            self.read_catalog().iter().filter(|file| file.family.eq_ignore_ascii_case(family)).map(|file| file.path.clone()).collect();
+        paths.sort();
+        paths.dedup();
+        if paths.is_empty() {
+            return false;
+        }
+        let cp = u32::from(c);
+        for path in paths {
+            for _ in 0..2 {
+                let (coverage_gen, cached) = {
+                    let coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let hit =
+                        coverage.files.iter().find(|f| f.path == path).and_then(|f| f.ranges.as_deref().map(|r| !f.complete || ranges_hold(r, cp)));
+                    (coverage.generation, hit)
+                };
+                if let Some(hit) = cached {
+                    if hit {
+                        return true;
+                    }
+                    break;
+                }
+                let (ranges, complete) = coverage_ranges(&path);
+                let hit = !complete || ranges_hold(&ranges, cp);
+                let mut coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if coverage.generation == coverage_gen {
+                    if let Some(file) = coverage.files.iter_mut().find(|f| f.path == path) {
+                        file.ranges = Some(ranges);
+                        file.complete = complete;
+                    } else {
+                        coverage.files.push(CoverageFile { path: path.clone(), ranges: Some(ranges), complete });
+                    }
+                    if hit {
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+        false
     }
 
     /// Resolve a family + style to a face, falling back to the closest style of the family, then to
@@ -1413,11 +1588,21 @@ impl FontDb {
             return false;
         }
         for fam in SYSTEM_FALLBACKS {
-            if !self.is_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
-                self.load_family(fam, &loading);
-                if covered(self) {
-                    return true;
-                }
+            if self.is_loaded(fam) || !cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
+                continue;
+            }
+            if self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tried.contains(fam) {
+                continue;
+            }
+            if !self.family_covers(fam, c) {
+                continue;
+            }
+            if !self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tried.insert(fam) {
+                continue;
+            }
+            self.load_family(fam, &loading);
+            if covered(self) {
+                return true;
             }
         }
         let mut paths: Vec<std::path::PathBuf> =
@@ -1757,5 +1942,32 @@ mod font_dir_tests {
         u.sort();
         u.dedup();
         assert_eq!(u.len(), d.len());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod fallback_coverage_tests {
+    use super::*;
+
+    #[test]
+    fn system_fallback_skips_loading_preferred_family_when_cmap_lacks_char() {
+        let dir = std::env::temp_dir().join(format!("dc-fallback-cov-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let font_path = dir.join("SegoeUISymbol.ttf");
+        std::fs::write(&font_path, bundled()[0]).unwrap();
+        let db = FontDb::with_font_dirs(vec![dir.clone()]);
+        db.catalog.write().unwrap().push(CatalogEntry {
+            family: "Segoe UI Symbol".to_string(),
+            style: "Regular".to_string(),
+            path: font_path.clone(),
+        });
+        let _ = db.cataloged.set(());
+        assert!(!db.family_covers("Segoe UI Symbol", '\u{10348}'));
+        assert!(db.family_covers("Segoe UI Symbol", 'A'));
+        assert!(!db.is_loaded("Segoe UI Symbol"));
+        let _ = db.system_fallback_filtered('\u{10348}', &|_| true, true);
+        assert!(!db.sys.lock().unwrap().tried.contains("Segoe UI Symbol"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
