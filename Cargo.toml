@@ -61,7 +61,7 @@ craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
 i_overlay = "9"
 quick-xml = "0.41"
-zip = { version = "3", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # ui
 egui = { version = "0.37", default-features = false }

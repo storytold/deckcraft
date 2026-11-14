@@ -17,7 +17,7 @@ fn deck_with(effect: &str, behaviour: &str) -> Vec<bool> {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().expect("entry name").to_string();
         let mut d = vec![];
         f.read_to_end(&mut d).expect("read");
         if name == "ppt/slides/slide1.xml" {

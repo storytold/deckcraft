@@ -21,7 +21,7 @@ fn import_with(xml: &str) -> Transition {
         let mut f = z.by_index(i).expect("entry");
         let mut d = vec![];
         f.read_to_end(&mut d).expect("read");
-        if f.name() == "ppt/slides/slide1.xml" {
+        if f.name().unwrap() == "ppt/slides/slide1.xml" {
             let s = String::from_utf8(d).expect("utf8");
             let t = s.find("<p:transition").expect("transition");
             let a = s[..t].rfind("<mc:AlternateContent").expect("mc start");
@@ -29,7 +29,7 @@ fn import_with(xml: &str) -> Transition {
             let b = t + s[t..].find(end).expect("mc end") + end.len();
             d = format!("{}{xml}{}", &s[..a], &s[b..]).into_bytes();
         }
-        out.start_file(f.name(), o).expect("start");
+        out.start_file(f.name().unwrap(), o).expect("start");
         out.write_all(&d).expect("write");
     }
     let bytes = out.finish().expect("finish").into_inner();

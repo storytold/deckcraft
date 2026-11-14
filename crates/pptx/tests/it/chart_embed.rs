@@ -31,7 +31,7 @@ fn with_workbook(bytes: &[u8]) -> Vec<u8> {
     let mut chart_part = None;
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         if name.starts_with("ppt/charts/chart") && name.ends_with(".xml") && !name.contains("_rels") {
@@ -70,7 +70,7 @@ fn parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut out = vec![];
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         out.push((name, data));
@@ -156,7 +156,7 @@ fn rewrite(src: &[u8], edit: impl Fn(&str, Vec<u8>) -> Vec<u8>, extra: &[(&str, 
     let opts = zip::write::SimpleFileOptions::default();
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         let data = edit(&name, data);

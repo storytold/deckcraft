@@ -40,7 +40,7 @@ fn deck_with(frames: &str) -> Vec<u8> {
         let mut f = z.by_index(i).expect("entry");
         let mut d = vec![];
         f.read_to_end(&mut d).expect("read");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         if name == "ppt/slides/slide1.xml" {
             let s = String::from_utf8(d).expect("utf8");
             let at = s.rfind("</p:spTree>").expect("spTree");
