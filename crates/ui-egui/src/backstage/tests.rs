@@ -323,6 +323,38 @@ fn save_as_and_export_run_the_file_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #1826: Save As has a File name field, filled with the title, and the Save dialog is opened
+/// with what was typed there; a typed `.pptx` isn't doubled, and a cleared field falls back to
+/// the title.
+#[test]
+fn save_as_opens_the_dialog_with_the_typed_file_name() {
+    let dir = temp_dir("saveas-name");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    let title = h.state().session.active().unwrap().title();
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    let field = h.get_by_role_and_label(Role::TextInput, "File name:");
+    assert_eq!(field.value().as_deref(), Some(title.as_str()), "starts as the title");
+    // Select all and type over it: egui's TextEdit takes Ctrl+A.
+    field.click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.get_by_role_and_label(Role::TextInput, "File name:").type_text("Quarterly review");
+    h.run_steps(2);
+    assert_eq!(h.get_by_role_and_label(Role::TextInput, "File name:").value().as_deref(), Some("Quarterly review"));
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*asked.borrow(), vec!["Quarterly review.pptx".to_string()], "the dialog suggests the typed name");
+    assert!(dir.join("Quarterly review.pptx").is_file());
+    assert!(h.state().backstage.is_none(), "a save returns to the slide");
+
+    // Typed with the extension already: not doubled. Cleared: the title (now "Deck") again.
+    h.state_mut().save_as_dialog("pptx", Some("  Deck.PPTX "));
+    h.state_mut().save_as_dialog("deckcraft", Some("   "));
+    assert_eq!(asked.borrow()[1..], ["Deck.PPTX".to_string(), "Deck.deckcraft".to_string()]);
+}
+
 /// Export › Change File Type › PNG offers "Transparent background" (#784): the PNG it saves
 /// leaves the slide background out. Other types don't show the option.
 #[test]

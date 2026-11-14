@@ -69,7 +69,7 @@ fn host_saves_go_back_to_the_opened_file() {
     app.save();
     assert!(!app.session.active().unwrap().is_dirty());
     edit(&mut app);
-    app.save_as_dialog("deckcraft");
+    app.save_as_dialog("deckcraft", None);
     assert!(!app.session.active().unwrap().is_dirty());
     edit(&mut app);
     app.save();
