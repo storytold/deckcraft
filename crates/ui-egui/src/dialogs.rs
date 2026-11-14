@@ -83,11 +83,13 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
+    // Centered when it opens; the title bar then drags it anywhere.
     let mut window = egui::Window::new(title(&d.id))
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
+        .pivot(Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center() + vec2(0.0, -40.0))
         .open(&mut open);
     // Two columns of colour rows plus Save must fit the first frame (Theme Colors), as must Save
     // in Theme Fonts. A later resize clips the buttons (the window size sticks) and clicks miss them.
