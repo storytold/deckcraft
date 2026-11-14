@@ -16,7 +16,7 @@ mod shapes;
 
 pub use build::build;
 use builder::{Corner, Dir, Pb, corner_rect, fill, fill_eo, fill_only, mid_sites, orient, shade, simple, stroke_only, vis};
-pub use catalog::{CATALOG, Category, FillMode, Geometry, Handle, PresetInfo, SubPath, info, is_line_like, mitred_by_default};
+pub use catalog::{CATALOG, Category, FillMode, Geometry, Handle, PresetInfo, SubPath, adjust_defaults, info, is_line_like, mitred_by_default};
 
 mod extra;
 

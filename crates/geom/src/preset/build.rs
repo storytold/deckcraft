@@ -2,7 +2,7 @@ use super::builder::{
     Corner, Dir, Pb, arrow, corner_rect, double_arrow, ellipse_sites, fill, fill_eo, fill_only, len_thick, mid_sites, orient, polygon_regular, shade,
     simple, spec_pts, star, star_text_rect, stroke_only, tip_handle, vis,
 };
-use super::catalog::{FillMode, Geometry, Handle, info};
+use super::catalog::{FillMode, Geometry, Handle};
 use super::shapes::{action_button, cloud, math, ribbon, scroll, wedge_rect};
 use super::{Arc, BezPath, Point, Rect, Vec2, extra};
 
@@ -29,7 +29,7 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
     if !(w.is_finite() && h.is_finite()) {
         return None;
     }
-    let defaults = info(name).map(|i| i.defaults).unwrap_or(&[]);
+    let defaults = super::catalog::adjust_defaults(name);
     let c = Ctx { name, w: w.max(0.0), h: h.max(0.0), adj, defaults };
     rect_and_triangle_shapes(&c)
         .or_else(|| polygon_and_symbol_shapes(&c))
@@ -1106,6 +1106,9 @@ fn flowchart_and_star_shapes(c: &Ctx) -> Option<Geometry> {
     Some(g)
 }
 
+/// The range presetShapeDefinitions gives the elbows' handles (`minX` / `maxX`, `minY` / `maxY`).
+const ADJ_LIMIT: f64 = 2_147_483_647.0;
+
 fn callout_wave_and_connector_shapes(c: &Ctx) -> Option<Geometry> {
     let name = c.name;
     let w = c.w;
@@ -1186,16 +1189,62 @@ fn callout_wave_and_connector_shapes(c: &Ctx) -> Option<Geometry> {
             let l = Pb::new().m(0.0, 0.0).l(w, 0.0).l(w, h).take();
             Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] }
         }
-        "bentConnector3" | "bentConnector4" | "bentConnector5" => {
-            let x = w * a(0) / 1e5;
-            let l = Pb::new().m(0.0, 0.0).l(x, 0.0).l(x, h).l(w, h).take();
+        // The elbows of ECMA-376's presetShapeDefinitions: 3 has one middle leg, 4 adds a
+        // horizontal one at `adj2`, 5 a third vertical one at `adj3`. 4 and 5 were drawn as 3.
+        // Their handles take the spec's whole range (its `ahXY` min and max), so dragging one
+        // never clamps a value an imported route uses.
+        "bentConnector3" => {
+            let x1 = w * a(0) / 1e5;
+            let l = Pb::new().m(0.0, 0.0).l(x1, 0.0).l(x1, h).l(w, h).take();
             let mut g = Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] };
-            g.handles.push(Handle::new(0, Point::new(0.0, h / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -1e6, 1e6));
+            g.handles.push(Handle::new(0, Point::new(0.0, h / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -ADJ_LIMIT, ADJ_LIMIT));
             g
         }
-        "curvedConnector2" | "curvedConnector3" | "curvedConnector4" | "curvedConnector5" => {
-            let x = w * if name == "curvedConnector2" { 100000.0 } else { a(0) } / 1e5;
-            let l = Pb::new().m(0.0, 0.0).c(x / 2.0, 0.0, x, h / 4.0, x, h / 2.0).c(x, h * 0.75, (x + w) / 2.0, h, w, h).take();
+        "bentConnector4" => {
+            let (x1, y2) = (w * a(0) / 1e5, h * a(1) / 1e5);
+            let l = Pb::new().m(0.0, 0.0).l(x1, 0.0).l(x1, y2).l(w, y2).l(w, h).take();
+            let mut g = Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] };
+            g.handles.push(Handle::new(0, Point::new(0.0, y2 / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -ADJ_LIMIT, ADJ_LIMIT));
+            g.handles.push(Handle::new(1, Point::new((x1 + w) / 2.0, 0.0), Vec2::new(0.0, h / 1e5), a(1), -ADJ_LIMIT, ADJ_LIMIT));
+            g
+        }
+        "bentConnector5" => {
+            let (x1, y2, x3) = (w * a(0) / 1e5, h * a(1) / 1e5, w * a(2) / 1e5);
+            let l = Pb::new().m(0.0, 0.0).l(x1, 0.0).l(x1, y2).l(x3, y2).l(x3, h).l(w, h).take();
+            let mut g = Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] };
+            g.handles.push(Handle::new(0, Point::new(0.0, y2 / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -ADJ_LIMIT, ADJ_LIMIT));
+            g.handles.push(Handle::new(1, Point::new((x1 + x3) / 2.0, 0.0), Vec2::new(0.0, h / 1e5), a(1), -ADJ_LIMIT, ADJ_LIMIT));
+            g.handles.push(Handle::new(2, Point::new(0.0, (y2 + h) / 2.0), Vec2::new(w / 1e5, 0.0), a(2), -ADJ_LIMIT, ADJ_LIMIT));
+            g
+        }
+        // The curved connectors follow the same legs with cubic Béziers.
+        "curvedConnector2" => {
+            let l = Pb::new().m(0.0, 0.0).c(w / 2.0, 0.0, w, h / 2.0, w, h).take();
+            Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] }
+        }
+        "curvedConnector3" => {
+            let x2 = w * a(0) / 1e5;
+            let l = Pb::new().m(0.0, 0.0).c(x2 / 2.0, 0.0, x2, h / 4.0, x2, h / 2.0).c(x2, h * 0.75, (x2 + w) / 2.0, h, w, h).take();
+            Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] }
+        }
+        "curvedConnector4" => {
+            let (x2, y4) = (w * a(0) / 1e5, h * a(1) / 1e5);
+            let (x1, x3) = (x2 / 2.0, (w + x2) / 2.0);
+            let (x4, x5) = ((x2 + x3) / 2.0, (x3 + w) / 2.0);
+            let y1 = y4 / 2.0;
+            let (y2, y3, y5) = (y1 / 2.0, (y1 + y4) / 2.0, (h + y4) / 2.0);
+            let l = Pb::new().m(0.0, 0.0).c(x1, 0.0, x2, y2, x2, y1).c(x2, y3, x4, y4, x3, y4).c(x5, y4, w, y5, w, h).take();
+            Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] }
+        }
+        "curvedConnector5" => {
+            let (x3, y4, x6) = (w * a(0) / 1e5, h * a(1) / 1e5, w * a(2) / 1e5);
+            let x1 = (x3 + x6) / 2.0;
+            let (x2, x4, x5, x7) = (x3 / 2.0, (x3 + x1) / 2.0, (x6 + x1) / 2.0, (x6 + w) / 2.0);
+            let y1 = y4 / 2.0;
+            let (y2, y3, y5) = (y1 / 2.0, (y1 + y4) / 2.0, (h + y4) / 2.0);
+            let (y6, y7) = ((y5 + y4) / 2.0, (y5 + h) / 2.0);
+            let l =
+                Pb::new().m(0.0, 0.0).c(x2, 0.0, x3, y2, x3, y1).c(x3, y3, x4, y4, x1, y4).c(x5, y4, x6, y6, x6, y5).c(x6, y7, x7, h, w, h).take();
             Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] }
         }
         _ => return None,

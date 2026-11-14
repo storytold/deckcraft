@@ -293,7 +293,7 @@ impl Session {
             if let Some(sh) = deckcraft_model::find_shape_mut(list, id)
                 && let deckcraft_model::Geom::Preset { name, adj } = &mut sh.geom
             {
-                let defaults = deckcraft_geom::preset::info(name).map(|x| x.defaults).unwrap_or(&[]);
+                let defaults = deckcraft_geom::preset::adjust_defaults(name);
                 for (i, v) in &vals {
                     while adj.len() <= *i {
                         let k = adj.len();
