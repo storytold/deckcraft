@@ -26,6 +26,8 @@
 //! 2. Add its code to [`LANGUAGES`].
 //!
 //! The Preferences dropdown, `app.language` and the system-language match pick it up from there.
+//! Until then a catalog craft-i18n already has is embedded but not offered: the interface
+//! doesn't show that language, and moving `craft-i18n.rev` past it changes nothing here.
 //!
 //! # Looking strings up
 //! - [`tl!`](crate::tl) / [`t`]: a string in the current language. [`tr`]: in a given one.
@@ -55,16 +57,12 @@ pub const AUTO: &str = "auto";
 
 /// The languages DeckCraft offers, as lowercase BCP 47 codes (also the `language` setting's value
 /// and the craft-i18n locale), when their catalogs are embedded. English first: it is the source
-/// language and the fallback.
-pub static LANGUAGES: [&str; 3] = [
-    "en", // German, neutral across Germany, Austria and Switzerland; `de-DE`, `de-AT`, `de_CH.UTF-8` …
-    // resolve here.
-    "de",
-    // Hebrew; `he-IL` and `he_IL.UTF-8` resolve here. Its letters come from the Noto Sans Hebrew
-    // interface face (`theme::font_definitions`), and the egui fork shapes and orders each run right
-    // to left. The panels themselves are not mirrored yet.
-    "he",
-];
+/// language and the fallback. German (`de`) is neutral across Germany, Austria and Switzerland:
+/// `de-DE`, `de-AT`, `de_CH.UTF-8` … resolve to it. Hebrew (`he-IL`, `he_IL.UTF-8`) resolves to
+/// `he`. Its letters come from the Noto Sans Hebrew interface face (`theme::font_definitions`),
+/// and the egui fork shapes and orders each run right to left. The panels themselves are not
+/// mirrored yet.
+pub static LANGUAGES: [&str; 3] = ["en", "de", "he"];
 
 /// A language the UI can be shown in: English, or an offered language whose catalogs are embedded.
 #[derive(Clone, Copy)]
