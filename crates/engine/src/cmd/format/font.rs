@@ -50,8 +50,58 @@ pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.font = Some(f.clone()))
 }
 
+/// Runs `f` and puts the selection back as it was: regenerating a SmartArt graphic selects the
+/// graphic alone, which must not drop the other selected shapes or the text range from a format
+/// command that goes on to format them.
+fn keeping_selection<T>(s: &mut Session, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+    let (shapes, text, cells) = {
+        let st = s.doc()?;
+        (st.selection.shapes.clone(), st.selection.text.clone(), st.selection.cells)
+    };
+    let r = f(s);
+    if let Ok(st) = s.doc_mut() {
+        st.selection.shapes = shapes;
+        st.selection.text = text;
+        st.selection.cells = cells;
+    }
+    r
+}
+
+/// Home ▸ Font on a selection holding SmartArt graphics: `graphic` formats each graphic as a whole
+/// (all its nodes, kept across regeneration), then `rest` formats the other selected shapes. The
+/// selection is left as it was. `None` when no graphic is selected (or text is): format as usual.
+fn on_graphics(
+    s: &mut Session,
+    graphic: impl Fn(&mut Session, ShapeId) -> Result<()>,
+    rest: impl FnOnce(&mut Session) -> Result<Value>,
+) -> Option<Result<Value>> {
+    if s.doc().ok()?.selection.text.is_some() {
+        return None;
+    }
+    let graphics = crate::cmd::smartart::selected_graphics(s);
+    if graphics.is_empty() {
+        return None;
+    }
+    let selected = s.doc().ok()?.selection.shapes.len();
+    if let Err(e) = keeping_selection(s, |s| graphics.iter().try_for_each(|gid| graphic(s, *gid))) {
+        return Some(Err(e));
+    }
+    if graphics.len() == selected {
+        return Some(ok());
+    }
+    Some(keeping_selection(s, |s| {
+        s.doc_mut()?.selection.shapes.retain(|id| !graphics.contains(id));
+        rest(s)
+    }))
+}
+
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
+    // A selected SmartArt graphic: one size for all its nodes (like smartArt.fontSize).
+    let graphic = |s: &mut Session, gid| crate::cmd::smartart::set_font_size(s, gid, Some(v), "format.size");
+    if let Some(r) = on_graphics(s, graphic, |s| format_run(s, &move |r| r.size = Some(v))) {
+        return r;
+    }
     format_run(s, &move |r| r.size = Some(v))
 }
 
@@ -73,6 +123,20 @@ fn step(cur: f64, up: bool) -> f64 {
 }
 
 fn grow_shrink(s: &mut Session, up: bool) -> Result<Value> {
+    // A selected SmartArt graphic steps all its nodes from the size they share, as format.size
+    // sets them; a run edit would be lost when the graphic is next regenerated.
+    let cmd = if up { "format.grow" } else { "format.shrink" };
+    let graphic = |s: &mut Session, gid| {
+        let to = step(crate::cmd::smartart::shown_size(s, gid).unwrap_or(18.0), up);
+        crate::cmd::smartart::set_font_size(s, gid, Some(to), cmd)
+    };
+    if let Some(r) = on_graphics(s, graphic, |s| grow_shrink_runs(s, up)) {
+        return r;
+    }
+    grow_shrink_runs(s, up)
+}
+
+fn grow_shrink_runs(s: &mut Session, up: bool) -> Result<Value> {
     // Each run steps from its own size, like PowerPoint.
     let st = s.doc()?;
     let ctx_sizes = current_run(s).size.unwrap_or(18.0);
@@ -122,6 +186,13 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
             if only_charts {
                 return ok();
             }
+        }
+        // A selected SmartArt graphic: the colour of all its nodes' text.
+        let tc = c.clone();
+        let graphic = move |s: &mut Session, gid| crate::cmd::smartart::set_text_color(s, gid, tc.clone(), "format.color");
+        let fill = c.clone();
+        if let Some(r) = on_graphics(s, graphic, move |s| format_run(s, &move |r| r.fill = Some(Fill::solid(fill.clone())))) {
+            return r;
         }
     }
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
@@ -288,6 +359,21 @@ impl FontEdits {
             && self.baseline.is_none()
             && self.caps.is_none()
             && self.spacing.is_none()
+    }
+
+    /// The settings that are neither the size nor the colour: what a SmartArt graphic keeps as its text look.
+    fn look(&self) -> RunProps {
+        RunProps {
+            font: self.family.clone(),
+            bold: self.bold,
+            italic: self.italic,
+            underline: self.underline.clone(),
+            strike: self.strike,
+            baseline: self.baseline,
+            caps: self.caps,
+            spacing: self.spacing,
+            ..Default::default()
+        }
     }
 
     fn write(&self, r: &mut RunProps) {
@@ -467,9 +553,34 @@ pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }
+    // A selected SmartArt graphic: every setting of the dialog is the diagram's, like format.size and format.color
+    // (size, colour) and the text look the layout applies (the rest), so it lasts across a regenerate.
+    let (size, color, look) = (edits.size, edits.color.clone(), edits.look());
+    let graphic = move |s: &mut Session, gid| {
+        if let Some(z) = size {
+            crate::cmd::smartart::set_font_size(s, gid, Some(z), "format.fontDialog")?;
+        }
+        if let Some(c) = color.clone() {
+            crate::cmd::smartart::set_text_color(s, gid, c, "format.fontDialog")?;
+        }
+        if look != RunProps::default() {
+            crate::cmd::smartart::set_text_props(s, gid, look.clone(), "format.fontDialog")?;
+        }
+        Ok(())
+    };
+    if let Some(r) = on_graphics(s, graphic, |s| format_run(s, &|r| edits.write(r))) {
+        return r;
+    }
     format_run(s, &|r| edits.write(r))
 }
 
 pub(super) fn clear(s: &mut Session, _p: &Value) -> Result<Value> {
+    // A selected SmartArt graphic: all its text formatting goes (colour, size and the rest), as on text.
+    let graphic = |s: &mut Session, gid| crate::cmd::smartart::clear_text_look(s, gid, "format.clear");
+    if let Some(r) =
+        on_graphics(s, graphic, |s| format_run(s, &|r| *r = RunProps { lang: r.lang.clone(), link: r.link.clone(), ..Default::default() }))
+    {
+        return r;
+    }
     format_run(s, &|r| *r = RunProps { lang: r.lang.clone(), link: r.link.clone(), ..Default::default() })
 }
