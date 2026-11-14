@@ -647,7 +647,11 @@ impl Session {
         }
         if let Err(e) = (spec.enabled)(self) {
             // A command told which shapes to act on doesn't depend on what is selected.
-            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO || e == cmd::merge::IN_GROUP)
+            let named = (e == cmd::NOTHING_SELECTED
+                || e == cmd::SELECT_TWO
+                || e == cmd::merge::IN_GROUP
+                || e == cmd::generated::SELECT_HARVEY
+                || e == cmd::generated::SELECT_CHECKBOX)
                 && (params.get("ids").is_some() || params.get("id").is_some());
             if !named {
                 return Err(EngineError::Disabled(id.into(), e));
@@ -732,6 +736,8 @@ impl Session {
         let mut sel = st.selection.clone();
         let r = f(&mut doc, &mut sel)?;
         cmd::arrange::refit_groups(&st.doc, &mut doc);
+        // Harvey balls and checkboxes: redrawn when resized, their parts not moved on their own.
+        cmd::generated::keep_whole(&st.doc, &mut doc)?;
         connect::reroute(&mut doc, &sel);
         st.doc = Arc::new(doc);
         st.selection = sel;

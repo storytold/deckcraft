@@ -104,6 +104,24 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("insert.symbol", "Symbol", ["Insert", "Symbols"], None, "{text: character(s)}", has_slide, symbol),
         cmd!(
+            "insert.harveyBall",
+            "Harvey Ball",
+            ["Insert", "Symbols"],
+            None,
+            "{value?: 0..=of (1), of?: 1..=100 (4), size?: pt 4..=400 (14), fill?: color (tx1), background?: color|null (null), outline?: color|null (tx1), outlineWidth?: pt 0..=20 (0.75), rect?: [x,y,w,h]} → {id}",
+            has_slide,
+            super::generated::insert_harvey_ball
+        ),
+        cmd!(
+            "insert.checkbox",
+            "Checkbox",
+            ["Insert", "Symbols"],
+            None,
+            "{state?: checked|unchecked|crossed (checked), size?: pt 4..=400 (14), color?: color (tx1), boxed?: bool (true), rect?: [x,y,w,h]} → {id}",
+            has_slide,
+            super::generated::insert_checkbox
+        ),
+        cmd!(
             "shape.action",
             "Action Settings",
             ["Insert", "Links"],
@@ -162,7 +180,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Default size for a click-inserted shape (1 inch square, PowerPoint style).
-fn default_rect(s: &Session, w: f64, h: f64) -> Xfrm {
+pub(crate) fn default_rect(s: &Session, w: f64, h: f64) -> Xfrm {
     let size = s.active().map(|d| d.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
     Xfrm::new((size.width - w) / 2.0, (size.height - h) / 2.0, w, h)
 }

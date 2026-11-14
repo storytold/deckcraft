@@ -10,6 +10,7 @@ pub mod edit;
 pub mod file;
 pub mod find;
 pub mod format;
+pub mod generated;
 pub mod ideas;
 pub mod insert;
 pub mod inspect;
@@ -168,6 +169,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(reuse::specs());
         v.extend(insert::specs());
         v.extend(smartart::specs());
+        v.extend(generated::specs());
         v.extend(shape::specs());
         v.extend(background::specs());
         v.extend(picture_style::specs());
