@@ -70,7 +70,7 @@ pub struct Gif {
 /// Pictures in `shapes` and in their groups, each with its xfrm in slide space. `group` is the
 /// enclosing group's slide-space xfrm and child space.
 fn collect_pictures<'a>(shapes: &'a [Shape], group: Option<(Xfrm, Xfrm)>, depth: usize, out: &mut Vec<(&'a Shape, Xfrm)>) {
-    if depth > 32 {
+    if depth > deckcraft_render::MAX_DRAW_DEPTH {
         return;
     }
     for sh in shapes {

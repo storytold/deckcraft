@@ -60,6 +60,10 @@ pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;
 pub use transition::{SlideParts, composite_transition, render_transition};
 
+// How many groups deep shapes are drawn. The constant lives in deckcraft-model, so the .pptx
+// writer, which does not depend on this crate, shares it.
+pub use deckcraft_model::MAX_DRAW_DEPTH;
+
 mod geometry;
 mod opts;
 mod raster;
@@ -72,7 +76,7 @@ use geometry::shade;
 pub use geometry::{camera_turn, crop_dest, parse_path, shape_geometry};
 pub(crate) use geometry::{color, scale_of};
 use opts::SlideFields;
-pub use opts::{ParaState, RenderOpts, ShapeState};
+pub use opts::{ParaState, RenderOpts, ShapeState, slide_fields};
 pub use raster::{Image, MAX_SIDE, dpi_for_scale, image_dpi};
 #[cfg(test)]
 use renderer::RENDERER;

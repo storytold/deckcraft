@@ -104,3 +104,19 @@ rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, close
 `chart.*` (`chart.options {textColor}` colours a chart's title, axes, legend and labels), `table.*`, `file.export {path, layout}` (PDF) or `{path, width, secondsPerSlide, loop}`
 (GIF). `deckcraft-cli describe COMMAND` prints any
 command's parameters.
+
+To check text after filling a slide, `text.fit {index?, ids?}` reports each text body as the slide
+draws it: the autofit in effect and where it is set (the shape, its layout or master placeholder, or
+the default), the font scale and line spacing reduction shrink-on-overflow applied, the smallest and
+largest drawn font size of the text in points (bullets are left out), the line count, and how far
+the drawn lines reach past the frame's top and bottom edges (`overflowPt`). A placeholder that
+inherits its shrink from the layout shows `autofit: null` in `shape.inspect`; `text.fit` shows the
+scale it is drawn at. Heights and sizes are points on the slide: a member of a resized group is
+measured at the size the group draws it. Vertical text is measured across its lines, which stack
+from side to side: `frameHeight` is the frame's width, and `overflowPt` is how far the lines reach
+past its left and right edges. In text set in columns, each column starts at the top and the last
+takes the lines the others leave: `overflowPt` measures the lines where the columns draw them, and
+`contentHeight` is the text's height set in one column, which can exceed `frameHeight` while every
+column fits. A body whose paragraphs are all empty draws no text and reports 0 lines and no
+overflow. Hidden shapes are reported as the slide would draw them. Shapes nested more than 32 groups
+deep are not drawn, so `text.fit` leaves them out and refuses their ids.

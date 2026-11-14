@@ -1,4 +1,4 @@
-use super::{DateTime, Fields, Rgba, ShapeId, Vec2, datetime};
+use super::{DateTime, Fields, Presentation, Rgba, ShapeId, Vec2, datetime};
 
 /// Animation state of one shape during a slide show or preview.
 #[derive(Clone, Debug)]
@@ -130,4 +130,11 @@ impl Fields for SlideFields {
         }
         None
     }
+}
+
+/// The field values slide `index` draws with default options, as [`crate::render_slide`] and
+/// [`crate::place_slide`] set them: its slide number, the current date in date fields and the
+/// presentation's footer text. Text laid out with these wraps as the slide draws it.
+pub fn slide_fields(pres: &Presentation, index: usize) -> impl Fields + use<> {
+    crate::Renderer::fields(pres, index, &RenderOpts::default())
 }

@@ -420,7 +420,7 @@ impl Renderer {
     }
 
     fn shape_at(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
-        if depth > 32 || (s.hidden && !f.opts.show_hidden) || self.skipped(f.opts.skip, s.id) {
+        if depth > crate::MAX_DRAW_DEPTH || (s.hidden && !f.opts.show_hidden) || self.skipped(f.opts.skip, s.id) {
             return;
         }
         let work = if self.in_shadow_pass { &mut self.shadow_work } else { &mut self.render_work };
