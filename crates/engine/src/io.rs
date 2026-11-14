@@ -31,16 +31,27 @@ pub fn read_file(path: &str) -> Result<Vec<u8>, String> {
 /// `path` is.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
+    write_file_impl(path, bytes, false)
+}
+
+/// Commit a complete new file without replacing any existing directory entry, even if another
+/// save creates it while these bytes are being written.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn write_file_new(path: &str, bytes: &[u8]) -> Result<(), String> {
+    write_file_impl(path, bytes, true)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_file_impl(path: &str, bytes: &[u8], create_new: bool) -> Result<(), String> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     crate::file_access::check_write(path)?;
     let err = |e: std::io::Error| format!("{path}: {e}");
 
-    let target_path = match std::fs::canonicalize(path) {
-        Ok(canonical) => canonical,
-        Err(_) => std::path::PathBuf::from(path),
-    };
+    // A no-replace save must also refuse symlinks, not resolve and write their targets.
+    let target_path =
+        if create_new { std::path::PathBuf::from(path) } else { std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path)) };
     let existing_perms = std::fs::metadata(&target_path).ok().map(|m| m.permissions());
 
     let mut attempts = 0;
@@ -61,7 +72,17 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
     }
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
-    let result = written.and_then(|()| std::fs::rename(&tmp, &target_path));
+    let result = written.and_then(|()| {
+        if create_new {
+            // Linking the fully written sibling is an atomic no-replace operation. If the
+            // filesystem cannot link, fail safely rather than falling back to replacement.
+            std::fs::hard_link(&tmp, &target_path)?;
+            let _ = std::fs::remove_file(&tmp);
+            Ok(())
+        } else {
+            std::fs::rename(&tmp, &target_path)
+        }
+    });
     if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp);
         return Err(err(e));
@@ -72,6 +93,11 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
 #[cfg(target_arch = "wasm32")]
 pub fn write_file(path: &str, _bytes: &[u8]) -> Result<(), String> {
     Err(format!("{path}: saving to a path is not available in the browser"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn write_file_new(path: &str, bytes: &[u8]) -> Result<(), String> {
+    write_file(path, bytes)
 }
 
 /// The size in bytes of the file at `path`; `None` when it can't be read (or is outside the
@@ -90,6 +116,44 @@ pub fn file_len(_path: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn new_file_commit_allows_exactly_one_concurrent_writer() {
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = Scratch(std::env::temp_dir().join(format!("deckcraft-new-file-{}-{stamp}", std::process::id())));
+        std::fs::create_dir(&dir.0).unwrap();
+        let path = dir.0.join("Quarterly.pptx");
+        let barrier = std::sync::Barrier::new(2);
+        let results = std::thread::scope(|scope| {
+            let writers: Vec<_> = [b"first".as_slice(), b"second".as_slice()]
+                .into_iter()
+                .map(|bytes| {
+                    let path = &path;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        (write_file_new(path.to_str().unwrap(), bytes), bytes)
+                    })
+                })
+                .collect();
+            writers.into_iter().map(|writer| writer.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert_eq!(results.iter().filter(|(result, _)| result.is_ok()).count(), 1);
+        let winner = results.iter().find(|(result, _)| result.is_ok()).unwrap().1;
+        assert_eq!(std::fs::read(&path).unwrap(), winner);
+        assert!(write_file_new(path.to_str().unwrap(), b"third").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), winner);
+        assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 1, "temporary siblings cleaned up");
+        write_file(path.to_str().unwrap(), b"confirmed replacement").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"confirmed replacement");
+    }
 
     #[test]
     fn read_file_rejects_directory() {

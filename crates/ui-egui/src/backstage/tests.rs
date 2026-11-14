@@ -323,6 +323,49 @@ fn save_as_and_export_run_the_file_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #1929: on Windows a name typed over the suggested one comes back without an extension, and
+/// the presentation was then written under the bare name. Save As and Export add the chosen one.
+#[test]
+fn save_as_and_export_add_the_extension_the_dialog_dropped() {
+    let dir = temp_dir("saveas-noext");
+    let d = dir.clone();
+    let services = Services {
+        pick_save: Some(Box::new(move |suggested: &str| {
+            // What the Windows dialog returns when "Quarterly" is typed over "Deck.pptx".
+            let stem = std::path::Path::new(suggested).file_stem().unwrap().to_string_lossy().to_string();
+            Some(d.join(stem).to_string_lossy().to_string())
+        })),
+        ..Default::default()
+    };
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    let title = h.state().session.active().unwrap().title();
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    let pptx = dir.join(format!("{title}.pptx"));
+    assert!(pptx.is_file(), "the .pptx the dialog dropped is added back");
+    assert!(!dir.join(&title).exists(), "nothing is written under the bare name");
+    assert_eq!(h.state().session.active().unwrap().path.as_deref(), Some(pptx.to_string_lossy().as_ref()));
+
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Create PDF");
+    h.run_steps(3);
+    assert!(std::fs::read(dir.join(format!("{title}.pdf"))).unwrap().starts_with(b"%PDF"), "exports get theirs too");
+
+    // The bare name again, now that `<title>.pptx` exists: the dialog only confirmed the bare
+    // name, so the existing file is kept and the status bar says why.
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    let before = std::fs::read(&pptx).unwrap();
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(std::fs::read(&pptx).unwrap(), before, "not overwritten without the dialog's replace prompt");
+    assert!(h.state().status.as_ref().is_some_and(|s| s.0.contains("already exists")), "{:?}", h.state().status);
+}
+
 /// Export › Change File Type › PNG offers "Transparent background" (#784): the PNG it saves
 /// leaves the slide background out. Other types don't show the option.
 #[test]

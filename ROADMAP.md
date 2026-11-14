@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-09 · **Last updated:** 2026-11-09 · **Change:** trivial (Save As / Export extension-adjusted destinations cannot replace a concurrent save; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -189,6 +190,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-24 | Preferences ▸ Measurement units: inches or centimetres. The Format pane's Size and Position fields, Shape Format ▸ Size on the ribbon, the Slide Size dialog and the ruler show and take the chosen unit; the deck still stores points (#1326) |
 | 2026-10-23 | Chart text colour: `chart.options {textColor}` and Font Color on a selected chart colour its title, axes, legend and data labels; the colour is written to the chart part (`c:txPr` on the axes, legend, labels and chart, the title's run defaults) so an imported chart keeps its `txPr` colours through an edit and a save; text without a colour of its own takes PowerPoint's default, the theme's text colour at 65 % plus 35 % (595959 on a light theme, light grey on a dark one) |
 | 2026-10-24 | A picture's own fill shows behind its transparent pixels, and an embedded object (an old equation, `p:oleObj`) takes the fill and outline of its fallback picture, as PowerPoint for Mac draws them (synthetic probe: a half-transparent PNG on orange and on yellow with an outline); on a private 166-deck corpus 51 slides of equations on coloured boxes move closer to PowerPoint's PDF, none further |
+| 2026-11-09 | Save As / Export append the chosen extension to bare names and atomically refuse replacement at adjusted destinations, even if another save creates the file after selection (#1929). Fully typed paths retain picker-confirmed replacement for single-file outputs; numbered image outputs can replace files without confirmation, so use an empty directory |
 | 2026-10-23 | Format Background ▸ Apply to All also sets the background of the slide masters the slides use (and clears their layouts' overrides), so new slides keep it (#891) |
 | 2026-10-22 | Table text takes the master's other-text style (`otherStyle`), shapes and text boxes the presentation's default text style, as PowerPoint for Mac draws them (synthetic probe: 14 pt cells under a 14 pt `otherStyle` and a 26 pt `defaultTextStyle`); a private deck's table had been drawn 20 pt instead of 18 |
 | 2026-10-18 | Find (Ctrl+F): "Find what:" has the keyboard as soon as the dialog opens, and keeps it after Enter finds a match, so the search can be typed and changed without clicking the field (#951) |
@@ -453,3 +455,4 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-10 | minor | Stage checked against the new core-workflow gate: passes, stays alpha |
 | 2026-10-10 | major | Restructured: stage, two numbers, dimensions, features, languages; parity estimate moved to docs/target-app-parity.md, "Working today" to its evidence section, the alpha checklist to docs/roadmap.md |
 | 2026-10-07 | major | Alpha checklist (~80% to a self-defined alpha), breadth ~80%, overall ~62%, ~190 h to full parity |
+| 2026-11-09 | trivial | Progress log: atomic no-replace writes for extension-adjusted Save As / Export paths (#1929); parity scores unchanged |
