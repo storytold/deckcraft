@@ -12,3 +12,7 @@ StartupWMClass=ai.storyteller.deckcraft
 Categories=Office;Presentation;
 MimeType=application/x-deckcraft;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.openxmlformats-officedocument.presentationml.template;application/vnd.openxmlformats-officedocument.presentationml.slideshow;
 Keywords=presentation;slides;slide show;deck;pptx;keynote;powerpoint;
+# AppRun registers the desktop entry and icons itself; tell external
+# AppImage integrators (AppImageLauncher, appimaged) not to add a duplicate.
+X-AppImage-Integrate=false
+
