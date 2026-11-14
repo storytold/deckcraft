@@ -149,12 +149,13 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.separator);
     v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     v.widgets.inactive.bg_fill = t.control;
-    v.widgets.inactive.bg_stroke = Stroke::NONE;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, t.border); // Fixed, consistent outline
     v.widgets.hovered.weak_bg_fill = t.hover;
     v.widgets.hovered.bg_fill = t.control_hover;
-    v.widgets.hovered.bg_stroke = Stroke::NONE;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, t.border); // Keeps the same outline on hover
     v.widgets.active.weak_bg_fill = t.pressed;
     v.widgets.active.bg_fill = t.control_pressed;
+    v.widgets.active.bg_stroke = Stroke::new(1.0, t.border);
     v.widgets.open.weak_bg_fill = t.pressed;
     v.window_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 18, spread: 0, color: t.shadow };
     v.popup_shadow = egui::epaint::Shadow { offset: [0, 3], blur: 12, spread: 0, color: t.shadow };
@@ -463,7 +464,6 @@ mod tests {
         let ctx = egui::Context::default();
         super::apply(&ctx, &super::Tokens::light());
         let v = ctx.global_style().visuals.clone();
-        assert_eq!(v.widgets.inactive.bg_stroke, egui::Stroke::NONE, "the test assumes no outline");
         let fill = v.widgets.inactive.bg_fill;
         for (name, bg) in [("dialog", v.window_fill), ("panel", v.panel_fill)] {
             let diff = [fill.r().abs_diff(bg.r()), fill.g().abs_diff(bg.g()), fill.b().abs_diff(bg.b())];
