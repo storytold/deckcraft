@@ -33,12 +33,9 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "design.background", json!({"gradient": crate::fillui::gradient_json(&g)}));
                 }
                 "picture" => {
-                    if let Some(pick) = app.services.pick_open.as_mut()
-                        && let Some(path) = pick("picture")
-                        && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
-                    {
+                    app.pick_picture_bytes(|app, bytes| {
                         let _ = app.run("design.background", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)}));
-                    }
+                    });
                 }
                 "pattern" => run(app, "design.background", json!({"pattern": {"preset": "pct20", "fg": "accent1", "bg": "bg1"}})),
                 _ => run(app, "design.background", json!({"reset": true})),
@@ -76,12 +73,10 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         Some(Fill::Picture(pf)) => {
-            if ui.button("Insert picture from file…").clicked()
-                && let Some(pick) = app.services.pick_open.as_mut()
-                && let Some(path) = pick("picture")
-                && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
-            {
-                let _ = app.run("design.background", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)}));
+            if ui.button("Insert picture from file…").clicked() {
+                app.pick_picture_bytes(|app, bytes| {
+                    let _ = app.run("design.background", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)}));
+                });
             }
             picture_background_options(app, ui, pf);
         }

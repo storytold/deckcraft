@@ -72,7 +72,7 @@ pub use panels::notes;
 pub use panels::selpane;
 pub use panels::thumbs;
 pub use ribbon::qat;
-pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
+pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, StartPickFn, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
 pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
@@ -86,6 +86,32 @@ enum FileTarget {
         doc: u64,
         place: FilePlace,
     },
+}
+
+/// What the Quit or Close prompt goes on to do once the Save dialogs it opened have answered.
+enum AfterSave {
+    /// Quit when no presentation is left unsaved; `dirty` is how many were unsaved when last looked at.
+    Quit { dirty: usize },
+    /// Close the presentation with this uid once it is saved.
+    Close(u64),
+}
+
+/// What a file dialog's answer is for, checked when it arrives: a dialog open for a while may
+/// answer after the presentation or the selection that asked for it is gone.
+enum PickBind {
+    /// Nothing: Open makes its own presentation.
+    Free,
+    /// The presentation that was active when the dialog was asked for.
+    Doc(u64),
+    /// The presentation and the slide (or master, layout) that were current.
+    Place(FileTarget),
+}
+
+/// A file dialog that is open, and what to do with the path it answers.
+struct PendingPick {
+    answer: std::sync::mpsc::Receiver<Option<String>>,
+    bind: PickBind,
+    then: Box<dyn FnOnce(&mut SlideApp, String)>,
 }
 
 struct PendingFile {
@@ -336,6 +362,10 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// File dialogs shown outside the event handler, with what to do with the path they answer.
+    pending_picks: Vec<PendingPick>,
+    /// The Quit or Close prompt's Save is waiting for a file dialog (see [`AfterSave`]).
+    after_save: Option<AfterSave>,
     /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
     /// first file the page sends takes its place.
     host_start: Option<u64>,
@@ -477,6 +507,8 @@ mod reuse_picker_tests;
 mod slide_size_tests;
 #[cfg(test)]
 mod split_button_tests;
+#[cfg(test)]
+mod start_pick_tests;
 #[cfg(test)]
 mod texture_limit_tests;
 #[cfg(test)]

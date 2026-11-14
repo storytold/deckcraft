@@ -25,6 +25,8 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+#[cfg(target_os = "macos")]
+mod sheet;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -106,6 +108,24 @@ fn save_prefs(app: &SlideApp) {
     }
 }
 
+/// The file types an open dialog for `purpose` offers: (name, extensions).
+fn open_filters(purpose: &str) -> &'static [(&'static str, &'static [&'static str])] {
+    match purpose {
+        "picture" => &[("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"])],
+        "audio" => {
+            &[("Audio", &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "caf", "wma", "weba", "mka"])]
+        }
+        "video" => &[("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"])],
+        "theme" => &[("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]), ("Office Theme", &["thmx"])],
+        _ => &[
+            ("Presentations", &["deckcraft", "pptx", "potx", "ppsx"]),
+            ("DeckCraft", &["deckcraft"]),
+            ("PowerPoint", &["pptx", "potx", "ppsx"]),
+            ("Outline", &["txt", "md"]),
+        ],
+    }
+}
+
 /// The desktop services. `native_wayland`: the window is a Wayland client (not Xwayland).
 fn services(native_wayland: bool) -> Services {
     // On native Wayland, egui-winit owns the clipboard through winit's data device, which carries
@@ -115,21 +135,7 @@ fn services(native_wayland: bool) -> Services {
     let pasteboard = !native_wayland;
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
-            let d = rfd::FileDialog::new();
-            let d = match purpose {
-                "picture" => d.add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]),
-                "audio" => d.add_filter(
-                    "Audio",
-                    &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "caf", "wma", "weba", "mka"],
-                ),
-                "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
-                "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
-                _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
-                    .add_filter("DeckCraft", &["deckcraft"])
-                    .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
-                    .add_filter("Outline", &["txt", "md"]),
-            };
+            let d = open_filters(purpose).iter().fold(rfd::FileDialog::new(), |d, (name, exts)| d.add_filter(*name, exts));
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
@@ -291,6 +297,11 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services(native_wayland));
+            // File dialogs are sheets on macOS: a modal loop inside the event handler crashes the app.
+            #[cfg(target_os = "macos")]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.start_pick = Some(sheet::start_pick(window, cc.egui_ctx.clone()));
+            }
             // Presenter View asks winit how many displays there are when a show starts.
             #[cfg(all(unix, not(target_os = "macos")))]
             if let Some(window) = cc.winit_window().cloned() {

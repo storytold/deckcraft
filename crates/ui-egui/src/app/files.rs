@@ -1,6 +1,6 @@
 use super::{
-    FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, RECENT_MAX, SlideApp, Target, UiRequest, Value, ViewMode, dialogs,
-    json, media,
+    AfterSave, FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, PendingPick, PickBind, RECENT_MAX, SlideApp, Target,
+    UiRequest, Value, ViewMode, dialogs, json, media,
 };
 
 #[derive(Default)]
@@ -204,19 +204,22 @@ impl SlideApp {
             }
         };
         let suggested = self.suggested_name(ext);
-        if let Some(pick) = self.services.pick_save.as_mut() {
-            let Some(path) = pick(&suggested) else { return false };
-            let mut params = json!({"path": path, "format": format, "all": all});
-            if let (Some(o), Some(x)) = (params.as_object_mut(), extra.as_object()) {
-                o.extend(x.clone());
-            }
-            return match self.run("file.export", params) {
-                Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
-                    true
+        if self.services.pick_save.is_some() || self.services.start_pick.is_some() {
+            let (format, extra) = (format.to_string(), extra.clone());
+            let done = std::rc::Rc::new(std::cell::Cell::new(false));
+            let flag = done.clone();
+            self.pick(true, &suggested, move |app, path| {
+                let mut params = json!({"path": path, "format": format, "all": all});
+                if let (Some(o), Some(x)) = (params.as_object_mut(), extra.as_object()) {
+                    o.extend(x.clone());
                 }
-                Err(_) => false,
-            };
+                if app.run("file.export", params).is_ok() {
+                    app.set_status(format!("Exported {path}"));
+                    flag.set(true);
+                }
+            });
+            // Shown as a sheet the answer comes later: false, nothing is written yet.
+            return done.get();
         }
         let Some(doc) = self.session.active().map(|d| d.doc.clone()) else { return false };
         let bytes = match format {
@@ -292,11 +295,177 @@ impl SlideApp {
         }
     }
 
-    pub(crate) fn pick_and_open(&mut self) {
-        if let Some(pick) = self.services.pick_open.as_mut() {
-            if let Some(path) = pick("open") {
-                self.open_path_in_background(&path);
+    /// Shows an open (or `save`) dialog for `arg` and calls `then` with the path picked, on the
+    /// presentation that asked: if another one is active by then it is made active again, and if it
+    /// was closed nothing is done. With `start_pick` the dialog runs outside this frame and `then`
+    /// runs when it answers; one dialog at a time. Otherwise it blocks here.
+    pub(crate) fn pick(&mut self, save: bool, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        let bind = self.session.active().map_or(PickBind::Free, |d| PickBind::Doc(d.uid));
+        self.pick_bound(bind, save, arg, then);
+    }
+
+    /// [`Self::pick`] for what is inserted at the current slide (or master, layout): if the
+    /// selection moved by the time the dialog answers, nothing is inserted.
+    pub(crate) fn pick_at(&mut self, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        let bind = match self.capture_file_target() {
+            FileTarget::Absent => PickBind::Free,
+            // Nothing is selected to put the file on (an empty presentation): the file goes to the
+            // presentation, which `viewing_target` would otherwise refuse as a moved selection.
+            FileTarget::Document { doc, place: FilePlace::Unspecified } => PickBind::Doc(doc),
+            target => PickBind::Place(target),
+        };
+        self.pick_bound(bind, false, arg, then);
+    }
+
+    /// [`Self::pick`] for a dialog whose answer is for no presentation (Open).
+    pub(crate) fn pick_free(&mut self, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        self.pick_bound(PickBind::Free, false, arg, then);
+    }
+
+    fn pick_bound(&mut self, bind: PickBind, save: bool, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        if let Some(start) = self.services.start_pick.as_mut() {
+            if !self.pending_picks.is_empty() {
+                self.set_status("A file dialog is already open");
+            } else if let Some(answer) = start(save, arg) {
+                self.pending_picks.push(PendingPick { answer, bind, then: Box::new(then) });
+            } else {
+                self.set_status("The file dialog could not be opened");
             }
+            return;
+        }
+        let pick = if save { self.services.pick_save.as_mut() } else { self.services.pick_open.as_mut() };
+        if let Some(path) = pick.and_then(|p| p(arg)) {
+            then(self, path);
+        }
+    }
+
+    /// Asks for a picture file and calls `then` with its bytes (desktop only; nothing on the web).
+    pub(crate) fn pick_picture_bytes(&mut self, then: impl FnOnce(&mut Self, Vec<u8>) + 'static) {
+        self.pick_at("picture", move |app, path| {
+            if let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path)) {
+                then(app, bytes);
+            }
+        });
+    }
+
+    /// [`Self::pick`] for a caller whose state is out of the app while it draws (a dialog): `then`
+    /// always runs from the next [`Self::drain_picks`], never inside this call.
+    pub(crate) fn pick_later(&mut self, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        if self.services.start_pick.is_some() {
+            return self.pick_free(arg, then);
+        }
+        let path = self.services.pick_open.as_mut().and_then(|p| p(arg));
+        let (tx, answer) = std::sync::mpsc::channel();
+        let _ = tx.send(path);
+        self.pending_picks.push(PendingPick { answer, bind: PickBind::Free, then: Box::new(then) });
+    }
+
+    /// Runs the continuation of every file dialog that has answered, for the presentation and
+    /// selection that asked for it ([`PickBind`]).
+    pub(crate) fn drain_picks(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let mut i = 0;
+        while i < self.pending_picks.len() {
+            match self.pending_picks[i].answer.try_recv() {
+                Err(TryRecvError::Empty) => i += 1,
+                answer => {
+                    let pick = self.pending_picks.remove(i);
+                    // The thread waiting for the dialog ended without an answer: not a cancel.
+                    if answer == Err(TryRecvError::Disconnected) {
+                        self.set_status("The file dialog could not be opened");
+                    }
+                    if let Ok(Some(path)) = answer
+                        && self.return_to(&pick.bind)
+                    {
+                        (pick.then)(self, path);
+                    }
+                }
+            }
+        }
+    }
+
+    fn dirty_count(&self) -> usize {
+        self.session.documents().iter().filter(|d| d.is_dirty()).count()
+    }
+
+    /// Quit › Save: quits at once when everything is saved; otherwise a Save dialog is open, and
+    /// the quit goes on from [`Self::resume_after_save`] as each one answers.
+    pub(crate) fn save_all_then_quit(&mut self, ctx: &egui::Context) {
+        if self.save_all() {
+            self.quit_confirmed = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else {
+            self.after_save = Some(AfterSave::Quit { dirty: self.dirty_count() });
+        }
+    }
+
+    /// Close › Save of the active presentation, after `save` left it unsaved because a Save dialog
+    /// is open: it closes once that dialog has saved it.
+    pub(crate) fn close_after_save(&mut self) {
+        if self.file_dialog_open()
+            && let Some(uid) = self.session.active().map(|d| d.uid)
+        {
+            self.after_save = Some(AfterSave::Close(uid));
+        }
+    }
+
+    /// Goes on with a Quit or Close that waited for Save dialogs, once none is open. A dialog that
+    /// was cancelled (or failed) saved nothing more, and ends the wait.
+    pub(crate) fn resume_after_save(&mut self, ctx: &egui::Context) {
+        if self.file_dialog_open() {
+            return;
+        }
+        match self.after_save.take() {
+            None => {}
+            Some(AfterSave::Quit { dirty }) => {
+                let now = self.dirty_count();
+                if now < dirty {
+                    self.save_all_then_quit(ctx);
+                }
+            }
+            Some(AfterSave::Close(uid)) => {
+                if let Some(index) = self.session.documents().iter().position(|d| d.uid == uid && !d.is_dirty()) {
+                    self.session.set_active(index);
+                    let _ = self.run("file.close", json!({}));
+                }
+            }
+        }
+    }
+
+    /// Makes the presentation a dialog was asked for active again; false (with the reason in the
+    /// status bar) when it is closed, or when the selection it was asked for has moved.
+    fn return_to(&mut self, bind: &PickBind) -> bool {
+        let (doc, place) = match bind {
+            PickBind::Free => return true,
+            PickBind::Doc(doc) => (*doc, None),
+            PickBind::Place(FileTarget::Absent) => return true,
+            PickBind::Place(target @ FileTarget::Document { doc, .. }) => (*doc, Some(target)),
+        };
+        if self.session.active().is_none_or(|d| d.uid != doc) {
+            match self.session.documents().iter().position(|d| d.uid == doc) {
+                Some(index) => self.session.set_active(index),
+                None => {
+                    self.set_status("The presentation was closed while the dialog was open: nothing was done");
+                    return false;
+                }
+            }
+        }
+        if place.is_some_and(|target| !self.viewing_target(target)) {
+            self.set_status("The selection changed while the dialog was open: nothing was inserted");
+            return false;
+        }
+        true
+    }
+
+    /// Whether a file dialog is open.
+    pub fn file_dialog_open(&self) -> bool {
+        !self.pending_picks.is_empty()
+    }
+
+    /// File › Open: asks for a presentation and opens it in the background.
+    pub(crate) fn pick_and_open(&mut self) {
+        if self.services.start_pick.is_some() || self.services.pick_open.is_some() {
+            self.pick_free("open", |app, path| app.open_path_in_background(&path));
         } else if self.services.open_async.is_some() {
             let id = self.begin_external_file("open");
             if let Some(f) = self.services.open_async.as_mut() {
@@ -351,15 +520,19 @@ impl SlideApp {
     /// Home › New Slide › Reuse Slides…: pick a presentation and insert all its slides after the
     /// current one (desktop only: the browser picker opens what it picks as a document).
     pub(super) fn pick_and_reuse(&mut self, keep: bool) {
-        let Some(pick) = self.services.pick_open.as_mut() else {
+        if self.services.pick_open.is_none() && self.services.start_pick.is_none() {
             self.set_status("Reuse Slides needs the desktop app".to_string());
             return;
-        };
-        let Some(path) = pick("open") else { return };
+        }
+        self.pick_at("open", move |app, path| app.reuse_from(&path, keep));
+    }
+
+    /// Reuse Slides, once the presentation to take the slides from is picked: lists its slides.
+    fn reuse_from(&mut self, path: &str, keep: bool) {
         // Read the file once: the list shown and the slides inserted come from the same bytes, even
         // if the file changes while the dialog is open. Without a reader the path is used as is.
         let mut source = json!({});
-        match self.services.read.as_ref().map(|r| r(&path)) {
+        match self.services.read.as_ref().map(|r| r(path)) {
             Some(Ok(bytes)) => {
                 let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 source["name"] = json!(name);
@@ -414,25 +587,26 @@ impl SlideApp {
 
     /// Pick a file and run `cmd` with it (`name` + `data`, or `path`) added to `extra`.
     pub(super) fn pick_and_run(&mut self, purpose: &str, cmd: &str, extra: &Value) {
-        if let Some(pick) = self.services.pick_open.as_mut() {
-            if let Some(path) = pick(purpose) {
-                let mut args = if extra.is_object() { extra.clone() } else { json!({}) };
-                let r = match self.services.read.as_ref().map(|r| r(&path)) {
+        if self.services.pick_open.is_some() || self.services.start_pick.is_some() {
+            let (cmd, extra) = (cmd.to_string(), extra.clone());
+            self.pick_at(purpose, move |app, path| {
+                let mut args = if extra.is_object() { extra } else { json!({}) };
+                let r = match app.services.read.as_ref().map(|r| r(&path)) {
                     Some(Ok(bytes)) => {
                         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                         args["name"] = json!(name);
                         args["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
-                        self.session.execute(cmd, &args)
+                        app.session.execute(&cmd, &args)
                     }
                     _ => {
                         args["path"] = json!(path);
-                        self.session.execute(cmd, &args)
+                        app.session.execute(&cmd, &args)
                     }
                 };
                 if let Err(e) = r {
-                    self.set_status(e.to_string());
+                    app.set_status(e.to_string());
                 }
-            }
+            });
         } else if self.services.open_async.is_some() {
             let id = self.begin_external_file(purpose);
             // Change Picture: the picture that arrives replaces the selected one (#115).
@@ -447,21 +621,20 @@ impl SlideApp {
         }
     }
 
+    /// File › Save As: asks for a file and saves the active presentation there (a download on the web).
     pub fn save_as_dialog(&mut self, format: &str) {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
-        if let Some(pick) = self.services.pick_save.as_mut() {
-            if let Some(path) = pick(&suggested) {
-                match self.session.execute("file.saveAs", &json!({"path": path})) {
-                    Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
-                        self.ui.recent.retain(|p| *p != path);
-                        self.ui.recent.insert(0, path);
-                    }
-                    Err(e) => self.set_status(e.to_string()),
+        if self.services.pick_save.is_some() || self.services.start_pick.is_some() {
+            self.pick(true, &suggested, |app, path| match app.session.execute("file.saveAs", &json!({"path": path})) {
+                Ok(_) => {
+                    app.set_status(format!("Saved {path}"));
+                    app.ui.recent.retain(|p| *p != path);
+                    app.ui.recent.insert(0, path);
                 }
-            }
+                Err(e) => app.set_status(e.to_string()),
+            });
         } else if self.services.host_save.is_some() {
             let _ = self.save_to_host(Some(ext));
         } else if let Some(dl) = self.services.download.as_mut()
@@ -478,14 +651,25 @@ impl SlideApp {
     /// Returns false if one wasn't saved (cancelled or failed).
     pub fn save_all(&mut self) -> bool {
         let dirty: Vec<usize> = self.session.documents().iter().enumerate().filter(|(_, d)| d.is_dirty()).map(|(i, _)| i).collect();
+        let mut saved = true;
+        let mut error = None;
         for i in dirty {
             self.session.set_active(i);
+            let before = self.status.clone();
             self.save();
-            if self.session.documents().get(i).is_some_and(|d| d.is_dirty()) {
-                return false;
+            // A Save dialog shown as a sheet answers later: the other presentations are saved
+            // meanwhile, and Save All reports that one as not saved yet.
+            let unsaved = self.session.documents().get(i).is_some_and(|d| d.is_dirty());
+            saved &= !unsaved;
+            if unsaved && error.is_none() && self.status != before {
+                error = self.status.clone();
             }
         }
-        true
+        // A later "Saved" must not hide an earlier failure
+        if error.is_some() {
+            self.status = error;
+        }
+        saved
     }
 
     pub fn save(&mut self) {
