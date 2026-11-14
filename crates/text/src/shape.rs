@@ -76,7 +76,7 @@ pub(crate) fn shape_para(
             if let Some(c) = &props.bullet_color {
                 rp.fill = Some(Fill::solid(c.clone()));
             }
-            rp.size = Some(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0));
+            rp.size = Some(props.bullet_size_points.unwrap_or(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0)));
             rp.underline = None;
             rp.strike = None;
             rp.highlight = None;
@@ -105,7 +105,7 @@ pub(crate) fn shape_para(
             if let Some(c) = &props.bullet_color {
                 rp.fill = Some(Fill::solid(c.clone()));
             }
-            rp.size = Some(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0));
+            rp.size = Some(props.bullet_size_points.unwrap_or(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0)));
             rp.underline = None;
             let mut st = make_style(ctx, &rp, scale, opts.prompt_color);
             let label = autonum(scheme, start_at.saturating_sub(1).saturating_add(number.unwrap_or(1)));

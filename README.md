@@ -150,6 +150,9 @@ crashed survives the next start. The file stops growing at 16 MiB. `--version` w
 The logger is `apps/deckcraft/src/logging.rs`; the realtime audio callback does not log. The web
 app logs to the browser console instead.
 
+Browser embedders can opt into [page-local file providers](docs/web-file-providers.md), including
+correlated native-deck saves, durable host acknowledgements and recoverable delivery failures.
+
 ## Agents, CLI and MCP
 
 Every action in DeckCraft is a command with a stable id, so people, scripts and AI agents use the

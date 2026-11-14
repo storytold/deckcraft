@@ -4,11 +4,18 @@
 
 use deckcraft_ui_egui::file_providers::{Host, Resource};
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
-use wasm_bindgen::{JsCast, JsValue, closure::Closure};
+use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
 
 const API: &str = "deckcraftFileProviders";
 const EVENT: &str = "deckcraft-file-provider";
 const MAX_BYTES: u32 = 80 * 1024 * 1024;
+
+#[wasm_bindgen]
+extern "C" {
+    // This explicit catch boundary converts recoverable JS allocation/copy throws to Err.
+    #[wasm_bindgen(catch, js_namespace = Uint8Array, js_name = from)]
+    fn copy_event_bytes(bytes: &[u8]) -> Result<Uint8Array, JsValue>;
+}
 
 fn error(message: impl ToString) -> JsValue {
     JsValue::from_str(&message.to_string())
@@ -196,7 +203,7 @@ pub fn install(host: Host, ctx: egui::Context) -> Result<(), JsValue> {
 fn dispatch(metadata: &serde_json::Value, bytes: Option<Vec<u8>>) -> Result<(), JsValue> {
     let detail = object(metadata)?;
     if let Some(bytes) = bytes {
-        set(&detail, "bytes", &Uint8Array::from(bytes.as_slice()))?;
+        set(&detail, "bytes", &copy_event_bytes(&bytes)?.into())?;
     }
     let init = web_sys::CustomEventInit::new();
     init.set_detail(&detail);
@@ -205,17 +212,8 @@ fn dispatch(metadata: &serde_json::Value, bytes: Option<Vec<u8>>) -> Result<(), 
     Ok(())
 }
 
-pub fn publish(host: &Host) {
-    // The first drain frees a full queue; the second delivers retained terminal events in order.
-    for _ in 0..2 {
-        let events = host.take_events();
-        if events.is_empty() {
-            break;
-        }
-        for event in events {
-            if let Err(error) = dispatch(&event.metadata, event.bytes) {
-                log::error!("file-provider event delivery failed: {error:?}");
-            }
-        }
+pub fn publish(host: &Host, ctx: &egui::Context) {
+    if host.publish_events_with(dispatch, |error| log::error!("file-provider event delivery failed: {error:?}")) {
+        ctx.request_repaint();
     }
 }

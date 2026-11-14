@@ -93,6 +93,7 @@ struct State {
     events: Vec<Event>,
     // Owners stay in opening/working until delivery can be queued: at most 16 of each.
     finished: VecDeque<Terminal>,
+    publishing_terminals: usize,
     documents: Value,
 }
 
@@ -156,11 +157,31 @@ impl State {
             }
         }
     }
+
+    fn take_events(&mut self) -> Vec<Event> {
+        let events = std::mem::take(&mut self.events);
+        self.flush_finished();
+        if events.is_empty() { std::mem::take(&mut self.events) } else { events }
+    }
 }
 
 /// One explicitly registered account namespace. Clones share the bounded transport state.
 #[derive(Clone, Default)]
 pub struct Host(Arc<Mutex<State>>);
+
+// A taken terminal still owns its registration while synchronous listeners run. Each nested
+// publisher releases only its own protection, including when a Rust callback unwinds.
+struct PublishingBatch {
+    host: Host,
+    terminals: usize,
+}
+
+impl Drop for PublishingBatch {
+    fn drop(&mut self) {
+        let mut state = self.host.state();
+        state.publishing_terminals = state.publishing_terminals.saturating_sub(self.terminals);
+    }
+}
 
 impl Host {
     fn state(&self) -> MutexGuard<'_, State> {
@@ -194,8 +215,10 @@ impl Host {
 
     pub fn disconnect(&self) -> Result<(), String> {
         let mut s = self.state();
-        if s.busy() {
-            return Err("finish or cancel pending operations before unregistering".into());
+        let queued_terminal =
+            s.events.iter().any(|event| matches!(event.metadata.get("type").and_then(Value::as_str), Some("opened" | "openFailed" | "saveFailed")));
+        if s.busy() || queued_terminal || s.publishing_terminals != 0 {
+            return Err("finish or cancel pending operations and consume completion events before unregistering".into());
         }
         s.identity = None;
         s.connection.clear();
@@ -276,6 +299,9 @@ impl Host {
             return Err("invalid save destination or filename".into());
         }
         let mut s = self.state();
+        if destination != "cancel" && s.commands.len() >= MAX_PENDING {
+            return Err("file provider command queue is full".into());
+        }
         let dialog = s.dialogs.remove(request).ok_or("unknown or completed save dialog")?;
         if destination != "cancel" {
             s.commands.push(Command::Save {
@@ -447,10 +473,62 @@ impl Host {
     }
 
     pub fn take_events(&self) -> Vec<Event> {
-        let mut s = self.state();
-        let events = std::mem::take(&mut s.events);
-        s.flush_finished();
-        if events.is_empty() { std::mem::take(&mut s.events) } else { events }
+        self.state().take_events()
+    }
+
+    /// Bounded platform delivery. Returned errors fail only still-owned requests; a save failure
+    /// becomes its exact captured Result, never a durable ACK. The caller must request repaint
+    /// when this returns true so application logic consumes the failure without more host input.
+    pub fn publish_events_with<E>(&self, mut dispatch: impl FnMut(&Value, Option<Vec<u8>>) -> Result<(), E>, mut on_error: impl FnMut(E)) -> bool {
+        let mut failed = false;
+        for _ in 0..2 {
+            let (events, _publishing) = {
+                let mut s = self.state();
+                let events = s.take_events();
+                let terminals = events
+                    .iter()
+                    .filter(|event| matches!(event.metadata.get("type").and_then(Value::as_str), Some("opened" | "openFailed" | "saveFailed")))
+                    .count();
+                s.publishing_terminals = s.publishing_terminals.saturating_add(terminals);
+                (events, PublishingBatch { host: self.clone(), terminals })
+            };
+            if events.is_empty() {
+                break;
+            }
+            for event in events {
+                if let Err(error) = dispatch(&event.metadata, event.bytes) {
+                    failed = true;
+                    if let Some(request) = event.metadata.get("requestId").and_then(Value::as_str) {
+                        let mut s = self.state();
+                        // A synchronous listener can already have accepted this owner. Preserve
+                        // its command/result and do not consume any unrelated request.
+                        match event.metadata.get("type").and_then(Value::as_str) {
+                            Some("save") => {
+                                if let Some(capture) = s.captures.remove(request) {
+                                    // No new save is admitted. At most MAX_PENDING existing
+                                    // captures append recovery results even if commands is full.
+                                    s.commands.push(Command::Result {
+                                        request: request.into(),
+                                        capture,
+                                        resource: String::new(),
+                                        status: "failed".into(),
+                                    });
+                                }
+                            }
+                            Some("openRequest") => {
+                                s.reads.remove(request);
+                            }
+                            Some("saveDialog") => {
+                                s.dialogs.remove(request);
+                            }
+                            _ => {}
+                        }
+                    }
+                    on_error(error);
+                }
+            }
+        }
+        failed
     }
 
     pub(crate) fn publish_documents(&self, documents: Value, open_ids: &[u64]) {

@@ -14,6 +14,7 @@ mod maps;
 mod opc;
 mod png;
 pub(crate) mod read;
+pub use read::MAX_TAG_BYTES;
 mod tables;
 mod write;
 mod xml;
@@ -65,8 +66,16 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
 
 /// [`import`], plus the part names of slides the file lists but that couldn't be read and were
 /// left out.
+/// Files with more than 10,000 slide-list entries return [`PptxError::Unsupported`] instead of a truncated presentation.
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
     read::import_checked(bytes)
+}
+
+/// [`import`] with a lower presentation-wide chart point budget, so tests reach the over-budget
+/// path without a multi-million-point chart.
+#[doc(hidden)]
+pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
+    read::import_with_chart_points(bytes, points).map(|(p, _)| p)
 }
 
 /// Read the theme of a `.thmx` file, or of a `.pptx` / `.potx`'s first master, with its media.
@@ -172,5 +181,45 @@ mod import_theme_tests {
         out.start_file("[Content_Types].xml", zip::write::SimpleFileOptions::default()).unwrap();
         out.write_all(b"<Types/>").unwrap();
         assert!(crate::import_theme(&out.finish().unwrap().into_inner()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod table_direction_tests {
+    use deckcraft_model::table::{Cell, Table};
+    use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, defaults};
+    use std::sync::Arc;
+
+    fn table(p: &Presentation) -> &Table {
+        p.slides[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.kind {
+                ShapeKind::Table(table) => Some(table),
+                _ => None,
+            })
+            .expect("table shape")
+    }
+
+    #[test]
+    fn table_direction_and_column_order_survive_two_pptx_saves() {
+        for rtl in [Some(true), Some(false), None] {
+            let mut p = defaults::new_presentation(None);
+            let mut t = Table::new(1, 2, 200.0, 30.0);
+            t.rtl = rtl;
+            t.rows[0].cells[0] = Cell::new("First column");
+            t.rows[0].cells[1] = Cell::new("Second column");
+            let shape = Shape { id: ShapeId(p.alloc_id().expect("id")), kind: ShapeKind::Table(t), ..Default::default() };
+            Arc::make_mut(&mut p.slides[0]).shapes.push(shape);
+
+            let mut roundtrip = crate::import(&crate::export(&p).expect("export")).expect("import");
+            for _ in 0..2 {
+                let t = table(&roundtrip);
+                assert_eq!(t.rtl, rtl);
+                assert_eq!(t.rows[0].cells[0].text.paragraphs[0].runs[0].text, "First column");
+                assert_eq!(t.rows[0].cells[1].text.paragraphs[0].runs[0].text, "Second column");
+                roundtrip = crate::import(&crate::export(&roundtrip).expect("export again")).expect("import again");
+            }
+        }
     }
 }

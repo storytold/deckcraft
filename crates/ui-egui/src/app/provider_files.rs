@@ -1,5 +1,7 @@
 //! Optional file-provider integration; engine/control commands remain deterministic and local.
 
+use std::sync::Arc;
+
 use crate::file_providers::{Capture, Command, Host};
 use crate::{ProviderClose, SlideApp, json};
 
@@ -67,14 +69,14 @@ impl SlideApp {
                     request,
                     connection: host.snapshot()["connectionId"].as_str().unwrap_or_default().to_string(),
                     document,
-                    revision: None,
+                    checkpoint: None,
                 });
             }
             return;
         }
         self.save();
-        // Preserve the original provider-free browser and native close paths.
-        let web = self.services.pick_save.is_none() && self.services.download.is_some();
+        // Standalone browser downloads leave the deck dirty. An embedding host saves it.
+        let web = self.services.pick_save.is_none() && self.services.download.is_some() && self.services.host_save.is_none();
         if web || self.session.active().is_some_and(|doc| !doc.is_dirty()) {
             let _ = self.run("file.close", json!({}));
         }
@@ -95,14 +97,17 @@ impl SlideApp {
             self.provider_close = None;
             return;
         }
-        let Some(revision) = close.revision else {
+        let Some(checkpoint) = close.checkpoint.as_ref() else {
             if !host.pending_for(close.document) {
                 self.provider_close = None;
             }
             return;
         };
         let document = &self.session.documents()[index];
-        if document.revision != revision || document.is_dirty() {
+        // The engine also advances revisions for selection changes, including show teardown.
+        // Require this save's content and checkpoint to remain current. An alias overwrite
+        // replaces the saved checkpoint even when the visible content has not changed.
+        if !Arc::ptr_eq(&document.doc, checkpoint) || !Arc::ptr_eq(&document.saved_doc, checkpoint) {
             self.provider_close = None;
             return;
         }
@@ -162,21 +167,21 @@ impl SlideApp {
         host.publish_documents(json!(documents), &ids);
     }
 
-    fn provider_mark_saved(&mut self, id: u64, revision: u64) {
+    fn provider_mark_saved(&mut self, id: u64, revision: u64) -> Option<Arc<deckcraft_model::Presentation>> {
         if self.notes_buf.0 == id && self.notes_buf.2.edited {
-            return;
+            return None;
         }
-        let Some(index) = self.provider_document(id) else { return };
+        let index = self.provider_document(id)?;
         let back = self.session.active_index();
         self.session.set_active(index);
-        if let Some(doc) = self.session.active_mut()
-            && doc.revision == revision
-        {
+        let checkpoint = self.session.active_mut().filter(|doc| doc.revision == revision).map(|doc| {
             doc.saved_doc = doc.doc.clone();
-        }
+            doc.saved_doc.clone()
+        });
         if let Some(back) = back {
             self.session.set_active(back);
         }
+        checkpoint
     }
     fn settle_provider_notes(&mut self, doc: u64) -> Result<(), String> {
         if self.notes_buf.0 != doc || !self.notes_buf.2.edited {
@@ -260,9 +265,13 @@ impl SlideApp {
             if let Some(back) = back {
                 self.session.set_active(back);
             }
-            self.provider_mark_saved(capture.doc, capture.revision);
-            if let Some(close) = self.provider_close.as_mut().filter(|close| close.request == request && close.document == capture.doc) {
-                close.revision = Some(capture.revision);
+            let checkpoint = self.provider_mark_saved(capture.doc, capture.revision);
+            if self.provider_close.as_ref().is_some_and(|close| close.request == request && close.document == capture.doc) {
+                // A stale ACK may bind the resource, but cannot complete this close.
+                self.provider_close = self.provider_close.take().zip(checkpoint).map(|(mut close, checkpoint)| {
+                    close.checkpoint = Some(checkpoint);
+                    close
+                });
             }
             self.set_status(format!("Saved {} to provider", capture.name));
         } else if status == "failed" {
@@ -412,7 +421,8 @@ mod tests {
         harness.run_steps(4);
         assert_eq!(harness.state().session.active().unwrap().uid, document);
         assert!(harness.state().show.is_some(), "a durable ACK must not close the audience's document mid-show");
-        assert!(harness.state().provider_close.is_some());
+        assert!(harness.state().provider_close.as_ref().is_some_and(|close| close.checkpoint.is_some()));
+        assert!(!harness.state().session.active().unwrap().is_dirty());
         assert_eq!(presenter.borrow().closes, 0);
 
         presenter.borrow_mut().commands.push(crate::presenter::Command::End);
@@ -867,5 +877,62 @@ mod tests {
         assert!(!events.iter().any(|event| event.metadata["type"] == "save"));
         assert!(app.session.active().unwrap().is_dirty());
         assert!(!host.busy());
+    }
+
+    #[test]
+    fn delivery_failure_consumes_the_exact_save_and_close_without_acknowledging_later_edits() {
+        let (mut app, host) = app();
+        let document = app.session.active().unwrap().uid;
+        let revision = app.session.active().unwrap().revision;
+        let checkpoint = app.session.active().unwrap().saved_doc.clone();
+        app.save_and_close_presentation();
+        let dialog = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
+        let request = dialog.metadata["requestId"].as_str().unwrap().to_string();
+        assert_eq!(app.provider_close.as_ref().unwrap().request, request);
+        host.resolve_dialog(&request, "provider", "Synthetic.deckcraft").unwrap();
+        app.provider_tick();
+        assert!(host.publish_events_with(
+            |metadata, bytes| {
+                assert_eq!(metadata["type"], "save");
+                assert_eq!(metadata["requestId"], request);
+                assert_eq!(metadata["documentId"], document.to_string());
+                assert!(bytes.is_some_and(|bytes| !bytes.is_empty()));
+                Err("synthetic recoverable payload-copy exception")
+            },
+            |_| {},
+        ));
+        assert!(host.pending_for(document), "the application still owns the queued failure result");
+        app.provider_tick();
+        let state = app.session.active().unwrap();
+        assert_eq!((state.uid, state.revision), (document, revision));
+        assert!(state.is_dirty());
+        assert!(std::sync::Arc::ptr_eq(&state.saved_doc, &checkpoint));
+        assert!(app.provider_close.is_none(), "failure carries the exact request needed to cancel deferred close");
+        assert!(!host.busy() && !host.bound(document));
+        assert!(host.result(request, "saved".into(), "late".into()).is_err());
+        assert!(app.fresh_status().unwrap().contains("Provider save failed"));
+
+        app.save();
+        let dialog = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
+        let retry = dialog.metadata["requestId"].as_str().unwrap().to_string();
+        host.resolve_dialog(&retry, "provider", "Synthetic.deckcraft").unwrap();
+        app.provider_tick();
+        assert!(!host.publish_events_with(
+            |metadata, bytes| {
+                assert_eq!(metadata["requestId"], retry);
+                assert!(bytes.is_some_and(|bytes| !bytes.is_empty()));
+                Ok::<(), &str>(())
+            },
+            |error| panic!("unexpected delivery error: {error}"),
+        ));
+        assert!(host.pending_for(document) && app.session.active().unwrap().is_dirty());
+        app.session.execute("slide.new", &json!({})).unwrap();
+        let edited_revision = app.session.active().unwrap().revision;
+        host.result(retry, "saved".into(), "one".into()).unwrap();
+        app.provider_tick();
+        let state = app.session.active().unwrap();
+        assert_eq!((state.uid, state.revision), (document, edited_revision));
+        assert!(state.is_dirty() && std::sync::Arc::ptr_eq(&state.saved_doc, &checkpoint));
+        assert!(host.bound(document) && !host.busy());
     }
 }

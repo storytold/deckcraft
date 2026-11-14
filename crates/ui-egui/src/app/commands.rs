@@ -20,6 +20,11 @@ impl SlideApp {
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
+        } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
+            // A page that keeps the files (`?host=parent`): Save by id (the command palette) goes
+            // to the page like Ctrl+S. The engine would write to the presentation's path, which a
+            // browser can't.
+            self.save_to_host(None).map(|name| json!({"path": name}))
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
         };

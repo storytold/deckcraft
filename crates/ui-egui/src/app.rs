@@ -108,6 +108,7 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            host_start: None,
             ime_tracker: egui::ime_context::ImeContextTracker::new(),
             ime_pending: None,
             ime_frame_viewport: None,
@@ -136,6 +137,14 @@ impl SlideApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn enable_update_checks(&mut self) {
         updates_ui::enable(self);
+    }
+
+    /// Start the helper of an update that is ready, so that it installs once the process has
+    /// exited. The desktop shell calls it in `on_exit`, which ends the process on macOS before the
+    /// app is dropped. Later calls do nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_pending_update(&mut self) {
+        updates_ui::start_pending_update(self);
     }
 
     /// A message that must be seen wherever the user is: a toast, which also shows over the start

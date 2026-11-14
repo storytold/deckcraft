@@ -337,3 +337,464 @@ fn retained_terminals_are_bounded_by_already_admitted_reads_and_saves() {
     assert!(!host.busy());
     assert!(host.take_events().is_empty());
 }
+
+// Original synthetic transport fixtures; no external deck or media assets.
+#[test]
+fn failed_save_delivery_becomes_a_correlated_failure_and_later_events_still_dispatch() {
+    let (host, _) = connected();
+    let id = request(&host, 1);
+    host.resolve_dialog(&id, "provider", "").unwrap();
+    host.take_commands();
+    host.capture(&id, capture(1, 23), vec![1, 2, 3]).unwrap();
+    host.state().event(json!({"type":"after-save"}), None).unwrap();
+    let mut errors = Vec::new();
+    let mut delivered = Vec::new();
+    let repaint = host.publish_events_with(
+        |metadata, bytes| {
+            if metadata["type"] == "save" {
+                assert_eq!(metadata["requestId"], id);
+                assert_eq!(bytes, Some(vec![1, 2, 3]));
+                Err("recoverable JavaScript payload allocation failure")
+            } else {
+                delivered.push(metadata["type"].as_str().unwrap().to_string());
+                Ok(())
+            }
+        },
+        |error| errors.push(error),
+    );
+    assert!(repaint, "the app must process the failed result without another host callback");
+    assert_eq!(errors, vec!["recoverable JavaScript payload allocation failure"]);
+    assert_eq!(delivered, vec!["after-save"]);
+    assert!(host.state().captures.is_empty(), "taken bytes cannot leave an unreachable capture");
+    assert!(host.result(id.clone(), "saved".into(), "late".into()).is_err(), "the failed delivery cannot later acknowledge persistence");
+    let commands = host.take_commands();
+    assert_eq!(commands.len(), 1);
+    let Command::Result { request, capture, resource, status } = &commands[0] else { panic!("expected correlated delivery failure") };
+    assert_eq!(request, &id);
+    assert_eq!((capture.doc, capture.revision), (1, 23));
+    assert_eq!(status, "failed");
+    assert!(resource.is_empty());
+    assert!(!host.bound(1));
+    assert!(!host.pending_for(1));
+    assert!(!host.busy());
+    host.disconnect().unwrap();
+}
+
+#[test]
+fn successful_save_delivery_stays_pending_until_the_hosts_explicit_result() {
+    let (host, _) = connected();
+    let id = request(&host, 1);
+    host.resolve_dialog(&id, "provider", "").unwrap();
+    host.take_commands();
+    host.capture(&id, capture(1, 23), vec![4, 5, 6]).unwrap();
+    let mut delivered = 0;
+    let mut errors = 0;
+    assert!(!host.publish_events_with(
+        |metadata, bytes| {
+            assert_eq!(metadata["requestId"], id);
+            assert_eq!(bytes, Some(vec![4, 5, 6]));
+            delivered += 1;
+            Ok::<(), &str>(())
+        },
+        |_| errors += 1,
+    ));
+    assert_eq!((delivered, errors), (1, 0));
+    assert!(host.pending_for(1));
+    assert!(host.take_commands().is_empty(), "successful delivery is not a persistence acknowledgement");
+    host.result(id, "saved".into(), "one".into()).unwrap();
+    let commands = host.take_commands();
+    assert!(matches!(commands.as_slice(), [Command::Result { status, .. }] if status == "saved"));
+}
+
+#[test]
+fn failed_delivery_recovers_its_existing_capture_even_with_a_full_command_queue() {
+    let (host, connection) = connected();
+    host.set_resources(&connection, vec![Resource { id: "one".into(), name: "Other.zip".into(), updated_at: String::new() }]).unwrap();
+    let id = request(&host, 1);
+    host.resolve_dialog(&id, "provider", "").unwrap();
+    host.take_commands();
+    host.capture(&id, capture(1, 23), vec![7]).unwrap();
+    let mut reads = Vec::new();
+    for _ in 0..super::MAX_PENDING {
+        let read = host.request_open("one").unwrap();
+        host.open(read.clone(), "Other.zip".into(), vec![]).unwrap();
+        reads.push(read);
+    }
+    assert_eq!(host.state().commands.len(), super::MAX_PENDING);
+    assert!(host.result(id.clone(), "saved".into(), "one".into()).unwrap_err().contains("queue is full"));
+    assert!(host.publish_events_with(|metadata, _| if metadata["type"] == "save" { Err("delivery failed") } else { Ok(()) }, |_| {},));
+    assert!(host.state().captures.is_empty());
+    let commands = host.take_commands();
+    assert_eq!(commands.len(), super::MAX_PENDING + 1);
+    assert_eq!(commands.iter().filter(|command| matches!(command, Command::Open { .. })).count(), reads.len());
+    let failures: Vec<_> = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::Result { request, capture, resource, status } => {
+                Some((request.as_str(), capture.doc, capture.revision, resource.as_str(), status.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failures, vec![(id.as_str(), 1, 23, "", "failed")]);
+    assert!(!host.bound(1));
+    assert!(host.result(id, "saved".into(), "late".into()).is_err());
+    for read in reads {
+        host.opened(&read, None, "fixture complete");
+    }
+    assert!(!host.publish_events_with(|_, _| Ok::<(), &str>(()), |_| {}));
+    assert!(!host.busy());
+}
+
+#[test]
+fn delivery_error_cannot_replace_a_result_already_accepted_from_a_synchronous_listener() {
+    let (host, _) = connected();
+    let id = request(&host, 1);
+    host.resolve_dialog(&id, "provider", "").unwrap();
+    host.take_commands();
+    host.capture(&id, capture(1, 23), vec![8]).unwrap();
+    assert!(host.publish_events_with(
+        |metadata, _| {
+            assert_eq!(metadata["requestId"], id);
+            host.result(id.clone(), "saved".into(), "one".into()).unwrap();
+            Err("dispatcher failed after the listener's result")
+        },
+        |_| {},
+    ));
+    let commands = host.take_commands();
+    assert_eq!(commands.len(), 1);
+    let Command::Result { capture, resource, status, .. } = &commands[0] else { panic!("expected the listener's result") };
+    assert_eq!((capture.doc, capture.revision, resource.as_str(), status.as_str()), (1, 23, "one", "saved"));
+    assert!(!host.busy());
+}
+
+#[test]
+fn failed_open_request_delivery_releases_only_its_read_and_preserves_capacity() {
+    let (host, connection) = connected();
+    host.set_resources(
+        &connection,
+        vec![
+            Resource { id: "one".into(), name: "One.zip".into(), updated_at: String::new() },
+            Resource { id: "two".into(), name: "Two.zip".into(), updated_at: String::new() },
+        ],
+    )
+    .unwrap();
+    let other = host.request_open("two").unwrap();
+    let mut other_deliveries = 0;
+    let mut errors = 0;
+    for _ in 0..=super::MAX_PENDING {
+        let failed = host.request_open("one").unwrap();
+        assert!(host.publish_events_with(
+            |metadata, _| {
+                assert_eq!(metadata["connectionId"], connection);
+                if metadata["requestId"] == failed {
+                    assert_eq!(metadata["resourceId"], "one");
+                    Err("openRequest delivery failed")
+                } else {
+                    assert_eq!(metadata["requestId"], other);
+                    assert_eq!(metadata["resourceId"], "two");
+                    other_deliveries += 1;
+                    Ok(())
+                }
+            },
+            |_| errors += 1,
+        ));
+        assert!(!host.state().reads.contains_key(&failed));
+        assert!(host.open(failed.clone(), "One.zip".into(), vec![1]).is_err());
+        assert!(host.cancel_open(failed, String::new()).is_err());
+        assert!(host.state().reads.contains_key(&other), "another admitted read still owns its response");
+        assert!(host.take_commands().is_empty());
+    }
+    assert_eq!((other_deliveries, errors), (1, super::MAX_PENDING + 1));
+    let retry = host.request_open("one").unwrap();
+    host.open(retry.clone(), "One.zip".into(), vec![7]).unwrap();
+    let commands = host.take_commands();
+    assert!(matches!(commands.as_slice(), [Command::Open { request, bytes, .. }]
+        if request == &retry && bytes.as_slice() == [7]));
+    host.opened(&retry, Some(capture(1, 23)), "");
+    host.cancel_open(other, "fixture complete".into()).unwrap();
+    let events = host.take_events();
+    assert!(events.iter().all(|event| event.metadata["connectionId"] == connection && event.metadata["namespace"] == "account-one"));
+    assert!(!host.busy());
+    host.disconnect().unwrap();
+}
+
+#[test]
+fn failed_save_dialog_delivery_releases_only_its_choice_and_allows_retry() {
+    let (host, connection) = connected();
+    host.choose(1, 23, "One.zip".into(), false).unwrap();
+    host.choose(2, 24, "Two.zip".into(), false).unwrap();
+    let mut failed = String::new();
+    let mut other = String::new();
+    let mut errors = 0;
+    assert!(host.publish_events_with(
+        |metadata, _| {
+            assert_eq!(metadata["type"], "saveDialog");
+            assert_eq!(metadata["connectionId"], connection);
+            let request = metadata["requestId"].as_str().unwrap().to_string();
+            if metadata["documentId"] == "1" {
+                failed = request;
+                Err("saveDialog delivery failed")
+            } else {
+                assert_eq!(metadata["documentId"], "2");
+                other = request;
+                Ok(())
+            }
+        },
+        |_| errors += 1,
+    ));
+    assert_eq!(errors, 1);
+    assert!(!failed.is_empty() && !other.is_empty() && failed != other);
+    assert!(!host.pending_for(1));
+    assert!(host.pending_for(2));
+    assert!(host.resolve_dialog(&failed, "provider", "").is_err());
+    assert!(host.take_commands().is_empty());
+    host.choose(1, 25, "Retry.zip".into(), true).unwrap();
+    let mut retries = 0;
+    assert!(!host.publish_events_with(
+        |metadata, _| {
+            assert_eq!(metadata["documentId"], "1");
+            assert_eq!(metadata["revision"], 25);
+            assert_eq!(metadata["name"], "Retry.zip");
+            assert_eq!(metadata["saveAs"], true);
+            let request = metadata["requestId"].as_str().unwrap();
+            assert_ne!(request, failed.as_str());
+            host.resolve_dialog(request, "cancel", "").unwrap();
+            retries += 1;
+            Ok::<(), String>(())
+        },
+        |error| panic!("unexpected delivery failure: {error}"),
+    ));
+    assert_eq!(retries, 1, "retry must emit a fresh choice rather than silently remain pending");
+    host.resolve_dialog(&other, "device", "").unwrap();
+    let commands = host.take_commands();
+    assert!(matches!(commands.as_slice(), [Command::Save { request, doc: 2, destination, name, save_as: false }]
+        if request == &other && destination == "device" && name == "Two.zip"));
+    host.finish_device(&other);
+    assert!(!host.busy());
+    host.disconnect().unwrap();
+}
+
+#[test]
+fn delivery_error_preserves_open_and_choice_already_accepted_by_synchronous_listeners() {
+    let (host, connection) = connected();
+    host.set_resources(&connection, vec![Resource { id: "one".into(), name: "One.zip".into(), updated_at: String::new() }]).unwrap();
+    let read = host.request_open("one").unwrap();
+    assert!(host.publish_events_with(
+        |metadata, _| {
+            assert_eq!(metadata["requestId"], read);
+            host.open(read.clone(), "One.zip".into(), vec![7]).unwrap();
+            Err("dispatch failed after accepting the read")
+        },
+        |_| {},
+    ));
+    let commands = host.take_commands();
+    assert!(matches!(commands.as_slice(), [Command::Open { request, bytes, .. }]
+        if request == &read && bytes.as_slice() == [7]));
+    assert!(host.disconnect().is_err());
+    host.opened(&read, Some(capture(1, 23)), "");
+    assert!(!host.publish_events_with(
+        |metadata, _| {
+            assert_eq!(metadata["type"], "opened");
+            assert_eq!(metadata["requestId"], read);
+            assert_eq!(metadata["resourceId"], "one");
+            assert_eq!(metadata["connectionId"], connection);
+            Ok::<(), String>(())
+        },
+        |error| panic!("unexpected delivery failure: {error}"),
+    ));
+    assert!(host.bound(1));
+    host.disconnect().unwrap();
+
+    let (host, _) = connected();
+    host.choose(2, 23, "Library.zip".into(), false).unwrap();
+    let mut dialog = String::new();
+    assert!(host.publish_events_with(
+        |metadata, _| {
+            dialog = metadata["requestId"].as_str().unwrap().to_string();
+            host.resolve_dialog(&dialog, "provider", "").unwrap();
+            Err("dispatch failed after accepting the choice")
+        },
+        |_| {},
+    ));
+    let commands = host.take_commands();
+    assert!(matches!(commands.as_slice(), [Command::Save { request, doc: 2, destination, .. }]
+        if request == &dialog && destination == "provider"));
+    host.capture(&dialog, capture(2, 23), vec![8]).unwrap();
+    assert!(!host.publish_events_with(
+        |metadata, bytes| {
+            assert_eq!(metadata["type"], "save");
+            assert_eq!(metadata["requestId"], dialog);
+            assert_eq!(bytes, Some(vec![8]));
+            host.result(dialog.clone(), "saved".into(), "two".into()).unwrap();
+            Ok::<(), String>(())
+        },
+        |error| panic!("unexpected delivery failure: {error}"),
+    ));
+    let commands = host.take_commands();
+    assert!(matches!(commands.as_slice(), [Command::Result { capture: Capture { doc: 2, revision: 23, .. }, resource, status, .. }]
+        if resource == "two" && status == "saved"));
+    assert!(!host.bound(2), "delivery does not itself admit a durable application checkpoint");
+    assert!(!host.busy());
+    host.disconnect().unwrap();
+}
+
+#[test]
+fn disconnect_during_publish_preserves_a_terminal_in_the_current_batch() {
+    let (host, connection) = connected();
+    host.set_resources(&connection, vec![Resource { id: "one".into(), name: "One.zip".into(), updated_at: String::new() }]).unwrap();
+    let read = host.request_open("one").unwrap();
+    host.open(read.clone(), "One.zip".into(), vec![7]).unwrap();
+    let commands = host.take_commands();
+    assert!(matches!(commands.as_slice(), [Command::Open { request, .. }] if request == &read));
+    host.opened(&read, Some(capture(1, 23)), "");
+    assert!(!host.busy(), "ordinary owners are finished; only undelivered events retain registration");
+    let mut order = Vec::new();
+    let mut terminal = None;
+    assert!(!host.publish_events_with(
+        |metadata, _| {
+            order.push(metadata["type"].as_str().unwrap().to_string());
+            assert!(host.disconnect().is_err(), "the current batch still owns an undelivered terminal");
+            assert_eq!(host.snapshot()["connectionId"], connection);
+            assert!(host.bound(1));
+            if metadata["type"] == "openRequest" {
+                host.choose(2, 1, "Other.zip".into(), false).unwrap();
+                let mut nested = 0;
+                assert!(!host.publish_events_with(
+                    |choice, _| {
+                        assert_eq!(choice["type"], "saveDialog");
+                        host.resolve_dialog(choice["requestId"].as_str().unwrap(), "cancel", "").unwrap();
+                        assert!(host.disconnect().is_err(), "a nested drain cannot release the outer batch's registration");
+                        nested += 1;
+                        Ok::<(), String>(())
+                    },
+                    |error| panic!("unexpected nested delivery failure: {error}"),
+                ));
+                assert_eq!(nested, 1, "independent choices remain available during publication");
+                assert!(!host.pending_for(2));
+                assert!(host.disconnect().is_err());
+            } else {
+                assert_eq!(metadata["type"], "opened");
+                terminal = Some(metadata.clone());
+            }
+            Ok::<(), String>(())
+        },
+        |error| panic!("unexpected delivery failure: {error}"),
+    ));
+    assert_eq!(order, vec!["openRequest", "opened"]);
+    let terminal = terminal.unwrap();
+    assert_eq!(terminal["requestId"], read);
+    assert_eq!(terminal["resourceId"], "one");
+    assert_eq!(terminal["documentId"], "1");
+    assert_eq!(terminal["revision"], 23);
+    assert_eq!(terminal["connectionId"], connection);
+    assert_eq!(terminal["namespace"], "account-one");
+    assert!(!host.busy());
+    assert!(host.take_events().is_empty());
+    host.disconnect().unwrap();
+}
+
+#[test]
+fn disconnect_during_publish_preserves_the_retained_completion_batch() {
+    for kind in ["opened", "openFailed", "saveFailed"] {
+        let (host, connection) = connected();
+        let request = if kind == "saveFailed" {
+            let request = request(&host, 1);
+            host.resolve_dialog(&request, "provider", "").unwrap();
+            host.take_commands();
+            request
+        } else {
+            host.set_resources(&connection, vec![Resource { id: "one".into(), name: "One.zip".into(), updated_at: String::new() }]).unwrap();
+            let request = host.request_open("one").unwrap();
+            host.open(request.clone(), "One.zip".into(), vec![7]).unwrap();
+            host.take_commands();
+            request
+        };
+        host.take_events();
+        fill_event_queue(&host);
+        if kind == "saveFailed" {
+            host.failed(&request, "encoder failed");
+        } else {
+            host.opened(&request, (kind == "opened").then(|| capture(1, 1)), "decoder failed");
+        }
+        let mut attempted_disconnect = false;
+        let mut delivered = Vec::new();
+        let failed = host.publish_events_with(
+            |metadata, _| {
+                if metadata["type"] == "queued" && !attempted_disconnect {
+                    attempted_disconnect = true;
+                    assert!(host.disconnect().is_err(), "the next batch still owns an undelivered terminal");
+                    assert_eq!(host.snapshot()["connectionId"], connection);
+                } else if metadata["type"] == kind {
+                    delivered.push(metadata.clone());
+                }
+                Ok::<(), String>(())
+            },
+            |error| panic!("unexpected delivery failure: {error}"),
+        );
+        assert!(!failed && attempted_disconnect);
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0]["requestId"], request);
+        assert_eq!(delivered[0]["namespace"], "account-one");
+        assert_eq!(delivered[0]["connectionId"], connection);
+        assert!(!host.busy());
+        assert!(host.take_events().is_empty());
+        host.disconnect().unwrap();
+    }
+}
+
+#[test]
+fn full_command_queue_keeps_a_choice_until_retry_or_explicit_cancel() {
+    for destination in ["provider", "device"] {
+        for cancel in [false, true] {
+            let (host, connection) = connected();
+            host.choose(1, 23, "Chosen.deckcraft".into(), true).unwrap();
+            let choice = host.take_events().remove(0).metadata["requestId"].as_str().unwrap().to_string();
+            host.set_resources(&connection, vec![Resource { id: "queued-read".into(), name: "Queued.deckcraft".into(), updated_at: String::new() }])
+                .unwrap();
+            let mut reads = Vec::new();
+            // Real accepted read replies fill the ordinary inbox while this choice remains owned.
+            for _ in 0..super::MAX_PENDING {
+                let read = host.request_open("queued-read").unwrap();
+                host.open(read.clone(), "Queued.deckcraft".into(), vec![7]).unwrap();
+                reads.push(read);
+            }
+            assert_eq!(host.state().commands.len(), super::MAX_PENDING);
+            assert!(host.resolve_dialog(&choice, destination, "Retried.deckcraft").is_err());
+            assert!(host.state().dialogs.contains_key(&choice));
+            assert!(host.pending_for(1));
+            assert_eq!(host.state().commands.len(), super::MAX_PENDING, "a seventeenth ordinary command must not be admitted");
+            if cancel {
+                host.resolve_dialog(&choice, "cancel", "").unwrap();
+                assert!(!host.state().dialogs.contains_key(&choice));
+                assert!(!host.pending_for(1));
+                let commands = host.take_commands();
+                assert_eq!(commands.len(), super::MAX_PENDING);
+                assert!(commands.iter().all(|command| matches!(command, Command::Open { .. })));
+            } else {
+                let commands = host.take_commands();
+                assert_eq!(commands.len(), super::MAX_PENDING);
+                assert!(commands.iter().all(|command| matches!(command, Command::Open { .. })));
+                host.resolve_dialog(&choice, destination, "Retried.deckcraft").unwrap();
+                assert!(!host.state().dialogs.contains_key(&choice));
+                let mut commands = host.take_commands();
+                assert_eq!(commands.len(), 1);
+                let Command::Save { request, doc, destination: chosen, name, save_as } = commands.remove(0) else {
+                    panic!("the retained choice must produce its original Save after capacity is freed")
+                };
+                assert_eq!(request, choice);
+                assert_eq!(doc, 1);
+                assert_eq!(chosen, destination);
+                assert_eq!(name, "Retried.deckcraft");
+                assert!(save_as);
+                host.failed(&choice, "fixture complete");
+            }
+            for read in reads {
+                host.opened(&read, None, "fixture complete");
+            }
+            assert!(!host.publish_events_with(|_, _| Ok::<(), ()>(()), |_| {}));
+            assert!(!host.busy());
+            host.disconnect().unwrap();
+        }
+    }
+}
