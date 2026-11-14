@@ -198,7 +198,14 @@ fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen:
                 // Letter spacing is charged per glyph; a glyph of a multi-glyph cluster shares its
                 // cluster's box and is only a fraction of an em out.
                 run_glyphs.push((
-                    Placed { face: face.clone(), size: r.size, gid: g.gid, x: 0.0, y: pen_y - f64::from(g.y_offset) * k, run: ri },
+                    Placed {
+                        face: face.clone(),
+                        size: r.size,
+                        gid: g.gid,
+                        x: f64::from(g.x_offset) * k,
+                        y: pen_y - f64::from(g.y_offset) * k,
+                        run: ri,
+                    },
                     f64::from(g.x_advance) * k + r.spacing,
                 ));
             }
@@ -209,7 +216,7 @@ fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen:
             run_glyphs.reverse();
         }
         for (mut p, advance) in run_glyphs {
-            p.x = pen_x;
+            p.x += pen_x;
             placed.push(p);
             pen_x += advance;
         }
@@ -248,7 +255,11 @@ fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen:
         // A label can be stroked without a fill, and then it still draws.
         if let Some((paint, stroke)) = &run.stroke {
             set_flat(ctx, paint);
-            ctx.set_stroke(kurbo::Stroke::new((stroke.width / k.max(1e-9)).max(1e-4)).with_caps(stroke.start_cap).with_join(stroke.join));
+            let k = k.max(1e-9);
+            let pen = kurbo::Stroke::new((stroke.width / k).max(1e-4)).with_caps(stroke.start_cap).with_join(stroke.join);
+            let pen =
+                if stroke.dash_pattern.is_empty() { pen } else { pen.with_dashes(stroke.dash_offset / k, stroke.dash_pattern.iter().map(|d| d / k)) };
+            ctx.set_stroke(pen);
             ctx.stroke_path(path.as_ref());
         }
     }

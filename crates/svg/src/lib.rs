@@ -36,6 +36,9 @@ const MAX_SEGMENTS_TOTAL: usize = 2_000_000;
 const MAX_VISITS: usize = 500_000;
 /// Most stops read from one gradient.
 const MAX_STOPS: usize = 64;
+/// How many times `MAX_STOPS` children a gradient's scan may look at. A stop list longer than
+/// this is hostile rather than a gradient someone drew.
+const GRADIENT_SCAN: usize = 4;
 /// Largest coordinate or radius taken from a shape (a bigger one would only tessellate absurdly).
 const MAX_COORD: f64 = 1e5;
 /// Most segments one path may hold.
@@ -630,7 +633,9 @@ enum Axis {
 fn stops_of(chain: &[&Node]) -> Vec<(f64, Rgba)> {
     for n in chain {
         let mut out: Vec<(f64, Rgba)> = Vec::new();
-        for k in n.kids.iter().filter(|k| k.name == "stop").take(MAX_STOPS) {
+        // The scan itself is bounded: 90,000 unrelated children before the stops would otherwise
+        // be walked for every reference to the gradient.
+        for k in n.kids.iter().take(MAX_STOPS * GRADIENT_SCAN).filter(|k| k.name == "stop").take(MAX_STOPS) {
             let offset = k.attr("offset").map(str::to_string).or_else(|| style_value(k, "offset"));
             let offset = offset.as_deref().map(str::trim).and_then(|v| match v.strip_suffix('%') {
                 Some(p) => p.trim().parse::<f64>().ok().map(|p| p / 100.0),
@@ -794,7 +799,13 @@ impl Build {
             transform *= Affine::translate((at("x"), at("y")));
             // A nested `svg` establishes its own viewport: a view box maps into the width and
             // height it is given (the view box's own size when neither is written).
-            if let Some(vb) = view_box_of(node) {
+            // The picture's own root view box is mapped into the bitmap by the renderer, and a
+            // `use` of a view-boxed element was mapped by `use_node`, so only a nested `svg`
+            // maps its box here.
+            if depth > 0
+                && !via_use
+                && let Some(vb) = view_box_of(node)
+            {
                 let w = node.attr("width").and_then(attr::length).unwrap_or(vb[2]);
                 let h = node.attr("height").and_then(attr::length).unwrap_or(vb[3]);
                 if w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite() {
@@ -1356,6 +1367,38 @@ mod tests {
         assert!(patterned.skipped.patterns);
         let picture = svg("<image x='0' y='0' width='4' height='4' href='a.png'/>");
         assert!(picture.skipped.images);
+    }
+
+    #[test]
+    fn the_pictures_own_view_box_is_left_for_the_renderer() {
+        // A 10-unit box asking for 200 pixels stays in box units here; the renderer maps it, and
+        // mapping it here as well would draw it at 200 units.
+        let s = parse(b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' width='200' height='200'><rect width='10' height='10'/></svg>")
+            .expect("reads");
+        let b = s.items[0].path.bounding_box();
+        assert!((b.x1 - 10.0).abs() < 1e-9, "{}", b.x1);
+    }
+
+    #[test]
+    fn a_text_outline_keeps_its_dash_pattern() {
+        let s = svg("<text x='0' y='0' fill='none' stroke='black' stroke-width='1' stroke-dasharray='4 2'>A</text>");
+        let run = &s.items[0].text.as_ref().expect("text").runs[0];
+        let (_, pen) = run.stroke.as_ref().expect("stroked");
+        assert_eq!(pen.dash_pattern.as_slice(), &[4.0, 2.0][..]);
+    }
+
+    #[test]
+    fn a_gradient_scan_is_bounded() {
+        // 200 children that are not stops come before the two that are; the scan still finds them
+        // and stops there instead of walking an endless list for every reference.
+        let mut body = String::from("<defs><linearGradient id='g'>");
+        for _ in 0..200 {
+            body.push_str("<desc>x</desc>");
+        }
+        body.push_str("<stop offset='0' stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)'/>");
+        let s = svg(&body);
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("gradient") };
+        assert_eq!(g.stops.len(), 2);
     }
 
     #[test]
