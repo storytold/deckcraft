@@ -362,6 +362,98 @@ pub fn dropdown(ui: &mut Ui, label: &str, current: &str, width: f32, enabled: bo
     resp
 }
 
+/// A font size typed in a size field: "18", "18pt" or "10,5". `None` when it is not a positive,
+/// finite number; the engine clamps the range.
+pub fn parse_size(text: &str) -> Option<f64> {
+    let t = text.trim();
+    let t = t.len().checked_sub(2).filter(|&i| t.get(i..).is_some_and(|s| s.eq_ignore_ascii_case("pt"))).and_then(|i| t.get(..i)).unwrap_or(t);
+    let t = t.trim().replace(',', ".");
+    t.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0)
+}
+
+/// A number field with a drop-down list of common values (font size): the person can type a value
+/// or pick one. Returns the arrow's response and the text typed when it was committed (Enter, Tab
+/// or a click elsewhere) and differs from `current`; Escape drops what was typed.
+pub fn number_dropdown(
+    ui: &mut Ui,
+    id: &str,
+    label: &str,
+    current: &str,
+    width: f32,
+    enabled: bool,
+    add_items: impl FnOnce(&mut Ui),
+) -> (Response, Option<String>) {
+    let t = Tokens::get(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
+    let arrow = Rect::from_min_max(pos2(rect.max.x - 18.0, rect.min.y), rect.max);
+    let field = Rect::from_min_max(rect.min, pos2(arrow.min.x, rect.max.y));
+    let edit_id = ui.scope_id().with(("number_dropdown", id));
+    let was_focused = ui.memory(|m| m.has_focus(edit_id));
+    let mut text = ui.data(|d| d.get_temp::<String>(edit_id)).unwrap_or_else(|| current.to_string());
+    let hovered = ui.rect_contains_pointer(rect);
+    let border = Stroke::new(
+        1.0,
+        if was_focused {
+            t.accent
+        } else if hovered {
+            t.text_faint
+        } else {
+            t.border
+        },
+    );
+    // The field's frame is painted exactly on the text input (the arrow has its own box beside
+    // it), once the input's rectangle is known: a slot is reserved so the text is drawn over it.
+    let frame_slot = ui.painter().add(egui::Shape::Noop);
+    let out = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(field), |ui| {
+            ui.add_enabled(
+                enabled,
+                egui::TextEdit::singleline(&mut text)
+                    .id(edit_id)
+                    .frame(egui::Frame::NONE)
+                    .margin(egui::Margin::symmetric(5, 0))
+                    .font(theme::font(12.0))
+                    .text_color(if enabled { t.text } else { t.text_faint })
+                    .min_size(field.size())
+                    .desired_width(field.width())
+                    .align(egui::Align2::LEFT_CENTER),
+            )
+        })
+        .inner;
+    let left = CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 };
+    let right = CornerRadius { nw: 0, sw: 0, ne: 4, se: 4 };
+    ui.painter().set(frame_slot, egui::epaint::RectShape::new(out.rect, left, t.field_bg, border, egui::StrokeKind::Inside));
+    ui.painter().rect(arrow, right, t.field_bg, border, egui::StrokeKind::Inside);
+    out.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, enabled, label));
+    // Clicking in the field selects its text, so typing replaces the size.
+    if out.gained_focus() {
+        let mut state = egui::text_edit::TextEditState::load(ui.ctx(), edit_id).unwrap_or_default();
+        let end = egui::text::CCursor::new(text.chars().count());
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), end)));
+        state.store(ui.ctx(), edit_id);
+    }
+    let mut committed = None;
+    if out.has_focus() {
+        ui.data_mut(|d| d.insert_temp(edit_id, text.clone()));
+    }
+    if out.lost_focus() {
+        let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        if !escaped && text.trim() != current.trim() {
+            committed = Some(text.clone());
+        }
+        ui.data_mut(|d| d.remove_temp::<String>(edit_id));
+    } else if !out.has_focus() {
+        ui.data_mut(|d| d.remove_temp::<String>(edit_id));
+    }
+    let resp = ui.interact(arrow, edit_id.with("arrow"), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, format!("{label} list")));
+    chevron(&ui.painter_at(rect), pos2(arrow.center().x, rect.center().y), 3.0, t.text_dim);
+    egui::Popup::menu(&resp).width(width.max(60.0)).show(|ui| {
+        egui::ScrollArea::vertical().max_height(360.0).show(ui, add_items);
+    });
+    (resp, committed)
+}
+
 /// The drop-down for a `color_grid`: a menu that stays open when its hex field is clicked
 /// (egui menus close on any click inside). Picking a colour closes it (`color_grid` calls
 /// `ui.close()`); other buttons in it must close it themselves.
@@ -841,5 +933,25 @@ mod tests {
         let stored = Some(("old".to_string(), "old plus typing".to_string()));
         assert_eq!(text_draft(stored, "undone"), "undone");
         assert_eq!(text_draft(None, "fresh"), "fresh");
+    }
+}
+
+#[cfg(test)]
+mod size_field_tests {
+    use super::parse_size;
+
+    #[test]
+    fn a_typed_size_is_read_with_or_without_the_unit() {
+        assert_eq!(parse_size("18"), Some(18.0));
+        assert_eq!(parse_size(" 18 pt "), Some(18.0));
+        assert_eq!(parse_size("10,5"), Some(10.5));
+        assert_eq!(parse_size("96PT"), Some(96.0));
+    }
+
+    #[test]
+    fn things_that_are_not_a_size_are_refused() {
+        for bad in ["", "abc", "-4", "0", "NaN", "inf", "1e999", "18p", "18t", "18ptpt"] {
+            assert_eq!(parse_size(bad), None, "{bad:?}");
+        }
     }
 }

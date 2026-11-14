@@ -1267,9 +1267,10 @@ fn ribbon_dropdowns_are_named_by_purpose_even_when_empty() {
     h.state_mut().ui.tab = "Home".into();
     h.state_mut().run("edit.select", json!({"ids": []})).unwrap();
     h.run_steps(2);
-    for (name, key) in [("Font", "font"), ("Font size", "size")] {
-        assert!(h.query_by_role_and_label(Role::ComboBox, name).is_some(), "{name} is named while empty");
-        assert!(h.query_by_role_and_label(Role::ComboBox, key).is_none(), "{key} is not announced");
+    // The font is picked from a list; the size is a field you type in, with its list beside it.
+    for (role, name, key) in [(Role::ComboBox, "Font", "font"), (Role::TextInput, "Font size", "size")] {
+        assert!(h.query_by_role_and_label(role, name).is_some(), "{name} is named while empty");
+        assert!(h.query_by_role_and_label(role, key).is_none(), "{key} is not announced");
     }
 }
 

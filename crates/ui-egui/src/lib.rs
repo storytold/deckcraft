@@ -473,6 +473,8 @@ mod replacefonts_tests;
 #[cfg(test)]
 mod reuse_picker_tests;
 #[cfg(test)]
+mod sizefield_tests;
+#[cfg(test)]
 mod slide_size_tests;
 #[cfg(test)]
 mod split_button_tests;
