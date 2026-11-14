@@ -3,7 +3,7 @@ use super::{FontFace, UnicodeSegmentation};
 /// Is `family` a symbol font (characters at U+F000 + code)?
 pub(crate) fn is_symbol_font(family: &str) -> bool {
     let f = family.to_ascii_lowercase();
-    f.starts_with("wingdings") || f == "symbol" || f.starts_with("webdings") || f.starts_with("marlett")
+    f.starts_with("wingdings") || f == "symbol" || f.starts_with("webdings") || f.starts_with("marlett") || f.starts_with("monotype sorts")
 }
 
 /// Does `face` draw the symbol-font character `c` (a U+F0xx private-use code)? Either directly at
@@ -277,7 +277,11 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
     }
     // Only the legacy symbol fonts: "Noto Sans Symbols" and the like are Unicode fonts whose
     // characters (❑ ❖) are drawn as they are. Private-use codes are mapped only when no font is named.
-    if f.contains("wingdings") || f == "symbol" || (font.is_none() && ('\u{f000}'..='\u{f0ff}').contains(&first)) {
+    if f.contains("wingdings")
+        || (f.starts_with("monotype sorts") && ((first as u32) < 0x100 || ('\u{f000}'..='\u{f0ff}').contains(&first)))
+        || f == "symbol"
+        || (font.is_none() && ('\u{f000}'..='\u{f0ff}').contains(&first))
+    {
         let code = (first as u32) & 0xff;
         // Wingdings 2 and 3 put different shapes at the same codes.
         if f.starts_with("wingdings 2") {
@@ -304,6 +308,8 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
             return m.to_string();
         }
         let m = match code {
+            0x6d if f.starts_with("monotype sorts") => '○',
+            0xf0 if f.contains("wingdings") => '⇨',
             0xa7 => '▪',
             0xd8 => '➢',
             0xfc => '✓',
