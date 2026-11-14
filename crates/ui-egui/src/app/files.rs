@@ -182,7 +182,7 @@ impl SlideApp {
         format!("{name}.{ext}")
     }
 
-    /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `pptx`,
+    /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `jpegAll`, `pptx`,
     /// `deckcraft`, `outline`) through `file.export`: the save picker on the desktop, a download
     /// on the web. `extra` adds `file.export` params (the PDF's layout, slides…). The
     /// presentation keeps its own file. Returns whether a file was written or handed over.
@@ -193,6 +193,7 @@ impl SlideApp {
             "png" => ("png", "png", false),
             "pngAll" => ("png", "png", true),
             "jpeg" | "jpg" => ("jpg", "jpeg", false),
+            "jpegAll" => ("jpg", "jpeg", true),
             "pptx" => ("pptx", "pptx", false),
             "outline" | "txt" => ("txt", "outline", false),
             "rtf" => ("rtf", "rtf", false),
