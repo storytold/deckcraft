@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-07 · **Change:** trivial (a slide whose relationship is missing is reported in `lostSlides`; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-13 · **Change:** minor (SVG pictures insert, render and import their vector original; export keeps no raster fallback; previous: trivial (#1910: a slide whose relationship is missing is reported in `lostSlides`, and slide lists over 10,000 entries are refused; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -53,7 +53,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Kind | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
 | PNG, JPEG, GIF (animated), BMP, TIFF, WebP | yes | yes | `image` 0.25; animated GIFs play since #39 |
-| SVG | yes (with PNG fallback) | **no** | The PNG fallback shows; SVG files can't be inserted |
+| SVG | yes (with PNG fallback) | yes | Inserted files and PowerPoint icons draw as vectors: paths, basic shapes, groups, `use`, nested `svg` viewports, solid and gradient fills and strokes with dash patterns, text with letter spacing and right-to-left runs, and markers; read by `crates/svg`, drawn by `crates/render/src/svg.rs`. Filters, masks, clip paths, patterns and embedded images are left out, and a picture that uses one keeps its raster fallback as the visible copy. Export writes the vector with the PNG fallback older readers need |
 | EMF / WMF | yes | partial | Drawn as vectors (paths, pens, pattern and hatch brushes, bitmaps, text in the document's fonts with the file's character advances). Rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ only pictures play every EMF+ drawing record (brushes incl. gradients and textures, pens, paths, curves, images, strings, transforms, clipping; see `crates/metafile/src/emfplus.rs` for the few exceptions). Legacy OLE objects (VML preview) and ActiveX controls show their pictures |
 | HEIC | yes (macOS) | no | |
 | Audio: MP3, AAC/M4A, ALAC, WAV, AIFF, CAF, FLAC, Ogg Vorbis, Opus | yes (Ogg/Opus partly) | yes | Pure-Rust decoders in `crates/media`; Opus from craft-audio (craft-libs) |
@@ -113,12 +113,14 @@ the round trip even though DeckCraft doesn't model it.
    tables, charts, animations, media, sections and masters/layouts among them. Still needed:
    render checks and a PowerPoint reference render for each (owner runs PowerPoint).
 2. The round-trip losses above (#70, #74).
-3. SVG rendering. EMF+ records inside EMF/WMF are still not drawn.
+3. EMF+ records inside EMF/WMF are still not drawn, and an SVG picture exports without the PNG
+   fallback PowerPoint writes next to the vector.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | SVG pictures insert, draw as vectors and import their vector original from `asvg:svgBlip`; export keeps no raster fallback |
 | 2026-11-07 | trivial | A slide-list entry whose relationship is missing is reported in `lostSlides` like an unreadable slide part, so the deck opens as a repaired copy; slide lists over 10,000 entries are refused with an import-limit error rather than silently truncated (#1910) |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
 | 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |

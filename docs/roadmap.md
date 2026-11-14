@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (SVG pictures read and drawn as vectors, inserted at their own size and imported from `asvg:svgBlip`; only the export fallback remains; previous: trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -31,7 +31,7 @@ points and lead the beta plan.
    theme effects, fills, bevels, connectors, 3-D models and animation bounce end, and keeps notes-
    and handout-master text, paragraph defaults and action sounds. Still open: decks from outside
    this repo, media options on save (#74), relationship-bearing SmartArt and OLE
-   (#203), EMF+ records and SVG. 31–55 h.
+   (#203), EMF+ records and the SVG export fallback. 31–55 h.
 3. **Review the open PRs:** equations (#55), browser print (#66), macOS
    open-with (#68), font lookup (#80), Ukrainian (#34, after the catalog exists). 4–8 h.
 
@@ -44,7 +44,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 1 | Stability: #60, #40/#59, soak and fuzz the editor | 10–20 | Stability 60 → 85% |
 | 2 | PPTX real-deck corpus and fixes | 20–35 | File formats 58 → 75% |
 | 3 | PPTX round-trip losses (#70, #74), `.potx`/`.ppsx`/`.pptm` content types, MicroType embedded-font subsets | 8–15 | File formats → 80% |
-| 4 | EMF/WMF and SVG pictures | 8–14 | File formats, Pictures |
+| 4 | SVG export fallback and EMF/WMF leftovers | 4–8 | File formats, Pictures |
 | 5 | Vector PDF, printing | 10–16 | File formats, Files |
 | 6 | Localization infrastructure + zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
 | 7 | Font weights (#69), image paste on Windows (#1414), Tab in text (#78) | 6–11 | Features |
@@ -79,7 +79,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M2 | PPTX import/export | done for generated decks | real-deck corpus, round-trip losses |
 | M3 | Shapes complete | mostly | edit points, Format Shape pane depth, bevel/3-D |
 | M4 | Design | mostly | Notes/Handout masters, variants, Designer |
-| M5 | Pictures and media | mostly | SVG/EMF, remove background, compress, icons, WMA/WMV |
+| M5 | Pictures and media | mostly | SVG export fallback, EMF leftovers, remove background, compress, icons, WMA/WMV |
 | M6 | Transitions and animations | mostly | Animation Pane timeline, remaining effects, transition sounds |
 | M7 | Slide show | mostly | second-display placement, laser, record |
 | M8 | Tables and charts | partly | chart data grid, elements, chartex types, draw table |
@@ -113,6 +113,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original; the beta plan's SVG item shrinks to the export fallback, and M5 keeps EMF leftovers |
 | 2026-10-22 | trivial | Beta item 9: Animation Pane ▸ Play From landed, the item keeps effect options (3–6 h) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |
