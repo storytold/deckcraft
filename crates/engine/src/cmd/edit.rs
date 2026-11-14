@@ -119,6 +119,12 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             })
         })
         .collect();
+    // A shape in a group is copied with the box it is drawn in, so it pastes where it was seen.
+    for sh in &mut shapes {
+        if let Some(x) = sh.xfrm.and_then(|x| box_on_slide(&st.doc, &st.selection, st.shapes(), sh.id, &x)) {
+            sh.xfrm = Some(x);
+        }
+    }
     // Copying is the last chance to read what a placeholder inherits: a cut removes it, and the
     // paste can be in another deck. Slide Master view pastes the originals instead.
     let placeholders: Vec<Shape> = shapes.iter().filter(|x| x.ph.is_some()).cloned().collect();
@@ -144,6 +150,39 @@ pub(crate) fn detach_on_slide(doc: &deckcraft_model::Presentation, sel: &crate::
     {
         shapes.iter_mut().for_each(|sh| deckcraft_model::resolve::detach_placeholder(&ctx, sh));
     }
+}
+
+/// Where shape `id` is drawn on the slide when it is inside a group: `x`, its box in its group's
+/// space, mapped out through each group around it, as Ungroup places a freed shape. `None` for a
+/// shape on the top level or not found. A turned shape in a group stretched more one way than the
+/// other is drawn skewed, which a box cannot hold, so it gets the unskewed box Ungroup gives it.
+fn box_on_slide(
+    doc: &deckcraft_model::Presentation,
+    sel: &crate::Selection,
+    shapes: &[Shape],
+    id: ShapeId,
+    x: &deckcraft_geom::Xfrm,
+) -> Option<deckcraft_geom::Xfrm> {
+    fn rec(
+        doc: &deckcraft_model::Presentation,
+        sel: &crate::Selection,
+        shapes: &[Shape],
+        id: ShapeId,
+        x: &deckcraft_geom::Xfrm,
+        depth: usize,
+    ) -> Option<deckcraft_geom::Xfrm> {
+        if depth > 64 {
+            return None;
+        }
+        shapes.iter().find_map(|sh| {
+            let deckcraft_model::ShapeKind::Group { children, child } = &sh.kind else {
+                return None;
+            };
+            let inner = if children.iter().any(|c| c.id == id) { *x } else { rec(doc, sel, children, id, x, depth + 1)? };
+            Some(super::arrange::child_to_parent(&xfrm_of(doc, sel, sh), child, &inner))
+        })
+    }
+    rec(doc, sel, shapes, id, x, 0)
 }
 
 fn copying_caret(s: &Session) -> bool {
@@ -558,6 +597,16 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let (new_ids, made) = s.edit(|doc, sel| {
         let list = super::current_shapes(doc, sel).cloned().unwrap_or_default();
         let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
+        // A shape inside a group is copied into that group, with the map from the group's space onto
+        // the slide so that its copy is offset on the slide as a top-level copy is.
+        let top = copies.len();
+        let mut to_slide = vec![None; top];
+        for id in grouped_targets(&list, &ids) {
+            if let Some((m, a)) = crate::connect::locate(doc, sel, &list, id) {
+                copies.push(m.clone());
+                to_slide.push(Some(a));
+            }
+        }
         let sources: Vec<ShapeId> = copies.iter().map(|c| c.id).collect();
         let boxes: Vec<_> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
         detach_on_slide(doc, sel, &mut copies);
@@ -569,10 +618,12 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
             })
             .and_then(|(_, _, pairs)| {
                 let (src, copy) = pairs.first()?;
-                let a = xfrm_of(doc, sel, list.iter().find(|x| x.id == *src)?);
-                let b = xfrm_of(doc, sel, list.iter().find(|x| x.id == *copy)?);
-                let d = (b.x - a.x, b.y - a.y);
-                (d.0.is_finite() && d.1.is_finite()).then_some(d)
+                // Measured on the slide, so the copy of a shape in a group repeats its drawn move.
+                let (a, to_a) = crate::connect::locate(doc, sel, &list, *src)?;
+                let (b, to_b) = crate::connect::locate(doc, sel, &list, *copy)?;
+                let (a, b) = (xfrm_of(doc, sel, a), xfrm_of(doc, sel, b));
+                let d = to_b * deckcraft_geom::Point::new(b.x, b.y) - to_a * deckcraft_geom::Point::new(a.x, a.y);
+                (d.x.is_finite() && d.y.is_finite()).then_some((d.x, d.y))
             })
             .unwrap_or((off, off));
         reid("edit.duplicate", doc, &mut copies)?;
@@ -587,7 +638,8 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
             rename_automatic(c, &mut taken, count);
             count += 1;
         });
-        for (c, b) in copies.iter_mut().zip(boxes) {
+        for ((c, b), to) in copies.iter_mut().zip(boxes).zip(&to_slide) {
+            let (dx, dy) = to.map_or((dx, dy), |a| offset_in(a, dx, dy));
             let mut x = b;
             x.x += dx;
             x.y += dy;
@@ -598,13 +650,46 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let new_ids: Vec<ShapeId> = copies.iter().map(|c| c.id).collect();
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("edit.duplicate", "no slide"))?;
-        shapes.extend(copies);
+        let mut copies = copies.into_iter();
+        shapes.extend(copies.by_ref().take(top));
+        // A member's copy goes last among its group's children, as a top-level copy goes last on the slide.
+        for (c, src) in copies.zip(sources.iter().skip(top)) {
+            deckcraft_model::sibling_list_mut(shapes, *src).ok_or_else(|| bad("edit.duplicate", "no such shape"))?.push(c);
+        }
         sel.shapes = new_ids.clone();
         let made = (sel.slide, sel.target, sources.into_iter().zip(new_ids.iter().copied()).collect());
         Ok((new_ids, made))
     })?;
     s.doc_mut()?.last_duplicate = Some(made);
     Ok(json!({"ids": new_ids}))
+}
+
+/// The shapes in `ids` that are inside groups, in drawing order, without those in a group that is
+/// in `ids` too: they are copied along with it.
+fn grouped_targets(list: &[Shape], ids: &[ShapeId]) -> Vec<ShapeId> {
+    fn rec(shapes: &[Shape], ids: &[ShapeId], nested: bool, out: &mut Vec<ShapeId>, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for sh in shapes {
+            if !ids.contains(&sh.id) {
+                rec(sh.children(), ids, true, out, depth + 1);
+            } else if nested {
+                out.push(sh.id);
+            }
+        }
+    }
+    let mut out = vec![];
+    rec(list, ids, false, &mut out, 0);
+    out
+}
+
+/// The offset in the space `to_slide` maps onto the slide that moves a shape by (`dx`, `dy`) on
+/// the slide. A group with no width or height draws nothing, and the offset stays as it is.
+fn offset_in(to_slide: deckcraft_geom::Affine, dx: f64, dy: f64) -> (f64, f64) {
+    let back = to_slide.inverse();
+    let v = back * deckcraft_geom::Point::new(dx, dy) - back * deckcraft_geom::Point::ZERO;
+    if v.x.is_finite() && v.y.is_finite() { (v.x, v.y) } else { (dx, dy) }
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
