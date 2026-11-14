@@ -195,6 +195,38 @@ fn preferences_cancel_restores_the_interface_language() {
     assert!(harness.query_by_label("File").is_some());
 }
 
+/// Diagram captions follow main while saved tab identifiers stay compatible.
+#[test]
+fn diagram_names_follow_upstream_without_changing_the_saved_tab() {
+    use egui_kittest::kittest::Queryable;
+    for (language, title) in [("en", "Choose a Diagram Graphic"), ("ja", "図表の選択")] {
+        if language == "ja" && !i18n::japanese_font_input_available() {
+            continue;
+        }
+        let mut session = Session::with_new();
+        deckcraft_engine::cmd::smartart::insert(&mut session, "process", Vec::new()).unwrap();
+        let mut app = SlideApp::new(session, Services::default());
+        app.run("app.language", json!({"language": language})).unwrap();
+        app.ui.tab = "SmartArt Design".into();
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1600.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Diagram Design").is_some());
+        assert!(harness.query_by_label("SmartArt Design").is_none());
+        assert_eq!(harness.state().ui.tab, "SmartArt Design");
+        preview(&mut harness, &format!("{language}-diagram-tab"));
+        harness.state_mut().dialog = Some(crate::dialogs::Dialog::new("smartart"));
+        harness.run_steps(3);
+        assert!(harness.query_by_label(title).is_some());
+        preview(&mut harness, &format!("{language}-diagram-dialog"));
+    }
+}
+
 /// Rendering another interface language must preserve user-authored document and toolbar data.
 #[test]
 fn interface_language_preserves_document_and_custom_toolbar_labels() {

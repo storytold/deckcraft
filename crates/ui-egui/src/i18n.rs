@@ -265,7 +265,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("dialog.smartart.matrix", "Matrix", "マトリックス"),
     ("dialog.smartart.process", "Basic Process", "基本の手順図"),
     ("dialog.smartart.pyramid", "Pyramid", "ピラミッド"),
-    ("dialog.smartart.title", "Choose a SmartArt Graphic", "SmartArtの選択"),
+    ("dialog.smartart.title", "Choose a Diagram Graphic", "図表の選択"),
     ("dialog.spelling.title", "Spelling", "スペルチェック"),
     ("dialog.symbol.arrows", "Arrows", "矢印"),
     ("dialog.symbol.currency", "Currency", "通貨"),

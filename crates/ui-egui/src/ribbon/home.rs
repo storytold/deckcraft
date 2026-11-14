@@ -406,7 +406,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         }
                     }
                 });
-                let r = icon_toggle(ui, Icon::SmartArt, "Convert to SmartArt", enabled(app, "smartArt.fromText"), false);
+                let r = icon_toggle(ui, Icon::SmartArt, "Convert to Diagram", enabled(app, "smartArt.fromText"), false);
                 egui::Popup::menu(&r).show(|ui| smartart_gallery(app, ui, "smartArt.fromText", json!({}), "", ("", ""), None));
                 if ui.add_enabled(en, egui::Button::new("Paragraph…").min_size(vec2(88.0, 22.0))).on_hover_text("Paragraph").clicked() {
                     run(app, "format.paragraphDialog", json!({}));
