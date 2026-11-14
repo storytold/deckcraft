@@ -132,6 +132,11 @@ echo 'app-office/deckcraft-bin ~amd64' >> /etc/portage/package.accept_keywords/d
 emerge --ask app-office/deckcraft-bin
 ```
 
+### Local file dialog history
+
+Desktop file dialogs share the last selected local folder. DeckCraft stores this path beside the
+recent files list in the local `ui.json` settings file.
+
 ### Logs
 
 The desktop app writes its `log` records to standard error and to `logs/deckcraft.log` in the

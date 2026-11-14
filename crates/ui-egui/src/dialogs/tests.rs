@@ -81,7 +81,7 @@ fn export_dialog_writes_an_animated_gif() {
     let suggested = std::rc::Rc::new(RefCell::new(String::new()));
     let seen = suggested.clone();
     let services = crate::Services {
-        pick_save: Some(Box::new(move |s: &str| {
+        pick_save: Some(Box::new(move |s: &str, _| {
             *seen.borrow_mut() = s.to_string();
             Some(picked.clone())
         })),
@@ -139,7 +139,7 @@ fn export_dialog_writes_a_png_with_a_transparent_background() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("slide.png");
     let picked = path.to_string_lossy().to_string();
-    let services = crate::Services { pick_save: Some(Box::new(move |_: &str| Some(picked.clone()))), ..Default::default() };
+    let services = crate::Services { pick_save: Some(Box::new(move |_: &str, _| Some(picked.clone()))), ..Default::default() };
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());

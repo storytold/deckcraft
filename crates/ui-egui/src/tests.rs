@@ -206,7 +206,7 @@ fn change_picture_replaces_the_selected_picture() {
     // Desktop: the file dialog returns a path.
     let blue = svg("blue");
     let services = Services {
-        pick_open: Some(Box::new(|_: &str| Some("b.svg".into()))),
+        pick_open: Some(Box::new(|_: &str, _| Some("b.svg".into()))),
         read: Some(Box::new(move |_: &str| Ok(blue.clone()))),
         ..Default::default()
     };
