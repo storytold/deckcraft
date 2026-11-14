@@ -5,15 +5,16 @@ use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Shape, ShapeKind};
 use serde_json::{Value, json};
 
+use super::picture_facts::{self, Drawn};
 use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "document.inspect", "Inspect Presentation", [], None, "{} → slides with titles, layouts, shape counts; selection; size; theme", has_doc, document),
-        cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?} → the slide's shapes with ids, kinds, boxes, text, fills, animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
+        cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?} → the slide's shapes with ids, kinds, boxes, text, fills, animations, transition, notes (text, and notesBody with its formatting); pictures, group members too, add pixels: [w, h] from the image, ppi: [across, down] as drawn after the crop, and aspect: {source (of the part the crop shows), shown (as drawn)}; pixels, ppi and aspect.source are null when the image states no pixel size (SVG, WMF, EMF, unreadable bytes), and ppi and aspect.shown for a tiled picture", has_doc, slide),
         cmd!(query "slide.actions", "Inspect Slide Actions", [], None, "{index?} → {index, slideId, actions: [{owner, event, type, target, hyperlink}]}; lists shape click/hover actions and text-run links/hover actions (including table cells) without executing them", has_doc, actions),
-        cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → full shape JSON plus its effective box", has_doc, shape),
+        cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → full shape JSON plus its effective box; a picture adds picture: {pixels, ppi, aspect} as in slide.inspect", has_doc, shape),
         cmd!(query "commands.list", "List Commands", [], None, "{filter?: substring} → [{id, label, params, enabled}]", always, commands),
     ]
 }
@@ -49,6 +50,11 @@ fn document(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
+    summary(ctx, ctx.map(|c| Drawn::on_slide(c.pres)), sh, depth)
+}
+
+/// [`shape_summary`], with `drawn` (when known) giving pictures their facts as drawn.
+fn summary(ctx: Option<&Ctx>, drawn: Option<Drawn>, sh: &Shape, depth: usize) -> Value {
     let x = ctx.map(|c| resolve::xfrm(c, sh)).or(sh.xfrm).unwrap_or_default();
     let fill = ctx.map(|c| {
         let (f, ph) = resolve::fill(c, sh);
@@ -95,8 +101,14 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
             ShapeKind::Chart(c) => {
                 o.insert("chart".into(), json!({"type": c.kind.label(), "title": c.title, "categories": c.categories, "series": c.series.iter().map(|s| json!({"name": s.name, "values": s.values})).collect::<Vec<_>>()}));
             }
-            ShapeKind::Group { children, .. } if depth < 8 => {
-                o.insert("children".into(), Value::Array(children.iter().map(|c| shape_summary(None, c, depth + 1)).collect()));
+            ShapeKind::Group { children, child } if depth < 8 => {
+                let inner = drawn.map(|d| d.inside(&x, child));
+                o.insert("children".into(), Value::Array(children.iter().map(|c| summary(None, inner, c, depth + 1)).collect()));
+            }
+            ShapeKind::Picture { fill } => {
+                if let Some(d) = drawn {
+                    d.picture(fill, &x).insert_into(o);
+                }
             }
             ShapeKind::Media(m) => {
                 o.insert("media".into(), json!({"id": m.media, "video": m.video, "autoplay": m.autoplay, "loop": m.loop_play}));
@@ -207,7 +219,13 @@ fn shape(s: &mut Session, p: &Value) -> Result<Value> {
         id_param(p, "id", "shape.inspect")?.or_else(|| st.selection.shapes.first().copied()).ok_or_else(|| bad("shape.inspect", "missing `id`"))?;
     let sh = st.shape(id).ok_or_else(|| bad("shape.inspect", format!("no shape {id}")))?;
     let x = xfrm_of(&st.doc, &st.selection, sh);
-    Ok(json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x}))
+    let mut out = json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x});
+    if let Some(picture) = picture_facts::for_shape(&st.doc, st.shapes(), sh, &x)
+        && let Some(o) = out.as_object_mut()
+    {
+        o.insert("picture".into(), picture);
+    }
+    Ok(out)
 }
 
 fn commands(s: &mut Session, p: &Value) -> Result<Value> {

@@ -214,9 +214,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "insert_picture",
             "Insert picture",
-            "Insert a picture from a file path or base64 data, optionally at a box.",
+            "Insert a picture from a file path or base64 data, optionally at a box (x, y, w, h). fit says how the picture fills the box: stretch fills it as given (the default), contain shrinks the box to the picture's aspect, centred, and cover crops the picture to the box's aspect (the default for a selected empty placeholder filled without a box). inspect_slide reports each picture's pixels, ppi as drawn and aspect; run_command review.pictures lists stretched and low-resolution pictures.",
             obj(
-                json!({"path": string("Image file path"), "data": string("Base64 image data (instead of path)"), "name": string("File name for data"), "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height")}),
+                json!({"path": string("Image file path"), "data": string("Base64 image data (instead of path)"), "name": string("File name for data"), "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height"), "fit": {"type": "string", "enum": ["stretch", "contain", "cover"], "description": "How the picture fills the box (default stretch; cover for a selected empty placeholder filled without a box); contain and cover need a raster image (not SVG)"}}),
                 &[],
             ),
             false,
