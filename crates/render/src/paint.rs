@@ -257,19 +257,32 @@ fn covers(tile: Rect, bounds: Rect) -> bool {
     tile.x0 <= bounds.x0 + e && tile.y0 <= bounds.y0 + e && tile.x1 >= bounds.x1 - e && tile.y1 >= bounds.y1 - e
 }
 
-/// The colour at `t` among the sorted `stops`, linear in sRGB between the two around it (the first
-/// or last colour beyond the ends).
+/// The color at `t` among the sorted `stops`, linear in premultiplied sRGB between the two around
+/// it, as peniko interpolates the untiled gradient (the first or last color beyond the ends).
 fn color_at(stops: &[(f64, Rgba)], t: f64) -> Rgba {
     let after = stops.partition_point(|s| s.0 < t);
     match (after.checked_sub(1).and_then(|i| stops.get(i)), stops.get(after)) {
         (Some(a), Some(b)) => {
             let k = if b.0 - a.0 > 1e-12 { (t - a.0) / (b.0 - a.0) } else { 1.0 };
-            a.1.lerp(b.1, k)
+            premultiplied_lerp(a.1, b.1, k)
         }
         (Some(a), None) => a.1,
         (None, Some(b)) => b.1,
         (None, None) => Rgba::BLACK,
     }
+}
+
+/// `a` to `b` at `k` (0 to 1) with the color channels weighted by alpha, returned with straight
+/// alpha. A fully transparent result keeps the straight mix of the channels.
+fn premultiplied_lerp(a: Rgba, b: Rgba, k: f64) -> Rgba {
+    let k = if k.is_finite() { k.clamp(0.0, 1.0) } else { 0.0 };
+    let (aa, ba) = (a.a as f64, b.a as f64);
+    let alpha = aa + (ba - aa) * k;
+    if alpha < 0.5 {
+        return Rgba { a: 0, ..a.lerp(b, k) };
+    }
+    let m = |x: u8, y: u8| ((x as f64 * aa + (y as f64 * ba - x as f64 * aa) * k) / alpha).round().clamp(0.0, 255.0) as u8;
+    Rgba { r: m(a.r, b.r), g: m(a.g, b.g), b: m(a.b, b.b), a: alpha.round().clamp(0.0, 255.0) as u8 }
 }
 
 /// Longest side of a tiled gradient's rasterised tile, in output pixels (bilinear sampling smooths

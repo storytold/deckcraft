@@ -422,6 +422,38 @@ fn a_linear_gradient_spans_its_tile_rect() {
 }
 
 #[test]
+fn a_tiled_gradient_mixes_transparent_stops_as_the_untiled_one_does() {
+    use deckcraft_color::ColorTransform;
+    use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+    // Transparent red to opaque blue (three stops, so the ramp is not expanded). The tile is the
+    // left half, so its pixel at x = 190 has the color position of the full-width ramp's x = 280.
+    let blue = Rgba::rgb(0, 0, 255);
+    let stops = vec![
+        GradientStop { pos: 0.0, color: ColorRef::rgb(RED).with(ColorTransform::Alpha(0)) },
+        GradientStop { pos: 0.9, color: ColorRef::rgb(blue) },
+        GradientStop { pos: 1.0, color: ColorRef::rgb(blue) },
+    ];
+    let shape = |tile: [f64; 4]| Shape {
+        id: ShapeId(21),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 100.0)),
+        fill: Some(Fill::Gradient(Gradient {
+            stops: stops.clone(),
+            shape: GradientShape::Linear { angle: 0.0, scaled: false },
+            rotate_with_shape: true,
+            tile,
+            flip: None,
+        })),
+        line: no_line(),
+        ..Default::default()
+    };
+    let untiled = render(vec![shape([0.0; 4])]).pixel(280, 150);
+    let tiled = render(vec![shape([0.0, 0.0, 0.5, 0.0])]).pixel(190, 150);
+    // No red from the transparent stop: half-transparent blue over white.
+    assert!(untiled[0] < 150, "untiled {untiled:?}");
+    assert!((0..3).all(|i| (i32::from(tiled[i]) - i32::from(untiled[i])).abs() <= 10), "tiled {tiled:?}, untiled {untiled:?}");
+}
+
+#[test]
 fn a_3d_pictures_border_stays_centred_on_its_edge() {
     let mut p = picture_deck(Some(Line::solid(ColorRef::rgb(RED), 8.0)));
     let s = std::sync::Arc::make_mut(&mut p.slides[0]);
