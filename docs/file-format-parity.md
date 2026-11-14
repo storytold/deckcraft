@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-13 · **Change:** minor (SVG pictures insert, render and import their vector original; export keeps no raster fallback; previous: trivial (#1910: a slide whose relationship is missing is reported in `lostSlides`, and slide lists over 10,000 entries are refused; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-14 · **Change:** minor (SVG pictures are saved with a PNG fallback beside the vector, and their density matches the picture; previous: minor (SVG pictures insert, render and import their vector original; export keeps no raster fallback; previous: trivial (#1910: a slide whose relationship is missing is reported in `lostSlides`, and slide lists over 10,000 entries are refused; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -113,13 +113,14 @@ the round trip even though DeckCraft doesn't model it.
    tables, charts, animations, media, sections and masters/layouts among them. Still needed:
    render checks and a PowerPoint reference render for each (owner runs PowerPoint).
 2. The round-trip losses above (#70, #74).
-3. EMF+ records inside EMF/WMF are still not drawn, and an SVG picture exports without the PNG
-   fallback PowerPoint writes next to the vector.
+3. EMF+ records inside EMF/WMF are still not drawn, and an SVG picture that uses a filter, mask,
+   clip path, pattern or embedded image draws without it, so import keeps its raster copy visible.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | minor | SVG pictures are saved with a PNG fallback beside the vector, and the fallback's density matches the picture, so tiled fills keep their size |
 | 2026-11-13 | minor | SVG pictures insert, draw as vectors and import their vector original from `asvg:svgBlip`; export keeps no raster fallback |
 | 2026-11-07 | trivial | A slide-list entry whose relationship is missing is reported in `lostSlides` like an unreadable slide part, so the deck opens as a repaired copy; slide lists over 10,000 entries are refused with an import-limit error rather than silently truncated (#1910) |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |

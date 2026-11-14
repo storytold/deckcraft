@@ -75,10 +75,16 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
 /// The picture drawn into a PNG whose longer side is `side` pixels, for the raster fallback an
 /// exported package carries next to the vector. `None` when the document doesn't parse.
 pub fn rasterize_png(bytes: &[u8], side: u32) -> Option<Vec<u8>> {
+    rasterize_png_at(bytes, side, 96.0)
+}
+
+/// A picture rendered as a PNG that says it is `dpi` dense. A picture written as a raster copy of
+/// a vector is drawn at the vector's own size, which is what the density tells a reader.
+pub fn rasterize_png_at(bytes: &[u8], side: u32, dpi: f64) -> Option<Vec<u8>> {
     let img = rasterize(bytes, side)?;
     let mut buf = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).ok()?;
-    Some(buf)
+    Some(crate::images::stamp_png_dpi(&buf, dpi))
 }
 
 /// The bitmap size and the user-units → pixels transform for a target `side`.
@@ -363,6 +369,21 @@ fn pen_at(p: &kurbo::Stroke, k: f64, path: &BezPath) -> kurbo::Stroke {
         s = s.with_dashes(p.dash_offset, crate::stroke::limit_dash_count(path, pattern));
     }
     s
+}
+
+#[cfg(test)]
+mod dpi_tests {
+    use super::*;
+
+    #[test]
+    fn a_fallback_says_how_dense_it_is() {
+        let svg = br#"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' fill='red'/></svg>"#;
+        let png = rasterize_png_at(svg, 512, 2048.0).expect("renders");
+        // 2048 dpi is 2048 / 0.0254 = 80629.9 dots per metre, rounded.
+        let at = png.windows(4).position(|w| w == b"pHYs").expect("a pHYs chunk");
+        let ppm = u32::from_be_bytes([png[at + 4], png[at + 5], png[at + 6], png[at + 7]]);
+        assert!((80630..=80631).contains(&ppm), "{ppm}");
+    }
 }
 
 #[cfg(test)]

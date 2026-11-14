@@ -29,10 +29,15 @@ enum Vector {
     Linked,
     /// A part declared as SVG whose bytes do not parse.
     Broken,
+    /// An SVG that parses but draws through a filter we do not draw.
+    Filtered,
 }
 
 /// Broken SVG bytes: an `svg` root that never closes.
 const BROKEN: &[u8] = b"<svg";
+
+/// An SVG that draws through a filter we do not draw, so it would show incomplete.
+const FILTERED: &str = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><filter id='f'><feGaussianBlur stdDeviation='2'/></filter></defs><rect width='24' height='24' fill='red' filter='url(#f)'/></svg>";
 
 fn deck() -> Presentation {
     let mut p = defaults::new_presentation(None);
@@ -81,14 +86,14 @@ fn patched(vector: Vector) -> Vec<u8> {
             "ppt/slides/_rels/slide1.xml.rels" if vector != Vector::None => {
                 let xml = String::from_utf8(data).expect("rels");
                 let rel = match vector {
-                    Vector::Embedded | Vector::Broken => {
+                    Vector::Embedded | Vector::Broken | Vector::Filtered => {
                         format!("<Relationship Id=\"rIdSvg\" Type=\"{IMAGE}\" Target=\"../media/image2.svg\"/>")
                     }
                     _ => format!("<Relationship Id=\"rIdSvg\" Type=\"{IMAGE}\" Target=\"https://example.com/i.svg\" TargetMode=\"External\"/>"),
                 };
                 data = xml.replacen("</Relationships>", &format!("{rel}</Relationships>"), 1).into_bytes();
             }
-            "[Content_Types].xml" if matches!(vector, Vector::Embedded | Vector::Broken) => {
+            "[Content_Types].xml" if matches!(vector, Vector::Embedded | Vector::Broken | Vector::Filtered) => {
                 let xml = String::from_utf8(data).expect("types");
                 let ct = "<Default Extension=\"svg\" ContentType=\"image/svg+xml\"/>";
                 data = xml.replacen("</Types>", &format!("{ct}</Types>"), 1).into_bytes();
@@ -97,9 +102,14 @@ fn patched(vector: Vector) -> Vec<u8> {
         }
         out.start_file(&name, opts).expect("start");
         out.write_all(&data).expect("write");
-        if name == "ppt/slides/slide1.xml" && matches!(vector, Vector::Embedded | Vector::Broken) {
+        if name == "ppt/slides/slide1.xml" && matches!(vector, Vector::Embedded | Vector::Broken | Vector::Filtered) {
             out.start_file("ppt/media/image2.svg", opts).expect("start svg");
-            out.write_all(if vector == Vector::Broken { BROKEN } else { SVG }).expect("write svg");
+            let body = match vector {
+                Vector::Broken => BROKEN,
+                Vector::Filtered => FILTERED.as_bytes(),
+                _ => SVG,
+            };
+            out.write_all(body).expect("write svg");
         }
     }
     out.finish().expect("finish").into_inner()
@@ -132,6 +142,13 @@ fn the_vector_original_wins_over_the_raster_fallback() {
     let (ct, data) = picture_media(&p);
     assert_eq!(ct, "image/svg+xml");
     assert_eq!(data, SVG);
+}
+
+#[test]
+fn a_picture_that_uses_features_we_skip_keeps_its_raster_fallback() {
+    let p = deckcraft_pptx::import(&patched(Vector::Filtered)).expect("import");
+    let (ct, _) = picture_media(&p);
+    assert_eq!(ct, "image/png", "the raster copy stays visible");
 }
 
 #[test]

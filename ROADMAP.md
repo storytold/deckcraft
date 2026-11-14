@@ -137,8 +137,8 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
 2. **PPTX on real decks:** the owned corpus now round-trips comments, links and actions, custom
    shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
-   and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records,
-   MicroType Express font subsets and the SVG export fallback. 36–64 h.
+   and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records and
+   MicroType Express font subsets. 34–60 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
