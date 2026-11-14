@@ -42,13 +42,13 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     if let Some(p) = &path {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Copy path").clicked() {
+            if ui.button(tl!("Copy path")).clicked() {
                 ui.ctx().copy_text(p.clone());
                 app.set_status("Copied the path");
             }
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(dir) = std::path::Path::new(p).parent().and_then(std::path::Path::to_str)
-                && ui.button("Open file location").clicked()
+                && ui.button(tl!("Open file location")).clicked()
             {
                 app.open_url(&format!("file:///{}", dir.replace('\\', "/").trim_start_matches('/')));
             }
@@ -156,28 +156,28 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     ui.horizontal(|ui| {
         craft_ui::ComboBox::from_id_salt("backstage_save_type")
             .width(340.0)
-            .selected_text(current)
+            .selected_text(tl!(current))
             .show_ui(ui, |ui| {
                 for (id, label, _) in SAVE_TYPES {
-                    if ui.selectable_label(bs.file_type == id, label).clicked() {
+                    if ui.selectable_label(bs.file_type == id, tl!(label)).clicked() {
                         bs.file_type = id;
                     }
                 }
             })
             .response
-            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Save as type"));
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Save as type")));
         // A page that keeps the files (`host_save`) saves; plain web downloads.
         let web = app.services.pick_save.is_none() && app.services.host_save.is_none();
-        let label = if web { "Download" } else { "Save" };
+        let label = if web { tl!("Download") } else { tl!("Save") };
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
         if save
-            .on_hover_text(if web {
+            .on_hover_text(tl!(if web {
                 "Download the file"
             } else if app.services.host_save.is_some() {
                 "Save to the page"
             } else {
                 "Choose where to save"
-            })
+            }))
             .clicked()
         {
             let fmt = bs.file_type;
@@ -214,7 +214,7 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
                 crate::dialogs::paint_logo(ui.painter(), r);
-                ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
+                ui.label(RichText::new(tl!("DeckCraft")).font(theme::bold(24.0)).color(t.text));
             });
             dim(ui, &crate::dialogs::version_line());
             dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
@@ -222,8 +222,8 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             if task(ui, Icon::Help, "Credits", "Credits", "The people and models who built DeckCraft.", true) {
                 let _ = app.run("app.about", json!({}));
             }
-            ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+            ui.hyperlink_to(tl!("Join our community on Discord"), deckcraft_engine::links::DISCORD);
+            ui.hyperlink_to(tl!("Source on GitHub"), deckcraft_engine::links::GITHUB);
         });
         ui.add_space(40.0);
         ui.vertical(|ui| {
@@ -232,16 +232,16 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             let dark = app.ui.brightness == theme::Brightness::Dark;
             craft_ui::ComboBox::from_id_salt("backstage_appearance")
                 .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
+                .selected_text(if dark { tl!("Dark") } else { tl!("Light") })
                 .show_ui(ui, |ui| {
                     for (on, label) in [(false, "Light"), (true, "Dark")] {
-                        if ui.selectable_label(dark == on, label).clicked() {
+                        if ui.selectable_label(dark == on, tl!(label)).clicked() {
                             let _ = app.run("view.dark", json!({"on": on}));
                         }
                     }
                 })
                 .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Appearance")));
         });
     });
 }

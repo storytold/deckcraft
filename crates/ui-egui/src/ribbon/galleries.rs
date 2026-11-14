@@ -232,7 +232,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             None => run(app, "shape.line", json!({"none": true})),
         }
     }
-    ui.menu_button("Weight", |ui| {
+    ui.menu_button(tl!("Weight"), |ui| {
         for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
             if ui.button(format!("{w} pt")).clicked() {
                 run(app, "shape.line", json!({"width": w}));
@@ -240,7 +240,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             }
         }
     });
-    ui.menu_button("Dashes", |ui| {
+    ui.menu_button(tl!("Dashes"), |ui| {
         for (l, d) in [
             ("Solid", "solid"),
             ("Round Dot", "sysDot"),
@@ -250,13 +250,13 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             ("Long Dash", "lgDash"),
             ("Long Dash Dot", "lgDashDot"),
         ] {
-            if ui.button(l).clicked() {
+            if ui.button(tl!(l)).clicked() {
                 run(app, "shape.line", json!({"dash": d}));
                 ui.close();
             }
         }
     });
-    ui.menu_button("Arrows", |ui| {
+    ui.menu_button(tl!("Arrows"), |ui| {
         for (l, h, tl) in [
             ("None", "none", "none"),
             ("Arrow at end", "none", "triangle"),
@@ -265,7 +265,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             ("Stealth end", "none", "stealth"),
             ("Oval ends", "oval", "oval"),
         ] {
-            if ui.button(l).clicked() {
+            if ui.button(tl!(l)).clicked() {
                 run(app, "shape.line", json!({"head": h, "tail": tl}));
                 ui.close();
             }
@@ -274,7 +274,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
 }
 
 pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
-    ui.menu_button("Shadow", |ui| {
+    ui.menu_button(tl!("Shadow"), |ui| {
         for (l, v) in [
             ("No Shadow", "none"),
             ("Outer", "outer"),
@@ -283,20 +283,20 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             ("Inner", "inner"),
             ("Perspective", "perspective"),
         ] {
-            if ui.button(l).clicked() {
+            if ui.button(tl!(l)).clicked() {
                 run(app, "shape.effects", json!({"shadow": v}));
             }
         }
     });
-    ui.menu_button("Reflection", |ui| {
+    ui.menu_button(tl!("Reflection"), |ui| {
         for (l, v) in [("No Reflection", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
-            if ui.button(l).clicked() {
+            if ui.button(tl!(l)).clicked() {
                 run(app, "shape.effects", json!({"reflection": v}));
             }
         }
     });
     ui.menu_button("Glow", |ui| {
-        if ui.button("No Glow").clicked() {
+        if ui.button(tl!("No Glow")).clicked() {
             run(app, "shape.effects", json!({"glow": null}));
         }
         for r in [5.0, 8.0, 11.0, 18.0] {
@@ -305,14 +305,14 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    ui.menu_button("Soft Edges", |ui| {
+    ui.menu_button(tl!("Soft Edges"), |ui| {
         for r in [0.0, 1.0, 2.5, 5.0, 10.0, 25.0] {
-            if ui.button(if r == 0.0 { "No Soft Edges".to_string() } else { format!("{r} pt") }).clicked() {
+            if ui.button(if r == 0.0 { tl!("No Soft Edges").to_string() } else { format!("{r} pt") }).clicked() {
                 run(app, "shape.effects", json!({"softEdges": r}));
             }
         }
     });
-    ui.menu_button("Bevel", |ui| {
+    ui.menu_button(tl!("Bevel"), |ui| {
         for b in [
             "none",
             "circle",
@@ -328,12 +328,13 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             "hardEdge",
             "artDeco",
         ] {
-            if ui.button(b).clicked() {
+            // The id as a name (`relaxedInset` → Relaxed inset), like Format Shape's 3-D bevels.
+            if ui.button(tl!(&crate::panels::preset_label(b))).clicked() {
                 run(app, "shape.effects", json!({"bevel": b}));
             }
         }
     });
-    if ui.button("Format Shape…").clicked() {
+    if ui.button(tl!("Format Shape…")).clicked() {
         let _ = app.run("view.pane", json!({"pane": "format", "tab": "effects"}));
     }
 }

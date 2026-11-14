@@ -29,7 +29,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             (false, Some(_)) => "▶ Play From",
             (false, None) => "▶ Play All",
         };
-        if ui.button(label).clicked() {
+        if ui.button(tl!(label)).clicked() {
             let p = match (playing, from) {
                 (false, Some(i)) => json!({"on": true, "from": i}),
                 _ => json!({"on": !playing}),
@@ -39,7 +39,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.separator();
     if anims.is_empty() {
-        ui.label(egui::RichText::new("Select an object on the slide and add an animation from the Animations tab.").color(t.text_dim));
+        ui.label(egui::RichText::new(tl!("Select an object on the slide and add an animation from the Animations tab.")).color(t.text_dim));
         return;
     }
     let bars = animtimeline::bars(anims.len(), &effects);
@@ -92,9 +92,13 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             );
             let edge = Rect::from_min_max(pos2(bar.max.x - 3.0, bar.min.y - 3.0), pos2(bar.max.x + 4.0, bar.max.y + 3.0));
             let body_resp = ui.interact(bar, ui.scope_id().with(("anim_bar", i)), Sense::drag()).on_hover_text(animtimeline::label(b));
-            body_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, format!("Timing bar {}", i + 1)));
+            body_resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Unknown, true, crate::i18n::fmt(tl!("Timing bar {n}"), &[("n", &(i + 1).to_string())]))
+            });
             let edge_resp = ui.interact(edge, ui.scope_id().with(("anim_edge", i)), Sense::drag());
-            edge_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, format!("Duration handle {}", i + 1)));
+            edge_resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Unknown, true, crate::i18n::fmt(tl!("Duration handle {n}"), &[("n", &(i + 1).to_string())]))
+            });
             if edge_resp.hovered() || edge_resp.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             } else if body_resp.hovered() || body_resp.dragged() {
@@ -152,17 +156,17 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Move Up").clicked() {
+            if ui.button(tl!("Move Up")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i.saturating_sub(1)}));
                 ui.close();
             }
-            if ui.button("Move Down").clicked() {
+            if ui.button(tl!("Move Down")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i + 1}));
                 ui.close();
             }
-            if ui.button("Remove").clicked() {
+            if ui.button(tl!("Remove")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.remove", json!({"index": i}));
                 ui.close();
