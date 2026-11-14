@@ -307,7 +307,7 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.menu_button(tl!("Soft Edges"), |ui| {
         for r in [0.0, 1.0, 2.5, 5.0, 10.0, 25.0] {
-            if ui.button(if r == 0.0 { "No Soft Edges".to_string() } else { format!("{r} pt") }).clicked() {
+            if ui.button(if r == 0.0 { tl!("No Soft Edges").to_string() } else { format!("{r} pt") }).clicked() {
                 run(app, "shape.effects", json!({"softEdges": r}));
             }
         }
@@ -328,7 +328,8 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             "hardEdge",
             "artDeco",
         ] {
-            if ui.button(b).clicked() {
+            // The id as a name (`relaxedInset` → Relaxed inset), like Format Shape's 3-D bevels.
+            if ui.button(tl!(&crate::panels::preset_label(b))).clicked() {
                 run(app, "shape.effects", json!({"bevel": b}));
             }
         }

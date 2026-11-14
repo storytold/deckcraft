@@ -457,10 +457,10 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             if ui.radio(none, tl!("No line")).clicked() {
                 run(app, "shape.line", json!({"none": true}));
             }
-            if ui.radio(!none && sh.line.is_some(), "Solid line").clicked() {
+            if ui.radio(!none && sh.line.is_some(), tl!("Solid line")).clicked() {
                 run(app, "shape.line", json!({"color": "tx1", "width": 1}));
             }
-            if ui.radio(sh.line.is_none(), "Automatic").clicked() {
+            if ui.radio(sh.line.is_none(), tl!("Automatic")).clicked() {
                 run(app, "shape.line", json!({"reset": true}));
             }
             color_button(app, ui, "Color", Some("No Outline"), |c| match c {
@@ -609,7 +609,7 @@ fn pick_fill_picture(app: &mut SlideApp) {
 /// when it changes.
 fn pic_drag(app: &mut SlideApp, ui: &mut Ui, label: &str, value: f64, suffix: &str, key: &str, scale: f64) {
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
         let mut v = value;
         let r = ui.add(egui::DragValue::new(&mut v).suffix(suffix).max_decimals(1)).labelled_by(field.id);
         if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
@@ -667,7 +667,7 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
         PictureMode::Stretch { fill_rect } => {
             for (i, label) in ["Offset left", "Offset top", "Offset right", "Offset bottom"].into_iter().enumerate() {
                 ui.horizontal(|ui| {
-                    let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+                    let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
                     let mut v = fill_rect[i] * 100.0;
                     let r = ui.add(egui::DragValue::new(&mut v).suffix("%").max_decimals(0)).labelled_by(field.id);
                     if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
@@ -686,7 +686,7 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
 }
 
 /// "perspectiveHeroicLeftFacing" → "Perspective heroic left facing".
-fn preset_label(name: &str) -> String {
+pub(crate) fn preset_label(name: &str) -> String {
     let mut out = String::new();
     for (i, c) in name.chars().enumerate() {
         if i == 0 {
@@ -704,10 +704,10 @@ fn preset_label(name: &str) -> String {
 /// A drop-down of `options`; picking one runs `shape.effects` with `{threeD: {key: option}}`.
 fn three_d_combo(app: &mut SlideApp, ui: &mut Ui, id: u32, label: &str, key: &str, cur: &str, options: &[&str]) {
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
-        let combo = craft_ui::ComboBox::from_id_salt(("3d", id, key)).selected_text(preset_label(cur)).width(170.0).show_ui(ui, |ui| {
+        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
+        let combo = craft_ui::ComboBox::from_id_salt(("3d", id, key)).selected_text(tl!(&preset_label(cur))).width(170.0).show_ui(ui, |ui| {
             for o in options {
-                if ui.selectable_label(*o == cur, preset_label(o)).clicked() {
+                if ui.selectable_label(*o == cur, tl!(&preset_label(o))).clicked() {
                     run(app, "shape.effects", json!({"threeD": {key: o}}));
                 }
             }
