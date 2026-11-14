@@ -94,6 +94,12 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Web `?chrome=none|notitlebar` (#1897): the title bar is left out. Not persisted.
+    #[serde(skip)]
+    pub hide_titlebar: bool,
+    /// Web `?chrome=none|nofiletab` (#1897): no File tab, and no shortcut opens Backstage. Not persisted.
+    #[serde(skip)]
+    pub hide_filetab: bool,
 }
 
 impl Default for UiState {
@@ -127,6 +133,8 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            hide_titlebar: false,
+            hide_filetab: false,
         }
     }
 }

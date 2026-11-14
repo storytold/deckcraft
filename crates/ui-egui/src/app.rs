@@ -181,6 +181,11 @@ impl SlideApp {
 
     /// Opens the File tab's view on `page` (keeping its state when it is already open).
     pub fn open_backstage(&mut self, page: backstage::Page) {
+        // `?chrome=none|nofiletab` (web, #1897): no File tab, so no shortcut opens Backstage either;
+        // a host that embeds the editor would otherwise receive saves for files it never sent.
+        if self.ui.hide_filetab {
+            return;
+        }
         let key = self.docs_key();
         match &mut self.backstage {
             Some(b) => b.go(page),
@@ -202,6 +207,10 @@ impl SlideApp {
         let has_doc = self.session.active().is_some();
         let stale = self.backstage.as_ref().is_some_and(|b| b.docs != key);
         if has_doc && stale {
+            self.backstage = None;
+        } else if !has_doc && self.ui.hide_filetab {
+            // `?chrome=none|nofiletab` (#1897): no start screen either, so a host that opens the
+            // editor without a presentation can't be handed one it never asked for.
             self.backstage = None;
         } else if !has_doc && (stale || self.backstage.is_none()) {
             self.backstage = Some(backstage::Backstage::new(backstage::Page::Home, key));
@@ -317,7 +326,9 @@ impl SlideApp {
         self.sync_backstage();
         self.keyboard(&ctx);
         self.sync_backstage();
-        ribbon::title_bar(self, ui);
+        if !self.ui.hide_titlebar {
+            ribbon::title_bar(self, ui);
+        }
         if self.backstage.is_none() && self.session.active().is_some() {
             ribbon::show(self, ui);
             status::status_bar(self, ui);

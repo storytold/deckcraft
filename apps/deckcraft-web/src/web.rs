@@ -79,6 +79,21 @@ pub fn start() {
                     {
                         crate::host::Bridge::set_author(&mut app, &author);
                     }
+                    if let Some(chrome) = query_param("chrome") {
+                        match chrome.as_str() {
+                            "none" => {
+                                app.ui.hide_titlebar = true;
+                                app.ui.hide_filetab = true;
+                            }
+                            "notitlebar" => {
+                                app.ui.hide_titlebar = true;
+                            }
+                            "nofiletab" => {
+                                app.ui.hide_filetab = true;
+                            }
+                            _ => {}
+                        }
+                    }
                     crate::api::install(&mut app, cc.egui_ctx.clone());
                     Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
                 }),

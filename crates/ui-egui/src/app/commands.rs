@@ -215,6 +215,9 @@ impl SlideApp {
                 if page.needs_doc() && self.session.active().is_none() {
                     return Err(format!("File › {} needs an open presentation", page.label()));
                 }
+                if self.ui.hide_filetab {
+                    return Err("the File tab is turned off in this window".into());
+                }
                 self.open_backstage(page);
                 return Ok(json!({"page": page.id()}));
             }

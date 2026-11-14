@@ -17,7 +17,9 @@
 //! empty presentation instead of the sample deck; `?show` starts the slide show.
 //! `?host=parent` (inside an `<iframe>`) talks to a same-origin parent page instead: it sends the
 //! presentation to open and stores what DeckCraft saves (`host`), and `&author=` names the user
-//! for comments.
+//! for comments. `?chrome=none|notitlebar|nofiletab` leaves out the title bar and/or the File tab
+//! (and with it every way into Backstage over an open presentation), as GridCraft's web build does (#1897); Ctrl/Cmd+S
+//! still saves to the host.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
