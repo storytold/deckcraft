@@ -122,7 +122,9 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
 /// (notably geometry) still target only the selected shape. The whole traversal stays in one edit.
 fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
     fn apply(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
-        if depth > 64 {
+        // A Harvey ball or checkbox in the group took the colours its description holds
+        // (`generated::route_format`); its parts are drawn from that, not formatted by hand.
+        if depth > 64 || sh.generated.is_some() {
             return Ok(());
         }
         f(sh)?;

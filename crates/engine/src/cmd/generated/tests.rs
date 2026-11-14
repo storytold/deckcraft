@@ -483,3 +483,43 @@ fn generated_elements_are_not_flipped() {
     let sh = deckcraft_model::find_shape(&new.slides[slide].shapes, ShapeId(c)).unwrap();
     assert_eq!(sh.xfrm.map(|x| (x.flip_h, x.flip_v, x.w)), Some((false, false, 60.0)), "resized, not mirrored");
 }
+
+/// Formatting an ordinary group passes its colours on to the Harvey balls and checkboxes inside, so
+/// a redraw keeps them; a format their description can't hold leaves them as they are and formats
+/// the rest of the group.
+#[test]
+fn formatting_a_group_passes_colours_on_to_the_elements_inside() {
+    use deckcraft_model::Fill;
+    let mut s = deck();
+    let b = id(&s.execute("insert.harveyBall", &json!({"value": 1, "rect": [100, 100, 50, 50]})).unwrap());
+    let c = id(&s.execute("insert.checkbox", &json!({"rect": [200, 100, 40, 40]})).unwrap());
+    let r = id(&s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 50, 50]})).unwrap());
+    s.execute("edit.select", &json!({"ids": [b, c, r]})).unwrap();
+    let outer = id(&s.execute("arrange.group", &json!({})).unwrap());
+    let red = crate::cmd::color_value(&json!("#FF0000")).unwrap();
+    let accent2 = crate::cmd::color_value(&json!("accent2")).unwrap();
+    let check = |s: &Session| match shape(s, c).generated {
+        Some(Generated::Checkbox(x)) => x,
+        _ => panic!(),
+    };
+    let n = undo_len(&s);
+    s.execute("shape.fill", &json!({"id": outer, "color": "#FF0000"})).unwrap();
+    assert_eq!(undo_len(&s), n + 1, "one undo step");
+    assert_eq!((ball(&s, b).fill, check(&s).color), (red.clone(), red.clone()));
+    assert_eq!(shape(&s, r).fill, Some(Fill::solid(red.clone())), "the rest of the group as usual");
+    assert_eq!(kids(&s, b)[0].fill, Some(Fill::None), "the ball's background isn't painted over");
+    // As the ribbon sends them: an outline colour, then a weight (which a checkbox can't hold).
+    s.execute("shape.line", &json!({"id": outer, "color": "accent2"})).unwrap();
+    assert_eq!((ball(&s, b).outline, check(&s).color), (Some(accent2.clone()), accent2.clone()));
+    s.execute("shape.line", &json!({"id": outer, "width": 2})).unwrap();
+    assert_eq!((ball(&s, b).outline_width, check(&s).color), (2.0, accent2.clone()));
+    // A redraw keeps them.
+    s.execute("harveyBall.set", &json!({"id": b, "value": 3})).unwrap();
+    assert_eq!(kids(&s, b)[1].fill, Some(Fill::solid(red.clone())));
+    // A gradient or dashes, which a description can't hold: the elements stay as they are.
+    let (ball_before, check_before) = (shape(&s, b), shape(&s, c));
+    s.execute("shape.fill", &json!({"id": outer, "gradient": {"stops": [[0, "#ffffff"], [1, "#000000"]]}})).unwrap();
+    s.execute("shape.line", &json!({"id": outer, "dash": "dash"})).unwrap();
+    assert_eq!((shape(&s, b), shape(&s, c)), (ball_before, check_before));
+    assert!(matches!(shape(&s, r).fill, Some(Fill::Gradient(_))), "the rectangle takes the gradient");
+}

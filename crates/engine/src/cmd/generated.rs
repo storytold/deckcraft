@@ -479,30 +479,53 @@ pub(crate) enum Format {
 /// checkbox either colour → `color`; `reset` → the defaults. What a description can't hold (a
 /// gradient, dashes, a checkbox weight…) is refused. A part named by id is formatted by hand as
 /// any shape is, until the next redraw.
+///
+/// An element inside a formatted ordinary group takes what its description can hold the same way,
+/// and is otherwise left as it is: the user formatted the group, not the element. Either way the
+/// group's own formatting pass leaves its parts alone (`shape::appearance::edit_group_appearance`).
 pub(crate) fn route_format(s: &mut Session, p: &Value, cmd: &str) -> Result<Format> {
     let ids = super::targets(s, p)?;
-    let (mut elements, mut others) = (vec![], vec![]);
+    let (mut elements, mut others, mut inside) = (vec![], vec![], vec![]);
     {
         let st = s.doc()?;
         for id in ids {
-            match st.shape(id).and_then(|sh| sh.generated.clone()) {
-                Some(g) => elements.push((id, g)),
+            match st.shape(id) {
+                Some(sh) if sh.generated.is_some() => elements.extend(sh.generated.clone().map(|g| (id, g))),
+                Some(sh) => {
+                    others.push(id.0);
+                    elements_inside(sh.children(), &mut inside, 0);
+                }
                 None => others.push(id.0),
             }
         }
     }
-    if elements.is_empty() {
+    if elements.is_empty() && inside.is_empty() {
         return Ok(Format::Unchanged);
     }
     let n = elements.len();
     for (id, g) in elements {
-        let (set, mut q) = element_params(p, cmd, &g)?;
-        if let Some(o) = q.as_object_mut() {
-            o.insert("id".into(), json!(id));
+        let (set, q) = element_params(p, cmd, &g)?;
+        s.execute(set, &super::with_param(&q, "id", json!(id)))?;
+    }
+    for (id, g) in inside {
+        if let Ok((set, q)) = element_params(p, cmd, &g) {
+            s.execute(set, &super::with_param(&q, "id", json!(id)))?;
         }
-        s.execute(set, &q)?;
     }
     Ok(if others.is_empty() { Format::Done(Value::from(n)) } else { Format::Rest(super::with_param(p, "ids", json!(others))) })
+}
+
+/// The Harvey balls and checkboxes in `list` and in its groups (not inside another element).
+fn elements_inside(list: &[Shape], out: &mut Vec<(ShapeId, Generated)>, depth: usize) {
+    if depth > MAX_DEPTH {
+        return;
+    }
+    for sh in list {
+        match &sh.generated {
+            Some(g) => out.push((sh.id, g.clone())),
+            None => elements_inside(sh.children(), out, depth + 1),
+        }
+    }
 }
 
 /// The `harveyBall.set` or `checkbox.set` params a `shape.fill` / `shape.line` call `p` makes for
