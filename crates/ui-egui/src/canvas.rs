@@ -152,6 +152,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     app.canvas_rect = Some(avail);
+    // The notes pane and the panes beside the canvas are editor chrome over it: nothing the
+    // canvas paints or hit-tests (the media bar hangs 6 pt below its clip, handles stick out of a
+    // shape, scroll bars) may reach into them. The parent's clip still covers the whole central
+    // area, so clip this `Ui` to the rect the canvas was given (#1922).
+    ui.set_clip_rect(avail.intersect(ui.clip_rect()));
     let Some(st) = app.session.active() else { return };
     // The leftover fraction of a wheel line belongs to one presentation. Drop it whenever another
     // one is drawn here, hovered or not, so switching away and back starts from zero.
