@@ -914,3 +914,53 @@ fn file_transition_screenshots() {
         h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-exit.png")).unwrap();
     }
 }
+
+/// Exercise real ribbon layout: content moves/fades, only the chosen tab exposes commands.
+#[test]
+fn ribbon_tabs_move_and_fade_without_retaining_outgoing_controls() {
+    let mut h = harness_with_dt(new_app(), 1.0 / 60.0);
+    h.run_steps(20);
+    h.state_mut().ui.tab = "Insert".into();
+    h.step();
+    let table = |h: &Harness<'_, SlideApp>| {
+        h.output()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Table" => Some((text.pos.x, text.fallback_color.a())),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let first = table(&h);
+    h.run_steps(4);
+    let middle = table(&h);
+    h.run_steps(20);
+    let last = table(&h);
+    assert!(first.0 > middle.0 && middle.0 > last.0, "incoming controls slide left: {first:?} {middle:?} {last:?}");
+    assert!(first.1 < middle.1 && middle.1 < last.1);
+    assert_eq!(last.1, 255);
+    assert!(h.query_by_label("Cut").is_none(), "outgoing Home controls have no accessibility nodes");
+    h.state_mut().ui.tab = "Home".into();
+    h.step();
+    assert!(h.query_by_label("Table").is_none(), "the previous tab does not retain its controls");
+}
+
+#[test]
+#[ignore = "writes screenshots for visual review"]
+fn ribbon_tab_transition_screenshots() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plan/ui-review");
+    std::fs::create_dir_all(&output).unwrap();
+    for (name, brightness) in [("light", crate::theme::Brightness::Light), ("dark", crate::theme::Brightness::Dark)] {
+        let mut app = new_app();
+        app.ui.brightness = brightness;
+        let mut h = harness_with_dt(app, 1.0 / 60.0);
+        h.run_steps(20);
+        h.state_mut().ui.tab = "Insert".into();
+        for (phase, steps) in [("start", 1), ("middle", 4), ("settled", 20)] {
+            h.run_steps(steps);
+            h.render().unwrap().save(output.join(format!("{name}-ribbon-tab-{phase}.png"))).unwrap();
+        }
+    }
+}

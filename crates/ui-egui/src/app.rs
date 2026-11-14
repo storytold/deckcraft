@@ -313,6 +313,7 @@ impl SlideApp {
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
         if self.show.is_some() {
+            ribbon::transition::reset(&ctx);
             backstage::reset_shell(&ctx);
             backstage::reset_transition(&ctx);
             self.anim_preview = None;
@@ -327,6 +328,9 @@ impl SlideApp {
         self.sync_backstage();
         ribbon::title_bar(self, ui);
         let mut file = self.backstage.is_some();
+        if file {
+            ribbon::transition::reset(&ctx);
+        }
         let document = self.session.active().map(|d| d.uid);
         let screen_id = egui::Id::unique(("backstage_document", ctx.viewport_id()));
         let same_document = ctx.data_mut(|data| {

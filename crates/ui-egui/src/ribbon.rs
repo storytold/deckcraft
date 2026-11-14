@@ -29,6 +29,7 @@ mod slide_show;
 mod smartart;
 mod table;
 mod title_bar;
+pub(crate) mod transition;
 mod transitions;
 mod view;
 
@@ -130,6 +131,8 @@ const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "An
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let ctx_tabs = contextual(app);
+    let now = ui.input(|i| i.time);
+    let animate = app.animations_on(ui.ctx()) && ui.style().animation_time > 0.0;
     if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) {
         app.ui.tab = "Home".into();
     }
@@ -155,7 +158,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             x += w + 2.0;
         }
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
-        for (name, contextual) in all {
+        let mut underline = None;
+        for (name, contextual) in &all {
+            let (name, contextual) = (*name, *contextual);
             let label = tab_label(name);
             let font = theme::font(13.0);
             let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
@@ -169,10 +174,6 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let col = if contextual { t.contextual } else { t.text };
             let f = if active { theme::bold(13.0) } else { font };
             ui.painter().text(r.center(), Align2::CENTER_CENTER, label, f, col);
-            if active {
-                let uw = (w - 20.0).max(16.0);
-                ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
-            }
             if resp.clicked() {
                 if active {
                     app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
@@ -184,9 +185,17 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             if resp.double_clicked() {
                 app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
             }
+            if app.ui.tab == name {
+                let uw = (w - 20.0).max(16.0);
+                underline = Some(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)));
+            }
             x += w + 2.0;
         }
+        if let Some(target) = underline {
+            transition::slide_underline(ui, &app.ui.tab, target, t.accent, now, animate);
+        }
         if app.ui.ribbon_collapsed {
+            transition::reset(ui.ctx());
             return;
         }
         // The white card.
@@ -194,15 +203,25 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.painter().rect_filled(card.translate(vec2(0.0, 1.0)), CornerRadius::same(10), t.card_border);
         ui.painter().rect_filled(card, CornerRadius::same(10), t.card);
         let inner = Rect::from_min_size(pos2(card.min.x + 10.0, card.min.y + 5.0), vec2(card.width() - 20.0, RIBBON_H));
+        let clip = inner.expand2(vec2(0.0, 3.0)).intersect(ui.clip_rect());
+        let index = all.iter().position(|(name, _)| *name == app.ui.tab).unwrap_or(0);
+        let (settled, direction) = transition::tab_content_entry(ui.ctx(), &app.ui.tab, index, now, animate);
+        let shift = vec2(direction * (1.0 - settled) * transition::CONTENT_SWITCH_SLIDE, 0.0);
+        let inner = inner.translate(shift);
+        // Only the selected tab runs controls. Moving their actual UI keeps hit testing aligned.
+        let mut content = ui.new_child(egui::UiBuilder::new().id_salt("ribbon_tab_content").max_rect(inner));
+        content.set_clip_rect(clip);
+        content.multiply_opacity(0.2 + 0.8 * settled);
+        let ui = &mut content;
         let mut cui = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        cui.set_clip_rect(inner.expand2(vec2(0.0, 3.0)));
+        cui.set_clip_rect(clip);
         // Reserve a gutter on both sides for the overflow chevrons. They are painted and
         // interacted in that gutter, never on top of the first/last visible button: the bar they
         // reveal must not steal the click they were meant to make reachable.
         let edge = 18.0_f32.min(inner.width() * 0.25);
         let scroll_rect = inner.shrink2(vec2(edge, 0.0));
         let mut sui = ui.new_child(egui::UiBuilder::new().max_rect(scroll_rect));
-        sui.set_clip_rect(scroll_rect.expand2(vec2(0.0, 3.0)));
+        sui.set_clip_rect(scroll_rect.expand2(vec2(0.0, 3.0)).intersect(clip));
         let tab = app.ui.tab.clone();
         // The card used to clip a too-wide group row with no way to reach the rest. A horizontal
         // scroll area plus edge chevrons keeps every group reachable at the default 1440 px

@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File page and screen transitions; feathered ribbon group hover; reduced motion; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File page, screen and ribbon tab transitions; feathered ribbon group hover; reduced motion; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -182,6 +182,13 @@ nodes are not retained. Rapid reversal starts from the composed frame. Each view
 own state; resize, DPI changes and reduced motion discard cached paint, and released textures
 are skipped. Closing or replacing the active presentation during layout disables replay.
 
+Switching upper ribbon tabs follows WordCraft: incoming content fades from 20% opacity and
+slides 14 pt from the side of the selected tab over 160 ms; the accent underline glides to the
+new tab over 200 ms, reversing from its current position when another tab is selected quickly.
+Only the selected tab lays out controls and accessibility nodes. Reduced motion settles both
+effects immediately without replaying them when reenabled. State is independent per viewport
+and resets when the ribbon is collapsed or hidden by File or a slide show.
+
 Ribbon groups have an inset accent glow at their lower edge, peaking at 20% opacity and fading
 to transparent on all four edges, including a 2 pt tail in the ribbon padding. Both themes use
 the existing accent token. Hosts supply reduced-motion preferences (Windows, macOS, the Linux/BSD
@@ -192,7 +199,7 @@ These visual choices do not change PowerPoint parity scores.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-14 | trivial | File/editor crossfade, page fade/lift, animated side-menu feedback and feathered ribbon hover; system reduced motion; parity scores unchanged. |
+| 2026-11-14 | trivial | File/editor crossfade, page fade/lift, sliding ribbon tab content and underline, animated side-menu feedback and feathered ribbon hover; system reduced motion; parity scores unchanged. |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |
