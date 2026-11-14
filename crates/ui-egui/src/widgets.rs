@@ -2,7 +2,7 @@
 //! picker and galleries.
 
 use deckcraft_color::{ColorScheme, Rgba, SchemeSlot};
-use deckcraft_model::ColorRef;
+use deckcraft_model::{ColorBase, ColorRef};
 use egui::{Align2, Color32, CornerRadius, Rect, Response, Sense, Stroke, Ui, Vec2, pos2, vec2};
 
 use crate::icons::{self, Icon};
@@ -388,6 +388,19 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     let t = Tokens::get(ui.ctx());
     let mut out = None;
     ui.set_min_width(220.0);
+    // A scheme with many extra colours makes a tall gallery: it scrolls past this height, while
+    // the usual ten-colour gallery is well under it and looks as before (the area shrinks to it).
+    egui::ScrollArea::vertical().max_height(GALLERY_MAX_HEIGHT).show(ui, |ui| color_grid_body(ui, &t, scheme, none_label, &mut out));
+    if out.is_some() {
+        ui.close();
+    }
+    out
+}
+
+/// The tallest the colour gallery grows before it scrolls, in points.
+pub(crate) const GALLERY_MAX_HEIGHT: f32 = 420.0;
+
+fn color_grid_body(ui: &mut Ui, t: &Tokens, scheme: &ColorScheme, none_label: Option<&str>, out: &mut Option<Option<ColorRef>>) {
     ui.label(egui::RichText::new("Theme Colors").font(theme::bold(12.0)));
     let slots = [
         SchemeSlot::Lt1,
@@ -411,10 +424,22 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
             Stroke::new(if resp.hovered() { 2.0 } else { 1.0 }, if resp.hovered() { t.accent } else { t.border }),
             egui::StrokeKind::Inside,
         );
+        let name = tip.to_string();
+        resp.widget_info(move || egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
         resp.on_hover_text(tip).clicked()
     };
-    egui::Grid::new("theme_colors").spacing(vec2(3.0, 1.0)).show(ui, |ui| {
-        for slot in slots {
+    // One gallery column: the colour, what a click applies, and the tint/shade rows under it.
+    struct Column {
+        color: Rgba,
+        tip: String,
+        pick: ColorRef,
+        /// The slot the rows' transforms apply to (none for an extra colour: its RGB is stored).
+        slot: Option<SchemeSlot>,
+        rows: Vec<deckcraft_color::GalleryVariant>,
+    }
+    let mut columns: Vec<Column> = slots
+        .iter()
+        .map(|&slot| {
             let alias = match slot {
                 SchemeSlot::Lt1 => SchemeSlot::Bg1,
                 SchemeSlot::Dk1 => SchemeSlot::Tx1,
@@ -422,40 +447,66 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
                 SchemeSlot::Dk2 => SchemeSlot::Tx2,
                 s => s,
             };
-            if sw(ui, scheme.get(slot), slot.label()) {
-                out = Some(Some(ColorRef::scheme(alias)));
+            Column {
+                color: scheme.get(slot),
+                tip: slot.label().to_string(),
+                pick: ColorRef::scheme(alias),
+                slot: Some(alias),
+                rows: scheme.slot_variants(slot),
             }
+        })
+        .collect();
+    // Extra named colours (a brand palette) follow, ten to a row as in the theme row.
+    for (i, e) in scheme.extra.iter().enumerate() {
+        columns.push(Column {
+            color: e.color,
+            tip: format!("{} #{}", e.name.trim(), e.color.hex()),
+            pick: ColorRef::rgb(e.color),
+            slot: None,
+            rows: scheme.extra_variants(i),
+        });
+    }
+    for (chunk, cols) in columns.chunks(slots.len()).enumerate() {
+        if chunk > 0 {
+            ui.add_space(3.0);
         }
-        ui.end_row();
-        for row in 0..5 {
-            for slot in slots {
-                let base = scheme.get(slot);
-                let vars = deckcraft_color::theme_variants(base);
-                let Some((mods, label)) = vars.get(row) else { continue };
-                let c = deckcraft_color::apply(base, mods);
-                if sw(ui, c, label) {
-                    let alias = match slot {
-                        SchemeSlot::Lt1 => SchemeSlot::Bg1,
-                        SchemeSlot::Dk1 => SchemeSlot::Tx1,
-                        SchemeSlot::Lt2 => SchemeSlot::Bg2,
-                        SchemeSlot::Dk2 => SchemeSlot::Tx2,
-                        s => s,
-                    };
-                    let mut r = ColorRef::scheme(alias);
-                    r.mods = mods.clone();
-                    out = Some(Some(r));
+        egui::Grid::new(("theme_colors", chunk)).spacing(vec2(3.0, 1.0)).show(ui, |ui| {
+            for col in cols {
+                if sw(ui, col.color, &col.tip) {
+                    *out = Some(Some(col.pick.clone()));
                 }
             }
             ui.end_row();
-        }
-    });
+            // Columns may have different numbers of rows (explicit lists): the grid is as tall as
+            // the longest, with empty cells where a column has fewer (none when all are empty).
+            let rows = cols.iter().map(|c| c.rows.len()).max().unwrap_or(0);
+            for row in 0..rows {
+                for col in cols {
+                    let Some(v) = col.rows.get(row) else {
+                        ui.allocate_exact_size(vec2(cell, cell), Sense::hover());
+                        continue;
+                    };
+                    // A computed row keeps its transforms on the slot, as PowerPoint stores it; an
+                    // explicit row (a `tints` override) and an extra colour store the exact RGB.
+                    let (tip, pick) = match (&v.mods, col.slot) {
+                        (Some(mods), Some(slot)) => (v.label.clone(), ColorRef { base: ColorBase::Scheme { slot }, mods: mods.clone() }),
+                        _ => (format!("{} {}", col.tip, v.label), ColorRef::rgb(v.color)),
+                    };
+                    if sw(ui, v.color, &tip) {
+                        *out = Some(Some(pick));
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    }
     ui.add_space(4.0);
     ui.label(egui::RichText::new("Standard Colors").font(theme::bold(12.0)));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         for (c, name) in deckcraft_color::STANDARD_COLORS {
             if sw(ui, c, name) {
-                out = Some(Some(ColorRef::rgb(c)));
+                *out = Some(Some(ColorRef::rgb(c)));
             }
         }
     });
@@ -463,7 +514,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     if let Some(n) = none_label
         && ui.button(n).clicked()
     {
-        out = Some(None);
+        *out = Some(None);
     }
     // "More Colors…": a hex field.
     let id = ui.scope_id().with("hex");
@@ -475,7 +526,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
             && ui.input(|i| i.key_pressed(egui::Key::Enter))
             && let Some(c) = Rgba::from_hex(&hex)
         {
-            out = Some(Some(ColorRef::rgb(c)));
+            *out = Some(Some(ColorRef::rgb(c)));
         }
     });
     ui.data_mut(|d| d.insert_temp(id, hex));
@@ -483,10 +534,6 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         crate::eyedropper::request(ui.ctx());
         ui.close();
     }
-    if out.is_some() {
-        ui.close();
-    }
-    out
 }
 
 /// A row of gallery tiles drawn by `paint_tile`; returns the clicked index.

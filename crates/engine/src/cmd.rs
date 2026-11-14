@@ -383,6 +383,26 @@ pub(crate) fn color_param(p: &Value, key: &str) -> Option<deckcraft_model::Color
     color_value(v)
 }
 
+thread_local! {
+    /// The active presentation's extra theme colours (name, colour), set for the command being
+    /// run so that `color_value` resolves their names (see `Session::execute`).
+    static EXTRA_COLORS: std::cell::RefCell<Vec<(String, deckcraft_color::Rgba)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Make `extra` the named colours `color_value` knows for the commands that follow on this thread.
+pub(crate) fn set_extra_colors(extra: Vec<(String, deckcraft_color::Rgba)>) {
+    EXTRA_COLORS.with(|e| *e.borrow_mut() = extra);
+}
+
+/// The extra theme colour called `name`, resolved to its RGB (extras have no slot in files).
+pub(crate) fn extra_color(name: &str) -> Option<deckcraft_color::Rgba> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    EXTRA_COLORS.with(|e| e.borrow().iter().find(|(n, _)| n.trim().eq_ignore_ascii_case(name)).map(|(_, c)| *c))
+}
+
 pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
     use deckcraft_model::ColorRef;
     match v {
@@ -391,6 +411,9 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
                 return Some(ColorRef::scheme(slot));
             }
             if let Some(c) = deckcraft_color::Rgba::from_hex(s) {
+                return Some(ColorRef::rgb(c));
+            }
+            if let Some(c) = extra_color(s) {
                 return Some(ColorRef::rgb(c));
             }
             deckcraft_color::preset(s).map(ColorRef::rgb)

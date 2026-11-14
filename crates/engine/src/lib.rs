@@ -656,6 +656,21 @@ impl Session {
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
         let vertex_kind = self.tool.vertex_kind.clone();
         let outer = self.depth == 0;
+        if outer {
+            // Colour parameters may name the theme's extra colours (`"Sand"`), from any master. The
+            // master of what is being edited comes first, so its colour wins a name two masters share.
+            let extra = self
+                .active()
+                .map(|d| {
+                    // The edited master may be a slide master or the handout or notes master,
+                    // which is not in `masters`.
+                    let current = cmd::text::ctx_for(&d.doc, &d.selection).map(|c| c.master);
+                    let others = d.doc.masters.iter().map(|m| m.as_ref()).filter(|m| current.is_none_or(|c| c.id != m.id));
+                    current.into_iter().chain(others).flat_map(|m| m.theme.colors.extra.iter().map(|e| (e.name.clone(), e.color))).collect()
+                })
+                .unwrap_or_default();
+            cmd::set_extra_colors(extra);
+        }
         self.depth += 1;
         let r = (spec.run)(self, params);
         self.depth -= 1;

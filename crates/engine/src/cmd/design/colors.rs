@@ -5,9 +5,16 @@ use super::{
 pub(super) fn colors(s: &mut Session, p: &Value) -> Result<Value> {
     let name_v = p.get("name");
     let colors_v = p.get("colors");
-    if name_v.is_none() && colors_v.is_none() {
+    let tints_v = p.get("tints");
+    let extra_v = p.get("extra");
+    let computed = match p.get("computedTints") {
+        None => None,
+        Some(Value::Bool(b)) => Some(*b),
+        Some(_) => return Err(bad("design.colors", "`computedTints` must be true or false")),
+    };
+    if name_v.is_none() && colors_v.is_none() && tints_v.is_none() && extra_v.is_none() && computed.is_none() {
         let sc = current_colors(s)?;
-        s.ui_requests.push(crate::UiRequest::Dialog { id: "themeColors".into(), params: scheme_dialog_params(&sc) });
+        s.ui_requests.push(crate::UiRequest::Dialog { id: "themeColors".into(), params: scheme_json(&sc) });
         return ok();
     }
     let given = match name_v {
@@ -22,8 +29,28 @@ pub(super) fn colors(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("design.colors", "`name` must be a string")),
     };
     let slots = parse_color_slots(colors_v)?;
+    let tints = parse_tints(tints_v)?;
+    let extra = parse_extra(extra_v)?;
     let current = current_colors(s)?;
-    let next = next_scheme(&current, given.as_deref(), slots.as_deref())?;
+    let mut next = next_scheme(&current, given.as_deref(), slots.as_deref())?;
+    if let Some(tints) = tints {
+        for (slot, v) in tints {
+            match v {
+                Some(v) => {
+                    next.tints.insert(slot, v);
+                }
+                None => {
+                    next.tints.remove(&slot);
+                }
+            }
+        }
+    }
+    if let Some(extra) = extra {
+        next.extra = extra;
+    }
+    if let Some(c) = computed {
+        next.computed_tints = c;
+    }
     if next == current {
         return ok();
     }
@@ -68,12 +95,115 @@ fn current_colors(s: &Session) -> Result<deckcraft_color::ColorScheme> {
     st.doc.masters.get(mi).map(|m| m.theme.colors.clone()).ok_or_else(|| bad("design.colors", "no master"))
 }
 
-fn scheme_dialog_params(sc: &deckcraft_color::ColorScheme) -> Value {
+fn hex_list(v: &[deckcraft_color::Rgba]) -> Value {
+    Value::Array(v.iter().map(|c| Value::String(format!("#{}", c.hex()))).collect())
+}
+
+/// A colour scheme as `design.colors` takes it: `{name, colors: {slot: #RRGGBB}, computedTints,
+/// tints: {slot: [#RRGGBB…]}, extra: [{name, color, tints?}]}` (the Create New Theme Colors
+/// dialog's parameters, and `design.themes`' `current`).
+pub(super) fn scheme_json(sc: &deckcraft_color::ColorScheme) -> Value {
     let mut colors = serde_json::Map::new();
     for slot in deckcraft_color::SchemeSlot::THEME {
         colors.insert(slot.xml_name().to_string(), Value::String(format!("#{}", sc.get(slot).hex())));
     }
-    json!({"name": sc.name, "colors": colors})
+    let mut tints = serde_json::Map::new();
+    for (slot, v) in &sc.tints {
+        tints.insert(slot.xml_name().to_string(), hex_list(v));
+    }
+    let extra: Vec<Value> = sc
+        .extra
+        .iter()
+        .map(|e| {
+            let mut o = json!({"name": e.name, "color": format!("#{}", e.color.hex())});
+            if let (Some(t), Some(o)) = (&e.tints, o.as_object_mut()) {
+                o.insert("tints".into(), hex_list(t));
+            }
+            o
+        })
+        .collect();
+    json!({"name": sc.name, "colors": colors, "computedTints": sc.computed_tints, "tints": tints, "extra": extra})
+}
+
+/// `[#RRGGBB…]` (0 to MAX_TINT_ROWS colours) for `what`; `None` for `null` (the list is removed).
+fn parse_tint_rows(what: &str, v: &Value) -> Result<Option<Vec<deckcraft_color::Rgba>>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let Some(arr) = v.as_array() else {
+        return Err(bad("design.colors", format!("`{what}` tints must be a list of colours like #RRGGBB")));
+    };
+    if arr.len() > deckcraft_color::MAX_TINT_ROWS {
+        return Err(bad("design.colors", format!("`{what}` tints hold at most {} colours, got {}", deckcraft_color::MAX_TINT_ROWS, arr.len())));
+    }
+    arr.iter()
+        .map(|c| {
+            c.as_str()
+                .and_then(deckcraft_color::Rgba::from_hex)
+                .ok_or_else(|| bad("design.colors", format!("`{what}` tints need colours like #RRGGBB")))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+/// `None` when the key is absent. `{slot: [#RRGGBB…] | null}`: a list (even empty) is exactly
+/// the gallery rows under that theme colour, `null` removes it (computed rows, or none when
+/// `computedTints` is false).
+#[allow(clippy::type_complexity)]
+fn parse_tints(v: Option<&Value>) -> Result<Option<Vec<(deckcraft_color::SchemeSlot, Option<Vec<deckcraft_color::Rgba>>)>>> {
+    let Some(v) = v else { return Ok(None) };
+    let Some(map) = v.as_object() else {
+        return Err(bad("design.colors", "`tints` must be an object {slot: [#RRGGBB…]}"));
+    };
+    let mut out = Vec::with_capacity(map.len());
+    for (k, v) in map {
+        let Some(slot) = deckcraft_color::SchemeSlot::from_xml(k) else {
+            return Err(bad("design.colors", format!("unknown colour `{k}` in `tints`")));
+        };
+        if !deckcraft_color::SchemeSlot::THEME.contains(&slot) {
+            return Err(bad("design.colors", format!("`{k}` is not a theme colour")));
+        }
+        out.push((slot, parse_tint_rows(k, v)?));
+    }
+    Ok(Some(out))
+}
+
+/// `None` when the key is absent. `[{name, color: #RRGGBB, tints?: [#RRGGBB…]}]` replaces the
+/// scheme's extra colours (`[]` removes them). Names are unique (case-insensitive) and must not be
+/// a slot name, so that each is reachable by name.
+fn parse_extra(v: Option<&Value>) -> Result<Option<Vec<deckcraft_color::ExtraColor>>> {
+    let Some(v) = v else { return Ok(None) };
+    let Some(arr) = v.as_array() else {
+        return Err(bad("design.colors", "`extra` must be a list of {name, color: #RRGGBB, tints?}"));
+    };
+    if arr.len() > deckcraft_color::MAX_EXTRA_COLORS {
+        return Err(bad("design.colors", format!("`extra` holds at most {} colours", deckcraft_color::MAX_EXTRA_COLORS)));
+    }
+    let mut out: Vec<deckcraft_color::ExtraColor> = Vec::with_capacity(arr.len());
+    for e in arr {
+        let Some(o) = e.as_object() else {
+            return Err(bad("design.colors", "each `extra` entry is {name, color: #RRGGBB, tints?}"));
+        };
+        let name = o.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+        if name.is_empty() {
+            return Err(bad("design.colors", "an `extra` colour needs a `name`"));
+        }
+        if deckcraft_color::SchemeSlot::from_xml(name).is_some() || deckcraft_color::Rgba::from_hex(name).is_some() {
+            return Err(bad("design.colors", format!("`{name}` cannot name an extra colour: it is a theme colour name or a hex colour")));
+        }
+        if out.iter().any(|x| x.name.eq_ignore_ascii_case(name)) {
+            return Err(bad("design.colors", format!("extra colour `{name}` is listed twice")));
+        }
+        let Some(color) = o.get("color").and_then(Value::as_str).and_then(deckcraft_color::Rgba::from_hex) else {
+            return Err(bad("design.colors", format!("extra colour `{name}` needs `color` like #RRGGBB")));
+        };
+        let tints = match o.get("tints") {
+            None => None,
+            Some(t) => parse_tint_rows(name, t)?,
+        };
+        out.push(deckcraft_color::ExtraColor { name: name.to_string(), color, tints });
+    }
+    Ok(Some(out))
 }
 
 /// `None` when the key is absent. Present values must be the twelve stored slots; aliases such

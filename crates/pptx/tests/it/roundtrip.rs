@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
+use deckcraft_color::{ColorTransform, ExtraColor, Rgba, SchemeSlot, VARIANT_ROWS};
 use deckcraft_geom::Xfrm;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
 use deckcraft_model::chart::{Chart, ChartType};
@@ -2295,6 +2295,84 @@ fn default_durations_match_powerpoint() {
         let a = deckcraft_model::anim::ANIMATIONS.iter().find(|a| a.0 == effect).unwrap();
         assert_eq!(a.4, ms, "{effect}");
     }
+}
+
+/// Tint lists over `MAX_TINT_ROWS` (a model built by hand; `design.colors` refuses them) are cut
+/// to the limit on save, as the reader and the galleries cut them.
+#[test]
+fn tint_rows_beyond_the_limit_are_cut_the_same_way_on_save_and_load() {
+    use deckcraft_color::{ExtraColor, MAX_TINT_ROWS, Rgba};
+    let mut p = defaults::new_presentation(None);
+    let long: Vec<Rgba> = (0..MAX_TINT_ROWS + 3).map(|i| Rgba::rgb(i as u8, 0, 0)).collect();
+    {
+        let c = &mut Arc::make_mut(&mut p.masters[0]).theme.colors;
+        c.tints.insert(SchemeSlot::Accent1, long.clone());
+        c.extra.push(ExtraColor { name: "Long".into(), color: Rgba::rgb(1, 2, 3), tints: Some(long.clone()) });
+    }
+    let q = round(&p);
+    let c = &q.masters[0].theme.colors;
+    assert_eq!(c.tints.get(&SchemeSlot::Accent1).map(Vec::as_slice), Some(&long[..MAX_TINT_ROWS]));
+    assert_eq!(c.extra[0].tints.as_deref(), Some(&long[..MAX_TINT_ROWS]));
+}
+
+#[test]
+fn extra_colours_beyond_the_limit_are_cut_the_same_way_on_save_and_load() {
+    use deckcraft_color::MAX_EXTRA_COLORS;
+    let mut p = defaults::new_presentation(None);
+    {
+        let c = &mut Arc::make_mut(&mut p.masters[0]).theme.colors;
+        for i in 0..MAX_EXTRA_COLORS + 7 {
+            c.extra.push(ExtraColor { name: format!("Extra {i}"), color: Rgba::rgb((i % 256) as u8, 0, 0), tints: None });
+        }
+    }
+    let q = round(&p);
+    let back = &q.masters[0].theme.colors.extra;
+    assert_eq!(back.len(), MAX_EXTRA_COLORS, "the writer keeps what the reader takes");
+    assert_eq!(back.last().map(|e| e.name.as_str()), Some(format!("Extra {}", MAX_EXTRA_COLORS - 1).as_str()));
+}
+
+#[test]
+fn extra_theme_colours_and_tint_rows_survive_save() {
+    let mut p = defaults::new_presentation(None);
+    {
+        let c = &mut Arc::make_mut(&mut p.masters[0]).theme.colors;
+        c.computed_tints = false;
+        c.tints.insert(SchemeSlot::Accent5, vec![Rgba::rgb(0xC7, 0xEB, 0xBA), Rgba::rgb(0x0D, 0x4A, 0x21)]);
+        c.tints.insert(SchemeSlot::Accent6, vec![]);
+        c.tints.insert(SchemeSlot::Dk2, vec![Rgba::WHITE; VARIANT_ROWS]);
+        c.extra.push(ExtraColor { name: "Sand".into(), color: Rgba::rgb(0xEB, 0xE5, 0xE0), tints: None });
+        c.extra.push(ExtraColor { name: "Broken white".into(), color: Rgba::rgb(0xFC, 0xFC, 0xFC), tints: Some(vec![]) });
+        c.extra.push(ExtraColor {
+            name: "Grey & \"tones\"".into(),
+            color: Rgba::rgb(0xA5, 0xA5, 0xA5),
+            tints: Some(vec![Rgba::rgb(0xE6, 0xE6, 0xE6), Rgba::rgb(0x32, 0x32, 0x32)]),
+        });
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    assert_eq!(q.masters[0].theme.colors, p.masters[0].theme.colors, "lists of 0, 2 and 5 rows, no list, and computed_tints");
+    // The extension sits inside the colour scheme, where other applications skip it.
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut z.by_name("ppt/theme/theme1.xml").expect("theme part"), &mut xml).expect("utf8");
+    let (cs_start, cs_end) = (xml.find("<a:clrScheme").expect("clrScheme"), xml.find("</a:clrScheme>").expect("clrScheme end"));
+    let ext = xml.find("<a:extLst>").expect("extLst");
+    assert!(cs_start < ext && ext < cs_end, "the extension belongs to the colour scheme");
+    assert!(xml.contains("computed=\"0\""), "{xml}");
+    assert!(xml.contains("<dc:color name=\"Sand\" val=\"EBE5E0\"></dc:color>"), "{xml}");
+    assert!(xml.contains("<dc:tints slot=\"accent6\"></dc:tints>"), "{xml}");
+    assert!(xml.contains("Grey &amp; &quot;tones&quot;"), "{xml}");
+    // With computed rows and no lists or extras, a plain scheme writes no extension at all.
+    let plain = deckcraft_pptx::export(&defaults::new_presentation(None)).expect("export");
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(plain)).expect("zip");
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut z.by_name("ppt/theme/theme1.xml").expect("theme part"), &mut xml).expect("utf8");
+    assert!(!xml.contains("extraColors"), "{xml}");
+    // `computed_tints = false` alone is kept too.
+    let mut p = defaults::new_presentation(None);
+    Arc::make_mut(&mut p.masters[0]).theme.colors.computed_tints = false;
+    let q = round(&p);
+    assert!(!q.masters[0].theme.colors.computed_tints);
 }
 
 /// Show media controls is PowerPoint's `p14:showMediaCtrls` extension inside `p:showPr`: off is
