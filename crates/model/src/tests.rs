@@ -178,6 +178,41 @@ fn four_by_three_master_scales() {
     assert!(x.x + x.w <= 720.0 + 1e-6);
 }
 
+/// #1937: the slide show tells links apart by their run, and runs side by side with one link are
+/// one link; two links to the same place are two.
+#[test]
+fn link_start_groups_neighbouring_runs_with_the_same_link() {
+    use crate::text::{Action, Hyperlink, Paragraph, Run};
+    let link = |url: &str| {
+        Some(Hyperlink {
+            action: Action::Url { url: url.into() },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        })
+    };
+    let run = |text: &str, l: Option<Hyperlink>| {
+        let mut r = Run::new(text);
+        r.props.link = l;
+        r
+    };
+    let para = Paragraph {
+        runs: vec![
+            run("a", link("https://a.example")),
+            run("b", link("https://a.example")),
+            run("c", None),
+            run("d", link("https://a.example")),
+            run("e", link("https://b.example")),
+        ],
+        ..Default::default()
+    };
+    let starts: Vec<usize> = (0..5).map(|i| para.link_start(i)).collect();
+    assert_eq!(starts, vec![0, 0, 2, 3, 4], "ab are one link; d has the same target as ab but is another; c has no link");
+    assert_eq!(para.link_start(9), 9, "out of range is itself");
+}
+
 #[test]
 fn hyperlinked_runs_take_the_theme_hyperlink_look() {
     use crate::text::{Action, Hyperlink, Paragraph, RunProps};

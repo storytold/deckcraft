@@ -1014,6 +1014,62 @@ fn hyperlinks_draw_in_the_hyperlink_colour_underlined() {
     assert_eq!(diff(&own, &px(&run_deck(RunProps { fill: red, underline: Some("sng".into()), ..Default::default() }))), 0);
 }
 
+/// #1937: a link the slide show has followed is drawn in the theme's followed hyperlink colour,
+/// and only that link: another link with the same target, or the same text, stays as it was.
+#[test]
+fn followed_links_draw_in_the_followed_hyperlink_colour() {
+    use deckcraft_model::RunProps;
+    use deckcraft_model::text::{Action, FollowedLink, Hyperlink, Run, TextBody};
+    let url = || Hyperlink {
+        action: Action::Url { url: "https://example.org".into() },
+        tooltip: String::new(),
+        highlight_click: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    };
+    // One paragraph: link, plain gap, a second link to the same place, then a link over two runs.
+    let deck = |first: RunProps, second: RunProps, third: RunProps, fourth: RunProps| {
+        let mut sh = text_shape(1, "x", 40.0, 40.0);
+        let mut body = TextBody::from_text("x");
+        let runs = [("Aaa", first), (" ", RunProps::default()), ("Bbb", second), (" ", RunProps::default()), ("Cc", third), ("cc", fourth)];
+        body.paragraphs[0].runs = runs
+            .into_iter()
+            .map(|(t, props)| {
+                let mut r = Run::new(t);
+                r.props = RunProps { size: Some(40.0), ..props };
+                r
+            })
+            .collect();
+        sh.text = Some(body);
+        deck_with(vec![sh])
+    };
+    let link = || RunProps { link: Some(url()), ..Default::default() };
+    let followed_look = || RunProps {
+        fill: Some(Fill::solid(ColorRef::scheme(deckcraft_color::SchemeSlot::FolHlink))),
+        underline: Some("sng".into()),
+        ..Default::default()
+    };
+    let plain = deck(link(), link(), link(), link());
+    let at = |p: &Presentation, followed: &[FollowedLink]| render_slide(p, 0, &RenderOpts { scale: 0.5, followed, ..Default::default() });
+    let diff = |a: &Image, b: &Image| a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 64).count();
+    let key = |run| FollowedLink { shape: ShapeId(1), para: 0, run };
+    let _ = at(&plain, &[]); // faces load lazily
+    let base = at(&plain, &[]);
+
+    // Following the first link recolours it exactly as the followed hyperlink colour, not the rest.
+    let first = at(&plain, &[key(0)]);
+    assert!(diff(&base, &first) > 100, "a followed link looks like a link that was not followed");
+    assert_eq!(diff(&first, &at(&deck(followed_look(), link(), link(), link()), &[])), 0);
+    // The second link has the same target; it is another link.
+    assert!(diff(&base, &at(&plain, &[key(2)])) > 100);
+    assert_eq!(diff(&at(&plain, &[key(2)]), &at(&deck(link(), followed_look(), link(), link()), &[])), 0);
+    // Runs side by side with one link are one link: following it recolours both.
+    assert_eq!(diff(&at(&plain, &[key(4)]), &at(&deck(link(), link(), followed_look(), followed_look()), &[])), 0);
+    // A different shape's key does nothing here.
+    assert_eq!(diff(&base, &at(&plain, &[FollowedLink { shape: ShapeId(2), para: 0, run: 0 }])), 0);
+}
+
 #[test]
 fn a_linear_gradient_ramps_like_powerpoint() {
     // Black to white, left to right: PowerPoint draws 105 a quarter of the way and 186 half way

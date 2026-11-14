@@ -2,7 +2,7 @@
 //! that put real text over a raster (PDF text layer, links) and for text extraction.
 
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Hyperlink, RunKind, TextBody};
+use deckcraft_model::text::{FollowedLink, Hyperlink, RunKind, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use deckcraft_text::{Fields, Opts, TextLayout};
 use kurbo::{Affine, Rect};
@@ -26,6 +26,9 @@ pub struct PlacedLink {
     pub shape: ShapeId,
     /// A hyperlink on text, not the shape's own action.
     pub text: bool,
+    /// Which link in the text this is, for a text hyperlink: what the slide show remembers as
+    /// followed. `None` for a shape's action.
+    pub followed: Option<FollowedLink>,
 }
 
 /// A shape of the slide itself (not of its layout or master) with its slide-space bounding box:
@@ -119,7 +122,7 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
     let m = parent * x.affine();
     let rect = m.transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h));
     if let Some(link) = &s.click {
-        out.links.push(PlacedLink { rect, link: link.clone(), shape: s.id, text: false });
+        out.links.push(PlacedLink { rect, link: link.clone(), shape: s.id, text: false, followed: None });
     }
     let me = if own {
         out.shapes.push(PlacedShape { id: s.id, parent: group, is_group: matches!(s.kind, ShapeKind::Group { .. }), rect, link: s.click.clone() });
@@ -177,25 +180,26 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
     }
     // Text hyperlinks: one box per line segment of a linked run.
     for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
-        let Some(link) = run_link(&placed, run.para, run.chars.0) else { continue };
+        let Some((link, run_ix)) = run_link(&placed, run.para, run.chars.0) else { continue };
+        let followed = placed.paragraphs.get(run.para).map(|p| FollowedLink { shape: owner, para: run.para, run: p.link_start(run_ix) });
         let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
         // The run's visual extent (right-to-left runs run from right to left).
         let first = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
         let (x0, x1) = line.span(run.chars.0, run.chars.1).unwrap_or((first, first));
         let r = Rect::new(x0, line.top, x1, line.bottom);
-        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
+        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true, followed });
     }
     out.texts.push(PlacedText { layout, transform: m, body: placed });
 }
 
-/// The hyperlink of the model run containing character `at` of paragraph `para`.
-fn run_link(body: &TextBody, para: usize, at: usize) -> Option<Hyperlink> {
+/// The hyperlink of the model run containing character `at` of paragraph `para`, and that run's index.
+fn run_link(body: &TextBody, para: usize, at: usize) -> Option<(Hyperlink, usize)> {
     let p = body.paragraphs.get(para)?;
     let mut pos = 0;
-    for r in &p.runs {
+    for (i, r) in p.runs.iter().enumerate() {
         let n = r.char_len();
         if at < pos + n.max(1) {
-            return r.props.link.clone();
+            return r.props.link.clone().map(|l| (l, i));
         }
         pos += n;
     }

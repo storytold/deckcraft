@@ -248,9 +248,17 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
         let _ = app.run("media.gifPlay", json!({"id": id}));
     } else if let Some((id, clip)) = media_click {
         app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show);
-    } else if clicked && let Some(Pick::Text(l)) = under.as_ref().and_then(|u| u.pick.clone()) {
+    } else if clicked && let Some(Pick::Text(l, id)) = under.as_ref().and_then(|u| u.pick.clone()) {
         let last = show.last_viewed;
-        match show.state.follow_link(doc, &l, last) {
+        let jump = show.state.follow_link(doc, &l, last);
+        // A click that did something marks that one link followed, until the show ends.
+        if let Some(id) = id
+            && !matches!(jump, LinkJump::None)
+            && !show.followed.contains(&id)
+        {
+            show.followed.push(id);
+        }
+        match jump {
             LinkJump::Show(a) => out.actions.push(a),
             LinkJump::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
             LinkJump::Exit => out.keep = false,
@@ -377,7 +385,16 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     crate::media::gif_repaint(ctx, &gifs);
     let gif = crate::media::gif_key(&gifs);
     let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
-    let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), plays: done, gif };
+    let key = Key {
+        slide: idx,
+        step,
+        size,
+        doc: std::sync::Arc::as_ptr(doc) as usize,
+        hidden: hidden.clone(),
+        plays: done,
+        gif,
+        followed: show.followed.len(),
+    };
     let back_key = BackKey { slide: idx, size, doc: key.doc };
     Sl { idx, step, animating, t, plays, stamps, media, hidden, times, gifs, key, back_key, size }
 }
@@ -399,7 +416,21 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
                 let tl = show.timeline(doc).clone();
                 // Animating: the backdrop doesn't change, only the shapes over it are drawn.
                 let back = animating.then(|| show.backdrop(doc, sl.back_key));
-                render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, back.as_deref())
+                render_frame(
+                    doc,
+                    idx,
+                    tl,
+                    step,
+                    sl.t,
+                    size,
+                    sl.hidden.clone(),
+                    &sl.times,
+                    render_threads(),
+                    &sl.plays,
+                    &sl.stamps,
+                    &show.followed,
+                    back.as_deref(),
+                )
             }
         };
         if show.remote_opened && show.presenter {
@@ -430,9 +461,11 @@ fn prefetch_next(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl) {
         let next = show.state.peek_next(doc);
         let wanted = next.filter(|n| app.media.gifs(doc_uid, doc, *n, now, &app.session.gif_paused).is_empty());
         if let Some(n) = wanted
-            && show.prefetch.as_ref().is_none_or(|p| p.key.slide != n || p.key.size != size || p.key.doc != std::sync::Arc::as_ptr(doc) as usize)
+            && show.prefetch.as_ref().is_none_or(|p| {
+                p.key.slide != n || p.key.size != size || p.key.followed != show.followed.len() || p.key.doc != std::sync::Arc::as_ptr(doc) as usize
+            })
         {
-            show.prefetch = start_prefetch(doc, n, size);
+            show.prefetch = start_prefetch(doc, n, size, show.followed.clone());
         }
     }
 }
@@ -498,7 +531,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
                     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
                 let timeline = ShowState::timeline(doc, prev);
                 let step = timeline.steps();
-                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None);
+                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], &show.followed, None);
                 tr.old = Some(crate::textures::upload(ctx, "trans-old", ci));
             }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
@@ -600,7 +633,21 @@ fn draw_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, frame
         let fresh = !animating && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == sl.key && *s == skip);
         if !fresh {
             let tl = show.timeline(doc).clone();
-            let ci = render_overlay(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &skip, &sl.times, render_threads(), &sl.plays, &sl.stamps);
+            let ci = render_overlay(
+                doc,
+                idx,
+                tl,
+                step,
+                sl.t,
+                size,
+                sl.hidden.clone(),
+                &skip,
+                &sl.times,
+                render_threads(),
+                &sl.plays,
+                &sl.stamps,
+                &show.followed,
+            );
             let handle = match show.overlay.take() {
                 Some((_, _, mut h)) => {
                     crate::textures::replace(ctx, &mut h, ci);
