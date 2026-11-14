@@ -25,6 +25,7 @@ pub mod selection;
 pub mod shape;
 pub mod slide;
 pub mod smartart;
+pub mod split;
 pub mod table;
 pub mod text;
 pub mod three_d;
@@ -166,6 +167,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(edit::specs());
         v.extend(slide::specs());
         v.extend(reuse::specs());
+        v.extend(split::specs());
         v.extend(insert::specs());
         v.extend(smartart::specs());
         v.extend(shape::specs());
