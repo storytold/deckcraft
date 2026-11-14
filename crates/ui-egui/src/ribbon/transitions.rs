@@ -15,12 +15,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
         let playing = app.show.as_ref().is_some_and(|s| s.preview_only);
         let (resp, _) = widgets::big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
         if resp.on_hover_text("Play this slide's transition").clicked() {
-            let to = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
-            app.start_show(to, true);
-            let now = ui.input(|i| i.time);
-            if let (Some(s), Some(d)) = (app.show.as_mut(), app.session.active()) {
-                s.start_transition_preview(&d.doc, now);
-            }
+            play_preview(app, ui);
         }
     });
     group(ui, |ui| {
@@ -37,6 +32,9 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
         ) && let Some(x) = shown.get(i)
         {
             run(app, "transition.set", json!({"kind": x.0}));
+            if x.0 != "none" && app.ui.auto_preview_transitions {
+                play_preview(app, ui);
+            }
         }
         let more = widgets::drop_button(ui, "", vec2(14.0, 52.0), true);
         egui::Popup::menu(&more).width(480.0).show(|ui| {
@@ -51,6 +49,9 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
                         paint_transition_tile(ui.painter(), r.shrink(3.0), (x.0, x.1));
                         if resp.clicked() {
                             run(app, "transition.set", json!({"kind": x.0}));
+                            if x.0 != "none" && app.ui.auto_preview_transitions {
+                                play_preview(app, ui);
+                            }
                             ui.close();
                         }
                     }
@@ -66,6 +67,9 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
             for &(o, on) in &rows {
                 if ui.selectable_label(on, deckcraft_model::anim::transition_option_label(&kind, o)).clicked() {
                     run(app, "transition.options", json!({"option": o}));
+                    if kind != "none" && app.ui.auto_preview_transitions {
+                        play_preview(app, ui);
+                    }
                     ui.close();
                 }
             }
@@ -242,4 +246,13 @@ pub fn paint_transition_tile(p: &egui::Painter, r: Rect, (id, label): (&str, &st
 pub(super) fn transition_effect_rows(kind: &str, current: Option<&str>) -> Vec<(&'static str, bool)> {
     let opts = deckcraft_model::anim::TRANSITIONS.iter().find(|x| x.0 == kind).map(|x| x.4).unwrap_or(&[]);
     marked_options(opts, current)
+}
+
+fn play_preview(app: &mut SlideApp, ui: &Ui) {
+    let to = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
+    app.start_show(to, true);
+    let now = ui.input(|i| i.time);
+    if let (Some(s), Some(d)) = (app.show.as_mut(), app.session.active()) {
+        s.start_transition_preview(&d.doc, now);
+    }
 }

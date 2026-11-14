@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
+use egui_kittest::kittest::Queryable;
 
 /// #1005: shapes stacked above a playing video must be drawn over its frame; the video, what
 /// is below it and other videos stay out of that overlay.
@@ -1368,4 +1369,136 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.kind, "fade");
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
+}
+
+/// #1655: selecting a transition in the gallery automatically triggers a preview on the slide.
+#[test]
+fn selecting_transition_in_gallery_auto_previews_when_enabled() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(s, crate::Services::default());
+    app.ui.tab = "Transitions".into();
+    assert!(app.ui.auto_preview_transitions);
+
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+
+    // Click "Push" in the transitions gallery.
+    h.get_by_label("Push").click();
+    h.run_steps(2);
+
+    // Show preview should now be actively running with preview_only = true.
+    let show = h.state().show.as_ref().expect("auto-preview started show");
+    assert!(show.preview_only);
+    let tr = show.trans.as_ref().expect("transition preview is playing");
+    assert_eq!(tr.kind, "push");
+}
+
+/// #1655 review: an automatic preview leaves the editor as it was. With slides 1 and 2 selected,
+/// picking a transition (applied to both) previews it and, once the preview has played out, the
+/// two slides are still selected, so the next Effect Options change still reaches both. And a
+/// preview never auto-advances, whatever "After" timing the slide carries.
+#[test]
+fn auto_preview_keeps_the_slide_selection_and_never_auto_advances() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.execute("slide.selectSlides", &json!({"indices": [0, 1]})).unwrap();
+    // A 50 ms "After" timing on both: a real show would advance almost at once.
+    s.execute("transition.timing", &json!({"after": 50})).unwrap();
+    let id = s.active().unwrap().doc.slides[0].shapes[0].id;
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "onClick", "duration": 500})).unwrap();
+    let mut app = SlideApp::new(s, crate::Services::default());
+    app.ui.tab = "Transitions".into();
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    let start = h.state().session.active().unwrap().selection.slide;
+    h.get_by_label("Push").click();
+    h.run_steps(2);
+    let show = h.state().show.as_ref().expect("auto-preview started");
+    assert!(show.preview_only, "a preview, not a show");
+    assert_eq!(show.state.slide, start, "previewed on the current slide");
+    // Let the preview run well past the transition and the 50 ms timing.
+    let mut advanced = false;
+    for _ in 0..240 {
+        h.step();
+        if let Some(show) = h.state().show.as_ref() {
+            advanced |= show.state.slide != start;
+        } else {
+            break;
+        }
+    }
+    assert!(!advanced, "a preview never auto-advances");
+    assert!(h.state().show.is_none(), "the preview exited on its own");
+    let st = h.state().session.active().unwrap();
+    assert_eq!(st.selection.slide, start, "the current slide is unchanged");
+    assert_eq!(st.selection.slides.len(), 2, "both slides are still selected: {:?}", st.selection.slides);
+    // So an Effect Options change still reaches both.
+    h.state_mut().run("transition.options", json!({"option": "l"})).unwrap();
+    let st = h.state().session.active().unwrap();
+    assert!(
+        st.doc.slides[..2].iter().all(|sl| sl.transition.as_ref().is_some_and(|t| t.kind == "push" && t.option == "l")),
+        "both slides took the option"
+    );
+}
+
+/// #1655: when auto_preview_transitions is disabled, selecting a transition does not play preview.
+#[test]
+fn selecting_transition_does_not_auto_preview_when_disabled() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(s, crate::Services::default());
+    app.ui.tab = "Transitions".into();
+    app.ui.auto_preview_transitions = false;
+
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+
+    // Click "Push" in the transitions gallery.
+    h.get_by_label("Push").click();
+    h.run_steps(2);
+
+    // Transition is set on the slide, but show is NOT started.
+    assert!(h.state().show.is_none());
+    let doc = h.state().session.active().unwrap().current_slide().unwrap();
+    assert_eq!(doc.transition.as_ref().unwrap().kind, "push");
+}
+
+#[test]
+fn transition_preview_closes_with_pending_or_playing_animation_steps() {
+    for start in ["onClick", "withPrevious"] {
+        let mut s = deckcraft_engine::Session::with_new();
+        let id = s.active().unwrap().doc.slides[0].shapes[0].id;
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": start, "duration": 10000})).unwrap();
+        s.execute("transition.set", &json!({"kind": "push", "duration": 1000})).unwrap();
+        let doc = s.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, true, false);
+        show.start_transition_preview(&doc, 10.0);
+        assert!(show.advance_hidden(&doc, 10.5), "the transition is still playing");
+        assert!(!show.advance_hidden(&doc, 11.1), "pending or long-running animations must not hold the preview");
+        assert_eq!(show.state.slide, 0);
+
+        let mut normal = Show::new(&doc, 0, true, false);
+        assert!(normal.advance_hidden(&doc, 1.1), "normal shows retain their click sequence");
+        assert_eq!(normal.state.slide, 0);
+    }
 }

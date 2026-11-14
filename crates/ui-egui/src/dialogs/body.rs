@@ -1372,6 +1372,8 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
         ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
     });
+    ui.label(egui::RichText::new("Slide Show").font(theme::bold(13.0)));
+    ui.checkbox(&mut app.ui.auto_preview_transitions, "Automatically preview transitions when selecting them");
     ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
     ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
     ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
