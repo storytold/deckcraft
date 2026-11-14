@@ -7126,6 +7126,67 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A size (or colour, bold…) set on a shape before it has any text survives the text that is
+/// then set: text.set keeps the first run's properties, and an empty paragraph keeps them on its
+/// end mark, which is what the agent's format.size then set_text sequence relies on.
+#[test]
+fn text_set_keeps_the_formatting_of_an_empty_shape() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("format.size", &json!({"size": 30})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("text.set", &json!({"id": id, "text": "Hello"})).unwrap();
+    let props =
+        |s: &Session| s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    let run = props(&s);
+    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "{run:?}");
+    // Emptied and filled again: the empty paragraph's end mark carried the formatting.
+    s.execute("text.set", &json!({"id": id, "text": ""})).unwrap();
+    s.execute("text.set", &json!({"id": id, "text": "Again"})).unwrap();
+    let run = props(&s);
+    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "after an empty text.set: {run:?}");
+}
+
+/// The same while editing the text: a bold set in the text editor of a shape with an empty body
+/// (no paragraph at all) is what the next typed text gets.
+#[test]
+fn text_insert_keeps_the_formatting_set_in_an_empty_editor() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.edit(|doc, sel| {
+        let sh = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), deckcraft_model::ShapeId(id as u32)).unwrap();
+        sh.text = Some(deckcraft_model::text::TextBody::default());
+        Ok(())
+    })
+    .unwrap();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("text.insert", &json!({"text": "Hi"})).unwrap();
+    let run = s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    assert_eq!(run.bold, Some(true), "{run:?}");
+}
+
+/// Font toggles on a selected table read the first selected cell, so the second Bold turns it off
+/// again, also for a cell whose empty text got its paragraph from the first toggle.
+#[test]
+fn bold_toggles_on_a_selected_table_cell() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["", "b"], ["c", "d"]]));
+    let bold = |s: &Session, r: usize, c: usize| {
+        let st = s.doc().unwrap();
+        let deckcraft_model::ShapeKind::Table(t) = &st.shape(id).unwrap().kind else { panic!("table") };
+        let p = &t.cell(r, c).unwrap().text.paragraphs[0];
+        p.runs.first().map_or(p.end_props.bold, |r| r.props.bold)
+    };
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("format.bold", &json!({})).unwrap();
+    assert_eq!((bold(&s, 0, 0), bold(&s, 0, 1)), (Some(true), Some(true)));
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["bold"], json!(true));
+    s.execute("format.bold", &json!({})).unwrap();
+    assert_eq!((bold(&s, 0, 0), bold(&s, 0, 1)), (Some(false), Some(false)));
+    assert_eq!(bold(&s, 1, 0), None, "cells outside the range keep their formatting");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
