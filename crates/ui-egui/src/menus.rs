@@ -60,6 +60,10 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
         }
         (P, true, true, false) => "app.palette",
         (Comma, true, false, false) => "app.preferences",
+        // Ctrl+= is Subscript while text or shapes are selected; it zooms only with nothing to format.
+        (Equals, true, false, false) if app.session.active().is_some_and(|d| d.selection.text.is_some() || !d.selection.shapes.is_empty()) => {
+            return false;
+        }
         (Equals | Plus, true, false, false) => "view.zoomIn",
         (Minus, true, false, false) => "view.zoomOut",
         (Num0, true, false, false) => "view.fit",
