@@ -160,6 +160,7 @@ fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
                     action: Action::Slide { slide: t.slide },
                     tooltip: label,
                     highlight_click: false,
+                    use_text_color: false,
                     zoom_return: back.then_some(t.last),
                     sound: None,
                     stop_sound: false,

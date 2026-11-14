@@ -117,7 +117,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Link",
             ["Insert", "Links"],
             Some("Cmd+K"),
-            "{url? | slide?: index, tooltip?, text?: shown when nothing is selected, highlightClick?, ids?}",
+            "{url? | slide?: index, tooltip?, text?: shown when nothing is selected, highlightClick?, useTextColor?: bool, ids?}",
             has_text_or_shapes,
             hyperlink
         ),

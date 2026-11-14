@@ -466,6 +466,9 @@ pub struct Hyperlink {
     pub tooltip: String,
     #[serde(default)]
     pub highlight_click: bool,
+    /// `ahyp:hlinkClr val="tx"`: keep the run's text color instead of the theme hyperlink color.
+    #[serde(default)]
+    pub use_text_color: bool,
     /// Sound played when the action runs (`a:snd`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<crate::MediaId>,

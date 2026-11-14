@@ -344,6 +344,41 @@ fn rewrite_zip_entry(bytes: &[u8], entry_name: &str, f: impl Fn(&str) -> String)
 }
 
 #[test]
+fn svg_only_blip_without_primary_embed_falls_back_to_svg_blip() {
+    let mut pres = defaults::new_presentation(None);
+    let png = pres.add_media("img.png", "image/png", vec![137, 80, 78, 71, 13, 10, 26, 10]).unwrap();
+    let svg = pres.add_media("img.svg", "image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec()).unwrap();
+    let mut sh = shape(&mut pres, "Picture 1", 50.0, 50.0, 100.0, 100.0);
+    sh.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: png, svg_media: Some(svg), ..Default::default() } };
+    Arc::make_mut(&mut pres.slides[0]).shapes.push(sh);
+    let out = deckcraft_pptx::export(&pres).unwrap();
+    let svg_only = rewrite_zip_entry(&out, "ppt/slides/slide1.xml", |xml| xml.replace(r#"<a:blip r:embed="rId2">"#, "<a:blip>"));
+    let back = deckcraft_pptx::import(&svg_only).unwrap();
+    let pf = back.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Picture { fill } => Some(fill),
+            _ => None,
+        })
+        .expect("Picture");
+    assert!(pf.svg_media.is_some());
+    assert_eq!(Some(pf.media), pf.svg_media);
+
+    let roundtripped = deckcraft_pptx::import(&deckcraft_pptx::export(&back).unwrap()).unwrap();
+    let pf2 = roundtripped.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Picture { fill } => Some(fill),
+            _ => None,
+        })
+        .expect("Picture after round-trip");
+    assert!(pf2.svg_media.is_some());
+    assert_eq!(Some(pf2.media), pf2.svg_media);
+}
+
+#[test]
 fn paragraph_build_without_bld_lst_still_folds_into_by_paragraph() {
     use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild};
     let mut pres = defaults::new_presentation(None);

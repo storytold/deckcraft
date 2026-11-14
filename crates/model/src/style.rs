@@ -167,6 +167,9 @@ impl Default for PictureMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct PictureFill {
     pub media: MediaId,
+    /// Office 2019+ `asvg:svgBlip` vector companion preserved alongside the raster fallback `media`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svg_media: Option<crate::MediaId>,
     /// Source crop as fractions of the image (left, top, right, bottom); negative values pad.
     pub crop: [f64; 4],
     pub mode: PictureMode,

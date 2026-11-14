@@ -144,9 +144,10 @@ pub fn gradient(f: &El) -> Gradient {
 /// `blipFill` (either `a:` or `p:`) → picture fill, registering the image as media.
 pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let blip = bf.child("blip");
-    let media = blip.and_then(|b| media_ref(imp, part, b));
-    let media = media?;
-    let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
+    let primary = blip.and_then(|b| media_ref(imp, part, b));
+    let svg_media = blip.and_then(|b| b.child("extLst")).and_then(|ext| ext.find("svgBlip")).and_then(|svg| media_ref(imp, part, svg));
+    let media = primary.or(svg_media)?;
+    let mut pf = PictureFill { media, svg_media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
     if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
         && let Some(effect) = layer
             .elements()
@@ -551,6 +552,7 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
         action: a,
         tooltip: h.attr("tooltip").unwrap_or("").to_string(),
         highlight_click: h.bool("highlightClick").unwrap_or(false),
+        use_text_color: h.child("extLst").and_then(|ext| ext.find("hlinkClr")).and_then(|clr| clr.attr("val")).is_some_and(|v| v == "tx"),
         stop_sound: h.bool("endSnd").unwrap_or(false),
         sound: h.child("snd").and_then(|s| media_ref(imp, part, s)),
         zoom_return: None,

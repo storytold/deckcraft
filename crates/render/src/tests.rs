@@ -995,6 +995,7 @@ fn hyperlinks_draw_in_the_hyperlink_colour_underlined() {
         action: Action::Url { url: "https://example.org".into() },
         tooltip: String::new(),
         highlight_click: false,
+        use_text_color: false,
         sound: None,
         stop_sound: false,
         zoom_return: None,
@@ -2522,8 +2523,15 @@ fn east_asian_vertical_text_stands_ideographs_upright() {
 #[test]
 fn placed_shapes_give_the_click_boxes_of_a_slide_in_drawing_order() {
     use deckcraft_model::text::{Action, Hyperlink};
-    let link =
-        Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None };
+    let link = Hyperlink {
+        action: Action::NextSlide,
+        tooltip: String::new(),
+        highlight_click: false,
+        use_text_color: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    };
     let rect = |id: u32, x: f64, click: Option<Hyperlink>| Shape {
         id: ShapeId(id),
         xfrm: Some(Xfrm::new(x, 50.0, 100.0, 40.0)),
@@ -2567,6 +2575,7 @@ fn a_text_hyperlink_belongs_to_the_shape_that_holds_the_text() {
             action: Action::FirstSlide,
             tooltip: String::new(),
             highlight_click: false,
+            use_text_color: false,
             sound: None,
             stop_sound: false,
             zoom_return: None,
