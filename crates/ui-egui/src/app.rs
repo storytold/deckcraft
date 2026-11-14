@@ -267,6 +267,11 @@ impl SlideApp {
         }
     }
 
+    /// Follow reduced motion from the host and the context's animation switch.
+    pub(crate) fn animations_on(&self, ctx: &egui::Context) -> bool {
+        ctx.global_style().animation_time > 0.0 && self.services.animations_enabled.as_ref().and_then(|ask| ask()).unwrap_or(true)
+    }
+
     /// Lay out the whole window.
     ///
     /// Every return route, including fonts/layout discards, show mode, modal/Backstage and the
@@ -299,6 +304,7 @@ impl SlideApp {
             self.requeue_injected_synthetic();
             return;
         }
+        ui.style_mut().animation_time = ctx.global_style().animation_time;
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);
@@ -307,6 +313,8 @@ impl SlideApp {
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
         if self.show.is_some() {
+            backstage::reset_shell(&ctx);
+            backstage::reset_transition(&ctx);
             self.anim_preview = None;
             show::ui(self, ui);
             doc_window::show(self, &ctx);
@@ -318,6 +326,18 @@ impl SlideApp {
         self.keyboard(&ctx);
         self.sync_backstage();
         ribbon::title_bar(self, ui);
+        let mut file = self.backstage.is_some();
+        let document = self.session.active().map(|d| d.uid);
+        let screen_id = egui::Id::unique(("backstage_document", ctx.viewport_id()));
+        let same_document = ctx.data_mut(|data| {
+            let previous = data.get_temp::<Option<u64>>(screen_id);
+            data.insert_temp(screen_id, document);
+            previous.is_none_or(|previous| previous == document)
+        });
+        let first_shape = backstage::shape_count(ui.painter());
+        if !file {
+            backstage::reset_transition(&ctx);
+        }
         if self.backstage.is_none() && self.session.active().is_some() {
             ribbon::show(self, ui);
             status::status_bar(self, ui);
@@ -327,7 +347,8 @@ impl SlideApp {
             ctx.request_repaint();
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
-            if self.backstage.is_some() {
+            file = self.backstage.is_some();
+            if file {
                 // File tab: the Backstage view replaces everything below the title bar.
                 backstage::show(self, ui);
                 return;
@@ -356,6 +377,9 @@ impl SlideApp {
                 }
             }
         });
+        // Do not retain paint belonging to a document that was closed or replaced during layout.
+        let animate = self.animations_on(&ctx) && same_document && self.session.active().map(|d| d.uid) == document;
+        backstage::paint_transition(ui.painter(), first_shape, file, animate, ui.layout().main_dir() == egui::Direction::RightToLeft);
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);

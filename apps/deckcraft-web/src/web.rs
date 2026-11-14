@@ -185,6 +185,9 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         }
     };
     Services {
+        animations_enabled: Some(Box::new(|| {
+            web_sys::window()?.match_media("(prefers-reduced-motion: reduce)").ok().flatten().map(|query| !query.matches())
+        })),
         presenter,
         open_async: Some(Box::new(move |purpose: &str, request: u64| {
             let inbox = open_inbox.clone();

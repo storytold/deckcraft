@@ -16,8 +16,16 @@ use crate::backstage::{Backstage, NAV_W, Nav, Page, PrintScope, entries, format_
 use crate::{Services, SlideApp};
 
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
-        |ui, app: &mut SlideApp| {
+    harness_with_dt(app, 0.25)
+}
+
+fn harness_with_dt(app: SlideApp, dt: f32) -> Harness<'static, SlideApp> {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(dt).build_ui_state(
+        move |ui, app: &mut SlideApp| {
+            // Kittest disables animation after context setup; enable it in the timed fixture.
+            if dt < 0.1 {
+                ui.ctx().all_styles_mut(|style| style.animation_time = 0.15);
+            }
             app.logic(ui.ctx());
             app.ui(ui);
         },
@@ -800,4 +808,109 @@ fn about_appearance_stays_on_the_page_at_minimum_width() {
     h.run_steps(3);
     let r = h.query_all_by_role_and_label(Role::ComboBox, "Appearance").next().expect("Appearance selector").rect();
     assert!(r.right() <= 900.0, "Appearance selector ends at {}, inside the window", r.right());
+}
+
+/// The real page heading fades/lifts, restarts on navigation, and settles with reduced motion.
+#[test]
+fn file_pages_fade_and_lift_and_respect_reduced_motion() {
+    let enabled = Rc::new(std::cell::Cell::new(true));
+    let ask = enabled.clone();
+    let services = Services { animations_enabled: Some(Box::new(move || Some(ask.get()))), ..Default::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    app.open_backstage(Page::Open);
+    let ctx = egui::Context::default();
+    let frame = |app: &mut SlideApp, now| {
+        let title = app.backstage.as_ref().unwrap().page.label();
+        let input = egui::RawInput {
+            time: Some(now),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        out.shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.text() == title && t.pos.x > NAV_W => Some((t.pos.y, t.fallback_color.a())),
+            _ => None,
+        })
+    };
+    for now in [0.0, 0.02, 0.04] {
+        frame(&mut app, now);
+    }
+    super::reset_transition(&ctx);
+    let first = frame(&mut app, 0.1).unwrap();
+    let middle = frame(&mut app, 0.19).unwrap();
+    let last = frame(&mut app, 0.4).unwrap();
+    assert!(first.0 > middle.0 && middle.0 > last.0, "heading lifts: {first:?} {middle:?} {last:?}");
+    assert!(first.1 < middle.1 && middle.1 < last.1);
+    assert_eq!(last.1, 255);
+    app.open_backstage(Page::New);
+    assert_eq!(frame(&mut app, 0.41).unwrap(), first);
+    app.open_backstage(Page::Open);
+    assert_eq!(frame(&mut app, 0.42).unwrap(), first);
+    enabled.set(false);
+    app.open_backstage(Page::New);
+    assert_eq!(frame(&mut app, 0.5).unwrap(), last);
+    enabled.set(true);
+    assert_eq!(frame(&mut app, 0.51).unwrap(), last, "reenabling does not replay the entry");
+}
+
+/// Outgoing paint is visible without retaining the old Close control or its accessibility node.
+#[test]
+fn exiting_file_keeps_paint_but_cannot_close_the_presentation() {
+    let mut h = harness_with_dt(new_app(), 1.0 / 60.0);
+    h.run_steps(20);
+    h.state_mut().open_backstage(Page::Open);
+    h.step();
+    assert!(h.output().shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == "File")));
+    h.run_steps(20);
+    let old_close = h.get_by_label("Close").rect().center();
+    h.state_mut().close_backstage();
+    h.run_steps(3);
+    assert!(
+        h.output().shapes.iter().any(
+            |s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == "Close" && t.fallback_color.a() > 0 && t.fallback_color.a() < 255)
+        )
+    );
+    assert!(h.query_by_label("Close").is_none());
+    h.event(egui::Event::PointerMoved(old_close));
+    h.event(egui::Event::PointerButton { pos: old_close, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.step();
+    h.event(egui::Event::PointerButton { pos: old_close, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+    assert!(!h.state().backstage_open());
+    assert_eq!(h.state().session.documents().len(), 1);
+}
+
+/// Optional headless captures for visual review of both themes and transition boundaries.
+#[test]
+#[ignore = "writes screenshots for visual review"]
+fn file_transition_screenshots() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    std::fs::create_dir_all("/private/tmp/deckcraft-ui-review").unwrap();
+    for (name, brightness) in [("light", crate::theme::Brightness::Light), ("dark", crate::theme::Brightness::Dark)] {
+        let mut app = new_app();
+        app.ui.brightness = brightness;
+        let mut h = harness_with_dt(app, 1.0 / 60.0);
+        h.run_steps(20);
+        h.event(egui::Event::PointerMoved(egui::pos2(100.0, 130.0)));
+        h.run_steps(20);
+        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-ribbon.png")).unwrap();
+        h.state_mut().open_backstage(Page::Open);
+        h.run_steps(5);
+        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-entry.png")).unwrap();
+        h.run_steps(20);
+        h.state_mut().open_backstage(Page::New);
+        h.run_steps(5);
+        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-new.png")).unwrap();
+        h.run_steps(20);
+        h.state_mut().open_backstage(Page::Print);
+        h.run_steps(20);
+        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-print.png")).unwrap();
+        h.state_mut().close_backstage();
+        h.run_steps(5);
+        h.render().unwrap().save(format!("/private/tmp/deckcraft-ui-review/{name}-exit.png")).unwrap();
+    }
 }

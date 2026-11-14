@@ -1073,10 +1073,13 @@ dependencies = [
  "fmv-macos-events",
  "image",
  "log",
+ "objc2-app-kit 0.3.2",
  "rfd",
  "serde_json",
+ "windows 0.62.2",
  "winit",
  "winresource",
+ "zbus",
 ]
 
 [[package]]
