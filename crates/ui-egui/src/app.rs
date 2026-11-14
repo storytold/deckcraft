@@ -73,6 +73,7 @@ impl SlideApp {
             ribbon_scroll: HashMap::new(),
             show_instance: 0,
             opening_generation: 0,
+            anim_row: None,
             canvas_rect: None,
             eyedropper: None,
             canvas_scale: 1.0,
@@ -205,6 +206,16 @@ impl SlideApp {
         } else if !has_doc && (stale || self.backstage.is_none()) {
             self.backstage = Some(backstage::Backstage::new(backstage::Page::Home, key));
         }
+    }
+
+    /// The index of the Animation Pane row still in force, if any.
+    pub fn anim_row_index(&self) -> Option<usize> {
+        let r = self.anim_row.as_ref()?;
+        let d = self.session.active()?;
+        if !r.matches(d) {
+            return None;
+        }
+        Some(r.index)
     }
 
     /// Background work, run on every logic call (visible, hidden or `run_logic`).

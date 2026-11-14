@@ -17,8 +17,8 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     // Play From starts at the effect last clicked here, or else the first effect of the selected
     // shape; with nothing selected it is Play All. Reordering or removing forgets the click: the
     // index would point at another effect.
-    let pick_id = egui::Id::unique(("anim_pane_pick", st.uid, st.selection.slide));
-    let pick = ui.data(|m| m.get_temp::<usize>(pick_id));
+    let (doc, slide_index) = (st.uid, st.selection.slide);
+    let pick = app.anim_row_index();
     // A triggered effect is not on the click sequence, so it can't be played from.
     let eligible = |i: usize| anims.get(i).is_some_and(|a| selected.contains(&a.shape.0)) && tl.start_of(i).is_some();
     let from = pick.filter(|&i| eligible(i)).or_else(|| (0..anims.len()).find(|&i| eligible(i)));
@@ -53,7 +53,8 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
         }
         let name = names.iter().find(|(id, _)| *id == a.shape.0).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("Shape {}", a.shape));
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
-        let sel = selected.contains(&a.shape.0);
+        // With a row picked the ribbon acts on it alone, so only it looks selected.
+        let sel = pick.map_or(selected.contains(&a.shape.0), |p| p == i);
         if sel || resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(4), if sel { t.selected } else { t.hover });
         }
@@ -141,8 +142,8 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         if resp.clicked() {
-            ui.data_mut(|m| m.insert_temp(pick_id, i));
             run(app, "edit.select", json!({"ids": [a.shape.0]}));
+            app.anim_row = Some(crate::AnimRow::new(doc, slide_index, i, a));
         }
         resp.context_menu(|ui| {
             for (l, v) in [("Start On Click", "onClick"), ("Start With Previous", "withPrevious"), ("Start After Previous", "afterPrevious")] {
@@ -153,17 +154,17 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             if ui.button("Move Up").clicked() {
-                ui.data_mut(|m| m.remove::<usize>(pick_id));
+                app.anim_row = None;
                 run(app, "animation.move", json!({"index": i, "to": i.saturating_sub(1)}));
                 ui.close();
             }
             if ui.button("Move Down").clicked() {
-                ui.data_mut(|m| m.remove::<usize>(pick_id));
+                app.anim_row = None;
                 run(app, "animation.move", json!({"index": i, "to": i + 1}));
                 ui.close();
             }
             if ui.button("Remove").clicked() {
-                ui.data_mut(|m| m.remove::<usize>(pick_id));
+                app.anim_row = None;
                 run(app, "animation.remove", json!({"index": i}));
                 ui.close();
             }

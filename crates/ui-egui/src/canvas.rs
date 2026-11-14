@@ -152,6 +152,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     app.canvas_rect = Some(avail);
+    // Clicking the slide goes back to acting on what is selected there, not the pane's row.
+    if ui.input(|i| i.pointer.primary_pressed() && i.pointer.hover_pos().is_some_and(|p| avail.contains(p))) {
+        app.anim_row = None;
+    }
     let Some(st) = app.session.active() else { return };
     // The leftover fraction of a wheel line belongs to one presentation. Drop it whenever another
     // one is drawn here, hovered or not, so switching away and back starts from zero.

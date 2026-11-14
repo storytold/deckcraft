@@ -214,7 +214,37 @@ struct InputTarget {
     opening: Option<(egui::Id, u64)>,
 }
 
+/// An Animation Pane row the person clicked. It stops counting when its effect changes place or
+/// target, or the selection moves off it (`SlideApp::anim_row_index`).
+#[derive(Clone, Debug)]
+pub struct AnimRow {
+    doc: u64,
+    slide: usize,
+    index: usize,
+    shape: deckcraft_model::ShapeId,
+    paragraph: Option<u32>,
+}
+
+impl AnimRow {
+    pub(crate) fn new(doc: u64, slide: usize, index: usize, a: &deckcraft_model::Animation) -> Self {
+        Self { doc, slide, index, shape: a.shape, paragraph: a.paragraph }
+    }
+
+    /// Is the row still this effect, and the selection still on it?
+    fn matches(&self, d: &deckcraft_engine::DocState) -> bool {
+        let sel = &d.selection;
+        d.uid == self.doc
+            && sel.slide == self.slide
+            && sel.text.is_none()
+            && sel.shapes == [self.shape]
+            && d.current_slide().and_then(|s| s.animations.get(self.index)).is_some_and(|a| a.shape == self.shape && a.paragraph == self.paragraph)
+    }
+}
+
 pub struct SlideApp {
+    /// The Animation Pane row last clicked: Play From starts there and the ribbon acts on it alone.
+    /// See `anim_row_index`.
+    pub anim_row: Option<AnimRow>,
     /// Shape Fill's last colour (a command colour parameter): the button applies it again. Accent 1 until one is picked.
     pub last_fill: serde_json::Value,
     /// Shape Outline's last colour, likewise. Text 1 until one is picked.
