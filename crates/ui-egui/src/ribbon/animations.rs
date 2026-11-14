@@ -1,6 +1,6 @@
 use super::{
-    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
-    pos2, rows, run, theme, vec2, widgets,
+    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big_button, big_button_ex, dropdown, enabled, group, icons, json, pos2,
+    rows, run, theme, vec2, widgets,
 };
 
 // ---------- Animations ----------
@@ -127,7 +127,18 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-        big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
+        // A toggle like Review › Show Comments: painted pressed while the pane is open, a click
+        // closes it again, and the widget metadata reports the open/closed state so a screen
+        // reader announces "pressed"/"not pressed" (#2080).
+        let pane_open = app.ui.pane.as_deref() == Some("animation");
+        let en = enabled(app, "view.pane");
+        let (r, _) = big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", en, false, pane_open);
+        r.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, en, pane_open, "Animation Pane"));
+        let r = r.on_hover_text(super::tip("view.pane", "Animation Pane"));
+        if r.clicked() {
+            run(app, "view.pane", json!({"pane": "animation", "toggle": true}));
+        }
+        crate::qat::ribbon_menu(app, &r, Icon::AnimationPane, "Animation\nPane", "view.pane", &json!({"pane": "animation", "toggle": true}));
         let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
             if ui.button("On Click of… (none)").clicked() {

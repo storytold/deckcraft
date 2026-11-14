@@ -1273,6 +1273,33 @@ fn ribbon_dropdowns_are_named_by_purpose_even_when_empty() {
     }
 }
 
+/// #2080: Animations › Animation Pane announces the pane's open/closed state like the
+/// status-bar pane toggles do, and a second click closes the pane again.
+#[test]
+fn animation_pane_button_reports_its_toggle_state() {
+    use egui::accesskit::{Role, Toggled};
+    use egui_kittest::kittest::NodeT;
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1600.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    h.state_mut().ui.tab = "Animations".into();
+    h.run_steps(3);
+    let toggled = |h: &egui_kittest::Harness<'_, SlideApp>| h.get_by_role_and_label(Role::Button, "Animation Pane").accesskit_node().toggled();
+    assert_eq!(toggled(&h), Some(Toggled::False), "closed pane: not pressed");
+    h.get_by_role_and_label(Role::Button, "Animation Pane").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("animation"), "the click opened the pane");
+    assert_eq!(toggled(&h), Some(Toggled::True), "open pane: pressed");
+    h.get_by_role_and_label(Role::Button, "Animation Pane").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane, None, "a second click closed the pane");
+    assert_eq!(toggled(&h), Some(Toggled::False));
+}
+
 /// Copy of a bold selection offers HTML; paste of Pages-like HTML keeps the bold.
 #[test]
 fn copy_offers_html_and_paste_keeps_bold() {
