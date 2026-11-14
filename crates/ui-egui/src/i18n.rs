@@ -274,7 +274,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("tab.shape_format", "Shape Format", "圖案格式"),
     ("tab.slide_master", "Slide Master", "投影片母片"),
     ("tab.slideshow", "Slide Show", "投影片放映"),
-    ("tab.smartart_design", "SmartArt Design", "SmartArt 設計"),
+    ("tab.smartart_design", "Diagram Design", "圖解設計"),
     ("tab.table_design", "Table Design", "表格設計"),
     ("tab.transitions", "Transitions", "轉場"),
     ("tab.view", "View", "檢視"),
