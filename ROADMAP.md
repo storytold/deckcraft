@@ -187,6 +187,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-24 | AutoFormat as you type: a paragraph that starts with `*`, `-`, `--`, `>`, `<>`, `1.`, `1)`, `I.`, `i.`, `A.`, `a.` or `a)` and a space or tab becomes a bulleted or numbered list in that style; Backspace right after puts the typed text back, and Tools ▸ AutoCorrect and `text.autocorrect {lists}` turn it off |
 | 2026-10-24 | Tables: while the caret is in a cell, dragging into another cell selects that range of cells (shaded, merged cells taken in whole), and Shift+arrow grows or shrinks it; formatting applies to the selected cells only, and Delete clears their text and keeps the table |
 | 2026-10-24 | Preferences ▸ Measurement units: inches or centimetres. The Format pane's Size and Position fields, Shape Format ▸ Size on the ribbon, the Slide Size dialog and the ruler show and take the chosen unit; the deck still stores points (#1326) |
+| 2026-10-23 | Preset geometry: the `extra` module dispatches its 38 extra outlines on a typed `Name` enum instead of string compares, with a `from_str` parse at the entry point (behaviour unchanged) |
 | 2026-10-23 | Chart text colour: `chart.options {textColor}` and Font Color on a selected chart colour its title, axes, legend and data labels; the colour is written to the chart part (`c:txPr` on the axes, legend, labels and chart, the title's run defaults) so an imported chart keeps its `txPr` colours through an edit and a save; text without a colour of its own takes PowerPoint's default, the theme's text colour at 65 % plus 35 % (595959 on a light theme, light grey on a dark one) |
 | 2026-10-24 | A picture's own fill shows behind its transparent pixels, and an embedded object (an old equation, `p:oleObj`) takes the fill and outline of its fallback picture, as PowerPoint for Mac draws them (synthetic probe: a half-transparent PNG on orange and on yellow with an outline); on a private 166-deck corpus 51 slides of equations on coloured boxes move closer to PowerPoint's PDF, none further |
 | 2026-10-23 | Format Background ▸ Apply to All also sets the background of the slide masters the slides use (and clears their layouts' overrides), so new slides keep it (#891) |
@@ -365,6 +366,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-24 | trivial | Progress log: measurement units in centimetres (#1326). Scores unchanged |
 | 2026-10-22 | trivial | Progress log: Animation Pane ▸ Play From. Scores unchanged |
 | 2026-10-24 | trivial | Progress log: Ctrl+wheel zoom during the slide show (#1286). Scores and milestone names unchanged |
+| 2026-10-23 | trivial | Progress log: extra preset outlines dispatch on a `Name` enum |
 | 2026-10-23 | trivial | Progress log: scroll bars on the zoomed slide pane (#1157). Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: the Columns dialog. Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option. Scores and milestone names unchanged |

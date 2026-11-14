@@ -36,7 +36,7 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
         .or_else(|| bracket_and_arrow_shapes(&c))
         .or_else(|| flowchart_and_star_shapes(&c))
         .or_else(|| callout_wave_and_connector_shapes(&c))
-        .or_else(|| extra::build(name, c.w, c.h, &|i| c.a(i)))
+        .or_else(|| extra::Name::from_str(name).map(|n| extra::build(n, c.w, c.h, &|i| c.a(i))))
 }
 
 fn rect_and_triangle_shapes(c: &Ctx) -> Option<Geometry> {
