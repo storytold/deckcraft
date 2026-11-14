@@ -77,7 +77,7 @@ Today it can:
   reflections.
 - **Write**: in-place text editing with full font and paragraph formatting, bullets and numbering,
   columns, autofit, vertical text, fields and hyperlinks.
-- **Add content**: pictures with crop and corrections, tables with styles, charts, SmartArt basics,
+- **Add content**: pictures with crop and corrections, tables with styles, charts, Diagram basics,
   audio and video (MP3, AAC, FLAC, ALAC, Ogg, Opus, WAV, AIFF; H.264, HEVC, VP9, AV1).
 - **Present**: transitions (including Morph), entrance/emphasis/exit and motion-path animations,
   by-paragraph builds, full-screen slide show, presenter view, pen, rehearse timings, media playback.
