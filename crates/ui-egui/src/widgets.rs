@@ -357,6 +357,9 @@ pub fn dropdown(ui: &mut Ui, label: &str, current: &str, width: f32, enabled: bo
         ..egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, label)
     });
     egui::Popup::menu(&resp).width(width.max(140.0)).show(|ui| {
+        // A long name ("Bricolage Grotesque 72pt SemiCondensed") widens the list instead of wrapping
+        // onto several lines.
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         egui::ScrollArea::vertical().max_height(360.0).show(ui, add_items);
     });
     resp
