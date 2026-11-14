@@ -84,6 +84,63 @@ fn keep_cursor_visible_leaves_a_still_cursor_over_a_link() {
     assert!(harness.state().ui.show_keep_cursor, "the setting is kept for the next show");
 }
 
+/// #1937: clicking a link in text marks that link followed for the rest of the show, and a show
+/// that is started again has every link back to normal.
+#[test]
+fn a_clicked_text_link_is_followed_until_the_show_ends() {
+    use deckcraft_model::text::{Action, Hyperlink, Run, TextBody};
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("slide.go", &json!({"index": 0})).unwrap();
+    let id = ShapeId(4100);
+    session
+        .edit(|doc, _| {
+            let mut body = TextBody::from_text("x");
+            let mut link = Run::new("Link");
+            link.props.size = Some(40.0);
+            link.props.link = Some(Hyperlink {
+                action: Action::NextSlide,
+                tooltip: String::new(),
+                highlight_click: false,
+                sound: None,
+                stop_sound: false,
+                zoom_return: None,
+            });
+            body.paragraphs[0].runs = vec![link];
+            let xfrm = deckcraft_geom::Xfrm::new(0.0, 0.0, doc.slide_size.width, doc.slide_size.height);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            slide.shapes.push(deckcraft_model::Shape { id, xfrm: Some(xfrm), text_box: true, text: Some(body), ..Default::default() });
+            Ok(())
+        })
+        .unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+    assert!(harness.state().show.as_ref().is_some_and(|s| s.followed.is_empty()), "nothing is followed yet");
+    // The slide is 960 x 540 points on a 1000 x 700 screen: 1.04 pixels per point, centred.
+    harness.hover_at(pos2(50.0, 110.0));
+    harness.run_steps(2);
+    click_at(&mut harness, pos2(50.0, 110.0));
+    harness.run_steps(2);
+    let show = harness.state().show.as_ref().expect("the show is running");
+    assert_eq!(show.state.slide, 1, "the link was followed to the next slide");
+    assert_eq!(show.followed, vec![deckcraft_model::text::FollowedLink { shape: id, para: 0, run: 0 }]);
+    // A new show starts with nothing followed.
+    harness.state_mut().show = None;
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+    assert!(harness.state().show.as_ref().is_some_and(|s| s.followed.is_empty()), "a restarted show has no followed links");
+}
+
 /// #1445: Set Up Slide Show turns Keep mouse cursor visible on and off.
 #[test]
 fn set_up_slide_show_keeps_the_cursor_visible() {
@@ -445,10 +502,13 @@ fn the_prefetched_frame_is_the_frame_shown_on_entry() {
     s.execute("slide.new", &json!({"title": "Second"})).unwrap();
     let doc = s.active().unwrap().doc.clone();
     let size = (96, 54);
-    let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
-    assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
+    let p = start_prefetch(&doc, 1, size, vec![]).expect("prefetch starts");
+    assert_eq!(
+        p.key,
+        Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![], followed: 0 }
+    );
     let got = p.rx.recv().expect("the frame arrives");
-    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None);
+    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], &[], None);
     assert_eq!(got.size, want.size);
     assert_eq!(got.pixels, want.pixels);
 }
@@ -483,8 +543,8 @@ fn an_animation_frame_over_the_kept_backdrop_matches_a_full_render() {
     let tl = ShowState::timeline(&doc, 0);
     assert!(!tl.is_empty());
     // Half-way through the fade, the star half see-through over the glow.
-    let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], Some(&back));
-    let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], None);
+    let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], &[], Some(&back));
+    let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], &[], None);
     assert_eq!(fast.size, full.size);
     let worst =
         fast.pixels.iter().zip(&full.pixels).map(|(a, b)| a.to_array().iter().zip(b.to_array()).map(|(x, y)| x.abs_diff(y)).max().unwrap_or(0)).max();
@@ -508,7 +568,7 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     let ctx = egui::Context::default();
     let red = crate::textures::upload(&ctx, "show", egui::ColorImage::filled([1, 1], Color32::RED));
     let mut show = Show::new(&doc, 0, false, false);
-    show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![] }, red.clone()));
+    show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![], followed: 0 }, red.clone()));
     assert!(show.apply(ShowAction::Slide(1), &doc, 0.0));
     let tr = show.trans.as_ref().expect("the fade plays");
     assert_eq!(tr.old.as_ref().map(TextureHandle::id), Some(red.id()));
@@ -528,7 +588,7 @@ fn going_back_plays_the_left_slides_transition_reversed() {
     let ctx = egui::Context::default();
     let tex = |slide| {
         let t = crate::textures::upload(&ctx, "show", egui::ColorImage::filled([1, 1], Color32::RED));
-        Some((Key { slide, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![] }, t))
+        Some((Key { slide, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![], followed: 0 }, t))
     };
     let mut show = Show::new(&doc, 0, false, false);
     show.tex = tex(0);

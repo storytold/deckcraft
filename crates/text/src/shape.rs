@@ -1,3 +1,7 @@
+use deckcraft_color::SchemeSlot;
+use deckcraft_model::style::ColorRef;
+use deckcraft_model::text::FollowedLink;
+
 use super::autonum::autonum;
 use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
@@ -6,6 +10,15 @@ use super::{
     Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
     UnicodeSegmentation, bidi, resolve, script,
 };
+
+/// A followed link is drawn in the theme's followed hyperlink colour instead of its hyperlink
+/// colour. A colour the run sets itself is not the hyperlink colour, so it stays.
+fn followed_colour(rp: &mut RunProps) {
+    let hlink = ColorRef::scheme(SchemeSlot::Hlink);
+    if matches!(&rp.fill, Some(Fill::Solid { color }) if *color == hlink) {
+        rp.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::FolHlink)));
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn shape_para(
@@ -42,8 +55,11 @@ pub(crate) fn shape_para(
     // The logical paragraph: its text and each character's style.
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
-    for run in &para.runs {
-        let rp = resolve::run(ctx, shape, para, &run.props);
+    for (ri, run) in para.runs.iter().enumerate() {
+        let mut rp = resolve::run(ctx, shape, para, &run.props);
+        if run.props.link.is_some() && opts.fields.followed(&FollowedLink { shape: shape.id, para: pi, run: para.link_start(ri) }) {
+            followed_colour(&mut rp);
+        }
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
         let t: String = match &run.kind {
             RunKind::Text => run.text.clone(),

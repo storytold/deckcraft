@@ -3,7 +3,7 @@
 //! and rehearsed timings.
 
 use deckcraft_anim::{Click, HitShape, Layer, LinkJump, ShowAction, ShowState, Source, StepStamp, Timeline, TriggerPlay};
-use deckcraft_model::text::Hyperlink;
+use deckcraft_model::text::{FollowedLink, Hyperlink};
 use deckcraft_model::{Presentation, ShapeId};
 use deckcraft_render::{ParaState, PlacedLink, PlacedShape, RenderOpts, ShapeState};
 use egui::{Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, pos2, vec2};
@@ -106,6 +106,9 @@ pub struct Show {
     media_slide: Option<usize>,
     /// The slide shown before the current one (the Last Slide Viewed action).
     last_viewed: Option<usize>,
+    /// The text hyperlinks clicked in this show, drawn as followed until it ends. A show starts
+    /// with none, so a restarted show has every link back in its normal colour.
+    followed: Vec<FollowedLink>,
     /// Click areas on slide `.0`, in slide points: hyperlinks and shape actions, and the slide's
     /// shapes in drawing order.
     links: Option<(usize, Vec<PlacedLink>, Vec<PlacedShape>)>,
@@ -131,6 +134,8 @@ struct Key {
     plays: Vec<(ShapeId, usize)>,
     /// The frames animated GIFs show.
     gif: u64,
+    /// How many links have been followed (the list only grows during a show).
+    followed: usize,
 }
 
 /// A slide frame being rendered on another thread: what it will be (`key`) and where it arrives.
@@ -266,6 +271,7 @@ impl Show {
             ended: false,
             media_slide: None,
             last_viewed: None,
+            followed: vec![],
             links: None,
             media_clock: None,
             media_cues: vec![],

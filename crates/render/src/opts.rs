@@ -1,3 +1,5 @@
+use deckcraft_model::text::FollowedLink;
+
 use super::{DateTime, Fields, Rgba, ShapeId, Vec2, datetime};
 
 /// Animation state of one shape during a slide show or preview.
@@ -71,6 +73,8 @@ pub struct RenderOpts<'a> {
     /// only what is on the slide is drawn over transparency: PNG export with a transparent
     /// background. Shapes filled with the background (`useBgFill`) still show it.
     pub transparent_background: bool,
+    /// Text hyperlinks the slide show has followed: drawn in the theme's followed hyperlink colour.
+    pub followed: &'a [FollowedLink],
 }
 
 impl Default for RenderOpts<'_> {
@@ -91,6 +95,7 @@ impl Default for RenderOpts<'_> {
             date_text: None,
             now: None,
             transparent_background: false,
+            followed: &[],
         }
     }
 }
@@ -103,11 +108,13 @@ pub(crate) struct SlideFields {
     pub(crate) footer: String,
     /// The local date and time date fields show; `None`: they keep their saved text.
     pub(crate) now: Option<DateTime>,
+    /// Followed text hyperlinks ([`RenderOpts::followed`]).
+    pub(crate) followed: Vec<FollowedLink>,
 }
 
 impl SlideFields {
     pub(crate) fn new(num: u32, footer: String, opts: &RenderOpts) -> Self {
-        SlideFields { num, date: opts.date_text.clone(), footer, now: opts.now.or_else(DateTime::now_local) }
+        SlideFields { num, date: opts.date_text.clone(), footer, now: opts.now.or_else(DateTime::now_local), followed: opts.followed.to_vec() }
     }
 }
 
@@ -129,5 +136,9 @@ impl Fields for SlideFields {
             return Some(self.footer.clone());
         }
         None
+    }
+
+    fn followed(&self, link: &FollowedLink) -> bool {
+        self.followed.contains(link)
     }
 }

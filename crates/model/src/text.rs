@@ -478,6 +478,16 @@ pub struct Hyperlink {
     pub zoom_return: Option<crate::SlideId>,
 }
 
+/// One hyperlink in text, as the slide show tells it apart from the others: the shape holding
+/// the text, the paragraph, and the first run of the link (see [`Paragraph::link_start`]).
+/// Two links that point at the same place are still two links.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FollowedLink {
+    pub shape: crate::ShapeId,
+    pub para: usize,
+    pub run: usize,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RunProps {
@@ -647,6 +657,17 @@ fn is_default_para(p: &ParaProps) -> bool {
 impl Paragraph {
     pub fn new(text: &str) -> Self {
         Paragraph { runs: if text.is_empty() { vec![] } else { vec![Run::new(text)] }, ..Default::default() }
+    }
+    /// The first run of the link that run `run` belongs to: runs side by side with the same link
+    /// (a link over partly bold text) are one link to the reader. `run` itself when it has no link
+    /// or is out of range.
+    pub fn link_start(&self, run: usize) -> usize {
+        let Some(link) = self.runs.get(run).and_then(|r| r.props.link.as_ref()) else { return run };
+        let mut start = run;
+        while start > 0 && self.runs.get(start - 1).and_then(|r| r.props.link.as_ref()) == Some(link) {
+            start -= 1;
+        }
+        start
     }
     /// Leading tabs are the outline level (at most 8), the same rule as a typed indent.
     /// Returns whether any tab was consumed.

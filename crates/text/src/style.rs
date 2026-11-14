@@ -11,6 +11,12 @@ pub trait Fields {
         let _ = lang;
         self.field(kind)
     }
+    /// Has the slide show followed this link? Followed links are drawn in the theme's followed
+    /// hyperlink colour. Only a show knows; everything else draws every link as not followed.
+    fn followed(&self, link: &deckcraft_model::text::FollowedLink) -> bool {
+        let _ = link;
+        false
+    }
 }
 
 pub struct NoFields;
