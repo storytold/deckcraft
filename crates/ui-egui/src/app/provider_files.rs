@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::file_providers::{Capture, Command, Host};
+use crate::file_providers::{Capture, Command, Host, OpenedDocument};
 use crate::{ProviderClose, SlideApp, json};
 
 fn suggested_provider_name(title: &str, extension: &str) -> String {
@@ -250,8 +250,9 @@ impl SlideApp {
     }
     fn provider_result(&mut self, host: &Host, command: Command) {
         let Command::Result { request, capture, resource, status } = command else { return };
-        if status == "saved" && self.provider_document(capture.doc).is_some() {
-            let aliases = host.bind(&capture, resource);
+        if status == "saved" {
+            let document_open = self.provider_document(capture.doc).is_some();
+            let aliases = host.record_save(&capture, resource, document_open);
             let back = self.session.active_index();
             for alias in aliases {
                 if let Some(index) = self.provider_document(alias) {
@@ -285,7 +286,7 @@ impl SlideApp {
         let Command::Open { request, name, bytes } = command else { return };
         let data = deckcraft_engine::cmd::base64_encode(&bytes);
         match self.run("file.openBytes", json!({"name":name,"data":data})) {
-            Ok(_) => {
+            Ok(opened) => {
                 // The audience show reads the active document. Its old slide state and popup
                 // must not continue controlling the newly imported presentation.
                 if self.show.take().is_some() {
@@ -295,20 +296,26 @@ impl SlideApp {
                     }
                 }
                 self.backstage = None;
-                let capture = self.session.active().map(|doc| Capture { doc: doc.uid, revision: doc.revision, name, save_as: false });
-                host.opened(&request, capture, "The imported presentation has no document");
+                self.finish_provider_open(host, &request, name, &opened);
             }
             Err(error) => {
-                host.opened(&request, None, &error);
+                host.opened(&request, Err(&error));
                 self.set_status(error);
             }
         }
+    }
+
+    fn finish_provider_open(&self, host: &Host, request: &str, name: String, opened: &serde_json::Value) {
+        let repaired = ["damagedMedia", "lostSlides"].iter().any(|key| opened[*key].as_array().is_some_and(|items| !items.is_empty()));
+        let binding_name = (!repaired).then_some(name);
+        let document = self.session.active().map(|doc| OpenedDocument { doc: doc.uid, revision: doc.revision, binding_name });
+        host.opened(request, document.ok_or("The imported presentation has no document"));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::file_providers::Host;
+    use crate::file_providers::{Command, Host, Resource};
     use crate::{Services, SlideApp, json};
 
     #[derive(Default)]
@@ -728,6 +735,56 @@ mod tests {
     }
 
     #[test]
+    fn repaired_provider_open_preserves_the_copy_without_overwrite_authority() {
+        let (mut app, host) = app();
+        let count = app.session.active().unwrap().doc.slides.len();
+        let bytes = deckcraft_engine::cmd::file::save_bytes(&app.session.active().unwrap().doc, "deckcraft").unwrap();
+        let connection = host.snapshot()["connectionId"].as_str().unwrap().to_string();
+        let resource = Resource { id: "original".into(), name: "Example.deckcraft".into(), updated_at: String::new() };
+        host.set_resources(&connection, vec![resource]).unwrap();
+        let read = host.request_open("original").unwrap();
+        host.take_events();
+        host.open(read.clone(), "Example.deckcraft".into(), bytes).unwrap();
+
+        // Supply a decoder's repair outcome using an ordinary, valid presentation.
+        let Command::Open { request, name, bytes } = host.take_commands().pop().unwrap() else {
+            panic!("expected the correlated open command");
+        };
+        let mut loaded = deckcraft_engine::cmd::file::loaded_file(&name, &bytes).unwrap();
+        loaded.damaged.media.push("Missing picture".into());
+        let token = app.session.stage_loaded(loaded);
+        let result = app.run("file.adopt", json!({"path":name,"token":token})).unwrap();
+        app.finish_provider_open(&host, &request, name, &result);
+
+        let copy = app.session.active().unwrap();
+        assert_eq!(app.session.documents().len(), 2);
+        assert_eq!(copy.doc.slides.len(), count);
+        assert!(copy.path.is_none() && copy.title.ends_with("(Repaired)"));
+        assert!(!host.bound(copy.uid));
+        let events = host.take_events();
+        assert_eq!(events.len(), 1);
+        let opened = &events[0].metadata;
+        assert_eq!(opened["type"], "opened");
+        assert_eq!(opened["requestId"], read);
+        assert_eq!(opened["resourceId"], "original");
+        assert_eq!(opened["connectionId"], connection);
+        assert_eq!(opened["documentId"], copy.uid.to_string());
+        assert_eq!(opened["repaired"], true);
+        assert!(!host.busy());
+
+        assert!(app.choose_provider_save(false, "deckcraft"));
+        let dialog = host.take_events().pop().unwrap().metadata;
+        assert_eq!(dialog["name"], "Example (Repaired).deckcraft");
+        assert!(dialog["resourceId"].is_null());
+        host.resolve_dialog(dialog["requestId"].as_str().unwrap(), "provider", "").unwrap();
+        app.provider_tick();
+        let save = host.take_events().pop().unwrap().metadata;
+        assert_eq!(save["type"], "save");
+        assert!(save["resourceId"].is_null());
+        assert_eq!(host.snapshot()["resources"][0]["name"], "Example.deckcraft");
+    }
+
+    #[test]
     fn resolving_a_provider_save_commits_notes_to_their_slide_before_encoding() {
         for extension in ["deckcraft", "pptx"] {
             let (mut app, host) = app();
@@ -860,6 +917,43 @@ mod tests {
         app.provider_tick();
         assert!(app.session.documents()[0].is_dirty());
     }
+
+    #[test]
+    fn a_durable_write_invalidates_open_aliases_after_the_source_tab_closes() {
+        let (mut app, host) = app();
+        let source = app.session.active().unwrap().uid;
+        let (request, bytes) = save(&mut app, &host);
+        host.result(request, "saved".into(), "shared".into()).unwrap();
+        app.provider_tick();
+        let read = host.request_open("shared").unwrap();
+        host.open(read, "Presentation.deckcraft".into(), bytes).unwrap();
+        app.provider_tick();
+        let alias = app.session.active().unwrap().uid;
+        assert!(host.bound(alias) && !app.session.active().unwrap().is_dirty());
+
+        let connection = host.snapshot()["connectionId"].as_str().unwrap().to_string();
+        let resource = Resource { id: "shared".into(), name: "Presentation.deckcraft".into(), updated_at: "Prior version".into() };
+        host.set_resources(&connection, vec![resource]).unwrap();
+        app.session.set_active(0);
+        app.session.execute("slide.new", &json!({})).unwrap();
+        let (request, _) = save(&mut app, &host);
+        app.session.close_document(0);
+        app.provider_tick();
+        assert!(host.pending_for(source) && !host.bound(source));
+        assert_eq!(host.snapshot()["resources"][0]["updatedAt"], "Prior version");
+
+        host.result(request, "saved".into(), "shared".into()).unwrap();
+        app.provider_tick();
+        let state = app.session.active().unwrap();
+        assert_eq!(state.uid, alias);
+        assert!(state.is_dirty());
+        assert!(!host.bound(source) && !host.bound(alias));
+        assert_eq!(host.snapshot()["resources"][0]["id"], "shared");
+        assert_eq!(host.snapshot()["resources"][0]["name"], "Presentation.deckcraft");
+        assert_eq!(host.snapshot()["resources"][0]["updatedAt"], "");
+        assert!(!host.busy());
+    }
+
     #[test]
     fn linked_media_without_bytes_cannot_be_reported_as_a_complete_provider_save() {
         let (mut app, host) = app();

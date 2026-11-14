@@ -2,9 +2,9 @@
 
 `window.deckcraftFileProviders` is a same-origin, page-local transport for complete presentation
 files. It is disabled until a host explicitly calls `registerProvider(id, label, namespace)`.
-Ordinary local files, browser downloads, Recents, checkpoints and desktop/CLI routes keep their
-existing behavior. Authentication, per-user authorization, storage and durable writes belong
-to the provider host; the bridge supplies no backend, credentials or cross-origin protocol.
+Before a host registers a provider, local files, browser downloads, Recents and saved checkpoints
+follow the editor's ordinary rules. Desktop and CLI file commands keep their existing behavior.
+The provider host handles authentication, per-user authorization, storage and durable writes.
 
 The provider API is available in the normal editor. DeckCraft's built-in page and iframe hosting
 modes keep their existing file handoff and do not expose the optional provider API. Presenter
@@ -20,9 +20,13 @@ Save and Save As emit `saveDialog`; respond with
 `resolveSaveDialog(requestId, provider|device|cancel, filename)`. The provider destination captures
 the native deck or PPTX bytes from that document and revision, then emits `save`. Delivery is
 not persistence. Only a durable host write permits `saveResult(requestId, saved, resourceId)`.
-Failed, cancelled or downloaded results never advance the saved checkpoint. Later edits remain
-dirty after an older captured revision is acknowledged, aliases retain the existing invalidation
-rules, and deferred Save-and-Close remains tied to its original request and document.
+The [provider protocol](../packaging/web/file-providers.md) defines the `save` event payload.
+While the provider chooser is active, a device copy preserves the presentation's unsaved-work
+state even if it has no provider binding. A device copy also keeps any existing binding. A
+failed or cancelled save or a device copy leaves the presentation open after Save-and-Close.
+Later edits remain dirty after an older captured revision is acknowledged. A durable write
+invalidates stale aliases even if its originating tab has closed. Opening a damaged presentation
+can recover a working copy with its own save destination.
 
 ## Recoverable delivery failures
 

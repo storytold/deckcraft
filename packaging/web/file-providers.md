@@ -52,9 +52,10 @@ Never reuse an account namespace for a different account.
    activating it; that save fails explicitly without changing the active presentation or draft.
 4. Persist that exact package durably, then call `saveResult(requestId, "saved", resourceId)`.
    Only a matching outstanding request can acknowledge the captured revision. Edits made after
-   capture stay dirty, closed document IDs are ignored, and another tab/document is never
-   marked saved. Other open documents bound to the same overwritten resource lose their stale
-   binding and clean state; unrelated local files with the same name are untouched.
+   capture stay dirty. When the originating tab has already closed, the editor refreshes the
+   resource entry without recreating its document binding. Other open tabs bound to the
+   overwritten resource lose their stale binding and clean state, including when the tab that
+   sent the capture has closed. Unrelated local files with the same name are untouched.
 5. On failure call `saveResult(requestId, "failed", "")`, or use `cancel` for cancellation.
    `download` is a terminal fallback result that does not acknowledge provider persistence.
    These outcomes keep unsaved work open. A serialization/filename rejection emits `saveFailed`.
@@ -84,16 +85,20 @@ Clicking a provider Recent or calling `requestOpen(resourceId)` emits `openReque
 its correlated request ID. Read bytes from authorized storage and call
 `openResource(requestId, name, Uint8Array)`. Only requests the editor issued are accepted.
 `cancelOpen(requestId, message)` finishes a cancelled or failed read. After decoding/admitting
-an actual document, the editor emits `opened`; malformed/unsupported/password-required bytes
-emit `openFailed`. Bytes are not dropped into an uncorrelated general file-picker inbox.
-Resource identity comes from the outstanding read, not a filename sent by the host.
+an actual document, the editor emits `opened` with its document ID, revision, requested resource
+ID and a `repaired` boolean. An intact presentation binds to the resource. A repaired copy
+(`repaired: true`) stays open without that binding, so its first Save suggests a new name and
+provides no overwrite resource ID. The terminal event still identifies the completed read.
+An unreadable, unsupported or password-required file emits `openFailed`.
+Resource identity comes from the outstanding read.
 Read-error text is normalized to remove control characters and capped at 1024 UTF-8 bytes
 before the read settles. Provider Recents follow the Home/Open search and result limits;
 refused opens use the persistent notice displayed over Backstage.
 
 ## Identity, limits and lifecycle
 
-Every event carries `providerId`, `namespace` and `connectionId`. Request IDs contain a random
+The pre-registration `ready` event carries `type` and `protocolVersion`. Events for registered
+work carry `providerId`, `namespace` and `connectionId`. Request IDs contain a random
 per-WASM-instance nonce plus a checked monotonic counter. Late replies from a previous page,
 connection, account, read or completed save cannot address a newer request. Metadata never
 contains credentials. `snapshot()` reports connection state, current provider resources,

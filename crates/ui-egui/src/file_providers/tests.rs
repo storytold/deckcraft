@@ -1,4 +1,4 @@
-use super::{Capture, Command, Host, Resource};
+use super::{Capture, Command, Host, OpenedDocument, Resource};
 use serde_json::json;
 
 #[test]
@@ -29,6 +29,10 @@ fn request(host: &Host, doc: u64) -> String {
 
 fn capture(doc: u64, revision: u64) -> Capture {
     Capture { doc, revision, name: "Example.docx".into(), save_as: false }
+}
+
+fn opened_document(doc: u64, revision: u64) -> OpenedDocument {
+    OpenedDocument { doc, revision, binding_name: Some("Example.docx".into()) }
 }
 
 #[test]
@@ -109,9 +113,9 @@ fn new_connection_rejects_old_list_and_read_result() {
 #[test]
 fn same_resource_alias_is_invalidated_but_homonymous_files_are_not() {
     let (host, _) = connected();
-    host.bind(&capture(1, 1), "one".into());
-    host.bind(&capture(2, 1), "two".into());
-    assert_eq!(host.bind(&capture(3, 1), "one".into()), vec![1]);
+    host.record_save(&capture(1, 1), "one".into(), true);
+    host.record_save(&capture(2, 1), "two".into(), true);
+    assert_eq!(host.record_save(&capture(3, 1), "one".into(), true), vec![1]);
     assert!(!host.bound(1));
     assert!(host.bound(2));
     assert!(host.bound(3));
@@ -120,7 +124,7 @@ fn same_resource_alias_is_invalidated_but_homonymous_files_are_not() {
 #[test]
 fn save_as_never_overwrites_binding_by_filename() {
     let (host, _) = connected();
-    host.bind(&capture(1, 1), "one".into());
+    host.record_save(&capture(1, 1), "one".into(), true);
     let id = request(&host, 1);
     host.resolve_dialog(&id, "provider", "").unwrap();
     host.take_commands();
@@ -139,9 +143,10 @@ fn provider_open_is_correlated_and_committed_after_decode() {
     assert!(host.disconnect().is_err());
     let commands = host.take_commands();
     assert!(matches!(&commands[0], Command::Open { request, name, bytes } if request == &read && name == "Example.docx" && bytes == &[7]));
-    host.opened(&read, Some(capture(1, 1)), "");
+    host.opened(&read, Ok(opened_document(1, 1)));
     assert!(host.take_events().iter().any(|event| event.metadata["type"] == "opened"
         && event.metadata["resourceId"] == "one"
+        && event.metadata["repaired"] == false
         && event.metadata["connectionId"].as_str() == Some(connection.as_str())));
     assert!(host.bound(1));
     assert!(host.open(read, "Example.docx".into(), vec![]).is_err());
@@ -247,8 +252,8 @@ fn full_event_queue_retains_open_success_and_failure_until_ordered_drain() {
         host.take_commands();
         host.take_events();
         fill_event_queue(&host);
-        host.opened(&read, success.then(|| capture(1, 1)), "decoder failed\n");
-        host.opened(&read, None, "duplicate");
+        host.opened(&read, success.then(|| opened_document(1, 1)).ok_or("decoder failed\n"));
+        host.opened(&read, Err("duplicate"));
         assert!(host.busy());
         assert!(host.disconnect().is_err());
         assert_eq!(host.state().finished.len(), 1);
@@ -316,7 +321,7 @@ fn retained_terminals_are_bounded_by_already_admitted_reads_and_saves() {
     }
     fill_event_queue(&host);
     for read in &reads {
-        host.opened(read, None, "decode failed");
+        host.opened(read, Err("decode failed"));
     }
     for save in &saves {
         host.failed(save, "encode failed");
@@ -440,7 +445,7 @@ fn failed_delivery_recovers_its_existing_capture_even_with_a_full_command_queue(
     assert!(!host.bound(1));
     assert!(host.result(id, "saved".into(), "late".into()).is_err());
     for read in reads {
-        host.opened(&read, None, "fixture complete");
+        host.opened(&read, Err("fixture complete"));
     }
     assert!(!host.publish_events_with(|_, _| Ok::<(), &str>(()), |_| {}));
     assert!(!host.busy());
@@ -511,7 +516,7 @@ fn failed_open_request_delivery_releases_only_its_read_and_preserves_capacity() 
     let commands = host.take_commands();
     assert!(matches!(commands.as_slice(), [Command::Open { request, bytes, .. }]
         if request == &retry && bytes.as_slice() == [7]));
-    host.opened(&retry, Some(capture(1, 23)), "");
+    host.opened(&retry, Ok(opened_document(1, 23)));
     host.cancel_open(other, "fixture complete".into()).unwrap();
     let events = host.take_events();
     assert!(events.iter().all(|event| event.metadata["connectionId"] == connection && event.metadata["namespace"] == "account-one"));
@@ -592,7 +597,7 @@ fn delivery_error_preserves_open_and_choice_already_accepted_by_synchronous_list
     assert!(matches!(commands.as_slice(), [Command::Open { request, bytes, .. }]
         if request == &read && bytes.as_slice() == [7]));
     assert!(host.disconnect().is_err());
-    host.opened(&read, Some(capture(1, 23)), "");
+    host.opened(&read, Ok(opened_document(1, 23)));
     assert!(!host.publish_events_with(
         |metadata, _| {
             assert_eq!(metadata["type"], "opened");
@@ -647,7 +652,7 @@ fn disconnect_during_publish_preserves_a_terminal_in_the_current_batch() {
     host.open(read.clone(), "One.zip".into(), vec![7]).unwrap();
     let commands = host.take_commands();
     assert!(matches!(commands.as_slice(), [Command::Open { request, .. }] if request == &read));
-    host.opened(&read, Some(capture(1, 23)), "");
+    host.opened(&read, Ok(opened_document(1, 23)));
     assert!(!host.busy(), "ordinary owners are finished; only undelivered events retain registration");
     let mut order = Vec::new();
     let mut terminal = None;
@@ -715,7 +720,7 @@ fn disconnect_during_publish_preserves_the_retained_completion_batch() {
         if kind == "saveFailed" {
             host.failed(&request, "encoder failed");
         } else {
-            host.opened(&request, (kind == "opened").then(|| capture(1, 1)), "decoder failed");
+            host.opened(&request, (kind == "opened").then(|| opened_document(1, 1)).ok_or("decoder failed"));
         }
         let mut attempted_disconnect = false;
         let mut delivered = Vec::new();
@@ -790,7 +795,7 @@ fn full_command_queue_keeps_a_choice_until_retry_or_explicit_cancel() {
                 host.failed(&choice, "fixture complete");
             }
             for read in reads {
-                host.opened(&read, None, "fixture complete");
+                host.opened(&read, Err("fixture complete"));
             }
             assert!(!host.publish_events_with(|_, _| Ok::<(), ()>(()), |_| {}));
             assert!(!host.busy());

@@ -62,6 +62,12 @@ pub(crate) struct Capture {
     pub save_as: bool,
 }
 
+pub(crate) struct OpenedDocument {
+    pub doc: u64,
+    pub revision: u64,
+    pub binding_name: Option<String>,
+}
+
 struct Dialog {
     doc: u64,
     name: String,
@@ -353,14 +359,18 @@ impl Host {
         Ok(())
     }
 
-    /// Returns other documents bound to the overwritten resource. Their clean state is stale.
-    pub(crate) fn bind(&self, capture: &Capture, resource: String) -> Vec<u64> {
+    /// Records a durable write and returns other documents with stale checkpoints.
+    pub(crate) fn record_save(&self, capture: &Capture, resource: String, document_open: bool) -> Vec<u64> {
         let mut s = self.state();
         let aliases: Vec<u64> = s.bindings.iter().filter(|(doc, b)| **doc != capture.doc && b.resource == resource).map(|(doc, _)| *doc).collect();
         for doc in &aliases {
             s.bindings.remove(doc);
         }
-        s.bindings.insert(capture.doc, Binding { resource: resource.clone(), name: capture.name.clone() });
+        if document_open {
+            s.bindings.insert(capture.doc, Binding { resource: resource.clone(), name: capture.name.clone() });
+        } else {
+            s.bindings.remove(&capture.doc);
+        }
         s.resources.retain(|r| r.id != resource);
         s.resources.insert(0, Resource { id: resource, name: capture.name.clone(), updated_at: String::new() });
         s.resources.truncate(MAX_RESOURCES);
@@ -426,18 +436,22 @@ impl Host {
         Ok(())
     }
 
-    pub(crate) fn opened(&self, request: &str, capture: Option<Capture>, error: &str) {
+    pub(crate) fn opened(&self, request: &str, result: Result<OpenedDocument, &str>) {
         let mut s = self.state();
         let Some(resource) = s.opening.get(request).cloned() else { return };
         if s.finished.iter().any(|terminal| terminal.request == request) {
             return;
         }
-        let metadata = if let Some(capture) = capture {
-            s.bindings.insert(capture.doc, Binding { resource: resource.clone(), name: capture.name.clone() });
-            json!({"type":"opened", "requestId":request, "resourceId":resource,
-                "documentId":capture.doc.to_string(), "revision":capture.revision})
-        } else {
-            json!({"type":"openFailed", "requestId":request, "resourceId":resource, "error":bounded_error(error)})
+        let metadata = match result {
+            Ok(OpenedDocument { doc, revision, binding_name }) => {
+                let repaired = binding_name.is_none();
+                if let Some(name) = binding_name {
+                    s.bindings.insert(doc, Binding { resource: resource.clone(), name });
+                }
+                json!({"type":"opened", "requestId":request, "resourceId":resource,
+                    "documentId":doc.to_string(), "revision":revision, "repaired":repaired})
+            }
+            Err(error) => json!({"type":"openFailed", "requestId":request, "resourceId":resource, "error":bounded_error(error)}),
         };
         s.finished.push_back(Terminal { request: request.into(), metadata, owner: TerminalOwner::Open });
         s.flush_finished();
