@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (localized font family names select installed and loaded fonts; line metrics follow the resolved configured faces; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -172,6 +173,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-01 | Copy, Cut, Paste, Duplicate and Alt+drag of a title, body or other placeholder on a slide keep its look: the copy is a regular shape that takes the size, font, bullets, indents, autofit and box its layout and master gave it, instead of 18 pt unbulleted text |
 | 2026-11-01 | Clipboard: Ctrl+C, Ctrl+X and Ctrl+V use the system clipboard again, so text and pictures paste from other apps and in-app copies paste back. Since the egui 0.37 migration (#1350) the desktop build had a clipboard that only worked inside the app. On native Wayland, text goes through egui's Wayland clipboard; HTML stays on X11, macOS and Windows |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
+| 2026-11-02 | Duplicate canonical family/style files merge localized and Windows family aliases into the retained face, including existing handles, catalog load orders and cached variable instances; merged names stay bounded. |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
@@ -233,6 +235,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-15 | PPTX trigger sequences keep separate On Click steps, including paragraph builds; synthetic import/edit/save/reopen and headless show regressions |
 | 2026-10-16 | Export: PNG with a transparent background — the slide background is left out, only the slide's content is drawn (Export… dialog, File › Export, web download, `file.export`/`file.render` `transparentBackground`, `deckcraft-cli render --transparent`) (#784) |
 | 2026-10-16 | Arrange ▸ Align: Align to Slide and Align Selected Objects, as in PowerPoint. One object aligns to the slide and several to each other until the other choice is ticked; the choice holds for that selection and also drives Distribute |
+| 2026-10-20 | Font lookup recognizes localized OpenType family names in loaded fonts and the system catalog, preserving canonical font menus and legacy weight selection. Text layout resolves configured script faces before comparing metric ownership, so a fallback alias collision cannot change line metrics. Exact canonical families precede aliases, including available style lists, style ranking and cached variable instances; runtime-only synthetic regressions. CJK parity remains partial |
 | 2026-10-16 | Fitted canvas: discrete mouse-wheel steps navigate immediately, including rapid and batched input, while trackpad gestures retain their cooldown and zoomed slides still pan. |
 | 2026-10-16 | PPTX import: a paragraph build edited in PowerPoint (paragraphs with their own start, other shapes' effects in between, builds by 2nd-level paragraphs) takes PowerPoint's clicks in the show; it used to be rebuilt as one build, 34 clicks instead of 10 on the reporter's slide. Paragraph builds with sub-points save as PowerPoint writes them (#844) |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
@@ -351,6 +354,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-02 | trivial | Progress log: tiled picture fills keep their size in scaled groups. Scores and milestone names unchanged |
 | 2026-11-01 | trivial | Workflow-breaking regression fixed: the desktop build uses the system clipboard again (eframe `clipboard` feature) |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
+| 2026-11-02 | minor | Duplicate font files retain bounded localized and Windows aliases without replacing existing faces or cached variable instances. Parity scores unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Progress log: the Picture Styles row leaves room for Crop and Size (#1232). Scores and milestone names unchanged |
@@ -380,6 +384,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-16 | trivial | Progress log: a `.ppsx` from the system starts the slide show (#862) |
 | 2026-10-26 | trivial | Progress log: spaces after symbol-font characters |
 | 2026-10-24 | trivial | Progress log: picture and embedded object fills |
+| 2026-10-20 | minor | Localized font family lookup; synthetic multilingual font regressions. Parity scores unchanged |
 | 2026-10-22 | trivial | Progress log: table text takes the master's other-text style |
 | 2026-10-16 | trivial | Progress log: responsive mouse-wheel navigation on the fitted canvas |
 | 2026-10-21 | trivial | Progress log: theme `spDef` anchor no longer applied to a file's own shapes |
