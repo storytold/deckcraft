@@ -50,7 +50,8 @@ pub enum ViewMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
-    pub brightness: theme::Brightness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brightness: theme::BrightnessPreference,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -99,7 +100,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
-            brightness: theme::Brightness::Light,
+            brightness: None,
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,

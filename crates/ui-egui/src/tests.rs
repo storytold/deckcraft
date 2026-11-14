@@ -672,7 +672,9 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
     let change = |harness: &mut egui_kittest::Harness<'static, SlideApp>| {
         harness.state_mut().run("app.preferences", json!({})).unwrap();
         harness.run_steps(2);
-        for label in ["Dark appearance", "Show smart guides", "Snap objects to grid"] {
+        harness.state_mut().run("view.theme", json!({"value": "dark"})).unwrap();
+        harness.run_steps(2);
+        for label in ["Show smart guides", "Snap objects to grid"] {
             harness
                 .query_all_by_role_and_label(egui::accesskit::Role::CheckBox, label)
                 .next()
@@ -680,7 +682,7 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
                 .click_accesskit();
             harness.run_steps(2);
         }
-        assert_ne!(harness.state().ui.brightness, dark_before, "the dialog previews the appearance");
+        assert_eq!(harness.state().ui.brightness, Some(crate::theme::Brightness::Dark), "the dialog previews the appearance");
         assert_ne!(harness.state().session.prefs.smart_guides, before.smart_guides);
     };
     let unchanged = |harness: &egui_kittest::Harness<'static, SlideApp>, how: &str| {

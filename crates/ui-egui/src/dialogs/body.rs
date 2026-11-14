@@ -1342,10 +1342,31 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
     ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
-    let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
-        let _ = app.run("view.dark", json!({"on": dark}));
-    }
+    ui.horizontal(|ui| {
+        ui.label("Display theme");
+        let selected = match app.ui.brightness {
+            None => "Use system setting",
+            Some(theme::Brightness::Light) => "Light",
+            Some(theme::Brightness::Dark) => "Dark",
+        };
+        egui::ComboBox::from_id_salt("display_theme")
+            .selected_text(selected)
+            .width(180.0)
+            .show_ui(ui, |ui| {
+                for (value, label) in [("system", "Use system setting"), ("light", "Light"), ("dark", "Dark")] {
+                    let chosen = match value {
+                        "system" => app.ui.brightness.is_none(),
+                        "light" => app.ui.brightness == Some(theme::Brightness::Light),
+                        _ => app.ui.brightness == Some(theme::Brightness::Dark),
+                    };
+                    if ui.selectable_label(chosen, label).clicked() {
+                        let _ = app.run("view.theme", json!({"value": value}));
+                    }
+                }
+            })
+            .response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Display theme"));
+    });
     // While the pointer holds the slider its value only waits in the dialog: applying it
     // would rescale the slider under the pointer and run it to an end (#767). It applies
     // on release, and at once from the keyboard.

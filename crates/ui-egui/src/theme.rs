@@ -11,6 +11,19 @@ pub enum Brightness {
     Dark,
 }
 
+pub type BrightnessPreference = Option<Brightness>;
+
+pub fn resolve_brightness(preference: BrightnessPreference, system_dark: Option<bool>, fallback: Brightness) -> Brightness {
+    match preference {
+        Some(brightness) => brightness,
+        None => match system_dark {
+            Some(true) => Brightness::Dark,
+            Some(false) => Brightness::Light,
+            None => fallback,
+        },
+    }
+}
+
 /// Every colour the chrome uses.
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {

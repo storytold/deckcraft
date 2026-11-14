@@ -17,8 +17,22 @@ impl SlideApp {
             ctx.request_discard("install interface fonts before layout");
             return false;
         }
+        if let Some(answer) = self.desktop_theme.take_change() {
+            self.desktop_dark = Some(answer);
+            if self.ui.brightness.is_none() {
+                self.restyle = true;
+            }
+        }
+        let system_dark = ctx.system_theme().map(|theme| theme == egui::Theme::Dark).or(self.desktop_dark);
+        if self.last_system_dark != system_dark {
+            self.last_system_dark = system_dark;
+            if self.ui.brightness.is_none() {
+                self.restyle = true;
+            }
+        }
         if self.restyle {
-            theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
+            self.shown_brightness = theme::resolve_brightness(self.ui.brightness, system_dark, self.shown_brightness);
+            theme::apply(ctx, &theme::Tokens::for_brightness(self.shown_brightness));
             self.restyle = false;
         }
         self.fonts_ready = true;
