@@ -680,8 +680,9 @@ fn new_run(cell: &Cell, st: &Style, face: &Arc<FontFace>, para: usize, pos: &Cel
         color: st.color,
         glyphs: vec![],
         cells: vec![],
-        fake_bold: st.fake_bold,
-        fake_italic: st.fake_italic,
+        // A bold or italic run's fallback face without that weight or slant (a CJK font) is made bolder or slanted; the run's own fonts keep the run's settings.
+        fake_bold: if cell.fallback { st.style_name.starts_with("Bold") && face.weight < 550.0 } else { st.fake_bold },
+        fake_italic: if cell.fallback { st.style_name.ends_with("Italic") && !face.italic } else { st.fake_italic },
         outline: st.outline,
         para,
         chars: (pos.ci, pos.ci + 1),
@@ -697,7 +698,7 @@ fn new_run(cell: &Cell, st: &Style, face: &Arc<FontFace>, para: usize, pos: &Cel
 fn emit_line_runs(out: &mut TextLayout, p: &ParaShaped, line: &LineInfo, place: &LinePlace) {
     // Group visually consecutive cells by (style, face).
     let mut cur: Option<GlyphRun> = None;
-    let mut cur_key = (usize::MAX, usize::MAX, false, false);
+    let mut cur_key = (usize::MAX, usize::MAX, false, false, false);
     for &k in &place.order {
         let ci = line.start + k;
         let Some(cell) = p.cells.get(ci) else { continue };
@@ -709,7 +710,7 @@ fn emit_line_runs(out: &mut TextLayout, p: &ParaShaped, line: &LineInfo, place: 
         let size = if small { size * 0.8 } else { size };
         let pos = CellPos { k, ci, cx, cx1, base_y, size };
         // Small capitals are drawn smaller than the capitals beside them: a run of their own.
-        let key = (cell.style, cell.face, small, cell.upright);
+        let key = (cell.style, cell.face, small, cell.upright, cell.fallback);
         if key != cur_key {
             if let Some(r) = cur.take() {
                 out.runs.push(r);

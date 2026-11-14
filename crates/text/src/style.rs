@@ -83,6 +83,8 @@ pub(crate) struct Cell {
     pub(crate) boundary: bool,
     /// Drawn upright in East Asian vertical text.
     pub(crate) upright: bool,
+    /// The face came from font fallback, not from the run's own fonts.
+    pub(crate) fallback: bool,
 }
 
 impl Cell {
