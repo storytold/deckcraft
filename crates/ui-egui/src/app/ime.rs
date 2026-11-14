@@ -27,6 +27,12 @@ impl SlideApp {
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);
         }
+        // The shell catalog is drawn from static strings, so the document scan above never sees
+        // it. Note it explicitly, before layout, or a translated label could ask for a glyph no
+        // borrowed face covers when no listed Traditional Chinese family is installed.
+        if self.language() == crate::i18n::Resolved::TraditionalChinese {
+            self.ui_fonts.note(ctx, crate::i18n::catalog_text());
+        }
         self.ui_fonts.apply(ctx);
     }
 

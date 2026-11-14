@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
 use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
+use crate::i18n;
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -15,6 +16,11 @@ fn grid_flag(p: &Value, key: &str) -> Result<Option<bool>, String> {
 }
 
 impl SlideApp {
+    /// The language the application shell is drawn in.
+    pub fn language(&self) -> i18n::Resolved {
+        self.ui.language.resolve(i18n::system_tag().as_deref())
+    }
+
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
@@ -233,6 +239,15 @@ impl SlideApp {
                 return Err("updates are handled by the browser: reload the page".into());
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
+            "app.language" => {
+                let code = p.get("language").and_then(Value::as_str).ok_or("missing `language`")?;
+                let choice = i18n::LanguageChoice::from_tag(code).ok_or_else(|| format!("unknown language `{code}`; use system, en or zh-Hant"))?;
+                if !i18n::choice_available(choice) {
+                    return Err("Traditional Chinese is not available in the web build".into());
+                }
+                self.ui.language = choice;
+                return Ok(json!({"language": choice.code(), "resolved": self.language().code()}));
+            }
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),

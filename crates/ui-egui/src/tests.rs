@@ -715,6 +715,65 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
     assert_ne!(s.session.prefs.snap_to_grid, before.snap_to_grid, "Done keeps snap to grid");
 }
 
+/// Traditional Chinese renames the shell tabs and Preferences, and English restores them. Ribbon
+/// groups, the other dialogs and command ids stay English.
+#[test]
+fn traditional_chinese_renames_the_shell_and_english_restores_it() {
+    use egui_kittest::kittest::Queryable;
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    harness.run_steps(2);
+    assert!(harness.query_by_label("File").is_some(), "the shell starts in English");
+
+    let result = harness.state_mut().run("app.language", json!({"language": "zh-TW"})).unwrap();
+    assert_eq!(result["language"], "zh-Hant");
+    assert_eq!(result["resolved"], "zh-Hant");
+    harness.run_steps(3);
+    assert_eq!(harness.state().ui.language, i18n::LanguageChoice::TraditionalChinese);
+    assert!(harness.query_by_label("檔案").is_some(), "the File tab follows the language");
+    assert!(harness.query_by_label("File").is_none(), "the English File tab is gone");
+
+    harness.state_mut().run("app.preferences", json!({})).unwrap();
+    harness.run_steps(3);
+    assert!(harness.query_by_label_contains("偏好設定").is_some(), "the Preferences title follows");
+    assert!(harness.query_all_by_label_contains("介面語言").next().is_some(), "the language row follows");
+    assert!(harness.query_all_by_label_contains("一般").next().is_some(), "the General heading follows");
+
+    harness.state_mut().run("app.language", json!({"language": "en"})).unwrap();
+    harness.run_steps(3);
+    assert_eq!(harness.state().ui.language, i18n::LanguageChoice::English);
+    assert!(harness.query_by_label("File").is_some(), "English brings the File tab back");
+    assert!(harness.query_by_label("檔案").is_none());
+}
+
+/// An older `ui.json` has no language and stays on System; an unknown saved value does too.
+#[test]
+fn an_older_ui_state_without_a_language_stays_on_system() {
+    let older: UiState = serde_json::from_str(r#"{"tab":"Home"}"#).unwrap();
+    assert_eq!(older.language, i18n::LanguageChoice::System);
+    assert_eq!(older.language.resolve(Some("zh-HK")), i18n::Resolved::TraditionalChinese);
+    let unknown: UiState = serde_json::from_str(r#"{"language":"zh-XX"}"#).unwrap();
+    assert_eq!(unknown.language, i18n::LanguageChoice::System);
+}
+
+/// `app.language` reports its argument errors and returns the canonical codes it saved.
+#[test]
+fn the_language_command_reports_missing_and_unknown_codes() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    assert_eq!(app.run("app.language", json!({})).unwrap_err(), "missing `language`");
+    assert_eq!(app.run("app.language", json!({"language": "ja"})).unwrap_err(), "unknown language `ja`; use system, en or zh-Hant");
+    assert_eq!(app.ui.language, i18n::LanguageChoice::System, "a rejected code changes nothing");
+    let saved = app.run("app.language", json!({"language": "zh-HK"})).unwrap();
+    assert_eq!(saved["language"], "zh-Hant");
+    assert_eq!(saved["resolved"], "zh-Hant");
+    assert_eq!(app.ui.language, i18n::LanguageChoice::TraditionalChinese);
+}
+
 /// About dialog: Close and Cancel each close the dialog.
 #[test]
 fn about_dialog_close_and_cancel_close_it() {
