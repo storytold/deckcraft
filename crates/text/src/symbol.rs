@@ -30,6 +30,29 @@ pub(crate) fn symbol_map_char(face: &FontFace, ch: char, sym: Option<&str>) -> O
     symbol_font_draw(face, code)
 }
 
+/// The Unicode look-alike that draws `ch`, a U+F0xx private-use code of the `a:sym` symbol font
+/// `sym`, when that font is not installed (or does not draw the code): the characters bullets use
+/// for these fonts. `None` when `ch` is not such a code, `sym` is not a symbol font, or a Symbol-font code
+/// has no standard Unicode character (its fragment glyphs); Wingdings and Webdings codes without a look-alike draw as a bullet.
+pub(crate) fn symbol_fallback_char(ch: char, sym: Option<&str>) -> Option<char> {
+    let code = ch as u32;
+    if !(0xF000..=0xF0FF).contains(&code) {
+        return None;
+    }
+    let sym = sym?;
+    if !is_symbol_font(sym) {
+        return None;
+    }
+    let low = code & 0xFF;
+    if low == 0x20 {
+        return Some(' ');
+    }
+    if sym.eq_ignore_ascii_case("symbol") {
+        return symbol_unicode(low).or_else(|| (0x21..=0x7E).contains(&low).then_some(low)).and_then(char::from_u32);
+    }
+    map_symbol_bullet(&ch.to_string(), Some(sym)).chars().next()
+}
+
 /// The real-Unicode character the Symbol font's code `code` (0x00–0xFF) maps to, in the Adobe
 /// Symbol encoding (Unicode, Inc.'s `MAPPINGS/VENDORS/ADOBE/symbol.txt`; Apple's Mac OS Symbol
 /// shares this layout, with a few alternative Unicode choices — see `symbol_unicode_alts`): the
@@ -306,6 +329,7 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
         let m = match code {
             0xa7 => '▪',
             0xd8 => '➢',
+            0xe8 => '➔',
             0xfc => '✓',
             0x76 => '❖',
             0x71 => '❑',
