@@ -493,8 +493,8 @@ pub struct Session {
     pub(crate) untitled: u32,
     /// Format Painter: copied shape/text formatting and whether it stays on (double-click).
     pub painter: Option<(cmd::format::Painted, bool)>,
-    /// Animation Painter: copied shape animations and whether it stays on (double-click).
-    pub anim_painter: Option<(Vec<deckcraft_model::anim::Animation>, bool)>,
+    /// Animation Painter: source document UID, copied shape animations and sticky mode.
+    pub anim_painter: Option<(u64, Vec<deckcraft_model::anim::Animation>, bool)>,
     /// Set as Default Shape: the look new shapes get.
     pub default_look: Option<cmd::format::Painted>,
     /// Nesting of commands run by commands: only the outermost one is an undo step and a journal
