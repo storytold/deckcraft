@@ -12,6 +12,7 @@ pub mod bidi;
 pub mod chart;
 pub mod defaults;
 pub mod edit;
+pub mod generated;
 pub mod numfmt;
 pub mod resolve;
 pub mod style;
@@ -30,6 +31,7 @@ use serde::{Deserialize, Serialize};
 pub use anim::{AnimClass, AnimStart, Animation, Transition};
 pub use bidi::{first_strong_is_rtl, is_rtl_script};
 pub use chart::Chart;
+pub use generated::{CheckState, Checkbox, Generated, HarveyBall};
 pub use style::{ColorBase, ColorRef, Effects, Fill, Line, ShapeStyle};
 pub use table::{Cell, Table};
 pub use text::{Paragraph, Run, RunProps, TextBody};
@@ -361,6 +363,11 @@ pub struct Shape {
     /// On a SmartArt group: the diagram's text outline, from which its shapes are regenerated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<Diagram>,
+    /// On a generated group (a Harvey ball, a checkbox): what it is drawn from. Its children are
+    /// regenerated from this, as a SmartArt group's are from `diagram`. Saved in a `.pptx` as the
+    /// tag [`generated::TAG`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated: Option<Generated>,
 }
 
 /// A SmartArt diagram's data: its layout and its outline of nodes (the Text Pane).
@@ -436,6 +443,7 @@ impl Default for Shape {
             tags: vec![],
             raw_ext: None,
             diagram: None,
+            generated: None,
         }
     }
 }
