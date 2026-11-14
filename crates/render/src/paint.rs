@@ -70,17 +70,32 @@ pub fn fill_path(
             if !covers(tile, bounds) {
                 let flip = g.flip.map(deckcraft_model::style::GradientFlip::xml).unwrap_or("none");
                 let flip = (matches!(flip, "x" | "xy"), matches!(flip, "y" | "xy"));
+                let e = 1e-9 * bounds.width().abs().max(bounds.height().abs()).max(1.0);
+                // An axis the tile already spans pads, as the untiled gradient does, so edge pixels do not wrap to the tile's far end.
+                let ext = |spans: bool, mirror: bool| {
+                    if spans {
+                        peniko::Extend::Pad
+                    } else if mirror {
+                        peniko::Extend::Reflect
+                    } else {
+                        peniko::Extend::Repeat
+                    }
+                };
+                let extend = (
+                    ext(tile.x0 <= bounds.x0 + e && tile.x1 >= bounds.x1 - e, flip.0),
+                    ext(tile.y0 <= bounds.y0 + e && tile.y1 >= bounds.y1 - e, flip.1),
+                );
                 match &g.shape {
                     GradientShape::Linear { angle, .. } => {
                         let (s, e) = linear_ends(*angle, tile);
                         let v = e - s;
                         let len2 = v.hypot2();
                         let position = |p: Point| if len2 > 1e-18 { ((p - s).dot(v) / len2).clamp(0.0, 1.0) } else { 0.0 };
-                        fill_tiled(ctx, position, &expanded, tile, flip, path, m, alpha);
+                        fill_tiled(ctx, position, &expanded, tile, extend, path, m, alpha);
                     }
                     GradientShape::Path { focus, .. } => {
                         let Some((f, c, r)) = circle_ends(*focus, bounds, tile) else { return };
-                        fill_tiled(ctx, |p| circle_position(f, c, r, p), &expanded, tile, flip, path, m, alpha);
+                        fill_tiled(ctx, |p| circle_position(f, c, r, p), &expanded, tile, extend, path, m, alpha);
                     }
                 }
                 return;
@@ -261,8 +276,8 @@ fn color_at(stops: &[(f64, Rgba)], t: f64) -> Rgba {
 /// the rest).
 const MAX_TILE_SIDE: f64 = 1024.0;
 
-/// Fill `path` with a gradient drawn over `tile` and repeated across the rest of the shape, every
-/// other tile mirrored across x and/or y as `flip` says. `position` gives the colour position (0
+/// Fill `path` with a gradient drawn over `tile` and repeated across the rest of the shape, each
+/// axis extended as `extend` says (repeated, mirrored, or padded where the tile spans the shape). `position` gives the colour position (0
 /// to 1) of a point in shape units, `stops` are sorted and expanded (see `ramp::expand`), the
 /// colours are faded by `alpha`, and `m` maps the path to the output.
 #[allow(clippy::too_many_arguments)]
@@ -271,7 +286,7 @@ fn fill_tiled(
     position: impl Fn(Point) -> f64,
     stops: &[(f64, Rgba)],
     tile: Rect,
-    flip: (bool, bool),
+    extend: (peniko::Extend, peniko::Extend),
     path: &BezPath,
     m: Affine,
     alpha: f64,
@@ -298,13 +313,12 @@ fn fill_tiled(
         }
     }
     let pm = std::sync::Arc::new(vello_cpu::Pixmap::from_parts(data, pw as u16, ph as u16));
-    let ext = |mirror: bool| if mirror { peniko::Extend::Reflect } else { peniko::Extend::Repeat };
     ctx.set_transform(m);
     ctx.set_paint(vello_cpu::Image {
         image: vello_cpu::ImageSource::Pixmap(pm),
         // Bilinear: at output resolution a repeat's seam mixes the two tile ends only in the one
         // output pixel it crosses, as an antialiased edge does.
-        sampler: peniko::ImageSampler { x_extend: ext(flip.0), y_extend: ext(flip.1), quality: peniko::ImageQuality::Medium, alpha: 1.0 },
+        sampler: peniko::ImageSampler { x_extend: extend.0, y_extend: extend.1, quality: peniko::ImageQuality::Medium, alpha: 1.0 },
     });
     ctx.set_paint_transform(
         Affine::translate(tile.origin().to_vec2()) * Affine::scale_non_uniform(tile.width() / pw as f64, tile.height() / ph as f64),
