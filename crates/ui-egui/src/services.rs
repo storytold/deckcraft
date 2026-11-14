@@ -65,6 +65,9 @@ pub struct Services {
     pub inbox: Option<Inbox>,
     /// Image on the system clipboard (PNG bytes), when the host can read one.
     pub clipboard_image: Option<Box<dyn FnMut() -> Option<Vec<u8>>>>,
+    /// Plain text on the system clipboard, read through the same backend as `clipboard_html`, so
+    /// a DeckCraft payload in the HTML can be matched with the text offered beside it.
+    pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
     /// HTML on the system clipboard (Pages, Keynote, and other apps that write `public.html`).
     pub clipboard_html: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Put HTML and its plain-text alternative on the system clipboard. `true` when it landed.
