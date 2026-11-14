@@ -7286,6 +7286,88 @@ fn many_distinct_fonts_are_listed_once_each_without_a_quadratic_scan() {
 }
 
 #[test]
+fn chart_options_axis_bounds_set_clear_and_refuse() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.chart",
+            &json!({"type": "bar", "rect": [40, 40, 400, 300], "categories": ["A", "B", "C"], "series": [{"name": "S", "values": [20, 45.5, 59.7]}]}),
+        )
+        .unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let bounds = |s: &Session| match &s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().kind {
+        deckcraft_model::ShapeKind::Chart(c) => (c.y_min, c.y_max),
+        k => panic!("not a chart: {k:?}"),
+    };
+    assert_eq!(bounds(&s), (None, None));
+    s.execute("chart.options", &json!({"id": id, "axisMax": 80})).unwrap();
+    assert_eq!(bounds(&s), (None, Some(80.0)));
+    s.execute("chart.options", &json!({"id": id, "axisMin": 10, "axisMax": 70.5})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), Some(70.5)));
+    // null clears a bound; other options are untouched.
+    s.execute("chart.options", &json!({"id": id, "axisMax": null})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    // Not a number, or a minimum at or above the maximum: refused, nothing changes.
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": "80"})).is_err());
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 5})).is_err(), "5 is below the minimum of 10");
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 10})).is_err(), "a maximum equal to the minimum");
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    // A chart with no value axis to bound is refused; a radar chart has one.
+    for kind in ["pie", "doughnut", "waterfall", "funnel"] {
+        let c = s.execute("insert.chart", &json!({ "type": kind })).unwrap()["id"].clone();
+        let e = s.execute("chart.options", &json!({"id": c, "axisMax": 80})).unwrap_err().to_string();
+        assert!(e.contains("axisMin` and `axisMax` are for"), "{kind}: {e}");
+    }
+    let radar = s.execute("insert.chart", &json!({"type": "radar"})).unwrap()["id"].clone();
+    s.execute("chart.options", &json!({"id": radar, "axisMax": 80})).unwrap();
+    // A logarithmic axis (as read from a file) takes only positive bounds.
+    for sl in &mut std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides {
+        if let Some(deckcraft_model::Shape { kind: deckcraft_model::ShapeKind::Chart(c), .. }) =
+            std::sync::Arc::make_mut(sl).shape_mut(ShapeId(id as u32))
+        {
+            c.y_log_base = Some(10.0);
+        }
+    }
+    for bad in [json!({"axisMin": 0}), json!({"axisMax": -5})] {
+        let mut p = bad.clone();
+        p["id"] = json!(id);
+        let e = s.execute("chart.options", &p).unwrap_err().to_string();
+        assert!(e.contains("logarithmic"), "{bad}: {e}");
+    }
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    s.execute("chart.options", &json!({"id": id, "axisMin": 1})).unwrap();
+    assert_eq!(bounds(&s), (Some(1.0), None));
+}
+
+/// Fixed value-axis bounds are written as `c:min` and `c:max` and read back; a cleared one is
+/// written as nothing, so it comes back automatic.
+#[test]
+fn chart_axis_bounds_survive_pptx() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    let round = |s: &Session| {
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let name = z.file_names().find(|n| n.starts_with("ppt/charts/chart") && n.ends_with(".xml")).unwrap().to_string();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut z.by_name(&name).unwrap(), &mut xml).unwrap();
+        let back = deckcraft_pptx::import(&bytes).unwrap();
+        let c = back.slides[1].shapes.iter().find_map(|x| if let deckcraft_model::ShapeKind::Chart(c) = &x.kind { Some(c.clone()) } else { None });
+        let c = c.unwrap();
+        (xml, c.y_min, c.y_max)
+    };
+    s.execute("chart.options", &json!({"id": id, "axisMin": 10, "axisMax": 70.5})).unwrap();
+    let (xml, lo, hi) = round(&s);
+    assert!(xml.contains("<c:min val=\"10\"/>") && xml.contains("<c:max val=\"70.5\"/>"), "{xml}");
+    assert_eq!((lo, hi), (Some(10.0), Some(70.5)));
+    s.execute("chart.options", &json!({"id": id, "axisMax": null})).unwrap();
+    let (xml, lo, hi) = round(&s);
+    assert!(!xml.contains("<c:max "), "{xml}");
+    assert_eq!((lo, hi), (Some(10.0), None));
+}
+
+#[test]
 fn slide_master_view_rejects_invalid_indices() {
     let mut s = Session::with_new();
     for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
@@ -7310,6 +7392,28 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
         assert_eq!(s.doc().unwrap().path, before);
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A chart opened with a minimum at or above its maximum still takes options that leave the
+/// bounds alone; setting a bound is what checks them.
+#[test]
+fn chart_options_with_crossed_bounds_from_a_file_still_take_other_options() {
+    let mut s = session();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].as_u64().unwrap();
+    let sid = ShapeId(id as u32);
+    {
+        let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let i = doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, sid).is_some()).unwrap();
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[i]);
+        let deckcraft_model::ShapeKind::Chart(c) = &mut deckcraft_model::find_shape_mut(&mut slide.shapes, sid).unwrap().kind else {
+            panic!("a chart")
+        };
+        (c.y_min, c.y_max) = (Some(50.0), Some(10.0));
+    }
+    s.execute("chart.options", &json!({"id": id, "textColor": "#FF0000"})).unwrap();
+    let e = s.execute("chart.options", &json!({"id": id, "axisMax": 20})).unwrap_err().to_string();
+    assert!(e.contains("axisMin must be below axisMax"), "{e}");
+    s.execute("chart.options", &json!({"id": id, "axisMin": 0, "axisMax": 20})).unwrap();
 }
 
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's

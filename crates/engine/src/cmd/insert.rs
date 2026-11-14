@@ -136,7 +136,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, axisMin?: n|null, axisMax?: n|null (the value axis' bounds; null: automatic), palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
         ),

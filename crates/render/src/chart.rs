@@ -295,6 +295,38 @@ pub fn default_text_color() -> ColorRef {
     ColorRef::scheme(SchemeSlot::Tx1).with(ColorTransform::LumMod(65000)).with(ColorTransform::LumOff(35000))
 }
 
+/// How many major units the value axis has room for (see `draw_inner`): `axis_len` long, its
+/// labels `base` points high, running across the plot when `horiz`.
+pub(crate) fn value_axis_intervals(c: &Chart, axis_len: f64, base: f64, horiz: bool) -> usize {
+    // `room`: the axis length one label wants; `extent`: the length a label's box takes.
+    let fit = |room: f64, extent: f64| {
+        let fewest = if axis_len >= 4.0 * extent { 4.0 } else { 2.0 };
+        (axis_len / room.max(1e-9)).floor().clamp(fewest, 12.0) as usize
+    };
+    if c.y_hidden || c.y_min.is_some() || c.y_max.is_some() || c.y_major.is_some() || c.y_log_base.is_some() {
+        // Hidden labels take no room: the plain length budget, as before labels were measured. A
+        // fixed bound or unit, or a logarithmic scale, keeps it too: the measuring below reads the labels of
+        // the linear scale the data picks, which is not the scale such an axis draws.
+        (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize
+    } else if horiz {
+        // The widest label of the scale `intervals` picks; fewer, rounder steps can reach a longer
+        // maximum (1,000,000,000,000 against 500,000,000,000), so each budget is measured on the
+        // scale it selects and the largest one whose labels fit is taken (a coarser scale can
+        // have shorter labels, which then leave room for a finer one).
+        let widest_at = |intervals: usize| {
+            let (lo, hi, st) = c.axis_scale(false, intervals).unwrap_or((0.0, 1.0, 0.2));
+            axis_ticks((lo, hi, st)).map(|v| c.axis_label(false, v).chars().count()).max().unwrap_or(1) as f64
+        };
+        let fits = |intervals: usize| {
+            let widest = widest_at(intervals);
+            fit(widest * base * 0.55 + base * 0.8, widest * base * 0.55 + base * 0.3) >= intervals
+        };
+        (2..=12).rev().find(|&n| fits(n)).unwrap_or(2)
+    } else {
+        fit(base * 1.9, base * 2.0)
+    }
+}
+
 fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<'_>) {
     let ChartFrame { transform: m, width: w, height: h, boxes } = frame;
     // Text without a colour of its own takes PowerPoint's default, the theme's text colour at
@@ -355,9 +387,13 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let bar_kind = c.series.iter().map(|s| c.series_kind(s)).find(|k| k.is_bar_like());
     let horiz = if combo { bar_kind.is_some_and(ChartType::horizontal) } else { c.kind.horizontal() };
     area = draw_axis_titles(ctx, rctx, &AxisTitleDrawing { chart: c, transform: m, base, text_color: text_col, horiz }, area);
-    // As many major units as the value axis has room for labels (PowerPoint's automatic unit).
+    // As many major units as the value axis has room for labels (PowerPoint's automatic unit),
+    // never fewer than four while four labels fit along the axis; an axis too short for that
+    // takes fewer rather than draw labels on top of each other. A horizontal axis measures the
+    // widest label of the scale the data asks for instead of assuming a long one, so short labels
+    // keep the step the data needs: a maximum of 59.7 ends at 70 by tens, not at 100 by fifties.
     let axis_len = if horiz { area.width() - base * 4.5 } else { area.height() - base * 1.8 };
-    let max_intervals = (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize;
+    let max_intervals = value_axis_intervals(c, axis_len, base, horiz);
     // A logarithmic axis is scaled in exponents of its base.
     let log = c.log_axis_scale(max_intervals).map(|sc| (c.y_log_base.unwrap_or(10.0), sc));
     let (min, max, step) = match log {

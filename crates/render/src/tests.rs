@@ -3260,3 +3260,172 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+/// How far the longest bar of a rendered bar or column chart reaches along its value axis, as a
+/// fraction of the plot's extent from the zero line to the outermost gridline. Bars are the
+/// coloured pixels; gridlines are the light grey lines that cross most of the plot.
+fn plot_fill_ratio(img: &Image, horiz: bool) -> f64 {
+    let coloured = |p: [u8; 4]| p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])).max(p[0].abs_diff(p[2])) > 40;
+    let grey = |p: [u8; 4]| p[0] == p[1] && p[1] == p[2] && p[0] > 150 && p[0] < 240;
+    let (w, h) = (img.width, img.height);
+    // Bar extent and the cross-axis range the bars occupy.
+    let (mut bar_lo, mut bar_hi, mut cross_lo, mut cross_hi) = (u32::MAX, 0u32, u32::MAX, 0u32);
+    for y in 0..h {
+        for x in 0..w {
+            if coloured(img.pixel(x, y)) {
+                let (a, c) = if horiz { (x, y) } else { (y, x) };
+                bar_lo = bar_lo.min(a);
+                bar_hi = bar_hi.max(a);
+                cross_lo = cross_lo.min(c);
+                cross_hi = cross_hi.max(c);
+            }
+        }
+    }
+    // Gridlines: along-axis positions where most of the cross range is grey.
+    let n = (cross_hi.saturating_sub(cross_lo)).max(1);
+    let is_grid = |a: u32| {
+        let hits = (cross_lo..=cross_hi).filter(|&c| grey(if horiz { img.pixel(a, c) } else { img.pixel(c, a) })).count() as u32;
+        hits * 10 >= n * 6
+    };
+    let along = if horiz { w } else { h };
+    let grids: Vec<u32> = (0..along).filter(|&a| is_grid(a)).collect();
+    let (Some(&g0), Some(&g1)) = (grids.first(), grids.last()) else { return f64::NAN };
+    if horiz {
+        // Bars start at the zero line (left gridline) and grow right.
+        (bar_hi as f64 - g0 as f64) / (g1 as f64 - g0 as f64)
+    } else {
+        // Bars stand on the zero line (bottom gridline) and grow up.
+        (g1 as f64 - bar_lo as f64) / (g1 as f64 - g0 as f64)
+    }
+}
+
+#[test]
+fn value_axis_ends_near_the_data_maximum() {
+    // A maximum of 59.7 drew its axis to 100 on a bar chart of this size (the step jumped from 10
+    // to 50 to fit three labels), leaving the bars in the left 60 % of the plot. The axis should
+    // end at the next tick of 10 past the data: 60 or 70.
+    for (kind, horiz) in [(ChartType::Bar, true), (ChartType::Column, false)] {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.gridlines = true;
+        c.categories = vec!["A".into(), "B".into(), "C".into()];
+        c.series.truncate(1);
+        c.series[0].values = vec![Some(20.0), Some(45.5), Some(59.7)];
+        let sh =
+            Shape { id: ShapeId(630), xfrm: Some(Xfrm::new(40.0, 40.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 2.0, ..Default::default() });
+        let ratio = plot_fill_ratio(&img, horiz);
+        assert!(ratio >= 0.8, "{kind:?}: the longest bar reaches {ratio:.3} of the plot (axis far past the data)");
+        assert!(ratio <= 1.0, "{kind:?}: the longest bar reaches {ratio:.3} of the plot");
+    }
+}
+
+/// A chart too short for four value labels takes fewer, so they don't sit on top of each other: a
+/// 400x60 chart with a maximum of 3.5 labels 0, 2 and 4, not 0 to 4 by ones 10 pt apart.
+#[test]
+fn a_short_value_axis_takes_fewer_than_four_labels() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.title = None;
+    c.legend = None;
+    c.gridlines = true;
+    c.categories = vec!["A".into(), "B".into(), "C".into()];
+    c.series.truncate(1);
+    c.series[0].values = vec![Some(1.0), Some(2.0), Some(3.5)];
+    let sh = Shape { id: ShapeId(631), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 60.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    // Rows with label ink (grey, darker than the gridlines) in the gutter left of the first bar;
+    // each label is one run of inked rows.
+    let coloured = |p: [u8; 4]| p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])) > 40;
+    let ink = |p: [u8; 4]| p[0] < 190 && p[1] < 190 && p[2] < 190 && p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])) < 12;
+    let first_bar = (0..400u32).find(|&x| (0..60u32).any(|y| coloured(img.pixel(x, y)))).unwrap_or(400);
+    let inked: Vec<bool> = (0..60u32).map(|y| (0..first_bar).any(|x| ink(img.pixel(x, y)))).collect();
+    let starts: Vec<usize> = inked.iter().enumerate().filter(|(y, on)| **on && (*y == 0 || !inked[*y - 1])).map(|(y, _)| y).collect();
+    let closest = starts.windows(2).map(|w| w[1] - w[0]).min().unwrap_or(60);
+    // Labels at least 1.9 base (13 pt at the 7 pt text of a chart this small) apart: 4 at most,
+    // where four intervals put 5 of them 10 pt apart.
+    assert!((2..=4).contains(&starts.len()), "{} value labels on a 60 pt tall chart (bars from x={first_bar}): {inked:?}", starts.len());
+    assert!(closest >= 13, "value labels {closest} pt apart: {starts:?}");
+}
+
+/// Data from 0 to 97 does not end its value axis at 100: Office adds a twentieth of the range
+/// above the maximum (101.85) before rounding up to the major unit, so the axis ends at 120 by
+/// twenties, or at 110 by tens where there is room for eleven intervals, as in PowerPoint.
+#[test]
+fn data_up_to_97_takes_powerpoints_headroom_past_100() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.series.truncate(1);
+    c.categories = vec!["A".into(), "B".into(), "C".into(), "D".into()];
+    c.series[0].values = vec![Some(0.0), Some(30.0), Some(60.0), Some(97.0)];
+    for n in 6..=10 {
+        assert_eq!(c.axis_scale(false, n), Some((0.0, 120.0, 20.0)), "{n} intervals");
+    }
+    for n in 11..=12 {
+        assert_eq!(c.axis_scale(false, n), Some((0.0, 110.0, 10.0)), "{n} intervals");
+    }
+}
+
+/// A stacked chart's axis ends near its tallest stack, not near the sum of every value or the
+/// largest single one: stacks of up to 59.7 fill most of the plot.
+#[test]
+fn a_stacked_value_axis_ends_near_the_tallest_stack() {
+    for (kind, horiz) in [(ChartType::StackedBar, true), (ChartType::StackedColumn, false)] {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.gridlines = true;
+        c.categories = vec!["A".into(), "B".into(), "C".into()];
+        c.series.truncate(2);
+        c.series[0].values = vec![Some(10.0), Some(20.0), Some(30.0)];
+        c.series[1].values = vec![Some(10.0), Some(25.5), Some(29.7)];
+        let sh =
+            Shape { id: ShapeId(632), xfrm: Some(Xfrm::new(40.0, 40.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 2.0, ..Default::default() });
+        let ratio = plot_fill_ratio(&img, horiz);
+        assert!((0.8..=1.0).contains(&ratio), "{kind:?}: the tallest stack reaches {ratio:.3} of the plot");
+    }
+}
+
+/// The label-measured budget changes only an automatic, linear, horizontal value axis. A vertical
+/// one, or one with a fixed bound or unit or a logarithmic scale, keeps the length budget it had before:
+/// on a vertical axis the floor of four intervals applies only where the length allows more than
+/// four anyway.
+#[test]
+fn the_value_axis_budget_changes_only_automatic_linear_horizontal_axes() {
+    let base = 10.0;
+    let old = |len: f64, horiz: bool| (len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize;
+    let mut c = Chart::sample(ChartType::Column);
+    c.series.truncate(1);
+    c.series[0].values = vec![Some(20.0), Some(45.5), Some(59.7)];
+    for len in (10..400).map(|l| l as f64) {
+        assert_eq!(crate::chart::value_axis_intervals(&c, len, base, false), old(len, false), "vertical, {len}");
+    }
+    let mut fixed = c.clone();
+    fixed.y_max = Some(80.0);
+    let mut lower = c.clone();
+    lower.y_min = Some(10.0);
+    let mut unit = c.clone();
+    unit.y_major = Some(10.0);
+    let mut log = c.clone();
+    log.y_log_base = Some(10.0);
+    for len in (10..600).map(|l| l as f64) {
+        for (name, c) in [("fixed maximum", &fixed), ("fixed minimum", &lower), ("fixed unit", &unit), ("logarithmic", &log)] {
+            assert_eq!(crate::chart::value_axis_intervals(c, len, base, true), old(len, true), "{name}, {len}");
+        }
+    }
+    // An automatic linear axis measures its labels: short ones leave room for more intervals.
+    assert!(crate::chart::value_axis_intervals(&c, 300.0, base, true) > old(300.0, true));
+}
+
+/// A coarser scale can have shorter labels, which leave room for a finer one: over 70 pt with 10 pt
+/// text, 0 to 2.1 in twelfths of a unit has three-character labels and fits two intervals, two
+/// intervals end the axis at 4 with one-character labels, but four fit and end it at 3.
+#[test]
+fn the_value_axis_budget_takes_the_largest_one_whose_labels_fit() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.series.truncate(1);
+    c.series[0].values = vec![Some(0.0), Some(1.0), Some(2.1)];
+    let n = crate::chart::value_axis_intervals(&c, 70.0, 10.0, true);
+    assert_eq!(n, 4);
+    assert_eq!(c.axis_scale(false, n).map(|(_, hi, _)| hi), Some(3.0));
+}
