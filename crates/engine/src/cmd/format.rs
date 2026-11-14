@@ -396,6 +396,40 @@ mod tests {
         }
     }
 
+    /// A run's own `a:effectLst` replaces the inherited list, so turning off an inherited shadow
+    /// must restate the other inherited effects: PowerPoint would drop the glow otherwise.
+    #[test]
+    fn inherited_shadow_off_keeps_the_inherited_glow_in_pptx() {
+        use deckcraft_model::style::Glow;
+        use deckcraft_model::text::LevelStyle;
+        use deckcraft_model::{ColorRef, Rgba};
+        use std::sync::Arc;
+
+        let glow = Glow { color: ColorRef::rgb(Rgba::rgb(255, 0, 0)), radius: 6.0 };
+        for editing_text in [false, true] {
+            let mut s = shape();
+            let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let run = RunProps { shadow: Some(default_text_shadow()), glow: Some(glow.clone()), ..Default::default() };
+            doc.default_text_style.set(0, LevelStyle { run, ..Default::default() });
+            if editing_text {
+                let id = s.doc().unwrap().selection.shapes[0];
+                s.execute("text.edit", &json!({"id": id})).unwrap();
+                s.execute("text.selectAll", &json!({})).unwrap();
+            }
+            s.execute("format.textShadow", &json!({})).unwrap();
+            if editing_text {
+                s.execute("text.exit", &json!({})).unwrap();
+            }
+
+            let doc = &s.doc().unwrap().doc;
+            let reopened = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
+            let sh = reopened.slides[0].shapes.iter().find(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Hello")).unwrap();
+            let r = &sh.text.as_ref().unwrap().paragraphs[0].runs[0].props;
+            assert!(r.no_shadow && r.shadow.is_none(), "editing text: {editing_text}");
+            assert_eq!(r.glow.as_ref(), Some(&glow), "editing text: {editing_text}");
+        }
+    }
+
     #[test]
     fn font_dialog_applies_character_formatting_in_one_undo() {
         let mut s = shape();

@@ -24,6 +24,7 @@ pub(crate) fn format_run_levels(
         let (a, b) = format_range(st, &t);
         // Only the levels of the paragraphs the selected range touches.
         let levels = if a == b { Vec::new() } else { master_levels(st, &t, t.ordered()) };
+        let inherited = body_of(st, &t).zip(st.shape(t.shape)).map(|(body, sh)| inherited_effects(st, sh, body)).unwrap_or_default();
         edit_text(s, |body, _| {
             if levels.is_empty() {
                 ed::format(body, a, b, f);
@@ -35,6 +36,7 @@ pub(crate) fn format_run_levels(
                 lf(&mut lvl.run, eff);
                 body.list_style.set(*l, lvl);
             }
+            keep_inherited_effects(body, &inherited);
         })?;
         return ok();
     }
@@ -56,6 +58,9 @@ pub(crate) fn format_run_levels(
     } else {
         Vec::new()
     };
+    // Each shape's paragraph-level effects, for runs whose shadow is turned off.
+    let inherited: Vec<(ShapeId, Vec<RunProps>)> =
+        ids.iter().filter_map(|id| st.shape(*id).and_then(|sh| Some((*id, inherited_effects(st, sh, sh.text.as_ref()?))))).collect();
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         let id = sh.id;
         match &mut sh.kind {
@@ -88,6 +93,9 @@ pub(crate) fn format_run_levels(
                         body.list_style.set(l, lvl);
                     }
                 }
+                if let Some((_, inh)) = inherited.iter().find(|(i, _)| *i == id) {
+                    keep_inherited_effects(body, inh);
+                }
             }
         }
         Ok(())
@@ -96,6 +104,35 @@ pub(crate) fn format_run_levels(
         fit_text_box(s, id)?;
     }
     ok()
+}
+
+/// The effects a run with none of its own takes in each paragraph of `body`: the paragraph's
+/// `defRPr` and the list style (the shape's own, its layout's and master's placeholder levels).
+fn inherited_effects(st: &DocState, shape: &deckcraft_model::Shape, body: &TextBody) -> Vec<RunProps> {
+    let Some(ctx) = crate::cmd::text::ctx_for(&st.doc, &st.selection) else { return Vec::new() };
+    body.paragraphs.iter().map(|p| deckcraft_model::resolve::run(&ctx, shape, p, &RunProps::default())).collect()
+}
+
+/// A run with its shadow turned off is written with its own `a:effectLst`, which replaces the
+/// whole inherited list in PowerPoint: an inherited glow, inner shadow, reflection or soft edge
+/// would go with the shadow. Copy those into the run, so only the shadow is dropped.
+fn keep_inherited_effects(body: &mut TextBody, inherited: &[RunProps]) {
+    for (p, inh) in body.paragraphs.iter_mut().zip(inherited) {
+        for r in p.runs.iter_mut().map(|r| &mut r.props).chain([&mut p.end_props]).filter(|r| r.no_shadow) {
+            if r.glow.is_none() {
+                r.glow.clone_from(&inh.glow);
+            }
+            if r.inner_shadow.is_none() {
+                r.inner_shadow.clone_from(&inh.inner_shadow);
+            }
+            if r.reflection.is_none() {
+                r.reflection.clone_from(&inh.reflection);
+            }
+            if r.soft_edge.is_none() {
+                r.soft_edge = inh.soft_edge;
+            }
+        }
+    }
 }
 
 /// Format the runs of [a, b) paragraph by paragraph, each with its own level's effective props, so
