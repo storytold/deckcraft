@@ -3,6 +3,7 @@
 
 use crate::text::{Paragraph, Run, RunKind, RunProps, TextBody};
 use crate::words;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// (paragraph, char offset in the paragraph).
 pub type Pos = (usize, usize);
@@ -419,6 +420,21 @@ fn smart_space(body: &mut TextBody, at: Pos) -> Pos {
     at
 }
 
+/// The position after the grapheme cluster at `pos`, or the next paragraph's start at a paragraph end.
+pub fn cluster_end(body: &TextBody, pos: Pos) -> Pos {
+    let (pi, ch) = clamp(body, pos);
+    let text = body.paragraphs.get(pi).map(Paragraph::text).unwrap_or_default();
+    // Boundaries come from the whole paragraph, so a caret inside a cluster deletes only to its end.
+    let mut end = 0;
+    for g in text.graphemes(true) {
+        end += g.chars().count();
+        if end > ch {
+            return (pi, end);
+        }
+    }
+    char_move(body, pos, true)
+}
+
 /// One character left/right across paragraph boundaries.
 pub fn char_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     let (pi, ch) = clamp(body, pos);
@@ -498,6 +514,11 @@ pub fn next_case(s: &str) -> &'static str {
     }
 }
 
+/// Whether the `.` at `i` sits between two ASCII digits (a decimal point or version number).
+fn is_decimal_point(all: &[char], i: usize) -> bool {
+    i > 0 && all[i - 1].is_ascii_digit() && all.get(i + 1).is_some_and(|n| n.is_ascii_digit())
+}
+
 /// Change case: `upper`, `lower`, `sentence`, `title`, `toggle`.
 pub fn change_case(s: &str, mode: &str) -> String {
     change_case_parts(&[s], mode).concat()
@@ -532,7 +553,7 @@ pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
                     } else {
                         out.extend(c.to_lowercase());
                     }
-                    if (title && c.is_whitespace()) || (!title && matches!(c, '.' | '!' | '?')) {
+                    if (title && c.is_whitespace()) || (!title && matches!(c, '.' | '!' | '?') && !(c == '.' && is_decimal_point(&all, i))) {
                         start = true;
                     }
                 }
@@ -556,6 +577,13 @@ mod tests {
         assert_eq!(change_case("ΟΔΟΣ", "title"), "Οδος");
         assert_eq!(change_case("ΟΔΟΣ ΜΟΥ.", "sentence"), "Οδος μου.");
         assert_eq!(change_case("ΟΔΟΣ", "lower"), "οδος");
+    }
+
+    #[test]
+    fn sentence_case_decimal_point_is_not_a_boundary() {
+        assert_eq!(change_case("I HAVE 3.5 APPLES", "sentence"), "I have 3.5 apples");
+        assert_eq!(change_case_parts(&["V 1.", "2 BETA"], "sentence").concat(), "V 1.2 beta");
+        assert_eq!(change_case("HELLO. WORLD", "sentence"), "Hello. World");
     }
 
     #[test]
