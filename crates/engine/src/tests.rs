@@ -1184,6 +1184,82 @@ fn distribute_wide_middle_stays_in_selection_bounds() {
     assert!(xs.iter().all(|x| (*x - [0.0, 10.0, 110.0][xs.iter().position(|y| y == x).unwrap()]).abs() < 1e-6), "{xs:?}");
 }
 
+/// An `edge`, `dir` or `to` that the commands do not name, or no `edge` at all, is refused with
+/// the accepted values. Before, such a call reported its shapes as edited and moved nothing,
+/// aligned to the selection, or fell back to the left edge or to horizontal.
+#[test]
+fn align_and_distribute_refuse_values_they_do_not_name() {
+    let mut s = session();
+    let mut ids = vec![];
+    for (x, y) in [(10.0, 10.0), (200.0, 50.0), (500.0, 200.0)] {
+        ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 40, 40]})).unwrap()["id"].as_u64().unwrap());
+    }
+    s.execute("edit.select", &json!({"ids": ids})).unwrap();
+    let before = s.doc().unwrap().revision;
+    let edges = "`edge` must be left, center, right, top, middle or bottom";
+    let dirs = "`dir` must be horizontal or vertical";
+    let tos = "`to` must be slide or selection";
+    for (cmd, params, want) in [
+        ("arrange.align", json!({"edge": "centre"}), edges),
+        ("arrange.align", json!({"edge": "Left"}), edges),
+        ("arrange.align", json!({"edge": "hcenter"}), edges),
+        ("arrange.align", json!({}), edges),
+        ("arrange.align", json!({"ids": [ids[0]], "edge": "left", "to": "Slide"}), tos),
+        ("arrange.distribute", json!({"dir": "Vertical"}), dirs),
+        ("arrange.distribute", json!({"dir": "columns"}), dirs),
+        ("arrange.distribute", json!({"dir": "v"}), dirs),
+        ("arrange.distribute", json!({"dir": "vertical", "to": "page"}), tos),
+    ] {
+        let err = s.execute(cmd, &params).unwrap_err().to_string();
+        assert!(err.contains(want), "{cmd} {params}: {err}");
+    }
+    assert_eq!(s.doc().unwrap().revision, before, "a refused call leaves the slide as it was");
+    let pos = |s: &mut Session, id: u64, k: &str| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"][k].as_f64().unwrap();
+    s.execute("arrange.align", &json!({"ids": [ids[1]], "edge": "left", "to": "slide"})).unwrap();
+    assert!(pos(&mut s, ids[1], "x").abs() < 1e-6);
+    // Within the selection's span, 10..240: 120 pt of shapes leaves two 55 pt gaps.
+    s.execute("arrange.distribute", &json!({"ids": ids, "dir": "vertical", "to": "selection"})).unwrap();
+    assert!((pos(&mut s, ids[1], "y") - 105.0).abs() < 1e-6);
+}
+
+/// A `dir` or `to` that is present but is not a string (null, a number, a bool, an object or an
+/// array) is refused with the accepted values, and the shapes and the revision stay as they were.
+/// Before, such a value counted as left out: `dir` meant horizontal and `to` each command's
+/// default, so the call moved the selected shapes.
+#[test]
+fn align_and_distribute_refuse_dir_and_to_that_are_not_strings() {
+    let dirs = "`dir` must be horizontal or vertical";
+    let tos = "`to` must be slide or selection";
+    let mut failures = vec![];
+    for v in [json!(null), json!(123), json!(false), json!({}), json!([])] {
+        for (cmd, params, want) in [
+            ("arrange.distribute", json!({"dir": v.clone()}), dirs),
+            ("arrange.distribute", json!({"dir": "horizontal", "to": v.clone()}), tos),
+            ("arrange.align", json!({"edge": "left", "to": v.clone()}), tos),
+        ] {
+            let mut s = session();
+            let mut ids = vec![];
+            for (x, y) in [(10.0, 10.0), (200.0, 50.0), (500.0, 200.0)] {
+                ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 40, 40]})).unwrap()["id"].as_u64().unwrap());
+            }
+            s.execute("edit.select", &json!({"ids": ids})).unwrap();
+            let boxes = |s: &mut Session| -> Vec<Value> {
+                ids.iter().map(|id| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone()).collect()
+            };
+            let (rev, before) = (s.doc().unwrap().revision, boxes(&mut s));
+            match s.execute(cmd, &params) {
+                Ok(_) => failures.push(format!("{cmd} {params}: accepted")),
+                Err(e) if !e.to_string().contains(want) => failures.push(format!("{cmd} {params}: {e}")),
+                Err(_) => {}
+            }
+            if s.doc().unwrap().revision != rev || boxes(&mut s) != before {
+                failures.push(format!("{cmd} {params}: moved the shapes"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn pointer_draw_move_resize() {
     let mut s = session();

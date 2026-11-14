@@ -417,17 +417,28 @@ fn regroup(s: &mut Session, _p: &Value) -> Result<Value> {
     }
 }
 
+/// `to` of arrange.align and arrange.distribute: `Some(true)` for the slide, `Some(false)` for the
+/// selection, `None` when it is left out. Any other value, a non-string included, is refused.
+fn align_to(cmd: &str, p: &Value) -> Result<Option<bool>> {
+    match p.get("to").map(Value::as_str) {
+        None => Ok(None),
+        Some(Some("slide")) => Ok(Some(true)),
+        Some(Some("selection")) => Ok(Some(false)),
+        Some(_) => Err(bad(cmd, "`to` must be slide or selection")),
+    }
+}
+
 fn align(s: &mut Session, p: &Value) -> Result<Value> {
-    let edge = str_param(p, "edge").unwrap_or("left").to_string();
+    let edge = match str_param(p, "edge") {
+        Some(e @ ("left" | "center" | "right" | "top" | "middle" | "bottom")) => e.to_string(),
+        _ => return Err(bad("arrange.align", "`edge` must be left, center, right, top, middle or bottom")),
+    };
+    let to = align_to("arrange.align", p)?;
     let ids = targets(s, p)?;
     let st = s.doc()?;
     let size = st.doc.slide_size;
     let boxes: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).collect();
-    let to_slide = match str_param(p, "to") {
-        Some("slide") => true,
-        Some(_) => false,
-        None => boxes.len() < 2,
-    };
+    let to_slide = to.unwrap_or(boxes.len() < 2);
     let reference = if to_slide {
         Rect::new(0.0, 0.0, size.width, size.height)
     } else {
@@ -453,13 +464,18 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
-    let horiz = !str_param(p, "dir").unwrap_or("horizontal").starts_with('v');
+    let horiz = match p.get("dir").map(Value::as_str) {
+        None | Some(Some("horizontal")) => true,
+        Some(Some("vertical")) => false,
+        Some(_) => return Err(bad("arrange.distribute", "`dir` must be horizontal or vertical")),
+    };
+    let to = align_to("arrange.distribute", p)?;
     let ids = targets(s, p)?;
     let st = s.doc()?;
     let size = st.doc.slide_size;
     let mut boxes: Vec<(ShapeId, Rect)> =
         ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x).bounds()))).collect();
-    let to_slide = str_param(p, "to") == Some("slide") || boxes.len() < 3;
+    let to_slide = to == Some(true) || boxes.len() < 3;
     if boxes.is_empty() {
         return ok();
     }
