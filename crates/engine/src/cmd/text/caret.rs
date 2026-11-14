@@ -56,7 +56,7 @@ pub(crate) fn delete_dir(s: &mut Session, dir: &str) -> Result<Value> {
             ed::delete(body, a, b)
         } else {
             let other = match dir.as_str() {
-                "forward" => ed::char_move(body, a, true),
+                "forward" => ed::cluster_end(body, a),
                 _ => {
                     // Backspace at the start of an indented/bulleted paragraph outdents first.
                     if a.1 == 0
