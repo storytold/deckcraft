@@ -64,17 +64,48 @@ pub fn fill_path(
                 return;
             }
             // PowerPoint's ramp between stops (linear light, S-shaped), see `ramp`.
+            let expanded = crate::ramp::expand(&stops);
+            // A tile rectangle that leaves part of the shape uncovered repeats across the rest of
+            // it (mirrored on the axes `flip` names), as ECMA-376 lays out `a:tileRect`.
+            if !covers(tile, bounds) {
+                let flip = g.flip.map(deckcraft_model::style::GradientFlip::xml).unwrap_or("none");
+                let flip = (matches!(flip, "x" | "xy"), matches!(flip, "y" | "xy"));
+                let e = 1e-9 * bounds.width().abs().max(bounds.height().abs()).max(1.0);
+                // An axis the tile already spans pads, as the untiled gradient does, so edge pixels do not wrap to the tile's far end.
+                let ext = |spans: bool, mirror: bool| {
+                    if spans {
+                        peniko::Extend::Pad
+                    } else if mirror {
+                        peniko::Extend::Reflect
+                    } else {
+                        peniko::Extend::Repeat
+                    }
+                };
+                let extend = (
+                    ext(tile.x0 <= bounds.x0 + e && tile.x1 >= bounds.x1 - e, flip.0),
+                    ext(tile.y0 <= bounds.y0 + e && tile.y1 >= bounds.y1 - e, flip.1),
+                );
+                match &g.shape {
+                    GradientShape::Linear { angle, .. } => {
+                        let (s, e) = linear_ends(*angle, tile);
+                        let v = e - s;
+                        let len2 = v.hypot2();
+                        let position = |p: Point| if len2 > 1e-18 { ((p - s).dot(v) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                        fill_tiled(ctx, position, &expanded, tile, extend, path, m, alpha);
+                    }
+                    GradientShape::Path { focus, .. } => {
+                        let Some((f, c, r)) = circle_ends(*focus, bounds, tile) else { return };
+                        fill_tiled(ctx, |p| circle_position(f, c, r, p), &expanded, tile, extend, path, m, alpha);
+                    }
+                }
+                return;
+            }
             let stops: Vec<peniko::ColorStop> =
-                crate::ramp::expand(&stops).into_iter().map(|(o, c)| peniko::ColorStop { offset: o as f32, color: color(c, alpha).into() }).collect();
+                expanded.into_iter().map(|(o, c)| peniko::ColorStop { offset: o as f32, color: color(c, alpha).into() }).collect();
             let grad = match &g.shape {
                 GradientShape::Linear { angle, .. } => {
-                    // Angle measured clockwise from left→right; span the bounds along that direction.
-                    let a = angle.to_radians();
-                    let (dx, dy) = (a.cos(), a.sin());
-                    let c = tile.center();
-                    let half = (tile.width() * dx.abs() + tile.height() * dy.abs()) / 2.0;
-                    peniko::Gradient::new_linear(Point::new(c.x - dx * half, c.y - dy * half), Point::new(c.x + dx * half, c.y + dy * half))
-                        .with_stops(stops.as_slice())
+                    let (s, e) = linear_ends(*angle, tile);
+                    peniko::Gradient::new_linear(s, e).with_stops(stops.as_slice())
                 }
                 GradientShape::Path { focus, .. } => circle_gradient(*focus, bounds, tile).with_stops(stops.as_slice()),
             };
@@ -169,18 +200,131 @@ pub fn gradient(shape: &GradientShape, mut stops: Vec<(f64, Rgba)>, bounds: Rect
 /// With a tile rectangle (`tile`, otherwise `bounds` itself) the end circle is the one around
 /// the tile, while the focus stays placed in `bounds`.
 pub fn circle_gradient(focus: [f64; 4], bounds: Rect, tile: Rect) -> peniko::Gradient {
+    match circle_ends(focus, bounds, tile) {
+        Some((f, c, r)) => peniko::Gradient::new_two_point_radial(f, 0.0, c, r as f32),
+        None => peniko::Gradient::new_radial(tile.center(), (tile.width().hypot(tile.height()) / 2.0).max(1e-6) as f32),
+    }
+}
+
+/// The focus, centre and radius of [`circle_gradient`]'s circles, or `None` when one of them is
+/// not finite.
+fn circle_ends(focus: [f64; 4], bounds: Rect, tile: Rect) -> Option<(Point, Point, f64)> {
     let fx = bounds.x0 + bounds.width() * (focus[0] + (1.0 - focus[2])) / 2.0;
     let fy = bounds.y0 + bounds.height() * (focus[1] + (1.0 - focus[3])) / 2.0;
     let c = tile.center();
     let r = (tile.width().hypot(tile.height()) / 2.0).max(1e-6);
     let f = Point::new(fx, fy);
     if !(f.is_finite() && c.is_finite() && r.is_finite()) {
-        return peniko::Gradient::new_radial(c, r as f32);
+        return None;
     }
     // A focus on or outside the end circle has no circle through it: keep it just inside.
     let d = f - c;
     let f = if d.hypot() > r * 0.999 { c + d * (r * 0.999 / d.hypot()) } else { f };
-    peniko::Gradient::new_two_point_radial(f, 0.0, c, r as f32)
+    Some((f, c, r))
+}
+
+/// The colour position of `p` in a circle gradient from the point `f` to the circle of radius `r`
+/// around `c` (`f` inside it): the `t` whose circle, of radius `t * r` around `f + t * (c - f)`,
+/// passes through `p`, kept to 0..1.
+fn circle_position(f: Point, c: Point, r: f64, p: Point) -> f64 {
+    let (d, q) = (c - f, p - f);
+    // |q - t d|² = t² r², a quadratic in t whose leading coefficient is negative while `f` is
+    // inside the circle; its larger root is the one at or past zero.
+    let a = d.hypot2() - r * r;
+    let b = -2.0 * q.dot(d);
+    let k = q.hypot2();
+    if a.abs() < 1e-12 {
+        return if b.abs() > 1e-12 { (-k / b).clamp(0.0, 1.0) } else { 0.0 };
+    }
+    let disc = (b * b - 4.0 * a * k).max(0.0);
+    let t = (-b - disc.sqrt()) / (2.0 * a);
+    if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 }
+}
+
+/// The start and end of a linear gradient at `angle` (degrees clockwise from left to right)
+/// spanning `tile` along that direction.
+fn linear_ends(angle: f64, tile: Rect) -> (Point, Point) {
+    let a = angle.to_radians();
+    let (dx, dy) = (a.cos(), a.sin());
+    let c = tile.center();
+    let half = (tile.width() * dx.abs() + tile.height() * dy.abs()) / 2.0;
+    (Point::new(c.x - dx * half, c.y - dy * half), Point::new(c.x + dx * half, c.y + dy * half))
+}
+
+/// Whether `tile` reaches every edge of `bounds`, so repeating it would add nothing.
+fn covers(tile: Rect, bounds: Rect) -> bool {
+    let e = 1e-9 * bounds.width().abs().max(bounds.height().abs()).max(1.0);
+    tile.x0 <= bounds.x0 + e && tile.y0 <= bounds.y0 + e && tile.x1 >= bounds.x1 - e && tile.y1 >= bounds.y1 - e
+}
+
+/// The colour at `t` among the sorted `stops`, linear in sRGB between the two around it (the first
+/// or last colour beyond the ends).
+fn color_at(stops: &[(f64, Rgba)], t: f64) -> Rgba {
+    let after = stops.partition_point(|s| s.0 < t);
+    match (after.checked_sub(1).and_then(|i| stops.get(i)), stops.get(after)) {
+        (Some(a), Some(b)) => {
+            let k = if b.0 - a.0 > 1e-12 { (t - a.0) / (b.0 - a.0) } else { 1.0 };
+            a.1.lerp(b.1, k)
+        }
+        (Some(a), None) => a.1,
+        (None, Some(b)) => b.1,
+        (None, None) => Rgba::BLACK,
+    }
+}
+
+/// Longest side of a tiled gradient's rasterised tile, in output pixels (bilinear sampling smooths
+/// the rest).
+const MAX_TILE_SIDE: f64 = 1024.0;
+
+/// Fill `path` with a gradient drawn over `tile` and repeated across the rest of the shape, each
+/// axis extended as `extend` says (repeated, mirrored, or padded where the tile spans the shape). `position` gives the colour position (0
+/// to 1) of a point in shape units, `stops` are sorted and expanded (see `ramp::expand`), the
+/// colours are faded by `alpha`, and `m` maps the path to the output.
+#[allow(clippy::too_many_arguments)]
+fn fill_tiled(
+    ctx: &mut RenderContext,
+    position: impl Fn(Point) -> f64,
+    stops: &[(f64, Rgba)],
+    tile: Rect,
+    extend: (peniko::Extend, peniko::Extend),
+    path: &BezPath,
+    m: Affine,
+    alpha: f64,
+) {
+    if !(tile.is_finite() && tile.width() > 0.0 && tile.height() > 0.0) || stops.is_empty() {
+        return;
+    }
+    // Sized per axis: a group can stretch its child space unevenly.
+    let c = m.as_coeffs();
+    let side = |len: f64, k: f64| {
+        let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
+        (len * k).ceil().clamp(1.0, MAX_TILE_SIDE) as u32
+    };
+    let (pw, ph) = (side(tile.width(), c[0].hypot(c[1])), side(tile.height(), c[2].hypot(c[3])));
+    let a = alpha.clamp(0.0, 1.0);
+    let mut data = Vec::with_capacity((pw * ph) as usize);
+    for j in 0..ph {
+        for i in 0..pw {
+            let p = Point::new(tile.x0 + (i as f64 + 0.5) / pw as f64 * tile.width(), tile.y0 + (j as f64 + 0.5) / ph as f64 * tile.height());
+            let col = color_at(stops, position(p));
+            let ca = (col.a as f64 * a).round().clamp(0.0, 255.0);
+            let mul = |v: u8| (v as f64 * ca / 255.0).round().clamp(0.0, 255.0) as u8;
+            data.push(vello_cpu::color::PremulRgba8 { r: mul(col.r), g: mul(col.g), b: mul(col.b), a: ca as u8 });
+        }
+    }
+    let pm = std::sync::Arc::new(vello_cpu::Pixmap::from_parts(data, pw as u16, ph as u16));
+    ctx.set_transform(m);
+    ctx.set_paint(vello_cpu::Image {
+        image: vello_cpu::ImageSource::Pixmap(pm),
+        // Bilinear: at output resolution a repeat's seam mixes the two tile ends only in the one
+        // output pixel it crosses, as an antialiased edge does.
+        sampler: peniko::ImageSampler { x_extend: extend.0, y_extend: extend.1, quality: peniko::ImageQuality::Medium, alpha: 1.0 },
+    });
+    ctx.set_paint_transform(
+        Affine::translate(tile.origin().to_vec2()) * Affine::scale_non_uniform(tile.width() / pw as f64, tile.height() / ph as f64),
+    );
+    ctx.fill_path(path);
+    ctx.reset_paint_transform();
 }
 
 /// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes; an animated

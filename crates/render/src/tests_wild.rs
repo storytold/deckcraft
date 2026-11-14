@@ -374,9 +374,24 @@ fn a_corner_radial_centres_on_the_corner_through_its_tile() {
 }
 
 #[test]
+fn a_circle_gradient_repeats_its_tile_rect() {
+    // Tile rect the left half of the box, focus in the middle of it: the right half shows the same
+    // circle again, light in its middle and dark at the seam.
+    let mut sh = radial([0.25, 0.5, 0.75, 0.5]);
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.tile = [0.0, 0.0, 0.5, 0.0];
+    }
+    let img = render(vec![sh]);
+    let (first, second, seam) = (img.pixel(200, 200)[0], img.pixel(400, 200)[0], img.pixel(298, 200)[0]);
+    assert!(second > 230 && i32::from(first) - i32::from(second) < 12, "first {first}, second {second}");
+    assert!(i32::from(second) > i32::from(seam) + 80, "second {second}, seam {seam}");
+}
+
+#[test]
 fn a_linear_gradient_spans_its_tile_rect() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
-    // Tile rect the left half of the box: the ramp ends half way and stays black after.
+    // Tile rect the left half of the box: the ramp ends half way, and the tile repeats over the
+    // right half (ECMA-376 `a:tileRect`), mirrored there with `flip="x"`.
     let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(WHITE) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::BLACK) }];
     let g = Gradient {
         stops,
@@ -385,16 +400,25 @@ fn a_linear_gradient_spans_its_tile_rect() {
         tile: [0.0, 0.0, 0.5, 0.0],
         flip: None,
     };
-    let sh = Shape {
+    let mut sh = Shape {
         id: ShapeId(20),
         xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 100.0)),
         fill: Some(Fill::Gradient(g)),
         line: no_line(),
         ..Default::default()
     };
-    let img = render(vec![sh]);
+    let img = render(vec![sh.clone()]);
     assert!(img.pixel(102, 150)[0] > 240);
-    assert!(img.pixel(305, 150)[0] < 15 && img.pixel(495, 150)[0] < 15, "{:?}", img.pixel(305, 150));
+    assert!(img.pixel(295, 150)[0] < 25, "end of the first tile {:?}", img.pixel(295, 150));
+    assert!(img.pixel(305, 150)[0] > 230, "the second tile starts over {:?}", img.pixel(305, 150));
+    assert!(img.pixel(299, 150)[0] < 25 && img.pixel(300, 150)[0] > 240, "a hard seam {:?} {:?}", img.pixel(299, 150), img.pixel(300, 150));
+    assert!(img.pixel(495, 150)[0] < 25, "end of the second tile {:?}", img.pixel(495, 150));
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.flip = Some(deckcraft_model::style::GradientFlip::X);
+    }
+    let img = render(vec![sh]);
+    assert!(img.pixel(305, 150)[0] < 25, "mirrored: dark next to the seam {:?}", img.pixel(305, 150));
+    assert!(img.pixel(495, 150)[0] > 230, "mirrored: light at the far end {:?}", img.pixel(495, 150));
 }
 
 #[test]
