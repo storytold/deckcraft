@@ -219,6 +219,7 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
             // Animations follow the new shape ids, triggers included.
             let map = super::edit::reid("slide.duplicate", doc, &mut copy.shapes)?;
             super::edit::remap_animations(&mut copy.animations, &map);
+            super::edit::remap_kept_sequences(&mut copy.kept_sequences, &map);
             let section = doc.section_of(src_id(doc, *i));
             let at = (last + 1 + k).min(doc.slides.len());
             new_ids.push(copy.id);

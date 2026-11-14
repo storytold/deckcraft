@@ -69,7 +69,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 | Effect dialog: sound, after-animation dim/hide, animate text by word/letter, smooth start/end, bounce end, repeat, rewind | yes | partly; repeat, bounce end and rewind round-trip |
 | By-paragraph text builds, sub-bullets follow parents | yes | yes; builds edited in PowerPoint (own start per paragraph, other effects in between, by 2nd-level paragraphs) import as one effect per paragraph and keep their clicks (#844) |
 | Triggers (on click of a shape) | yes | yes; played in the show: a step per click, the sequence starts over after its last step, a click completes a playing step. Separate click steps, mixed starts and paragraph builds survive PPTX save (`trigger_steps.rs`) |
-| Triggers on a media bookmark | yes | no |
+| Triggers on a media bookmark | yes | kept on save (the sequence is written back as the file had it, #362); not played in the show and not listed in the Animation Pane |
 | Animation Painter | yes | yes (#54) |
 | Animation Pane: list, reorder, remove | yes | yes |
 | Animation Pane: advanced timeline (bars you drag) | yes | yes: bars from the show schedule, drag the body for delay, the right edge for duration, seconds ruler (`animpane_tests`) |

@@ -3012,6 +3012,94 @@ mod copy_remap {
             }
         }
     }
+
+    /// A media-bookmark sequence kept from a file (#362) follows a duplicated or pasted slide's
+    /// new shape ids, so a save writes it for the copy too.
+    #[test]
+    fn duplicated_and_pasted_slides_retarget_kept_sequences() {
+        let mut s = Session::with_new();
+        let (p, b, _) = populate(&mut s, b"x");
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        Arc::make_mut(&mut doc.slides[0]).kept_sequences.push(deckcraft_model::KeptSequence {
+            xml: format!(
+                r#"<p:seq><p:cTn id="2"><p:tgtEl><p:spTgt spid="{}"/></p:tgtEl><p:tgtEl><p:spTgt spid="{}"/></p:tgtEl></p:cTn></p:seq>"#,
+                b.0, p.0
+            ),
+            builds: vec![format!(r#"<p:bldP spid="{}" grpId="0"/>"#, p.0)],
+        });
+        let names = |s: &Session, slide: usize| {
+            let d = s.doc().unwrap();
+            let sl = &d.doc.slides[slide];
+            let k = &sl.kept_sequences[0];
+            let ids: Vec<u32> = sl.shapes.iter().map(|x| x.id.0).collect();
+            let spids: Vec<u32> = k
+                .xml
+                .split("spid=\"")
+                .skip(1)
+                .chain(k.builds[0].split("spid=\"").skip(1))
+                .map(|t| t[..t.find('"').unwrap()].parse().unwrap())
+                .collect();
+            assert_eq!(spids.len(), 3);
+            assert!(spids.iter().all(|i| ids.contains(i)), "{spids:?} not among {ids:?}");
+            spids
+        };
+        let first = names(&s, 0);
+        s.execute("slide.duplicate", &json!({"index": 0})).unwrap();
+        let copy = names(&s, 1);
+        assert!(copy.iter().zip(&first).all(|(a, b)| a != b), "{copy:?} {first:?}");
+        s.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        s.execute("edit.paste", &json!({"scope": "slides"})).unwrap();
+        let n = s.doc().unwrap().doc.slides.len();
+        names(&s, n - 1);
+    }
+
+    /// A kept sequence that names a shape the slide doesn't have can't follow a copy: a duplicate
+    /// drops it and the original keeps it, and one undo takes the copy back. `slide.reuse`
+    /// retargets the sequence that can follow and drops the other, and undoes in one step too.
+    #[test]
+    fn kept_sequences_without_a_target_are_dropped_by_copies_and_reuse() {
+        let mut s = Session::with_new();
+        let (p, b, _) = populate(&mut s, b"x");
+        let seq = |ids: &[u32]| deckcraft_model::KeptSequence {
+            xml: format!("<p:seq>{}</p:seq>", ids.iter().map(|i| format!(r#"<p:spTgt spid="{i}"/>"#)).collect::<String>()),
+            builds: vec![],
+        };
+        {
+            let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            Arc::make_mut(&mut doc.slides[0]).kept_sequences = vec![seq(&[b.0, p.0]), seq(&[b.0, 99_999])];
+        }
+        let spids = |k: &deckcraft_model::KeptSequence| -> Vec<u32> {
+            k.xml.split("spid=\"").skip(1).map(|t| t[..t.find('"').unwrap()].parse().unwrap()).collect()
+        };
+        let before = s.doc().unwrap().doc.clone();
+        s.execute("slide.duplicate", &json!({"index": 0})).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.doc.slides[0].kept_sequences, before.slides[0].kept_sequences, "the original keeps both");
+        let copy = &d.doc.slides[1];
+        assert_eq!(copy.kept_sequences.len(), 1, "the copy drops the one naming a missing shape: {:?}", copy.kept_sequences);
+        let ids: Vec<u32> = copy.shapes.iter().map(|x| x.id.0).collect();
+        let got = spids(&copy.kept_sequences[0]);
+        assert!(got.len() == 2 && got.iter().all(|i| ids.contains(i)), "{got:?} not among {ids:?}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before, "one undo takes the copy back");
+        // The same deck, saved, reused into itself.
+        let bytes = deckcraft_format::save(&before).unwrap();
+        s.execute("slide.reuse", &json!({"data": crate::cmd::base64_encode(&bytes), "name": "src.deckcraft", "slides": [0], "at": 1})).unwrap();
+        let d = s.doc().unwrap();
+        let reused = &d.doc.slides[1];
+        assert_eq!(reused.kept_sequences.len(), 1, "{:?}", reused.kept_sequences);
+        // The copy's shapes come in the source's order: the box's and the picture's copies, in turn.
+        let copy_of = |id: ShapeId| {
+            let at = before.slides[0].shapes.iter().position(|x| x.id == id).unwrap();
+            reused.shapes[at].id.0
+        };
+        let got = spids(&reused.kept_sequences[0]);
+        assert_eq!(got, vec![copy_of(b), copy_of(p)]);
+        assert!(!got.contains(&b.0) && !got.contains(&p.0), "fresh ids: {got:?}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.slides, before.slides, "one undo takes the reused slide back");
+    }
 }
 
 #[test]
