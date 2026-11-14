@@ -405,7 +405,21 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
     s.kind = ShapeKind::Group { children, child };
+    take_generated(&mut s);
     s
+}
+
+/// A group DeckCraft generated (a Harvey ball, a checkbox) carries what it was drawn from in the
+/// tag `ARTCRAFT_GENERATED`: parsed into `generated` and taken out of the tags, so a save doesn't
+/// write it twice. A value that isn't version 1 or doesn't parse stays an ordinary tag, and the
+/// group an ordinary group.
+fn take_generated(s: &mut Shape) {
+    use deckcraft_model::generated::{Generated, TAG};
+    let Some((i, g)) = s.tags.iter().enumerate().find_map(|(i, (n, v))| (n == TAG).then(|| Generated::from_tag(v)).flatten().map(|g| (i, g))) else {
+        return;
+    };
+    s.tags.remove(i);
+    s.generated = Some(g);
 }
 
 fn cxn(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {

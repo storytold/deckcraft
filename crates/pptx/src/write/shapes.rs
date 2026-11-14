@@ -158,8 +158,19 @@ fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
     w.close("p:cNvPr");
 }
 
+/// The tags a shape is written with: a generated group's description (a Harvey ball, a checkbox)
+/// joins its kept tags as `ARTCRAFT_GENERATED`, once (a stale copy among the kept tags is dropped).
+pub(crate) fn shape_tags(s: &Shape) -> std::borrow::Cow<'_, [(String, String)]> {
+    use deckcraft_model::generated::TAG;
+    let Some(value) = s.generated.as_ref().filter(|_| s.is_group()).and_then(|g| g.to_tag()) else { return std::borrow::Cow::Borrowed(&s.tags) };
+    let mut tags: Vec<(String, String)> = s.tags.iter().filter(|(n, _)| n != TAG).cloned().collect();
+    tags.push((TAG.to_string(), value));
+    std::borrow::Cow::Owned(tags)
+}
+
 fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
-    if s.ph.is_none() && s.tags.is_empty() {
+    let tags = shape_tags(s);
+    if s.ph.is_none() && tags.is_empty() {
         w.empty0("p:nvPr");
         return;
     }
@@ -180,7 +191,7 @@ fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
                 .t("hasCustomPrompt", ph.has_custom_prompt),
         );
     }
-    super::cust_data(w, x, o, &s.tags);
+    super::cust_data(w, x, o, &tags);
     w.close("p:nvPr");
 }
 
