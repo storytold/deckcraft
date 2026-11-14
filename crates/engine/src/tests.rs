@@ -7471,6 +7471,33 @@ fn outline_export_skips_footer_date_and_slide_number() {
 }
 
 #[test]
+fn selection_highlight_is_the_range_in_order_for_the_renderer_to_shade() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 420.0, 160.0], "text": "Hello world"})).unwrap();
+    let id = ShapeId(r["id"].as_u64().unwrap() as u32);
+    let sel = |shape, anchor, caret, cell| TextSel { shape, anchor, caret, cell, notes: false, line_end: None };
+    let blue = deckcraft_color::Rgba::rgb(0x33, 0x75, 0xDB);
+    let highlight = |s: &Session, t: &TextSel| cmd::text::selection_highlight(s.doc().unwrap(), t, blue);
+
+    // A backwards drag is the same range; a caret alone, or the notes, shade nothing.
+    let h = highlight(&s, &sel(id, (0, 8), (0, 2), None)).expect("a range is shaded");
+    assert_eq!((h.shape, h.cell, h.from, h.to, h.color), (id, None, (0, 2), (0, 8), blue));
+    assert!(highlight(&s, &sel(id, (0, 3), (0, 3), None)).is_none());
+    assert!(highlight(&s, &TextSel { notes: true, ..sel(id, (0, 0), (0, 5), None) }).is_none());
+
+    // WordArt bends its lines: the UI veils those instead.
+    s.execute("format.textWarp", &json!({"preset": "textArchUp"})).unwrap();
+    assert!(highlight(&s, &sel(id, (0, 0), (0, 5), None)).is_none());
+    s.execute("format.textWarp", &json!({"preset": "none"})).unwrap();
+    assert!(highlight(&s, &sel(id, (0, 0), (0, 5), None)).is_some());
+
+    // A table cell's text is shaded in its cell.
+    let table = table_at(&mut s, &[200.0, 200.0], json!([["Hello world", "b"], ["c", ""]]));
+    let h = highlight(&s, &sel(table, (0, 0), (0, 5), Some((0, 0)))).expect("cell text is shaded");
+    assert_eq!((h.shape, h.cell), (table, Some((0, 0))));
+}
+
+#[test]
 fn shape_adjust_and_quick_style_reject_invalid_index() {
     let mut s = session();
     let r = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 100, 200, 100]})).unwrap();

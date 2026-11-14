@@ -34,7 +34,7 @@ pub(crate) use formatting::{format_body, format_para, format_run, format_run_lev
 pub use ime::{IME_SURROUNDING_MAX_BYTES, ImeSurrounding, cell_range_underlines, composition_underlines, ime_surrounding, range_underlines};
 use ime::{commit, compose};
 pub(crate) use layout::ctx_for;
-pub use layout::{caret_color, caret_line, fit_text_box, layout_for, text_frame, text_pos_at};
+pub use layout::{caret_color, caret_line, fit_text_box, layout_for, selection_highlight, text_frame, text_pos_at};
 
 /// Catalogue text-editing, selection, autocorrect, font, IME, and surrounding-deletion commands
 /// with their parameter docs and enabled predicates.

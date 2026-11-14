@@ -5,7 +5,7 @@ use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
 use super::slide::{SlidePart, needs_filters, output_size};
 use super::stroke::{arrowheads, head_trims, stroke, trim_ends};
-use super::text_draw::{draw_layout_with, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
+use super::text_draw::{draw_layout_selected, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
 use super::*;
 
 pub struct Renderer {
@@ -141,8 +141,8 @@ impl Renderer {
 
     /// Background plus the master and layout graphics the slide shows.
     fn backdrop(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: &Slide, view: Affine) {
-        // Backdrop graphics never take shape states: their ids may clash with the slide's shapes.
-        let bopts = RenderOpts { state: None, date_text: f.opts.date_text.clone(), ..*f.opts };
+        // Backdrop graphics never take shape states or the text selection: their ids may clash with the slide's shapes.
+        let bopts = RenderOpts { state: None, text_highlight: None, date_text: f.opts.date_text.clone(), ..*f.opts };
         let bf = Frame { pres: f.pres, opts: &bopts, fields: f.fields.clone() };
         let f = &bf;
         self.background(ctx, f, rctx, Some(slide), view);
@@ -281,8 +281,11 @@ impl Renderer {
                     self.background(&mut ctx, &f, &c, None, view);
                     if l.show_master_shapes {
                         let mc = Ctx::for_master(pres, m);
+                        // Master shapes never take the layout's text selection: their ids can clash with the layout's.
+                        let mopts = RenderOpts { text_highlight: None, date_text: f.opts.date_text.clone(), ..*f.opts };
+                        let mf = Frame { pres, opts: &mopts, fields: f.fields.clone() };
                         for s in m.shapes.iter().filter(|s| s.ph.is_none()) {
-                            self.shape(&mut ctx, &f, &mc, s, view, 0);
+                            self.shape(&mut ctx, &mf, &mc, s, view, 0);
                         }
                     }
                     for s in &l.shapes {
@@ -504,7 +507,9 @@ impl Renderer {
             }
             ShapeKind::Table(t) => {
                 // Rows grow with their text: what the cells cover, borders included.
-                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, f.opts.edit && f.opts.editing_text == Some(s.id));
+                let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
+                let highlight = f.opts.text_highlight.filter(|h| editing && !self.in_shadow_pass && h.shape == s.id);
+                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, editing, highlight.as_ref());
                 self.track(m, cells.unwrap_or(Rect::new(0.0, 0.0, x.w, x.h)).inflate(2.0, 2.0));
             }
             ShapeKind::Chart(c) => {
@@ -1088,6 +1093,8 @@ impl Renderer {
             };
             let tr = geo.text_rect;
             let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
+            // The selection is no part of a group's shadow, which is cast by its children drawn again.
+            let shadow_pass = self.in_shadow_pass;
             if !body.is_empty() || editing {
                 // Imported placeholders can have no paragraph until the first keystroke.
                 let mut empty;
@@ -1108,9 +1115,16 @@ impl Renderer {
                     let pad = b.height() * 0.3;
                     self.track(tm, b.inflate(pad, pad));
                 }
-                match text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0) {
+                let warped = text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0);
+                // WordArt bends its lines; their straight selection boxes would miss the glyphs.
+                let selection = f
+                    .opts
+                    .text_highlight
+                    .filter(|h| editing && !shadow_pass && h.shape == s.id && h.cell.is_none() && warped.is_none())
+                    .map(|h| (h.from, h.to, h.color));
+                match warped {
                     Some(w) => warp::draw(ctx, &l, tr, m, &st.paras, &w),
-                    None => draw_layout_with(ctx, &l, tr, m, &st.paras),
+                    None => draw_layout_selected(ctx, &l, tr, m, &st.paras, selection),
                 }
             } else if f.opts.edit && s.ph.is_some() {
                 let kind = s.ph_type().unwrap_or(PhType::Body);
