@@ -31,7 +31,7 @@ pub use audio::Pcm;
 pub use clip::ClipParams;
 pub use feed::VideoFeed;
 pub use player::{AudioOut, PlayState, Player, VoiceSpec, VoiceStatus};
-pub use probe::{AudioInfo, MediaInfo, VideoInfo, probe};
+pub use probe::{AudioInfo, MediaInfo, VideoInfo, probe, probe_headers};
 pub use video::{Frame, VideoDecoder, poster_frame, poster_png};
 
 /// Shared media bytes (the model's `MediaItem::data`).

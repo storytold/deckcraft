@@ -1,6 +1,6 @@
 //! JSON-RPC 2.0 framing and the MCP lifecycle / tools / resources methods.
 
-use std::io::{BufRead, Write};
+use std::io::{self, BufRead, Write};
 
 use serde_json::{Value, json};
 
@@ -16,7 +16,15 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
+
+/// Entries one batch (a JSON-RPC batch, or the `batch` tool's commands) may hold.
+pub(crate) const MAX_BATCH_ITEMS: usize = 1000;
+/// Bytes of results one batch may gather before the rest of it is refused: each result can copy
+/// much of the document (an inspection holds every note), so a batch holds at most this much.
+pub(crate) const MAX_BATCH_BYTES: usize = 64 << 20;
 const RESOURCE_NOT_FOUND: i64 = -32002;
+/// Keep request frames in step with the connected backend's reply limit.
+const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 const INSTRUCTIONS: &str = "DeckCraft is a presentation app (a PowerPoint clone). Coordinates are points on the \
 current slide (y down; the default 16:9 slide is 960×540). Every action is a command: find ids and parameters with \
@@ -62,9 +70,16 @@ impl Server {
     /// Serve newline-delimited JSON-RPC until `input` closes. Logs go to stderr only (stdout is
     /// the protocol stream).
     pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-        for line in input.lines() {
-            let line = line?;
-            if let Some(reply) = self.handle_line(&line) {
+        let mut input = input;
+        while let Some(frame) = read_frame(&mut input)? {
+            let reply = match frame {
+                Frame::Complete(bytes) => match std::str::from_utf8(&bytes) {
+                    Ok(line) => self.handle_line(line),
+                    Err(_) => Some(error(Value::Null, PARSE_ERROR, "request frame is not valid UTF-8").to_string()),
+                },
+                Frame::TooLarge => Some(error(Value::Null, INVALID_REQUEST, "request frame exceeds 16 MiB").to_string()),
+            };
+            if let Some(reply) = reply {
                 output.write_all(reply.as_bytes())?;
                 output.write_all(b"\n")?;
                 output.flush()?;
@@ -84,8 +99,28 @@ impl Server {
                 // Batches were removed in 2025-06-18; still answer older clients sensibly.
                 if batch.is_empty() {
                     Some(error(Value::Null, INVALID_REQUEST, "empty batch"))
+                } else if batch.len() > MAX_BATCH_ITEMS {
+                    Some(error(Value::Null, INVALID_REQUEST, format!("a batch holds at most {MAX_BATCH_ITEMS} messages")))
                 } else {
-                    let replies: Vec<Value> = batch.into_iter().filter_map(|m| self.handle(m)).collect();
+                    let mut used = 0usize;
+                    let mut replies: Vec<Value> = Vec::new();
+                    for m in batch {
+                        if used > MAX_BATCH_BYTES {
+                            // Not run: answer each remaining request with a short error.
+                            if let Some(id) = m.get("id").filter(|id| id.is_string() || id.is_number()) {
+                                replies.push(error(id.clone(), INTERNAL_ERROR, "the batch's replies passed 64 MiB; not run"));
+                            }
+                            continue;
+                        }
+                        if let Some(r) = self.handle(m) {
+                            used = used.saturating_add(r.to_string().len());
+                            replies.push(if used > MAX_BATCH_BYTES {
+                                error(r.get("id").cloned().unwrap_or(Value::Null), INTERNAL_ERROR, "the batch's replies passed 64 MiB; reply dropped")
+                            } else {
+                                r
+                            });
+                        }
+                    }
                     (!replies.is_empty()).then_some(Value::Array(replies))
                 }
             }
@@ -169,6 +204,41 @@ impl Server {
                 Ok(json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}]}))
             }
             other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
+        }
+    }
+}
+
+enum Frame {
+    Complete(Vec<u8>),
+    TooLarge,
+}
+
+/// Read through one newline while retaining no more than the documented frame budget.
+fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Frame>> {
+    let mut bytes = Vec::new();
+    let mut too_large = false;
+    loop {
+        let available = input.fill_buf()?;
+        if available.is_empty() {
+            if bytes.is_empty() && !too_large {
+                return Ok(None);
+            }
+            return Ok(Some(if too_large { Frame::TooLarge } else { Frame::Complete(bytes) }));
+        }
+        let count = available.iter().position(|byte| *byte == b'\n').map_or(available.len(), |i| i + 1);
+        if !too_large {
+            let remaining = MAX_FRAME_BYTES.saturating_sub(bytes.len());
+            if count > remaining {
+                too_large = true;
+                bytes.clear();
+            } else {
+                bytes.extend_from_slice(&available[..count]);
+            }
+        }
+        let ended = available[count - 1] == b'\n';
+        input.consume(count);
+        if ended {
+            return Ok(Some(if too_large { Frame::TooLarge } else { Frame::Complete(bytes) }));
         }
     }
 }

@@ -29,4 +29,4 @@ wasm-bindgen-test = "0.3"
 # slide renders (the same bytes, in parallel). The root patch selects the same pinned
 # backend as craft-pdf; this dependency only enables its native compression feature.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-krilla = { version = "=0.8.2", features = ["rayon"] }
+krilla = { version = "=0.8.2", default-features = false, features = ["rayon"] }

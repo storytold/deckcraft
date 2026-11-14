@@ -1,7 +1,7 @@
 //! Chart parts: a `c:chartSpace` with cached categories and values.
 //! An unchanged chart also keeps the embedded workbook and the other parts it points at.
 
-use deckcraft_model::chart::{Chart, ChartType, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::opc::{NS_A, NS_C, NS_R};
@@ -30,7 +30,17 @@ fn simple_fill(w: &mut W, f: &Fill) {
     match f {
         Fill::None => w.empty0("a:noFill"),
         Fill::Solid { color } => super::dml::solid(w, color),
-        Fill::Gradient(_) | Fill::Picture(_) | Fill::Pattern(_) | Fill::Group | Fill::Background => {
+        Fill::Pattern(p) => {
+            w.open("a:pattFill", A::new().a("prst", if p.preset.is_empty() { "pct5" } else { &p.preset }));
+            w.open0("a:fgClr");
+            super::dml::color(w, &p.fg);
+            w.close("a:fgClr");
+            w.open0("a:bgClr");
+            super::dml::color(w, &p.bg);
+            w.close("a:bgClr");
+            w.close("a:pattFill");
+        }
+        Fill::Gradient(_) | Fill::Picture(_) | Fill::Group | Fill::Background => {
             if let Fill::Gradient(g) = f
                 && let Some(s) = g.stops.first()
             {
@@ -58,14 +68,86 @@ fn sp_pr(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>) {
     w.close("c:spPr");
 }
 
-fn rich(w: &mut W, text: &str) {
+/// `a:defRPr` carrying the chart's text colour, where PowerPoint keeps it: the paragraph
+/// defaults of a title's rich text and of every `c:txPr`.
+fn def_rpr(w: &mut W, color: Option<&deckcraft_model::ColorRef>) {
+    match color {
+        Some(c) => {
+            w.open0("a:defRPr");
+            super::dml::solid(w, c);
+            w.close("a:defRPr");
+        }
+        None => w.empty0("a:defRPr"),
+    }
+}
+
+/// `c:txPr` with the chart's text colour (`Chart::text_color`) as the default run properties, on
+/// the axes, the legend, the data labels and the chart itself, as PowerPoint writes it. Nothing
+/// without a colour: the theme's default then applies on reading.
+fn tx_pr(w: &mut W, c: &Chart) {
+    let Some(color) = &c.text_color else { return };
+    w.open0("c:txPr");
+    w.empty0("a:bodyPr");
+    w.empty0("a:lstStyle");
+    w.open0("a:p");
+    w.open0("a:pPr");
+    def_rpr(w, Some(color));
+    w.close("a:pPr");
+    w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
+    w.close("a:p");
+    w.close("c:txPr");
+}
+
+/// `c:legendEntry` with the entry's own text size, weight and colour.
+fn legend_entry(w: &mut W, e: &deckcraft_model::chart::LegendEntry) {
+    w.open0("c:legendEntry");
+    w.val("c:idx", e.idx);
+    w.open0("c:txPr");
+    w.empty0("a:bodyPr");
+    w.empty0("a:lstStyle");
+    w.open0("a:p");
+    w.open0("a:pPr");
+    let mut a = A::new();
+    if let Some(sz) = e.size.filter(|v| v.is_finite() && *v > 0.0) {
+        // 1 to 400 pt, as the reader takes it, so a size reads back as written.
+        a = a.a("sz", ((sz * 100.0).round().clamp(100.0, 40_000.0) as u32).to_string());
+    }
+    if let Some(b) = e.bold {
+        a = a.a("b", if b { "1" } else { "0" });
+    }
+    match &e.color {
+        Some(c) => {
+            w.open("a:defRPr", a);
+            super::dml::solid(w, c);
+            w.close("a:defRPr");
+        }
+        None => w.empty("a:defRPr", a),
+    }
+    w.close("a:pPr");
+    w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
+    w.close("a:p");
+    w.close("c:txPr");
+    w.close("c:legendEntry");
+}
+
+fn rich(w: &mut W, text: &str, color: Option<&deckcraft_model::ColorRef>) {
     w.open0("c:tx");
     w.open0("c:rich");
     w.empty0("a:bodyPr");
     w.empty0("a:lstStyle");
     for line in text.split('\n') {
         w.open0("a:p");
+        if color.is_some() {
+            w.open0("a:pPr");
+            def_rpr(w, color);
+            w.close("a:pPr");
+        }
         w.open0("a:r");
+        if let Some(c) = color {
+            w.open("a:rPr", A::new().a("lang", "en-US"));
+            super::dml::solid(w, c);
+            w.close("a:rPr");
+        }
         w.elt("a:t", line);
         w.close("a:r");
         w.close("a:p");
@@ -74,14 +156,28 @@ fn rich(w: &mut W, text: &str) {
     w.close("c:tx");
 }
 
-fn title(w: &mut W, text: &str) {
+/// A title (the chart's or an axis's) in the chart's text colour.
+fn title(w: &mut W, text: &str, c: &Chart) {
     w.open0("c:title");
-    rich(w, text);
+    rich(w, text, c.text_color.as_ref());
     w.val("c:overlay", 0);
     w.close("c:title");
 }
 
+/// Points one cache writes. Excel and PowerPoint hold 32,000 points per series, so this is far
+/// above any chart they make; a longer vector is cut here with a warning, not refused.
+const MAX_CACHE_POINTS: usize = 1_000_000;
+
+/// `vals` cut to [`MAX_CACHE_POINTS`].
+fn capped<T>(vals: &[T]) -> &[T] {
+    if vals.len() > MAX_CACHE_POINTS {
+        log::warn!("pptx: chart data cache cut from {} to {MAX_CACHE_POINTS} points", vals.len());
+    }
+    &vals[..vals.len().min(MAX_CACHE_POINTS)]
+}
+
 fn str_cache(w: &mut W, f: &str, vals: &[String]) {
+    let vals = capped(vals);
     w.open0("c:strRef");
     w.elt("c:f", f);
     w.open0("c:strCache");
@@ -96,6 +192,7 @@ fn str_cache(w: &mut W, f: &str, vals: &[String]) {
 }
 
 fn num_cache(w: &mut W, f: &str, vals: &[Option<f64>]) {
+    let vals = capped(vals);
     w.open0("c:numRef");
     w.elt("c:f", f);
     w.open0("c:numCache");
@@ -114,6 +211,7 @@ fn num_cache(w: &mut W, f: &str, vals: &[Option<f64>]) {
 
 /// Numbers written into the chart itself (`c:numLit`), with no worksheet range behind them.
 fn num_lit(w: &mut W, vals: &[Option<f64>]) {
+    let vals = capped(vals);
     w.open0("c:numLit");
     w.val("c:ptCount", vals.len());
     for (i, v) in vals.iter().enumerate() {
@@ -152,6 +250,51 @@ fn group_of(k: ChartType) -> Group {
         _ => Group::Bar,
     }
 }
+
+fn error_bars(w: &mut W, e: &ErrorBars, g: Group) {
+    let word = |v: &str, ok: &[&'static str], d: &'static str| ok.iter().copied().find(|o| *o == v).unwrap_or(d);
+    w.open0("c:errBars");
+    if matches!(g, Group::Scatter | Group::Bubble) {
+        w.val("c:errDir", "y");
+    }
+    w.val("c:errBarType", word(&e.bar_type, &["both", "plus", "minus"], "both"));
+    let vt = word(&e.val_type, &["fixedVal", "percentage", "stdDev", "stdErr", "cust"], "fixedVal");
+    w.val("c:errValType", vt);
+    w.val("c:noEndCap", if e.end_cap { 0 } else { 1 });
+    if vt == "cust" {
+        w.open0("c:plus");
+        num_lit(w, &e.plus);
+        w.close("c:plus");
+        w.open0("c:minus");
+        num_lit(w, &e.minus);
+        w.close("c:minus");
+    } else if e.value.is_finite() {
+        w.val("c:val", fmt_num(e.value));
+    }
+    w.close("c:errBars");
+}
+
+/// Per-point fills of pie, doughnut and bar series.
+fn point_fills(w: &mut W, s: &Series, g: Group) {
+    if !matches!(g, Group::Pie | Group::Doughnut | Group::Bar) {
+        return;
+    }
+    for (idx, f) in s.point_fills.iter().take(1000) {
+        w.open0("c:dPt");
+        w.val("c:idx", idx);
+        if g == Group::Bar {
+            w.val("c:invertIfNegative", 0);
+        }
+        if g != Group::Bar {
+            w.val("c:bubble3D", 0);
+        }
+        sp_pr(w, Some(f), None);
+        w.close("c:dPt");
+    }
+}
+
+/// Data points (categories and values counted per series) one chart group writes to its caches.
+const MAX_EXPORT_POINTS: usize = 4_000_000;
 
 fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group) {
     w.open0("c:ser");
@@ -202,22 +345,9 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
             w.close("c:marker");
         }
     }
-    if g == Group::Pie || g == Group::Doughnut || g == Group::Bar {
-        for (idx, f) in s.point_fills.iter().take(1000) {
-            w.open0("c:dPt");
-            w.val("c:idx", idx);
-            if g == Group::Bar {
-                w.val("c:invertIfNegative", 0);
-            }
-            if g != Group::Bar {
-                w.val("c:bubble3D", 0);
-            }
-            sp_pr(w, Some(f), None);
-            w.close("c:dPt");
-        }
-    }
+    point_fills(w, s, g);
     if let Some(d) = s.data_labels {
-        data_labels(w, d);
+        data_labels(w, c, d);
     }
     // After labels, before the category and value caches (ECMA-376 series content order).
     if matches!(g, Group::Bar | Group::Line | Group::Area | Group::Scatter) {
@@ -225,29 +355,10 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
             trendline(w, t);
         }
     }
-    let n = c.categories.len().max(s.values.len());
+    let n = c.categories.len().max(s.values.len()).min(MAX_CACHE_POINTS);
     let last = n + 1;
     if let Some(e) = &s.error_bars {
-        let word = |v: &str, ok: &[&'static str], d: &'static str| ok.iter().copied().find(|o| *o == v).unwrap_or(d);
-        w.open0("c:errBars");
-        if matches!(g, Group::Scatter | Group::Bubble) {
-            w.val("c:errDir", "y");
-        }
-        w.val("c:errBarType", word(&e.bar_type, &["both", "plus", "minus"], "both"));
-        let vt = word(&e.val_type, &["fixedVal", "percentage", "stdDev", "stdErr", "cust"], "fixedVal");
-        w.val("c:errValType", vt);
-        w.val("c:noEndCap", if e.end_cap { 0 } else { 1 });
-        if vt == "cust" {
-            w.open0("c:plus");
-            num_lit(w, &e.plus);
-            w.close("c:plus");
-            w.open0("c:minus");
-            num_lit(w, &e.minus);
-            w.close("c:minus");
-        } else if e.value.is_finite() {
-            w.val("c:val", fmt_num(e.value));
-        }
-        w.close("c:errBars");
+        error_bars(w, e, g);
     }
     if matches!(g, Group::Scatter | Group::Bubble) {
         let xs: Vec<Option<f64>> = if s.x_values.is_empty() { (1..=s.values.len()).map(|v| Some(v as f64)).collect() } else { s.x_values.clone() };
@@ -325,8 +436,9 @@ fn trendline(w: &mut W, t: &Trendline) {
     w.close("c:trendline");
 }
 
-fn data_labels(w: &mut W, show: bool) {
+fn data_labels(w: &mut W, c: &Chart, show: bool) {
     w.open0("c:dLbls");
+    tx_pr(w, c);
     for (n, v) in [
         ("c:showLegendKey", false),
         ("c:showVal", show),
@@ -355,12 +467,13 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", "b");
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t);
+            title(w, t, c);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
+        tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
         w.val("c:crossBetween", "midCat");
@@ -374,12 +487,13 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", cat_pos);
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t);
+            title(w, t, c);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
+        tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
         w.val("c:auto", 1);
@@ -411,7 +525,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.empty0("c:minorGridlines");
     }
     if let Some(t) = &c.axis_titles.1 {
-        title(w, t);
+        title(w, t, c);
     }
     match c.y_format.as_deref().filter(|f| !f.is_empty()) {
         Some(f) => w.empty("c:numFmt", A::new().a("formatCode", f).a("sourceLinked", 0)),
@@ -420,10 +534,29 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
     w.val("c:majorTickMark", "none");
     w.val("c:minorTickMark", "none");
     w.val("c:tickLblPos", "nextTo");
+    tx_pr(w, c);
     w.val("c:crossAx", AX_CAT);
     w.val("c:crosses", "autoZero");
     w.val("c:crossBetween", if g == Group::Area || g == Group::Scatter { "midCat" } else { "between" });
     w.close("c:valAx");
+}
+
+/// Points `series` writes into its caches for group `g`, synthesized vectors included.
+fn series_points(c: &Chart, s: &Series, g: Group) -> usize {
+    let v = s.values.len();
+    if matches!(g, Group::Scatter | Group::Bubble) {
+        let xs = if s.x_values.is_empty() { v } else { s.x_values.len() };
+        let sizes = if g != Group::Bubble {
+            0
+        } else if s.sizes.is_empty() {
+            v
+        } else {
+            s.sizes.len()
+        };
+        xs.saturating_add(v).saturating_add(sizes)
+    } else {
+        c.categories.len().saturating_add(v)
+    }
 }
 
 fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) {
@@ -464,11 +597,21 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
     if g != Group::Stock {
         w.val("c:varyColors", vary);
     }
-    for (i, s) in list {
+    // Each series repeats the categories in its own cache, so the output grows with series times
+    // categories: stop adding series once a group's caches pass the budget (the first is always written).
+    // The first series is always written; each of its caches is cut at MAX_CACHE_POINTS.
+    let mut left = MAX_EXPORT_POINTS;
+    for (n, (i, s)) in list.iter().enumerate() {
+        let cost = series_points(c, s, g);
+        if n > 0 && cost > left {
+            log::warn!("pptx: chart export stopped after {n} series; the data caches passed {MAX_EXPORT_POINTS} points");
+            break;
+        }
+        left = left.saturating_sub(cost);
         series(w, c, s, *i, kind, g);
     }
     if c.data_labels {
-        data_labels(w, true);
+        data_labels(w, c, true);
     }
     match g {
         Group::Bar => {
@@ -545,6 +688,18 @@ fn kept_chartex(c: &Chart) -> Option<Vec<u8>> {
 
 /// The chart part XML, and whether it is the original part (so its relationships still apply).
 pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
+    // A chart too large to model is written back as it was read.
+    if c.verbatim
+        && let Some(raw) = &c.raw
+        && let Ok(doc) = crate::xml::parse(raw.as_bytes())
+        && doc.root.is("chartSpace")
+    {
+        let mut keep = doc.root;
+        drop_unkept_refs(&mut keep, c);
+        let mut w = W::new();
+        w.raw(&keep.to_xml());
+        return (w.finish(), true);
+    }
     // Reuse the kept part when the chart is unchanged since it was read.
     if let Some(raw) = &c.raw
         && !raw.contains(NS_CX)
@@ -576,7 +731,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.open0("c:chart");
     match &c.title {
         Some(t) => {
-            title(&mut w, t);
+            title(&mut w, t, c);
             w.val("c:autoTitleDeleted", 0);
         }
         None => w.val("c:autoTitleDeleted", 1),
@@ -653,7 +808,11 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         };
         w.open0("c:legend");
         w.val("c:legendPos", p);
+        for e in &c.legend_entries {
+            legend_entry(&mut w, e);
+        }
         w.val("c:overlay", u8::from(c.legend_overlay));
+        tx_pr(&mut w, c);
         w.close("c:legend");
     }
     w.val("c:plotVisOnly", 1);
@@ -662,6 +821,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     if let Some(f) = &c.chart_fill {
         sp_pr(&mut w, Some(f), None);
     }
+    tx_pr(&mut w, c);
     w.close("c:chartSpace");
     (w.finish(), false)
 }
@@ -750,11 +910,20 @@ pub fn write_kept(pkg: &mut crate::opc::PackageOut, chart_name: &str, c: &Chart,
         }
     }
     pkg.rels(chart_name, &rels);
+    let mut parts_by_norm = std::collections::HashMap::new();
+    for p in &c.kept.parts {
+        parts_by_norm.entry(norm(&p.name)).or_insert(p);
+    }
+    let mut seen_payloads = std::collections::HashSet::new();
     // The kept parts' own relationships, pointed at the new names.
     for p in c.kept.parts.iter().filter(|p| kept_payload(&p.name)) {
-        let Some(new_source) = names.get(&norm(&p.name)) else { continue };
+        let norm_name = norm(&p.name);
+        if !seen_payloads.insert(norm_name.clone()) {
+            continue;
+        }
+        let Some(new_source) = names.get(&norm_name) else { continue };
         let rp = norm(&rels_path(&p.name));
-        let Some(rels_part) = c.kept.parts.iter().find(|q| norm(&q.name) == rp) else { continue };
+        let Some(rels_part) = parts_by_norm.get(&rp) else { continue };
         let mut out = RelsOut::default();
         for r in crate::opc::rels_from_bytes(&rels_part.bytes, &p.name).items {
             if r.external {
@@ -782,6 +951,7 @@ fn cx_text(w: &mut W, t: &str) {
 
 /// A `cx:lvl` of points.
 fn cx_level(w: &mut W, pts: &[String], format: Option<&str>) {
+    let pts = capped(pts);
     let mut a = A::new().a("ptCount", pts.len());
     if let Some(f) = format {
         a = a.a("formatCode", f);
@@ -807,14 +977,39 @@ fn kept_region_layout(raw: &str) -> Option<String> {
     lp.name.starts_with("cx:").then(|| lp.to_xml())
 }
 
+/// Points one `chartEx` part may carry in all, categories repeated for every series: Excel's 255
+/// series x 32,000 points. Series past it are left out with a warning (the first is always written).
+const MAX_CHARTEX_POINTS: usize = 255 * 32_000;
+
+/// How many of `c`'s series fit [`MAX_CHARTEX_POINTS`] (at least one).
+fn chartex_series_within_budget(c: &Chart) -> usize {
+    let level = |v: &Vec<String>| v.len().min(MAX_CACHE_POINTS);
+    let cats = if c.categories.is_empty() {
+        0
+    } else {
+        level(&c.categories).saturating_add(c.category_levels.iter().map(level).fold(0usize, usize::saturating_add))
+    };
+    let mut left = MAX_CHARTEX_POINTS;
+    for (n, s) in c.series.iter().enumerate() {
+        let cost = cats.saturating_add(s.values.len().min(MAX_CACHE_POINTS));
+        if n > 0 && cost > left {
+            log::warn!("pptx: chart part stopped after {n} series; its data passed {MAX_CHARTEX_POINTS} points");
+            return n;
+        }
+        left = left.saturating_sub(cost);
+    }
+    c.series.len()
+}
+
 /// Writes an Office 2016 chart from the model, as PowerPoint lays the part out: one `cx:data`
 /// per series (categories and values), then the plot area with each series' layout, the axes
 /// the layout uses, the title and the legend.
 pub fn build_chartex(c: &Chart) -> Vec<u8> {
+    let n_series = chartex_series_within_budget(c);
     let mut w = W::new();
     w.open("cx:chartSpace", A::new().a("xmlns:a", NS_A).a("xmlns:r", NS_R).a("xmlns:cx", NS_CX));
     w.open0("cx:chartData");
-    for (i, s) in c.series.iter().enumerate() {
+    for (i, s) in c.series.iter().enumerate().take(n_series) {
         w.open("cx:data", A::new().a("id", i));
         if !c.categories.is_empty() {
             w.open("cx:strDim", A::new().a("type", "cat"));
@@ -854,10 +1049,10 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
         _ => "clusteredColumn",
     };
     let one = !matches!(c.kind, ChartType::BoxWhisker);
-    for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { usize::MAX }) {
+    for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { n_series }) {
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
-        if s.data_labels.unwrap_or(c.data_labels) {
+        if c.series_data_labels(s) {
             w.open("cx:dataLabels", A::new().a("pos", if c.kind == ChartType::Funnel { "ctr" } else { "outEnd" }));
             w.empty("cx:visibility", A::new().a("seriesName", "0").a("categoryName", "0").a("value", "1"));
             w.close("cx:dataLabels");
@@ -971,7 +1166,131 @@ mod region_map_tests {
 
 #[cfg(test)]
 mod tests {
-    use deckcraft_model::chart::{Chart, ChartType};
+    use deckcraft_color::{ColorTransform, Rgba};
+    use deckcraft_model::ColorRef;
+    use deckcraft_model::chart::{Chart, ChartType, Series};
+
+    #[test]
+    fn export_cost_counts_the_caches_each_group_writes() {
+        let s = Series { values: vec![Some(1.0); 600], ..Default::default() };
+        let mut c = Chart::sample(ChartType::Column);
+        c.categories = vec!["a".into(); 1000];
+        // Category and value caches: 1,000 + 600, however the series is stored.
+        assert_eq!(super::series_points(&c, &s, super::Group::Bar), 1600);
+        // A bubble series without x values or sizes still writes three value-length caches.
+        assert_eq!(super::series_points(&c, &s, super::Group::Bubble), 1800);
+        assert_eq!(super::series_points(&c, &s, super::Group::Scatter), 1200);
+        let s = Series { values: vec![Some(1.0); 600], x_values: vec![Some(1.0); 5], sizes: vec![Some(1.0); 7], ..Default::default() };
+        assert_eq!(super::series_points(&c, &s, super::Group::Bubble), 612);
+    }
+
+    /// The chart's text colour is written where PowerPoint keeps it (`c:txPr` on the axes, legend,
+    /// data labels and chart, the title's run defaults) and read back as the same colour.
+    #[test]
+    fn chart_text_colour_round_trips() {
+        let mut c = Chart::sample(ChartType::Column);
+        c.title = Some("Revenue".into());
+        c.legend = Some("b".into());
+        c.data_labels = true;
+        c.axis_titles = (Some("Quarter".into()), Some("EUR".into()));
+        let tinted = ColorRef::scheme(deckcraft_model::SchemeSlot::Accent2).with(ColorTransform::LumMod(75000));
+        c.text_color = Some(tinted.clone());
+        let xml = String::from_utf8(super::chart_xml(&c).0).unwrap();
+        // Axes (2), legend, data labels and the chart root; a title keeps it in its rich text.
+        assert!(xml.matches("<c:txPr>").count() >= 5, "{xml}");
+        assert!(xml.contains(r#"<a:schemeClr val="accent2"><a:lumMod val="75000"/></a:schemeClr>"#), "{xml}");
+        assert!(xml.contains("<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr><a:solidFill>"), "{xml}");
+        assert_eq!(crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap().text_color, Some(tinted));
+        // An RGB colour and no colour at all round-trip too.
+        c.text_color = Some(ColorRef::rgb(Rgba::rgb(255, 255, 255)));
+        let xml = super::chart_xml(&c).0;
+        assert_eq!(crate::read::chart::read_chart_xml(&xml).unwrap().text_color, c.text_color);
+        c.text_color = None;
+        let xml = String::from_utf8(super::chart_xml(&c).0).unwrap();
+        assert!(!xml.contains("<c:txPr>"), "{xml}");
+        assert_eq!(crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap().text_color, None);
+    }
+
+    /// An imported chart's `c:txPr` colour survives an edit that rebuilds the part from the model
+    /// (the colour used to be read but never written, so a save after any edit lost it).
+    #[test]
+    fn imported_text_colour_survives_an_edit_and_a_save() {
+        let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:val><c:numRef><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="65000"/><a:lumOff val="35000"/></a:schemeClr></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:crossAx val="1"/></c:valAx></c:plotArea></c:chart></c:chartSpace>"#;
+        let c = crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap();
+        let grey = ColorRef::scheme(deckcraft_model::SchemeSlot::Tx1).with(ColorTransform::LumMod(65000)).with(ColorTransform::LumOff(35000));
+        assert_eq!(c.text_color, Some(grey.clone()));
+        // Unchanged: the part is written back as read.
+        assert!(super::chart_xml(&c).1);
+        // Edited (a title; the editor drops `raw` on any edit): rebuilt with the colour.
+        let mut e = c.clone();
+        e.title = Some("Units".into());
+        e.raw = None;
+        let (out, kept) = super::chart_xml(&e);
+        assert!(!kept);
+        let back = crate::read::chart::read_chart_xml(&out).unwrap();
+        assert_eq!(back.text_color, Some(grey));
+        assert_eq!(back.title.as_deref(), Some("Units"));
+    }
+
+    /// #2067: a legend entry's own text (`c:legendEntry/c:txPr`: size, bold, colour) is read, and
+    /// an edit that rebuilds the part writes it back, in schema order before `c:overlay`.
+    #[test]
+    fn legend_entry_text_is_read_and_survives_an_edit() {
+        let entry = |idx: u32, rgb: &str| {
+            format!(
+                r#"<c:legendEntry><c:idx val="{idx}"/><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="2000" b="1"><a:solidFill><a:srgbClr val="{rgb}"/></a:solidFill></a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr></c:legendEntry>"#
+            )
+        };
+        let xml = format!(
+            r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:lineChart><c:grouping val="standard"/><c:ser><c:idx val="0"/><c:val><c:numRef><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:lineChart><c:catAx><c:axId val="1"/><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:crossAx val="1"/></c:valAx></c:plotArea><c:legend><c:legendPos val="r"/>{}{}<c:legendEntry><c:idx val="2"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr/></a:pPr></a:p></c:txPr></c:legendEntry><c:overlay val="0"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1200"><a:solidFill><a:srgbClr val="7F7F7F"/></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr></c:legend></c:chart></c:chartSpace>"#,
+            entry(0, "C00000"),
+            entry(1, "00B050")
+        );
+        let c = crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap();
+        let want = |idx: u32, rgb: (u8, u8, u8)| deckcraft_model::chart::LegendEntry {
+            idx,
+            size: Some(20.0),
+            bold: Some(true),
+            color: Some(ColorRef::rgb(Rgba::rgb(rgb.0, rgb.1, rgb.2))),
+        };
+        // The third entry sets nothing of its own and is not kept.
+        assert_eq!(c.legend_entries, vec![want(0, (0xC0, 0, 0)), want(1, (0, 0xB0, 0x50))]);
+        assert_eq!(c.text_size, Some(12.0), "the legend's own size stays the legend's");
+        let mut e = c.clone();
+        e.title = Some("Units".into());
+        e.raw = None;
+        let (out, kept) = super::chart_xml(&e);
+        assert!(!kept);
+        let s = String::from_utf8(out.clone()).unwrap();
+        let legend = &s[s.find("<c:legend>").unwrap()..];
+        let (pos, entry0, overlay) =
+            (legend.find("<c:legendPos").unwrap(), legend.find("<c:legendEntry>").unwrap(), legend.find("<c:overlay").unwrap());
+        assert!(pos < entry0 && entry0 < overlay, "{s}");
+        assert_eq!(crate::read::chart::read_chart_xml(&out).unwrap().legend_entries, c.legend_entries);
+        // None: nothing written.
+        e.legend_entries.clear();
+        assert!(!String::from_utf8(super::chart_xml(&e).0).unwrap().contains("legendEntry"));
+        // The paragraph's own properties win over the list style's, which come first in the XML.
+        let listed = xml.replacen(
+            r#"<c:legendEntry><c:idx val="0"/><c:txPr><a:bodyPr/><a:lstStyle/>"#,
+            r#"<c:legendEntry><c:idx val="0"/><c:txPr><a:bodyPr/><a:lstStyle><a:lvl1pPr><a:defRPr sz="1200" b="0"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:defRPr></a:lvl1pPr></a:lstStyle>"#,
+            1,
+        );
+        assert_ne!(listed, xml, "the list style was put in");
+        let c = crate::read::chart::read_chart_xml(listed.as_bytes()).unwrap();
+        assert_eq!(c.legend_entries[0], want(0, (0xC0, 0, 0)), "the paragraph's 20 pt, bold, C00000");
+        // A size reads back as it was written, within the reader's 1-400 pt.
+        for (size, back) in [(20.5, 20.5), (400.0, 400.0), (500.0, 400.0)] {
+            let mut e = c.clone();
+            e.raw = None;
+            e.legend_entries = vec![deckcraft_model::chart::LegendEntry { idx: 0, size: Some(size), bold: None, color: None }];
+            let written = super::chart_xml(&e).0;
+            let sz = format!(r#"sz="{}""#, (back * 100.0) as u32);
+            assert!(String::from_utf8_lossy(&written).contains(&sz), "{size} pt is written as {sz}");
+            let back_size = crate::read::chart::read_chart_xml(&written).unwrap().legend_entries[0].size;
+            assert_eq!(back_size, Some(back), "{size} pt");
+        }
+    }
 
     #[test]
     fn reversed_category_axis_round_trips() {
@@ -982,5 +1301,35 @@ mod tests {
         assert!(crate::read::chart::read_chart_xml(&xml).unwrap().cat_reversed);
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
+    }
+}
+
+#[cfg(test)]
+mod cache_cap_tests {
+    use super::*;
+
+    #[test]
+    fn a_chartex_part_stops_adding_series_past_excels_point_count() {
+        const { assert!(MAX_CHARTEX_POINTS >= 255 * 32_000) };
+        let mut c = Chart::sample(ChartType::Waterfall);
+        c.categories = vec![String::new(); 32_000];
+        let mut s = c.series[0].clone();
+        s.values = Vec::new();
+        c.series = vec![s; 300];
+        // 32,000 categories per series: 255 fit exactly, the 256th does not.
+        assert_eq!(chartex_series_within_budget(&c), 255);
+        c.series.truncate(3);
+        assert_eq!(chartex_series_within_budget(&c), 3);
+    }
+
+    /// A cache longer than the cap is cut, never refused; anything a real chart holds (32,000
+    /// points per series) is far under it. Zero-sized elements, so the test allocates nothing.
+    #[test]
+    fn caches_are_cut_at_the_cap_not_refused() {
+        const { assert!(MAX_CACHE_POINTS >= 32_000) };
+        let over = vec![(); MAX_CACHE_POINTS + 1];
+        assert_eq!(capped(&over).len(), MAX_CACHE_POINTS);
+        let real = vec![(); 32_000];
+        assert_eq!(capped(&real).len(), 32_000);
     }
 }

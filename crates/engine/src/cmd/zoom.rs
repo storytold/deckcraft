@@ -13,7 +13,7 @@ use deckcraft_model::text::{Action, Hyperlink, TextBody};
 use deckcraft_model::{LayoutType, Shape, ShapeId, ShapeKind, SlideId, defaults};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_slide, str_param};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

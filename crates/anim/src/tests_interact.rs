@@ -6,7 +6,7 @@ use std::sync::Arc;
 use deckcraft_model::text::Action;
 use deckcraft_model::{AnimClass, AnimStart, Animation, Presentation, Shape, ShapeId, Slide, SlideId, Transition, Xfrm};
 
-use crate::*;
+use crate::{Click, HitShape, LinkJump, ShowAction, ShowState, Target, Timeline};
 
 fn shape(id: u32) -> Shape {
     Shape { id: ShapeId(id), name: format!("S{id}"), xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)), ..Default::default() }

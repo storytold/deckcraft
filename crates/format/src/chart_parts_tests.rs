@@ -1,6 +1,9 @@
-use super::*;
+use std::io::{Cursor, Write};
+use std::sync::Arc;
+
+use super::{Budget, Presentation, load, load_checked, load_within, read_entry, read_entry_max, save};
 use deckcraft_model::chart::{Chart, ChartPart, ChartRel, ChartType};
-use deckcraft_model::{Master, Shape, ShapeId};
+use deckcraft_model::{Master, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
 const PART: &str = "ppt/embeddings/owned.xlsx";
@@ -82,14 +85,14 @@ fn chart_parts_share_media_byte_and_item_budgets() {
     let mut p = fixture(vec![7; 600]);
     p.add_media("a.bin", "application/octet-stream", vec![8; 600]).unwrap();
     let bytes = save(&p).unwrap();
-    assert!(load_within(&bytes, Budget { total: 1200, items: 2 }).is_ok());
-    assert!(load_within(&bytes, Budget { total: 1199, items: 2 }).is_err(), "chart payloads share the cumulative media budget");
-    assert!(load_within(&bytes, Budget { total: 1200, items: 1 }).is_err(), "chart parts share the media item budget");
+    assert!(load_within(&bytes, Budget::media(1200, 2)).is_ok());
+    assert!(load_within(&bytes, Budget::media(1199, 2)).is_err(), "chart payloads share the cumulative media budget");
+    assert!(load_within(&bytes, Budget::media(1200, 1)).is_err(), "chart parts share the media item budget");
     let duplicated = rewrite_manifest(&bytes, |manifest| {
         let media = manifest["presentation"]["media"].as_array_mut().unwrap();
         media.push(media[0].clone());
     });
-    assert!(load_within(&duplicated, Budget { total: 1200, items: 2 }).is_err(), "duplicate media IDs still count as listed items");
+    assert!(load_within(&duplicated, Budget::media(1200, 2)).is_err(), "duplicate media IDs still count as listed items");
 }
 
 #[test]
@@ -101,9 +104,9 @@ fn legacy_inline_chart_bytes_are_budgeted_and_preserved() {
         part.remove("nativeEntry");
         part.insert("bytes".into(), json!(vec![9_u8; 600]));
     });
-    assert_eq!(load_within(&legacy, Budget { total: 1200, items: 2 }).unwrap().0, p);
-    assert!(load_within(&legacy, Budget { total: 1199, items: 2 }).is_err());
-    assert!(load_within(&legacy, Budget { total: 1200, items: 1 }).is_err());
+    assert_eq!(load_within(&legacy, Budget::media(1200, 2)).unwrap().0, p);
+    assert!(load_within(&legacy, Budget::media(1199, 2)).is_err());
+    assert!(load_within(&legacy, Budget::media(1200, 1)).is_err());
 }
 
 #[test]
@@ -204,7 +207,7 @@ fn corrupt_chart_members_stop_before_reusing_the_inflation_budget() {
     }
     // A failed CRC may already have inflated bytes. Continuing with the same remaining
     // budget would let each corrupt member consume that work budget again.
-    let result = load_within(&bytes, Budget { total: 10, items: 2 });
+    let result = load_within(&bytes, Budget::media(10, 2));
     assert!(result.is_err(), "two corrupt 10-byte members must not reuse a 10-byte budget");
     assert!(result.unwrap_err().to_string().contains("chart-parts/0"));
 }
@@ -225,7 +228,7 @@ fn duplicate_physical_zip_names_are_indexed_and_inflated_once() {
     assert_eq!(replaced, 2);
     let z = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
     assert_eq!(z.file_names().filter(|n| n.starts_with("chart-parts/")).count(), 1);
-    let (q, damaged) = load_within(&bytes, Budget { total: 10, items: 2 }).unwrap();
+    let (q, damaged) = load_within(&bytes, Budget::media(10, 2)).unwrap();
     assert_eq!(damaged.len(), 1, "the second reference is missing, not inflated again");
     let ShapeKind::Group { children, .. } = &q.slides[0].shapes[0].kind else { panic!("group") };
     let ShapeKind::Chart(chart) = &children[0].kind else { panic!("chart") };

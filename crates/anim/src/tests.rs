@@ -7,7 +7,10 @@ use deckcraft_model::{
     AnimClass, AnimStart, Animation, ColorRef, CustomShow, Presentation, Rgba, Shape, ShapeId, Slide, SlideId, TextBody, Transition, Xfrm,
 };
 
-use crate::*;
+use crate::{
+    AnimState, Layer, LinkJump, MotionPath, ShowAction, ShowState, Source, Timeline, TriggerPlay, default_path, ease, morph_crop, morph_frame,
+    morph_pairs, morph_xfrm, show_order, transition_frame, transition_layers,
+};
 
 const W: f64 = 960.0;
 const H: f64 = 540.0;
@@ -342,6 +345,36 @@ fn empty_slide() {
     assert!(tl.is_empty());
     assert!(tl.state(ShapeId(1), None, 0, 1.0).is_identity());
     assert_eq!(tl.locate(5.0), (0, 0.0));
+}
+
+#[test]
+fn start_of_seeks_the_play_all_clock_to_an_effect() {
+    let mut late = anim(4, AnimClass::Entrance, "fade", AnimStart::WithPrevious);
+    late.delay_ms = 250;
+    let mut triggered = anim(4, AnimClass::Emphasis, "pulse", AnimStart::OnClick);
+    triggered.trigger = Some(ShapeId(1));
+    let tl = Timeline::new(
+        &slide_with(vec![
+            anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick),
+            anim(2, AnimClass::Exit, "fadeOut", AnimStart::OnClick),
+            anim(3, AnimClass::Entrance, "fade", AnimStart::OnClick),
+            late,
+            triggered,
+        ]),
+        W,
+        H,
+    );
+    assert_eq!(tl.start_of(0), Some(0.0));
+    assert_eq!(tl.start_of(2), Some(2.0));
+    assert_eq!(tl.start_of(3), Some(2.25));
+    assert_eq!(tl.start_of(4), None, "a triggered effect is not on the play-all clock");
+    assert_eq!(tl.start_of(9), None);
+    // Playing from the third effect: what came before has played, the rest has not.
+    let at = tl.start_of(2).unwrap();
+    assert!(tl.state_at(ShapeId(1), None, at).visible, "entered before");
+    assert!(!tl.state_at(ShapeId(2), None, at).visible, "exited before");
+    assert!(!tl.state_at(ShapeId(3), None, at).visible, "not entered yet");
+    assert!(!tl.state_at(ShapeId(4), None, at).visible, "not entered yet");
 }
 
 #[test]
@@ -731,6 +764,26 @@ fn show_skips_hidden_slides() {
 }
 
 #[test]
+fn show_remembers_a_slide_was_reached_by_going_back() {
+    // #1531: the UI plays the left slide's transition reversed only for Back.
+    let p = pres(3);
+    let mut s = ShowState::new(&p);
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert!(!s.backward);
+    assert_eq!(s.prev(&p), ShowAction::Slide(0));
+    assert!(s.backward);
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert!(!s.backward);
+    assert_eq!(s.goto(&p, 0), ShowAction::Slide(0));
+    assert!(!s.backward, "a jump is not Back");
+    // Back from the end screen shows the last slide again, without a transition to reverse.
+    assert_eq!(s.goto(&p, 2), ShowAction::Slide(2));
+    assert_eq!(s.next(&p), ShowAction::End);
+    assert_eq!(s.prev(&p), ShowAction::Slide(2));
+    assert!(!s.backward);
+}
+
+#[test]
 fn show_loops() {
     let mut p = pres(3);
     p.show.loop_until_esc = true;
@@ -1051,4 +1104,109 @@ fn show_returns_to_the_zoom_slide() {
     s.follow_link(&p, &link(2, Some(2)), None);
     s.goto(&p, 4);
     assert_eq!(s.next(&p), ShowAction::Slide(5));
+}
+
+#[test]
+fn custom_show_resolves_duplicate_ids_to_the_first_slide() {
+    let mut p = pres(3);
+    Arc::make_mut(&mut p.slides[2]).id = p.slides[0].id;
+    p.custom_shows = vec![CustomShow { name: "Dup".into(), slides: vec![p.slides[0].id, SlideId(1001), SlideId(424_242)] }];
+    p.show.custom_show = Some("Dup".into());
+    assert_eq!(show_order(&p), vec![0, 1]);
+}
+
+#[test]
+fn custom_show_with_many_entries_resolves_quickly() {
+    let mut p = pres(20_000);
+    let ids: Vec<SlideId> = p.slides.iter().map(|s| s.id).collect();
+    p.custom_shows = vec![CustomShow { name: "All".into(), slides: ids.iter().rev().copied().collect() }];
+    p.show.custom_show = Some("All".into());
+    let t = std::time::Instant::now();
+    let order = show_order(&p);
+    assert_eq!(order.len(), 20_000);
+    assert_eq!(order[0], 19_999);
+    assert!(t.elapsed().as_secs() < 5);
+}
+
+#[test]
+fn timeline_targets_the_first_shape_with_a_duplicate_id() {
+    let mut s = slide_with(vec![anim(7, AnimClass::Entrance, "fade", AnimStart::OnClick)]);
+    s.shapes[0] = shape(7, "first");
+    s.shapes[1] = shape(7, "second");
+    s.shapes[0].xfrm = Some(Xfrm::new(10.0, 10.0, 20.0, 20.0));
+    let tl = Timeline::new(&s, W, H);
+    assert_eq!(tl.effects().len(), 1);
+    assert_eq!(tl.steps(), 1);
+}
+
+#[test]
+fn many_by_paragraph_animations_on_one_shape_share_paragraph_targets() {
+    let mut s = slide_with(vec![]);
+    s.shapes[0].text = Some(TextBody::from_text("one\ntwo\nthree"));
+    s.animations = (0..2_000)
+        .map(|_| {
+            let mut a = anim(1, AnimClass::Path, "customPath", AnimStart::OnClick);
+            a.text_build = TextBuild::ByParagraph;
+            a.path = Some("M 0 0 L 0.5 0.5 E".into());
+            a
+        })
+        .collect();
+    let tl = Timeline::new(&s, W, H);
+    assert_eq!(tl.effects().len(), 6_000);
+    assert_eq!(tl.paragraph_targets(ShapeId(1)), vec![0, 1, 2]);
+}
+
+#[test]
+fn morph_pairs_take_the_first_unused_match_in_slide_order() {
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    a.shapes = vec![shape(1, "Same"), shape(2, "Same"), shape(3, "Other")];
+    b.shapes = vec![shape(11, "Same"), shape(12, "Same"), shape(13, "Same")];
+    // By name first, in slide order; the shape of `a` left over pairs by kind and geometry with
+    // the shape of `b` left over.
+    assert_eq!(morph_pairs(&a, &b), [(ShapeId(1), ShapeId(11)), (ShapeId(2), ShapeId(12)), (ShapeId(3), ShapeId(13))]);
+}
+
+#[test]
+fn morph_of_large_slides_stays_linear() {
+    let n = 20_000u32;
+    let text = |i: u32, side: &str| Some(TextBody::from_text(&format!("{side} {i}")));
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    // Text no shape on the other slide shares: every pass looks for a partner and finds none.
+    a.shapes = (0..n).map(|i| Shape { text: text(i, "a"), ..shape(i + 1, "") }).collect();
+    b.shapes = (0..n).map(|i| Shape { text: text(i, "b"), ..shape(n + i + 1, "") }).collect();
+    // One named pair at opposite ends.
+    a.shapes[0].name = "Logo".into();
+    b.shapes[n as usize - 1].name = "Logo".into();
+    // No wall-clock bound (it would flake on a loaded runner): at this size a quadratic pairing
+    // takes minutes, so a regression shows as a test that hangs rather than a failed assertion.
+    assert_eq!(morph_pairs(&a, &b), [(ShapeId(1), ShapeId(2 * n))]);
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+    // Every shape fades in place; the named pair differs in text, so it cross-fades as two.
+    assert_eq!(f.shapes.len(), 2 * n as usize);
+}
+
+#[test]
+fn paragraph_states_of_a_large_build_stay_linear() {
+    let n = 20_000usize;
+    let mut s = slide_with(vec![]);
+    let mut body = TextBody::from_text(&vec!["line"; n].join("\n"));
+    // One first-level paragraph owning every other paragraph.
+    for p in body.paragraphs.iter_mut().skip(1) {
+        p.level = 1;
+    }
+    s.shapes[0].text = Some(body);
+    let mut a = anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick);
+    a.text_build = TextBuild::ByParagraph;
+    s.animations = vec![a];
+    let tl = Timeline::new(&s, W, H);
+    // No wall-clock bound, as above: a per-paragraph scan of the slide would take minutes here.
+    assert_eq!(tl.paragraph_targets(ShapeId(1)).len(), n);
+    for p in 0..n {
+        assert!(!tl.state(ShapeId(1), Some(p), 0, 0.0).visible);
+        assert!(tl.state(ShapeId(1), Some(p), 1, 0.0).visible);
+    }
+    assert_eq!(tl.animated_shapes(), [ShapeId(1)]);
 }

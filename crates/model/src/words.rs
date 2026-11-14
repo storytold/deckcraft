@@ -90,9 +90,14 @@ fn base_class(c: char) -> Class {
         c if c.is_alphanumeric() => Class::Word,
         c if is_symbol(c) => Class::Symbol,
         // A combining mark with no base (or any other mark) stays with letters.
-        '\u{300}'..='\u{36f}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}' | '\u{20d0}'..='\u{20ff}' | '\u{fe20}'..='\u{fe2f}' => Class::Word,
+        c if is_combining_mark(c) => Class::Word,
         _ => Class::Punct,
     }
+}
+
+/// Whether `c` is a combining mark (a decomposed accent), which belongs to the letter before it.
+pub fn is_combining_mark(c: char) -> bool {
+    matches!(c, '\u{300}'..='\u{36f}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}' | '\u{20d0}'..='\u{20ff}' | '\u{fe20}'..='\u{fe2f}')
 }
 
 fn clusters(text: &str) -> Vec<Cluster> {

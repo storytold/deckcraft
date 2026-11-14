@@ -338,6 +338,8 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
     }
+    // A picture in a picture placeholder is cut into the layout's shape (a circle, say).
+    mark_inherited_geometry(&mut s, e.child("spPr"));
     s.style = e.child("style").map(style);
     let pf = e.child("blipFill").and_then(|b| dml::blip_fill(imp, part, b));
     let nvpr = e.path(&["nvPicPr", "nvPr"]);
@@ -347,8 +349,14 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     if vf.is_some() || af.is_some() || p14.is_some() {
         let media = p14.and_then(|m| dml::media_ref(imp, part, m)).or_else(|| vf.or(af).and_then(|f| dml::media_ref(imp, part, f)));
         if let Some(media) = media {
-            let mut clip =
-                MediaClip { media, video: vf.is_some() || af.is_none(), poster: pf.as_ref().map(|p| p.media), volume: 1.0, ..Default::default() };
+            let mut clip = MediaClip {
+                media,
+                video: vf.is_some() || af.is_none(),
+                poster: pf.as_ref().map(|p| p.media),
+                crop: pf.as_ref().map(|p| p.crop).unwrap_or_default(),
+                volume: 1.0,
+                ..Default::default()
+            };
             if let Some(m) = p14 {
                 if let Some(t) = m.child("trim") {
                     clip.trim_start_ms = ms(t.attr("st"));
@@ -387,6 +395,12 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
+        if let Some(sc) = pr.child("scene3d") {
+            let raw = part.keep_inner(sc);
+            if !raw.is_empty() && raw.len() <= 64 * 1024 {
+                s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
+            }
+        }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
@@ -420,11 +434,8 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             return s;
         }
         if let Some(c) = gd.child("chart")
-            && let Some(rel) = part.rels.get(c.attr("r:id").unwrap_or(""))
-            && let Some(bytes) = imp.pkg.xml_bytes(&rel.target)
-            && let Some(mut chart) = if uri.ends_with("/chartex") { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }
+            && let Some(chart) = super::chart::frame_chart(imp, part, c.attr("r:id").unwrap_or(""), uri)
         {
-            chart.kept = super::chart::capture_kept(imp.pkg, &rel.target);
             s.kind = ShapeKind::Chart(Box::new(chart));
             return s;
         }
@@ -441,6 +452,17 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
     }
     .or_else(|| gd.and_then(|g| g.find("oleObj")).and_then(|o| vml_preview(imp, part, o.attr("spid")?)));
+    // An embedded object's fallback picture (`p:oleObj/p:pic`) can carry a fill and an outline,
+    // which PowerPoint draws behind and around the preview (old equation objects on coloured
+    // boxes). The frame's own position stays.
+    if let Some(pr) = gd.and_then(|g| g.find("oleObj")).and_then(|o| o.find("pic")).and_then(|p| p.child("spPr")) {
+        if s.fill.is_none() {
+            s.fill = dml::fill_of(imp, part, pr);
+        }
+        if s.line.is_none() {
+            s.line = pr.child("ln").map(|ln| dml::line(imp, part, ln));
+        }
+    }
     let label = if let Some(o) = gd.and_then(|g| g.find("oleObj")) {
         o.attr("progId").or(o.attr("name")).unwrap_or("Object").to_string()
     } else if uri.ends_with("/diagram") {
@@ -456,7 +478,8 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         .into_iter()
         .map(|id| {
             let rel = part.rels.get(&id).filter(|r| !r.external)?;
-            if !imp.pkg.rels(&rel.target).items.is_empty() {
+            let pkg = imp.pkg;
+            if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
                 return None;
             }
             let (kind, target) = (rel.ty.clone(), rel.target.clone());
@@ -510,6 +533,10 @@ fn vml_index(pkg: &crate::opc::Package, vml: &str) -> std::collections::HashMap<
 /// relationship id, which a save renumbers. Only diagrams whose drawing is missing or empty get
 /// here, and those are drawn from their data.
 fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId> {
+    let norm_target = crate::opc::norm(target);
+    if let Some(&id) = imp.media_by_part.get(&norm_target) {
+        return Some(id);
+    }
     fn strip(e: &mut El, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
             return;
@@ -531,11 +558,15 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
         data: std::sync::Arc::new(xml.into_bytes()),
         link: None,
     });
+    imp.media_by_part.insert(norm_target, id);
     Some(id)
 }
 
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
 fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
+    if depth > 8 {
+        return None;
+    }
     let rel_ids = gd.child("relIds")?;
     let dm = part.rels.get(rel_ids.attr("r:dm").unwrap_or(""))?;
     let data = imp.pkg.xml(&dm.target)?;
@@ -730,6 +761,7 @@ fn table(imp: &mut Imp, part: &Part, tbl: &El) -> Table {
         t.last_col = pr.bool("lastCol").unwrap_or(false);
         t.band_row = pr.bool("bandRow").unwrap_or(false);
         t.band_col = pr.bool("bandCol").unwrap_or(false);
+        t.rtl = pr.bool("rtl");
         if let Some(id) = pr.child("tableStyleId").map(|e| e.text()) {
             // A style the file defines is drawn from its definition (by its GUID).
             // DeckCraft's own styles (written with GUIDs derived from their ids) map back to them.
@@ -778,6 +810,8 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
             ]);
         }
         c.anchor = pr.attr("anchor").and_then(Anchor::from_xml);
+        c.anchor_ctr = pr.bool("anchorCtr");
+        c.horz_overflow = pr.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml);
         c.vertical = pr.attr("vert").and_then(TextDir::from_xml);
         for (i, n) in ["lnL", "lnR", "lnT", "lnB"].iter().enumerate() {
             if let Some(ln) = pr.child(n)

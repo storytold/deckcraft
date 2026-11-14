@@ -367,6 +367,7 @@ pub fn esc(s: &str) -> String {
             '&' => o.push_str("&amp;"),
             '<' => o.push_str("&lt;"),
             '>' => o.push_str("&gt;"),
+            '\r' => o.push_str("&#13;"),
             c if xml_char(c) => o.push(c),
             _ => {}
         }
@@ -504,6 +505,15 @@ mod tests {
         let d = parse(b"<a:p><a:t>one\r\ntwo\rthree&#13;four</a:t><a:t><![CDATA[x\r\ny]]></a:t></a:p>").expect("parse");
         let t: Vec<String> = d.root.children_named("t").map(|t| t.text()).collect();
         assert_eq!(t, vec!["one\ntwo\nthree\rfour".to_string(), "x\ny".to_string()]);
+    }
+
+    #[test]
+    fn cr_in_text_survives_write_read() {
+        assert_eq!(esc("a\rb"), "a&#13;b");
+        let mut w = W::default();
+        w.elt("a:t", "one\rtwo\r\nthree");
+        let d = parse(w.s.as_bytes()).expect("parse");
+        assert_eq!(d.root.text(), "one\rtwo\r\nthree");
     }
 
     #[test]

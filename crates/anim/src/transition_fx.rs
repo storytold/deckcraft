@@ -9,7 +9,10 @@ use std::f64::consts::PI;
 
 use crate::easing::ease;
 use crate::transition::{FULL, Layer, R, Source};
-use crate::transition_geom::*;
+use crate::transition_geom::{
+    Cam, V3, boundary, card, center, clip, dir, edge, ein, eout, facing_shade, fan, field, hash64, moved, offset, poly_layers, pow_inout, q2,
+    rect_poly, rnd, rot, rot_quad, scale_rect, scaled, soft_rect, ss, v3, win,
+};
 
 use Source::{Black, New, NewBack, NewContent, Old, OldBack, OldContent, White};
 

@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use crate::*;
+use crate::Session;
 
 fn deck() -> Session {
     let mut s = Session::with_new();

@@ -1,10 +1,11 @@
 //! A slide's animation sequence: click steps, effect start times and per-shape state over time.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-use deckcraft_model::anim::TextBuild;
+use deckcraft_model::anim::{BuildRole, TextBuild, paragraph_build_roles};
 use deckcraft_model::style::Fill;
-use deckcraft_model::{AnimClass, AnimStart, Animation, ColorScheme, Rgba, SchemeSlot, ShapeId, Slide, Xfrm};
+use deckcraft_model::{AnimClass, AnimStart, Animation, ColorScheme, Rgba, SchemeSlot, Shape, ShapeId, Slide, Xfrm};
 
 use crate::AnimState;
 use crate::effects::{EffectSpec, exit_base, motion_path};
@@ -12,7 +13,6 @@ use crate::effects::{EffectSpec, exit_base, motion_path};
 /// Delay between paragraphs of a by-paragraph build that isn't on click (seconds).
 pub const PARAGRAPH_STAGGER: f64 = 0.5;
 const MAX_EFFECTS: usize = 100_000;
-const MAX_PARAGRAPHS: usize = 1_000;
 const MAX_ITERATIONS: f64 = 1.0e6;
 
 /// Which sequence an effect belongs to.
@@ -86,7 +86,9 @@ enum After {
 #[derive(Clone, Debug)]
 struct Effect {
     timing: EffectTiming,
-    spec: EffectSpec,
+    /// Shared by every paragraph effect of one animation, so a large motion path is not copied
+    /// per paragraph.
+    spec: Arc<EffectSpec>,
     after: After,
 }
 
@@ -101,6 +103,41 @@ pub struct Timeline {
     /// By-paragraph builds animate first-level paragraphs; deeper paragraphs follow their parent:
     /// (shape, member paragraph, owner paragraph).
     groups: Vec<(ShapeId, usize, usize)>,
+    /// Lookups built with the timeline, so evaluating a shape or paragraph costs its own effects
+    /// rather than a scan of every effect, group and colour on the slide.
+    index: TimelineIndex,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TimelineIndex {
+    /// Effects (indices into `effects`, in order) by target shape and paragraph.
+    by_target: HashMap<(ShapeId, Option<usize>), Vec<usize>>,
+    /// Effects (indices into `effects`, in order) by target shape.
+    by_shape: HashMap<ShapeId, Vec<usize>>,
+    /// Owner paragraph of each member paragraph (the first group recorded wins).
+    owner: HashMap<(ShapeId, usize), usize>,
+    /// Groups (member, owner) by shape, in order.
+    groups_by_shape: HashMap<ShapeId, Vec<(usize, usize)>>,
+    /// Base colour by shape (the first recorded wins).
+    color: HashMap<ShapeId, Rgba>,
+}
+
+impl TimelineIndex {
+    fn build(effects: &[Effect], groups: &[(ShapeId, usize, usize)], colors: &[(ShapeId, Rgba)]) -> TimelineIndex {
+        let mut ix = TimelineIndex::default();
+        for (i, e) in effects.iter().enumerate() {
+            ix.by_target.entry((e.timing.shape, e.timing.paragraph)).or_default().push(i);
+            ix.by_shape.entry(e.timing.shape).or_default().push(i);
+        }
+        for &(shape, member, owner) in groups {
+            ix.owner.entry((shape, member)).or_insert(owner);
+            ix.groups_by_shape.entry(shape).or_default().push((member, owner));
+        }
+        for &(shape, c) in colors {
+            ix.color.entry(shape).or_insert(c);
+        }
+        ix
+    }
 }
 
 enum Status {
@@ -163,6 +200,14 @@ impl Timeline {
         let accent = scheme.map(|s| s.get(SchemeSlot::Accent1)).unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
 
         let mut tl = Timeline::default();
+        if slide.animations.is_empty() {
+            return tl;
+        }
+        // Every shape by id, built once: resolving each animation's target by tree search would
+        // cost shapes x animations.
+        let shapes = shape_index(&slide.shapes);
+        // Paragraph targets of each shape, worked out for its first by-paragraph animation only.
+        let mut para_cache: HashMap<ShapeId, Arc<Vec<Option<usize>>>> = HashMap::new();
         // Group the animations by sequence in one pass, sequences in order of first appearance
         // (main first), so many distinct triggers cost linear work, not a scan per trigger.
         let mut seqs: Vec<(Sequence, Vec<usize>)> = vec![(Sequence::Main, Vec::new())];
@@ -191,34 +236,38 @@ impl Timeline {
                 if tl.effects.len() >= MAX_EFFECTS {
                     break;
                 }
-                let shape = slide.shape(a.shape);
+                let shape = shapes.get(&a.shape).copied();
                 // Paragraph targets of this animation.
-                let paras: Vec<Option<usize>> = match (a.paragraph, a.text_build) {
-                    (Some(p), _) => vec![Some(p as usize)],
+                let paras: Arc<Vec<Option<usize>>> = match (a.paragraph, a.text_build) {
+                    (Some(p), _) => Arc::new(vec![Some(p as usize)]),
                     (None, TextBuild::ByParagraph) => {
-                        let mut v: Vec<Option<usize>> = vec![];
-                        if let Some(t) = shape.and_then(|s| s.text.as_ref()) {
-                            let filled = |p: &deckcraft_model::text::Paragraph| p.runs.iter().any(|r| !r.text.trim().is_empty());
-                            let top = t.paragraphs.iter().filter(|p| filled(p)).map(|p| p.level).min().unwrap_or(0);
-                            let mut owner: Option<usize> = None;
-                            for (i, p) in t.paragraphs.iter().enumerate() {
-                                if p.level <= top && filled(p) && v.len() < MAX_PARAGRAPHS {
-                                    owner = Some(i);
-                                    v.push(Some(i));
-                                } else if let Some(o) = owner
-                                    && grouped.insert((a.shape, i, o))
-                                {
-                                    tl.groups.push((a.shape, i, o));
+                        let cached = para_cache.entry(a.shape).or_insert_with(|| {
+                            let mut v: Vec<Option<usize>> = vec![];
+                            if let Some(t) = shape.and_then(|s| s.text.as_ref()) {
+                                for (i, role) in paragraph_build_roles(t).into_iter().enumerate() {
+                                    match role {
+                                        BuildRole::Top => v.push(Some(i)),
+                                        BuildRole::Member(o) => {
+                                            if grouped.insert((a.shape, i, o)) {
+                                                tl.groups.push((a.shape, i, o));
+                                            }
+                                        }
+                                        BuildRole::Unowned => {}
+                                    }
                                 }
                             }
-                        }
-                        if v.is_empty() { vec![None] } else { v }
+                            if v.is_empty() {
+                                v.push(None)
+                            }
+                            Arc::new(v)
+                        });
+                        Arc::clone(cached)
                     }
-                    _ => vec![None],
+                    _ => Arc::new(vec![None]),
                 };
                 let xf = xfrm_of(a.shape).or_else(|| shape.and_then(|s| s.xfrm)).unwrap_or(Xfrm::new(sw / 4.0, sh / 4.0, sw / 2.0, sh / 2.0));
                 let xf = sanitize_xfrm(xf, sw, sh);
-                let spec = build_spec(a, xf, sw, sh, &resolve);
+                let spec = Arc::new(build_spec(a, xf, sw, sh, &resolve));
                 let dur = secs(a.duration_ms);
                 let delay = secs(a.delay_ms);
                 let until_next_click = a.repeat == u32::MAX;
@@ -287,7 +336,7 @@ impl Timeline {
                             span,
                             class: a.class,
                         },
-                        spec: spec.clone(),
+                        spec: Arc::clone(&spec),
                         after: after.clone(),
                     });
                 }
@@ -298,17 +347,19 @@ impl Timeline {
             }
         }
         // Base colours of animated shapes.
+        let mut colored: HashSet<ShapeId> = HashSet::new();
         for e in &tl.effects {
             let id = e.timing.shape;
-            if tl.colors.iter().any(|(s, _)| *s == id) {
+            if !colored.insert(id) {
                 continue;
             }
-            let c = match slide.shape(id).and_then(|s| s.fill.as_ref()) {
+            let c = match shapes.get(&id).copied().and_then(|s| s.fill.as_ref()) {
                 Some(Fill::Solid { color }) => resolve(color),
                 _ => accent,
             };
             tl.colors.push((id, c));
         }
+        tl.index = TimelineIndex::build(&tl.effects, &tl.groups, &tl.colors);
         tl
     }
 
@@ -359,6 +410,19 @@ impl Timeline {
         (self.main.len(), 0.0)
     }
 
+    /// Where effect `anim` (index into `slide.animations`) starts on the play-everything clock:
+    /// Animation Pane ▸ Play From. `None` for a triggered effect or one that isn't on the slide.
+    pub fn start_of(&self, anim: usize) -> Option<f64> {
+        let e = self
+            .effects
+            .iter()
+            .map(|e| &e.timing)
+            .filter(|e| e.anim == anim && e.sequence == Sequence::Main)
+            .min_by(|a, b| a.step.cmp(&b.step).then(a.start.total_cmp(&b.start)))?;
+        let before: f64 = self.main.iter().take(e.step).map(|s| s.duration).sum();
+        Some(before + e.start)
+    }
+
     /// Shapes that start an interactive sequence when clicked.
     pub fn trigger_shapes(&self) -> Vec<ShapeId> {
         self.triggers.iter().map(|(s, _)| *s).collect()
@@ -385,8 +449,12 @@ impl Timeline {
 
     /// Paragraph indices of `shape` animated separately (by-paragraph builds).
     pub fn paragraph_targets(&self, shape: ShapeId) -> Vec<usize> {
-        let mut v: Vec<usize> = self.effects.iter().filter(|e| e.timing.shape == shape).filter_map(|e| e.timing.paragraph).collect();
-        v.extend(self.groups.iter().filter(|g| g.0 == shape && v.contains(&g.2)).map(|g| g.1).collect::<Vec<_>>());
+        let mine = self.index.by_shape.get(&shape).map_or(&[][..], Vec::as_slice);
+        let mut v: Vec<usize> = mine.iter().filter_map(|&i| self.effects.get(i)).filter_map(|e| e.timing.paragraph).collect();
+        let owners: HashSet<usize> = v.iter().copied().collect();
+        if let Some(groups) = self.index.groups_by_shape.get(&shape) {
+            v.extend(groups.iter().filter(|(_, owner)| owners.contains(owner)).map(|(member, _)| *member));
+        }
         v.sort_unstable();
         v.dedup();
         v
@@ -394,13 +462,8 @@ impl Timeline {
 
     /// Shapes with any effect.
     pub fn animated_shapes(&self) -> Vec<ShapeId> {
-        let mut v: Vec<ShapeId> = Vec::new();
-        for e in &self.effects {
-            if !v.contains(&e.timing.shape) {
-                v.push(e.timing.shape);
-            }
-        }
-        v
+        let mut seen: HashSet<ShapeId> = HashSet::new();
+        self.effects.iter().map(|e| e.timing.shape).filter(|s| seen.insert(*s)).collect()
     }
 
     /// State of `shape` (or of one of its paragraphs, `para`) when `step` main steps have been
@@ -428,9 +491,9 @@ impl Timeline {
         triggers: &[TriggerPlay],
         stamps: &[StepStamp],
     ) -> AnimState {
-        let para = para.map(|p| self.groups.iter().find(|g| g.0 == shape && g.1 == p).map(|g| g.2).unwrap_or(p));
-        let mine = self.effects.iter().filter(|e| e.timing.shape == shape && e.timing.paragraph == para);
-        let base_color = self.colors.iter().find(|(s, _)| *s == shape).map(|(_, c)| *c).unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
+        let para = para.map(|p| self.index.owner.get(&(shape, p)).copied().unwrap_or(p));
+        let mine = self.index.by_target.get(&(shape, para)).map_or(&[][..], Vec::as_slice).iter().filter_map(|&i| self.effects.get(i));
+        let base_color = self.index.color.get(&shape).copied().unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
         let mut st = AnimState::default();
         // Initial visibility comes from the first effect in the Animation Pane order.
         let mut ordered: Vec<&Effect> = mine.collect();
@@ -521,6 +584,23 @@ fn status(e: &EffectTiming, step: usize, t: f64) -> Status {
     let c = if c.is_finite() { c } else { 0.0 };
     let p = if c > dur { 2.0 - c / dur } else { c / dur };
     Status::Active(p.clamp(0.0, 1.0))
+}
+
+/// Shapes by id in the order `Slide::shape` searches (a shape before its children, groups at most
+/// 64 deep); the first shape with an id wins a duplicate.
+fn shape_index(shapes: &[Shape]) -> HashMap<ShapeId, &Shape> {
+    fn walk<'a>(shapes: &'a [Shape], depth: usize, out: &mut HashMap<ShapeId, &'a Shape>) {
+        if depth > 64 {
+            return;
+        }
+        for s in shapes {
+            out.entry(s.id).or_insert(s);
+            walk(s.children(), depth + 1, out);
+        }
+    }
+    let mut out = HashMap::new();
+    walk(shapes, 0, &mut out);
+    out
 }
 
 fn build_spec(a: &Animation, xf: Xfrm, sw: f64, sh: f64, resolve: &dyn Fn(&deckcraft_model::ColorRef) -> Rgba) -> EffectSpec {
