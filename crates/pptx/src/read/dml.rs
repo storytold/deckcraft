@@ -212,7 +212,12 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
 fn svg_blip(imp: &mut Imp, part: &Part, blip: &El) -> Option<deckcraft_model::MediaId> {
     let svg = blip.child("extLst")?.find("svgBlip")?;
     let id = media_ref(imp, part, svg)?;
-    imp.media.iter().any(|m| m.id == id && m.content_type == "image/svg+xml" && deckcraft_svg::parse(&m.data).is_some()).then_some(id)
+    // A picture that uses a filter, mask, clip path, pattern or embedded image would lose it, so
+    // the raster copy stays the visible one and the SVG is kept only when it draws whole.
+    imp.media
+        .iter()
+        .any(|m| m.id == id && m.content_type == "image/svg+xml" && deckcraft_svg::parse(&m.data).is_some_and(|s| !s.skipped.any()))
+        .then_some(id)
 }
 
 /// Media for an element with `r:embed` (or `r:link`).

@@ -174,11 +174,13 @@ struct Placed {
 /// `pen` is the position the last chunk ended at, so a run that sets only `x` keeps the baseline.
 fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen: &mut (f64, f64)) {
     let (mut pen_x, mut pen_y) = *pen;
+    let mut origin = pen_x;
     let mut placed: Vec<Placed> = Vec::new();
     let mut widths: Vec<f64> = vec![0.0; runs.len()];
     for (ri, r) in runs.iter().enumerate() {
         if let Some(x) = r.at_x {
             pen_x = x;
+            origin = x;
         }
         if let Some(y) = r.at_y {
             pen_y = y;
@@ -188,29 +190,36 @@ fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen:
         let start = pen_x;
         // Characters the run's face does not have are drawn by a fallback face, so a label keeps
         // its whole text instead of losing the arrows and symbols in it.
+        let mut run_glyphs: Vec<(Placed, f64)> = Vec::new();
         for (face, segment) in segments(r, &face_for(r)) {
             let k = r.size / face.upem.max(1.0);
             let shaped = deckcraft_fonts::shape(&face, segment, &[], |c| c);
             for g in &shaped {
                 // Letter spacing is charged per glyph; a glyph of a multi-glyph cluster shares its
                 // cluster's box and is only a fraction of an em out.
-                placed.push(Placed {
-                    face: face.clone(),
-                    size: r.size,
-                    gid: g.gid,
-                    x: pen_x + f64::from(g.x_offset) * k,
-                    y: pen_y - f64::from(g.y_offset) * k,
-                    run: ri,
-                });
-                pen_x += f64::from(g.x_advance) * k + r.spacing;
+                run_glyphs.push((
+                    Placed { face: face.clone(), size: r.size, gid: g.gid, x: 0.0, y: pen_y - f64::from(g.y_offset) * k, run: ri },
+                    f64::from(g.x_advance) * k + r.spacing,
+                ));
             }
+        }
+        // `shape` hands back a run in text order; a right-to-left run is laid out the other way,
+        // so its glyphs are drawn from the last to the first.
+        if is_rtl_text(&r.text) {
+            run_glyphs.reverse();
+        }
+        for (mut p, advance) in run_glyphs {
+            p.x = pen_x;
+            placed.push(p);
+            pen_x += advance;
         }
         widths[ri] = pen_x - start;
     }
     *pen = (pen_x, pen_y);
-    // The space a run asks for after its last character is not part of the visible line.
+    // The space a run asks for after its last character is not part of the visible line, and the
+    // anchor measures the chunk including every `dx` it sets.
     let trailing = runs.last().map(|r| r.spacing).unwrap_or(0.0);
-    let total: f64 = widths.iter().sum::<f64>() - trailing;
+    let total = pen_x - origin - trailing;
     let shift = match runs.first().map(|r| r.anchor).unwrap_or(Anchor::Start) {
         Anchor::Start => 0.0,
         Anchor::Middle => -total / 2.0,
@@ -239,10 +248,24 @@ fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen:
         // A label can be stroked without a fill, and then it still draws.
         if let Some((paint, stroke)) = &run.stroke {
             set_flat(ctx, paint);
-            ctx.set_stroke(kurbo::Stroke::new(stroke.width / k.max(1e-9)).with_caps(stroke.start_cap).with_join(stroke.join));
+            ctx.set_stroke(kurbo::Stroke::new((stroke.width / k.max(1e-9)).max(1e-4)).with_caps(stroke.start_cap).with_join(stroke.join));
             ctx.stroke_path(path.as_ref());
         }
     }
+}
+
+/// Whether a run reads right to left: it has a right-to-left character and no strong
+/// left-to-right one. A mixed run keeps text order, which misplaces its right-to-left words.
+fn is_rtl_text(text: &str) -> bool {
+    let mut rtl = false;
+    for c in text.chars() {
+        if deckcraft_fonts::is_rtl(c) && c.is_alphabetic() {
+            rtl = true;
+        } else if c.is_alphabetic() && !deckcraft_fonts::is_rtl(c) {
+            return false;
+        }
+    }
+    rtl
 }
 
 /// Paint with a solid colour; a gradient falls back to its first stop.

@@ -72,9 +72,9 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
                 // Only elements that lay characters out keep them, as `#text` children in the
                 // order they appear, so mixed content (`A<tspan>B</tspan>C`) stays in order.
                 let raw = t.decode().map(|c| c.into_owned()).unwrap_or_default();
-                push_text(&mut stack, &mut nodes, raw);
+                push_text(&mut stack, &mut nodes, raw, false);
             }
-            Event::CData(c) => push_text(&mut stack, &mut nodes, String::from_utf8_lossy(&c).into_owned()),
+            Event::CData(c) => push_text(&mut stack, &mut nodes, String::from_utf8_lossy(&c).into_owned(), true),
             // `&amp;` and `&#x2192;` are separate events, and their position in a label matters.
             Event::GeneralRef(r) => {
                 let raw = match r.resolve_char_ref() {
@@ -84,7 +84,7 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
                         quick_xml::escape::resolve_predefined_entity(&name).map(str::to_string).unwrap_or_default()
                     }
                 };
-                push_text(&mut stack, &mut nodes, raw);
+                push_text(&mut stack, &mut nodes, raw, true);
             }
             Event::Eof => break,
             // Comments, declarations and processing instructions carry nothing we draw.
@@ -100,7 +100,7 @@ pub fn parse(bytes: &[u8]) -> Option<Arc<Node>> {
 
 /// Keep a stretch of characters as a `#text` child of the innermost open text element, charged
 /// against the document's node budget so a small file of many references still stops.
-fn push_text(stack: &mut [Node], nodes: &mut usize, raw: String) {
+fn push_text(stack: &mut [Node], nodes: &mut usize, raw: String, literal: bool) {
     if raw.is_empty() {
         return;
     }
@@ -109,13 +109,14 @@ fn push_text(stack: &mut [Node], nodes: &mut usize, raw: String) {
         return;
     }
     if let Some(parent) = stack.last_mut().filter(|p| matches!(p.name.as_str(), "text" | "tspan")) {
-        parent.kids.push(Arc::new(text_node(raw)));
+        parent.kids.push(Arc::new(text_node(raw, literal)));
     }
 }
 
-/// A run of characters inside a text element, as a child node so its order is kept.
-fn text_node(raw: String) -> Node {
-    let text = quick_xml::escape::unescape(&raw).map(|c| c.into_owned()).unwrap_or(raw);
+/// A run of characters inside a text element, as a child node so its order is kept. `literal` is
+/// CDATA, where XML expands nothing.
+fn text_node(raw: String, literal: bool) -> Node {
+    let text = if literal { raw } else { quick_xml::escape::unescape(&raw).map(|c| c.into_owned()).unwrap_or(raw) };
     Node { name: "#text".to_string(), attrs: vec![], kids: vec![], text }
 }
 

@@ -85,7 +85,9 @@ pub fn named(name: &str) -> Option<Rgba> {
         "black" => (0, 0, 0),
         "white" => (255, 255, 255),
         "red" => (255, 0, 0),
-        "lime" | "green" => (0, 128, 0),
+        // SVG keeps these apart: `lime` is full green, `green` the darker half.
+        "lime" => (0, 255, 0),
+        "green" => (0, 128, 0),
         "blue" => (0, 0, 255),
         "yellow" => (255, 255, 0),
         "cyan" | "aqua" => (0, 255, 255),

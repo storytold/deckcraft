@@ -69,10 +69,30 @@ const DEFINITIONS: [&str; 15] = [
 pub struct Svg {
     /// The size the picture asks for, in 96-dpi pixels.
     pub size: (f64, f64),
+    /// Features this picture uses that nothing here draws. A caller that has a raster fallback
+    /// should prefer it, because the drawing would be missing them.
+    pub skipped: Skipped,
     /// `viewBox` as `[x, y, width, height]` in user units.
     pub view_box: Option<[f64; 4]>,
     /// Every shape, in painting order, already in user units.
     pub items: Vec<Item>,
+}
+
+/// The features a picture uses that this renderer does not draw.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Skipped {
+    pub filters: bool,
+    pub masks: bool,
+    pub clip_paths: bool,
+    pub patterns: bool,
+    pub images: bool,
+}
+
+impl Skipped {
+    /// Whether anything at all had to be left out.
+    pub fn any(&self) -> bool {
+        self.filters || self.masks || self.clip_paths || self.patterns || self.images
+    }
 }
 
 /// One filled and/or stroked shape, or a text element.
@@ -234,9 +254,20 @@ pub fn parse(bytes: &[u8]) -> Option<Svg> {
     let mut ids = HashMap::new();
     collect_ids(&root, &mut ids);
     let viewport = view_box.map(|v| (v[2], v[3])).unwrap_or(size);
-    let mut build = Build { items: Vec::new(), ids, viewport, uses: 0, visits: 0, segments: 0, marker_depth: 0, text_chars: 0 };
+    let mut build = Build {
+        items: Vec::new(),
+        ids,
+        viewport,
+        uses: 0,
+        visits: 0,
+        segments: 0,
+        marker_depth: 0,
+        text_chars: 0,
+        paths: HashMap::new(),
+        skipped: Skipped::default(),
+    };
     build.walk(&root, &Frame { transform: Affine::IDENTITY, style: Style::default() }, 0, true);
-    Some(Svg { size, view_box, items: build.items })
+    Some(Svg { size, view_box, skipped: build.skipped, items: build.items })
 }
 
 /// The size in pixels a picture asks for: its `width`/`height`, else the `viewBox`, else CSS's
@@ -409,8 +440,19 @@ impl Style {
                 }
             }
             "stroke-dasharray" => {
-                let d = attr::numbers(v);
-                self.dash = (d.len() >= 2 && d.iter().all(|v| *v > 0.0)).then_some(d);
+                let mut d = attr::numbers(v);
+                if d.iter().any(|v| *v < 0.0) || !d.iter().any(|v| *v > 0.0) {
+                    d.clear();
+                }
+                // An odd number of values repeats to make the pattern even, as SVG says.
+                if d.len() == 1 {
+                    let v = d[0];
+                    d.push(v);
+                } else if d.len() % 2 == 1 {
+                    let first = d[0];
+                    d.push(first);
+                }
+                self.dash = (!d.is_empty()).then_some(d);
             }
             "fill-rule" => self.even_odd = v.trim() == "evenodd",
             "fill-opacity" => self.fill_opacity = opacity(v).unwrap_or(1.0),
@@ -428,7 +470,7 @@ impl Style {
             "font-size" => {
                 let v = v.trim();
                 let size = match v.strip_suffix('%') {
-                    Some(p) => p.trim().parse::<f64>().ok().map(|p| self.font.size * p / 100.0),
+                    Some(p) => p.trim().parse::<f64>().ok().map(|p| em * p / 100.0),
                     None => attr::length_em(v, em),
                 };
                 if let Some(s) = size.filter(|s: &f64| s.is_finite() && *s > 0.0) {
@@ -595,12 +637,10 @@ fn stops_of(chain: &[&Node]) -> Vec<(f64, Rgba)> {
                 None => v.parse::<f64>().ok(),
             });
             let offset = offset.filter(|o: &f64| o.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0);
-            let declared = k.attr("stop-color").map(str::to_string).or_else(|| style_value(k, "stop-color"));
+            let declared = style_value(k, "stop-color").or_else(|| k.attr("stop-color").map(str::to_string));
             let c = declared.as_deref().and_then(|v| attr::color(v).or_else(|| attr::named(v))).unwrap_or(Rgba::BLACK);
-            let a = k
-                .attr("stop-opacity")
-                .map(str::to_string)
-                .or_else(|| style_value(k, "stop-opacity"))
+            let a = style_value(k, "stop-opacity")
+                .or_else(|| k.attr("stop-opacity").map(str::to_string))
                 .and_then(|v| v.parse::<f64>().ok())
                 .unwrap_or(1.0)
                 .clamp(0.0, 1.0);
@@ -636,10 +676,8 @@ fn gradient_color(node: &Node, ids: &HashMap<String, Arc<Node>>) -> Option<Rgba>
             }
             let declared = k.attr("stop-color").map(str::to_string).or_else(|| style_value(k, "stop-color"));
             let c = declared.as_deref().and_then(|v| attr::color(v).or_else(|| attr::named(v))).unwrap_or(Rgba::BLACK);
-            let a = k
-                .attr("stop-opacity")
-                .map(str::to_string)
-                .or_else(|| style_value(k, "stop-opacity"))
+            let a = style_value(k, "stop-opacity")
+                .or_else(|| k.attr("stop-opacity").map(str::to_string))
                 .and_then(|v| v.parse::<f64>().ok())
                 .unwrap_or(1.0)
                 .clamp(0.0, 1.0);
@@ -664,6 +702,13 @@ fn gradient_color(node: &Node, ids: &HashMap<String, Arc<Node>>) -> Option<Rgba>
 
 fn k_href(n: &Node) -> Option<&str> {
     n.attr("href").or_else(|| n.attr("xlink:href")).and_then(|h| h.trim().strip_prefix('#'))
+}
+
+/// The id a `url(#id)` reference names.
+fn url_id(raw: &str) -> Option<&str> {
+    let rest = raw.trim().strip_prefix("url(")?;
+    let inner = rest.split(')').next()?.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    inner.strip_prefix('#')
 }
 
 fn style_value(n: &Node, key: &str) -> Option<String> {
@@ -693,6 +738,10 @@ struct Build {
     text_chars: usize,
     /// Elements visited, so a reference graph that expands without painting anything stops too.
     visits: usize,
+    /// Shapes already parsed, so a path referenced by many `use` elements is parsed once.
+    paths: HashMap<usize, Option<kurbo::BezPath>>,
+    /// What the parser had to leave out.
+    skipped: Skipped,
     /// Path elements kept, so many references cannot pile up behind [`MAX_ITEMS`].
     segments: usize,
 }
@@ -704,10 +753,36 @@ impl Build {
         if depth > dom::MAX_DEPTH || self.visits > MAX_VISITS || self.items.len() >= MAX_ITEMS || self.segments >= MAX_SEGMENTS_TOTAL {
             return;
         }
+        // An embedded image is not drawn, so the drawing is incomplete whether or not the element
+        // is reached through a definition.
+        if node.name == "image" {
+            self.skipped.images = true;
+        }
         if !via_use && DEFINITIONS.contains(&node.name.as_str()) {
             return;
         }
         let style = f.style.resolve(node, &self.ids, self.viewport);
+        // A reference to an effect we do not draw means the drawing is incomplete, and a caller
+        // holding the picture's raster copy should keep it.
+        // A `pattern` fill falls back to nothing, which is a picture that would be blank.
+        for attr in ["fill", "stroke"] {
+            let raw = node.attr(attr).map(str::to_string).or_else(|| style_value(node, attr));
+            let Some(id) = raw.as_deref().and_then(url_id) else { continue };
+            if self.ids.get(id).map(|n| n.name == "pattern").unwrap_or(false) {
+                self.skipped.patterns = true;
+            }
+        }
+        for (attr, flag) in [("filter", 0), ("mask", 1), ("clip-path", 2)] {
+            let set =
+                node.attr(attr).map(|v| v.contains("url(")).unwrap_or(false) || style_value(node, attr).map(|v| v.contains("url(")).unwrap_or(false);
+            if set {
+                match flag {
+                    0 => self.skipped.filters = true,
+                    1 => self.skipped.masks = true,
+                    _ => self.skipped.clip_paths = true,
+                }
+            }
+        }
         // `display: none` hides the subtree; `visibility: hidden` leaves descendants able to show
         // themselves, so it is applied where a shape is painted.
         if !style.display {
@@ -717,6 +792,15 @@ impl Build {
         if node.name == "svg" {
             let at = |k: &str| node.attr(k).and_then(attr::length).unwrap_or(0.0);
             transform *= Affine::translate((at("x"), at("y")));
+            // A nested `svg` establishes its own viewport: a view box maps into the width and
+            // height it is given (the view box's own size when neither is written).
+            if let Some(vb) = view_box_of(node) {
+                let w = node.attr("width").and_then(attr::length).unwrap_or(vb[2]);
+                let h = node.attr("height").and_then(attr::length).unwrap_or(vb[3]);
+                if w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite() {
+                    transform *= fit(vb, w, h);
+                }
+            }
         }
         transform *= attr::transform(node.attr("transform").unwrap_or(""));
         let frame = Frame { transform, style };
@@ -760,7 +844,16 @@ impl Build {
         if !f.style.visibility {
             return;
         }
-        let Some(mut path) = shape_path(node) else { return };
+        let key = node as *const Node as usize;
+        let cached = match self.paths.get(&key) {
+            Some(hit) => hit.clone(),
+            None => {
+                let parsed = shape_path(node);
+                self.paths.insert(key, parsed.clone());
+                parsed
+            }
+        };
+        let Some(mut path) = cached else { return };
         let segments = path.elements().len();
         if self.segments.saturating_add(segments) > MAX_SEGMENTS_TOTAL {
             return;
@@ -863,6 +956,7 @@ impl Build {
     /// Append `node`'s characters and those of the `tspan`s under it. `parent` is the style in
     /// force above the node, `root` tells whether the node is the `text` element itself.
     fn text_runs(&mut self, node: &Node, parent: &Style, root: bool, out: &mut Vec<TextRun>, scale: f64) {
+        self.visits += 1;
         if self.text_chars >= MAX_TEXT_CHARS || self.visits > MAX_VISITS {
             return;
         }
@@ -878,9 +972,9 @@ impl Build {
         let (at_x, at_y) = if root { (Some(at("x").unwrap_or(0.0)), Some(at("y").unwrap_or(0.0))) } else { (at("x"), at("y")) };
         let fill = style.fill.clone().map(|p| p.faded(style.fill_opacity * opacity));
         let stroke = style.stroke.clone().filter(|_| style.width > 0.0).map(|p| {
-            let mut pen = kurbo::Stroke::new((style.width * scale).max(1e-4)).with_caps(style.cap).with_join(style.join);
+            let mut pen = kurbo::Stroke::new(style.width.max(1e-4)).with_caps(style.cap).with_join(style.join);
             if let Some(d) = &style.dash {
-                pen = pen.with_dashes(0.0, d.iter().map(|v| v * scale));
+                pen = pen.with_dashes(0.0, d.iter().copied());
             }
             (p.faded(style.stroke_opacity * opacity), pen)
         });
@@ -1195,6 +1289,100 @@ mod tests {
         assert_eq!(*c, Paint::Solid(Rgba::rgb(0, 0, 255)));
         assert_eq!(pen.width, 2.0);
         assert!(!it.even_odd);
+    }
+
+    #[test]
+    fn lime_is_full_green_and_green_is_half() {
+        let s = svg("<rect width='4' height='4' fill='lime'/><rect width='4' height='4' fill='green'/>");
+        assert_eq!(s.items[0].fill, Some(Paint::Solid(Rgba::rgb(0, 255, 0))));
+        assert_eq!(s.items[1].fill, Some(Paint::Solid(Rgba::rgb(0, 128, 0))));
+    }
+
+    #[test]
+    fn cdata_stays_literal() {
+        let s = svg("<text x='0' y='0'><![CDATA[a &amp; b]]></text>");
+        assert_eq!(s.items.last().and_then(|i| i.text.as_ref()).map(|t| t.runs[0].text.as_str()), Some("a &amp; b"));
+    }
+
+    #[test]
+    fn one_dash_value_repeats_and_zero_dashes_are_allowed() {
+        let s = svg("<path d='M0 0 L4 4' stroke='black' stroke-width='1' stroke-dasharray='2'/>");
+        let (_, pen) = s.items[0].stroke.as_ref().expect("stroked");
+        assert_eq!(pen.dash_pattern.as_slice(), &[2.0, 2.0][..], "a single value repeats");
+        let s = svg("<path d='M0 0 L4 4' stroke='black' stroke-width='1' stroke-dasharray='4 0'/>");
+        let (_, pen) = s.items[0].stroke.as_ref().expect("stroked");
+        assert_eq!(pen.dash_pattern.as_slice(), &[4.0, 0.0][..], "a zero gap is a valid pattern");
+    }
+
+    #[test]
+    fn a_percentage_font_size_measures_against_the_inherited_size() {
+        let s = svg("<g font-size='16'><text x='0' y='0' font-size='10' style='font-size:200%'>A</text></g>");
+        assert_eq!(s.items[0].text.as_ref().map(|t| t.runs[0].size), Some(32.0));
+    }
+
+    #[test]
+    fn a_stop_style_wins_over_its_presentation_attributes() {
+        let s = svg(
+            "<defs><linearGradient id='g'><stop offset='0' stop-color='red' stop-opacity='0.2' style='stop-color:#00ff00;stop-opacity:1'/></linearGradient></defs><rect width='4' height='4' fill='url(#g)'/>",
+        );
+        let Some(Paint::Gradient(g)) = &s.items[0].fill else { panic!("gradient") };
+        assert_eq!(g.stops[0], (0.0, Rgba::rgb(0, 255, 0)));
+    }
+
+    #[test]
+    fn a_nested_svg_maps_its_view_box_into_its_viewport() {
+        // A 24-unit box into 12 units halves the drawing, then `x` moves it right.
+        let s = svg("<svg x='6' y='0' width='12' height='12' viewBox='0 0 24 24'><rect width='24' height='24'/></svg>");
+        let path = &s.items[0].path;
+        let b = path.bounding_box();
+        let (x0, y0, x1, y1) = (b.x0, b.y0, b.x1, b.y1);
+        assert!((x0 - 6.0).abs() < 1e-9 && (x1 - 18.0).abs() < 1e-9, "{x0}..{x1}");
+        assert!((y0 - 0.0).abs() < 1e-9 && (y1 - 12.0).abs() < 1e-9, "{y0}..{y1}");
+    }
+
+    #[test]
+    fn a_filter_a_mask_a_clip_path_or_an_image_is_reported() {
+        let clean = svg("<rect width='4' height='4' fill='red'/>");
+        assert!(!clean.skipped.any(), "a plain drawing is whole");
+        let filtered = svg("<defs><filter id='f'><feGaussianBlur stdDeviation='2'/></filter></defs><rect width='4' height='4' filter='url(#f)'/>");
+        assert!(filtered.skipped.filters);
+        let masked = svg("<defs><mask id='m'><rect width='4' height='4' fill='white'/></mask></defs><rect width='4' height='4' mask='url(#m)'/>");
+        assert!(masked.skipped.masks);
+        let clipped = svg("<defs><clipPath id='c'><rect width='2' height='2'/></clipPath></defs><rect width='4' height='4' clip-path='url(#c)'/>");
+        assert!(clipped.skipped.clip_paths);
+        let patterned = svg(
+            "<defs><pattern id='p' width='4' height='4'><rect width='4' height='4'/></pattern></defs><rect width='4' height='4' fill='url(#p)'/>",
+        );
+        assert!(patterned.skipped.patterns);
+        let picture = svg("<image x='0' y='0' width='4' height='4' href='a.png'/>");
+        assert!(picture.skipped.images);
+    }
+
+    #[test]
+    fn a_path_named_by_many_uses_is_parsed_once() {
+        // The same 2,000-element path under 400 references stays inside the segment budget only
+        // when each node is parsed and charged once.
+        let mut d = String::from("M0 0");
+        for i in 0..2000 {
+            d.push_str(&format!(" L{} {}", i % 24, i / 24));
+        }
+        let mut body = format!("<defs><path id='p' d='{d}' stroke='black'/></defs>");
+        for i in 0..400 {
+            body.push_str(&format!("<use href='#p' x='{}'/>", i % 24));
+        }
+        let s = svg(&body);
+        assert_eq!(s.items.len(), 400, "every reference draws");
+    }
+
+    #[test]
+    fn a_text_element_counts_against_the_visit_budget() {
+        // 3,000 empty tspan sequences would run forever without the budget.
+        let mut body = String::new();
+        for _ in 0..3000 {
+            body.push_str("<text x='0' y='0'></text>");
+        }
+        let s = svg(&body);
+        assert!(s.items.len() <= 3000);
     }
 
     #[test]
