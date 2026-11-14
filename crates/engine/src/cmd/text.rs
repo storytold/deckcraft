@@ -186,3 +186,136 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
     }
     Ok(r)
 }
+
+#[cfg(test)]
+mod font_script_tests {
+    use super::*;
+
+    /// Every run's (latin, east asian, complex script) typefaces in the deck.
+    fn typefaces(s: &mut Session) -> Vec<(Option<String>, Option<String>, Option<String>)> {
+        s.doc()
+            .unwrap()
+            .doc
+            .slides
+            .iter()
+            .flat_map(|sl| sl.shapes.iter())
+            .filter_map(|sh| sh.text.as_ref())
+            .flat_map(|t| t.paragraphs.iter())
+            .flat_map(|para| para.runs.iter())
+            .map(|r| (r.props.font.clone(), r.props.font_ea.clone(), r.props.font_cs.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn format_font_sets_the_east_asian_and_complex_script_typefaces() {
+        // A run carries a typeface per script; setting only the Latin one leaves a CJK run
+        // drawing, and saving, in whatever `a:ea` named before (#786).
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 300, 50], "text": "Hello"})).unwrap();
+        s.execute("text.exit", &json!({})).unwrap();
+
+        // All three at once.
+        s.execute("format.font", &json!({"family": "Lato", "eastAsia": "Noto Sans CJK SC", "complexScript": "Noto Sans Arabic"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), Some("Noto Sans Arabic".into()))]);
+
+        // The Latin-only call keeps its old meaning: the other two are left alone, which is
+        // what makes the new parameters additive.
+        s.execute("format.font", &json!({"family": "Comic Neue"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Comic Neue".into()), Some("Noto Sans CJK SC".into()), Some("Noto Sans Arabic".into()))]);
+
+        // And they reach the file: the issue is that a saved deck kept asking for the old
+        // East Asian font.
+        let bytes = crate::cmd::file::save_bytes(&s.doc().unwrap().doc, "pptx").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        // The text box is on whichever slide was current, so look across all of them.
+        let mut xml = String::new();
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i).unwrap();
+            if f.name().starts_with("ppt/slides/slide") && f.name().ends_with(".xml") {
+                std::io::Read::read_to_string(&mut f, &mut xml).unwrap();
+            }
+        }
+        assert!(xml.contains(r#"<a:ea typeface="Noto Sans CJK SC"/>"#), "no a:ea in the saved slides");
+        assert!(xml.contains(r#"<a:cs typeface="Noto Sans Arabic"/>"#), "no a:cs in the saved slides");
+        assert!(xml.contains(r#"<a:latin typeface="Comic Neue"/>"#), "no a:latin in the saved slides");
+
+        // Read back, they are still there.
+        s.execute("file.openBytes", &json!({"name": "f.pptx", "data": crate::cmd::base64_encode(&bytes)})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Comic Neue".into()), Some("Noto Sans CJK SC".into()), Some("Noto Sans Arabic".into()))]);
+    }
+
+    #[test]
+    fn format_font_rejects_an_unusable_typeface_name() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 300, 50], "text": "Hello"})).unwrap();
+        s.execute("text.exit", &json!({})).unwrap();
+        for p in [json!({"family": "   "}), json!({"family": "Lato", "eastAsia": ""}), json!({"family": "Lato", "complexScript": "x".repeat(201)})] {
+            assert!(s.execute("format.font", &p).is_err(), "{p} should be rejected");
+        }
+
+        // A script key that is present but not a string is refused, not read as absent. It used
+        // to set `family` and report success with the script typeface untouched, so the one thing
+        // the call asked for was the one thing that did not happen (noted in review).
+        for p in [
+            json!({"family": "Lato", "eastAsia": 42}),
+            json!({"family": "Lato", "complexScript": true}),
+            json!({"family": "Lato", "eastAsia": ["Noto Sans CJK SC"]}),
+            json!({"family": "Lato", "complexScript": {"name": "Noto Sans Arabic"}}),
+            json!({"family": 42}),
+        ] {
+            let e = s.execute("format.font", &p).expect_err(&format!("{p} should be rejected"));
+            assert!(format!("{e}").contains("is not a typeface name"), "{p}: {e}");
+        }
+        // Nothing above changed a run: the first call in this test left `family` unset, and a
+        // refused call must not have set it on the way to the error.
+        assert_eq!(typefaces(&mut s), vec![(None, None, None)]);
+
+        // An explicit `null` reads as absent, as it does for an index or a shape id, so the
+        // script keeps whatever typeface it had.
+        s.execute("format.font", &json!({"family": "Lato", "eastAsia": "Noto Sans CJK SC"})).unwrap();
+        s.execute("format.font", &json!({"family": "Lato", "eastAsia": null})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), None)]);
+
+        // A name with spaces around it is kept, trimmed.
+        s.execute("format.font", &json!({"family": "  Lato  ", "eastAsia": " Noto Sans CJK SC "})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), None)]);
+    }
+
+    /// Each script's typeface is set on its own, and a run whose text is entirely CJK takes its
+    /// East Asian one: that is the run #786 is about, where `a:latin` alone changes nothing that
+    /// is drawn (noted in review).
+    #[test]
+    fn a_cjk_run_takes_the_east_asian_typeface_and_each_script_is_set_on_its_own() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 300, 50], "text": "你好世界"})).unwrap();
+        s.execute("text.exit", &json!({})).unwrap();
+
+        // `eastAsia` alone (with the required `family`): the complex-script typeface is untouched.
+        s.execute("format.font", &json!({"family": "Lato", "eastAsia": "Noto Sans CJK SC"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), None)]);
+
+        // `complexScript` alone: the East Asian typeface just set is kept, not cleared.
+        s.execute("format.font", &json!({"family": "Lato", "complexScript": "Noto Sans Arabic"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), Some("Noto Sans Arabic".into()))]);
+
+        // A Latin-only call on the CJK run changes `a:latin` and nothing a CJK glyph is drawn in.
+        s.execute("format.font", &json!({"family": "Comic Neue"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Comic Neue".into()), Some("Noto Sans CJK SC".into()), Some("Noto Sans Arabic".into()))]);
+
+        // The saved run carries its text and the East Asian typeface together.
+        let bytes = crate::cmd::file::save_bytes(&s.doc().unwrap().doc, "pptx").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut xml = String::new();
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i).unwrap();
+            if f.name().starts_with("ppt/slides/slide") && f.name().ends_with(".xml") {
+                std::io::Read::read_to_string(&mut f, &mut xml).unwrap();
+            }
+        }
+        let run = xml.find("你好世界").and_then(|at| xml[..at].rfind("<a:r>").map(|start| &xml[start..at])).unwrap_or_default();
+        assert!(run.contains(r#"<a:ea typeface="Noto Sans CJK SC"/>"#), "the CJK run has no a:ea: {run}");
+    }
+}
