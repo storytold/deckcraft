@@ -23,7 +23,8 @@ fn theme_color_row(ui: &mut Ui, d: &mut Dialog, slot: SchemeSlot) {
         let fill = deckcraft_color::Rgba::from_hex(&v).map(theme::to_color32).unwrap_or_else(|| Color32::from_gray(200));
         let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
         ui.painter().rect(rect, CornerRadius::same(2), fill, Stroke::new(1.0, Tokens::get(ui.ctx()).border), egui::StrokeKind::Inside);
-        let resp = ui.add(egui::TextEdit::singleline(&mut v).desired_width(84.0).id_salt(("theme-hex", key)));
+        let desired = ui.available_width().max(84.0);
+        let resp = ui.add(egui::TextEdit::singleline(&mut v).desired_width(desired).id_salt(("theme-hex", key)));
         let shown = v.clone();
         resp.widget_info(move || {
             let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, format!("{} hex", slot.label()));
@@ -60,18 +61,22 @@ pub(super) fn theme_colors_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialo
     ui.style_mut().spacing.button_padding.y = 2.0;
     let left = [SchemeSlot::Dk1, SchemeSlot::Lt1, SchemeSlot::Dk2, SchemeSlot::Lt2, SchemeSlot::Hlink, SchemeSlot::FolHlink];
     let right = [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6];
-    egui::Grid::new("theme-colors").spacing(vec2(18.0, 4.0)).show(ui, |ui| {
-        for (a, b) in left.into_iter().zip(right) {
-            theme_color_row(ui, d, a);
-            theme_color_row(ui, d, b);
-            ui.end_row();
+    ui.columns(2, |columns| {
+        columns[0].spacing_mut().item_spacing.y = 4.0;
+        columns[1].spacing_mut().item_spacing.y = 4.0;
+        for slot in left {
+            theme_color_row(&mut columns[0], d, slot);
+        }
+        for slot in right {
+            theme_color_row(&mut columns[1], d, slot);
         }
     });
     ui.add_space(6.0);
     let mut name = d.get("schemeName", "");
     ui.horizontal(|ui| {
         ui.label("Name:");
-        let resp = ui.add(egui::TextEdit::singleline(&mut name).desired_width(280.0).id_salt("schemeName"));
+        let name_w = (ui.available_width() - 80.0).clamp(280.0, 420.0);
+        let resp = ui.add(egui::TextEdit::singleline(&mut name).desired_width(name_w).id_salt("schemeName"));
         let shown = name.clone();
         resp.widget_info(move || {
             let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Scheme name");
