@@ -24,7 +24,13 @@
 #[cfg(any(target_arch = "wasm32", test))]
 mod api;
 #[cfg(target_arch = "wasm32")]
+mod file_providers;
+#[cfg(target_arch = "wasm32")]
 mod host;
+
+#[cfg(all(target_arch = "wasm32", test))]
+mod file_provider_browser_tests;
+
 #[cfg(target_arch = "wasm32")]
 mod presenter;
 #[cfg(target_arch = "wasm32")]
