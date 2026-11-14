@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-14 · **Change:** minor (SVG pictures are saved with a PNG fallback beside the vector, as PowerPoint writes them, so the export shortfall is closed; nested `svg` viewports, right-to-left runs, dash patterns, `lime`, CDATA and percentages follow the review, and a picture we would draw incomplete keeps its raster copy; previous: trivial (the SVG entry is split: rendering limits and the export fallback are separate shortfalls now; gradients follow their element's transform and resolve viewport percentages; a marker cannot recurse, the last vertex keeps its marker and curve markers follow the tangent; a `url(#…)` that names no paint draws black; previous: minor (SVG pictures draw their text, real gradient ramps and markers; filters, masks and clip paths still are not read, export still lacks the PNG fallback; previous: minor (SVG pictures render as vectors, insert from disk and import their vector original from PowerPoint files; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -20,7 +20,7 @@ revision history.
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
-| 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
+| 4 | SVG pictures lose their filters, masks and clip paths | File format | | 10–16 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
@@ -102,14 +102,22 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** a deck opened and saved silently loses show behaviour.
 - **Estimate:** 2–4 h. **Beta blocker.**
 
-### SVG pictures don't render
-- **Evidence:** `crates/render/src/images.rs` decodes through `image` 0.25 (PNG, JPEG, WebP, GIF,
-  TIFF, BMP), and EMF/WMF through `deckcraft-metafile` (ported from WordCraft: paths, fills, pens,
-  pattern and hatch brushes, bitmaps and text; rectangle clip regions are applied, EMF+ only
-  pictures play their EMF+ records).
-  Nothing reads SVG; PowerPoint's Insert Icons stores SVG with a PNG fallback.
-- **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
-- **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
+### SVG pictures lose their filters, masks and clip paths
+- **Evidence:** `crates/svg` reads paths, basic shapes, groups, transforms, `use`, `text` with
+`tspan` (family, size, weight, style, `text-anchor`, letter spacing), `marker-start`/`-mid`/`-end`,
+solid and gradient paints with their stops, units, `gradientTransform` and `spreadMethod`, and
+strokes; `crates/render/src/svg.rs` draws them as vectors. SVG's `filter`, `mask`, `clipPath` and
+`pattern` elements are skipped (`DEFINITIONS` in `crates/svg/src/lib.rs`), and a picture that uses
+one of them, or an embedded `image`, reports it in `Svg::skipped`, so import keeps that picture's
+raster copy as the visible one instead of drawing it incomplete.
+- **Impact:** a picture that draws its glow, shadow or blur through `feGaussianBlur`/`feMerge` paints
+flat, and one that clips artwork gets the unclipped shapes: on PowerPoint-written SVG decks this is
+the visible remainder against a PowerPoint PDF render (measured 2026-11-13). A group's opacity
+applies to each shape in it rather than to the composited group, and a `url(#…)` paint that resolves
+to nothing is drawn black where a browser draws nothing.
+- **Estimate:** 10–16 h (a bounded filter graph: `feGaussianBlur`, `feOffset`, `feFlood`,
+`feComposite`, `feMerge`; masks as luminance layers; clip paths through vello's clip layers;
+patterns as tiles).
 
 ### Macro-enabled variants aren't recognized
 - **Evidence:** `.pptx`, `.potx` and `.ppsx` open and save with their own main content types
@@ -368,6 +376,11 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | minor | SVG pictures are saved with a PNG fallback in `a:blip/@r:embed` and the vector in `asvg:svgBlip`, so readers without SVG support draw them; the export shortfall is closed and the ranking row keeps only the filters, masks and clip paths |
+| 2026-11-13 | trivial | The remaining SVG limits are two entries now: filters, masks, clip paths and patterns (10–16 h) and export without a PNG fallback (2–4 h) |
+| 2026-11-13 | trivial | SVG gradients now follow the element transform and resolve percentages in `userSpaceOnUse` against the viewport; markers cannot recurse, keep the last vertex and follow a curve's tangent; the gap that remains is filters, masks and clip paths, plus the missing export fallback |
+| 2026-11-13 | minor | SVG pictures draw their text (families, size, weight, style, anchor, tspans), real gradient ramps (stops, units, transform, spread) and markers; filters, masks and clip paths remain, and so does export without a PNG fallback |
+| 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from `asvg:svgBlip`; the gap that remains is export without a PNG fallback, and gradients drawn as average stops |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

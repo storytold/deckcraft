@@ -50,11 +50,12 @@ use vello_cpu::{RenderContext, Resources, peniko};
 
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
-pub use images::{decode as decode_image, gif_frame};
+pub use images::{decode as decode_image, gif_frame, natural_size};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use pattern::{is_fg as pattern_is_fg, presets as pattern_presets, tile as pattern_tile};
 pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts, place_slide, place_slide_with, text_outline};
+pub use svg::rasterize_png as svg_png;
 pub use table::cell_body as table_cell_body;
 pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;
@@ -66,6 +67,7 @@ mod raster;
 mod renderer;
 mod slide;
 mod stroke;
+mod svg;
 mod text_draw;
 
 use geometry::shade;

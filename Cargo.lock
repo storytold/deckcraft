@@ -1223,6 +1223,7 @@ dependencies = [
  "deckcraft-engine",
  "deckcraft-geom",
  "deckcraft-model",
+ "deckcraft-svg",
  "image",
  "log",
  "quick-xml 0.41.0",
@@ -1241,6 +1242,7 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
+ "deckcraft-svg",
  "deckcraft-text",
  "image",
  "kurbo",
@@ -1248,6 +1250,15 @@ dependencies = [
  "skrifa 0.47.0",
  "vello_common",
  "vello_cpu",
+]
+
+[[package]]
+name = "deckcraft-svg"
+version = "0.18.1"
+dependencies = [
+ "deckcraft-color",
+ "kurbo",
+ "quick-xml 0.41.0",
 ]
 
 [[package]]

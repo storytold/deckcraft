@@ -85,18 +85,33 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
 
 /// Write a `.pptx` package.
 pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
-    write::export(p, write::CT_PRES)
+    write::export(p, write::CT_PRES, None)
+}
+
+/// [`export`] with a rasterizer for SVG pictures: each one gets a PNG part as its `r:embed` and
+/// the vector in the `asvg:svgBlip` extension, the way PowerPoint writes it, so readers without
+/// SVG support still draw the picture.
+pub fn export_with(p: &Presentation, fallback: write::SvgFallback<'_>) -> Result<Vec<u8>, PptxError> {
+    write::export(p, write::CT_PRES, Some(fallback))
 }
 
 /// Write a package for `ext`: `potx` (template) and `ppsx` (slide show) differ from `pptx` only in
 /// the main part's content type.
 pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
-    let ct = match ext {
+    write::export(p, content_type_for(ext), None)
+}
+
+/// [`export_as`] with a rasterizer for SVG pictures, as [`export_with`].
+pub fn export_as_with(p: &Presentation, ext: &str, fallback: write::SvgFallback<'_>) -> Result<Vec<u8>, PptxError> {
+    write::export(p, content_type_for(ext), Some(fallback))
+}
+
+fn content_type_for(ext: &str) -> &'static str {
+    match ext {
         "potx" => write::CT_TEMPLATE,
         "ppsx" => write::CT_SHOW,
         _ => write::CT_PRES,
-    };
-    write::export(p, ct)
+    }
 }
 
 /// Content type for a file name's extension.

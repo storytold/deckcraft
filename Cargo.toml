@@ -26,6 +26,7 @@ deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
+deckcraft-svg = { path = "crates/svg" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
