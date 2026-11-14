@@ -25,6 +25,8 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod x11_scale;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -203,6 +205,9 @@ fn app_icon() -> Option<egui::IconData> {
 /// Install logging, parse startup arguments and environment, launch the native app, and
 /// propagate an eframe startup failure.
 fn main() -> eframe::Result {
+    // Apply X11 scaling before logger setup; a successful re-exec must not duplicate log I/O.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    x11_scale::apply();
     // First, so every start-up record (and the engine's panic hook, installed with the first
     // Session) is captured; see `logging`.
     let logger = logging::install();
