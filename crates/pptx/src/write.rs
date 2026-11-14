@@ -794,11 +794,11 @@ fn master_xml(x: &mut Exp, o: &mut Out, m: &Master, layouts: &[(u64, String)]) -
     }
     w.close("p:sldLayoutIdLst");
     w.open0("p:txStyles");
-    let (dt, db, dother) = defaults::master_styles();
-    let pick = |s: &deckcraft_model::text::ListStyle, d: deckcraft_model::text::ListStyle| if s.is_empty() { d } else { s.clone() };
-    dml::list_style(&mut w, x, o, "p:titleStyle", &pick(&m.title_style, dt));
-    dml::list_style(&mut w, x, o, "p:bodyStyle", &pick(&m.body_style, db));
-    dml::list_style(&mut w, x, o, "p:otherStyle", &pick(&m.other_style, dother));
+    // An imported empty body style has no bullets; saving must not author defaults into it.
+    // New decks already carry their populated master styles in the model.
+    dml::list_style(&mut w, x, o, "p:titleStyle", &m.title_style);
+    dml::list_style(&mut w, x, o, "p:bodyStyle", &m.body_style);
+    dml::list_style(&mut w, x, o, "p:otherStyle", &m.other_style);
     w.close("p:txStyles");
     ext_list(&mut w, ext_children(m.raw_ext.as_deref()).as_deref());
     w.close("p:sldMaster");

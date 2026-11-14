@@ -71,7 +71,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textTransparency",
             "Text Transparency",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{value: 0..1} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
@@ -129,7 +129,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textOutline",
             "Text Outline",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{color?, width?: pt} (no color = none)",
             has_text_or_shapes,
@@ -138,7 +138,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textWarp",
             "Text Transform",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{preset: a prstTxWarp name or none, adj?: [finite raw guide values, at most 8]} — none clears the transform; omitted adj uses the preset's defaults",
             has_text_or_shapes,
