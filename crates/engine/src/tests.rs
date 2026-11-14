@@ -7126,6 +7126,50 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// G6: with no sites given, shape.connect joins the sites that face each other along the
+/// dominant direction between the two shapes (a box mostly below leaves from the bottom), not
+/// "the closest pair", which for a diagonal neighbour picked a side site and crossed boxes.
+#[test]
+fn connector_default_sites_follow_the_dominant_direction() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let diag = s.execute("shape.insert", &json!({"preset": "rect", "rect": [150, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(0)), "mostly below: bottom → top, not right → left: {r}");
+    let r = s.execute("shape.connect", &json!({"from": diag, "to": a})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(0), Some(2)), "and back: top → bottom: {r}");
+    // The direction runs between the shapes' centres, not between the means of their sites: a
+    // triangle's sites lie mostly along its base, which pulled the direction sideways and chose
+    // the box's left site for a box that is mostly below.
+    let tri = s.execute("shape.insert", &json!({"preset": "triangle", "rect": [400, 0, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    let below = s.execute("shape.insert", &json!({"preset": "rect", "rect": [520, 155, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": tri, "to": below})).unwrap();
+    assert_eq!(r["toSite"].as_u64(), Some(0), "centre to centre is mostly down: the box's top, not its left: {r}");
+    // An exact diagonal ties the bottom with the right side (and the top with the left): the lower
+    // site index wins, so bottom → top, and top → bottom back.
+    let p = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 300, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let q = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 500, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let sites = |s: &mut Session, from: u64, to: u64| {
+        let r = s.execute("shape.connect", &json!({"from": from, "to": to})).unwrap();
+        (r["fromSite"].as_u64(), r["toSite"].as_u64())
+    };
+    assert_eq!(sites(&mut s, p, q), (Some(2), Some(0)));
+    assert_eq!(sites(&mut s, q, p), (Some(0), Some(2)));
+    // Shapes with one centre tie every site: site 0 on both.
+    let big = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600, 300, 200, 100]})).unwrap()["id"].as_u64().unwrap();
+    let small = s.execute("shape.insert", &json!({"preset": "rect", "rect": [650, 325, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(sites(&mut s, big, small), (Some(0), Some(0)));
+    // One site given: the other end is the other shape's site closest to it, as before the facing
+    // rule (which is for when neither is given). From a's right side (100, 25) the diagonal box's
+    // top (200, 200) is nearest; to its left side (150, 225), a's bottom (50, 50).
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag, "fromSite": 3})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(3), Some(0)), "fromSite only: {r}");
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag, "toSite": 1})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(1)), "toSite only: {r}");
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag, "fromSite": 2, "toSite": 3})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(3)), "both given: {r}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
