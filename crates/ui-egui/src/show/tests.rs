@@ -159,6 +159,64 @@ fn presenter_all_slides_does_not_cover_the_audience_screen() {
     assert!(!harness.state().1.presenter_grid, "G again closes it");
 }
 
+/// #2037: the notes pane kept its scroll offset across slides, so a new slide's notes opened
+/// partway down. A slide change opens that slide's notes at the top, forward and back; the
+/// same slide keeps the presenter's place.
+#[test]
+fn presenter_notes_open_at_the_top_on_a_slide_change() {
+    use deckcraft_model::text::{Paragraph, TextBody};
+    use egui_kittest::kittest::Queryable;
+
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session
+        .edit(|doc, _| {
+            for i in 0..2 {
+                std::sync::Arc::make_mut(&mut doc.slides[i]).notes =
+                    TextBody { paragraphs: (0..60).map(|n| Paragraph::new(&format!("line {n} of slide {}", i + 1))).collect(), ..Default::default() };
+            }
+            Ok(())
+        })
+        .unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let show = Show::new(&doc, 0, false, true);
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+            let now = ui.input(|i| i.time);
+            presenter_window(ui.ctx(), show, doc, now, keep);
+        },
+        (doc, show, true),
+    );
+    harness.run_steps(2);
+    // The notes pane is the presenter window's only scroll area.
+    let notes_scroll = |h: &egui_kittest::Harness<'_, (std::sync::Arc<Presentation>, Show, bool)>| {
+        h.ctx.data_mut(|d| d.iter_temp_by_type::<egui::scroll_area::State>().next().map(|s| s.unclamped_offset().y))
+    };
+    let scroll_notes_down = |h: &egui_kittest::Harness<'_, (std::sync::Arc<Presentation>, Show, bool)>| {
+        for _ in 0..3 {
+            h.get_by_label_contains("line 0").scroll_down();
+        }
+    };
+    // Reading the first slide's notes scrolls them down.
+    scroll_notes_down(&harness);
+    harness.run_steps(2);
+    let scrolled = notes_scroll(&harness).unwrap_or(0.0);
+    assert!(scrolled > 100.0, "the notes scrolled: {scrolled}");
+    // Turning the page shows the next slide's notes from the top.
+    harness.get_by_label("Next ▶").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().1.state.slide, 1);
+    assert_eq!(notes_scroll(&harness), Some(0.0), "the next slide's notes open at the top");
+    // Going back does the same rather than restoring where the reading left off.
+    scroll_notes_down(&harness);
+    harness.run_steps(2);
+    assert!(notes_scroll(&harness).unwrap_or(0.0) > 100.0, "the second slide's notes scrolled");
+    harness.get_by_label("◀ Previous").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().1.state.slide, 0);
+    assert_eq!(notes_scroll(&harness), Some(0.0), "going back opens the notes at the top too");
+}
+
 /// A silent mono 8 kHz WAV, so the clip has a real duration to seek in.
 fn silent_wav(secs: u32) -> Vec<u8> {
     let rate = 8_000u32;
