@@ -98,6 +98,33 @@ fn text_editing_flow() {
     assert_eq!(s.doc().unwrap().selection.shapes.len(), 1);
 }
 
+/// Forward Delete removes a whole grapheme cluster, not just its first scalar.
+#[test]
+fn forward_delete_removes_whole_grapheme_cluster() {
+    for (input, rest) in [("\u{1F44D}\u{1F3FD}y", "y"), ("e\u{301}x", "x")] {
+        let mut s = session();
+        let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+        s.execute("text.edit", &json!({"id": title})).unwrap();
+        s.execute("text.selectAll", &json!({})).unwrap();
+        s.execute("text.insert", &json!({"text": input})).unwrap();
+        s.execute("text.move", &json!({"to": "start"})).unwrap();
+        s.execute("text.delete", &json!({"dir": "forward"})).unwrap();
+        let t = s.execute("text.get", &json!({"id": title})).unwrap();
+        assert_eq!(t["text"], rest);
+    }
+    // Inside a cluster, Delete stops at that cluster's end and leaves the next flag intact.
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": "\u{1F1FA}\u{1F1F8}\u{1F1E8}\u{1F1E6}"})).unwrap();
+    s.execute("text.move", &json!({"to": "start"})).unwrap();
+    s.execute("text.move", &json!({"to": "right"})).unwrap();
+    s.execute("text.delete", &json!({"dir": "forward"})).unwrap();
+    let t = s.execute("text.get", &json!({"id": title})).unwrap();
+    assert_eq!(t["text"], "\u{1F1FA}\u{1F1E8}\u{1F1E6}");
+}
+
 /// `text.set` treats CRLF (or a lone CR) as one paragraph break and keeps no `\r` in the text.
 #[test]
 fn text_set_crlf_makes_clean_paragraphs() {
@@ -212,6 +239,71 @@ fn clipboard_copy_paste_shapes_and_slides() {
     s.execute("edit.paste", &json!({"scope": "slides"})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
     assert!(s.doc().unwrap().doc.validate().is_empty());
+}
+
+/// A shape copied or cut from inside a group pastes where it was drawn: on another slide in the
+/// same place, on its own slide offset as any paste there is. Its box is mapped out through each
+/// group around it, however the groups were moved, stretched, turned or flipped. Before, the
+/// clipboard kept the box inside the group, so the shape pasted where it had been before the group
+/// was moved or stretched.
+#[test]
+fn a_shape_copied_from_a_group_pastes_where_it_was_drawn() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let sites = |s: &Session, id: ShapeId| {
+        let st = s.doc().unwrap();
+        connect::sites_of(&st.doc, &st.selection, st.shapes(), id).unwrap()
+    };
+    type Edits<'a> = &'a [(&'a str, Value)];
+    let edit = |s: &mut Session, id: u64, edits: Edits<'_>| {
+        for (cmd, p) in edits {
+            let mut p = p.clone();
+            p["ids"] = json!([id]);
+            s.execute(cmd, &p).unwrap();
+        }
+    };
+    // Edits to the shape's group, then to a group around that one (none: no outer group).
+    let cases: [(Edits<'_>, Edits<'_>); 4] = [
+        (&[("shape.move", json!({"dx": 200}))], &[]),
+        (&[("shape.resize", json!({"w": 600}))], &[]),
+        (&[("shape.rotate", json!({"deg": 30})), ("shape.flip", json!({"axis": "vertical"})), ("shape.move", json!({"dx": 50, "dy": 20}))], &[]),
+        (&[("shape.move", json!({"dx": 200}))], &[("shape.resize", json!({"w": 450})), ("shape.move", json!({"dy": 60}))]),
+    ];
+    let off = session().prefs.duplicate_offset;
+    for (n, (inner_edits, outer_edits)) in cases.into_iter().enumerate() {
+        for (cmd, same_slide) in [("edit.copy", false), ("edit.cut", false), ("edit.copy", true)] {
+            let mut s = session();
+            s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+            let (a, b) = (rect(&mut s, 100.0, 100.0), rect(&mut s, 300.0, 100.0));
+            let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+            edit(&mut s, g, inner_edits);
+            if !outer_edits.is_empty() {
+                let c = rect(&mut s, 100.0, 300.0);
+                let outer = s.execute("arrange.group", &json!({"ids": [g, c]})).unwrap()["id"].as_u64().unwrap();
+                edit(&mut s, outer, outer_edits);
+            }
+            let was = sites(&s, sid(a));
+            s.doc_mut().unwrap().selection.shapes = vec![sid(a)];
+            s.execute(cmd, &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().shape(sid(a)).is_some(), cmd == "edit.copy", "case {n}: {cmd}");
+            if !same_slide {
+                s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+            }
+            let r = s.execute("edit.paste", &json!({})).unwrap();
+            let pasted = sid(r["ids"][0].as_u64().unwrap());
+            assert!(s.doc().unwrap().shapes().iter().any(|x| x.id == pasted), "case {n}: {cmd} pastes on the top level");
+            let d = if same_slide { off } else { 0.0 };
+            let now = sites(&s, pasted);
+            assert_eq!(was.len(), now.len(), "case {n}: {cmd}");
+            assert!(
+                was.iter().zip(&now).all(|(p, q)| (q.x - p.x - d).hypot(q.y - p.y - d) < 1e-6),
+                "case {n}: {cmd} on the same slide {same_slide}: drawn at {was:?}, pasted at {now:?}"
+            );
+            assert_eq!(s.doc().unwrap().doc.validate(), Vec::<String>::new());
+        }
+    }
 }
 
 /// The resolved look of every paragraph and run of shape `id` on the current slide: size, font,
@@ -883,6 +975,154 @@ fn group_ungroup_roundtrip_positions() {
     s.execute("arrange.ungroup", &json!({"ids": [g]})).unwrap();
     let v = s.execute("shape.inspect", &json!({"id": b})).unwrap();
     assert!((v["box"]["x"].as_f64().unwrap() - 310.0).abs() < 1e-6, "{v}");
+}
+
+/// Ungrouping a group inside another group frees its shapes into the outer group, in its place
+/// in the outer group's order, drawn where they were, and selects them. Before, arrange.ungroup
+/// looked only at the slide's top level: it answered `{ids: []}` and changed nothing.
+#[test]
+fn ungrouping_a_nested_group_frees_its_shapes_into_the_outer_group() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let sites = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        connect::sites_of(&st.doc, &st.selection, st.shapes(), sid(id)).unwrap()
+    };
+    // The outer group moved and stretched; then an inner group turned and flipped, inside an outer
+    // group that is turned and moved.
+    type Edits<'a> = &'a [(&'a str, Value)];
+    let cases: [(Edits<'_>, Edits<'_>); 2] = [
+        (&[], &[("shape.move", json!({"dx": 200})), ("shape.resize", json!({"w": 450}))]),
+        (
+            &[("shape.rotate", json!({"deg": 30})), ("shape.flip", json!({"axis": "horizontal"}))],
+            &[("shape.rotate", json!({"deg": 45})), ("shape.move", json!({"dx": 120, "dy": 40}))],
+        ),
+    ];
+    let edit = |s: &mut Session, id: u64, edits: Edits<'_>| {
+        for (cmd, p) in edits {
+            let mut p = p.clone();
+            p["ids"] = json!([id]);
+            s.execute(cmd, &p).unwrap();
+        }
+    };
+    for (n, (inner_edits, outer_edits)) in cases.into_iter().enumerate() {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let (a, b, c) = (rect(&mut s, 100.0, 100.0), rect(&mut s, 300.0, 100.0), rect(&mut s, 100.0, 300.0));
+        let inner = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+        edit(&mut s, inner, inner_edits);
+        let outer = s.execute("arrange.group", &json!({"ids": [inner, c]})).unwrap()["id"].as_u64().unwrap();
+        edit(&mut s, outer, outer_edits);
+        let before = [sites(&s, a), sites(&s, b), sites(&s, c)];
+        let r = s.execute("arrange.ungroup", &json!({"ids": [inner]})).unwrap();
+        assert_eq!(r["ids"], json!([a, b]), "case {n}");
+        assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b)]);
+        let st = s.doc().unwrap();
+        let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
+        assert_eq!(order, [sid(a), sid(b), sid(c)], "case {n}");
+        for (id, was) in [a, b, c].into_iter().zip(before) {
+            let now = sites(&s, id);
+            assert_eq!(was.len(), now.len(), "case {n}: shape {id}");
+            assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "case {n}: shape {id} moved from {was:?} to {now:?}");
+        }
+    }
+    // Two named groups, one inside the other, inside a third: the shapes of both go to the third,
+    // each listed once.
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let (a, b, c, d) = (rect(&mut s, 100.0, 100.0), rect(&mut s, 300.0, 100.0), rect(&mut s, 100.0, 300.0), rect(&mut s, 300.0, 300.0));
+    let inner = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    let middle = s.execute("arrange.group", &json!({"ids": [inner, c]})).unwrap()["id"].as_u64().unwrap();
+    let outer = s.execute("arrange.group", &json!({"ids": [middle, d]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("shape.resize", &json!({"ids": [outer], "w": 600})).unwrap();
+    let before = [a, b, c, d].map(|id| sites(&s, id));
+    let r = s.execute("arrange.ungroup", &json!({"ids": [inner, middle]})).unwrap();
+    assert_eq!(r["ids"], json!([a, b, c]));
+    assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b), sid(c)]);
+    let st = s.doc().unwrap();
+    let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
+    assert_eq!(order, [sid(a), sid(b), sid(c), sid(d)]);
+    for (id, was) in [a, b, c, d].into_iter().zip(before) {
+        let now = sites(&s, id);
+        assert_eq!(was.len(), now.len(), "shape {id}");
+        assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "shape {id} moved from {was:?} to {now:?}");
+    }
+}
+
+/// Ungrouping nested groups in one call returns each freed shape once, whatever order the groups
+/// are named in. Before, a group freed into a group that the same call freed next was listed twice
+/// and replaced once, so the call returned the id of a group that no longer existed.
+#[test]
+fn ungrouping_nested_groups_in_any_order_returns_only_freed_shapes() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    fn group(s: &mut Session, ids: [u64; 2]) -> u64 {
+        s.execute("arrange.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let [a, b, c, d, e] = [(100.0, 100.0), (300.0, 100.0), (100.0, 300.0), (300.0, 300.0), (500.0, 300.0)].map(|(x, y)| rect(&mut s, x, y));
+    let inner = group(&mut s, [a, b]);
+    let middle = group(&mut s, [inner, c]);
+    let upper = group(&mut s, [middle, d]);
+    let outer = group(&mut s, [upper, e]);
+    let r = s.execute("arrange.ungroup", &json!({"ids": [middle, upper, inner]})).unwrap();
+    assert_eq!(r["ids"], json!([a, b, c, d]));
+    assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b), sid(c), sid(d)]);
+    let st = s.doc().unwrap();
+    let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
+    assert_eq!(order, [sid(a), sid(b), sid(c), sid(d), sid(e)]);
+}
+
+/// Ungrouping a top-level group and a group inside it in one call frees the shapes of both onto
+/// the slide, in the top-level group's place and drawn where they were, whichever is named first.
+#[test]
+fn ungrouping_a_top_level_group_with_a_group_inside_it_frees_both() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    fn group(s: &mut Session, ids: [u64; 2]) -> u64 {
+        s.execute("arrange.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let sites = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        connect::sites_of(&st.doc, &st.selection, st.shapes(), sid(id)).unwrap()
+    };
+    let roots = |s: &Session| -> Vec<ShapeId> { s.doc().unwrap().shapes().iter().map(|x| x.id).collect() };
+    for outer_first in [true, false] {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let [a, b, c, z] = [(100.0, 100.0), (300.0, 100.0), (100.0, 300.0), (500.0, 500.0)].map(|(x, y)| rect(&mut s, x, y));
+        let inner = group(&mut s, [a, b]);
+        let outer = group(&mut s, [inner, c]);
+        s.execute("shape.resize", &json!({"ids": [outer], "w": 600})).unwrap();
+        let before = [a, b, c].map(|id| sites(&s, id));
+        let freed = [sid(a), sid(b), sid(c)];
+        let mut expected = vec![];
+        for x in roots(&s) {
+            if x == sid(outer) {
+                expected.extend(freed);
+            } else {
+                expected.push(x);
+            }
+        }
+        assert!(expected.contains(&sid(z)));
+        let ids = if outer_first { [outer, inner] } else { [inner, outer] };
+        let r = s.execute("arrange.ungroup", &json!({"ids": ids})).unwrap();
+        assert_eq!(r["ids"], json!([a, b, c]), "{ids:?}");
+        assert_eq!(s.doc().unwrap().selection.shapes, freed, "{ids:?}");
+        assert_eq!(roots(&s), expected, "{ids:?}");
+        for (id, was) in [a, b, c].into_iter().zip(before) {
+            let now = sites(&s, id);
+            assert_eq!(was.len(), now.len(), "{ids:?}: shape {id}");
+            assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "{ids:?}: shape {id} moved from {was:?} to {now:?}");
+        }
+    }
 }
 
 /// Grouping a group again and again stops at `MAX_GROUP_DEPTH`: past about 39 levels a saved
@@ -4160,10 +4400,10 @@ fn smartart_round_trips_through_pptx_as_a_diagram() {
     }
     let back = deckcraft_pptx::import(&bytes).unwrap();
     assert!(back.validate().is_empty());
-    let g = back.slides[1].shapes.iter().find(|x| x.diagram.is_some()).expect("a SmartArt group");
+    let g = back.slides[1].shapes.iter().find(|x| x.diagram.is_some()).expect("a Diagram group");
     let d = g.diagram.as_ref().unwrap();
     assert_eq!(d.kind, "hierarchy");
-    assert_eq!((d.style.as_str(), d.colors.as_str()), ("intense", "accent3"), "SmartArt style and colours come back");
+    assert_eq!((d.style.as_str(), d.colors.as_str()), ("intense", "accent3"), "Diagram style and colours come back");
     assert!(d.imported);
     let outline: Vec<(&str, u8)> = d.nodes.iter().map(|n| (n.text.as_str(), n.level)).collect();
     assert_eq!(outline, [("CEO", 0), ("CTO", 1), ("Dev", 2), ("CFO", 1)]);
@@ -4191,7 +4431,7 @@ fn smartart_pictures_3d_styles_and_colour_variants() {
     let pics = |s: &Session| -> Vec<deckcraft_model::Shape> {
         let st = s.doc().unwrap();
         let g = st.doc.slides[1].shapes.iter().find(|x| x.diagram.is_some()).unwrap().clone();
-        g.children().iter().filter(|c| c.name == "SmartArt picture").cloned().collect()
+        g.children().iter().filter(|c| c.name == "Diagram picture").cloned().collect()
     };
     assert_eq!(pics(&s).len(), 2, "one picture placeholder per top-level node");
     assert!(pics(&s).iter().all(|p| !matches!(p.fill, Some(deckcraft_model::Fill::Picture(_)))));
@@ -6594,6 +6834,66 @@ fn duplicating_a_moved_copy_repeats_the_move() {
     assert_eq!(s.doc().unwrap().doc.validate(), Vec::<String>::new());
 }
 
+/// Duplicating a shape inside a group puts the copy in that group, last among its children, and
+/// selects it. The copy is offset on the slide as a top-level copy is, however the group is moved,
+/// stretched or turned, and duplicating a moved copy repeats the move (#966). A shape whose group is
+/// duplicated as well goes along with the group's copy. Before, Duplicate looked only at the slide's
+/// top level: it answered `{ids: []}` and changed nothing.
+#[test]
+fn duplicating_a_shape_in_a_group_copies_it_into_the_group() {
+    fn rect(s: &mut Session, x: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    // How far shape `to` is drawn from shape `from` on the slide, the same for each of its sites.
+    let offset = |s: &Session, from: u64, to: u64| {
+        let st = s.doc().unwrap();
+        let sites = |id| connect::sites_of(&st.doc, &st.selection, st.shapes(), sid(id)).unwrap();
+        let (p, q) = (sites(from), sites(to));
+        assert_eq!(p.len(), q.len(), "{p:?} {q:?}");
+        let d = q[0] - p[0];
+        assert!(p.iter().zip(&q).all(|(p, q)| (*q - *p - d).hypot() < 1e-6), "{p:?} {q:?}");
+        (d.x, d.y)
+    };
+    let grouped = |edit: &str, p: Value| {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let (a, b) = (rect(&mut s, 100.0), rect(&mut s, 300.0));
+        let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+        let mut p = p;
+        p["ids"] = json!([g]);
+        s.execute(edit, &p).unwrap();
+        (s, a, b, g)
+    };
+    for (edit, p) in [("shape.move", json!({"dx": 200})), ("shape.resize", json!({"w": 600})), ("shape.rotate", json!({"deg": 90}))] {
+        let (mut s, a, b, g) = grouped(edit, p);
+        let off = s.prefs.duplicate_offset;
+        let r = s.execute("edit.duplicate", &json!({"ids": [a]})).unwrap();
+        assert_eq!(r["ids"].as_array().map(Vec::len), Some(1), "{edit}: {r}");
+        let c = r["ids"][0].as_u64().unwrap();
+        assert_eq!(s.doc().unwrap().selection.shapes, [sid(c)]);
+        let st = s.doc().unwrap();
+        let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(g)).unwrap().children().iter().map(|x| x.id).collect();
+        assert_eq!(order, [sid(a), sid(b), sid(c)], "{edit}");
+        let (dx, dy) = offset(&s, a, c);
+        assert!((dx - off).abs() < 1e-6 && (dy - off).abs() < 1e-6, "{edit}: the copy is drawn ({dx}, {dy}) from the original");
+        // Moved, then duplicated again: the next copy is drawn as far from it again.
+        s.execute("shape.move", &json!({"ids": [c], "dx": 30})).unwrap();
+        let (mx, my) = offset(&s, a, c);
+        let d = s.execute("edit.duplicate", &json!({"ids": [c]})).unwrap()["ids"][0].as_u64().unwrap();
+        let (nx, ny) = offset(&s, c, d);
+        assert!((nx - mx).abs() < 1e-6 && (ny - my).abs() < 1e-6, "{edit}: moved ({mx}, {my}), then ({nx}, {ny})");
+        assert_eq!(s.doc().unwrap().doc.validate(), Vec::<String>::new());
+    }
+    let (mut s, a, _, g) = grouped("shape.move", json!({"dx": 200}));
+    let r = s.execute("edit.duplicate", &json!({"ids": [a, g]})).unwrap();
+    assert_eq!(r["ids"].as_array().map(Vec::len), Some(1), "{r}");
+    let st = s.doc().unwrap();
+    let count = |id: u64| deckcraft_model::find_shape(st.shapes(), sid(id)).unwrap().children().len();
+    assert_eq!((count(g), count(r["ids"][0].as_u64().unwrap())), (2, 2));
+    assert_eq!(st.shapes().len(), 2);
+}
+
 fn chart_of(s: &Session, id: u64) -> deckcraft_model::Chart {
     match &s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().kind {
         deckcraft_model::ShapeKind::Chart(c) => (**c).clone(),
@@ -6921,6 +7221,37 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
 
+/// #2059: Decrease Font Size (Ctrl+[, Cmd+Shift+,) steps down one size at a time from any size:
+/// PowerPoint's list up to 96, then 8 points at a time above it, as Increase Font Size steps up.
+/// A size above 66 used to shrink straight to 66.
+#[test]
+fn shrinking_a_large_font_steps_down_one_size_at_a_time() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 420.0, 160.0], "text": "Big"})).unwrap();
+    let id = deckcraft_model::ShapeId(u32::try_from(r["id"].as_u64().unwrap()).unwrap());
+    let size = |s: &Session| s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.size;
+    s.execute("format.size", &json!({"size": 120})).unwrap();
+    let mut down = vec![];
+    for _ in 0..9 {
+        s.execute("format.shrink", &json!({})).unwrap();
+        down.push(size(&s).unwrap());
+    }
+    assert_eq!(down, [112.0, 104.0, 96.0, 88.0, 80.0, 72.0, 66.0, 60.0, 54.0]);
+    let mut up = vec![];
+    for _ in 0..7 {
+        s.execute("format.grow", &json!({})).unwrap();
+        up.push(size(&s).unwrap());
+    }
+    assert_eq!(up, [60.0, 66.0, 72.0, 80.0, 88.0, 96.0, 104.0]);
+    // A size between list steps goes to the next one down, and one past the top steps 8 at most.
+    s.execute("format.size", &json!({"size": 99})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!(size(&s), Some(96.0));
+    s.execute("format.size", &json!({"size": 150})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!(size(&s), Some(142.0));
+}
+
 /// A shape named many times in one edit is edited once and not copied per mention.
 #[test]
 fn repeated_target_ids_edit_the_shape_once() {
@@ -7054,13 +7385,13 @@ fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
     let gid = s.execute("smartArt.fromText", &json!({"kind": "blockList"})).unwrap()["id"].as_u64().unwrap();
     for cmd in ["arrange.flipHorizontal", "arrange.flipVertical", "shape.flip"] {
         let e = s.execute(cmd, &json!({"ids": [gid]})).unwrap_err().to_string();
-        assert!(e.contains("SmartArt") && e.contains("smartArt.layout"), "{cmd}: {e}");
+        assert!(e.contains("Diagram") && e.contains("smartArt.layout"), "{cmd}: {e}");
     }
     // Grouped with another shape it cannot be flipped either: ungrouping would hand it the flip.
     let other = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
     let group = s.execute("arrange.group", &json!({"ids": [gid, other]})).unwrap()["id"].as_u64().unwrap();
     let e = s.execute("shape.flip", &json!({"ids": [group]})).unwrap_err().to_string();
-    assert!(e.contains("SmartArt"), "{e}");
+    assert!(e.contains("Diagram"), "{e}");
     s.execute("arrange.ungroup", &json!({"ids": [group]})).unwrap();
     // Still a SmartArt graphic: smartArt commands keep working.
     s.execute("smartArt.layout", &json!({"id": gid, "kind": "cycle"})).unwrap();
