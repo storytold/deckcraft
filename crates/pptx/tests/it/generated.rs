@@ -165,3 +165,25 @@ fn the_description_survives_beside_many_other_tags() {
     let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("import");
     assert_eq!(groups(&back)[0].generated, want);
 }
+
+/// A stale description among a group's kept tags is dropped when DeckCraft would read it (the
+/// group's own replaces it) and kept when it refuses it: another version is someone else's data.
+#[test]
+fn a_stale_tag_deckcraft_would_read_is_replaced_and_one_it_refuses_is_kept() {
+    let mut p = deck(&[("insert.harveyBall", json!({"value": 3}))]);
+    let want = groups(&p)[0].generated.clone();
+    let stale = Generated::HarveyBall(deckcraft_model::HarveyBall { value: 1, ..Default::default() }).to_tag().expect("tag");
+    let other = r#"{"v":2,"kind":"harveyBall","value":9,"of":12}"#.to_string();
+    let slide = std::sync::Arc::make_mut(&mut p.slides[1]);
+    let g = slide.shapes.iter_mut().find(|s| s.is_group()).expect("group");
+    g.tags = vec![(TAG.to_string(), stale), (TAG.to_string(), other.clone()), ("ADDIN".to_string(), "kept".to_string())];
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    assert_eq!(count_tag(&bytes), 2, "the group's own description and the refused one");
+    let back = deckcraft_pptx::import(&bytes).expect("import");
+    let h = groups(&back)[0];
+    assert_eq!(h.generated, want, "the group's own description, not the stale one");
+    assert_eq!(h.tags, vec![(TAG.to_string(), other), ("ADDIN".to_string(), "kept".to_string())]);
+    // And again: nothing is lost or doubled on a second save.
+    let again = deckcraft_pptx::import(&deckcraft_pptx::export(&back).expect("export")).expect("import");
+    assert_eq!((groups(&again)[0].generated.clone(), groups(&again)[0].tags.clone()), (h.generated.clone(), h.tags.clone()));
+}

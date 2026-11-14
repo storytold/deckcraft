@@ -276,6 +276,8 @@ fn parts_move_with_their_element_only() {
         ("shape.sizePosition", json!({"id": wedge, "w": 3})),
         ("edit.delete", json!({"ids": [wedge]})),
         ("arrange.bringToFront", json!({"id": wedge})),
+        ("shape.change", json!({"ids": [wedge], "preset": "rect"})),
+        ("shape.adjust", json!({"ids": [wedge], "index": 1, "value": 10_800_000})),
     ] {
         let r = s.execute(cmd, &p);
         assert!(r.is_err(), "{cmd}: {r:?}");
@@ -332,6 +334,9 @@ fn space_toggles_a_selected_checkbox() {
     assert_eq!(s.type_text(" ").unwrap()["handled"], true);
     assert_eq!(state(&s), CheckState::Unchecked);
     assert!(s.doc().unwrap().selection.text.is_none());
+    // A key sent as the character itself (the control channel, MCP) toggles too.
+    assert_eq!(s.key(" ", crate::Mods::default()).unwrap()["command"], "checkbox.toggle");
+    assert_eq!(state(&s), CheckState::Checked);
     // Elsewhere Space is what it was.
     let r = id(&s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap());
     s.execute("edit.select", &json!({"ids": [r]})).unwrap();

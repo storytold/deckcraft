@@ -30,7 +30,8 @@ pub const SELECT_CHECKBOX: &str = "select a checkbox";
 const NOT_HARVEY: &str = "not a Harvey ball";
 const NOT_CHECKBOX: &str = "not a checkbox";
 /// The parts are drawn from the group's description; moved on their own they'd no longer match it.
-pub const PARTS_STAY: &str = "the parts of a Harvey ball or checkbox can't be moved, resized or deleted on their own: select the whole element";
+pub const PARTS_STAY: &str =
+    "the parts of a Harvey ball or checkbox can't be moved, resized, reshaped or deleted on their own: select the whole element";
 
 /// Default side of an inserted element, in points.
 const DEFAULT_SIZE: f64 = 14.0;
@@ -670,7 +671,10 @@ fn keep_one(sh: &mut Shape, old: &Shape, ids: &mut Ids) -> Result<()> {
         let _ = rebuild(sh, g, ids);
         return Ok(());
     }
-    let same = children.len() == was.len() && children.iter().zip(was).all(|(a, b)| a.id == b.id && a.xfrm == b.xfrm);
+    // A part's geometry is drawn from the description like its box (a wedge's angles, the tick's
+    // path): changing one on its own (`shape.change`, `shape.adjust`) is refused too. Formatting
+    // a part (fill, line) is allowed until the next redraw.
+    let same = children.len() == was.len() && children.iter().zip(was).all(|(a, b)| a.id == b.id && a.xfrm == b.xfrm && a.geom == b.geom);
     if same { Ok(()) } else { Err(EngineError::Other(PARTS_STAY.into())) }
 }
 

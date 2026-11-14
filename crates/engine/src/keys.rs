@@ -140,7 +140,8 @@ impl Session {
                 }
                 // Not a registered shortcut: a registry Space would answer every other Space with
                 // "not available" (typing a space in text included).
-                "space" if crate::cmd::generated::checkbox_in_selection(self) => {
+                // `key_token` keeps a literal " " as it is (the registry maps both to Space).
+                "space" | " " if crate::cmd::generated::checkbox_in_selection(self) => {
                     let r = self.execute("checkbox.toggle", &json!({}))?;
                     return Ok(json!({"handled": true, "command": "checkbox.toggle", "result": r}));
                 }
