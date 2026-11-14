@@ -1,6 +1,6 @@
 use super::{
-    FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, RECENT_MAX, SlideApp, Target, UiRequest, Value, ViewMode, dialogs,
-    json, media,
+    AfterPick, FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, PendingPick, RECENT_MAX, SlideApp, Target, UiRequest,
+    Value, ViewMode, dialogs, json, media,
 };
 
 #[derive(Default)]
@@ -293,7 +293,9 @@ impl SlideApp {
     }
 
     pub(crate) fn pick_and_open(&mut self) {
-        if let Some(pick) = self.services.pick_open.as_mut() {
+        if self.services.open_dialog.is_some() {
+            self.start_pick("open", AfterPick::Open);
+        } else if let Some(pick) = self.services.pick_open.as_mut() {
             if let Some(path) = pick("open") {
                 self.open_path_in_background(&path);
             }
@@ -414,22 +416,13 @@ impl SlideApp {
 
     /// Pick a file and run `cmd` with it (`name` + `data`, or `path`) added to `extra`.
     pub(super) fn pick_and_run(&mut self, purpose: &str, cmd: &str, extra: &Value) {
-        if let Some(pick) = self.services.pick_open.as_mut() {
+        let args = if extra.is_object() { extra.clone() } else { json!({}) };
+        if self.services.open_dialog.is_some() {
+            self.start_pick(purpose, AfterPick::Run { cmd: cmd.to_string(), args });
+        } else if let Some(pick) = self.services.pick_open.as_mut() {
             if let Some(path) = pick(purpose) {
-                let mut args = if extra.is_object() { extra.clone() } else { json!({}) };
-                let r = match self.services.read.as_ref().map(|r| r(&path)) {
-                    Some(Ok(bytes)) => {
-                        let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        args["name"] = json!(name);
-                        args["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
-                        self.session.execute(cmd, &args)
-                    }
-                    _ => {
-                        args["path"] = json!(path);
-                        self.session.execute(cmd, &args)
-                    }
-                };
-                if let Err(e) = r {
+                let (_, params) = self.file_params(args, &path);
+                if let Err(e) = self.session.execute(cmd, &params) {
                     self.set_status(e.to_string());
                 }
             }
@@ -443,6 +436,61 @@ impl SlideApp {
             }
             if let Some(f) = self.services.open_async.as_mut() {
                 f(purpose, id);
+            }
+        }
+    }
+
+    /// `args` with the file at `path`: its name and bytes, or the path when the host can't read it.
+    fn file_params(&self, mut args: Value, path: &str) -> (String, Value) {
+        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        match self.services.read.as_ref().map(|r| r(path)) {
+            Some(Ok(bytes)) => {
+                args["name"] = json!(name);
+                args["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+            }
+            _ => args["path"] = json!(path),
+        }
+        (name, args)
+    }
+
+    /// Show the host's open dialog and return without waiting for it; [`Self::poll_pick`]
+    /// finishes the job when it answers. One dialog at a time.
+    fn start_pick(&mut self, purpose: &str, then: AfterPick) {
+        if self.pending_pick.is_some() {
+            self.set_status("A file dialog is already open");
+            return;
+        }
+        let target = self.capture_file_target();
+        let Some(open) = self.services.open_dialog.as_mut() else { return };
+        let answer = open(purpose);
+        self.pending_pick = Some(PendingPick { answer, then, target });
+    }
+
+    /// Finish the open dialog once it has answered: open the presentation, or run the command
+    /// on the presentation and slide the dialog was started from (#2040).
+    pub(crate) fn poll_pick(&mut self) {
+        let Some(pick) = &self.pending_pick else { return };
+        let path = match pick.answer.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Ok(path) => path,
+            // The host dropped the dialog without an answer: a cancel.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+        };
+        let Some(PendingPick { then, target, .. }) = self.pending_pick.take() else { return };
+        let Some(path) = path else { return };
+        match then {
+            AfterPick::Open => self.open_path_in_background(&path),
+            AfterPick::Run { cmd, args } => {
+                let (name, params) = self.file_params(args, &path);
+                let result = if self.viewing_target(&target) {
+                    self.session.execute(&cmd, &params).map(|_| ()).map_err(|e| e.to_string())
+                } else {
+                    self.execute_on_target(&target, &name, &cmd, &params)
+                };
+                if let Err(e) = result {
+                    self.set_status(e);
+                }
+                self.drain_requests();
             }
         }
     }

@@ -1073,6 +1073,7 @@ dependencies = [
  "fmv-macos-events",
  "image",
  "log",
+ "pollster 0.4.0",
  "rfd",
  "serde_json",
  "winit",

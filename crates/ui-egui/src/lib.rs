@@ -72,7 +72,7 @@ pub use panels::notes;
 pub use panels::selpane;
 pub use panels::thumbs;
 pub use ribbon::qat;
-pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
+pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, OpenDialogFn, PickFn, ReadFn, Services, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
 pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
@@ -92,6 +92,21 @@ struct PendingFile {
     id: u64,
     purpose: FilePurpose,
     target: FileTarget,
+}
+
+/// An open dialog from [`Services::open_dialog`] that hasn't answered yet.
+struct PendingPick {
+    answer: std::sync::mpsc::Receiver<Option<String>>,
+    then: AfterPick,
+    target: FileTarget,
+}
+
+/// What a picked path is for.
+enum AfterPick {
+    /// Open the presentation.
+    Open,
+    /// Run `cmd` with the file added to `args`, as the blocking `pick_open` path does.
+    Run { cmd: String, args: serde_json::Value },
 }
 
 /// UI-only commands (id, label, shortcut, params).
@@ -336,6 +351,8 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The open dialog still showing, if any: one at a time.
+    pending_pick: Option<PendingPick>,
     /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
     /// first file the page sends takes its place.
     host_start: Option<u64>,
