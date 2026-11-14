@@ -115,6 +115,7 @@ pub(super) fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "strike": r.strike.is_some_and(|x| x != Strike::None),
         "superscript": r.baseline.unwrap_or(0.0) > 0.0,
         "subscript": r.baseline.unwrap_or(0.0) < 0.0,
+        "shadow": r.shadow.is_some(),
         "align": pp.align.map(|a| a.xml()),
         "bullets": matches!(pp.bullet, Some(Bullet::Char { .. })),
         "numbering": matches!(pp.bullet, Some(Bullet::AutoNum { .. })),

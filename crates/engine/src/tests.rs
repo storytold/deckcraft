@@ -7172,6 +7172,179 @@ fn master_layout_placeholder_format_inherits() {
     }
 }
 
+/// #1662: Home › Font's Text Shadow shows a shadow the text inherits from its layout, and
+/// turns it off (the run's own empty effect list) and on again.
+#[test]
+fn text_shadow_inherited_from_the_layout_shows_and_toggles() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let title_of = |shapes: &[model::Shape]| shapes.iter().find(|sh| sh.ph.as_ref().is_some_and(|p| p.kind.is_title())).map(|sh| sh.id.0).unwrap();
+    let title = title_of(&s.doc().unwrap().doc.slides[0].shapes);
+    s.execute("view.slideMaster", &json!({"master": 0, "layout": 0})).unwrap();
+    let layout_title = title_of(&s.doc().unwrap().doc.masters[0].layouts[0].shapes);
+    s.execute("edit.select", &json!({"ids": [layout_title]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": true})).unwrap();
+    s.execute("view.closeMaster", &json!({})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.execute("edit.select", &json!({"ids": [title]})).unwrap();
+    let shadow = |s: &mut Session| s.execute("format.state", &json!({})).unwrap()["shadow"].clone();
+    let own = |s: &mut Session| s.doc().unwrap().shape(ShapeId(title)).unwrap().text.clone().unwrap().paragraphs[0].runs[0].props.clone();
+    assert_eq!(shadow(&mut s), true, "inherited from the layout");
+    assert!(own(&mut s).shadow.is_none());
+    s.execute("format.textShadow", &json!({})).unwrap();
+    assert_eq!(shadow(&mut s), false, "turned off over the layout's shadow");
+    assert_eq!(own(&mut s).own_effects, Some(true));
+    s.execute("format.textShadow", &json!({})).unwrap();
+    assert_eq!(shadow(&mut s), true);
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(shadow(&mut s), true);
+    assert_eq!(own(&mut s), model::text::RunProps::default());
+}
+
+/// A shadow and, in some paragraphs, a glow that the text inherits (its paragraphs' `defRPr`).
+fn shadowed(glow: bool) -> model::text::RunProps {
+    let color = model::ColorRef::rgb(deckcraft_color::Rgba::BLACK);
+    model::text::RunProps {
+        shadow: Some(model::style::Shadow {
+            color: color.clone(),
+            blur: 3.0,
+            dist: 2.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        }),
+        glow: glow.then_some(model::style::Glow { color, radius: 5.0 }),
+        ..Default::default()
+    }
+}
+
+/// #1662: turning off an inherited shadow keeps what each run itself inherits, not the first
+/// run's effects: a glow stays where it was and does not spread to text that had none.
+#[test]
+fn text_shadow_off_keeps_each_runs_own_inherited_effects() {
+    let mut s = session();
+    let mut ids = vec![];
+    for (i, glow) in [true, false].into_iter().enumerate() {
+        let y = 40.0 + 120.0 * i as f64;
+        let id =
+            s.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, y, 240.0, 80.0], "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+        s.edit(|doc, sel| {
+            let sh = model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), ShapeId(id as u32)).unwrap();
+            sh.text.as_mut().unwrap().paragraphs[0].def_props = shadowed(glow);
+            Ok(())
+        })
+        .unwrap();
+        ids.push(id);
+    }
+    let runs = |s: &Session, id: u64| -> Vec<model::text::RunProps> {
+        let body = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.clone().unwrap();
+        body.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.props.clone())).collect()
+    };
+    s.execute("edit.select", &json!({"ids": ids})).unwrap();
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["shadow"], true);
+    s.execute("format.textShadow", &json!({})).unwrap();
+    let (glowing, plain) = (runs(&s, ids[0]), runs(&s, ids[1]));
+    assert!(glowing.iter().all(|r| r.own_effects == Some(true) && r.shadow.is_none() && r.glow.is_some()), "{glowing:?}");
+    assert!(plain.iter().all(|r| r.own_effects == Some(true) && r.glow.is_none()), "the first shape's glow spread: {plain:?}");
+    for id in &ids {
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        assert_eq!(s.execute("format.state", &json!({})).unwrap()["shadow"], false, "shape {id}");
+    }
+
+    // The same across the paragraphs of one text range.
+    let id =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [340.0, 40.0, 240.0, 80.0], "text": "One"})).unwrap()["id"].as_u64().unwrap();
+    s.edit(|doc, sel| {
+        let body = model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), ShapeId(id as u32)).unwrap().text.as_mut().unwrap();
+        let mut two = body.paragraphs[0].clone();
+        two.runs[0].text = "Two".into();
+        body.paragraphs[0].def_props = shadowed(true);
+        two.def_props = shadowed(false);
+        body.paragraphs.push(two);
+        Ok(())
+    })
+    .unwrap();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [1, 3]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": false})).unwrap();
+    let body = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.clone().unwrap();
+    let (one, two) = (&body.paragraphs[0].runs[0].props, &body.paragraphs[1].runs[0].props);
+    assert!(one.own_effects == Some(true) && one.glow.is_some(), "{one:?}");
+    assert!(two.own_effects == Some(true) && two.glow.is_none(), "{two:?}");
+}
+
+/// Turning a shadow on next to an inherited glow gives the run its own effect list with the glow
+/// in it, so the glow is still there when the saved file is reopened (a run's `a:effectLst`
+/// replaces the inherited one).
+#[test]
+fn text_shadow_on_keeps_an_inherited_glow_through_save_and_reopen() {
+    let mut s = session();
+    let id =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, 40.0, 240.0, 80.0], "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+    s.edit(|doc, sel| {
+        let sh = model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), ShapeId(id as u32)).unwrap();
+        sh.text.as_mut().unwrap().paragraphs[0].def_props = model::text::RunProps { shadow: None, ..shadowed(true) };
+        Ok(())
+    })
+    .unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": true})).unwrap();
+    let run = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.clone().unwrap().paragraphs[0].runs[0].props.clone();
+    assert!(run.own_effects == Some(true) && run.shadow.is_some() && run.glow.is_some(), "{run:?}");
+
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap()).unwrap();
+    let text = back
+        .slides
+        .iter()
+        .flat_map(|sl| sl.shapes.iter())
+        .find_map(|sh| sh.text.as_ref().filter(|t| t.paragraphs[0].runs.first().is_some_and(|r| r.text == "Hello")));
+    let para = &text.expect("the shape comes back").paragraphs[0];
+    let mut shown = para.runs[0].props.clone();
+    shown.inherit(&para.def_props);
+    assert!(shown.shadow.is_some(), "{shown:?}");
+    assert_eq!(shown.glow.map(|g| g.radius), Some(5.0), "the inherited glow survives the round trip");
+}
+
+/// #1662: turning off an inherited shadow in a table gives each cell what its own paragraphs
+/// inherit (a glow stays only where it was), only in the selected cells, and leaves a cell with no
+/// inherited shadow alone.
+#[test]
+fn text_shadow_off_in_a_table_uses_each_cells_inherited_effects() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    s.edit(|doc, sel| {
+        let sh = model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), id).unwrap();
+        let model::ShapeKind::Table(t) = &mut sh.kind else { panic!("not a table") };
+        for (r, c, glow) in [(0, 0, true), (0, 1, false), (1, 0, true)] {
+            t.rows[r].cells[c].text.paragraphs[0].def_props = shadowed(glow);
+        }
+        Ok(())
+    })
+    .unwrap();
+    let cell = |s: &Session, r: usize, c: usize| table_of(s, id).rows[r].cells[c].text.paragraphs[0].runs[0].props.clone();
+
+    // Row 0 only: its cells each keep their own glow (or none); row 1 is untouched.
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": false})).unwrap();
+    let (a, b) = (cell(&s, 0, 0), cell(&s, 0, 1));
+    assert!(a.own_effects == Some(true) && a.shadow.is_none() && a.glow.is_some(), "{a:?}");
+    assert!(b.own_effects == Some(true) && b.shadow.is_none() && b.glow.is_none(), "the glow spread to (0, 1): {b:?}");
+    assert_eq!(cell(&s, 1, 0), model::text::RunProps::default(), "outside the selected cells");
+
+    // The whole table: (1, 0) gets its own glow; (1, 1) inherits no shadow, so needs no list.
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": false})).unwrap();
+    let c = cell(&s, 1, 0);
+    assert!(c.own_effects == Some(true) && c.glow.is_some(), "{c:?}");
+    assert_eq!(cell(&s, 1, 1), model::text::RunProps::default());
+}
+
 #[test]
 fn master_body_placeholder_format_keeps_per_level_formatting() {
     let mut s = Session::new();

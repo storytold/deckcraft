@@ -215,6 +215,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 toggle(app, ui, Icon::Bold, "Bold", "format.bold", b("bold"));
                 toggle(app, ui, Icon::Italic, "Italic", "format.italic", b("italic"));
                 toggle(app, ui, Icon::Underline, "Underline", "format.underline", b("underline"));
+                toggle(app, ui, Icon::TextShadow, "Text Shadow", "format.textShadow", b("shadow"));
                 toggle(app, ui, Icon::Strikethrough, "Strikethrough", "format.strikethrough", b("strike"));
                 toggle(app, ui, Icon::Superscript, "Superscript", "format.superscript", b("superscript"));
                 toggle(app, ui, Icon::Subscript, "Subscript", "format.subscript", b("subscript"));
