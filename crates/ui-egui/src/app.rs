@@ -56,6 +56,7 @@ impl SlideApp {
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
             status: None,
+            status_message: None,
             opening: None,
             toast: None,
             fonts_noted: Default::default(),
@@ -128,6 +129,14 @@ impl SlideApp {
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), now_ms()));
+        self.status_message = None;
+    }
+
+    /// A status message built from a template: `status` holds its English text, and the status
+    /// bar shows it in the interface language (#2110).
+    pub fn set_status_message(&mut self, msg: crate::i18n::Message) {
+        self.status = Some((msg.english(), now_ms()));
+        self.status_message = Some(msg);
     }
 
     /// Turn on the automatic check for a newer release at start-up (desktop shell only; tests and
@@ -162,6 +171,17 @@ impl SlideApp {
             self.status = None;
             None
         }
+    }
+
+    /// [`Self::fresh_status`] in the interface language, for drawing (#2110). A message set from a
+    /// template is filled in now; any other is looked up as it is, so the UI's fixed messages and
+    /// the engine's follow the language too. The control channel reads the English `status`.
+    pub fn shown_status(&mut self) -> Option<String> {
+        let msg = self.fresh_status()?;
+        Some(match &self.status_message {
+            Some(m) if m.english() == msg => m.shown(),
+            _ => crate::i18n::tc("@msg", &msg).to_string(),
+        })
     }
 
     /// Return the current document count plus the active document uid, so callers can detect a
@@ -298,6 +318,8 @@ impl SlideApp {
             self.requeue_injected_synthetic();
             return;
         }
+        // The language every label this pass draws is looked up in (Preferences › Language).
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);

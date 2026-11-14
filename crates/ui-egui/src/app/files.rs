@@ -199,7 +199,7 @@ impl SlideApp {
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
-                self.set_status(format!("DeckCraft can't export “{other}”"));
+                self.set_status_message(crate::i18n::Message::Fmt("DeckCraft can't export “{format}”", vec![("format", other.to_string())]));
                 return false;
             }
         };
@@ -212,7 +212,7 @@ impl SlideApp {
             }
             return match self.run("file.export", params) {
                 Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
+                    self.set_status_message(crate::i18n::Message::Fmt("Exported {name}", vec![("name", path.to_string())]));
                     true
                 }
                 Err(_) => false,
@@ -398,7 +398,7 @@ impl SlideApp {
         match result {
             Ok(()) => {
                 self.reuse_target = None;
-                self.set_status(format!("Inserted {} slides", picked.len()));
+                self.set_status_message(crate::i18n::Message::Count(picked.len() as u64, "Inserted {n} slide", "Inserted {n} slides"));
                 true
             }
             Err(e) => {
@@ -455,7 +455,7 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status_message(crate::i18n::Message::Fmt("Saved {name}", vec![("name", path.to_string())]));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }
@@ -525,7 +525,7 @@ impl SlideApp {
         });
         match saved {
             Ok(()) => {
-                self.set_status(format!("Saved {name}"));
+                self.set_status_message(crate::i18n::Message::Fmt("Saved {name}", vec![("name", name.to_string())]));
                 Ok(name)
             }
             Err(e) => {
