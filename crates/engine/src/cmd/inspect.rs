@@ -146,35 +146,38 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
 fn background_summary(doc: &Presentation, sl: &Slide) -> Value {
     use deckcraft_model::Background;
     use deckcraft_model::Fill;
-    let level = if sl.background.is_some() {
-        ("slide", sl.background.as_ref())
-    } else if let Some((_, l)) = doc.layout(sl.layout) {
-        ("layout", l.background.as_ref())
-    } else {
-        ("master", None)
-    };
-    let (level, bg) = match level {
-        (name, Some(b)) => (name, Some(b)),
-        (_, None) => (level.0, doc.layout(sl.layout).and_then(|(m, _)| m.background.as_ref())),
+    let (level, bg) = match sl.background.as_ref() {
+        Some(b) => ("slide", Some(b)),
+        None => match doc.layout(sl.layout) {
+            Some((m, l)) => match l.background.as_ref() {
+                Some(b) => ("layout", Some(b)),
+                None => ("master", m.background.as_ref()),
+            },
+            None => ("none", None),
+        },
     };
     let Some(bg) = bg else { return json!({"source": "none"}) };
     match bg {
         Background::Fill { fill: Fill::Picture(pf) } => {
             let m = doc.media(pf.media);
-            // Decoded only for a picture small enough that opening a deck to inspect it stays
-            // cheap; a huge photo still reports its media without its pixel size.
-            let pixels =
-                m.filter(|m| m.data.len() < 8 << 20).and_then(|m| deckcraft_render::decode_image(&m.data)).map(|i| json!([i.width(), i.height()]));
+            // Read from the header, never decoded: inspecting a deck must not open its pictures.
+            let pixels = m.and_then(|m| deckcraft_render::pixel_size(&m.data)).map(|(w, h)| json!([w, h]));
+            // Fractions stay exact: a 0.004 crop is geometry the renderer has to reproduce.
             let mode = match &pf.mode {
-                PictureMode::Stretch { fill_rect } => json!({"stretch": {"fill_rect": fill_rect.iter().map(|v| round(*v)).collect::<Vec<_>>()}}),
-                PictureMode::Tile { sx, sy, tx, ty, .. } => json!({"tile": {"scale": [round(*sx), round(*sy)], "offset": [round(*tx), round(*ty)]}}),
+                PictureMode::Stretch { fill_rect } => json!({"stretch": {"fill_rect": fill_rect.to_vec()}}),
+                PictureMode::Tile { sx, sy, tx, ty, align, flip } => json!({"tile": {
+                    "scale": [sx, sy],
+                    "offset": [tx, ty],
+                    "align": align,
+                    "flip": flip,
+                }}),
             };
             json!({
                 "source": level,
                 "kind": "picture",
                 "media": m.map(|m| json!({"id": m.id.0, "name": m.name, "type": m.content_type, "pixels": pixels})),
                 "mode": mode,
-                "crop": pf.crop.iter().map(|v| round(*v)).collect::<Vec<_>>(),
+                "crop": pf.crop.to_vec(),
             })
         }
         Background::Fill { fill } => {
@@ -281,16 +284,19 @@ mod tests {
         Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
     }
 
+    /// A 4 by 3 PNG, for a background picture whose header says its size.
+    fn test_png() -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(4, 3, image::Rgb([10, 20, 30]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).expect("png");
+        out
+    }
+
     #[test]
     fn slide_inspect_names_the_background_picture_and_its_layout() {
         use deckcraft_model::style::{Fill, PictureFill, PictureMode};
         let mut s = Session::with_new();
-        let png = {
-            let img = image::RgbImage::from_pixel(4, 3, image::Rgb([10, 20, 30]));
-            let mut out = Vec::new();
-            image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).expect("png");
-            out
-        };
+        let png = test_png();
         let st = s.doc_mut().unwrap();
         let slide_index = st.selection.slide;
         let media = std::sync::Arc::make_mut(&mut st.doc).add_media("bg.png", "image/png", png).expect("media");
@@ -308,6 +314,39 @@ mod tests {
         assert_eq!(bg["media"]["type"], "image/png");
         assert_eq!(bg["media"]["pixels"], json!([4, 3]));
         assert_eq!(bg["mode"]["stretch"]["fill_rect"], json!([0.0, -0.17, 0.0, -0.17]));
+        assert_eq!(bg["crop"], json!([0.0, 0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn slide_inspect_names_the_master_when_no_layout_sets_a_background() {
+        use deckcraft_model::style::{Fill, PictureFill, PictureMode};
+        let mut s = Session::with_new();
+        // Every layout loses its background, then the master gets a picture one.
+        {
+            let st = s.doc_mut().unwrap();
+            let p = std::sync::Arc::make_mut(&mut st.doc);
+            for master in p.masters.iter_mut() {
+                let m = std::sync::Arc::make_mut(master);
+                for l in m.layouts.iter_mut() {
+                    l.background = None;
+                }
+                m.background = None;
+            }
+            let media = p.media.first().map(|m| m.id);
+            let p = std::sync::Arc::make_mut(&mut st.doc);
+            let media = match media {
+                Some(id) => id,
+                None => p.add_media("bg.png", "image/png", test_png()).expect("media"),
+            };
+            let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+            m.background = Some(deckcraft_model::Background::Fill {
+                fill: Fill::Picture(PictureFill { media, mode: PictureMode::Stretch { fill_rect: [0.0; 4] }, ..Default::default() }),
+            });
+        }
+        let slide_index = s.doc().unwrap().selection.slide;
+        let v = s.execute("slide.inspect", &json!({ "index": slide_index })).unwrap();
+        assert_eq!(v["backgroundFill"]["source"], "master");
+        assert_eq!(v["backgroundFill"]["kind"], "picture");
     }
 
     #[test]
