@@ -125,13 +125,18 @@ calls it.
     },
     Subcommand {
         name: "app",
-        usage: "app [--port PORT] COMMAND [PARAMS] | --method METHOD [PARAMS]",
+        usage: "app [--port PORT] (COMMAND | --method METHOD) [PARAMS | --params-file FILE]",
         summary: "run a command in the DeckCraft app started with --control",
         details: "Sends one request to the DeckCraft app started with `deckcraft --control PORT` (port 7979 by default)
 and prints its answer as JSON. COMMAND [PARAMS] runs a command, as run --cmd does; --method METHOD
 [PARAMS] calls a control-channel method such as ui.screenshot. PARAMS is a JSON object.
 
+--params-file FILE reads PARAMS from a UTF-8 file instead, or from stdin for `-`, so a payload too
+large for the command line — font.add's font data, insert.picture's picture, file.openBytes — still
+reaches the app. The file may be up to 16 MiB; PARAMS and --params-file cannot both be given.
+
   deckcraft-cli app shape.insert '{\"preset\":\"star5\",\"rect\":[100,100,200,200]}'
+  deckcraft-cli app font.add --params-file font.json
   deckcraft-cli app --method ui.screenshot '{\"path\":\"/tmp/shot.png\"}'",
     },
     Subcommand {
