@@ -16,7 +16,7 @@ struct MoveDrag {
 pub(crate) const MAX_GESTURE_POINTS: usize = 100_000;
 
 impl Session {
-    /// Update the active drag interaction using the pointer position and modifiers.
+    /// Apply a slide-space pointer movement to the active gesture, mapping group members locally.
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         if matches!(self.tool.drag, Some(Drag::Ink { .. })) {
             self.extend_ink(p);
@@ -35,9 +35,16 @@ impl Session {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
             Drag::Resize { id, orig, ids, handle, origs, start } => {
+                let parent = cmd::parent_transform(self.doc()?, id);
+                let determinant = parent.determinant();
+                // Refitting can collapse a group during a resize; do not invert it on the next sample.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
+                let local = parent.inverse() * p;
                 let keep_aspect = mods.shift || self.is_picture(id);
-                let nx = resize_box(&orig, handle, p - start, keep_aspect, mods.alt);
-                let nx = self.snap_resize(nx, handle, &ids, tol);
+                let nx = resize_box(&orig, handle, local - start, keep_aspect, mods.alt);
+                let nx = self.snap_resize(nx, parent, handle, &ids, tol);
                 let sx = if orig.w > 1e-9 { (nx.w / orig.w) * if nx.flip_h != orig.flip_h { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let sy = if orig.h > 1e-9 { (nx.h / orig.h) * if nx.flip_v != orig.flip_v { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let div = if mods.alt { 2.0 } else { 1.0 };
@@ -78,10 +85,11 @@ impl Session {
                 }
             }
             Drag::LineEnd { id, end, orig } => {
+                let parent = cmd::parent_transform(self.doc()?, id);
                 let a = orig.affine();
                 let (p0, p1) = (a * Point::new(0.0, 0.0), a * Point::new(orig.w, orig.h));
                 let mut q = p;
-                let other = if end == 0 { p1 } else { p0 };
+                let other = parent * if end == 0 { p1 } else { p0 };
                 if mods.shift {
                     q = constrain_45(other, q);
                 }
@@ -89,6 +97,7 @@ impl Session {
                 if let Some((_, _, at)) = glue {
                     q = at;
                 }
+                let q = parent.inverse() * q;
                 let (s0, s1) = if end == 0 { (q, p1) } else { (p0, q) };
                 self.set_xfrm(id, line_xfrm(s0, s1, orig.rot))?;
                 self.edit(|doc, sel| {
@@ -98,26 +107,8 @@ impl Session {
                     Ok(())
                 })?;
             }
-            Drag::Rotate { ids, center, start, origs } => {
-                let ang = (p.y - center.y).atan2(p.x - center.x);
-                let mut delta = (ang - start).to_degrees();
-                for (id, o) in &origs {
-                    let mut r = o.rot + delta;
-                    if mods.shift {
-                        r = (r / 15.0).round() * 15.0;
-                        delta = r - o.rot;
-                    }
-                    let mut nx = *o;
-                    nx.rot = ((r % 360.0) + 360.0) % 360.0;
-                    if ids.len() > 1 {
-                        // Rotate positions around the common centre too.
-                        let c = o.center();
-                        let rc = Affine::translate(center.to_vec2()) * Affine::rotate(delta.to_radians()) * Affine::translate(-center.to_vec2()) * c;
-                        nx.x = rc.x - o.w / 2.0;
-                        nx.y = rc.y - o.h / 2.0;
-                    }
-                    self.set_xfrm(*id, nx)?;
-                }
+            Drag::Rotate { to_frame, center, start, origs } => {
+                self.drag_rotate(to_frame, center, start, &origs, p, mods)?;
             }
             Drag::Adjust { id, index, orig } => return self.drag_adjust(id, index, orig, p),
             Drag::Vertex { id, path, index } => {
@@ -145,6 +136,7 @@ impl Session {
                 return Ok(Value::Null);
             }
             Drag::Warp { id, index, name, base, orig } => {
+                let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
                 let v = {
                     let st = self.doc()?;
                     let Some(sh) = st.shape(id) else { return Ok(Value::Null) };
@@ -204,6 +196,52 @@ impl Session {
         Ok(Value::Null)
     }
 
+    /// Rotate in the captured frame and map each box back to its own parent.
+    fn drag_rotate(&mut self, to_frame: Affine, center: Point, start: f64, origs: &[(ShapeId, Xfrm, Affine)], p: Point, mods: Mods) -> Result<()> {
+        let p = to_frame * p;
+        let ang = (p.y - center.y).atan2(p.x - center.x);
+        let mut delta = (ang - start).to_degrees();
+        let mixed = origs.iter().any(|(_, _, parent)| *parent != Affine::IDENTITY);
+        let axis = |parent: Affine, rot: f64| parent.with_translation(Vec2::ZERO) * Affine::rotate(rot.to_radians()) * Point::new(0.0, -1.0);
+        if mixed
+            && mods.shift
+            && let Some((_, o, parent)) = origs.first()
+        {
+            let ray = axis(*parent, o.rot);
+            let heading = ray.x.atan2(-ray.y).to_degrees();
+            delta = ((heading + delta) / 15.0).round() * 15.0 - heading;
+        }
+        for (id, o, parent) in origs {
+            // Same-parent members snap to their own absolute angles and orbit by their
+            // own snapped turns. Never feed one member's snap into the next member.
+            let delta = if !mixed && mods.shift { ((o.rot + delta) / 15.0).round() * 15.0 - o.rot } else { delta };
+            let mut nx = *o;
+            if delta != 0.0 {
+                let spin = Affine::rotate(delta.to_radians());
+                let inverse = parent.inverse();
+                let r = if *parent == Affine::IDENTITY {
+                    o.rot + delta
+                } else {
+                    // Map the turned handle axis back through the member's own parent,
+                    // including reflections and unequal scale along the two axes.
+                    let ray = inverse.with_translation(Vec2::ZERO) * spin * axis(*parent, o.rot);
+                    ray.x.atan2(-ray.y).to_degrees()
+                };
+                nx.rot = r.rem_euclid(360.0);
+                if origs.len() > 1 {
+                    let orbit = Affine::translate(center.to_vec2()) * spin * Affine::translate(-center.to_vec2());
+                    let rc = inverse * orbit * *parent * o.center();
+                    nx.x = rc.x - o.w / 2.0;
+                    nx.y = rc.y - o.h / 2.0;
+                }
+            }
+            if self.doc()?.shape(*id).and_then(|sh| sh.xfrm) != Some(nx) {
+                self.set_xfrm(*id, nx)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Ink grows by one sample per move: extend it (and its preview) in place rather than
     /// copying the whole stroke twice per event, up to [`MAX_GESTURE_POINTS`].
     fn extend_ink(&mut self, p: Point) {
@@ -216,10 +254,21 @@ impl Session {
         }
     }
 
+    /// Move each selected shape by the slide displacement expressed in its containing group.
     fn drag_move(&mut self, drag: MoveDrag, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         let MoveDrag { ids, start, origs, moved, duplicate, enter_text } = drag;
         let mut d = p - start;
         if !moved && (d.hypot() < tol.max(1.0) || origs.is_empty()) {
+            return Ok(Value::Null);
+        }
+        let st = self.doc()?;
+        // Keep the entire selection unchanged when any member lacks a unique parent inverse,
+        // before Alt-drag can duplicate it or a partial move can alter the other members.
+        if origs.iter().any(|(id, _)| {
+            let parent = cmd::parent_transform(st, *id);
+            let determinant = parent.determinant();
+            determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite()
+        }) {
             return Ok(Value::Null);
         }
         if !moved {
@@ -238,17 +287,30 @@ impl Session {
             }
         }
         // Smart guides on the moved group's bounds.
-        let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
+        let st = self.doc()?;
+        let bounds = origs
+            .iter()
+            .map(|(id, x)| (cmd::parent_transform(st, *id) * x.affine()).transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h)))
+            .reduce(|a, b| a.union(b))
+            .unwrap_or_default();
         let moved_b = bounds + d;
         let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
         d += snap;
         self.tool.guides = guides;
         let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
+        let st = self.doc()?;
+        let deltas: Vec<_> = origs2
+            .iter()
+            .map(|(id, _)| {
+                let inv = cmd::parent_transform(st, *id).inverse();
+                inv * (Point::ZERO + d) - inv * Point::ZERO
+            })
+            .collect();
         self.edit(|doc, sel| {
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
-            for (id, o) in &origs2 {
+            for ((id, o), delta) in origs2.iter().zip(&deltas) {
                 if let Some(sh) = deckcraft_model::find_shape_mut(list, *id) {
-                    sh.xfrm = Some(Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o });
+                    sh.xfrm = Some(Xfrm { x: o.x + delta.x, y: o.y + delta.y, ..*o });
                 }
             }
             // A connector dragged away from shapes that stay put comes unglued at those ends.
@@ -274,7 +336,15 @@ impl Session {
         Ok(Value::Null)
     }
 
+    /// Map a slide-space drag into the adjusted member's group before changing its geometry.
     fn drag_adjust(&mut self, id: ShapeId, index: usize, orig: Xfrm, p: Point) -> Result<Value> {
+        let parent = cmd::parent_transform(self.doc()?, id);
+        let determinant = parent.determinant();
+        // A collapsed group has no unique slide-to-child mapping.
+        if determinant == 0.0 || !determinant.is_finite() {
+            return Ok(Value::Null);
+        }
+        let p = parent.inverse() * p;
         let st = self.doc()?;
         let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
         let local = orig.affine().inverse() * p;
