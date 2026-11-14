@@ -1,7 +1,6 @@
 # Localization parity with PowerPoint
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (placeholder prompts on slides follow the interface language, #2107; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
 are looked up in the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs when the
