@@ -105,7 +105,9 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
     Ok(buf.into_inner())
 }
 
-fn is_compressed(ct: &str) -> bool {
+/// Whether [`save`] stores media of content type `ct` as is (already compressed) rather than
+/// deflating it.
+pub fn is_compressed(ct: &str) -> bool {
     ct.starts_with("image/jpeg")
         || ct.starts_with("image/png")
         || ct.starts_with("video/")
@@ -170,7 +172,18 @@ pub fn load_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     load_within(bytes, Budget { total: MAX_TOTAL_MEDIA, items: MAX_MEDIA_ITEMS, manifest: MAX_MANIFEST })
 }
 
+/// Read untrusted clipboard slides with an 8 MiB manifest, 32 MiB of media and chart
+/// payloads together, and at most 4,096 payload items. Native file limits are unchanged.
+/// Stop at the first damaged media entry so failed inflation cannot reuse the byte budget.
+pub fn load_clipboard_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
+    load_with_limits(bytes, Budget { total: 32 << 20, items: 4096, manifest: 8 << 20 }, true)
+}
+
 fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String>)> {
+    load_with_limits(bytes, budget, false)
+}
+
+fn load_with_limits(bytes: &[u8], budget: Budget, stop_on_damage: bool) -> Result<(Presentation, Vec<String>)> {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| FormatError::NotOurs(e.to_string()))?;
     if z.index_for_name("presentation.json").is_none() {
         return Err(FormatError::NotOurs("no presentation.json".into()));
@@ -201,6 +214,7 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
         match read_entry_charged(&mut z, &name, &mut left) {
             Ok(data) => item.data = Arc::new(data),
             Err(_) if linked_only => {}
+            Err(e) if stop_on_damage => return Err(e),
             Err(e) => damaged.push(e.to_string()),
         }
     }
