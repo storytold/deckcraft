@@ -1396,6 +1396,45 @@ fn single_guide_names_follow_the_preset() {
     }
 }
 
+/// Large finite guides position a visible bend even when the connector is only one EMU wide.
+#[test]
+fn large_connector_adjustments_keep_their_elbows_through_two_saves() {
+    let cases = [
+        ("ordinary", 80.0, 50000.0),
+        ("near control", 1588.0 / 12700.0, -12800000.0),
+        ("near negative", 1.0 / 12700.0, -20320000000.0),
+        ("near positive", 1.0 / 12700.0, 20320000000.0),
+        ("zero width", 0.0, 20320000000.0),
+        ("ordinary negative", 80.0, -20000.0),
+    ];
+    let mut p = defaults::new_presentation(None);
+    p.slides.clear();
+    let mut s = new_slide(&mut p, "Connectors");
+    s.shapes.clear();
+    for (name, width, guide) in cases {
+        let mut sh = shape(&mut p, name, 100.0, 80.0, width, 140.0);
+        sh.kind = ShapeKind::Connector { start: None, end: None };
+        sh.geom = Geom::Preset { name: "bentConnector3".into(), adj: vec![guide] };
+        s.shapes.push(sh);
+    }
+    p.slides.push(Arc::new(s));
+    for generation in 1..=2 {
+        p = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("reopen");
+        for (name, width, guide) in cases {
+            let sh = p.slides[0].shapes.iter().find(|sh| sh.name == name).expect("connector");
+            let Geom::Preset { name: preset, adj } = &sh.geom else {
+                panic!("preset connector");
+            };
+            assert_eq!(adj, &[guide], "{name}, save {generation}");
+            let xfrm = sh.xfrm.expect("transform");
+            assert_eq!((xfrm.w, xfrm.h), (width, 140.0));
+            let expected = deckcraft_geom::preset::build("bentConnector3", width, 140.0, &[guide]).expect("expected geometry");
+            let actual = deckcraft_geom::preset::build(preset, xfrm.w, xfrm.h, adj).expect("reopened geometry");
+            assert_eq!(actual.outline(), expected.outline(), "{name}, save {generation}");
+        }
+    }
+}
+
 /// #147: PowerPoint's Float Down is preset 47 (Float Up is 42); it imported as a plain fade.
 #[test]
 fn float_down_is_preset_47_both_ways() {
@@ -2256,6 +2295,34 @@ fn default_durations_match_powerpoint() {
         let a = deckcraft_model::anim::ANIMATIONS.iter().find(|a| a.0 == effect).unwrap();
         assert_eq!(a.4, ms, "{effect}");
     }
+}
+
+/// Show media controls is PowerPoint's `p14:showMediaCtrls` extension inside `p:showPr`: off is
+/// written there, under its extension uri and with the p14 namespace declared on the element;
+/// on (the default) writes nothing.
+#[test]
+fn hidden_media_controls_survive_save_and_reopen() {
+    let props = |p: &Presentation| {
+        let bytes = deckcraft_pptx::export(p).expect("export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        let mut x = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("ppt/presProps.xml").expect("presProps"), &mut x).expect("read");
+        x
+    };
+    let mut p = Presentation::default();
+    p.show.show_media_controls = false;
+    let xml = props(&p);
+    let show = xml.split("<p:showPr").nth(1).and_then(|r| r.split("</p:showPr>").next()).expect("p:showPr");
+    assert!(
+        show.contains(
+            "<p:ext uri=\"{2FDB2607-1784-4EEB-B798-7EB5836EED8A}\"><p14:showMediaCtrls xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" val=\"0\"/></p:ext>"
+        ),
+        "{xml}"
+    );
+    assert!(!round(&p).show.show_media_controls);
+    let default = Presentation::default();
+    assert!(!props(&default).contains("showMediaCtrls"));
+    assert!(round(&default).show.show_media_controls);
 }
 
 #[test]

@@ -339,8 +339,9 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 app.save();
-                // In the browser a save is a download: the presentation stays "unsaved".
-                let web = app.services.pick_save.is_none() && app.services.download.is_some();
+                // In the browser a save is a download: the presentation stays "unsaved". A page
+                // that keeps the files saves it for real, so a failed save keeps it open.
+                let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
                 if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
                     run(app, "file.close", json!({}));
                 }
@@ -1259,7 +1260,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let mut v = d.get("text", "Plan\nBuild\nLaunch");
-    ui.add(egui::TextEdit::multiline(&mut v).hint_text("SmartArt items").desired_rows(5).desired_width(320.0));
+    ui.add(egui::TextEdit::multiline(&mut v).hint_text("Diagram items").desired_rows(5).desired_width(320.0));
     d.fields.insert("text".into(), v.clone());
     let (ok, cancel) = buttons(ui, "Insert");
     if ok {
