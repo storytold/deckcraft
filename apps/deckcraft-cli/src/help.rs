@@ -128,7 +128,9 @@ calls it.
         usage: "app [--port PORT] COMMAND [PARAMS] | --method METHOD [PARAMS]",
         summary: "run a command in the DeckCraft app started with --control",
         details: "Sends one request to the DeckCraft app started with `deckcraft --control PORT` (port 7979 by default)
-and prints its answer as JSON. COMMAND [PARAMS] runs a command, as run --cmd does; --method METHOD
+and prints its answer as JSON. The app answers only with a token: set DECKCRAFT_CONTROL_TOKEN to the one
+the app printed, or run as the user the app runs as (it writes a token file this command reads). COMMAND
+[PARAMS] runs a command, as run --cmd does; --method METHOD
 [PARAMS] calls a control-channel method such as ui.screenshot. PARAMS is a JSON object.
 
   deckcraft-cli app shape.insert '{\"preset\":\"star5\",\"rect\":[100,100,200,200]}'
@@ -139,8 +141,9 @@ and prints its answer as JSON. COMMAND [PARAMS] runs a command, as run --cmd doe
         usage: "mcp [--connect PORT] [--sample] [--automation-read-root DIR]... [--automation-write-root DIR]...",
         summary: "serve the commands to an agent over MCP on stdio",
         details: "Runs a Model Context Protocol server on stdin and stdout. It works on its own presentation without a
-window, or with --connect PORT (or host:port) on the DeckCraft app started with --control PORT.
---sample opens the sample presentation.
+window, or with --connect PORT (or host:port) on the DeckCraft app started with --control PORT. The app
+answers only with a token: set DECKCRAFT_CONTROL_TOKEN to the one the app printed, or run as the user
+the app runs as (it writes a token file). --sample opens the sample presentation.
 
 --automation-read-root DIR and --automation-write-root DIR confine every file the agent's commands read
 (open, pictures, audio, video) and write (save, export, PDF) to those folders, links followed. Repeat either

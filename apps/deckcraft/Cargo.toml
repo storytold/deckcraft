@@ -14,6 +14,7 @@ workspace = true
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 deckcraft-media = { workspace = true }
+deckcraft-mcp = { workspace = true }
 # `clipboard` is the OS clipboard (Ctrl+C/X/V with other apps). Without it egui simulates one inside
 # the app; the egui 0.37 migration (#1350) dropped it from this list.
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "clipboard", "links", "wayland", "x11"] }
@@ -21,6 +22,7 @@ egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
+getrandom = { workspace = true }
 
 [build-dependencies]
 # Icon + VERSIONINFO for deckcraft.exe; build.rs only uses it when the target is Windows.
