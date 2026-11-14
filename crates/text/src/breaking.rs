@@ -178,10 +178,12 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 next = i + 1;
                 break;
             }
-            let adv = if c == '\t' {
-                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i))
+            let max_x = x0 + avail;
+            let (adv, seg) = if c == '\t' {
+                let seg = tab_segment(&p.cells, i);
+                (tab_advance(x0 + x, tab_stops, default_tab, seg, max_x), seg)
             } else {
-                p.cells.get(i).map(|c| c.adv).unwrap_or(0.0)
+                (p.cells.get(i).map(|c| c.adv).unwrap_or(0.0), (0.0, 0.0, 0.0))
             };
             let breakable = |j: usize| p.cells.get(j).is_none_or(|c| c.breakable(j));
             if i > start && allowed.get(i).copied().unwrap_or(false) && breakable(i) {
@@ -194,8 +196,16 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 next = i + 1;
                 break;
             }
-            // A tab that would run past the end moves to the next line (and to its first stop there).
-            if wrap && c == '\t' && x + adv > avail + 0.01 && i > start {
+            // A tab that runs past the end moves to the next line. Also keep it with its
+            // following segment when x + adv + seg.2 overflows here but fresh_tab_adv + seg.2
+            // fits within rest_w: a clamped tab can have zero advance while its text still
+            // overflows, and moving only the text would lose its tab alignment. The fresh-line
+            // check includes the tab advance, not just the text width. seg.2 excludes trailing
+            // whitespace so spaces alone cannot move visible text; an oversized segment that
+            // cannot fit with its tab on a fresh line uses the ordinary wrapping rules.
+            let fresh_tab_adv = if seg.2 > 0.0 { tab_advance(x0_rest, tab_stops, default_tab, seg, x0_rest + rest_w) } else { 0.0 };
+            let tab_overflow = x + adv > avail + 0.01 || (seg.2 > 0.0 && x + adv + seg.2 > avail + 0.01 && fresh_tab_adv + seg.2 <= rest_w + 0.01);
+            if wrap && c == '\t' && tab_overflow && i > start {
                 end = i;
                 next = i;
                 while end > start && p.cells.get(end - 1).is_some_and(|c| c.ch == ' ') {
@@ -285,11 +295,12 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
     tabs
 }
 
-/// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
-/// that text before its first ".".
-pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
+/// Width of the text after the tab at cell `i` up to the next tab or line break, the width of
+/// that text before its first ".", and the width excluding trailing whitespace.
+pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64, f64) {
     let mut w = 0.0;
     let mut dec = None;
+    let mut last_non_ws = 0.0;
     for c in cells.iter().skip(i + 1) {
         if matches!(c.ch, '\t'..='\u{b}') {
             break;
@@ -298,24 +309,53 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
             dec = Some(w);
         }
         w += c.adv;
+        if !c.ch.is_whitespace() {
+            last_non_ws = w;
+        }
     }
-    (w, dec.unwrap_or(w))
+    (w, dec.unwrap_or(w), last_non_ws)
 }
 
-/// Advance of a tab at `x` (from the start edge) to the next stop, placing the text after it
-/// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
-/// moving back, as PowerPoint does; past the last stop, to the next default stop.
-pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
-    // `stops` is in position order (`tabs_of`): the next stop is the first past x.
-    // A NaN `x` (a NaN spacing upstream) skips the lookup and takes the finite default-stop path.
-    if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)).filter(|_| !x.is_nan()) {
-        let to = s.pos - x;
-        return match s.align {
-            TabAlign::Left => to,
-            TabAlign::Right => (to - seg.0).max(0.0),
-            TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
-            TabAlign::Decimal => (to - seg.1).max(0.0),
-        };
+/// Advance of a tab at `x` to the next stop, aligning the following text without moving back;
+/// past the last explicit stop, advance to the next default stop.
+///
+/// `x`, stop positions and `max_x` are distances from the same text-column start edge, not
+/// from the current line's indented start. `max_x` is the right-margin coordinate, not the
+/// remaining width: `break_lines` passes `x0 + avail`, while layout's `line_advances` passes
+/// `col_w - mr` (already measured from the column edge). `max_x <= 0.0` disables clamping,
+/// as in `tab_tests`.
+///
+/// `seg` is `(total_width, width_before_first_decimal_point, width_without_trailing_whitespace)`,
+/// from [`tab_segment`]; the second value equals the total width when no "." occurs.
+/// This function uses the first two values for alignment; `break_lines` uses the third for
+/// its visible-segment fit check. Layout passes the same tuple when computing line advances.
+///
+/// Only explicit right, center and decimal stops beyond a positive `max_x` are adjusted
+/// (#1663). Their effective alignment positions are respectively `max_x`,
+/// `max(max_x - seg.0 / 2, 0)` and `max(max_x - max(seg.0 - seg.1, 0), 0)`, so the segment's
+/// right edge reaches the margin when the nonnegative-position and no-backward-motion
+/// limits permit. Stops at or inside the margin, left stops and default stops are unchanged.
+pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64, f64), max_x: f64) -> f64 {
+    for s in stops {
+        if s.pos > x + 0.5 {
+            let pos = if max_x > 0.0 && s.pos > max_x {
+                match s.align {
+                    TabAlign::Right => max_x,
+                    TabAlign::Center => (max_x - seg.0 / 2.0).max(0.0),
+                    TabAlign::Decimal => (max_x - (seg.0 - seg.1).max(0.0)).max(0.0),
+                    TabAlign::Left => s.pos,
+                }
+            } else {
+                s.pos
+            };
+            let to = pos - x;
+            return match s.align {
+                TabAlign::Left => to,
+                TabAlign::Right => (to - seg.0).max(0.0),
+                TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
+                TabAlign::Decimal => (to - seg.1).max(0.0),
+            };
+        }
     }
     let d = if default_tab > 1.0 { default_tab } else { 72.0 };
     let next = ((x / d).floor() + 1.0) * d;
@@ -329,7 +369,7 @@ mod tab_tests {
     #[test]
     fn a_nan_position_takes_the_finite_default_stop() {
         let stops = [Tab { pos: 100.0, align: TabAlign::Left }];
-        assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0)).is_finite());
-        assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0)), 90.0);
+        assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0, 0.0), 0.0).is_finite());
+        assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0, 0.0), 0.0), 90.0);
     }
 }
