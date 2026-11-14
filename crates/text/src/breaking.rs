@@ -29,11 +29,9 @@ pub(crate) fn line_metrics(face: &FontFace, size: f64) -> (f64, f64) {
     (h * face.line_split, h * (1.0 - face.line_split))
 }
 
-/// Hangul syllables and jamo: PowerPoint wraps Korean at word boundaries (spaces), not between
-/// syllables.
-fn is_hangul(c: char) -> bool {
-    matches!(c, '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{A960}'..='\u{A97F}' | '\u{AC00}'..='\u{D7FF}')
-}
+/// Hangul syllables and jamo, halfwidth ones too: PowerPoint wraps Korean at word boundaries
+/// (spaces), not between syllables.
+use deckcraft_model::words::is_hangul;
 
 /// East Asian commas and full stops, the punctuation PowerPoint lets hang past the end of a line
 /// (`hangingPunct`). Closing brackets don't hang: "「。」" overflowing by its "」" moves to the next
