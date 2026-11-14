@@ -136,7 +136,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) {
         app.ui.tab = "Home".into();
     }
-    let h = 28.0 + if app.ui.ribbon_collapsed { 4.0 } else { RIBBON_H + 20.0 };
+    let reveal = transition::reveal(ui.ctx(), app.ui.ribbon_collapsed, now, animate);
+    let h = 32.0 + reveal * (RIBBON_H + 16.0);
     egui::Panel::top("ribbon").exact_size(h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         // Tabs. File comes first and opens the File tab's full-window view (Backstage), as in
@@ -175,15 +176,13 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let f = if active { theme::bold(13.0) } else { font };
             ui.painter().text(r.center(), Align2::CENTER_CENTER, label, f, col);
             if resp.clicked() {
+                ui.ctx().request_repaint();
                 if active {
                     app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
                 } else {
                     app.ui.tab = name.to_string();
                     app.ui.ribbon_collapsed = false;
                 }
-            }
-            if resp.double_clicked() {
-                app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
             }
             if app.ui.tab == name {
                 let uw = (w - 20.0).max(16.0);
@@ -194,12 +193,15 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         if let Some(target) = underline {
             transition::slide_underline(ui, &app.ui.tab, target, t.accent, now, animate);
         }
-        if app.ui.ribbon_collapsed {
-            transition::reset(ui.ctx());
+        if reveal <= 0.0 {
             return;
         }
+        // Clip the moving card below the tabs, including its shadow and all hit targets.
+        ui.set_clip_rect(ui.clip_rect().intersect(Rect::from_min_max(pos2(rect.min.x, rect.min.y + 28.0), rect.max)));
+        let rise = (1.0 - reveal) * (RIBBON_H + 16.0);
         // The white card.
-        let card = Rect::from_min_max(pos2(rect.min.x + 8.0, rect.min.y + 30.0), pos2(rect.max.x - 8.0, rect.min.y + 30.0 + RIBBON_H + 10.0));
+        let card = Rect::from_min_max(pos2(rect.min.x + 8.0, rect.min.y + 30.0), pos2(rect.max.x - 8.0, rect.min.y + 30.0 + RIBBON_H + 10.0))
+            .translate(vec2(0.0, -rise));
         ui.painter().rect_filled(card.translate(vec2(0.0, 1.0)), CornerRadius::same(10), t.card_border);
         ui.painter().rect_filled(card, CornerRadius::same(10), t.card);
         let inner = Rect::from_min_size(pos2(card.min.x + 10.0, card.min.y + 5.0), vec2(card.width() - 20.0, RIBBON_H));
@@ -211,6 +213,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         // Only the selected tab runs controls. Moving their actual UI keeps hit testing aligned.
         let mut content = ui.new_child(egui::UiBuilder::new().id_salt("ribbon_tab_content").max_rect(inner));
         content.set_clip_rect(clip);
+        // Closing paint stays visible, but its controls cannot be activated.
+        if app.ui.ribbon_collapsed {
+            content.disable();
+        }
         content.multiply_opacity(0.2 + 0.8 * settled);
         let ui = &mut content;
         let mut cui = ui.new_child(egui::UiBuilder::new().max_rect(inner));

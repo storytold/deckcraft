@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File page, screen and ribbon tab transitions; feathered ribbon group hover; reduced motion; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File and ribbon transitions; animated single-click ribbon collapse; queued-click motion guard; per-theme motion restoration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -187,7 +187,13 @@ slides 14 pt from the side of the selected tab over 160 ms; the accent underline
 new tab over 200 ms, reversing from its current position when another tab is selected quickly.
 Only the selected tab lays out controls and accessibility nodes. Reduced motion settles both
 effects immediately without replaying them when reenabled. State is independent per viewport
-and resets when the ribbon is collapsed or hidden by File or a slide show.
+and resets when hidden by File or a slide show. Clicking the active tab once collapses the
+card; clicking any tab while collapsed opens it. The card slides vertically under the tab row
+and changes the panel height over 200 ms, reversing from its current position on rapid clicks.
+Closing controls are disabled and clipped to the visible card. Reduced motion settles the height
+immediately. Synthetic coordinate input waits for ribbon motion to settle; an already injected
+batch is retracted if motion begins before delivery. Each theme restores its own animation duration
+after the host reenables motion.
 
 Ribbon groups have an inset accent glow at their lower edge, peaking at 20% opacity and fading
 to transparent on all four edges, including a 2 pt tail in the ribbon padding. Both themes use
@@ -199,6 +205,7 @@ These visual choices do not change PowerPoint parity scores.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | trivial | Single-click ribbon slide in/out with reversal, queued coordinate-input motion guard, per-theme animation-duration restoration; parity scores unchanged. |
 | 2026-11-14 | trivial | File/editor crossfade, page fade/lift, sliding ribbon tab content and underline, animated side-menu feedback and feathered ribbon hover; system reduced motion; parity scores unchanged. |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |

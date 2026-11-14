@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File page, screen and ribbon tab transitions; feathered ribbon group hover; reduced motion; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** trivial (File and ribbon transitions; animated single-click ribbon collapse; queued-click motion guard; per-theme motion restoration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
@@ -157,6 +157,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-14 | UI: single-click ribbon collapse and reopen slide vertically over 200 ms, with continuous reversal; synthetic coordinates wait for ribbon motion and both themes recover their own animation duration. |
 | 2026-11-14 | UI: ribbon tab content fades/slides over 160 ms with a 200 ms sliding underline; File/editor crossfade, File page fade/lift, fading sidebar feedback and subtle ribbon group glow, adapted from WordCraft #6643; reduced-motion support. |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
@@ -346,6 +347,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | trivial | Animated single-click ribbon collapse/reopen; queued-click guard during ribbon motion; theme-specific animation restoration; scores unchanged. |
 | 2026-11-14 | trivial | File/editor crossfade, page fade/lift, sliding ribbon tab content and underline, animated side-menu feedback and feathered ribbon hover; system reduced motion; parity scores unchanged. |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |

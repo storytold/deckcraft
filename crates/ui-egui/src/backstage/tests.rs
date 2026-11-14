@@ -964,3 +964,90 @@ fn ribbon_tab_transition_screenshots() {
         }
     }
 }
+
+/// A single click hides the card, keeps tabs available, and any tab brings it back.
+#[test]
+fn ribbon_single_click_slides_closed_and_open() {
+    let mut h = harness_with_dt(new_app(), 1.0 / 60.0);
+    h.run_steps(20);
+    let canvas_top = |h: &Harness<'_, SlideApp>| h.state().canvas_rect.unwrap().top();
+    let expanded = canvas_top(&h);
+    h.get_by_label("Home").click();
+    h.step();
+    assert!(h.state().ui.ribbon_collapsed);
+    h.run_steps(4);
+    assert!(canvas_top(&h) < expanded, "panel height shrinks while the card slides up");
+    h.run_steps(20);
+    assert!(h.query_by_label("Cut").is_none());
+    h.get_by_label("Home").click();
+    h.step();
+    assert!(!h.state().ui.ribbon_collapsed);
+    h.run_steps(4);
+    let entering = canvas_top(&h);
+    h.run_steps(20);
+    assert!(entering < canvas_top(&h), "panel height grows while the card slides down");
+    h.get_by_label("Home").click();
+    h.run_steps(20);
+    h.get_by_label("Insert").click();
+    h.run_steps(20);
+    assert_eq!(h.state().ui.tab, "Insert");
+    assert!(!h.state().ui.ribbon_collapsed);
+    assert!(h.query_by_label("Table").is_some());
+}
+
+#[test]
+fn reduced_motion_restores_each_themes_own_animation_duration() {
+    let enabled = Rc::new(std::cell::Cell::new(true));
+    let ask = enabled.clone();
+    let services = Services { animations_enabled: Some(Box::new(move || Some(ask.get()))), ..Default::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    let ctx = egui::Context::default();
+    let frame = |app: &mut SlideApp| {
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+    };
+    frame(&mut app);
+    frame(&mut app);
+    ctx.style_mut_of(egui::Theme::Light, |s| s.animation_time = 0.12);
+    ctx.style_mut_of(egui::Theme::Dark, |s| s.animation_time = 0.34);
+    enabled.set(false);
+    ctx.set_theme(egui::Theme::Light);
+    frame(&mut app);
+    ctx.set_theme(egui::Theme::Dark);
+    frame(&mut app);
+    assert_eq!(ctx.style_of(egui::Theme::Light).animation_time, 0.0);
+    assert_eq!(ctx.style_of(egui::Theme::Dark).animation_time, 0.0);
+    enabled.set(true);
+    frame(&mut app);
+    assert_eq!(ctx.style_of(egui::Theme::Light).animation_time, 0.12);
+    assert_eq!(ctx.style_of(egui::Theme::Dark).animation_time, 0.34);
+    ctx.set_theme(egui::Theme::Light);
+    frame(&mut app);
+    assert_eq!(ctx.global_style().animation_time, 0.12);
+}
+
+#[test]
+#[ignore = "writes screenshots for visual review"]
+fn ribbon_reveal_screenshots() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plan/ui-review");
+    std::fs::create_dir_all(&output).unwrap();
+    for (name, brightness) in [("light", crate::theme::Brightness::Light), ("dark", crate::theme::Brightness::Dark)] {
+        let mut app = new_app();
+        app.ui.brightness = brightness;
+        let mut h = harness_with_dt(app, 1.0 / 60.0);
+        h.run_steps(20);
+        h.render().unwrap().save(output.join(format!("{name}-expanded.png"))).unwrap();
+        h.get_by_label("Home").click();
+        h.run_steps(4);
+        h.render().unwrap().save(output.join(format!("{name}-closing.png"))).unwrap();
+        h.run_steps(20);
+        h.render().unwrap().save(output.join(format!("{name}-collapsed.png"))).unwrap();
+        h.get_by_label("Insert").click();
+        h.run_steps(4);
+        h.render().unwrap().save(output.join(format!("{name}-opening.png"))).unwrap();
+    }
+}

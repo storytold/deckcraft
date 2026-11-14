@@ -7,6 +7,7 @@ fn ease(p: f32) -> f32 {
 pub(crate) fn reset(ctx: &egui::Context) {
     let viewport = ctx.viewport_id();
     ctx.data_mut(|d| {
+        d.remove::<Reveal>(egui::Id::unique(("ribbon_reveal", viewport)));
         d.remove::<Underline>(egui::Id::unique(("tab_underline", viewport)));
         d.remove::<TabChange>(egui::Id::unique(("ribbon_tab_change", viewport)));
     });
@@ -85,6 +86,47 @@ pub(super) fn tab_content_entry(ctx: &egui::Context, tab: &str, index: usize, no
     }
 }
 
+const REVEAL_SECS: f64 = 0.2;
+
+#[derive(Clone)]
+struct Reveal {
+    from: f32,
+    to: f32,
+    start: f64,
+}
+
+fn reveal_at(state: &Reveal, now: f64) -> f32 {
+    egui::lerp(state.from..=state.to, ease(((now - state.start) / REVEAL_SECS) as f32))
+}
+
+/// Keep the tabs visible while the card slides under them. Reversals start at the current height.
+pub(super) fn reveal(ctx: &egui::Context, collapsed: bool, now: f64, animate: bool) -> f32 {
+    let id = egui::Id::unique(("ribbon_reveal", ctx.viewport_id()));
+    let target = if collapsed { 0.0 } else { 1.0 };
+    let prev: Option<Reveal> = ctx.data(|d| d.get_temp(id));
+    let next = match prev {
+        Some(p) if animate && p.to != target => Reveal { from: reveal_at(&p, now), to: target, start: now },
+        Some(p) if animate => p,
+        _ => Reveal { from: target, to: target, start: now },
+    };
+    let value = reveal_at(&next, now);
+    if value != target {
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|d| d.insert_temp(id, next));
+    value
+}
+
+/// Coordinate input must wait until both the tab entry and the card's vertical motion settle.
+pub(crate) fn moving(ctx: &egui::Context, now: f64) -> bool {
+    ctx.data(|d| {
+        let tab = d.get_temp::<TabChange>(egui::Id::unique(("ribbon_tab_change", ctx.viewport_id())));
+        let card = d.get_temp::<Reveal>(egui::Id::unique(("ribbon_reveal", ctx.viewport_id())));
+        tab.is_some_and(|t| t.dir != 0.0 && now - t.start < CONTENT_SWITCH_SECS)
+            || card.is_some_and(|r| r.from != r.to && now - r.start < REVEAL_SECS)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,6 +138,47 @@ mod tests {
         out.textures_delta.clear();
         let egui::Shape::Rect(rect) = &out.shapes.last().unwrap().shape else { panic!("underline rectangle") };
         rect.rect
+    }
+
+    #[test]
+    fn coordinate_batches_wait_for_entry_and_injected_batches_retract() {
+        let ctx = egui::Context::default();
+        let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        tab_content_entry(&ctx, "Home", 0, 0.0, true);
+        tab_content_entry(&ctx, "Insert", 1, 1.0, true);
+        let event = egui::Event::PointerMoved(egui::pos2(100.0, 80.0));
+        app.queue_input(event.clone());
+        let mut raw = egui::RawInput { time: Some(1.05), ..Default::default() };
+        app.raw_input_hook(&ctx, &mut raw);
+        assert!(raw.events.is_empty(), "moving controls must not receive coordinates");
+        assert_eq!(app.synthetic_queued_len(), 1);
+        raw.time = Some(1.3);
+        app.raw_input_hook(&ctx, &mut raw);
+        assert_eq!(raw.events, vec![event], "settled ribbon admits ordinary coordinates");
+        // A new entry starts while eframe carries the already-injected batch.
+        tab_content_entry(&ctx, "View", 9, 1.31, true);
+        raw.time = Some(1.32);
+        app.raw_input_hook(&ctx, &mut raw);
+        assert!(raw.events.is_empty(), "in-flight coordinates are retracted during motion");
+    }
+
+    #[test]
+    fn card_slides_both_ways_and_reverses_without_jumping() {
+        let ctx = egui::Context::default();
+        assert_eq!(reveal(&ctx, false, 0.0, true), 1.0);
+        assert_eq!(reveal(&ctx, true, 1.0, true), 1.0);
+        let middle = reveal(&ctx, true, 1.1, true);
+        assert!(middle > 0.0 && middle < 1.0);
+        assert!(moving(&ctx, 1.1));
+        assert_eq!(reveal(&ctx, false, 1.1, true), middle);
+        assert_eq!(reveal(&ctx, false, 1.4, true), 1.0);
+        assert!(!moving(&ctx, 1.4));
+        reveal(&ctx, true, 1.5, true);
+        assert_eq!(reveal(&ctx, true, 1.8, true), 0.0);
+        reveal(&ctx, false, 1.9, true);
+        assert_eq!(reveal(&ctx, false, 1.91, false), 1.0);
+        assert!(!moving(&ctx, 1.91));
+        assert_eq!(reveal(&ctx, false, 1.92, true), 1.0);
     }
 
     #[test]
