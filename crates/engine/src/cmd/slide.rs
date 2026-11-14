@@ -602,10 +602,14 @@ fn notes(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").unwrap_or("").to_string();
     s.edit(|doc, _| {
         if let Some(sl) = doc.slides.get_mut(i) {
-            let notes = &mut Arc::make_mut(sl).notes;
+            let sl = Arc::make_mut(sl);
+            let notes = &mut sl.notes;
             match body {
                 Some(b) => *notes = b,
                 None => deckcraft_model::edit::replace_text(notes, &text),
+            }
+            if !notes.is_empty() {
+                sl.has_notes_slide = true;
             }
         }
         Ok(())
