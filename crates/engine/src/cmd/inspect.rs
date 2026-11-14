@@ -1,8 +1,9 @@
 //! Inspection for agents: the deck, slides and shapes as JSON (verify work without screenshots).
 
 use deckcraft_model::resolve::{self, Ctx};
+use deckcraft_model::style::PictureMode;
 use deckcraft_model::text::Hyperlink;
-use deckcraft_model::{Shape, ShapeKind};
+use deckcraft_model::{Presentation, Shape, ShapeKind, Slide};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param, xfrm_of};
@@ -121,12 +122,14 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
         (deckcraft_model::Fill::Solid { color }, ph) => json!(format!("#{}", c.color(&color, ph).hex())),
         (f, _) => serde_json::to_value(&f).ok().and_then(|v| v.get("kind").cloned()).unwrap_or_default(),
     });
+    let bg_fill = background_summary(&st.doc, sl);
     Ok(json!({
         "index": i,
         "id": sl.id,
         "layout": st.doc.layout(sl.layout).map(|(_, l)| l.name.clone()),
         "title": sl.title(),
         "background": bg,
+        "backgroundFill": bg_fill,
         "shapes": shapes,
         "transition": serde_json::to_value(&sl.transition).unwrap_or_default(),
         "animations": serde_json::to_value(&sl.animations).unwrap_or_default(),
@@ -135,6 +138,51 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
         "comments": sl.comments.len(),
         "hidden": sl.hidden,
     }))
+}
+
+/// The background a slide actually draws: which level it comes from, and for a picture fill the
+/// media and the layout that a renderer has to reproduce (the trap in a PowerPoint deck is a
+/// negative `fillRect` that stretches the photo past the slide).
+fn background_summary(doc: &Presentation, sl: &Slide) -> Value {
+    use deckcraft_model::Background;
+    use deckcraft_model::Fill;
+    let level = if sl.background.is_some() {
+        ("slide", sl.background.as_ref())
+    } else if let Some((_, l)) = doc.layout(sl.layout) {
+        ("layout", l.background.as_ref())
+    } else {
+        ("master", None)
+    };
+    let (level, bg) = match level {
+        (name, Some(b)) => (name, Some(b)),
+        (_, None) => (level.0, doc.layout(sl.layout).and_then(|(m, _)| m.background.as_ref())),
+    };
+    let Some(bg) = bg else { return json!({"source": "none"}) };
+    match bg {
+        Background::Fill { fill: Fill::Picture(pf) } => {
+            let m = doc.media(pf.media);
+            // Decoded only for a picture small enough that opening a deck to inspect it stays
+            // cheap; a huge photo still reports its media without its pixel size.
+            let pixels =
+                m.filter(|m| m.data.len() < 8 << 20).and_then(|m| deckcraft_render::decode_image(&m.data)).map(|i| json!([i.width(), i.height()]));
+            let mode = match &pf.mode {
+                PictureMode::Stretch { fill_rect } => json!({"stretch": {"fill_rect": fill_rect.iter().map(|v| round(*v)).collect::<Vec<_>>()}}),
+                PictureMode::Tile { sx, sy, tx, ty, .. } => json!({"tile": {"scale": [round(*sx), round(*sy)], "offset": [round(*tx), round(*ty)]}}),
+            };
+            json!({
+                "source": level,
+                "kind": "picture",
+                "media": m.map(|m| json!({"id": m.id.0, "name": m.name, "type": m.content_type, "pixels": pixels})),
+                "mode": mode,
+                "crop": pf.crop.iter().map(|v| round(*v)).collect::<Vec<_>>(),
+            })
+        }
+        Background::Fill { fill } => {
+            let kind = serde_json::to_value(fill).ok().and_then(|v| v.get("kind").cloned()).unwrap_or_default();
+            json!({"source": level, "kind": kind})
+        }
+        Background::Ref { idx, .. } => json!({"source": level, "kind": "reference", "idx": idx}),
+    }
 }
 
 fn actions(s: &mut Session, p: &Value) -> Result<Value> {
@@ -231,6 +279,35 @@ mod tests {
 
     fn link(action: Action) -> Hyperlink {
         Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
+    }
+
+    #[test]
+    fn slide_inspect_names_the_background_picture_and_its_layout() {
+        use deckcraft_model::style::{Fill, PictureFill, PictureMode};
+        let mut s = Session::with_new();
+        let png = {
+            let img = image::RgbImage::from_pixel(4, 3, image::Rgb([10, 20, 30]));
+            let mut out = Vec::new();
+            image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).expect("png");
+            out
+        };
+        let st = s.doc_mut().unwrap();
+        let slide_index = st.selection.slide;
+        let media = std::sync::Arc::make_mut(&mut st.doc).add_media("bg.png", "image/png", png).expect("media");
+        // The layout carries the picture, as PowerPoint writes a full-bleed background.
+        let layout = st.doc.slides[slide_index].layout;
+        let p = std::sync::Arc::make_mut(&mut st.doc);
+        let layout = p.masters.iter_mut().flat_map(|m| std::sync::Arc::make_mut(m).layouts.iter_mut()).find(|l| l.id == layout).expect("layout");
+        let pf = PictureFill { media, mode: PictureMode::Stretch { fill_rect: [0.0, -0.17, 0.0, -0.17] }, ..Default::default() };
+        layout.background = Some(deckcraft_model::Background::Fill { fill: Fill::Picture(pf) });
+
+        let v = s.execute("slide.inspect", &json!({ "index": slide_index })).unwrap();
+        let bg = &v["backgroundFill"];
+        assert_eq!(bg["source"], "layout");
+        assert_eq!(bg["kind"], "picture");
+        assert_eq!(bg["media"]["type"], "image/png");
+        assert_eq!(bg["media"]["pixels"], json!([4, 3]));
+        assert_eq!(bg["mode"]["stretch"]["fill_rect"], json!([0.0, -0.17, 0.0, -0.17]));
     }
 
     #[test]
