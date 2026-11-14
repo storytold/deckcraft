@@ -599,13 +599,14 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
         scale: (a.scale_x, a.scale_y),
         rotate: a.rotate,
         clip: a.clip,
+        reveal: a.reveal,
         tint: a.tint,
         paras: tl
             .paragraph_targets(id)
             .into_iter()
             .map(|p| {
                 let a = tl.state(id, Some(p), step, t);
-                (p, ParaState { visible: a.visible, opacity: a.opacity, offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y) })
+                (p, ParaState::from_anim(&a))
             })
             .collect(),
     }

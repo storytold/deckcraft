@@ -139,6 +139,17 @@ pub(crate) fn outside_line(line: &Line, lw: f64) -> Option<Line> {
     Some(Line { width: Some(lw * 2.0), dash: dash.or_else(|| line.dash.clone()), ..line.clone() })
 }
 
+/// How far a shape's outline reaches past its geometry, in points: half the line's width where the
+/// line is centred on the edge, the whole width for a picture's border, which `outside_line` draws
+/// wholly outside the picture. 0 without a line.
+pub(crate) fn outline_reach(line: &Line, is_pic: bool, effects: Option<&Effects>) -> f64 {
+    if !line.fill.as_ref().is_some_and(|f| !f.is_none()) {
+        return 0.0;
+    }
+    let lw = line.width.unwrap_or(0.75).max(0.0);
+    if border_outside(is_pic, effects) && outside_line(line, lw).is_some() { lw } else { lw / 2.0 }
+}
+
 /// A shape's outline as it casts a shadow: its line, that line's placeholder colour and opacity,
 /// and the space it is stroked in (see `Renderer::line_space`).
 pub(crate) struct Caster<'a> {

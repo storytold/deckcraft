@@ -28,6 +28,7 @@ mod pathgrad;
 mod placed;
 mod radar;
 mod ramp;
+mod reveal;
 mod table;
 mod transition;
 mod warp;

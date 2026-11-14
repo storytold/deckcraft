@@ -3260,3 +3260,38 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+/// Ink (pixels that are not white) in rows `y0..y1`.
+fn inked_rows(img: &Image, y0: u32, y1: u32) -> usize {
+    let w = img.width as usize;
+    img.pixels.as_chunks::<4>().0.chunks(w).skip(y0 as usize).take((y1 - y0) as usize).flatten().filter(|px| px[1] < 200).count()
+}
+
+#[test]
+fn a_paragraph_is_revealed_through_its_own_text_and_the_others_are_untouched() {
+    use crate::ParaState;
+    use deckcraft_anim::{Reveal, RevealShape};
+    let p = deck_with(vec![text_shape(1, "WWWW\nWWWW", 0.0, 0.0)]);
+    let render = |reveal: Option<Reveal>| {
+        let state = move |_: ShapeId| ShapeState { paras: vec![(0, ParaState { reveal, ..Default::default() })], ..Default::default() };
+        render_slide(&p, 0, &RenderOpts { scale: 1.0, state: Some(&state), ..Default::default() })
+    };
+    let (first, second) = ((0, 52), (52, 100));
+    let whole = render(None);
+    assert!(inked_rows(&whole, first.0, first.1) > 500 && inked_rows(&whole, second.0, second.1) > 500, "two lines of text");
+    // The "in" directions start with the whole paragraph hidden and end with it whole.
+    let hidden = render(Some(Reveal::new(RevealShape::Box, true, 0.0)));
+    assert_eq!(inked_rows(&hidden, first.0, first.1), 0, "the revealed paragraph shows nothing yet");
+    assert_eq!(inked_rows(&hidden, second.0, second.1), inked_rows(&whole, second.0, second.1), "the next one is not touched");
+    let done = render(Some(Reveal::new(RevealShape::Box, true, 1.0)));
+    assert_eq!(inked_rows(&done, first.0, first.1), inked_rows(&whole, first.0, first.1));
+    // Half way, a hole closes in the middle of the paragraph's own text, not of the shape's frame
+    // (600 pt wide, while the text is about a third of that): the edges show before the middle.
+    let half = render(Some(Reveal::new(RevealShape::Box, true, 0.5)));
+    let (shown, all) = (inked_rows(&half, first.0, first.1), inked_rows(&whole, first.0, first.1));
+    assert!(shown > 0 && shown < all, "part of the paragraph shows: {shown} of {all}");
+    // A wipe from the left shows the left part of the same paragraph first.
+    let wipe = render(Some(Reveal::new(RevealShape::WipeLeft, false, 0.5)));
+    let left_part = inked_rows(&wipe, first.0, first.1);
+    assert!(left_part > 0 && left_part < all, "{left_part} of {all}");
+}
