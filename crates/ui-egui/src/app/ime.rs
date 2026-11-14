@@ -17,6 +17,16 @@ impl SlideApp {
                 })
                 .collect()
         });
+        let lang = crate::i18n::current();
+        if self.catalog_noted != Some(lang) {
+            // The language's own face is now installed: characters seen against the old fonts and
+            // the open presentation's text must be checked against it.
+            self.ui_fonts.reset_coverage();
+            for text in lang.catalog_text() {
+                self.ui_fonts.note(ctx, text);
+            }
+            self.catalog_noted = Some(lang);
+        }
         self.ui_fonts.note(ctx, &typed);
         for d in self.session.documents() {
             self.ui_fonts.note(ctx, &d.title());

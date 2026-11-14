@@ -1194,9 +1194,18 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
     }
     let last = bridge.borrow().last.clone().unwrap();
     assert!(last.grid);
+    assert_eq!(last.language, "en");
     assert_eq!(last.slides.as_ref().map(Vec::len), Some(3), "the popup gets a thumbnail per slide");
     assert!(last.slides.iter().flatten().all(|p| p.width.max(p.height) <= 96), "thumbnails stay small enough for one message");
     assert!(last.current.is_none() && last.next.is_none(), "the grid replaces both previews");
+    crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n");
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    for _ in 0..20 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    assert_eq!(bridge.borrow().last.as_ref().map(|s| s.language.as_str()), Some("de"));
+    h.state_mut().run("app.language", json!({"language": "en"})).unwrap();
     bridge.borrow_mut().commands.push(Command::Goto { slide: 2 });
     h.run_steps(2);
     let show = h.state().show.as_ref().unwrap();

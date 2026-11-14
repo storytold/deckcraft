@@ -61,12 +61,12 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Close")));
                     if resp.hovered() {
                         ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
                     }
                     icons::paint(ui.painter(), r.shrink(3.0), Icon::Close, t.text_dim, false);
-                    if resp.on_hover_text("Close").clicked() {
+                    if resp.on_hover_text(tl!("Close")).clicked() {
                         close = true;
                     }
                 });
@@ -91,5 +91,25 @@ mod tests {
         assert!(f(&["Aptos", "Sora"]).unwrap().starts_with("Aptos and Sora aren't installed"));
         assert!(f(&["A", "B", "C"]).unwrap().starts_with("A, B and C aren't"));
         assert!(f(&["A", "B", "C", "D", "E"]).unwrap().starts_with("A, B, C and 2 more aren't"));
+    }
+
+    #[test]
+    fn close_button_uses_translated_accessible_name() {
+        use egui_kittest::kittest::Queryable;
+        let de = crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n\tClose\tSchließen\n");
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.ui.language = "de".into();
+        app.notify("Notice");
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(800.0, 600.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                crate::i18n::set_current(de);
+                show(app, ui.ctx());
+            },
+            app,
+        );
+        h.run_steps(2);
+        assert!(h.query_by_role_and_label(egui::accesskit::Role::Button, "Schließen").is_some());
+        assert!(h.query_by_role_and_label(egui::accesskit::Role::Button, "Close").is_none());
+        crate::i18n::set_current(crate::i18n::Lang::EN);
     }
 }

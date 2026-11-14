@@ -181,6 +181,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 blank: show.blank_name().map(str::to_owned),
                 grid: show.presenter_grid,
                 zoom_armed: show.zoom_arm,
+                language: crate::i18n::Lang::from_pref(&app.ui.language).code().to_owned(),
                 // The grid replaces both previews in the popup; leaving them out keeps one message small.
                 current: show.remote_preview.clone().filter(|_| !show.presenter_grid),
                 next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next && !show.presenter_grid).map(|(_, image)| image.clone()),
@@ -769,16 +770,16 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(tl!("Close")).clicked() {
             out.keep = false;
         }
-        if child.button("▶").clicked() {
+        if child.button(tl!("▶")).clicked() {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
         }
-        if child.button("◀").clicked() {
+        if child.button(tl!("◀")).clicked() {
             let a = show.state.prev(doc);
             show.apply(a, doc, now);
         }
