@@ -730,7 +730,6 @@ mod tests {
     #[test]
     fn commands_do_not_touch_the_file_system_themselves() {
         /// Every `.rs` file under `dir`, added to `files`.
-        /// Every `.rs` file under `dir`, added to `files`.
         fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
