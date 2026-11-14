@@ -220,7 +220,7 @@ fn show_with_clip() -> (egui_kittest::Harness<'static, SlideApp>, ShapeId, Pos2,
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
     let doc = harness.state().session.active().unwrap().doc.clone();
-    let bar = slide_media_bars(slide.get(), &doc, 0)[0].3;
+    let bar = slide_media_bars(slide.get(), &doc, 0, &[])[0].3;
     let track = pos2(bar.min.x + bar.width() * 0.8, bar.center().y);
     (harness, id, track, on_bar)
 }
@@ -1368,4 +1368,127 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.kind, "fade");
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
+}
+
+/// #1659: an audio clip with "Hide during show" is hidden during the presentation,
+/// does not show a playback bar on hover, and stays hidden in presenter view previews.
+#[test]
+fn audio_with_hide_during_show_stays_hidden_in_presentation_mode() {
+    let size = vec2(1000.0, 700.0);
+    let mut session = deckcraft_engine::Session::with_new();
+    let id = ShapeId(5000);
+    session
+        .edit(|doc, _| {
+            let media = doc.add_media("audio.wav", "audio/wav", silent_wav(5)).unwrap();
+            let (w, h) = (doc.slide_size.width, doc.slide_size.height);
+            let clip = deckcraft_model::MediaClip {
+                media,
+                video: false,
+                hide_while_not_playing: true,
+                volume: 1.0,
+                duration_ms: 5000,
+                ..Default::default()
+            };
+            let xfrm = deckcraft_geom::Xfrm::new(w * 0.4, h * 0.4, 48.0, 48.0);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            slide.shapes.push(deckcraft_model::Shape { id, xfrm: Some(xfrm), kind: deckcraft_model::ShapeKind::Media(clip), ..Default::default() });
+            Ok(())
+        })
+        .unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let on_bar = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = on_bar.clone();
+    let under_visible = std::rc::Rc::new(std::cell::Cell::new(true));
+    let under_seen = under_visible.clone();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let mut harness = egui_kittest::Harness::builder().with_size(size).build_ui_state(
+        move |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            if let (Some(show), Some(d)) = (app.show.as_mut(), app.session.active()) {
+                let now = ui.input(|i| i.time);
+                seen.set(pointer_on_media_bar(ui.ctx(), ui, &d.doc, show, now));
+                under_seen.set(super::media::shapes_under_pointer(ui.ctx(), ui, show, &d.doc, now).is_some_and(|u| u.visible(id)));
+            }
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+
+    let show = harness.state().show.as_ref().unwrap();
+    let (key, _) = show.tex.as_ref().expect("frame rendered");
+    assert!(key.hidden.contains(&id), "audio clip must be hidden in the frame key");
+
+    let shape_pos = pos2(size.x * 0.4 + 24.0, size.y * 0.4 + 24.0);
+    harness.hover_at(shape_pos);
+    harness.run_steps(2);
+    assert!(!on_bar.get(), "hidden audio has no active media bar under the cursor");
+
+    assert!(!under_visible.get(), "hidden audio must not be treated as visible in ordinary shape hit-testing");
+    let preview = presenter::render_preview(&doc, 0, (480, 270), 0);
+    assert_eq!(preview.size, [480, 270]);
+}
+
+/// Paused video with "hide while not playing" stays visible and targetable so it can be resumed.
+#[test]
+fn paused_video_with_hide_stays_targetable() {
+    let size = vec2(1000.0, 700.0);
+    let mut session = deckcraft_engine::Session::with_new();
+    let id = ShapeId(6000);
+    session
+        .edit(|doc, _| {
+            let media = doc.add_media("clip.wav", "audio/wav", silent_wav(10)).unwrap();
+            let (w, h) = (doc.slide_size.width, doc.slide_size.height);
+            let clip = deckcraft_model::MediaClip {
+                media,
+                video: true,
+                hide_while_not_playing: true,
+                volume: 1.0,
+                duration_ms: 10_000,
+                ..Default::default()
+            };
+            let xfrm = deckcraft_geom::Xfrm::new(w * 0.2, h * 0.2, w * 0.6, h * 0.6);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            slide.shapes.push(deckcraft_model::Shape { id, xfrm: Some(xfrm), kind: deckcraft_model::ShapeKind::Media(clip), ..Default::default() });
+            Ok(())
+        })
+        .unwrap();
+    let hit_target = std::rc::Rc::new(std::cell::Cell::new(false));
+    let hit_seen = hit_target.clone();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let mut harness = egui_kittest::Harness::builder().with_size(size).build_ui_state(
+        move |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            if let (Some(show), Some(d)) = (app.show.as_mut(), app.session.active()) {
+                hit_seen.set(super::media::media_hit(ui.ctx(), ui, show, &d.doc).is_some_and(|(hit_id, _)| hit_id == id));
+            }
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+
+    // Unstarted: video is hidden.
+    let show = harness.state().show.as_ref().unwrap();
+    assert!(show.tex.as_ref().unwrap().0.hidden.contains(&id));
+
+    // Simulate paused state (mid-playback).
+    let doc_uid = harness.state().session.active().unwrap().uid;
+    let doc = harness.state().session.active().unwrap().doc.clone();
+    let clip = crate::media::find_clip(&doc, id, Some(0)).unwrap();
+    harness.state_mut().media.play(doc_uid, &doc, id, &clip, Some(2.0), crate::media::Owner::Show);
+    harness.state_mut().media.toggle(doc_uid, &doc, id, &clip, crate::media::Owner::Show);
+    harness.hover_at(pos2(size.x * 0.5, size.y * 0.5));
+    harness.run_steps(2);
+
+    // Paused: video is not hidden, can be targeted and resumed.
+    let show = harness.state().show.as_ref().unwrap();
+    assert!(!show.tex.as_ref().unwrap().0.hidden.contains(&id));
+    assert!(hit_target.get(), "paused video must remain targetable to resume playback");
 }

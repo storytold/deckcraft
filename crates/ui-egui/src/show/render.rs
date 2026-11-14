@@ -121,7 +121,7 @@ pub(super) fn below_playing_video(doc: &Presentation, idx: usize, videos: &[Shap
 }
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.
-fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
+pub(super) fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
     crate::media::slide_media(doc, idx).into_iter().filter(|(_, _, clip)| clip.hide_while_not_playing).map(|m| m.0).collect()
 }
 
@@ -183,8 +183,11 @@ pub(super) fn quad_mesh(tex: Option<egui::TextureId>, rect: Rect, l: &Layer, col
 pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Option<usize>, to: usize, size: (u32, u32)) -> [Option<TextureHandle>; 4] {
     use deckcraft_render::SlidePart;
     let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
-    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
     let tex = |i: usize, part: SlidePart, name: &str| {
+        let hidden = hidden_on_entry(doc, i);
+        let state = move |id: ShapeId| deckcraft_render::ShapeState { visible: !hidden.contains(&id), ..Default::default() };
+        let opts =
+            RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), state: Some(&state), threads, ..Default::default() };
         let img = deckcraft_render::render_slide_part(doc, i, part, &opts);
         crate::textures::upload(ctx, name, crate::textures::to_color_image(&img, false))
     };

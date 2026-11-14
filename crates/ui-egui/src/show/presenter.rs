@@ -76,8 +76,11 @@ pub(super) fn wall_clock() -> String {
 }
 
 /// The Presenter View's preview of slide `n`, `size` pixels.
-fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) -> egui::ColorImage {
-    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
+pub(super) fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) -> egui::ColorImage {
+    let hidden = super::render::hidden_on_entry(doc, n);
+    let state = move |id: deckcraft_model::ShapeId| deckcraft_render::ShapeState { visible: !hidden.contains(&id), ..Default::default() };
+    let opts =
+        RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, state: Some(&state), ..Default::default() };
     crate::textures::to_color_image(&deckcraft_render::render_slide(doc, n, &opts), false)
 }
 
