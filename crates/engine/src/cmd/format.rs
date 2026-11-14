@@ -430,6 +430,40 @@ mod tests {
         }
     }
 
+    /// Table text inherits from the master's other-text style: a selected table keeps that glow
+    /// in PPTX when its inherited shadow is turned off.
+    #[test]
+    fn inherited_shadow_off_keeps_a_table_cells_inherited_glow_in_pptx() {
+        use deckcraft_model::style::Glow;
+        use deckcraft_model::text::LevelStyle;
+        use deckcraft_model::{ColorRef, Rgba, ShapeKind};
+        use std::sync::Arc;
+
+        let glow = Glow { color: ColorRef::rgb(Rgba::rgb(255, 0, 0)), radius: 6.0 };
+        let mut s = Session::with_new();
+        s.execute("insert.table", &json!({"rows": 1, "cols": 2, "rect": [40.0, 40.0, 300.0, 60.0], "data": [["a", "b"]]})).unwrap();
+        let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let run = RunProps { shadow: Some(default_text_shadow()), glow: Some(glow.clone()), ..Default::default() };
+        Arc::make_mut(&mut doc.masters[0]).other_style.set(0, LevelStyle { run, ..Default::default() });
+        s.execute("format.textShadow", &json!({"on": false})).unwrap();
+
+        let doc = &s.doc().unwrap().doc;
+        let reopened = deckcraft_pptx::import(&deckcraft_pptx::export(doc).unwrap()).unwrap();
+        let table = reopened.slides[0]
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Table(t) => Some(t),
+                _ => None,
+            })
+            .unwrap();
+        for cell in &table.rows[0].cells {
+            let r = &cell.text.paragraphs[0].runs[0].props;
+            assert!(r.no_shadow && r.shadow.is_none());
+            assert_eq!(r.glow.as_ref(), Some(&glow));
+        }
+    }
+
     #[test]
     fn font_dialog_applies_character_formatting_in_one_undo() {
         let mut s = shape();

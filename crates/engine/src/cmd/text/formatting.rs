@@ -58,19 +58,31 @@ pub(crate) fn format_run_levels(
     } else {
         Vec::new()
     };
-    // Each shape's paragraph-level effects, for runs whose shadow is turned off.
+    // Each shape's (or table cell's) paragraph-level effects, for runs whose shadow is turned off.
     let inherited: Vec<(ShapeId, Vec<RunProps>)> =
         ids.iter().filter_map(|id| st.shape(*id).and_then(|sh| Some((*id, inherited_effects(st, sh, sh.text.as_ref()?))))).collect();
+    let inherited_cells: Vec<(ShapeId, Vec<Vec<Vec<RunProps>>>)> = ids
+        .iter()
+        .filter_map(|id| {
+            let sh = st.shape(*id)?;
+            let ShapeKind::Table(t) = &sh.kind else { return None };
+            Some((*id, t.rows.iter().map(|row| row.cells.iter().map(|cell| inherited_effects(st, sh, &cell.text)).collect()).collect()))
+        })
+        .collect();
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         let id = sh.id;
         match &mut sh.kind {
             ShapeKind::Table(t) => {
                 // Only the selected cells, when a range of them is selected.
                 let range = crate::cmd::table::selected_range(cells, id, t);
+                let inh = inherited_cells.iter().find(|(i, _)| *i == id).map(|(_, v)| v);
                 for (r, row) in t.rows.iter_mut().enumerate() {
                     for (c, cell) in row.cells.iter_mut().enumerate() {
                         if crate::cmd::table::in_range(range, r, c) {
                             ed::format_all(&mut cell.text, f);
+                            if let Some(e) = inh.and_then(|v| v.get(r)).and_then(|row| row.get(c)) {
+                                keep_inherited_effects(&mut cell.text, e);
+                            }
                         }
                     }
                 }
