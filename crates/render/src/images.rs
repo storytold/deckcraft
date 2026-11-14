@@ -178,6 +178,15 @@ fn decode_raster(bytes: &[u8], max: u64) -> Option<image::RgbaImage> {
     Some(img.to_rgba8())
 }
 
+/// A raster picture's own pixel size, read from its header without decoding the pixels.
+pub fn pixel_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if crate::metafile::is_metafile(bytes) {
+        return None;
+    }
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()?;
+    (w > 0 && h > 0).then_some((w, h))
+}
+
 /// A raster picture's own size in 96-dpi pixels (so 0.75 pt each), read from its header: its
 /// pixel size, scaled by the resolution it records (PNG `pHYs`, JPEG JFIF density) when that
 /// isn't 96 dpi, as PowerPoint sizes pictures. `None` for metafiles and anything unreadable.
