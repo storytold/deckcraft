@@ -127,7 +127,7 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
 }
 
-/// `a:alpha` for `transparency` (0–1) on `c`, replacing any alpha it had; fully opaque drops it.
+/// `a:alpha` for `transparency` (0–1) on `c`, replacing every alpha it had; an RGB color that ends up opaque gets none.
 fn with_transparency(c: &mut ColorRef, transparency: f64) {
     c.set_alpha(1.0 - transparency);
 }

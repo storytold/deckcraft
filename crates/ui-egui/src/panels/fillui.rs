@@ -44,12 +44,9 @@ pub fn gradient_json(g: &Gradient) -> Value {
     }
 }
 
-/// `c` with its alpha set to `a` (0–1) when `a` is below 1, replacing every alpha it had; at 1, `c`
-/// keeps its own alpha.
+/// `c` with its alpha set to `a` (0–1), replacing every alpha it had.
 fn with_alpha(mut c: ColorRef, a: f64) -> ColorRef {
-    if a < 1.0 {
-        c.set_alpha(a);
-    }
+    c.set_alpha(a);
     c
 }
 

@@ -287,7 +287,6 @@ fn requested_fill(s: &mut Session, p: &Value) -> Result<Option<Option<Fill>>> {
     Ok(None)
 }
 
-/// The effective fill of each targeted shape, for a transparency change on an inherited (style) fill.
 /// The fill `shape` draws with: its own, or the one it inherits from its layout, master or theme
 /// style, with a solid color resolved to RGB (alpha included). `None` when nothing gives it one.
 pub fn effective_fill(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Option<Fill> {
@@ -303,6 +302,7 @@ fn resolved_fill(ctx: &deckcraft_model::resolve::Ctx, sh: &deckcraft_model::Shap
     })
 }
 
+/// The effective fill of each targeted shape, for a transparency change on an inherited (style) fill.
 fn inherited_fills(s: &Session, p: &Value) -> Result<HashMap<ShapeId, Option<Fill>>> {
     let st = s.doc()?;
     let ctx = super::text::ctx_for(&st.doc, &st.selection);
