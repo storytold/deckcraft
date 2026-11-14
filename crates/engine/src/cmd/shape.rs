@@ -112,7 +112,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Outline",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
+            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|lgDashDot|lgDashDotDot|sysDot|sysDash|sysDashDot|sysDashDotDot (PowerPoint's Round Dot and Square Dot are dot with cap round or square), cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize? (both width and length), headWidth?, headLength?, tailWidth?, tailLength? (sm|med|lg), reset?, ids?}; a group also formats its members",
             has_selection,
             line
         ),
