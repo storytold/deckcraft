@@ -153,3 +153,15 @@ fn a_corrupt_tag_is_kept_as_an_ordinary_tag() {
         assert_eq!(groups(&deckcraft_pptx::import(&resaved).expect("import"))[0].tags, h.tags, "{bad}");
     }
 }
+
+/// The description is written first among a shape's tags, so the cap on tags per part never drops it.
+#[test]
+fn the_description_survives_beside_many_other_tags() {
+    let mut p = deck(&[("insert.harveyBall", json!({"value": 2}))]);
+    let want = groups(&p)[0].generated.clone();
+    let slide = std::sync::Arc::make_mut(&mut p.slides[1]);
+    let g = slide.shapes.iter_mut().find(|s| s.is_group()).expect("group");
+    g.tags = (0..10_000).map(|i| (format!("T{i}"), "x".to_string())).collect();
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("import");
+    assert_eq!(groups(&back)[0].generated, want);
+}

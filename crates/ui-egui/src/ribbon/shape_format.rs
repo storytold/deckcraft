@@ -236,7 +236,9 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
 const HARVEY_PARTS: [u16; 6] = [2, 3, 4, 5, 8, 10];
 
 /// Shape Format ▸ Harvey Ball or Checkbox, shown while the selection is one (or one of its parts):
-/// the ball's value, parts and colours, or the checkbox's state and colour.
+/// the ball's value, parts and colours, or the checkbox's state and colour. Colours and state go to
+/// every selected element of the kind; the stepper and parts, whose values come from the first
+/// one, to that one.
 fn generated_group(app: &mut SlideApp, ui: &mut Ui, gid: ShapeId, g: &Generated, sc: &deckcraft_color::ColorScheme) {
     match g {
         Generated::HarveyBall(b) => group(ui, |ui| {
@@ -266,13 +268,11 @@ fn generated_group(app: &mut SlideApp, ui: &mut Ui, gid: ShapeId, g: &Generated,
                 });
             });
             rows(ui, |ui| {
-                colour_menu(app, ui, sc, (Icon::ShapeFill, "Ball Fill"), None, |c| ("harveyBall.set", json!({"id": gid, "fill": c})));
+                colour_menu(app, ui, sc, (Icon::ShapeFill, "Ball Fill"), None, |c| ("harveyBall.set", json!({"fill": c})));
                 colour_menu(app, ui, sc, (Icon::FormatBackground, "Ball Background"), Some("No Fill"), |c| {
-                    ("harveyBall.set", json!({"id": gid, "background": c}))
+                    ("harveyBall.set", json!({"background": c}))
                 });
-                colour_menu(app, ui, sc, (Icon::ShapeOutline, "Ball Outline"), Some("No Outline"), |c| {
-                    ("harveyBall.set", json!({"id": gid, "outline": c}))
-                });
+                colour_menu(app, ui, sc, (Icon::ShapeOutline, "Ball Outline"), Some("No Outline"), |c| ("harveyBall.set", json!({"outline": c})));
             });
         }),
         Generated::Checkbox(c) => group(ui, |ui| {
@@ -281,12 +281,12 @@ fn generated_group(app: &mut SlideApp, ui: &mut Ui, gid: ShapeId, g: &Generated,
                 widgets::dropdown(ui, "Checkbox State", current, 110.0, true, |ui| {
                     for (state, label) in CHECK_STATES {
                         if picture_row(ui, label, c.state.name() == state, |p, r, ink| paint_checkbox(p, r, state, ink)) {
-                            run(app, "checkbox.set", json!({"id": gid, "state": state}));
+                            run(app, "checkbox.set", json!({"state": state}));
                             ui.close();
                         }
                     }
                 });
-                colour_menu(app, ui, sc, (Icon::ShapeOutline, "Checkbox Color"), None, |col| ("checkbox.set", json!({"id": gid, "color": col})));
+                colour_menu(app, ui, sc, (Icon::ShapeOutline, "Checkbox Color"), None, |col| ("checkbox.set", json!({"color": col})));
             });
         }),
     }

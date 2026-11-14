@@ -160,11 +160,12 @@ fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
 
 /// The tags a shape is written with: a generated group's description (a Harvey ball, a checkbox)
 /// joins its kept tags as `ARTCRAFT_GENERATED`, once (a stale copy among the kept tags is dropped).
-pub(crate) fn shape_tags(s: &Shape) -> std::borrow::Cow<'_, [(String, String)]> {
+/// It goes first, so the cap on tags per part (`Exp::tags_rel`) never drops it.
+fn shape_tags(s: &Shape) -> std::borrow::Cow<'_, [(String, String)]> {
     use deckcraft_model::generated::TAG;
     let Some(value) = s.generated.as_ref().filter(|_| s.is_group()).and_then(|g| g.to_tag()) else { return std::borrow::Cow::Borrowed(&s.tags) };
-    let mut tags: Vec<(String, String)> = s.tags.iter().filter(|(n, _)| n != TAG).cloned().collect();
-    tags.push((TAG.to_string(), value));
+    let mut tags = vec![(TAG.to_string(), value)];
+    tags.extend(s.tags.iter().filter(|(n, _)| n != TAG).cloned());
     std::borrow::Cow::Owned(tags)
 }
 

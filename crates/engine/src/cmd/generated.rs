@@ -7,7 +7,7 @@
 //! the parts can't be moved, resized or deleted on their own ([`keep_whole`]). Hand-formatting a
 //! part is allowed; the next redraw replaces it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use deckcraft_geom::Xfrm;
@@ -185,18 +185,31 @@ fn owner(shapes: &[Shape], id: ShapeId, k: Kind) -> Option<ShapeId> {
     chain.iter().rev().find(|s| s.generated.as_ref().is_some_and(|g| Kind::of(g) == k)).map(|s| s.id)
 }
 
-/// The selected elements of kind `k`, each once.
+/// The selected elements of kind `k`, each once, in selection order. One walk of the tree however
+/// much is selected: the ribbon asks every frame.
 fn selected_of(st: &crate::DocState, k: Kind) -> Vec<ShapeId> {
-    let Some(shapes) = current_shapes(&st.doc, &st.selection) else { return vec![] };
-    let mut out: Vec<ShapeId> = vec![];
-    for id in &st.selection.shapes {
-        if let Some(g) = owner(shapes, *id, k)
-            && !out.contains(&g)
-        {
-            out.push(g);
+    fn walk(list: &[Shape], k: Kind, owner: Option<ShapeId>, wanted: &HashSet<ShapeId>, found: &mut HashMap<ShapeId, ShapeId>, depth: usize) {
+        for sh in list {
+            let own = if sh.generated.as_ref().is_some_and(|g| Kind::of(g) == k) { Some(sh.id) } else { owner };
+            if let Some(o) = own
+                && wanted.contains(&sh.id)
+            {
+                found.insert(sh.id, o);
+            }
+            if depth < MAX_DEPTH {
+                walk(sh.children(), k, own, wanted, found, depth + 1);
+            }
         }
     }
-    out
+    let Some(shapes) = current_shapes(&st.doc, &st.selection) else { return vec![] };
+    if st.selection.shapes.is_empty() {
+        return vec![];
+    }
+    let wanted: HashSet<ShapeId> = st.selection.shapes.iter().copied().collect();
+    let mut found = HashMap::new();
+    walk(shapes, k, None, &wanted, &mut found, 0);
+    let mut seen = HashSet::new();
+    st.selection.shapes.iter().filter_map(|id| found.get(id).copied()).filter(|g| seen.insert(*g)).collect()
 }
 
 /// The element the selection is (or is inside), for the ribbon: its group id and description.
