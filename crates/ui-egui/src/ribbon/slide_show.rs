@@ -54,8 +54,13 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
 
 pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Cameo, "Cameo", false);
-        let _ = r.on_hover_text("Camera capture is not available yet");
+        let available = app.camera_available();
+        let on = app.camera_preview_on();
+        let (cameo, _) = big_button_ex(ui, Icon::Cameo, "Cameo", available, false, on);
+        let cameo = cameo.on_hover_text(app.camera_status_text());
+        if cameo.clicked() {
+            app.toggle_camera_preview();
+        }
         if big_button(ui, Icon::PlayFromStart, "From\nBeginning", true).clicked() {
             app.start_show(app.show_start_index(), false);
             if let Some(s) = app.show.as_mut() {

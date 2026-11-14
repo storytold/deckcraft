@@ -30,6 +30,8 @@ web-time = { workspace = true }
 craft-update = { workspace = true }
 
 [dev-dependencies]
+# The scripted camera the UI tests inject through `Services.camera_in`.
+deckcraft-media = { workspace = true, features = ["test-util"] }
 skrifa = { workspace = true }
 # kittest's own dev-dependencies do not propagate; tests need both font features explicitly.
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }

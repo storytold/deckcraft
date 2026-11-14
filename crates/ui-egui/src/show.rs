@@ -15,7 +15,7 @@ use crate::theme;
 mod keys;
 mod media;
 mod presenter;
-mod render;
+pub(crate) mod render;
 mod ui;
 mod zoom;
 pub(crate) use zoom::GRID_CAP;
@@ -26,7 +26,7 @@ use presenter::{NOTES_DEFAULT, PresenterTimer};
 #[cfg(test)]
 use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_notes, presenter_window, wall_clock};
 #[cfg(test)]
-use render::{below_playing_video, next_rect, render_frame, start_prefetch};
+use render::{below_live, next_rect, render_frame, start_prefetch};
 use render::{render_backdrop, render_threads};
 #[cfg(test)]
 use ui::transition_layers;
@@ -55,9 +55,12 @@ pub struct Show {
     step_end: f64,
     trans: Option<Transition>,
     tex: Option<(Key, TextureHandle)>,
-    /// The shapes stacked above the playing videos, drawn over the video frames (#1005).
-    overlay: Option<(Key, Vec<ShapeId>, TextureHandle)>,
-    /// The Presenter View's next-slide preview: the presentation and slide it shows.
+    /// The shapes stacked above the live frames, drawn over them (#1005, Cameos): one cached
+    /// overlay per skip list, so painting another frame does not replace a different slice.
+    overlay: Vec<(Key, Vec<ShapeId>, TextureHandle)>,
+    /// The Presenter View's above-Cameo overlay: document identity, slide, size, skip list, step,
+    /// GIF frames, trigger plays, and the texture.
+    presenter_over: Option<(usize, usize, (u32, u32), Vec<ShapeId>, usize, u64, Vec<(ShapeId, usize)>, TextureHandle)>,
     next_tex: Option<(std::sync::Arc<Presentation>, usize, TextureHandle)>,
     /// The one next-slide preview being rendered on another thread (#964).
     next_job: Option<(std::sync::Arc<Presentation>, usize, std::sync::mpsc::Receiver<egui::ColorImage>)>,
@@ -233,7 +236,8 @@ impl Show {
             step_end: 0.0,
             trans: None,
             tex: None,
-            overlay: None,
+            overlay: vec![],
+            presenter_over: None,
             next_tex: None,
             next_job: None,
             #[cfg(test)]
@@ -609,6 +613,12 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
             })
             .collect(),
     }
+}
+
+/// The show's animation state for a layer the UI paints itself (a live Cameo's camera) rather
+/// than the renderer, so both treat the shape the same way.
+fn live_state<'a>(tl: &'a Timeline, step: usize, t: f64, plays: &'a [TriggerPlay], stamps: &'a [StepStamp]) -> impl Fn(ShapeId) -> ShapeState + 'a {
+    move |id| state_for(tl, id, step, t, plays, stamps)
 }
 
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.

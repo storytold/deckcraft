@@ -8,6 +8,11 @@ description = "DeckCraft media: probing, audio decoding (MP3, AAC/M4A, WAV, AIFF
 [lints]
 workspace = true
 
+[features]
+# The scripted camera in `camera::testing`, for UI tests and headless builds. Off by default so
+# production builds carry only the interface.
+test-util = []
+
 [dependencies]
 # Containers (MP4/MOV, Matroska/WebM, Ogg), the Opus decoder and the video decoders, shared with the other Craft apps.
 craft-media = { workspace = true, features = ["isobmff", "matroska", "ogg"] }
@@ -15,6 +20,7 @@ craft-audio = { workspace = true }
 craft-video = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+web-time = { workspace = true }
 image = { workspace = true }
 # Audio decoding for the formats we have no decoder of our own for (MPL-2.0, used unmodified,
 # as in FilmCraft).

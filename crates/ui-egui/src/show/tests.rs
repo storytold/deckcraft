@@ -18,12 +18,114 @@ fn shapes_above_a_playing_video_are_the_overlay() {
     let ids: Vec<ShapeId> = slide.shapes.iter().map(|s| s.id).collect();
     slide.shapes[1].kind = deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, ..Default::default() });
     // Video in the middle: the shape above it is drawn over it.
-    assert_eq!(below_playing_video(&doc, 0, &[ids[1]]), vec![ids[0], ids[1]]);
+    assert_eq!(below_live(&doc, 0, &[ids[1]]), vec![ids[0], ids[1]]);
     // Video on top: nothing above it, the frame is painted last as before.
     std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.swap(1, 2);
-    assert!(below_playing_video(&doc, 0, &[ids[1]]).is_empty());
+    assert!(below_live(&doc, 0, &[ids[1]]).is_empty());
     // No video playing.
-    assert!(below_playing_video(&doc, 0, &[]).is_empty());
+    assert!(below_live(&doc, 0, &[]).is_empty());
+}
+
+/// #1837: a Cameo's live frame is composited where the Cameo sits in the stack, so a shape placed
+/// above it is drawn over the frame instead of being covered by it.
+#[test]
+fn shapes_above_a_cameo_are_the_overlay() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let cameo = crate::camera::cameo_ids(&doc, 0);
+    assert_eq!(cameo.len(), 1);
+    // The Cameo is the topmost object: nothing is above it, so its frame is painted last.
+    assert!(below_live(&doc, 0, &cameo).is_empty());
+    let above = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let above = ShapeId(above["id"].as_u64().unwrap() as u32);
+    let doc = session.active().unwrap().doc.clone();
+    let skip = below_live(&doc, 0, &cameo);
+    assert!(!skip.contains(&above), "the shape above the Cameo goes into the overlay");
+    assert!(skip.contains(&cameo[0]), "the Cameo's own box is left to the camera layer");
+    assert_eq!(skip.len(), doc.slides[0].shapes.len() - 1, "everything at or below it is skipped");
+}
+
+/// A Cameo nested in a group counts at the group's stack position: a shape above the group goes
+/// into the overlay, and the group itself is skipped (its frame belongs to the camera layer).
+#[test]
+fn a_grouped_cameo_counts_at_its_group() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).unwrap();
+    let cameo_doc = session.active().unwrap().doc.clone();
+    let cameo = crate::camera::cameo_ids(&cameo_doc, 0);
+    assert_eq!(cameo.len(), 1);
+    let buddy = session.execute("shape.insert", &json!({"preset": "rect", "rect": [300.0, 300.0, 60.0, 60.0]})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let ids: Vec<u32> = doc.slides[0].shapes.iter().map(|s| s.id.0).collect();
+    session.execute("arrange.group", &json!({"ids": ids})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    assert_eq!(doc.slides[0].shapes.len(), 1, "the Cameo and its buddy are one group");
+    let group = doc.slides[0].shapes[0].id;
+    // No shape above the group: the frame is painted last.
+    assert!(below_live(&doc, 0, &cameo).is_empty());
+    let above = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let above = ShapeId(above["id"].as_u64().unwrap() as u32);
+    let doc = session.active().unwrap().doc.clone();
+    let skip = below_live(&doc, 0, &cameo);
+    assert!(skip.contains(&group), "the group holding the Cameo is left to the camera layer");
+    assert!(!skip.contains(&above), "the shape above the group goes into the overlay");
+    let _ = buddy;
+}
+
+/// Two live Cameos with a shape between them: the middle slice covers the lower Cameo and what
+/// is below it while leaving the middle shape out, so the interleaved paint lands it between
+/// the two frames instead of above both.
+#[test]
+fn a_shape_between_two_cameos_lands_between_their_frames() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).expect("first Cameo");
+    let bottom = crate::camera::cameo_ids(&session.active().unwrap().doc, 0);
+    assert_eq!(bottom.len(), 1);
+    let middle = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let middle = ShapeId(middle["id"].as_u64().unwrap() as u32);
+    session.execute("insert.cameo", &json!({})).expect("second Cameo");
+    let doc = session.active().unwrap().doc.clone();
+    let live: Vec<ShapeId> = crate::camera::cameo_ids(&doc, 0);
+    assert_eq!(live.len(), 2, "both Cameos paint a frame");
+    let (lower, upper) = (live[0], live[1]);
+    // The middle slice: the lower Cameo is painted and everything at or below it is skipped,
+    // while the middle shape and the upper Cameo stay out for their own layers.
+    let lower_slice = below_live(&doc, 0, &[lower]);
+    assert!(lower_slice.contains(&lower), "the lower Cameo is left to the camera layer");
+    assert!(!lower_slice.contains(&middle), "the middle shape is not part of the lower slice");
+    assert!(!lower_slice.contains(&upper), "the upper Cameo is not part of the lower slice");
+    // The full stack: both Cameos are covered by the top slice while both edge shapes stay out.
+    let full = below_live(&doc, 0, &live);
+    assert!(full.contains(&lower) && full.contains(&upper), "both frames are left to the camera layer");
+    assert!(!full.contains(&middle), "the middle shape paints over the frames");
+}
+
+/// A playing video stacked above an overlapping Cameo keeps its frame: the merged paint orders
+/// live layers by top-level stack position, so the video's slice leaves the Cameo's slice below
+/// it instead of painting the Cameo over the video.
+#[test]
+fn a_video_above_a_cameo_keeps_stack_order() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).expect("Cameo");
+    let cameo = crate::camera::cameo_ids(&session.active().unwrap().doc, 0);
+    assert_eq!(cameo.len(), 1);
+    let above = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let above = ShapeId(above["id"].as_u64().unwrap() as u32);
+    // The inserted rect is the top-level video: the merged stack paints the Cameo first, then
+    // the video, so the topmost frame stays visible.
+    let mut doc = (*session.active().unwrap().doc).clone();
+    let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+    slide.shapes.iter_mut().find(|s| s.id == above).expect("the top rect").kind =
+        deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, ..Default::default() });
+    // Bottom-up: the Cameo's slice leaves the video out (it paints in a later layer).
+    let cameo_slice = below_live(&doc, 0, &[cameo[0]]);
+    assert!(cameo_slice.contains(&cameo[0]), "the Cameo is left to the camera layer");
+    assert!(!cameo_slice.contains(&above), "the video above is not part of the Cameo's slice");
+    // With both frames live the topmost frame is painted last, so its own slice is empty —
+    // nothing paints above it (this is the pre-existing `below_live` contract, also used by
+    // the `#1005` video test above).
+    assert!(below_live(&doc, 0, &[cameo[0], above]).is_empty(), "nothing is above the topmost frame");
 }
 
 /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
@@ -137,7 +239,7 @@ fn presenter_all_slides_does_not_cover_the_audience_screen() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -361,7 +463,7 @@ fn presenter_navigation_uses_its_own_keyboard_events() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -1232,13 +1334,13 @@ fn the_presenter_next_preview_arrives_without_blocking_the_frame() {
     let mut show = Show::new(&doc, 0, false, true);
     let mut keep = true;
     let ctx = egui::Context::default();
-    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, 0.0, &mut keep)).textures_delta.clear();
+    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, 0.0, &mut keep, None)).textures_delta.clear();
     assert!(show.next_job.is_some() && show.next_tex.is_none(), "the first frame leaves the preview pending");
     assert_eq!(show.preview_spawns, 1);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -1267,7 +1369,7 @@ fn paging_quickly_renders_one_preview_at_a_time_and_lands_on_the_newest() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );
@@ -1318,7 +1420,7 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, now, keep, None);
         },
         (doc, show, true),
     );

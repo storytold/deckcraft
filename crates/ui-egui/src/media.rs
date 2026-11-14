@@ -68,20 +68,31 @@ pub struct Gif {
 }
 
 /// Pictures in `shapes` and in their groups, each with its xfrm in slide space. `group` is the
-/// enclosing group's slide-space xfrm and child space.
-fn collect_pictures<'a>(shapes: &'a [Shape], group: Option<(Xfrm, Xfrm)>, depth: usize, out: &mut Vec<(&'a Shape, Xfrm)>) {
+/// enclosing group's slide-space xfrm and child space; `group_hidden` is true when an enclosing
+/// group is hidden, so its members stay hidden like the renderer keeps them (`placed::place`
+/// returns nothing below a hidden shape). Hidden shapes themselves are skipped for the same
+/// reason: an editor Cameo tray or a show overlay built from this list must not show a frame
+/// the slide does not draw.
+pub(crate) fn collect_pictures<'a>(
+    shapes: &'a [Shape],
+    group: Option<(Xfrm, Xfrm)>,
+    group_hidden: bool,
+    depth: usize,
+    out: &mut Vec<(&'a Shape, Xfrm)>,
+) {
     if depth > 32 {
         return;
     }
     for sh in shapes {
+        let hidden = group_hidden || sh.hidden;
         let Some(x) = sh.xfrm else { continue };
         let x = match group {
             Some((gx, ch)) => deckcraft_engine::cmd::arrange::child_to_parent(&gx, &ch, &x),
             None => x,
         };
         match &sh.kind {
-            ShapeKind::Picture { .. } => out.push((sh, x)),
-            ShapeKind::Group { children, child } => collect_pictures(children, Some((x, *child)), depth + 1, out),
+            ShapeKind::Picture { .. } if !hidden => out.push((sh, x)),
+            ShapeKind::Group { children, child } => collect_pictures(children, Some((x, *child)), hidden, depth + 1, out),
             _ => {}
         }
     }
@@ -163,7 +174,7 @@ impl MediaHost {
         self.ensure_doc(doc_uid);
         let Some(slide) = doc.slides.get(index) else { return vec![] };
         let mut pictures = vec![];
-        collect_pictures(&slide.shapes, None, 0, &mut pictures);
+        collect_pictures(&slide.shapes, None, false, 0, &mut pictures);
         let mut out = vec![];
         for (sh, rect) in pictures {
             let ShapeKind::Picture { fill } = &sh.kind else { continue };

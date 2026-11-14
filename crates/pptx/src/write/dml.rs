@@ -116,60 +116,85 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
     let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
         w.open("a:blip", a);
-        if let Some(c) = adj.clear_color {
-            w.open0("a:clrChange");
-            w.open0("a:clrFrom");
-            color(w, &ColorRef::rgb(c));
-            w.close("a:clrFrom");
-            w.open0("a:clrTo");
-            color(w, &ColorRef::rgb(c).with(deckcraft_color::ColorTransform::Alpha(0)));
-            w.close("a:clrTo");
-            w.close("a:clrChange");
-        }
-        if let Some(al) = pf.alpha {
-            w.empty("a:alphaModFix", A::new().a("amt", pct(al.clamp(0.0, 1.0))));
-        }
-        if adj.alpha_inv {
-            w.empty0("a:alphaInv");
-        }
-        if let Some(t) = adj.bilevel {
-            w.empty("a:biLevel", A::new().a("thresh", pct(t.clamp(0.0, 1.0))));
-        }
-        if let Some((d, l)) = &adj.duotone {
-            w.open0("a:duotone");
-            color(w, d);
-            color(w, l);
-            w.close("a:duotone");
-        }
-        if adj.grayscale {
-            w.empty0("a:grayscl");
-        }
-        if adj.brightness != 0.0 || adj.contrast != 0.0 {
-            w.empty("a:lum", A::new().a("bright", pct(adj.brightness.clamp(-1.0, 1.0))).a("contrast", pct(adj.contrast.clamp(-1.0, 1.0))));
-        }
+        blip_adjustments(w, pf);
         // Artistic effect: the blip is the processed picture; the original rides in an
         // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
-        if let Some(art) = &pf.artistic
-            && art.effect.starts_with("artistic")
-            && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
-            && let Some(orig) = x.media_rel(o, art.original, "image")
-        {
+        if artistic_ext(x, o, pf).is_some() {
             w.open0("a:extLst");
-            w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
-            w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
-            w.open("a14:imgLayer", A::new().a("r:embed", &orig));
-            w.open0("a14:imgEffect");
-            w.empty0(&format!("a14:{}", art.effect));
-            w.close("a14:imgEffect");
-            w.close("a14:imgLayer");
-            w.close("a14:imgProps");
-            w.close("a:ext");
+            artistic_img_layer(w, x, o, pf);
             w.close("a:extLst");
         }
         w.close("a:blip");
     } else {
         w.empty("a:blip", a);
     }
+    blip_tail(w, pf);
+    w.close(tag);
+}
+
+/// Whether the artistic original rides in the blip's extension list (checked before opening it,
+/// so a Cameo's SVG extension and the artistic one share one `a:extLst`).
+fn artistic_ext(x: &mut Exp, o: &mut Out, pf: &PictureFill) -> Option<String> {
+    let art = pf.artistic.as_ref()?;
+    (art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| x.media_rel(o, art.original, "image"))
+        .flatten()
+}
+
+/// The `a:ext` block carrying the artistic original for [`artistic_ext`].
+fn artistic_img_layer(w: &mut W, x: &mut Exp, o: &mut Out, pf: &PictureFill) {
+    let Some(art) = &pf.artistic else { return };
+    let Some(orig) = x.media_rel(o, art.original, "image") else { return };
+    w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
+    w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
+    w.open("a14:imgLayer", A::new().a("r:embed", &orig));
+    w.open0("a14:imgEffect");
+    w.empty0(&format!("a14:{}", art.effect));
+    w.close("a14:imgEffect");
+    w.close("a14:imgLayer");
+    w.close("a14:imgProps");
+    w.close("a:ext");
+}
+
+/// The effect children of an open `a:blip` (everything before its `a:extLst`): recolor, alpha,
+/// luminance and duotone adjustments shared by the raster and Cameo SVG forms.
+fn blip_adjustments(w: &mut W, pf: &PictureFill) {
+    let adj = &pf.adjust;
+    if let Some(c) = adj.clear_color {
+        w.open0("a:clrChange");
+        w.open0("a:clrFrom");
+        color(w, &ColorRef::rgb(c));
+        w.close("a:clrFrom");
+        w.open0("a:clrTo");
+        color(w, &ColorRef::rgb(c).with(deckcraft_color::ColorTransform::Alpha(0)));
+        w.close("a:clrTo");
+        w.close("a:clrChange");
+    }
+    if let Some(al) = pf.alpha {
+        w.empty("a:alphaModFix", A::new().a("amt", pct(al.clamp(0.0, 1.0))));
+    }
+    if adj.alpha_inv {
+        w.empty0("a:alphaInv");
+    }
+    if let Some(t) = adj.bilevel {
+        w.empty("a:biLevel", A::new().a("thresh", pct(t.clamp(0.0, 1.0))));
+    }
+    if let Some((d, l)) = &adj.duotone {
+        w.open0("a:duotone");
+        color(w, d);
+        color(w, l);
+        w.close("a:duotone");
+    }
+    if adj.grayscale {
+        w.empty0("a:grayscl");
+    }
+    if adj.brightness != 0.0 || adj.contrast != 0.0 {
+        w.empty("a:lum", A::new().a("bright", pct(adj.brightness.clamp(-1.0, 1.0))).a("contrast", pct(adj.contrast.clamp(-1.0, 1.0))));
+    }
+}
+
+/// The `a:srcRect` and stretch/tile children shared by every blip form.
+fn blip_tail(w: &mut W, pf: &PictureFill) {
     let c = pf.crop;
     if c.iter().any(|v| *v != 0.0) {
         w.empty("a:srcRect", A::new().a("l", pct(c[0])).a("t", pct(c[1])).a("r", pct(c[2])).a("b", pct(c[3])));
@@ -196,6 +221,37 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
             w.empty("a:tile", A::new().a("tx", emu(*tx)).a("ty", emu(*ty)).a("sx", pct(*sx)).a("sy", pct(*sy)).a("flip", flip).a("algn", algn));
         }
     }
+}
+
+/// `p:blipFill` for a Cameo. PowerPoint keeps the camera's placeholder as `asvg:svgBlip` inside
+/// the blip's extension list (with no `r:embed` on the blip itself), so write that shape. A raster
+/// placeholder — a recorded still, or an image the user swapped in — keeps the ordinary blip.
+pub fn cameo_blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
+    let svg = x.media(pf.media).is_some_and(|m| {
+        // Linked media has no part inside the package, so `r:embed` on `asvg:svgBlip` would be
+        // invalid: the raster form's `r:link` carries it instead.
+        let linked = m.data.is_empty() && m.link.is_some();
+        !linked && (m.content_type == "image/svg+xml" || m.name.to_ascii_lowercase().ends_with(".svg"))
+    });
+    if !svg {
+        return blip_fill(w, x, o, tag, pf);
+    }
+    let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
+    w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
+    w.open0("a:blip");
+    // Adjustments ride in the blip like the raster form's, so a filtered SVG Cameo round-trips;
+    // schema order puts them before the single `a:extLst` holding the SVG and artistic exts.
+    blip_adjustments(w, pf);
+    w.open0("a:extLst");
+    w.open("a:ext", A::new().a("uri", crate::cameo::SVG_BLIP_URI));
+    w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", crate::cameo::NS_ASVG).a("r:embed", &rid));
+    w.close("a:ext");
+    if artistic_ext(x, o, pf).is_some() {
+        artistic_img_layer(w, x, o, pf);
+    }
+    w.close("a:extLst");
+    w.close("a:blip");
+    blip_tail(w, pf);
     w.close(tag);
 }
 

@@ -16,6 +16,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 };
 
 pub mod backstage;
+pub mod camera;
 pub mod canvas;
 pub mod capture;
 pub mod control;
@@ -238,6 +239,8 @@ pub struct SlideApp {
     reuse_target: Option<FileTarget>,
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
+    /// The Cameo live preview: the injected camera session, its latest frame and texture.
+    pub camera: camera::CameraHost,
     pub status: Option<(String, f64)>,
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,

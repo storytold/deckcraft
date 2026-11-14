@@ -76,6 +76,20 @@ impl SlideApp {
         }
     }
 
+    /// Camera preview clocks: drain the capture channel (never blocking), upload the newest frame
+    /// for the canvas/show to draw, and follow the running show's cameo need. Texture upload stays
+    /// out of the paint pass so the canvas and the show never disagree within one frame.
+    pub(super) fn tick_camera(&mut self, ctx: &egui::Context) {
+        // The show recomputes camera demand when its identity or its current slide changes:
+        // normal navigation skips hidden slides, but an explicit jump can land on one, and its
+        // Cameo must not start the camera.
+        let current = self.show.as_ref().map(|show| (show.instance, show.state.slide));
+        crate::camera::wants_show_camera(self, current);
+        if let Some(message) = self.camera.tick(ctx) {
+            self.notify(message);
+        }
+    }
+
     /// Media clocks. Voices belong to the open presentation: closing the last one, or switching
     /// decks, stops them. The editor's media also stops when its slide is left. This runs from
     /// `logic` on every call so a minimized window keeps playing; texture upload stays in `ui`.

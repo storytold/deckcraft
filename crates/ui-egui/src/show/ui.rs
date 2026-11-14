@@ -3,14 +3,14 @@ use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
-use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
+use super::render::{below_live, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, live_state, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -136,7 +136,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     draw_slide(app, ui, &mut show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
-    draw_extras(&mut show, &f, &painter, &mut out);
+    draw_extras(app, &mut show, &f, &painter, &mut out);
     if out.keep
         && show.presenter
         && !show.reading
@@ -560,59 +560,146 @@ fn swap_old_new(s: Source) -> Source {
     }
 }
 
-fn draw_videos(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, tex: &Option<TextureHandle>) -> (Vec<ShapeId>, bool) {
+/// Paint the slide texture, then every live frame — playing videos and Cameo cameras — in slide
+/// stack order, each followed by the overlay of what is stacked above it. A video above a Cameo
+/// keeps its frame (the Cameo paints under it); a shape between two live frames lands between
+/// them instead of above both. Overlays are cached per skip list and survive empty segments, so
+/// camera repaints do not re-render them.
+fn draw_live_layers(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, tex: &Option<TextureHandle>) {
     let Fr { doc, full, srect, .. } = *f;
     if let Some(tex) = &tex {
         painter.image(tex.id(), srect, show.zoom_uv(), Color32::WHITE);
     }
-    // Playing video: the current frame in its box, or full screen.
     let (sw, sh) = (doc.slide_size.width as f32, doc.slide_size.height as f32);
     let uv = show.zoom_uv();
-    let mut framed: Vec<ShapeId> = vec![];
+    let Some(slide) = doc.slides.get(sl.idx) else { return };
+    // Top-level order, with each live shape counted at its outermost position:
+    // `below_live` counts a grouped live shape at its group, so the walk mirrors it.
+    let top_order = |id: ShapeId| {
+        slide.shapes.iter().position(|s| {
+            let mut found = false;
+            deckcraft_model::walk(std::slice::from_ref(s), &mut |sh, _| found |= sh.id == id);
+            found
+        })
+    };
+    // Painted videos: screen box plus crop.
+    let mut videos: Vec<(ShapeId, usize, Rect, [f64; 4])> = vec![];
     let mut full_screen = false;
     for (id, x, clip) in &sl.media {
         if !clip.video || sl.hidden.contains(id) {
             continue;
         }
-        let r = if clip.full_screen && app.media.is_playing(*id) {
+        if clip.full_screen && app.media.is_playing(*id) {
             full_screen = true;
-            full
+            videos.push((*id, top_order(*id).unwrap_or(usize::MAX), full, clip.crop));
         } else {
-            slide_box(srect, uv, (sw, sh), (x.x as f32, x.y as f32, x.w as f32, x.h as f32))
-        };
-        if crate::media::paint_frame(painter, &app.media, *id, r, clip.crop) {
-            framed.push(*id);
+            videos.push((
+                *id,
+                top_order(*id).unwrap_or(usize::MAX),
+                slide_box(srect, uv, (sw, sh), (x.x as f32, x.y as f32, x.w as f32, x.h as f32)),
+                clip.crop,
+            ));
         }
     }
-    (framed, full_screen)
+    // Painted Cameo frames with their animation state (skipped when hidden, unfaded, or
+    // textureless: nothing would cover them, so their ids stay out of `live`).
+    let cam_tex = app.camera.texture().cloned();
+    let mut cameos: Vec<(ShapeId, usize, deckcraft_geom::Xfrm, ShapeState)> = vec![];
+    if cam_tex.is_some() {
+        let tl = show.timeline(doc).clone();
+        let anim = live_state(&tl, sl.step, sl.t, &sl.plays, &sl.stamps);
+        for (shape, x) in crate::camera::cameo_boxes(&slide.shapes) {
+            let state = anim(shape.id);
+            if crate::camera::live_opacity(&sl.hidden, shape.id, &state).is_none() {
+                continue;
+            }
+            cameos.push((shape.id, top_order(shape.id).unwrap_or(usize::MAX), x, state));
+        }
+    }
+    if full_screen {
+        // A video playing full screen covers the whole slide: only the playing clip paints,
+        // last over the texture, with no overlay above it. A paused inline video may still
+        // hold a texture; painting it into `full` would cover the playing clip.
+        if let Some((id, _, _, crop)) =
+            videos.iter().find(|(id, _, _, _)| sl.media.iter().any(|(mid, _, clip)| mid == id && clip.full_screen && app.media.is_playing(*id)))
+        {
+            crate::media::paint_frame(painter, &app.media, *id, full, *crop);
+        }
+        return;
+    }
+    // One merged stack, bottom-up: a video above a Cameo keeps its frame (the Cameo paints
+    // under it); a shape between two live frames lands between them instead of above both.
+    let mut layers: Vec<(usize, bool, usize)> = vec![];
+    for (i, v) in videos.iter().enumerate() {
+        layers.push((v.1, false, i));
+    }
+    for (i, c) in cameos.iter().enumerate() {
+        layers.push((c.1, true, i));
+    }
+    layers.sort();
+    let mut live: Vec<ShapeId> = vec![];
+    for (_, is_cameo, i) in &layers {
+        // The overlay for the frames painted so far, before this frame: nothing above the
+        // first frame paints yet, and each middle slice covers only what sits between this
+        // frame and the frames before it.
+        draw_retained_overlay(show, f, sl, painter, &live);
+        if !is_cameo {
+            let (id, _, r, crop) = &videos[*i];
+            if crate::media::paint_frame(painter, &app.media, *id, *r, *crop) {
+                live.push(*id);
+            }
+        } else {
+            let Some(cam_tex) = cam_tex.as_ref() else { continue };
+            let (_, _, x, state) = &cameos[*i];
+            let Some(shape) = slide.shape(cameos[*i].0) else { continue };
+            let id = cameos[*i].0;
+            let centre = deckcraft_geom::Point::new(x.w / 2.0, x.h / 2.0);
+            let st = state.clone();
+            let to_screen = |p: deckcraft_geom::Point| {
+                let q = x.affine() * crate::camera::animated(p, centre, &st) + st.offset;
+                slide_point_to_screen(srect, uv, q.x as f32 / sw.max(1.0), q.y as f32 / sh.max(1.0))
+            };
+            crate::camera::paint_cameo_clipped(&painter.with_clip_rect(srect), cam_tex, shape, *x, state.opacity, &to_screen);
+            live.push(id);
+        }
+    }
+    draw_retained_overlay(show, f, sl, painter, &live);
 }
 
-fn draw_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, framed: &[ShapeId], full_screen: bool) {
+/// The overlay of what is stacked above the `live` frames painted so far, cached per skip
+/// list: another slice's overlay is kept, not replaced, and an empty segment keeps the
+/// cache instead of clearing it, so camera repaints reuse textures instead of re-rendering.
+fn draw_retained_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, live: &[ShapeId]) {
     let Fr { ctx, doc, srect, .. } = *f;
     let Sl { idx, step, animating, size, .. } = *sl;
     let uv = show.zoom_uv();
-    // Shapes stacked above a playing video show over it, as in PowerPoint (#1005); a video
-    // playing full screen covers the whole slide.
-    let skip = if full_screen { vec![] } else { below_playing_video(doc, idx, framed) };
+    let skip = below_live(doc, idx, live);
     if skip.is_empty() {
-        show.overlay = None;
-    } else {
-        let fresh = !animating && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == sl.key && *s == skip);
-        if !fresh {
-            let tl = show.timeline(doc).clone();
-            let ci = render_overlay(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &skip, &sl.times, render_threads(), &sl.plays, &sl.stamps);
-            let handle = match show.overlay.take() {
-                Some((_, _, mut h)) => {
-                    crate::textures::replace(ctx, &mut h, ci);
-                    h
-                }
-                None => crate::textures::upload(ctx, "show-overlay", ci),
-            };
-            show.overlay = Some((sl.key.clone(), skip, handle));
+        // No overlay for this prefix yet: keep the other slices' textures (a later `live`
+        // prefix renders its own slice), so repaints do not drop and re-upload them.
+        return;
+    }
+    let pos = show.overlay.iter().position(|(k, s, _)| *k == sl.key && *s == skip);
+    let fresh = !animating && pos.is_some();
+    if !fresh {
+        let tl = show.timeline(doc).clone();
+        let ci = render_overlay(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &skip, &sl.times, render_threads(), &sl.plays, &sl.stamps);
+        match pos {
+            Some(p) => {
+                let (_, _, h) = &mut show.overlay[p];
+                crate::textures::replace(ctx, h, ci);
+            }
+            None => {
+                // A long show would otherwise accrue a full-slide texture per slide, size, and
+                // document. Keep only this slide/size/document: eviction ignores the GIF frame
+                // (in `Key.gif`), so a looping GIF reuses its entry instead of re-rendering.
+                show.overlay.retain(|(k, _, _)| k.slide == sl.key.slide && k.size == sl.key.size && k.doc == sl.key.doc);
+                show.overlay.push((sl.key.clone(), skip.clone(), crate::textures::upload(ctx, "show-overlay", ci)));
+            }
         }
-        if let Some((_, _, h)) = &show.overlay {
-            painter.image(h.id(), srect, uv, Color32::WHITE);
-        }
+    }
+    if let Some((_, _, h)) = show.overlay.iter().rev().find(|(k, s, _)| *k == sl.key && *s == skip) {
+        painter.image(h.id(), srect, uv, Color32::WHITE);
     }
 }
 
@@ -673,14 +760,22 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         prefetch_next(app, show, f, &sl);
         if !draw_transition(show, f, &sl, painter, &tex) {
             show.trans = None;
-            let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
-            draw_overlay(show, f, &sl, painter, &framed, full_screen);
+            // Every live frame in slide stack order, each with the overlay above it: a video
+            // above a Cameo keeps its frame; a shape between two frames lands between them.
+            draw_live_layers(app, show, f, &sl, painter, &tex);
             draw_media_controls(app, ui, show, f, &sl, painter);
         }
         if sl.animating {
             ctx.request_repaint();
         }
     }
+}
+
+/// Slide fractions through the zoom window onto the screen.
+fn slide_point_to_screen(srect: Rect, uv: Rect, nx: f32, ny: f32) -> Pos2 {
+    let u = (nx - uv.min.x) / uv.width().max(1e-4);
+    let v = (ny - uv.min.y) / uv.height().max(1e-4);
+    pos2(srect.min.x + u * srect.width(), srect.min.y + v * srect.height())
 }
 
 fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, pointing: bool) {
@@ -823,7 +918,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     }
 }
 
-fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
@@ -844,7 +939,11 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        let gifs = app.media.gifs(f.doc_uid, doc, show.state.slide, now, &app.session.gif_paused);
+        let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
+        let live =
+            app.camera.texture().map(|t| super::presenter::PresenterLive { camera: t, gif_times: &times, gif_key: crate::media::gif_key(&gifs) });
+        presenter_window(ctx, show, doc, now, &mut out.keep, live);
     }
 }
 
