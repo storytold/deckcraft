@@ -77,3 +77,7 @@ sync_github_name = false
 [people.adikshan11]
 real_name = "Adithya Shankaran"
 sync_github_name = true
+
+[people.NibrasAz7]
+real_name = "Nibras Abo Alzahab"
+display_name = "NibrasAz7"
