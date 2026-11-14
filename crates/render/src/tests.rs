@@ -1130,6 +1130,31 @@ fn a_background_is_laid_over_white() {
 }
 
 #[test]
+fn a_background_picture_expands_by_a_negative_fill_top_and_bottom() {
+    // PowerPoint's own layouts stretch a 4:3 photo over a 16:9 slide by giving the fill a negative
+    // top and bottom inset: the picture is drawn taller than the slide and the slide cuts it. A
+    // picture whose quarter line sits at a known row tells the two layouts apart.
+    use deckcraft_model::style::{Fill, PictureFill, PictureMode};
+    let mut img = image::RgbImage::from_pixel(100, 100, image::Rgb([200, 0, 0]));
+    for x in 0..100 {
+        img.put_pixel(x, 25, image::Rgb([0, 0, 0]));
+    }
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let mut p = deck_with(vec![]);
+    let media = p.add_media("bg.png", "image/png", png.into_inner()).expect("media");
+    let pf = PictureFill { media, mode: PictureMode::Stretch { fill_rect: [0.0, -0.17, 0.0, -0.17] }, ..Default::default() };
+    std::sync::Arc::make_mut(&mut p.slides[0]).background = Some(deckcraft_model::Background::Fill { fill: Fill::Picture(pf) });
+    let img = render_slide(&p, 0, &RenderOpts { scale: 0.5, ..Default::default() });
+
+    // The quarter line lands at -0.17h + 0.25 * 1.34h = 0.165h of the slide (about y = 44 of 270),
+    // not at 0.25h (y = 67) as it would if the inset were ignored.
+    let dark_row = (0..img.height).find(|y| img.pixel(240, *y)[0] < 40 && img.pixel(240, *y)[2] < 40);
+    let y = dark_row.expect("the quarter line is drawn");
+    assert!((40..=50).contains(&y), "the line sits at y = {y}, expected about 44 (the inset is applied)");
+}
+
+#[test]
 fn a_transparent_background_leaves_the_slide_background_out() {
     // #784: PNG export with a transparent background draws only what is on the slide. The
     // background (a solid colour here) and its white underlay are left out; the shapes, and a
