@@ -146,7 +146,7 @@ pub(crate) struct BreakParams<'a> {
     pub(crate) first_w: f64,
     pub(crate) rest_w: f64,
     pub(crate) wrap: bool,
-    pub(crate) tab_stops: &'a [Tab],
+    pub(crate) tab_stops: &'a Tabs,
     pub(crate) default_tab: f64,
     pub(crate) x0_first: f64,
     pub(crate) x0_rest: f64,
@@ -255,14 +255,19 @@ enum TabAlign {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Tab {
+struct Tab {
     pos: f64,
     align: TabAlign,
 }
 
-/// The paragraph's tab stops in position order (a stop at no finite position is left out), so
-/// [`tab_advance`] finds the next one by binary search instead of a scan per tab.
-pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
+pub(crate) struct Tabs {
+    explicit: Vec<Tab>,
+    implicit: Option<Tab>,
+}
+
+/// Sorted explicit stops and the single hanging-indent stop, looked up independently so their
+/// different eligibility thresholds do not turn each tab into a linear scan.
+pub(crate) fn tabs_of(props: &ParaProps) -> Tabs {
     let mut tabs: Vec<Tab> = props
         .tabs
         .as_ref()
@@ -282,7 +287,15 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
         })
         .unwrap_or_default();
     tabs.sort_by(|a, b| a.pos.total_cmp(&b.pos));
-    tabs
+    // The hanging-indent stop uses the explicit alignment when it coincides with marL.
+    let margin = props.margin_left.unwrap_or(0.0).max(0.0);
+    let indent = props.indent.unwrap_or(0.0);
+    let implicit = if indent < 0.0 && margin > 0.0 && margin.is_finite() {
+        Some(tabs.iter().find(|t| t.pos == margin).copied().unwrap_or(Tab { pos: margin, align: TabAlign::Left }))
+    } else {
+        None
+    };
+    Tabs { explicit: tabs, implicit }
 }
 
 /// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
@@ -305,17 +318,24 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// Advance of a tab at `x` (from the start edge) to the next stop, placing the text after it
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
-pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
-    // `stops` is in position order (`tabs_of`): the next stop is the first past x.
-    // A NaN `x` (a NaN spacing upstream) skips the lookup and takes the finite default-stop path.
-    if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)).filter(|_| !x.is_nan()) {
-        let to = s.pos - x;
-        return match s.align {
-            TabAlign::Left => to,
-            TabAlign::Right => (to - seg.0).max(0.0),
-            TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
-            TabAlign::Decimal => (to - seg.1).max(0.0),
+pub(crate) fn tab_advance(x: f64, stops: &Tabs, default_tab: f64, seg: (f64, f64)) -> f64 {
+    if !x.is_nan() {
+        let index = stops.explicit.partition_point(|s| s.pos <= x + 0.5);
+        let explicit = stops.explicit.get(index);
+        let implicit = stops.implicit.as_ref().filter(|s| s.pos > x + 0.01);
+        let next = match (explicit, implicit) {
+            (Some(a), Some(b)) => Some(if a.pos < b.pos { a } else { b }),
+            (a, b) => a.or(b),
         };
+        if let Some(s) = next {
+            let to = s.pos - x;
+            return match s.align {
+                TabAlign::Left => to,
+                TabAlign::Right => (to - seg.0).max(0.0),
+                TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
+                TabAlign::Decimal => (to - seg.1).max(0.0),
+            };
+        }
     }
     let d = if default_tab > 1.0 { default_tab } else { 72.0 };
     let next = ((x / d).floor() + 1.0) * d;
@@ -328,8 +348,41 @@ mod tab_tests {
 
     #[test]
     fn a_nan_position_takes_the_finite_default_stop() {
-        let stops = [Tab { pos: 100.0, align: TabAlign::Left }];
+        let stops = Tabs { explicit: vec![Tab { pos: 100.0, align: TabAlign::Left }], implicit: None };
         assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0)).is_finite());
         assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0)), 90.0);
+    }
+
+    #[test]
+    fn coincident_explicit_stop_keeps_alignment_and_implicit_threshold() {
+        for (align, expected) in [("l", 0.25), ("r", 0.05), ("ctr", 0.15), ("dec", 0.20)] {
+            let props = ParaProps {
+                margin_left: Some(27.0),
+                indent: Some(-0.25),
+                tabs: Some(vec![deckcraft_model::text::TabStop { pos: 27.0, align: align.into() }]),
+                ..Default::default()
+            };
+            let stops = tabs_of(&props);
+            assert!((tab_advance(26.75, &stops, 72.0, (0.2, 0.05)) - expected).abs() < 1.0e-9);
+            assert_eq!(tab_advance(27.0, &stops, 72.0, (0.0, 0.0)), 45.0);
+        }
+    }
+
+    #[test]
+    fn implicit_and_explicit_stops_keep_distinct_thresholds() {
+        let props = ParaProps {
+            margin_left: Some(27.0),
+            indent: Some(-0.7),
+            tabs: Some(vec![
+                deckcraft_model::text::TabStop { pos: 26.6, align: "l".into() },
+                deckcraft_model::text::TabStop { pos: 27.4, align: "l".into() },
+                deckcraft_model::text::TabStop { pos: 100.0, align: "l".into() },
+            ]),
+            ..Default::default()
+        };
+        let stops = tabs_of(&props);
+        assert!((tab_advance(26.3, &stops, 72.0, (0.0, 0.0)) - 0.7).abs() < 1.0e-9);
+        assert_eq!(tab_advance(27.0, &stops, 72.0, (0.0, 0.0)), 73.0);
+        assert_eq!(tab_advance(100.0, &stops, 72.0, (0.0, 0.0)), 44.0);
     }
 }
