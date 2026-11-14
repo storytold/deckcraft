@@ -932,19 +932,28 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         _ if available => {
             ui.label(egui::RichText::new(format!("Dictionary: {}", info.get("lang").and_then(Value::as_str).unwrap_or(""))).small().weak())
         }
-        _ => ui.label(
-            egui::RichText::new(format!(
-                "No {} dictionary is installed, so only common misspellings are found. Put a Hunspell .aff/.dic pair in {}.",
-                info.get("lang").and_then(Value::as_str).unwrap_or("en-US"),
-                info.get("folders")
-                    .and_then(Value::as_array)
-                    .and_then(|a| a.get(1).or(a.first()))
-                    .and_then(Value::as_str)
-                    .unwrap_or("a dictionaries folder")
-            ))
-            .small()
-            .weak(),
-        ),
+        _ => {
+            let lang = info.get("lang").and_then(Value::as_str).unwrap_or("en-US");
+            // The built-in list is English misspellings: another language has only repeated
+            // words reported until its dictionary is installed.
+            let checked = if deckcraft_engine::spell::is_english(lang) {
+                "so only common English misspellings are found"
+            } else {
+                "so only repeated words are reported"
+            };
+            ui.label(
+                egui::RichText::new(format!(
+                    "No {lang} dictionary is installed, {checked}. Put a Hunspell .aff/.dic pair in {}.",
+                    info.get("folders")
+                        .and_then(Value::as_array)
+                        .and_then(|a| a.get(1).or(a.first()))
+                        .and_then(Value::as_str)
+                        .unwrap_or("a dictionaries folder")
+                ))
+                .small()
+                .weak(),
+            )
+        }
     };
     if list.is_empty() {
         ui.label("The spelling check is complete. No issues found.");

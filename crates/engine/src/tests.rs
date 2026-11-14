@@ -5344,14 +5344,33 @@ fn spelling_uses_a_dictionary_suggests_and_changes() {
 
 #[test]
 fn spelling_without_a_dictionary_falls_back_to_common_misspellings() {
+    // This machine may have an English dictionary installed; the built-in list is what a
+    // dictionary-less install (Windows, the web) uses, so make sure there is none here.
+    crate::spell::install_no_dictionary("en-US");
     let mut s = session();
     s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "Teh qzxv"})).unwrap();
-    let v = s.execute("review.spelling", &json!({"lang": "zz-NONE"})).unwrap();
+    let v = s.execute("review.spelling", &json!({"lang": "en-US"})).unwrap();
     assert_eq!(v.as_array().map(Vec::len), Some(1));
     assert_eq!(v[0]["word"], "Teh");
+    let d = s.execute("review.dictionary", &json!({"lang": "en-US"})).unwrap();
+    assert_eq!(d["available"], false, "{d}");
+    // A language with no dictionary file anywhere: `found` names none.
     let d = s.execute("review.dictionary", &json!({"lang": "zz-NONE"})).unwrap();
     assert!(d["found"].is_null());
     assert_eq!(d["available"], false);
+}
+
+/// The built-in list holds English misspellings, so it says nothing about another language's
+/// text: `teh` is not a Portuguese typo, and a Portuguese word is not judged by it.
+#[test]
+fn the_built_in_misspelling_list_is_english_only() {
+    crate::spell::install_no_dictionary("pt-PT");
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "teh palavra"})).unwrap();
+    s.execute("edit.select", &json!({"ids": [r["id"]]})).unwrap();
+    s.execute("format.language", &json!({"lang": "pt-PT"})).unwrap();
+    let v = s.execute("review.spelling", &json!({})).unwrap();
+    assert!(v.as_array().unwrap().is_empty(), "{v}");
 }
 
 #[test]
