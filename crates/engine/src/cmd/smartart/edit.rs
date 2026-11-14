@@ -1,9 +1,10 @@
 use super::nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove, sync_text};
-use super::paint::layout;
+use super::paint::{clear_props, layout, set_color, set_props, set_size, unset_color};
 use super::{
-    AutoFit, COLORS, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session, Shape,
-    ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
+    AutoFit, COLORS, ColorRef, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session,
+    Shape, ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
 };
+use deckcraft_model::RunProps;
 
 /// The SmartArt group that `id` is, or is inside.
 fn diagram_group(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
@@ -21,6 +22,79 @@ fn diagram_group(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
         }
     }
     None
+}
+
+/// After text in a node changed: fit the graphic's text afresh at one shared scale, so the nodes
+/// that were not edited do not keep a scale from the old text (PowerPoint sizes them alike).
+pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
+    // Look before cloning: most text edits are not in a graphic.
+    let st = s.doc()?;
+    let Some(gid) = current_shapes(&st.doc, &st.selection).and_then(|l| diagram_group(l, id)).map(|g| g.id) else { return Ok(()) };
+    let st = s.doc_mut()?;
+    let mut d = (*st.doc).clone();
+    let sel = st.selection.clone();
+    if share_in(&mut d, &sel, gid) {
+        st.doc = std::sync::Arc::new(d);
+        st.revision += 1;
+    }
+    Ok(())
+}
+
+/// [`share_after_edit`] on the document `d` itself; whether the graphic's shapes were replaced.
+fn share_in(d: &mut Presentation, sel: &crate::Selection, gid: ShapeId) -> bool {
+    let Some(list) = crate::shapes_mut(d, sel) else { return false };
+    let Some((ShapeKind::Group { children, child }, Some(group))) = deckcraft_model::find_shape(list, gid).map(|g| (g.kind.clone(), g.xfrm)) else {
+        return false;
+    };
+    let mut kids = children;
+    for sh in &mut kids {
+        if let Some(t) = sh.text.as_mut()
+            && let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut t.body.autofit
+        {
+            (*font_scale, *line_reduction) = (Some(1.0), 0.0);
+        }
+    }
+    let Some(ctx) = crate::cmd::text::ctx_for(d, sel) else { return false };
+    super::paint::share_shrink(&ctx, &mut kids, super::paint::child_scale(&group, &child));
+    drop(ctx);
+    if let Some(list) = crate::shapes_mut(d, sel)
+        && let Some(g) = deckcraft_model::find_shape_mut(list, gid)
+        && let ShapeKind::Group { children, .. } = &mut g.kind
+    {
+        *children = kids;
+        return true;
+    }
+    false
+}
+
+/// The size a graphic's text shows: for a generated graphic the one set for every node (regeneration
+/// applies it), else the smallest size of any line the text layout puts down, which already has the scale
+/// shrink-on-overflow lays the nodes out at (PowerPoint steps from what you see). An imported graphic keeps its drawing,
+/// so what that drawing shows wins over the size read from the data model.
+pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
+    let st = s.doc().ok()?;
+    let g = st.shape(gid)?;
+    let stretch = match (&g.kind, g.xfrm) {
+        (ShapeKind::Group { child, .. }, Some(x)) => super::paint::child_scale(&x, child),
+        _ => (1.0, 1.0),
+    };
+    let set = g.diagram.as_ref().and_then(|d| d.font_size);
+    if !g.diagram.as_ref().is_some_and(|d| d.imported)
+        && let Some(z) = set
+    {
+        return Some(z);
+    }
+    let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;
+    // The smallest size of any line the text layout puts down, so what the renderer draws.
+    let mut shown: Option<f64> = None;
+    deckcraft_model::walk(std::slice::from_ref(g), &mut |x, _| {
+        if let Some(l) = super::paint::laid_out(&ctx, x, stretch) {
+            for line in l.lines.iter().filter(|ln| ln.size > 0.0) {
+                shown = Some(shown.map_or(line.size, |m| m.min(line.size)));
+            }
+        }
+    });
+    shown.or(set)
 }
 
 /// The SmartArt graphic the selection is (or is inside), with its outline as the Text Pane shows it.
@@ -41,9 +115,13 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a Diagram graphic"))
 }
 
-/// Children with fresh ids for diagram `d` inside a group whose child space is `area`.
-fn regenerate(cmd: &str, doc: &mut Presentation, d: &Diagram, area: Xfrm) -> Result<Vec<Shape>> {
+/// Children with fresh ids for diagram `d` inside a group whose child space is `area`, their text
+/// fitted at one shared size on the slide `sel` edits.
+fn regenerate(cmd: &str, doc: &mut Presentation, sel: &crate::Selection, d: &Diagram, area: Xfrm, stretch: (f64, f64)) -> Result<Vec<Shape>> {
     let mut v = layout(d, area);
+    if let Some(ctx) = crate::cmd::text::ctx_for(doc, sel) {
+        super::paint::share_shrink(&ctx, &mut v, stretch);
+    }
     for sh in &mut v {
         sh.id = ShapeId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
     }
@@ -60,7 +138,7 @@ fn edit_diagram<T>(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Di
         let out = f(&mut d)?;
         normalize(&mut d.nodes);
         d.imported = false;
-        let kids = regenerate(cmd, doc, &d, child)?;
+        let kids = regenerate(cmd, doc, sel, &d, child, g.xfrm.map_or((1.0, 1.0), |x| super::paint::child_scale(&x, &child)))?;
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         let sh = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))?;
         sh.kind = ShapeKind::Group { children: kids, child };
@@ -86,7 +164,7 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
     let size = s.doc()?.doc.slide_size;
     let area = Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6);
     let id = s.edit(|doc, sel| {
-        let children = regenerate("insert.smartArt", doc, &d, area)?;
+        let children = regenerate("insert.smartArt", doc, sel, &d, area, (1.0, 1.0))?;
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
         let g = Shape {
             id,
@@ -197,7 +275,7 @@ pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let d = Diagram { kind: kind.clone(), nodes, ..Default::default() };
     let gid = s.edit(|doc, sel| {
-        let children = regenerate(CMD, doc, &d, area)?;
+        let children = regenerate(CMD, doc, sel, &d, area, (1.0, 1.0))?;
         let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let g = Shape {
             id: gid,
@@ -337,6 +415,185 @@ pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
         n.picture = media;
         Ok(Value::Null)
     })
+}
+
+/// The SmartArt graphics among the selected shapes (top level), for Home › Font on a graphic.
+pub(crate) fn selected_graphics(s: &Session) -> Vec<ShapeId> {
+    let Ok(st) = s.doc() else { return vec![] };
+    st.selection.shapes.iter().copied().filter(|id| st.shape(*id).is_some_and(|sh| sh.diagram.is_some())).collect()
+}
+
+/// For an imported graphic, apply `f` to the text of every shape of its retained drawing and record the change on
+/// the diagram with `note`, without regenerating (PowerPoint keeps the file's own drawing and only restyles its
+/// text). Returns false, touching nothing, for a generated graphic.
+fn restyle_imported(s: &mut Session, gid: ShapeId, cmd: &str, share: bool, note: impl FnOnce(&mut Diagram), f: impl Fn(&mut Shape)) -> Result<bool> {
+    if !s.doc()?.shape(gid).and_then(|g| g.diagram.as_ref()).is_some_and(|d| d.imported) {
+        return Ok(false);
+    }
+    fn walk(v: &mut [Shape], f: &impl Fn(&mut Shape)) {
+        for sh in v {
+            f(sh);
+            if let ShapeKind::Group { children, .. } = &mut sh.kind {
+                walk(children, f);
+            }
+        }
+    }
+    s.edit(|doc, sel| {
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
+        let sh = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))?;
+        if let ShapeKind::Group { children, .. } = &mut sh.kind {
+            walk(children, &f);
+        }
+        if let Some(d) = &mut sh.diagram {
+            note(d);
+        }
+        // The nodes share one scale again, in the same edit.
+        if share {
+            share_in(doc, sel, gid);
+        }
+        Ok(())
+    })?;
+    Ok(true)
+}
+
+/// Shrink-on-overflow back on the text of a shape whose size a set size had fixed (`AutoFit::None`).
+fn restore_shrink(sh: &mut Shape) {
+    if let Some(t) = sh.text.as_mut()
+        && matches!(t.body.autofit, Some(AutoFit::None))
+    {
+        t.body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    }
+}
+
+/// Whether graphic `gid` has a size set for its nodes (what turned shrink-on-overflow off on its text).
+fn has_set_size(s: &Session, gid: ShapeId) -> bool {
+    s.doc().ok().and_then(|st| st.shape(gid)).and_then(|g| g.diagram.as_ref()).is_some_and(|d| d.font_size.is_some())
+}
+
+/// Set the size of every node's text of graphic `gid` (`None`: automatic).
+pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cmd: &str) -> Result<()> {
+    if let Some(z) = size
+        && restyle_imported(s, gid, cmd, false, |d| d.font_size = Some(z), |sh| set_size(sh, z))?
+    {
+        return Ok(());
+    }
+    // Automatic again on an imported graphic: the file's drawing stays; shrink-on-overflow comes back on the text
+    // the set size had fixed and the nodes share one scale. The sizes the runs carry are not recoverable and stay.
+    if size.is_none() {
+        let fixed = has_set_size(s, gid);
+        if restyle_imported(
+            s,
+            gid,
+            cmd,
+            true,
+            |d| d.font_size = None,
+            move |sh| {
+                if fixed {
+                    restore_shrink(sh)
+                }
+            },
+        )? {
+            return Ok(());
+        }
+    }
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.font_size = size;
+        Ok(())
+    })
+}
+
+/// Colour every node's text of graphic `gid`.
+pub(crate) fn set_text_color(s: &mut Session, gid: ShapeId, color: ColorRef, cmd: &str) -> Result<()> {
+    let c = color.clone();
+    if restyle_imported(s, gid, cmd, false, |d| d.text_color = Some(c.clone()), |sh| set_color(sh, &color))? {
+        return Ok(());
+    }
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.text_color = Some(color);
+        Ok(())
+    })
+}
+
+/// Back to the style's automatic text colour for every node of graphic `gid`. An imported graphic keeps its
+/// drawing and loses the fills on its runs (the colours the file set are not recoverable).
+pub(crate) fn clear_text_color(s: &mut Session, gid: ShapeId, cmd: &str) -> Result<()> {
+    if restyle_imported(s, gid, cmd, false, |d| d.text_color = None, unset_color)? {
+        return Ok(());
+    }
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.text_color = None;
+        Ok(())
+    })
+}
+
+/// The Font dialog's other settings (family, bold, italic, underline, strikethrough, baseline, caps, spacing) on
+/// every node's text of graphic `gid`: kept in the diagram so a regenerate applies them, in place on an imported one.
+pub(crate) fn set_text_props(s: &mut Session, gid: ShapeId, props: RunProps, cmd: &str) -> Result<()> {
+    fn merge(d: &mut Diagram, o: &RunProps) {
+        let t = d.text_style.get_or_insert_with(RunProps::default);
+        if o.font.is_some() {
+            t.font = o.font.clone();
+        }
+        if o.underline.is_some() {
+            t.underline = o.underline.clone();
+        }
+        t.bold = o.bold.or(t.bold);
+        t.italic = o.italic.or(t.italic);
+        t.strike = o.strike.or(t.strike);
+        t.baseline = o.baseline.or(t.baseline);
+        t.caps = o.caps.or(t.caps);
+        t.spacing = o.spacing.or(t.spacing);
+    }
+    if restyle_imported(s, gid, cmd, false, |d| merge(d, &props), |sh| set_props(sh, &props))? {
+        return Ok(());
+    }
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        merge(d, &props);
+        Ok(())
+    })
+}
+
+/// Clear All Formatting on graphic `gid`: every run property of its nodes' text goes (but the language and the link),
+/// the stored text look with it. On an imported graphic that happens in place, in one edit; shrink-on-overflow comes
+/// back where a set size had fixed the text.
+pub(crate) fn clear_text_look(s: &mut Session, gid: ShapeId, cmd: &str) -> Result<()> {
+    let fixed = has_set_size(s, gid);
+    if restyle_imported(
+        s,
+        gid,
+        cmd,
+        true,
+        |d| (d.text_color, d.font_size, d.text_style) = (None, None, None),
+        move |sh| {
+            clear_props(sh);
+            if fixed {
+                restore_shrink(sh);
+            }
+        },
+    )? {
+        return Ok(());
+    }
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        (d.text_color, d.font_size, d.text_style) = (None, None, None);
+        Ok(())
+    })
+}
+
+pub(super) fn font_size(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.fontSize";
+    let size = match p.get("size") {
+        Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|z| z.is_finite() && *z > 0.0)
+                .ok_or_else(|| bad(CMD, "`size` is a font size in points (or null for automatic)"))?
+                .clamp(1.0, 4000.0),
+        ),
+        None => return Err(bad(CMD, "missing `size` (points, or null for automatic)")),
+    };
+    let gid = target_group(s, p, CMD)?;
+    set_font_size(s, gid, size, CMD)?;
+    Ok(json!({"id": gid.0, "fontSize": size}))
 }
 
 pub(super) fn change_style(s: &mut Session, p: &Value) -> Result<Value> {
