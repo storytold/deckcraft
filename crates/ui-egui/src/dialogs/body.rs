@@ -1260,7 +1260,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let mut v = d.get("text", "Plan\nBuild\nLaunch");
-    ui.add(egui::TextEdit::multiline(&mut v).hint_text(tl!("SmartArt items")).desired_rows(5).desired_width(320.0));
+    ui.add(egui::TextEdit::multiline(&mut v).hint_text(tl!("Diagram items")).desired_rows(5).desired_width(320.0));
     d.fields.insert("text".into(), v.clone());
     let (ok, cancel) = buttons(ui, "Insert");
     if ok {
