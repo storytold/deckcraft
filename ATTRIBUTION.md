@@ -68,6 +68,16 @@ families excluded by `crates/fonts/build.rs`:
 Web (wasm32) builds embed only Inter Regular/Bold (and a Variable face where the Latin manifest
 provides one) and BIZ UDPGothic Regular.
 
+## Embedded at build time from craft-i18n (`CRAFT_I18N_DIR`)
+
+Builds with a craft-i18n checkout (at the commit in `craft-i18n.rev`) embed its interface
+catalogs for the languages DeckCraft offers (`locales/<locale>/common.tsv` and `deckcraft.tsv`).
+They are text, not files in this repository; without the checkout the interface is English only.
+
+| Asset | Author | Source | Licence | Use |
+|---|---|---|---|---|
+| craft-i18n interface catalogs | craft-i18n translators, credited in its [ATTRIBUTION.md](https://github.com/storytold/craft-i18n/blob/main/ATTRIBUTION.md) | https://github.com/storytold/craft-i18n at `craft-i18n.rev` | MIT OR Apache-2.0 | Interface languages other than English (German first); clean-room translations from the English interface labels |
+
 ## PDF writer colour profiles
 
 `craft-pdf` is used with only its `write` feature and default features disabled. Krilla

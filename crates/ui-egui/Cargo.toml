@@ -21,6 +21,8 @@ deckcraft-media = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 egui_extras = { workspace = true }
 craft-ui = { workspace = true }
+craft-i18n = { workspace = true }
+sys-locale = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
