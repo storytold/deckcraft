@@ -460,6 +460,115 @@ fn toggle_checkbox(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(v)
 }
 
+// ---------- Shape Fill and Shape Outline ----------
+
+/// What [`route_format`] left for `shape.fill` or `shape.line` to do.
+pub(crate) enum Format {
+    /// No target is a Harvey ball or checkbox: format as asked.
+    Unchanged,
+    /// Every target was one, and is done: the command's answer.
+    Done(Value),
+    /// Some were: format the others, named in these params' `ids`.
+    Rest(Value),
+}
+
+/// Shape Fill and Shape Outline on a Harvey ball or checkbox (the element itself, not one of its
+/// parts) change its description through `harveyBall.set` or `checkbox.set`, so a redraw keeps
+/// the colour: fill → `fill`, outline colour or none → `outline`, weight → `outlineWidth`; on a
+/// checkbox either colour → `color`; `reset` → the defaults. What a description can't hold (a
+/// gradient, dashes, a checkbox weight…) is refused. A part named by id is formatted by hand as
+/// any shape is, until the next redraw.
+pub(crate) fn route_format(s: &mut Session, p: &Value, cmd: &str) -> Result<Format> {
+    let ids = super::targets(s, p)?;
+    let (mut elements, mut others) = (vec![], vec![]);
+    {
+        let st = s.doc()?;
+        for id in ids {
+            match st.shape(id).and_then(|sh| sh.generated.clone()) {
+                Some(g) => elements.push((id, g)),
+                None => others.push(id.0),
+            }
+        }
+    }
+    if elements.is_empty() {
+        return Ok(Format::Unchanged);
+    }
+    let n = elements.len();
+    for (id, g) in elements {
+        let (set, mut q) = element_params(p, cmd, &g)?;
+        if let Some(o) = q.as_object_mut() {
+            o.insert("id".into(), json!(id));
+        }
+        s.execute(set, &q)?;
+    }
+    Ok(if others.is_empty() { Format::Done(Value::from(n)) } else { Format::Rest(super::with_param(p, "ids", json!(others))) })
+}
+
+/// The `harveyBall.set` or `checkbox.set` params a `shape.fill` / `shape.line` call `p` makes for
+/// element `g`.
+fn element_params(p: &Value, cmd: &str, g: &Generated) -> Result<(&'static str, Value)> {
+    let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null() && *v != Value::Bool(false));
+    let what = match g {
+        Generated::HarveyBall(_) => "a Harvey ball",
+        Generated::Checkbox(_) => "a checkbox",
+    };
+    let refuse = |keys: &[&str], takes: &str| match keys.iter().find(|k| given(k)) {
+        Some(k) => Err(bad(cmd, format!("{what} takes {takes}, not `{k}`"))),
+        None => Ok(()),
+    };
+    let colour = || -> Result<Option<Value>> {
+        match p.get("color").filter(|v| !v.is_null()) {
+            Some(v) if color_value(v).is_some() => Ok(Some(v.clone())),
+            Some(v) => Err(bad(cmd, format!("`color` isn't a colour: {v}"))),
+            None => Ok(None),
+        }
+    };
+    let reset = given("reset");
+    let tx1 = || json!("tx1");
+    match (cmd, g) {
+        ("shape.fill", _) => {
+            refuse(&["none", "background", "gradient", "picture", "pattern", "transparency", "pictureProps"], "one fill colour")?;
+            let c = if reset { tx1() } else { colour()?.ok_or_else(|| bad(cmd, format!("give {what} a `color`")))? };
+            Ok(match g {
+                Generated::HarveyBall(_) => ("harveyBall.set", json!({"fill": c})),
+                Generated::Checkbox(_) => ("checkbox.set", json!({"color": c})),
+            })
+        }
+        ("shape.line", Generated::HarveyBall(b)) => {
+            refuse(&["dash", "cap", "join", "compound", "head", "tail", "headSize", "tailSize"], "an outline colour and weight")?;
+            if reset {
+                return Ok(("harveyBall.set", json!({"outline": tx1(), "outlineWidth": HarveyBall::default().outline_width})));
+            }
+            let mut q = serde_json::Map::new();
+            if given("none") {
+                q.insert("outline".into(), Value::Null);
+            }
+            if let Some(c) = colour()? {
+                q.insert("outline".into(), c);
+            }
+            if let Some(w) = p.get("width").filter(|v| !v.is_null()) {
+                let w = w.as_f64().filter(|w| w.is_finite() && (0.0..=deckcraft_model::generated::MAX_OUTLINE_WIDTH).contains(w));
+                let w = w.ok_or_else(|| bad(cmd, format!("{what}'s outline weight is 0 to {} pt", deckcraft_model::generated::MAX_OUTLINE_WIDTH)))?;
+                q.insert("outlineWidth".into(), json!(w));
+                // A weight on a ball without a ring gives it one, as Shape Outline does on a shape.
+                if b.outline.is_none() && !q.contains_key("outline") {
+                    q.insert("outline".into(), tx1());
+                }
+            }
+            if q.is_empty() {
+                return Err(bad(cmd, format!("give {what} an outline `color`, `none` or `width`")));
+            }
+            Ok(("harveyBall.set", Value::Object(q)))
+        }
+        ("shape.line", Generated::Checkbox(_)) => {
+            refuse(&["none", "width", "dash", "cap", "join", "compound", "head", "tail", "headSize", "tailSize"], "one colour")?;
+            let c = if reset { tx1() } else { colour()?.ok_or_else(|| bad(cmd, format!("give {what} a `color`")))? };
+            Ok(("checkbox.set", json!({"color": c})))
+        }
+        _ => Err(bad(cmd, format!("{what} is formatted with its own command"))),
+    }
+}
+
 // ---------- after every edit ----------
 
 /// After an edit (`Session::edit`): keep each generated group whole. One whose box was resized
@@ -546,6 +655,12 @@ fn keep_one(sh: &mut Shape, old: &Shape, ids: &mut Ids) -> Result<()> {
     let Some(g) = sh.generated.clone() else { return Ok(()) };
     if old.generated.as_ref() != Some(&g) {
         return Ok(());
+    }
+    // Not mirrored: `shape.flip` refuses it, and a resize handle dragged past the opposite edge
+    // keeps the element's orientation (a mirrored ball would fill counter-clockwise).
+    if let (Some(x), Some(o)) = (sh.xfrm.as_mut(), old.xfrm) {
+        x.flip_h = o.flip_h;
+        x.flip_v = o.flip_v;
     }
     let (ShapeKind::Group { children, child }, ShapeKind::Group { children: was, child: was_child }) = (&sh.kind, &old.kind) else { return Ok(()) };
     let touched = sh.xfrm != old.xfrm || child != was_child;

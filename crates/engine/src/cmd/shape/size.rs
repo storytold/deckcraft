@@ -193,10 +193,18 @@ pub(super) fn flip(s: &mut Session, p: &Value) -> Result<Value> {
     edit_geometry(s, p, "shape.flip", |sh| {
         // PowerPoint greys Flip out for a SmartArt graphic (SmartArt Design > Right to Left mirrors it),
         // also inside a group: ungrouping would hand the flip to the graphic.
-        let mut graphic = false;
-        deckcraft_model::walk(std::slice::from_ref(&*sh), &mut |x, _| graphic |= x.diagram.is_some());
+        let (mut graphic, mut generated) = (false, false);
+        deckcraft_model::walk(std::slice::from_ref(&*sh), &mut |x, _| {
+            graphic |= x.diagram.is_some();
+            generated |= x.generated.is_some();
+        });
         if graphic {
             return Err(bad("shape.flip", "Flip is not available for a Diagram graphic; use `smartArt.layout` to change how it is laid out"));
+        }
+        // Mirrored, a Harvey ball would fill counter-clockwise; a ball or checkbox is drawn the same
+        // way round wherever it is, also inside a group.
+        if generated {
+            return Err(bad("shape.flip", "Flip is not available for a Harvey ball or checkbox"));
         }
         if let Some(x) = sh.xfrm.as_mut() {
             if v {

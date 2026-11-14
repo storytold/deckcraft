@@ -109,7 +109,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Slide Sorter sections: a bar per section, add, rename in place, collapse, drag the whole section (its slides move with it) | yes | yes |
 | Image paste from the clipboard | yes | macOS pastes a picture when the paste carries no text (TIFF), and rich text copies and pastes as HTML (bold, italic, underline). Windows image paste stays open (#1414) |
 | Font menu: every installed family with its faces | yes | families yes; only Regular/Bold/Italic faces (#69) |
-| Harvey balls and checkboxes | add-ins only | Insert › Symbols › Harvey Ball (0/4…4/4) and Checkbox (checked, unchecked, crossed). While one is selected, Shape Format shows a value stepper, a parts drop-down (2, 3, 4, 5, 8, 10) and fill, background and outline colours, or the checkbox state and colour. Space toggles a selected checkbox; a resize redraws a ball round; a part moves, resizes and deletes only with its element (#2127) |
+| Harvey balls and checkboxes | add-ins only | Insert › Symbols › Harvey Ball (0/4…4/4) and Checkbox (checked, unchecked, crossed). While one is selected, Shape Format shows a value stepper, a parts drop-down (2, 3, 4, 5, 8, 10) and fill, background and outline colours, or the checkbox state and colour. Shape Fill and Shape Outline on a selected element set its own colours (a ball's fill, ring colour and weight; a checkbox's colour), so redraws keep them. Space toggles a selected checkbox; a resize redraws a ball round; Flip is refused, as for a Diagram graphic; a part moves, resizes and deletes only with its element (#2127) |
 
 ## Keyboard shortcuts
 
@@ -175,7 +175,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-14 | minor | Insert › Symbols › Harvey Ball and Checkbox; Shape Format controls for the selected one; Space toggles a checkbox (#2127). Scores unchanged |
+| 2026-11-14 | minor | Insert › Symbols › Harvey Ball and Checkbox; Shape Format controls for the selected one, Shape Fill and Shape Outline set its own colours, Flip refused; Space toggles a checkbox (#2127). Scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |

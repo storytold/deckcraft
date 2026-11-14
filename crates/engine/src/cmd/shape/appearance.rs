@@ -137,6 +137,16 @@ fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut 
 }
 
 pub(super) fn fill(s: &mut Session, p: &Value) -> Result<Value> {
+    // A Harvey ball's or checkbox's colour lives in its description, which redraws replay.
+    let rest;
+    let p = match crate::cmd::generated::route_format(s, p, "shape.fill")? {
+        crate::cmd::generated::Format::Unchanged => p,
+        crate::cmd::generated::Format::Done(v) => return Ok(v),
+        crate::cmd::generated::Format::Rest(q) => {
+            rest = q;
+            &rest
+        }
+    };
     let new_fill = requested_fill(s, p)?;
     let transparency = f64_param(p, "transparency");
     let pic_props = p.get("pictureProps").filter(|v| v.is_object());
@@ -237,6 +247,16 @@ fn line_end(v: &str) -> Option<LineEnd> {
 }
 
 pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
+    // A Harvey ball's outline and a checkbox's colour live in its description (see `fill`).
+    let rest;
+    let p = match crate::cmd::generated::route_format(s, p, "shape.line")? {
+        crate::cmd::generated::Format::Unchanged => p,
+        crate::cmd::generated::Format::Done(v) => return Ok(v),
+        crate::cmd::generated::Format::Rest(q) => {
+            rest = q;
+            &rest
+        }
+    };
     let reset = bool_or(p, "reset", false);
     let none = bool_or(p, "none", false);
     let color = color_param(p, "color");

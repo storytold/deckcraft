@@ -91,3 +91,20 @@ fn shape_format_sets_the_checkbox_state() {
     h.run_steps(3);
     assert!(h.query_by_role_and_label(Role::ComboBox, "Checkbox State").is_none());
 }
+
+/// Shape Fill and Shape Outline on a selected ball go to its description, so a redraw keeps them.
+#[test]
+fn shape_fill_and_outline_buttons_recolour_the_ball() {
+    let mut s = blank();
+    s.execute("insert.harveyBall", &json!({"value": 1, "of": 4, "rect": [100, 100, 60, 60]})).unwrap();
+    let mut h = harness(s, "Shape Format");
+    click(&mut h, Role::Button, "Shape Fill");
+    let accent1 = deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent1);
+    assert!(matches!(selected(&h), Generated::HarveyBall(b) if b.fill == accent1), "Shape Fill's colour is the ball's fill");
+    click(&mut h, Role::Button, "Shape Outline options");
+    click(&mut h, Role::Button, "No Outline");
+    assert!(matches!(selected(&h), Generated::HarveyBall(b) if b.outline.is_none()));
+    h.state_mut().run("shape.sizePosition", json!({"w": 90, "h": 40})).unwrap();
+    h.run_steps(3);
+    assert!(matches!(selected(&h), Generated::HarveyBall(b) if b.fill == accent1 && b.outline.is_none()), "kept through a resize");
+}

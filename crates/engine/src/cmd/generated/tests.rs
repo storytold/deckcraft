@@ -390,3 +390,91 @@ fn an_exhausted_id_space_refuses_new_elements() {
     assert!(s.execute("insert.checkbox", &json!({})).is_err());
     assert_eq!(*s.doc().unwrap().doc, *before);
 }
+
+/// Shape Fill and Shape Outline on a selected element change its description, so the colour
+/// survives the redraw a resize makes; other selected shapes are formatted as usual, all in one
+/// undo step.
+#[test]
+fn shape_fill_and_outline_recolour_an_element_through_a_resize() {
+    use deckcraft_model::Fill;
+    let mut s = deck();
+    let b = id(&s.execute("insert.harveyBall", &json!({"value": 1, "rect": [100, 100, 50, 50]})).unwrap());
+    let c = id(&s.execute("insert.checkbox", &json!({"rect": [200, 100, 40, 40]})).unwrap());
+    let r = id(&s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 50, 50]})).unwrap());
+    s.execute("edit.select", &json!({"ids": [b, c, r]})).unwrap();
+    let n = undo_len(&s);
+    s.execute("shape.fill", &json!({"color": "#FF0000"})).unwrap();
+    assert_eq!(undo_len(&s), n + 1, "one undo step for all three");
+    let red = crate::cmd::color_value(&json!("#FF0000")).unwrap();
+    let accent2 = crate::cmd::color_value(&json!("accent2")).unwrap();
+    let check = |s: &Session| match shape(s, c).generated {
+        Some(Generated::Checkbox(x)) => x,
+        _ => panic!(),
+    };
+    assert_eq!(ball(&s, b).fill, red);
+    assert_eq!(check(&s).color, red);
+    assert_eq!(shape(&s, r).fill, Some(Fill::solid(red.clone())), "the rectangle is filled as usual");
+    s.execute("shape.line", &json!({"ids": [b], "color": "accent2", "width": 3})).unwrap();
+    assert_eq!((ball(&s, b).outline, ball(&s, b).outline_width), (Some(accent2.clone()), 3.0));
+    s.execute("shape.line", &json!({"ids": [c], "color": "accent2"})).unwrap();
+    assert_eq!(check(&s).color, accent2);
+    // Resized, both are redrawn with their colours.
+    s.execute("shape.sizePosition", &json!({"id": b, "w": 120, "h": 60})).unwrap();
+    s.execute("shape.sizePosition", &json!({"id": c, "w": 90, "h": 40})).unwrap();
+    let k = kids(&s, b);
+    assert_eq!(k[1].fill, Some(Fill::solid(red.clone())), "the wedge");
+    let ring = k[2].line.as_ref().unwrap();
+    assert_eq!((ring.fill.clone(), ring.width), (Some(Fill::solid(accent2.clone())), Some(3.0)));
+    assert!(kids(&s, c).iter().all(|x| x.line.as_ref().and_then(|l| l.fill.clone()) == Some(Fill::solid(accent2.clone()))), "box and tick");
+    // No outline takes the ring off; a weight puts a Text 1 ring back.
+    s.execute("shape.line", &json!({"ids": [b], "none": true})).unwrap();
+    assert_eq!((ball(&s, b).outline, kids(&s, b).len()), (None, 2));
+    s.execute("shape.line", &json!({"ids": [b], "width": 2})).unwrap();
+    assert_eq!((ball(&s, b).outline, ball(&s, b).outline_width), (crate::cmd::color_value(&json!("tx1")), 2.0));
+    s.execute("shape.fill", &json!({"ids": [b], "reset": true})).unwrap();
+    assert_eq!(ball(&s, b).fill, HarveyBall::default().fill);
+    // What a description can't hold is refused, naming the command, and changes nothing.
+    let before = s.doc().unwrap().doc.clone();
+    for (cmd, p) in [
+        ("shape.fill", json!({"ids": [b], "gradient": {"stops": [[0, "#fff"], [1, "#000"]]}})),
+        ("shape.fill", json!({"ids": [c], "none": true})),
+        ("shape.fill", json!({"ids": [b, r], "color": "notAColour"})),
+        ("shape.line", json!({"ids": [b], "dash": "dash"})),
+        ("shape.line", json!({"ids": [b], "width": 25})),
+        ("shape.line", json!({"ids": [c], "width": 2})),
+        ("shape.line", json!({"ids": [c], "none": true})),
+    ] {
+        let e = s.execute(cmd, &p).expect_err(&format!("{cmd} {p}")).to_string();
+        assert!(e.contains(cmd), "{cmd} {p}: {e}");
+        assert_eq!(*s.doc().unwrap().doc, *before, "{cmd} {p} changed nothing");
+    }
+}
+
+/// Flip is refused for a Harvey ball or checkbox, as for a Diagram graphic, also inside a group;
+/// a resize dragged past the opposite edge keeps it the right way round.
+#[test]
+fn generated_elements_are_not_flipped() {
+    let mut s = deck();
+    let b = id(&s.execute("insert.harveyBall", &json!({"value": 1, "rect": [100, 100, 50, 50]})).unwrap());
+    let c = id(&s.execute("insert.checkbox", &json!({"rect": [200, 100, 40, 40]})).unwrap());
+    let before = s.doc().unwrap().doc.clone();
+    for (e, axis) in [(b, "horizontal"), (b, "vertical"), (c, "horizontal"), (c, "vertical")] {
+        let err = s.execute("shape.flip", &json!({"id": e, "axis": axis})).unwrap_err().to_string();
+        assert!(err.contains("shape.flip") && err.contains("Harvey ball or checkbox"), "{err}");
+    }
+    assert_eq!(*s.doc().unwrap().doc, *before);
+    let r = id(&s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 50, 50]})).unwrap());
+    s.execute("edit.select", &json!({"ids": [b, r]})).unwrap();
+    let outer = id(&s.execute("arrange.group", &json!({})).unwrap());
+    assert!(s.execute("shape.flip", &json!({"id": outer})).is_err(), "a group holding a ball");
+    // A handle drag past the opposite edge flips what it resizes (`tools::hit::resize_box`).
+    let old = s.doc().unwrap().doc.clone();
+    let mut new = (*old).clone();
+    let slide = s.doc().unwrap().selection.slide;
+    let sh = deckcraft_model::find_shape_mut(&mut std::sync::Arc::make_mut(&mut new.slides[slide]).shapes, ShapeId(c)).unwrap();
+    let x = sh.xfrm.as_mut().unwrap();
+    (x.flip_h, x.flip_v, x.w) = (true, true, 60.0);
+    super::keep_whole(&old, &mut new).unwrap();
+    let sh = deckcraft_model::find_shape(&new.slides[slide].shapes, ShapeId(c)).unwrap();
+    assert_eq!(sh.xfrm.map(|x| (x.flip_h, x.flip_v, x.w)), Some((false, false, 60.0)), "resized, not mirrored");
+}
