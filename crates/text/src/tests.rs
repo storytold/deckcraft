@@ -1992,3 +1992,34 @@ fn signed_insets_are_preserved_when_they_fit() {
     assert_eq!(l.lines.len(), 1);
     assert_eq!(l.inner.x0, -10.0);
 }
+
+/// Each run is shaped in its own language (Review › Language), so a font's forms for that language
+/// (OpenType `locl`) are drawn: the Serbian б, not the Russian one, in a Serbian run beside a
+/// Russian run of the same word.
+#[test]
+fn serbian_runs_draw_the_fonts_serbian_forms() {
+    let b = |f: &FontFace, lang: &str| {
+        let params = deckcraft_fonts::ShapeParams { language: Some(lang), ..Default::default() };
+        deckcraft_fonts::shape_range(f, "б", 0.."б".len(), &params, |c| c).first().map(|g| g.gid)
+    };
+    let serbian_form = |f: &FontFace| b(f, "sr-Cyrl-RS") != b(f, "ru-RU");
+    let Some(family) = first_family(&["DejaVu Sans", "DejaVu Serif", "Source Sans 3", "Source Serif 4", "Noto Sans", "Noto Serif"], serbian_form)
+    else {
+        eprintln!("skipped: no font with a Serbian б");
+        return;
+    };
+    let run = |text: &str, lang: &str| {
+        let mut r = Run::new(text);
+        r.props.lang = Some(lang.into());
+        r.props.font = Some(family.clone());
+        r
+    };
+    let (p, sh) = bidi_setup(vec![run("грб ", "sr-Cyrl-RS"), run("грб", "ru-RU")], 2000.0, false, Align::Left);
+    let l = lay(&p, &sh, 2000.0, 300.0);
+    // Glyph of each paragraph character.
+    let at = |i: usize| l.runs.iter().find_map(|r| r.cells.iter().position(|&(k, _)| k == i).and_then(|g| r.glyphs.get(g)).map(|g| g.0));
+    // г р б, space, г р б: each б is the one its language gives.
+    let face = FontDb::global().face(&family, "Regular");
+    assert_eq!(at(2), b(&face, "sr-Cyrl-RS"), "{family}: the Serbian б");
+    assert_eq!(at(6), b(&face, "ru-RU"), "{family}: the Russian б");
+}
