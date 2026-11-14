@@ -56,6 +56,13 @@ pub struct Ctx<'a> {
     pub written: HashSet<u32>,
 }
 
+/// The shape's extent in EMU, the space a custom geometry's connection sites are written in; a
+/// shape without a transform of its own uses the extent the reader assumes for it.
+fn extent_emu(s: &Shape) -> (i64, i64) {
+    let inherited = crate::custgeom::INHERITED_EXTENT_EMU as i64;
+    s.xfrm.map(|xf| (deckcraft_geom::pt_to_emu(xf.w), deckcraft_geom::pt_to_emu(xf.h))).unwrap_or((inherited, inherited))
+}
+
 impl Ctx<'_> {
     fn id_for(&mut self, s: &Shape) -> u32 {
         let id = self.ids.get(s.id).unwrap_or(0);
@@ -85,7 +92,9 @@ fn extra_guides(name: &str) -> &'static [(&'static str, i64)] {
     }
 }
 
-pub fn geometry(w: &mut W, g: &Geom) {
+/// `sites` and `ext` (the shape's extent in EMU) are the connection sites of a custom geometry
+/// and the space they are written in; a preset ignores them.
+pub fn geometry(w: &mut W, g: &Geom, sites: &[deckcraft_model::ConnectionSite], ext: (i64, i64)) {
     match g {
         Geom::Preset { name, adj } => {
             let name = preset_name(name);
@@ -119,12 +128,12 @@ pub fn geometry(w: &mut W, g: &Geom) {
             w.close("a:prstGeom");
         }
         Geom::Custom { paths } => {
-            if paths.is_empty() {
+            if paths.is_empty() && sites.is_empty() {
                 w.open("a:prstGeom", A::new().a("prst", "rect"));
                 w.empty0("a:avLst");
                 w.close("a:prstGeom");
             } else {
-                crate::custgeom::write_cust_geom(w, paths);
+                crate::custgeom::write_cust_geom(w, paths, sites, ext);
             }
         }
     }
@@ -245,7 +254,7 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
         dml::xfrm(w, "a:xfrm", xf, None);
     }
     if geom && (s.xfrm.is_some() || s.ph.is_none() || !matches!(&s.geom, Geom::Preset { name, adj } if name == "rect" && adj.is_empty())) {
-        geometry(w, &s.geom);
+        geometry(w, &s.geom, &s.sites, extent_emu(s));
     }
     if let Some(f) = &s.fill {
         dml::fill(w, x, o, f);
@@ -361,6 +370,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.open0("p:cxnSp");
             w.open0("p:nvCxnSpPr");
             cnvpr(w, x, o, id, s);
+            // A connector glued to a group member names the member, as the file does.
             let st = start.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             let en = end.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             if st.is_none() && en.is_none() && !s.locked {
@@ -1034,6 +1044,16 @@ pub fn tree_header(w: &mut W) {
 mod tests {
     use super::*;
 
+    /// A placeholder (no transform of its own) writes its sites in the extent the reader assumes
+    /// for it, so they keep their fractions; a transform gives the extent in EMU.
+    #[test]
+    fn site_extent_of_a_shape_without_a_transform_matches_the_reader() {
+        let inherited = crate::custgeom::INHERITED_EXTENT_EMU as i64;
+        assert_eq!(extent_emu(&Shape::default()), (inherited, inherited));
+        let s = Shape { xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 100.0, 50.0)), ..Default::default() };
+        assert_eq!(extent_emu(&s), (1_270_000, 635_000));
+    }
+
     #[test]
     fn guide_literals_remain_finite_bounded_integers() {
         for (guide, expected) in [
@@ -1046,7 +1066,7 @@ mod tests {
             (-12500.6, -12501),
         ] {
             let mut w = W::frag();
-            geometry(&mut w, &Geom::Preset { name: "bentConnector3".into(), adj: vec![guide] });
+            geometry(&mut w, &Geom::Preset { name: "bentConnector3".into(), adj: vec![guide] }, &[], (0, 0));
             assert!(w.s.contains(&format!(r#"fmla="val {expected}""#)), "{}", w.s);
         }
     }
@@ -1055,16 +1075,16 @@ mod tests {
     #[test]
     fn preset_guides_are_complete() {
         let mut w = W::frag();
-        geometry(&mut w, &Geom::Preset { name: "star5".into(), adj: vec![20000.0] });
+        geometry(&mut w, &Geom::Preset { name: "star5".into(), adj: vec![20000.0] }, &[], (0, 0));
         assert_eq!(
             w.s,
             r#"<a:prstGeom prst="star5"><a:avLst><a:gd name="adj" fmla="val 20000"/><a:gd name="hf" fmla="val 105146"/><a:gd name="vf" fmla="val 110557"/></a:avLst></a:prstGeom>"#
         );
         let mut w = W::frag();
-        geometry(&mut w, &Geom::Preset { name: "rightArrow".into(), adj: vec![10000.0] });
+        geometry(&mut w, &Geom::Preset { name: "rightArrow".into(), adj: vec![10000.0] }, &[], (0, 0));
         assert!(w.s.contains(r#"name="adj1" fmla="val 10000""#) && w.s.contains(r#"name="adj2" fmla="val 50000""#), "{}", w.s);
         let mut w = W::frag();
-        geometry(&mut w, &Geom::Preset { name: "textBox".into(), adj: vec![] });
+        geometry(&mut w, &Geom::Preset { name: "textBox".into(), adj: vec![] }, &[], (0, 0));
         assert_eq!(w.s, r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#);
     }
 }

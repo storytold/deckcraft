@@ -15,8 +15,8 @@ use deckcraft_model::text::{
     Action, Align, Anchor, AutoFit, BodyProps, Bullet, Caps, Hyperlink, Paragraph, Run, RunKind, RunProps, Spacing, Strike, TextBody, TextOverflow,
 };
 use deckcraft_model::{
-    Background, Comment, CustomPath, CustomShow, Geom, InkStroke, MediaClip, Presentation, Section, Shape, ShapeId, ShapeKind, Slide, SlideId,
-    defaults,
+    Background, Comment, ConnectionSite, CustomPath, CustomShow, Geom, InkStroke, MediaClip, Presentation, Section, Shape, ShapeId, ShapeKind, Slide,
+    SlideId, defaults,
 };
 
 fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
@@ -177,11 +177,35 @@ pub fn rich_deck() -> Presentation {
         }],
     };
     c.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Accent4)));
+    // Connection sites of its own (a circuit symbol's pins): left middle, right middle, and one
+    // below the box.
+    c.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5), ConnectionSite::new(0.5, 1.25)];
     let child1 = Shape { geom: Geom::preset("ellipse"), ..shape(&mut p, "Child 1", 0.0, 0.0, 50.0, 50.0) };
     let child2 = Shape { geom: Geom::preset("rect"), ..shape(&mut p, "Child 2", 60.0, 0.0, 50.0, 50.0) };
     let (c1, c2) = (child1.id, child2.id);
     let mut g = shape(&mut p, "Group", 600.0, 120.0, 220.0, 100.0);
     g.kind = ShapeKind::Group { children: vec![child1, child2], child: Xfrm::new(0.0, 0.0, 110.0, 50.0) };
+    // A grouped symbol: a member with pins of its own, a group within holding another, and a
+    // connector inside the symbol between the two; a connector on the slide glued to the
+    // member's own site 1.
+    let mut pin = shape(&mut p, "Lead", 0.0, 20.0, 60.0, 10.0);
+    pin.geom = Geom::Custom { paths: vec![CustomPath { w: 60.0, h: 10.0, d: "M 0 5 L 60 5".into(), ..Default::default() }] };
+    pin.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)];
+    let pin_id = pin.id;
+    let mut pin2 = shape(&mut p, "Inner Lead", 0.0, 0.0, 20.0, 10.0);
+    pin2.geom = pin.geom.clone();
+    pin2.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)];
+    let pin2_id = pin2.id;
+    let mut inner = shape(&mut p, "Inner", 20.0, 35.0, 20.0, 10.0);
+    inner.kind = ShapeKind::Group { children: vec![pin2], child: Xfrm::new(0.0, 0.0, 20.0, 10.0) };
+    let mut inner_wire = shape(&mut p, "Inner Wire", 0.0, 25.0, 20.0, 15.0);
+    inner_wire.kind = ShapeKind::Connector { start: Some((pin_id, 0)), end: Some((pin2_id, 1)) };
+    inner_wire.geom = Geom::preset("straightConnector1");
+    let mut symbol = shape(&mut p, "Symbol", 100.0, 300.0, 120.0, 100.0);
+    symbol.kind = ShapeKind::Group { children: vec![pin, inner, inner_wire], child: Xfrm::new(0.0, 0.0, 60.0, 50.0) };
+    let mut wire = shape(&mut p, "Wire", 220.0, 325.0, 100.0, 0.0);
+    wire.kind = ShapeKind::Connector { start: Some((pin_id, 1)), end: Some((pin2_id, 0)) };
+    wire.geom = Geom::preset("straightConnector1");
     let mut cx = shape(&mut p, "Connector", 600.0, 300.0, 200.0, 0.0);
     cx.kind = ShapeKind::Connector { start: Some((c1, 2)), end: Some((c2, 0)) };
     cx.geom = Geom::preset("straightConnector1");
@@ -195,7 +219,7 @@ pub fn rich_deck() -> Presentation {
     tb.descr = "alt text".into();
     let mut bgs = shape(&mut p, "Uses background", 450.0, 400.0, 60.0, 60.0);
     bgs.fill = Some(Fill::Background);
-    s.shapes.extend([a, b, c, g, cx, tb, bgs]);
+    s.shapes.extend([a, b, c, g, cx, tb, bgs, symbol, wire]);
     s.background = Some(Background::Fill { fill: Fill::solid(ColorRef::rgb(Rgba::rgb(250, 248, 240))) });
     s.transition = Some(Transition { kind: "morph".into(), option: "words".into(), duration_ms: 2000, ..Default::default() });
     let ids: Vec<ShapeId> = s.shapes.iter().map(|x| x.id).collect();
@@ -388,6 +412,23 @@ fn round(p: &Presentation) -> Presentation {
     deckcraft_pptx::import(&bytes).expect("import")
 }
 
+/// One part of a pptx (zip) as text.
+fn zip_part(bytes: &[u8], name: &str) -> String {
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+    let mut f = z.by_name(name).expect(name);
+    let mut s = String::new();
+    std::io::Read::read_to_string(&mut f, &mut s).expect("utf-8");
+    s
+}
+
+/// The `p:cNvPr` id written for the shape named `name`.
+fn find_cnvpr_id(xml: &str, name: &str) -> String {
+    let at = xml.find(&format!(r#" name="{name}""#)).unwrap_or_else(|| panic!("no shape {name}"));
+    let head = &xml[..at];
+    let id_at = head.rfind(r#" id=""#).expect("id") + 5;
+    head[id_at..].split('"').next().unwrap().to_string()
+}
+
 fn by_name<'a>(s: &'a Slide, name: &str) -> &'a Shape {
     let mut found = None;
     deckcraft_model::walk(&s.shapes, &mut |x, _| {
@@ -406,6 +447,21 @@ fn rich_deck_writes_to_dir() {
         std::fs::write(format!("{dir}/rich.pptx"), &bytes).expect("write");
     }
     assert!(bytes.len() > 1000);
+}
+
+/// A custom geometry with no path but with connection sites (a pin marker) keeps them: it is
+/// written as a `custGeom` with an empty path list, not as a rectangle preset.
+#[test]
+fn an_empty_custom_geometry_keeps_its_connection_sites() {
+    let mut p = defaults::new_presentation(None);
+    let mut pin = shape(&mut p, "Pin", 100.0, 100.0, 1.0, 1.0);
+    pin.geom = Geom::Custom { paths: vec![] };
+    pin.sites = vec![ConnectionSite::new(0.5, 0.5)];
+    Arc::make_mut(&mut p.slides[0]).shapes.push(pin);
+    let q = round(&p);
+    let back = by_name(&q.slides[0], "Pin");
+    assert_eq!(back.geom, Geom::Custom { paths: vec![] });
+    assert_eq!(back.sites, vec![ConnectionSite::new(0.5, 0.5)]);
 }
 
 #[test]
@@ -616,13 +672,29 @@ fn shapes_fills_lines_effects_round_trip() {
         assert_eq!(a.line, b.line, "{name}");
         assert_eq!(a.effects, b.effects, "{name}");
         assert_eq!(a.xfrm, b.xfrm, "{name}");
+        assert_eq!(a.sites, b.sites, "{name}: connection sites (a:cxnLst) survive");
     }
+    assert_eq!(by_name(&q.slides[1], "Freeform").sites.len(), 3);
     let g = by_name(&q.slides[1], "Group");
     assert!(matches!(&g.kind, ShapeKind::Group { children, child } if children.len() == 2 && child.w == 110.0));
     let c = by_name(&q.slides[1], "Connector");
     let (c1, c2) = (by_name(&q.slides[1], "Child 1").id, by_name(&q.slides[1], "Child 2").id);
     assert!(matches!(c.kind, ShapeKind::Connector { start: Some((s, 2)), end: Some((e, 0)) } if s == c1 && e == c2), "{:?}", c.kind);
     assert_eq!(c.line, by_name(&p.slides[1], "Connector").line);
+    // A connector glued to a group member names the member and its own site, in the file and
+    // back: on the slide, and inside the group to a member of a group within.
+    let xml = deckcraft_pptx::export(&p).expect("export");
+    let slide2 = zip_part(&xml, "ppt/slides/slide2.xml");
+    let (lead, inner_lead) = (find_cnvpr_id(&slide2, "Lead"), find_cnvpr_id(&slide2, "Inner Lead"));
+    assert!(slide2.contains(&format!(r#"<a:stCxn id="{lead}" idx="1"/><a:endCxn id="{inner_lead}" idx="0"/>"#)), "{slide2}");
+    assert!(slide2.contains(&format!(r#"<a:stCxn id="{lead}" idx="0"/><a:endCxn id="{inner_lead}" idx="1"/>"#)), "{slide2}");
+    let ends = |name: &str| match by_name(&q.slides[1], name).kind {
+        ShapeKind::Connector { start, end } => (start, end),
+        ref k => panic!("{name}: {k:?}"),
+    };
+    let (lead, inner_lead) = (by_name(&q.slides[1], "Lead").id, by_name(&q.slides[1], "Inner Lead").id);
+    assert_eq!(ends("Wire"), (Some((lead, 1)), Some((inner_lead, 0))));
+    assert_eq!(ends("Inner Wire"), (Some((lead, 0)), Some((inner_lead, 1))));
     // Ids are kept.
     assert_eq!(by_name(&q.slides[1], "Group").id, by_name(&p.slides[1], "Group").id);
 }

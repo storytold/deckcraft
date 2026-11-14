@@ -339,3 +339,77 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
 }
+
+/// Connection sites of a custom geometry are saved as fractions of the box and left out when
+/// there are none; a file from before they existed loads with none.
+#[test]
+fn connection_sites_serialize_as_fractions_and_default_to_none() {
+    use super::ConnectionSite;
+    let mut sh = Shape { xfrm: Some(Xfrm::new(10.0, 20.0, 200.0, 100.0)), ..Default::default() };
+    let v = serde_json::to_value(&sh).unwrap();
+    assert!(v.get("sites").is_none(), "{v}");
+    sh.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)];
+    let v = serde_json::to_value(&sh).unwrap();
+    assert_eq!(v["sites"], serde_json::json!([{"x": 0.0, "y": 0.5}, {"x": 1.0, "y": 0.5}]));
+    let back: Shape = serde_json::from_value(v).unwrap();
+    assert_eq!(back.sites, sh.sites);
+    let old: Shape =
+        serde_json::from_str(r#"{"id": 7, "name": "Old", "geom": {"kind": "custom", "paths": [{"w": 10, "h": 10, "d": "M 0 0 L 10 10"}]}}"#).unwrap();
+    assert!(old.sites.is_empty());
+}
+
+/// A connector saved glued to a group stores the position of the site in a walk over the
+/// members' own sites (groups within too, lines and ink left out, hidden members kept in place).
+/// `retarget_group_glue` glues it to the member and that member's own site instead, which keeps
+/// meaning the same pin when members are added, removed or reordered.
+#[test]
+fn legacy_glue_to_a_group_is_retargeted_to_the_member_and_its_own_site() {
+    use super::{ConnectionSite, retarget_group_glue};
+    let member = |id: u32, x: f64, sites: Vec<ConnectionSite>, hidden: bool| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(x, 0.0, 10.0, 10.0)),
+        sites,
+        hidden,
+        ..Default::default()
+    };
+    let a = member(1, 0.0, vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)], false);
+    let hidden = member(2, 20.0, vec![ConnectionSite::new(0.5, 0.5)], true);
+    let none = member(3, 40.0, vec![], false);
+    let inner = member(4, 0.0, vec![ConnectionSite::new(0.5, 1.0)], false);
+    let nested = Shape {
+        id: ShapeId(5),
+        xfrm: Some(Xfrm::new(60.0, 0.0, 20.0, 20.0)),
+        kind: ShapeKind::Group { children: vec![inner], child: Xfrm::new(0.0, 0.0, 10.0, 10.0) },
+        ..Default::default()
+    };
+    let line =
+        Shape { id: ShapeId(6), geom: super::Geom::preset("line"), sites: vec![ConnectionSite::new(0.0, 0.0)], ..member(6, 90.0, vec![], false) };
+    let group = |id: u32, children: Vec<Shape>| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 20.0)),
+        kind: ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, 100.0, 20.0) },
+        ..Default::default()
+    };
+    let wire = |id: u32, start: Option<(u32, u32)>, end: Option<(u32, u32)>| Shape {
+        id: ShapeId(id),
+        kind: ShapeKind::Connector { start: start.map(|(s, i)| (ShapeId(s), i)), end: end.map(|(s, i)| (ShapeId(s), i)) },
+        ..Default::default()
+    };
+    let empty = group(11, vec![member(12, 0.0, vec![], false)]);
+    // Walk: (1, 0), (1, 1), (2, 0), (4, 0); the line's site is not part of it.
+    let mut shapes = vec![
+        group(10, vec![a, hidden, none, nested, line]),
+        empty,
+        wire(20, Some((10, 2)), Some((10, 3))),
+        wire(21, Some((10, 99)), Some((11, 0))),
+        group(30, vec![wire(31, Some((10, 1)), Some((7, 2))), member(32, 0.0, vec![], false)]),
+    ];
+    retarget_group_glue(&mut shapes);
+    let ends = |s: &Shape| match s.kind {
+        ShapeKind::Connector { start, end } => (start.map(|(s, i)| (s.0, i)), end.map(|(s, i)| (s.0, i))),
+        _ => (None, None),
+    };
+    assert_eq!(ends(&shapes[2]), (Some((2, 0)), Some((4, 0))), "a hidden member keeps its place; a nested group's member");
+    assert_eq!(ends(&shapes[3]), (Some((1, 0)), Some((11, 0))), "past the end: the first site; a group without any: left");
+    assert_eq!(ends(&shapes[4].children()[0]), (Some((1, 1)), Some((7, 2))), "a connector inside a group; a plain shape: left");
+}

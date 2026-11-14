@@ -82,6 +82,8 @@ pub fn sp_tree(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, tree: &El, depth: us
             out.push(s);
         }
     }
+    // `stCxn`/`endCxn` name the shape and its own site, a group member included, which is
+    // what a connector holds: only the file's ids need mapping (connectors in groups too).
     if depth == 0 {
         remap_connectors(&mut out, ctx, 0);
     }
@@ -227,10 +229,16 @@ fn sp_pr(imp: &mut Imp, part: &Part, s: &mut Shape, pr: &El) {
     if let Some(pg) = pr.child("prstGeom") {
         s.geom = preset_geom(pg);
     } else if let Some(cg) = pr.child("custGeom") {
-        let (w, h) = s.xfrm.map(|x| (deckcraft_geom::pt_to_emu(x.w) as f64, deckcraft_geom::pt_to_emu(x.h) as f64)).unwrap_or((21600.0, 21600.0));
+        let (w, h) = s
+            .xfrm
+            .map(|x| (deckcraft_geom::pt_to_emu(x.w) as f64, deckcraft_geom::pt_to_emu(x.h) as f64))
+            .unwrap_or((crate::custgeom::INHERITED_EXTENT_EMU, crate::custgeom::INHERITED_EXTENT_EMU));
         let paths = crate::custgeom::read_cust_geom(cg, w, h);
-        if !paths.is_empty() {
+        let sites = crate::custgeom::read_cxn_lst(cg, w, h);
+        // A custom geometry without a path but with sites is still that (nothing drawn, pins).
+        if !paths.is_empty() || !sites.is_empty() {
             s.geom = Geom::Custom { paths };
+            s.sites = sites;
         }
     }
     s.fill = dml::fill_of(imp, part, pr);

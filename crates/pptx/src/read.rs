@@ -1107,24 +1107,28 @@ fn default_text_anchor(p: &mut Presentation) {
 /// layout's picture placeholder cut into a shape keeps that shape on the slide. Anything left
 /// is a rectangle.
 fn inherit_placeholder_geometry(p: &mut Presentation) {
-    let unset = |g: &Geom| matches!(g, Geom::Custom { paths } if paths.is_empty());
+    // The marker is an empty custom geometry on a placeholder (`mark_inherited_geometry`). A
+    // custom geometry without a path but with connection sites is the shape's own (pins only),
+    // on a placeholder too; the geometry inherited from a parent brings the parent's sites.
+    let unset = |s: &deckcraft_model::Shape| s.ph.is_some() && s.sites.is_empty() && matches!(&s.geom, Geom::Custom { paths } if paths.is_empty());
+    let own = |s: &deckcraft_model::Shape| (!unset(s)).then(|| (s.geom.clone(), s.sites.clone()));
     // Masters first, then layouts (from their masters), then slides (from layouts and masters).
     for m in &mut p.masters {
         let m = Arc::make_mut(m);
         walk_shapes_mut(&mut m.shapes, &mut |s| {
-            if unset(&s.geom) {
+            if unset(s) {
                 s.geom = Geom::default();
             }
         });
     }
-    let mut layout_geoms: Vec<(LayoutId, usize, Geom)> = vec![];
+    let mut layout_geoms: Vec<(LayoutId, usize, (Geom, Vec<deckcraft_model::ConnectionSite>))> = vec![];
     for m in &p.masters {
         for l in &m.layouts {
             let ctx = deckcraft_model::resolve::Ctx::for_layout(p, m, l);
             for (i, s) in l.shapes.iter().enumerate() {
-                if unset(&s.geom) {
+                if unset(s) {
                     let (_, mp) = deckcraft_model::resolve::parents(&ctx, s);
-                    layout_geoms.push((l.id, i, mp.map(|m| m.geom.clone()).filter(|g| !unset(g)).unwrap_or_default()));
+                    layout_geoms.push((l.id, i, mp.and_then(own).unwrap_or_default()));
                 }
             }
         }
@@ -1132,36 +1136,37 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
     for m in &mut p.masters {
         let m = Arc::make_mut(m);
         for l in &mut m.layouts {
-            for (id, i, g) in layout_geoms.iter().filter(|(id, _, _)| *id == l.id) {
+            for (id, i, (g, sites)) in layout_geoms.iter().filter(|(id, _, _)| *id == l.id) {
                 let _ = id;
                 if let Some(s) = l.shapes.get_mut(*i) {
                     s.geom = g.clone();
+                    s.sites = sites.clone();
                 }
             }
         }
     }
-    let mut slide_geoms: Vec<(usize, usize, Geom)> = vec![];
+    let mut slide_geoms: Vec<(usize, usize, (Geom, Vec<deckcraft_model::ConnectionSite>))> = vec![];
     for (si, sl) in p.slides.iter().enumerate() {
         let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(p, sl) else { continue };
         for (i, s) in sl.shapes.iter().enumerate() {
-            if unset(&s.geom) {
+            if unset(s) {
                 let (lp, mp) = deckcraft_model::resolve::parents(&ctx, s);
-                let g = lp.map(|l| l.geom.clone()).filter(|g| !unset(g)).or_else(|| mp.map(|m| m.geom.clone()).filter(|g| !unset(g)));
-                slide_geoms.push((si, i, g.unwrap_or_default()));
+                slide_geoms.push((si, i, lp.and_then(own).or_else(|| mp.and_then(own)).unwrap_or_default()));
             }
         }
     }
-    for (si, i, g) in slide_geoms {
+    for (si, i, (g, sites)) in slide_geoms {
         if let Some(sl) = p.slides.get_mut(si)
             && let Some(s) = Arc::make_mut(sl).shapes.get_mut(i)
         {
             s.geom = g;
+            s.sites = sites;
         }
     }
     // Placeholders inside groups (rare) and anything still unset: rectangles.
     for sl in &mut p.slides {
         walk_shapes_mut(&mut Arc::make_mut(sl).shapes, &mut |s| {
-            if unset(&s.geom) {
+            if unset(s) {
                 s.geom = Geom::default();
             }
         });
@@ -1169,7 +1174,7 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
     for m in &mut p.masters {
         for l in &mut Arc::make_mut(m).layouts {
             walk_shapes_mut(&mut l.shapes, &mut |s| {
-                if unset(&s.geom) {
+                if unset(s) {
                     s.geom = Geom::default();
                 }
             });
