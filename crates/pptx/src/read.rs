@@ -35,7 +35,7 @@ pub struct Imp<'a> {
     pub custom_show_names: HashMap<String, String>,
     /// GUIDs (upper case) of the table styles the file defines.
     pub table_style_ids: Vec<String>,
-    /// Per legacy VML drawing part: shape id → preview picture part (see `shapes::vml_preview`).
+    /// Per legacy VML drawing part: shape id or o:spid → preview picture part (see `shapes::vml_preview`).
     pub vml_previews: HashMap<String, HashMap<String, String>>,
     /// Aggregate byte count of retained chart sidecars across the presentation.
     pub kept_sidecar_bytes: usize,

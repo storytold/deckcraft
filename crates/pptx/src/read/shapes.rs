@@ -493,7 +493,7 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
 }
 
 /// The preview picture of an old-style embedded object (`p:oleObj spid` with no `p:pic`): the
-/// `v:imagedata` of the legacy VML drawing shape with that id, as PowerPoint 2007 wrote them.
+/// `v:imagedata` of the legacy VML drawing shape with that id or `o:spid`, as PowerPoint 2007 wrote them.
 fn vml_preview(imp: &mut Imp, part: &Part, spid: &str) -> Option<deckcraft_model::MediaId> {
     for rel in part.rels.items.iter().filter(|r| r.kind == "vmlDrawing" && !r.external) {
         let key = crate::opc::norm(&rel.target);
@@ -507,23 +507,64 @@ fn vml_preview(imp: &mut Imp, part: &Part, spid: &str) -> Option<deckcraft_model
     None
 }
 
-/// Every shape id in a VML drawing with a picture, mapped to that picture's part: parsed once per
+/// The VML part with Office conditional-comment markers (`<!--[if …]>`, `<![if …]>`, `<![endif]-->`) removed, so shapes wrapped in them are parsed.
+fn strip_vml_conditionals(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    let mut changed = false;
+    while at < bytes.len() {
+        let rest = &bytes[at..];
+        let marker = rest.iter().position(|b| *b == b'<').map(|i| at + i);
+        let Some(start) = marker else {
+            out.extend_from_slice(rest);
+            break;
+        };
+        out.extend_from_slice(&bytes[at..start]);
+        let rest = &bytes[start..];
+        let conditional = rest.starts_with(b"<!--[if") || rest.starts_with(b"<![if") || rest.starts_with(b"<![endif");
+        if conditional {
+            let Some(end) = rest.iter().position(|b| *b == b'>') else {
+                out.extend_from_slice(rest);
+                break;
+            };
+            let mut next = start + end + 1;
+            if bytes.get(next..next + 3) == Some(b"-->") {
+                next += 3;
+            }
+            at = next;
+            changed = true;
+            continue;
+        }
+        out.push(b'<');
+        at = start + 1;
+    }
+    if changed { std::borrow::Cow::Owned(out) } else { std::borrow::Cow::Borrowed(bytes) }
+}
+
+/// Every shape id and o:spid in a VML drawing with a picture, mapped to that picture's part: parsed once per
 /// drawing however many objects look it up.
 fn vml_index(pkg: &crate::opc::Package, vml: &str) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    let Some(doc) = pkg.xml(vml) else { return out };
+    let Some(bytes) = pkg.xml_bytes(vml) else { return out };
+    let decoded = crate::xml::decode_xml_bytes(bytes);
+    let bytes = strip_vml_conditionals(&decoded);
+    let doc = match crate::xml::parse(&bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("pptx: {vml}: {e}");
+            return out;
+        }
+    };
     let rels = pkg.rels(vml);
     let mut shapes = vec![];
     doc.root.find_all("shape", &mut shapes);
     for s in shapes {
-        let Some(id) = s.attr("id") else { continue };
-        if out.contains_key(id) {
-            continue; // the first shape with an id wins, as the old lookup did
-        }
         let Some(img) = s.find("imagedata") else { continue };
         let Some(rid) = img.attr("o:relid").or(img.attr("r:id")) else { continue };
-        if let Some(r) = rels.get(rid).filter(|r| !r.external) {
-            out.insert(id.to_string(), r.target.clone());
+        let Some(r) = rels.get(rid).filter(|r| !r.external) else { continue };
+        let keys = [s.attr("o:spid").or_else(|| s.attr("spid")), s.attr("id")];
+        for key in keys.into_iter().flatten().filter(|key| !key.is_empty()) {
+            out.entry(key.to_string()).or_insert_with(|| r.target.clone());
         }
     }
     out
@@ -825,4 +866,20 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
         c.fill = dml::fill_of(imp, part, pr);
     }
     c
+}
+
+#[cfg(test)]
+mod vml_tests {
+    use super::strip_vml_conditionals;
+
+    #[test]
+    fn strips_vml_conditional_blocks_and_preserves_shape_xml() {
+        let raw = br#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><!--[if gte vml 1]><v:shape id="_x0000_s1025" o:spid="_x0000_s2049"><v:imagedata o:relid="rId1"/></v:shape><![endif]--></xml>"#;
+        let cleaned = strip_vml_conditionals(raw);
+        let doc = crate::xml::parse(&cleaned).expect("parse VML");
+        let mut shapes = vec![];
+        doc.root.find_all("shape", &mut shapes);
+        assert_eq!(shapes.len(), 1);
+        assert_eq!(shapes[0].attr("o:spid"), Some("_x0000_s2049"));
+    }
 }
