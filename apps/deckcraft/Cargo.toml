@@ -29,6 +29,9 @@ winresource = "0.1"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 craft-update = { workspace = true }
 rfd = { workspace = true }
+# Waits for an `rfd::AsyncFileDialog` on a background thread, so open dialogs don't block the
+# window (#2040); the version rfd itself already uses.
+pollster = "0.4"
 arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"

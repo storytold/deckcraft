@@ -20,6 +20,7 @@ mod audio;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod display;
+mod file_dialogs;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
@@ -31,23 +32,27 @@ use deckcraft_ui_egui::{Services, SlideApp};
 
 struct App(
     SlideApp,
+    /// Shows the open dialogs the app asked for, parented to the window (`file_dialogs`, #2040).
+    file_dialogs::Launcher,
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
     fmv_macos_events::Inbox,
 );
 
 impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        apple_events::poll(&self.1, &mut self.0, ctx);
+        apple_events::poll(&self.2, &mut self.0, ctx);
         self.0.logic(ctx);
+        self.1.show(frame);
     }
     /// Forward native raw input to the wrapped application once per pass.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(ctx, raw);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        self.1.show(frame);
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
@@ -107,31 +112,21 @@ fn save_prefs(app: &SlideApp) {
 }
 
 /// The desktop services. `native_wayland`: the window is a Wayland client (not Xwayland).
-fn services(native_wayland: bool) -> Services {
+/// `open_dialog`: Open and the single-file picks, shown without blocking the window (#2040).
+fn services(native_wayland: bool, open_dialog: deckcraft_ui_egui::OpenDialogFn) -> Services {
     // On native Wayland, egui-winit owns the clipboard through winit's data device, which carries
     // text and PNG but no HTML. `pasteboard` (arboard, built for X11 only) would put a copy on the
     // Xwayland selection instead and skip egui's Wayland claim, so Ctrl+V would read something
     // else. There, text goes through egui and pictures arrive as `PasteImage` events.
     let pasteboard = !native_wayland;
     Services {
+        // Still blocking: the pickers inside dialogs and panes (Photo Album, Format Background and
+        // Format Shape picture fills) wait for the path where they are.
         pick_open: Some(Box::new(|purpose: &str| {
-            let d = rfd::FileDialog::new();
-            let d = match purpose {
-                "picture" => d.add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]),
-                "audio" => d.add_filter(
-                    "Audio",
-                    &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "caf", "wma", "weba", "mka"],
-                ),
-                "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
-                "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
-                _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
-                    .add_filter("DeckCraft", &["deckcraft"])
-                    .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
-                    .add_filter("Outline", &["txt", "md"]),
-            };
+            let d = file_dialogs::open_filters(purpose).iter().fold(rfd::FileDialog::new(), |d, (name, ext)| d.add_filter(*name, ext));
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
+        open_dialog: Some(open_dialog),
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
@@ -290,7 +285,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
-            let mut app = SlideApp::new(Session::new(), services(native_wayland));
+            let (open_dialog, dialogs) = file_dialogs::hook(&cc.egui_ctx);
+            let mut app = SlideApp::new(Session::new(), services(native_wayland, open_dialog));
             // Presenter View asks winit how many displays there are when a show starts.
             #[cfg(all(unix, not(target_os = "macos")))]
             if let Some(window) = cc.winit_window().cloned() {
@@ -324,6 +320,7 @@ fn main() -> eframe::Result {
             }
             Ok(Box::new(App(
                 app,
+                dialogs,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
             )))
@@ -340,8 +337,10 @@ mod tests {
     #[test]
     fn on_exit_ends_the_process_on_macos() {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
+            let ctx = egui::Context::default();
             let mut app = App(
                 SlideApp::new(Session::new(), Services::default()),
+                file_dialogs::hook(&ctx).1,
                 #[cfg(target_os = "macos")]
                 fmv_macos_events::Inbox::default(),
             );
@@ -376,9 +375,9 @@ mod tests {
     /// it carries HTML and pictures beside egui's text.
     #[test]
     fn the_pasteboard_stays_off_native_wayland() {
-        let s = services(true);
+        let s = services(true, file_dialogs::hook(&egui::Context::default()).0);
         assert!(s.clipboard_html.is_none() && s.clipboard_set_html.is_none() && s.clipboard_image.is_none());
-        let s = services(false);
+        let s = services(false, file_dialogs::hook(&egui::Context::default()).0);
         assert!(s.clipboard_html.is_some() && s.clipboard_set_html.is_some() && s.clipboard_image.is_some());
     }
 

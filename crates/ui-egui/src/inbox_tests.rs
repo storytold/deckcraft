@@ -186,3 +186,60 @@ fn a_dropped_file_stays_on_the_slide_it_was_dropped_on() {
     assert_eq!(pictures(&app, uid, slide0), 1, "{status}");
     assert_eq!(pictures(&app, uid, slide1), 0);
 }
+
+/// #2040: on the desktop, Insert Picture opens a dialog that answers later instead of blocking
+/// the window. Nothing changes while it is open, a second dialog waits its turn, and the picture
+/// lands on the slide the dialog was opened from.
+#[test]
+fn a_picture_from_a_nonblocking_dialog_lands_on_the_slide_that_asked() {
+    type Answer = std::sync::mpsc::Sender<Option<String>>;
+    let dialogs: Arc<Mutex<Vec<(String, Answer)>>> = Arc::default();
+    let blocking = Arc::new(Mutex::new(0));
+    let (record, blocked) = (dialogs.clone(), blocking.clone());
+    let services = Services {
+        pick_open: Some(Box::new(move |_: &str| {
+            *blocked.lock().unwrap() += 1;
+            None
+        })),
+        open_dialog: Some(Box::new(move |purpose: &str| {
+            let (answer, rx) = std::sync::mpsc::channel();
+            record.lock().unwrap().push((purpose.to_string(), answer));
+            rx
+        })),
+        read: Some(Box::new(|_: &str| Ok(png()))),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    let uid = app.session.active().unwrap().uid;
+    let slide0 = app.session.active().unwrap().current_slide().unwrap().id;
+    app.session.execute("slide.new", &json!({})).unwrap();
+    let slide1 = app.session.active().unwrap().current_slide().unwrap().id;
+    app.session.execute("slide.go", &json!({"id": slide0.0})).unwrap();
+
+    app.run("app.insertPictureDialog", json!({})).unwrap();
+    app.poll_pick();
+    assert_eq!(pictures(&app, uid, slide0), 0, "nothing is inserted before the dialog answers");
+    app.run("app.insertAudioDialog", json!({})).unwrap();
+    assert_eq!(dialogs.lock().unwrap().len(), 1, "one dialog at a time");
+    assert!(app.status.as_ref().is_some_and(|(t, _)| t.contains("already open")));
+
+    // The user moves on before choosing the file.
+    app.session.execute("slide.go", &json!({"id": slide1.0})).unwrap();
+    let (purpose, answer) = dialogs.lock().unwrap().remove(0);
+    assert_eq!(purpose, "picture");
+    answer.send(Some("/photos/shot.png".into())).unwrap();
+    app.poll_pick();
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(pictures(&app, uid, slide0), 1, "{status}");
+    assert_eq!(pictures(&app, uid, slide1), 0);
+    assert_eq!(app.session.active().unwrap().current_slide().unwrap().id, slide1, "the view stays where the user went");
+
+    // A dialog closed without a file inserts nothing, and the next one may open.
+    app.run("app.insertPictureDialog", json!({})).unwrap();
+    drop(dialogs.lock().unwrap().remove(0));
+    app.poll_pick();
+    assert_eq!(pictures(&app, uid, slide1), 0);
+    app.run("app.insertPictureDialog", json!({})).unwrap();
+    assert_eq!(dialogs.lock().unwrap().len(), 1);
+    assert_eq!(*blocking.lock().unwrap(), 0, "the blocking picker is never used");
+}
