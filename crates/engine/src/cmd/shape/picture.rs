@@ -1,4 +1,4 @@
-use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json};
+use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json, require_any};
 
 pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
@@ -15,6 +15,7 @@ pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn picture_adjust(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(p, "picture.adjust", &["brightness", "contrast", "saturation", "grayscale", "transparency", "reset"])?;
     edit_shapes(s, p, "picture.adjust", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {
             let a = &mut fill.adjust;

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::text::{format_body, format_para, format_run, format_run_levels};
 use super::{
     CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, color_param, edit_shapes, f64_or, f64_param, has_doc, has_text,
-    has_text_or_shapes, ids_param, ok, str_param,
+    has_text_or_shapes, ids_param, ok, require_any, str_param,
 };
 use crate::{Result, Session};
 use deckcraft_model::ShapeId;
@@ -199,7 +199,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph…",
             ["Format"],
             None,
-            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines}",
+            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines, lineSpacingPt?: pt} (at least one key)",
             has_text_or_shapes,
             paragraph
         ),
@@ -248,7 +248,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Box Margins",
             ["Format Shape", "Text Box"],
             None,
-            "{left?: pt, top?: pt, right?: pt, bottom?: pt}",
+            "{left?: pt, top?: pt, right?: pt, bottom?: pt} (at least one key)",
             has_text_or_shapes,
             margins
         ),
