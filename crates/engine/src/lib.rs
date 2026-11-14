@@ -472,6 +472,12 @@ pub struct Clipboard {
     /// regular shapes; a paste in Slide Master view takes these, which stay placeholders.
     pub placeholders: Vec<Shape>,
     pub slides: Vec<Slide>,
+    /// The layouts the copied slides are on, and the document (its uid) they were copied from: a
+    /// paste into another deck takes the layout with the same placeholders or brings its own along.
+    pub layouts: Vec<deckcraft_model::Layout>,
+    /// Media the copied layouts reference, brought in only when a paste brings a layout along.
+    pub layout_media: Vec<deckcraft_model::MediaItem>,
+    pub source_uid: Option<u64>,
     /// Media the copied shapes/slides reference.
     pub media: Vec<deckcraft_model::MediaItem>,
     pub text: Option<deckcraft_model::TextBody>,
