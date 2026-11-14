@@ -2503,3 +2503,26 @@ fn comments_pane_keeps_its_width_and_resizes() {
     let wide = drag(&mut h, -150.0);
     assert!(wide > narrow + 140.0, "dragging left widens the pane: {narrow} -> {wide}");
 }
+
+/// #53: Paste from the context menu, the ribbon and the Edit menu ignored a picture on the system
+/// clipboard (only the Ctrl+V path read it), so "Copy image" in a browser could not be pasted.
+#[test]
+fn paste_command_inserts_an_image_from_the_clipboard() {
+    let session = Session::with_new();
+    let png = {
+        let d = session.active().unwrap();
+        deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+    };
+    let services = Services { clipboard_image: Some(Box::new(move || Some(png.clone()))), ..Default::default() };
+    let mut app = SlideApp::new(session, services);
+    let pictures = |app: &SlideApp| {
+        let d = app.session.active().unwrap();
+        d.doc.slides[0].shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count()
+    };
+    assert_eq!(pictures(&app), 0);
+    app.run("edit.paste", serde_json::json!({})).expect("paste");
+    assert_eq!(pictures(&app), 1);
+    // Pasting slides (the slide list's menu) is not taken for a picture paste.
+    let _ = app.run("edit.paste", serde_json::json!({"scope": "slides"}));
+    assert_eq!(pictures(&app), 1);
+}
