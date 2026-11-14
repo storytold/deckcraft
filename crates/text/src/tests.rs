@@ -204,7 +204,59 @@ fn shrink_on_overflow() {
     let (p, sh) = setup(&text, 600.0, 200.0);
     let l = lay(&p, &sh, 600.0, 200.0);
     assert!(l.font_scale < 1.0, "scale {}", l.font_scale);
-    assert!(!l.overflow || l.font_scale <= 0.11);
+    assert!(!l.overflow || l.font_scale <= 0.25);
+}
+
+/// PowerPoint 16 (Windows) saved exactly these pairs when one text was fitted into boxes growing
+/// from 100 to 440 pt high (other fonts, sizes and boxes only ever gave pairs from this list), smallest text first;
+/// text that fits as it is gets a bare `<a:normAutofit/>`.
+#[test]
+fn shrink_steps_are_the_ones_powerpoint_saves() {
+    let seen = [
+        (0.25, 0.2),
+        (0.325, 0.2),
+        (0.4, 0.2),
+        (0.475, 0.2),
+        (0.55, 0.2),
+        (0.625, 0.2),
+        (0.7, 0.2),
+        (0.775, 0.2),
+        (0.85, 0.2),
+        (0.85, 0.1),
+        (0.925, 0.2),
+        (0.925, 0.1),
+        (1.0, 0.1),
+        (1.0, 0.0),
+    ];
+    let mut ours = crate::SHRINK_STEPS.to_vec();
+    ours.reverse();
+    assert_eq!(ours, seen);
+}
+
+/// Every overflowing text is drawn at one of PowerPoint's steps, and at the first one that fits.
+#[test]
+fn shrink_picks_the_first_step_that_fits() {
+    for n in 1..40 {
+        let text = (0..n).map(|i| format!("Line number {i}")).collect::<Vec<_>>().join("\n");
+        let (p, sh) = setup(&text, 300.0, 200.0);
+        let l = lay(&p, &sh, 300.0, 200.0);
+        let i = crate::SHRINK_STEPS
+            .iter()
+            .position(|&s| s == (l.font_scale, l.line_reduction))
+            .unwrap_or_else(|| panic!("{n} lines: {} {}", l.font_scale, l.line_reduction));
+        assert!(!l.overflow || i == crate::SHRINK_STEPS.len() - 1, "{n} lines");
+        if i > 0 {
+            // The step before it, laid out at that scale alone (no shrink search), overflows.
+            let (font_scale, line_reduction) = crate::SHRINK_STEPS[i - 1];
+            let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+            let opts = Opts { rect: Rect::new(0.0, 0.0, 300.0, 200.0), fields: &NoFields, prompt_color: None, no_shrink: false };
+            let body = sh.text.as_ref().unwrap();
+            let before = layout_scaled(&ctx, &sh, body, &resolve::body(&ctx, &sh), &opts, font_scale, line_reduction);
+            assert!(before.overflow, "{n} lines at step {}", i - 1);
+        } else {
+            assert!(!l.overflow);
+        }
+    }
 }
 
 #[test]
@@ -310,12 +362,12 @@ fn shrink_gives_up_at_once_when_even_the_smallest_scale_overflows() {
     let (p, sh) = setup(&text, 100.0, 20.0);
     crate::LAYOUT_PASSES.with(|n| n.set(0));
     let l = lay(&p, &sh, 100.0, 20.0);
-    assert!(l.overflow && l.font_scale <= 0.11, "scale {}", l.font_scale);
+    assert!(l.overflow && l.font_scale == 0.25 && l.line_reduction == 0.2, "scale {}", l.font_scale);
     assert!(crate::LAYOUT_PASSES.with(|n| n.get()) <= 2, "{} passes", crate::LAYOUT_PASSES.with(|n| n.get()));
     // Text that fits somewhere in the range still gets the search.
-    let (p, sh) = setup(&(0..12).map(|i| format!("Line number {i}")).collect::<Vec<_>>().join("\n"), 600.0, 200.0);
+    let (p, sh) = setup(&(0..8).map(|i| format!("Line number {i}")).collect::<Vec<_>>().join("\n"), 600.0, 200.0);
     let l = lay(&p, &sh, 600.0, 200.0);
-    assert!(l.font_scale > 0.11 && l.font_scale < 1.0 && !l.overflow, "scale {} overflow {}", l.font_scale, l.overflow);
+    assert!(l.font_scale > 0.25 && l.font_scale < 1.0 && !l.overflow, "scale {} overflow {}", l.font_scale, l.overflow);
 }
 
 #[test]

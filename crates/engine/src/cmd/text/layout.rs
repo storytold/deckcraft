@@ -69,7 +69,10 @@ fn fit_shrink_scale(s: &mut Session, id: ShapeId) -> Result<()> {
     let mut probe = body.clone();
     probe.body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
     let opts = deckcraft_text::Opts { rect: tr, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false };
-    let l = deckcraft_text::layout(&ctx, &sh, &probe, &opts);
+    // The layout reads the body's autofit from the shape, so the probe goes in a shape of its own.
+    let mut probe_shape = sh.clone();
+    probe_shape.text = Some(probe.clone());
+    let l = deckcraft_text::layout(&ctx, &probe_shape, &probe, &opts);
     if l.font_scale >= 1.0 && l.line_reduction <= 0.0 {
         return Ok(());
     }
