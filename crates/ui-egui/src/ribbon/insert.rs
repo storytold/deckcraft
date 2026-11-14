@@ -93,8 +93,21 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::Link, "Link", "app.dialog", json!({"id": "hyperlink"}));
         let r = big_button(ui, Icon::Action, "Action", enabled(app, "insert.actionButton"));
         egui::Popup::menu(&r).show(|ui| {
-            for k in ["back", "forward", "beginning", "end", "home", "information", "return", "movie", "document", "sound", "help", "custom"] {
-                if ui.button(crate::i18n::fmt(tl!("Action Button: {kind}"), &[("kind", tl!(k))])).clicked() {
+            for (k, name) in [
+                ("back", "Back or Previous"),
+                ("forward", "Forward or Next"),
+                ("beginning", "Beginning"),
+                ("end", "End"),
+                ("home", "Home"),
+                ("information", "Information"),
+                ("return", "Return"),
+                ("movie", "Video"),
+                ("document", "Document"),
+                ("sound", "Sound"),
+                ("help", "Help"),
+                ("custom", "Custom"),
+            ] {
+                if ui.button(crate::i18n::fmt(tl!("Action Button: {kind}"), &[("kind", tl!(name))])).clicked() {
                     run(app, "insert.actionButton", json!({"kind": k}));
                 }
             }

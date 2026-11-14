@@ -251,7 +251,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ("Browsed by an individual (window)", "browsed"),
         ("Browsed at a kiosk (full screen)", "kiosk"),
     ] {
-        if ui.radio(ty == v, l).clicked() {
+        if ui.radio(ty == v, tl!(l)).clicked() {
             d.fields.insert("type".into(), v.into());
         }
     }
@@ -843,7 +843,11 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let (ok, cancel) = buttons(ui, "Replace");
     if ok && !from.is_empty() && !to.trim().is_empty() {
         let n = app.run("font.replace", json!({"from": from, "to": to.trim()})).ok().and_then(|v| v["replaced"].as_u64()).unwrap_or(0);
-        let msg = if n == 0 { format!("“{from}” isn't used explicitly.") } else { format!("Replaced “{from}” with “{}”.", to.trim()) };
+        let msg = if n == 0 {
+            crate::i18n::fmt(tl!("“{font}” isn't used explicitly."), &[("font", from.as_str())])
+        } else {
+            crate::i18n::fmt(tl!("Replaced “{font}” with “{replacement}”."), &[("font", from.as_str()), ("replacement", to.trim())])
+        };
         d.fields.insert("result".into(), msg);
         d.fields.remove("from");
         // Stay open, like PowerPoint, so several fonts can be replaced in a row.
@@ -1288,7 +1292,7 @@ fn dlg_about(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let tab = d.get("tab", "about");
     ui.horizontal(|ui| {
         for (k, l) in [("about", "About"), ("contributors", "Contributors"), ("models", "Models")] {
-            if ui.selectable_label(tab == k, l).clicked() {
+            if ui.selectable_label(tab == k, tl!(l)).clicked() {
                 d.fields.insert("tab".into(), k.into());
             }
         }
