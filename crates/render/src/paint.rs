@@ -286,7 +286,7 @@ fn premultiplied_lerp(a: Rgba, b: Rgba, k: f64) -> Rgba {
 }
 
 /// Longest side of a tiled gradient's rasterised tile, in output pixels (bilinear sampling smooths
-/// the rest).
+/// the rest; a repeat's seam is then drawn nearest, see `seam_bands`).
 const MAX_TILE_SIDE: f64 = 1024.0;
 
 /// Fill `path` with a gradient drawn over `tile` and repeated across the rest of the shape, each
@@ -311,9 +311,10 @@ fn fill_tiled(
     let c = m.as_coeffs();
     let side = |len: f64, k: f64| {
         let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
-        (len * k).ceil().clamp(1.0, MAX_TILE_SIDE) as u32
+        let n = (len * k).ceil();
+        (n.clamp(1.0, MAX_TILE_SIDE) as u32, n > MAX_TILE_SIDE)
     };
-    let (pw, ph) = (side(tile.width(), c[0].hypot(c[1])), side(tile.height(), c[2].hypot(c[3])));
+    let ((pw, capped_w), (ph, capped_h)) = (side(tile.width(), c[0].hypot(c[1])), side(tile.height(), c[2].hypot(c[3])));
     let a = alpha.clamp(0.0, 1.0);
     let mut data = Vec::with_capacity((pw * ph) as usize);
     for j in 0..ph {
@@ -326,18 +327,66 @@ fn fill_tiled(
         }
     }
     let pm = std::sync::Arc::new(vello_cpu::Pixmap::from_parts(data, pw as u16, ph as u16));
+    let image = |quality| vello_cpu::Image {
+        image: vello_cpu::ImageSource::Pixmap(pm.clone()),
+        sampler: peniko::ImageSampler { x_extend: extend.0, y_extend: extend.1, quality, alpha: 1.0 },
+    };
+    let paint_transform = Affine::translate(tile.origin().to_vec2()) * Affine::scale_non_uniform(tile.width() / pw as f64, tile.height() / ph as f64);
     ctx.set_transform(m);
-    ctx.set_paint(vello_cpu::Image {
-        image: vello_cpu::ImageSource::Pixmap(pm),
-        // Bilinear: at output resolution a repeat's seam mixes the two tile ends only in the one
-        // output pixel it crosses, as an antialiased edge does.
-        sampler: peniko::ImageSampler { x_extend: extend.0, y_extend: extend.1, quality: peniko::ImageQuality::Medium, alpha: 1.0 },
-    });
-    ctx.set_paint_transform(
-        Affine::translate(tile.origin().to_vec2()) * Affine::scale_non_uniform(tile.width() / pw as f64, tile.height() / ph as f64),
-    );
+    // A capped raster's texels span more than one output pixel, so bilinear sampling would spread a
+    // repeat's seam over several. The bands around those seams are drawn again, sampled nearest.
+    let repeats = |e: peniko::Extend, capped: bool| capped && matches!(e, peniko::Extend::Repeat);
+    let texel = (tile.width() / pw as f64, tile.height() / ph as f64);
+    let bands = seam_bands(path.bounding_box(), tile, texel, (repeats(extend.0, capped_w), repeats(extend.1, capped_h)));
+    if bands.is_some() {
+        // A group of its own, so the second pass replaces the first instead of adding to its opacity.
+        ctx.push_layer(None, None, None, None, None);
+    }
+    // Bilinear: at output resolution a repeat's seam mixes the two tile ends only in the one
+    // output pixel it crosses, as an antialiased edge does.
+    ctx.set_paint(image(peniko::ImageQuality::Medium));
+    ctx.set_paint_transform(paint_transform);
     ctx.fill_path(path);
+    if let Some(bands) = bands {
+        let copy = peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::Copy);
+        // Nonzero, so the clip is the union of bands that cross.
+        let rule = *ctx.fill_rule();
+        ctx.set_fill_rule(peniko::Fill::NonZero);
+        ctx.push_layer(Some(&bands), Some(copy), None, None, None);
+        ctx.set_fill_rule(rule);
+        ctx.set_paint(image(peniko::ImageQuality::Low));
+        ctx.set_paint_transform(paint_transform);
+        ctx.fill_path(path);
+        ctx.pop_layer();
+        ctx.pop_layer();
+    }
     ctx.reset_paint_transform();
+}
+
+/// Bands one texel (`texel`, per axis) either side of each seam between repeats of `tile` that
+/// crosses `bounds`, on the axes `axes` marks; `None` when there are none or more than 256 on an
+/// axis.
+fn seam_bands(bounds: Rect, tile: Rect, texel: (f64, f64), axes: (bool, bool)) -> Option<BezPath> {
+    const MAX_SEAMS: f64 = 256.0;
+    let seams = |lo: f64, hi: f64, origin: f64, len: f64| {
+        let (first, last) = (((lo - origin) / len).ceil(), ((hi - origin) / len).floor());
+        (first.is_finite() && last.is_finite() && last - first < MAX_SEAMS).then(|| {
+            let n = if last >= first { (last - first) as i64 + 1 } else { 0 };
+            (0..n).map(move |i| origin + (first + i as f64) * len)
+        })
+    };
+    let mut bands = BezPath::new();
+    if axes.0 {
+        for x in seams(bounds.x0, bounds.x1, tile.x0, tile.width())? {
+            bands.extend(Rect::new(x - texel.0, bounds.y0, x + texel.0, bounds.y1).path_elements(0.1));
+        }
+    }
+    if axes.1 {
+        for y in seams(bounds.y0, bounds.y1, tile.y0, tile.height())? {
+            bands.extend(Rect::new(bounds.x0, y - texel.1, bounds.x1, y + texel.1).path_elements(0.1));
+        }
+    }
+    (!bands.elements().is_empty()).then_some(bands)
 }
 
 /// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes; an animated

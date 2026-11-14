@@ -388,6 +388,41 @@ fn a_circle_gradient_repeats_its_tile_rect() {
 }
 
 #[test]
+fn a_tile_wider_than_its_raster_keeps_a_hard_seam() {
+    use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+    // A 1000 pt tile at 2.5x spans 2500 output pixels, more than the tile raster holds: the seam at
+    // x = 500 pt (1250 px) stays one pixel wide.
+    let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(WHITE) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::BLACK) }];
+    let g = Gradient {
+        stops,
+        shape: GradientShape::Linear { angle: 0.0, scaled: false },
+        rotate_with_shape: true,
+        tile: [0.0, 0.0, 0.5, 0.0],
+        flip: None,
+    };
+    let mut sh = Shape {
+        id: ShapeId(22),
+        xfrm: Some(Xfrm::new(-500.0, 100.0, 2000.0, 100.0)),
+        fill: Some(Fill::Gradient(g)),
+        line: no_line(),
+        ..Default::default()
+    };
+    let img = render_slide(&deck_with(vec![sh.clone()]), 0, &RenderOpts { scale: 2.5, ..Default::default() });
+    let (before, after) = (img.pixel(1249, 375), img.pixel(1250, 375));
+    assert!(before[0] < 25 && after[0] > 240, "a hard seam {before:?} {after:?}");
+
+    // Half-transparent stops: the redrawn seam keeps the opacity of the rest of the fill.
+    let half = |c: Rgba| ColorRef::rgb(c).with(deckcraft_color::ColorTransform::Alpha(50_000));
+    let stops = vec![GradientStop { pos: 0.0, color: half(Rgba::BLACK) }, GradientStop { pos: 1.0, color: half(Rgba::rgb(0, 0, 40)) }];
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.stops = stops;
+    }
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 2.5, ..Default::default() });
+    let (inside, seam) = (img.pixel(1000, 375)[0], img.pixel(1250, 375)[0]);
+    assert!((110..=145).contains(&inside) && inside.abs_diff(seam) <= 3, "inside {inside}, seam {seam}");
+}
+
+#[test]
 fn a_linear_gradient_spans_its_tile_rect() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
     // Tile rect the left half of the box: the ramp ends half way, and the tile repeats over the
