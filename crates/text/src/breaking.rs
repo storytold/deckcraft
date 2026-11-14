@@ -281,6 +281,15 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                 .collect()
         })
         .unwrap_or_default();
+    // A hanging indent's `marL` is an implicit left tab stop: on a line that starts left of
+    // `marL` (the first line of a hanging-indent paragraph, without a bullet), the first tab
+    // lands there and later tabs at the next stops, as PowerPoint lays them out (#1683).
+    // An explicit stop at `marL` replaces it; a stop merely near `marL` does not.
+    let (margin, indent) = (props.margin_left.unwrap_or(0.0), props.indent.unwrap_or(0.0));
+    if indent < 0.0 && margin > 0.0 && !tabs.iter().any(|s| (s.pos - margin).abs() < 1e-6) {
+        let at = tabs.iter().position(|s| s.pos > margin).unwrap_or(tabs.len());
+        tabs.insert(at, Tab { pos: margin, align: TabAlign::Left });
+    }
     tabs.sort_by(|a, b| a.pos.total_cmp(&b.pos));
     tabs
 }
