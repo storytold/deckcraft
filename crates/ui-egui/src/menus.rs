@@ -262,7 +262,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("-", ""),
                 ("Section", "section.add"),
                 ("Text Box", "insert.textBox"),
-                ("WordArt", "insert.wordArt"),
+                ("Decorative Text", "insert.wordArt"),
                 ("Date and Time", "insert.dateTime"),
                 ("Slide Number", "insert.slideNumber"),
                 ("-", ""),
