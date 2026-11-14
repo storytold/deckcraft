@@ -158,7 +158,7 @@ fn shape_cells(
     let style_rtl: Vec<bool> = styles.iter().map(|st| st.lang.as_deref().is_some_and(bidi::is_rtl_lang)).collect();
     let rtl_lang: Vec<bool> = char_style.iter().map(|&si| style_rtl.get(si).copied().unwrap_or(false)).collect();
     let levels = bidi::levels_lang(text, &chars, rtl, &rtl_lang);
-    let scripts = script::resolve(&chars);
+    let mut scripts = script::resolve(&chars);
     let mut boundary = vec![false; n];
     let mut graphemes: Vec<(usize, usize)> = Vec::new();
     for (b, g) in text.grapheme_indices(true) {
@@ -167,6 +167,20 @@ fn shape_cells(
             *x = true;
         }
         graphemes.push((i, i + g.chars().count()));
+    }
+    // Common characters Office classifies by code range (ECMA-376 font classes) — ASCII spaces,
+    // digits and punctuation, and high-ANSI neutrals such as `≥` or `“` — keep the Latin slot and
+    // the Latin shaping context whatever text surrounds them (a space after a Han character
+    // inherits its Han script, which would draw it in the theme's Han face): normalize the
+    // inherited script along with the slot, for the face chain and for shaping alike. Emoji, and
+    // pictographs asked to look like text (U+FE0E), pick their own face and keep their context.
+    for &(a, b) in &graphemes {
+        let Some(cluster) = chars.get(a..b) else { continue };
+        if cluster.iter().all(|c| script::latin_neutral(*c)) && !deckcraft_fonts::is_emoji_cluster(cluster) && !cluster.contains(&'\u{FE0E}') {
+            for s in scripts.get_mut(a..b).into_iter().flatten() {
+                *s = (None, FontSlot::Latin);
+            }
+        }
     }
     let face_index = |faces: &mut Vec<Arc<FontFace>>, f: &Arc<FontFace>| -> usize {
         if let Some(i) = faces.iter().position(|x| Arc::ptr_eq(x, f)) {
@@ -191,6 +205,10 @@ fn shape_cells(
         // Emoji, and pictographs asked to look like text (U+FE0E), pick their own face.
         let neutral =
             cluster.iter().all(|c| script::script_of(*c).is_none()) && !deckcraft_fonts::is_emoji_cluster(cluster) && !cluster.contains(&'\u{FE0E}');
+        // A Common character Office classifies by code range (ECMA-376) never continues in the
+        // preceding face: it takes the run's Latin typeface, so a line of space-padded text
+        // wraps where PowerPoint's does.
+        let latin = neutral && cluster.iter().all(|c| script::latin_neutral(*c));
         // A symbol-font character (U+F0xx) with an `a:sym` font draws in that font when it's there.
         // Some installed Symbol faces (Apple's on macOS) have no private-use mapping: they map the
         // glyphs to real Unicode, so the PUA code is remapped to that character when shaping.
@@ -205,6 +223,7 @@ fn shape_cells(
             (Some(f), _) => f,
             (None, Some(p))
                 if neutral
+                    && !latin
                     && !p.is_color()
                     && !is_symbol_font(&p.family)
                     && deckcraft_fonts::covers_cluster(p, cluster)
@@ -348,6 +367,16 @@ pub(crate) enum Upright {
 /// Size of superscript and subscript text relative to the run's size.
 pub(crate) const SUB_SUPER: f64 = 0.66;
 
+/// A glyph's advance as PowerPoint measures it: Office lays text out in hundredths of a point (the
+/// unit of `sz` and `spc`), quantizing each glyph's advance down. A line of space-padded course
+/// text then fits its box by the width PowerPoint saw rather than exact font units — a 32 pt Times
+/// New Roman line of 35 glyphs measures 0.18 pt narrower — and wraps where PowerPoint's does
+/// (measured against PowerPoint on a deck whose first line fits its box by two hundredths of a
+/// point).
+pub(crate) fn glyph_advance(adv: f64) -> f64 {
+    (adv * 100.0).floor() / 100.0
+}
+
 /// The OpenType features to change from the shaper's defaults for an item, as PowerPoint draws
 /// it: kerning only where the run asks for it (`kern`), and no standard or contextual ligatures in
 /// Latin, Greek and Cyrillic ("fi", "ffi" and Calibri's "ti" stay apart). Other scripts need
@@ -419,7 +448,7 @@ fn shape_item(
         let s = scale_of(cell);
         let w = width.entry(h).or_insert(0.0);
         cell.glyphs.push((g.gid, *w + g.x_offset as f64 * s, -(g.y_offset as f64) * s));
-        *w += g.x_advance as f64 * s;
+        *w += glyph_advance(g.x_advance as f64 * s);
         let e = lig.entry(h).or_insert((g.gid, 0));
         e.1 += 1;
     }

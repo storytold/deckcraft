@@ -54,13 +54,13 @@ pub use layout::layout;
 use layout::layout_scaled;
 pub use run::{Dash, Deco, DecoLine, GlyphRun, RunEffects, TextShadow, UPRIGHT_CENTRE};
 #[cfg(test)]
-use shape::{SUB_SUPER, caps_char, is_upright, shaping_features};
+use shape::{SUB_SUPER, caps_char, glyph_advance, is_upright, shaping_features};
 #[cfg(test)]
 use style::Cell;
 pub use style::{Fields, NoFields, Opts};
+pub use symbol::{SYMBOL_CHARSET, map_symbol_bullet, metafile_char, symbol_char};
 #[cfg(test)]
 use symbol::{covers_symbol, is_symbol_font, symbol_font_char, symbol_font_draw, symbol_unicode, symbol_unicode_alts};
-pub use symbol::{map_symbol_bullet, symbol_char};
 
 #[derive(Clone, Debug, Default)]
 pub struct LineInfo {

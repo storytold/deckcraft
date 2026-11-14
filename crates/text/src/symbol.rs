@@ -275,9 +275,21 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
         };
         return m.to_string();
     }
+    // The Symbol font's own codes are not a bullet set: they map through the Adobe Symbol
+    // encoding (`symbol_unicode`, the published table), so equation and math text set in Symbol
+    // keeps its characters (α ∑ ≥) whether the font is installed or not. Where the encoding has
+    // no equivalent the character itself stands in. Other "* symbol" families ("Noto Sans
+    // Symbols") are Unicode fonts whose characters are drawn as they are.
+    if f == "symbol" {
+        let code = (first as u32) & 0xff;
+        return match symbol_unicode(code) {
+            Some(v) => char::from_u32(v).unwrap_or(first).to_string(),
+            None => first.to_string(),
+        };
+    }
     // Only the legacy symbol fonts: "Noto Sans Symbols" and the like are Unicode fonts whose
     // characters (❑ ❖) are drawn as they are. Private-use codes are mapped only when no font is named.
-    if f.contains("wingdings") || f == "symbol" || (font.is_none() && ('\u{f000}'..='\u{f0ff}').contains(&first)) {
+    if f.contains("wingdings") || (font.is_none() && ('\u{f000}'..='\u{f0ff}').contains(&first)) {
         let code = (first as u32) & 0xff;
         // Wingdings 2 and 3 put different shapes at the same codes.
         if f.starts_with("wingdings 2") {
@@ -320,4 +332,23 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
     }
     // PowerPoint draws only the first character of a longer `buChar` ("••" draws one dot).
     c.graphemes(true).next().unwrap_or("•").to_string()
+}
+
+/// `SYMBOL_CHARSET` (MS-WMF LOGFONT): the text bytes are the font's own symbol codes, drawn from
+/// the U+F000 + byte code point.
+pub const SYMBOL_CHARSET: u8 = 2;
+
+/// The character a metafile text item draws for `c` (one decoded character of the record's text)
+/// in the font of `charset`: symbol-font families map their codes as bullets do
+/// ([`symbol_char`]), and a `SYMBOL_CHARSET` font that is not a symbol family — MathType writes
+/// "Times New Roman" with the symbol character set — keeps its U+F000 + byte code where `face`
+/// draws it there and falls back to the byte's own character where it doesn't (the requested
+/// font is missing), rather than to a .notdef box.
+pub fn metafile_char(face: &FontFace, family: &str, charset: u8, c: char) -> char {
+    let c = symbol_char(face, family, c).unwrap_or(c);
+    if charset == SYMBOL_CHARSET && ('\u{F000}'..='\u{F0FF}').contains(&c) && !face.covers(c) {
+        char::from_u32(c as u32 & 0xFF).unwrap_or(c)
+    } else {
+        c
+    }
 }
