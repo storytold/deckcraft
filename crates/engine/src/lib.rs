@@ -517,7 +517,19 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// A host opened the presentation to be viewed, not changed (#1898): every command that
+    /// would change it is refused ([`READ_ONLY_REFUSED`]), [`Session::edit`] fails, and no saves
+    /// are allowed. Existing edits and undo history are kept. Navigation, selection, Copy, Find
+    /// and the slide show keep working. Nothing in the editor lifts it; it is never written to a file.
+    pub read_only: bool,
 }
+
+/// What a read-only session refuses (#1898): the message of the error every refused command gets.
+pub const READ_ONLY_REFUSED: &str = "the presentation is open read-only";
+
+/// Commands that change the presentation or its file without being undo steps: Undo, Redo and
+/// Revert replace the document (Revert also clears history), and Save would write the host's file.
+const READ_ONLY_EXTRA: &[&str] = &["edit.undo", "edit.redo", "file.save", "file.saveAs", "file.revert"];
 
 impl Default for Session {
     fn default() -> Self {
@@ -551,6 +563,7 @@ impl Session {
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            read_only: false,
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
@@ -641,7 +654,12 @@ impl Session {
     /// failed outer command, and committing the resulting undo entry or journal record.
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
-        // Any other edit (or a click, a key, undo) settles an input method's composition first.
+        // Read-only (#1898): every undo step changes the presentation, so every undoable command is
+        // refused, and so are the few non-undoable ones that change it or its file. Copy, Select,
+        // Find, Go To Slide, the slide show and the inspectors are none of these and keep working.
+        if spec.blocked_by_read_only(self) {
+            return Err(EngineError::Disabled(id.into(), READ_ONLY_REFUSED.into()));
+        }
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
             self.settle_composition();
         }
@@ -725,8 +743,12 @@ impl Session {
         command_specs().iter().map(|c| c.info(self)).collect()
     }
 
-    /// Mutate the active presentation (copy-on-write) and bump the revision.
+    /// Mutate the active presentation (copy-on-write) and bump the revision. Refused in a
+    /// read-only session (#1898): the tools' drags and typing reach the document only through here.
     pub fn edit<T>(&mut self, f: impl FnOnce(&mut Presentation, &mut Selection) -> Result<T>) -> Result<T> {
+        if self.read_only {
+            return Err(EngineError::Disabled("edit".into(), READ_ONLY_REFUSED.into()));
+        }
         let st = self.doc_mut()?;
         let mut doc = (*st.doc).clone();
         let mut sel = st.selection.clone();
