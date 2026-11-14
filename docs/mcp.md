@@ -104,3 +104,14 @@ rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, close
 `chart.*` (`chart.options {textColor}` colours a chart's title, axes, legend and labels), `table.*`, `file.export {path, layout}` (PDF) or `{path, width, secondsPerSlide, loop}`
 (GIF). `deckcraft-cli describe COMMAND` prints any
 command's parameters.
+
+To check fonts after setting them, `format.font {family}` answers `{family, installed, drawnWith}`:
+the family the text now asks for (theme fonts such as `+mn-lt` resolved), whether this machine has
+it, and the faces the slide draws that text in: a stand-in when it is not installed, and another
+face for a character it has no glyph for. `format.fontDialog` gives the same answer when it sets
+`family`.
+`font.used {detail: true}` answers the same for every family in the deck, with how many runs and
+character bullets are set in it, their font sizes and the slides they are on.
+`text.glyphs {slide?, ids?}` goes down to each text run: the families its characters ask for, the
+faces that draw them, the characters drawn in a fallback face (`fallbackChars`) and the characters
+no face has a glyph for, which the slide draws as empty boxes (`missingChars`).

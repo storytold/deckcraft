@@ -291,8 +291,18 @@ pub(crate) fn format_body(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     ok()
 }
 
-pub(super) fn fonts_used(s: &mut Session, _: &Value) -> Result<Value> {
-    let mut v = crate::fonts::used_fonts(&s.doc()?.doc);
+/// `font.used {detail?}`: the sorted family names, or with `detail` an entry per family.
+pub(super) fn fonts_used(s: &mut Session, p: &Value) -> Result<Value> {
+    let detail = match p.get("detail") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(v) => return Err(bad("font.used", format!("`detail` is not true or false: {v}"))),
+    };
+    let doc = &s.doc()?.doc;
+    if detail {
+        return Ok(Value::Array(super::glyphs::used_detail(doc)));
+    }
+    let mut v = crate::fonts::used_fonts(doc);
     v.sort_by_key(|f| f.to_lowercase());
     Ok(json!(v))
 }

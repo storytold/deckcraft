@@ -62,7 +62,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!(
+            "format.font",
+            "Font",
+            ["Home", "Font"],
+            None,
+            "{family} → {family, installed, drawnWith: [face family]} (the family the runs now ask for, theme fonts such as +mn-lt resolved; whether this machine has it; the faces that draw the text it was set on, most characters first: a stand-in when it is not installed, another face for a character it has no glyph for, or the face it is drawn in when none of that text is drawn)",
+            has_text_or_shapes,
+            font
+        ),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -120,7 +128,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font…",
             ["Home", "Font"],
             Some("Cmd+T"),
-            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
+            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog; with `family`, answers as format.font does: {family, installed, drawnWith}",
             has_text_or_shapes,
             font_dialog
         ),

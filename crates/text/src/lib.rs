@@ -30,7 +30,7 @@ use deckcraft_fonts::script::{self, joins_following, joins_preceding};
 use deckcraft_fonts::{FontDb, FontFace, FontSlot, ScriptTag, ShapeParams};
 use deckcraft_geom::{Point, Rect};
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Align, Anchor, AutoFit, BodyProps, Bullet, Caps, ParaProps, RunKind, RunProps, Spacing, Strike, TextBody, TextDir};
+use deckcraft_model::text::{Align, Anchor, AutoFit, BodyProps, Bullet, Caps, ParaProps, Run, RunKind, RunProps, Spacing, Strike, TextBody, TextDir};
 use deckcraft_model::{Fill, Shape};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -55,9 +55,10 @@ use layout::layout_scaled;
 pub use run::{Dash, Deco, DecoLine, GlyphRun, RunEffects, TextShadow, UPRIGHT_CENTRE};
 #[cfg(test)]
 use shape::{SUB_SUPER, caps_char, is_upright, shaping_features};
+pub use shape::{is_symbol_code, run_text};
 #[cfg(test)]
 use style::Cell;
-pub use style::{Fields, NoFields, Opts};
+pub use style::{Fields, NoFields, Opts, RunFonts, run_fonts, script_family};
 #[cfg(test)]
 use symbol::{covers_symbol, is_symbol_font, symbol_font_char, symbol_font_draw, symbol_unicode, symbol_unicode_alts};
 pub use symbol::{map_symbol_bullet, symbol_char};
