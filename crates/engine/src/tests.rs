@@ -3155,6 +3155,49 @@ fn text_transparency_keeps_the_colour_and_sets_alpha() {
 }
 
 #[test]
+fn edit_points_rejects_invalid_path_instead_of_editing_the_first_outline() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = s.tool.edit_points.unwrap();
+    s.tool.vertex_kind = Some((id, 0, 0, "straight".into()));
+    let before = s.doc().unwrap().doc.clone();
+    let undo = s.doc().unwrap().history.undo.len();
+    let remembered = s.tool.vertex_kind.clone();
+    for (command, params) in [
+        ("shape.movePoint", json!({"index": 0, "x": 80, "y": 90})),
+        ("shape.addPoint", json!({"segment": 1})),
+        ("shape.deletePoint", json!({"index": 0})),
+        ("shape.pointType", json!({"index": 0, "type": "smooth"})),
+        ("shape.moveHandle", json!({"index": 0, "side": "out", "x": 80, "y": 90})),
+        ("shape.segmentType", json!({"segment": 1, "type": "curved"})),
+        ("shape.openPath", json!({"index": 0})),
+        ("shape.closePath", json!({"index": 0})),
+        ("shape.deleteSegment", json!({"segment": 1})),
+    ] {
+        for path in [json!(-1), json!(0.5), json!("0"), json!(false), json!([]), json!({})] {
+            let mut params = params.clone();
+            params["path"] = path;
+            let error = s.execute(command, &params).expect_err(command).to_string();
+            assert!(error.contains("`path` is not a valid index"), "{command}: {error}");
+            assert!(std::sync::Arc::ptr_eq(&before, &s.doc().unwrap().doc), "{command}");
+            assert_eq!(s.doc().unwrap().history.undo.len(), undo, "{command}");
+            assert_eq!(s.tool.vertex_kind, remembered, "{command}");
+        }
+    }
+    // Explicit zero, null and an omitted path all keep selecting the first outline.
+    for params in
+        [json!({"path": 0, "index": 0, "x": 80, "y": 90}), json!({"path": null, "index": 0, "x": 80, "y": 90}), json!({"index": 0, "x": 80, "y": 90})]
+    {
+        s.execute("shape.movePoint", &params).unwrap();
+        assert_eq!(s.execute("shape.points", &json!({})).unwrap()["paths"][0][0], json!([80.0, 90.0]));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.execute("shape.points", &json!({})).unwrap()["paths"][0][0], json!([100.0, 100.0]));
+    }
+}
+
+#[test]
 fn edit_points_turns_a_preset_into_a_freeform_and_moves_adds_deletes() {
     use deckcraft_model::Geom;
     let mut s = Session::with_new();
