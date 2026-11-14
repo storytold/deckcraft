@@ -4400,10 +4400,10 @@ fn smartart_round_trips_through_pptx_as_a_diagram() {
     }
     let back = deckcraft_pptx::import(&bytes).unwrap();
     assert!(back.validate().is_empty());
-    let g = back.slides[1].shapes.iter().find(|x| x.diagram.is_some()).expect("a SmartArt group");
+    let g = back.slides[1].shapes.iter().find(|x| x.diagram.is_some()).expect("a Diagram group");
     let d = g.diagram.as_ref().unwrap();
     assert_eq!(d.kind, "hierarchy");
-    assert_eq!((d.style.as_str(), d.colors.as_str()), ("intense", "accent3"), "SmartArt style and colours come back");
+    assert_eq!((d.style.as_str(), d.colors.as_str()), ("intense", "accent3"), "Diagram style and colours come back");
     assert!(d.imported);
     let outline: Vec<(&str, u8)> = d.nodes.iter().map(|n| (n.text.as_str(), n.level)).collect();
     assert_eq!(outline, [("CEO", 0), ("CTO", 1), ("Dev", 2), ("CFO", 1)]);
@@ -4431,7 +4431,7 @@ fn smartart_pictures_3d_styles_and_colour_variants() {
     let pics = |s: &Session| -> Vec<deckcraft_model::Shape> {
         let st = s.doc().unwrap();
         let g = st.doc.slides[1].shapes.iter().find(|x| x.diagram.is_some()).unwrap().clone();
-        g.children().iter().filter(|c| c.name == "SmartArt picture").cloned().collect()
+        g.children().iter().filter(|c| c.name == "Diagram picture").cloned().collect()
     };
     assert_eq!(pics(&s).len(), 2, "one picture placeholder per top-level node");
     assert!(pics(&s).iter().all(|p| !matches!(p.fill, Some(deckcraft_model::Fill::Picture(_)))));
@@ -7385,13 +7385,13 @@ fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
     let gid = s.execute("smartArt.fromText", &json!({"kind": "blockList"})).unwrap()["id"].as_u64().unwrap();
     for cmd in ["arrange.flipHorizontal", "arrange.flipVertical", "shape.flip"] {
         let e = s.execute(cmd, &json!({"ids": [gid]})).unwrap_err().to_string();
-        assert!(e.contains("SmartArt") && e.contains("smartArt.layout"), "{cmd}: {e}");
+        assert!(e.contains("Diagram") && e.contains("smartArt.layout"), "{cmd}: {e}");
     }
     // Grouped with another shape it cannot be flipped either: ungrouping would hand it the flip.
     let other = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
     let group = s.execute("arrange.group", &json!({"ids": [gid, other]})).unwrap()["id"].as_u64().unwrap();
     let e = s.execute("shape.flip", &json!({"ids": [group]})).unwrap_err().to_string();
-    assert!(e.contains("SmartArt"), "{e}");
+    assert!(e.contains("Diagram"), "{e}");
     s.execute("arrange.ungroup", &json!({"ids": [group]})).unwrap();
     // Still a SmartArt graphic: smartArt commands keep working.
     s.execute("smartArt.layout", &json!({"id": gid, "kind": "cycle"})).unwrap();
