@@ -57,6 +57,8 @@ struct Found<'a> {
     group: usize,
     /// Sum of the start delays of the time nodes between the click group and the effect, in ms.
     offset: u32,
+    /// Whether any ancestor time node defers start until an event (`onClick`, `onEnd`, targeted `onBegin`) or nonzero delay.
+    deferred: bool,
 }
 
 /// Where `collect` is in the time tree: the click group and the delay accumulated inside it.
@@ -65,6 +67,7 @@ struct At {
     trigger: Option<u32>,
     group: usize,
     offset: u32,
+    deferred: bool,
 }
 
 fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, depth: usize) {
@@ -73,7 +76,8 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
     }
     for c in e.elements() {
         if c.is("cTn") && c.has_attr("presetClass") {
-            out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset });
+            let deferred = at.deferred || c.child("stCondLst").is_some_and(defers_start);
+            out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset, deferred });
             continue;
         }
         let mut at = at;
@@ -84,14 +88,26 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
             at.trigger = ctn.path(&["stCondLst", "cond", "tgtEl", "spTgt"]).and_then(|s| s.u32("spid"));
         }
         if c.is("cTn")
-            && let Some(cond) = c.path(&["stCondLst", "cond"])
+            && let Some(st) = c.child("stCondLst")
         {
-            if cond.attr("delay").map(str::trim) == Some("indefinite") {
-                *groups += 1;
-                at.group = *groups;
-                at.offset = 0;
-            } else {
-                at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
+            let is_main_seq_auto = st.children_named("cond").any(|d| d.attr("delay").map(str::trim) == Some("indefinite"))
+                && st.children_named("cond").any(|d| {
+                    d.attr("evt") == Some("onBegin")
+                        && d.attr("delay").map(str::trim) == Some("0")
+                        && d.child("tgtEl").is_none()
+                        && d.child("rtn").is_none()
+                });
+            if !is_main_seq_auto && defers_start(st) {
+                at.deferred = true;
+            }
+            if let Some(cond) = st.child("cond") {
+                if cond.attr("delay").map(str::trim) == Some("indefinite") {
+                    *groups += 1;
+                    at.group = *groups;
+                    at.offset = 0;
+                } else {
+                    at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
+                }
             }
         }
         collect(c, at, groups, out, depth + 1);
@@ -207,12 +223,44 @@ fn behaviour_auto_reverses(c: &El) -> bool {
 
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
+/// Returns whether `st` (`p:stCondLst`) defers playback instead of starting immediately on slide entry.
+fn defers_start(st: &El) -> bool {
+    let is_auto_begin = |c: &El| {
+        c.attr("evt") == Some("onBegin")
+            && c.attr("delay").map(str::trim) == Some("0")
+            && c.child("tgtEl").is_none()
+            && c.child("tn").is_none()
+            && c.child("rtn").is_none()
+    };
+    let has_on_begin = st.children_named("cond").any(is_auto_begin);
+    st.children_named("cond")
+        .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
+}
+
+/// Applies `p:video`/`p:audio` timing node settings and main-sequence autoplay triggers to media shapes.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
-    let mut nodes = vec![];
-    for tag in ["video", "audio"] {
-        timing.find_all(tag, &mut nodes);
+    fn collect_media<'a>(e: &'a El, deferred: bool, out: &mut Vec<(&'a El, bool)>, depth: usize) {
+        if depth > 64 || out.len() >= 10_000 {
+            return;
+        }
+        let mut deferred = deferred;
+        if e.is("cTn")
+            && let Some(st) = e.child("stCondLst")
+            && defers_start(st)
+        {
+            deferred = true;
+        }
+        if e.is("video") || e.is("audio") {
+            out.push((e, deferred));
+            return;
+        }
+        for c in e.elements() {
+            collect_media(c, deferred, out, depth + 1);
+        }
     }
-    for node in nodes.into_iter().take(10_000) {
+    let mut nodes = vec![];
+    collect_media(timing, false, &mut nodes, 0);
+    for (node, deferred) in nodes {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
         let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
@@ -228,8 +276,42 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if cm.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite") {
             clip.loop_play = true;
         }
+        if cm.child("cTn").and_then(|c| c.attr("fill")) == Some("remove") {
+            clip.rewind = true;
+        }
+        if cm.u32("numSld").is_some_and(|n| n > 1) {
+            clip.play_across_slides = true;
+        }
+        if !deferred && cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("evt").is_none() && c.attr("delay").map(str::trim) == Some("0"))
+        {
+            clip.autoplay = true;
+        }
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
+        }
+    }
+    let root_deferred = timing.path(&["tnLst", "par", "cTn", "stCondLst"]).is_some_and(defers_start);
+    if !root_deferred && let Some(tn) = timing.child("tnLst") {
+        let mut found = vec![];
+        collect(tn, At { trigger: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
+        for f in found.into_iter().filter(|f| f.trigger.is_none()) {
+            let c = f.ctn;
+            if c.attr("nodeType") == Some("clickEffect") || f.deferred {
+                break;
+            }
+            let class = AnimClass::from_xml(c.attr("presetClass").unwrap_or("entr"));
+            let preset = c.u32("presetID").unwrap_or(0);
+            let effect = maps::effect_for_preset(class, preset).unwrap_or_else(|| maps::fallback_effect(class));
+            let delay = c.path(&["stCondLst", "cond"]).and_then(|d| ms_attr(d, "delay")).unwrap_or(0);
+            if class == AnimClass::Media
+                && effect == "play"
+                && f.offset == 0
+                && delay == 0
+                && let Some(id) = c.find("spTgt").and_then(|t| t.u32("spid")).and_then(|s| ctx.lookup(s))
+                && let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind)
+            {
+                clip.autoplay = true;
+            }
         }
     }
 }
@@ -239,7 +321,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
-    collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
+    collect(tn, At { trigger: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
     // Paragraph builds (`bldP`) by (spid, grpId) -> whether `build="p"`.
     let bld_p: std::collections::HashMap<(u32, String), bool> = timing
         .child("bldLst")
