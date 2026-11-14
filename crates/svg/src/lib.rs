@@ -447,11 +447,8 @@ impl Style {
                 if d.iter().any(|v| *v < 0.0) || !d.iter().any(|v| *v > 0.0) {
                     d.clear();
                 }
-                // An odd number of values repeats to make the pattern even, as SVG says.
-                if d.len() == 1 {
-                    let v = d[0];
-                    d.push(v);
-                } else if d.len() % 2 == 1 {
+                // An odd number of values repeats the first to make the pattern even, as SVG says.
+                if d.len() % 2 == 1 {
                     let first = d[0];
                     d.push(first);
                 }
@@ -936,7 +933,7 @@ impl Build {
     /// advances the pen.
     fn text(&mut self, node: &Node, f: &Frame) {
         let mut runs = Vec::new();
-        self.text_runs(node, &f.style, true, &mut runs, f.transform.determinant().abs().sqrt());
+        self.text_runs(node, &f.style, true, &mut runs);
         // SVG drops the whitespace that starts and ends the element, unless it is preserved.
         if let Some(first) = runs.iter_mut().find(|r| !r.text.is_empty()).filter(|r| !r.preserve) {
             first.text = first.text.trim_start().to_string();
@@ -966,7 +963,7 @@ impl Build {
 
     /// Append `node`'s characters and those of the `tspan`s under it. `parent` is the style in
     /// force above the node, `root` tells whether the node is the `text` element itself.
-    fn text_runs(&mut self, node: &Node, parent: &Style, root: bool, out: &mut Vec<TextRun>, scale: f64) {
+    fn text_runs(&mut self, node: &Node, parent: &Style, root: bool, out: &mut Vec<TextRun>) {
         self.visits += 1;
         if self.text_chars >= MAX_TEXT_CHARS || self.visits > MAX_VISITS {
             return;
@@ -1032,7 +1029,7 @@ impl Build {
                         stroke: stroke.clone(),
                     });
                 }
-                "tspan" => self.text_runs(kid, &style, false, out, scale),
+                "tspan" => self.text_runs(kid, &style, false, out),
                 _ => {}
             }
         }
@@ -1100,8 +1097,6 @@ struct Vertex {
     angle: f64,
     /// The first vertex of the path.
     first: bool,
-    /// The last vertex of the path.
-    last: bool,
 }
 
 /// Which vertices a `marker-*` property paints.
@@ -1156,16 +1151,16 @@ fn marker_vertices(path: &BezPath) -> Vec<Vertex> {
     let segs: Vec<kurbo::PathSeg> = path.segments().collect();
     let mut out: Vec<Vertex> = Vec::with_capacity(segs.len().min(MAX_MARKERS) + 1);
     let Some(first) = segs.first() else { return out };
-    out.push(Vertex { point: first.start(), angle: tangent(first, false), first: true, last: false });
+    out.push(Vertex { point: first.start(), angle: tangent(first, false), first: true });
     // An interior vertex points along the bisector of the segments it joins, up to the cap.
     let last = segs.len() - 1;
     for i in 0..last.min(MAX_MARKERS.saturating_sub(1)) {
         let angle = bisect(tangent(&segs[i], true), tangent(&segs[i + 1], false));
-        out.push(Vertex { point: segs[i].end(), angle, first: false, last: false });
+        out.push(Vertex { point: segs[i].end(), angle, first: false });
     }
     // The end vertex is always drawn, even when the interior was capped.
     let end = &segs[last];
-    out.push(Vertex { point: end.end(), angle: tangent(end, true), first: false, last: true });
+    out.push(Vertex { point: end.end(), angle: tangent(end, true), first: false });
     out
 }
 
