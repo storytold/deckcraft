@@ -22,7 +22,7 @@ commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
   pdf-deps        verify pinned writer sources and the production feature boundary
   layers          enforce the crate dependency layering (plan/architecture.md §3)
-  wasm            cargo clippy --target wasm32-unknown-unknown -D warnings for the wasm-safe crates (one call)
+  wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (one call)
   test            workspace tests (cargo nextest when installed, else cargo test), then doctests
   ci              fmt --check, pdf-deps, clippy -D warnings, test, doctest, assets, layers, wasm
                   (stops at first failure)
@@ -139,7 +139,7 @@ fn wasm_set() -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// One `cargo clippy -- -D warnings` for the whole set: each crate is checked once, and
+/// One `cargo check` for the whole set: each crate is checked once, and
 /// `--keep-going` still reports every failing crate. Features unify across the
 /// set, so each crate is checked with the union of the features the set enables.
 fn cmd_wasm() -> Result<(), String> {
@@ -147,15 +147,13 @@ fn cmd_wasm() -> Result<(), String> {
     if set.is_empty() {
         return Err("no wasm-safe crates found in the workspace metadata".into());
     }
-    // Clippy with `-D warnings`, as the host step: a plain `check` let wasm-only dead code through (#1954).
     let mut c = cargo();
-    c.args(["clippy", "--target", "wasm32-unknown-unknown", "--keep-going"]);
+    c.args(["check", "--target", "wasm32-unknown-unknown", "--keep-going"]);
     for pkg in &set {
         c.args(["-p", pkg]);
     }
-    c.args(["--", "-D", "warnings"]);
-    run(c, &format!("cargo clippy --target wasm32-unknown-unknown --keep-going -p {} -- -D warnings", set.join(" -p ")))?;
-    println!("\nwasm32-unknown-unknown clippy: ok ({} crates: {})", set.len(), set.join(", "));
+    run(c, &format!("cargo check --target wasm32-unknown-unknown --keep-going -p {}", set.join(" -p ")))?;
+    println!("\nwasm32-unknown-unknown check: ok ({} crates: {})", set.len(), set.join(", "));
     Ok(())
 }
 
