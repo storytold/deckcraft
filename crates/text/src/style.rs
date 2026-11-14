@@ -144,14 +144,7 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
     if let Some(p) = prompt {
         color = p;
     }
-    let major = r.font.as_deref().is_some_and(|f| f.starts_with("+mj"));
-    let theme = &ctx.master.theme;
-    let slot_family = |explicit: &Option<String>, theme_ref: &str| {
-        let name = theme.font(explicit.as_deref().unwrap_or(theme_ref));
-        (!name.trim().is_empty()).then_some(name)
-    };
-    let ea = slot_family(&r.font_ea, if major { "+mj-ea" } else { "+mn-ea" });
-    let cs = slot_family(&r.font_cs, if major { "+mj-cs" } else { "+mn-cs" });
+    let RunFonts { major, ea, cs, sym } = run_fonts(ctx, r);
     let underline =
         r.underline.as_deref().and_then(Underline::from_xml).map(|u| (r.underline_color.as_ref().map(|c| ctx.color(c, None)).unwrap_or(color), u));
     let outline = r.outline.as_ref().and_then(|l| match &l.fill {
@@ -179,10 +172,48 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
         lang: r.lang.clone().filter(|l| !l.is_empty()),
         ea,
         cs,
-        sym: r.font_sym.as_deref().map(|f| ctx.master.theme.font(f)).filter(|f| !f.trim().is_empty()),
+        sym,
         major,
         kern: r.kern.is_some_and(|k| k > 0.0 && size + 1e-6 >= k * scale),
     }
+}
+
+/// The typefaces a run's formatting names besides its Latin one ([`resolve::font_family`]), as
+/// the layout reads them: theme references (`+mn-ea`…) resolved and blank names left out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunFonts {
+    /// The run's typeface is a theme heading font (`+mj-…`), so the theme's major font set gives
+    /// its East Asian and complex-script defaults and its script fonts ([`script_family`]).
+    pub major: bool,
+    /// The East Asian typeface (`a:ea`): the run's own, else the theme's.
+    pub ea: Option<String>,
+    /// The complex-script typeface (`a:cs`): the run's own, else the theme's.
+    pub cs: Option<String>,
+    /// The symbol typeface (`a:sym`), when the run names one: symbol-font codes
+    /// ([`is_symbol_code`](crate::is_symbol_code)) are drawn in it.
+    pub sym: Option<String>,
+}
+
+/// The typefaces run properties `r`, resolved through the style chain, name besides the Latin one.
+pub fn run_fonts(ctx: &Ctx, r: &RunProps) -> RunFonts {
+    let major = r.font.as_deref().is_some_and(|f| f.starts_with("+mj"));
+    let theme = &ctx.master.theme;
+    let named = |name: String| (!name.trim().is_empty()).then_some(name);
+    let slot_family = |explicit: &Option<String>, theme_ref: &str| named(theme.font(explicit.as_deref().unwrap_or(theme_ref)));
+    RunFonts {
+        major,
+        ea: slot_family(&r.font_ea, if major { "+mj-ea" } else { "+mn-ea" }),
+        cs: slot_family(&r.font_cs, if major { "+mj-cs" } else { "+mn-cs" }),
+        sym: r.font_sym.as_deref().map(|f| theme.font(f)).and_then(named),
+    }
+}
+
+/// The theme's typeface for script `script` (`a:font[@script]`): from its major font set for a
+/// heading font ([`RunFonts::major`]), else from its minor set.
+pub fn script_family<'a>(ctx: &Ctx<'a>, major: bool, script: ScriptTag) -> Option<&'a str> {
+    let fonts = &ctx.master.theme.fonts;
+    let set = if major { &fonts.major } else { &fonts.minor };
+    std::str::from_utf8(&script).ok().and_then(|s| set.script(s))
 }
 
 /// The faces to try for a cluster of `slot`/`script` in style `st`, in order: the slot's
@@ -204,11 +235,8 @@ pub(crate) fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<S
         FontSlot::ComplexScript => st.cs.as_deref().into_iter().for_each(&mut push),
         FontSlot::Latin => {}
     }
-    if let Some(sc) = script.and_then(|t| std::str::from_utf8(&t).ok().map(String::from)) {
-        let set = if st.major { &ctx.master.theme.fonts.major } else { &ctx.master.theme.fonts.minor };
-        if let Some(f) = set.script(&sc) {
-            push(f);
-        }
+    if let Some(f) = script.and_then(|t| script_family(ctx, st.major, t)) {
+        push(f);
     }
     if !chain.iter().any(|c| Arc::ptr_eq(c, &st.face)) {
         chain.push(st.face.clone());
