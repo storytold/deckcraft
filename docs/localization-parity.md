@@ -11,8 +11,8 @@ system language (#15), or Preferences › Interface language and `app.language` 
 `de`). Command ids, engine labels returned to scripts, the control channel, the CLI and MCP stay
 English. The status bar looks its message up as it draws it (#2110): the UI's own messages and
 the engine's fixed ones follow the interface language, and switch with it while they show. A
-message filled in with a name or a count (`Saved {name}`) is translated when it is made and keeps
-that language for the six seconds it shows. Still English: slide placeholder prompts
+message built from a template (`Saved {name}`, `Inserted {n} slides`) is kept as the template and
+its values and filled in as it is drawn; the control channel and scripts read its English text. Still English: slide placeholder prompts
 (drawn by the renderer), engine messages with variable parts (they need `@msg` template matching,
 which the `craft-i18n` crate doesn't have yet), the native macOS menu bar and some dialog choice lists. Other requests: #30 and PR #34
 (Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as

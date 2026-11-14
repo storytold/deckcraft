@@ -189,3 +189,30 @@ fn status_messages_follow_the_interface_language() {
     h.get_by_value("Nothing to undo");
     set_current(Lang::EN);
 }
+
+/// A status message built from a template keeps its English text for the control channel and
+/// scripts, and the status bar fills the template in the interface language as it draws it, also
+/// after a language switch (#2110 review).
+#[test]
+fn template_status_messages_stay_english_for_scripts() {
+    use_fixture(
+        "de",
+        "@id\tlanguage.name\tDeutsch\n\tSaved {name}\t{name} gespeichert\n@plural\tInserted {n} slide|Inserted {n} slides\t{n} Folie eingefügt|{n} Folien eingefügt\n",
+    );
+    let mut h = harness(SlideApp::new(Session::with_new(), Services::default()));
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.state_mut().set_status_message(Message::Fmt("Saved {name}", vec![("name", "talk.pptx".into())]));
+    h.run_steps(2);
+    h.get_by_value("talk.pptx gespeichert");
+    let ctx = h.ctx.clone();
+    assert_eq!(crate::control::inspect(h.state(), &ctx)["status"], json!("Saved talk.pptx"), "scripts read English");
+    h.state_mut().run("app.language", json!({"language": "en"})).unwrap();
+    h.run_steps(2);
+    h.get_by_value("Saved talk.pptx");
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.state_mut().set_status_message(Message::Count(3, "Inserted {n} slide", "Inserted {n} slides"));
+    h.run_steps(2);
+    h.get_by_value("3 Folien eingefügt");
+    assert_eq!(crate::control::inspect(h.state(), &ctx)["status"], json!("Inserted 3 slides"));
+    set_current(Lang::EN);
+}

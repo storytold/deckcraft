@@ -205,6 +205,39 @@ pub fn tn(n: u64, one: &str, other: &str) -> String {
     lang.i18n().trn(lang.lang, n, one, other)
 }
 
+/// A UI message kept as its English template and values (#2110): the English text is what the
+/// control channel and scripts read, and [`Message::shown`] fills the template in the interface
+/// language when the message is drawn, so it also follows a language switch while it shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Message {
+    /// A template with `{placeholders}` and their values.
+    Fmt(&'static str, Vec<(&'static str, String)>),
+    /// A count in its plural form: the English `one` and `other` forms, with `{n}`.
+    Count(u64, &'static str, &'static str),
+}
+
+impl Message {
+    /// The message in English, without isolate marks.
+    pub fn english(&self) -> String {
+        match self {
+            Message::Fmt(template, args) => fmt_plain(template, &pairs(args)),
+            Message::Count(n, one, other) => fmt_plain(if *n == 1 { one } else { other }, &[("n", &n.to_string())]),
+        }
+    }
+
+    /// The message in the current language.
+    pub fn shown(&self) -> String {
+        match self {
+            Message::Fmt(template, args) => fmt(t(template), &pairs(args)),
+            Message::Count(n, one, other) => tn(*n, one, other),
+        }
+    }
+}
+
+fn pairs<'a>(args: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+    args.iter().map(|(k, v)| (*k, v.as_str())).collect()
+}
+
 /// A ribbon caption whose line break was saved as a space (a Quick Access Toolbar label such as
 /// `New Slide`, from `New\nSlide`) in the current language, on one line.
 pub fn t_flat(s: &str) -> String {

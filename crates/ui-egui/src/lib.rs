@@ -248,7 +248,10 @@ pub struct SlideApp {
     reuse_target: Option<FileTarget>,
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
+    /// The transient status message in English (what the control channel reports), and when.
     pub status: Option<(String, f64)>,
+    /// The status message as a template, when it was set as one ([`SlideApp::set_status_message`]).
+    pub status_message: Option<i18n::Message>,
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).
