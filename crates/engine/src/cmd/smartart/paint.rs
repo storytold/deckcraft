@@ -166,21 +166,21 @@ pub(super) fn text_shape(preset: &str, x: Xfrm, lines: &[&DiagramNode], title: b
     if !title {
         body.body.anchor = Some(deckcraft_model::text::Anchor::Top);
     }
-    Shape { name: "SmartArt shape".into(), xfrm: Some(x), geom: Geom::preset(preset), text: Some(body), ..Default::default() }
+    Shape { name: "Diagram shape".into(), xfrm: Some(x), geom: Geom::preset(preset), text: Some(body), ..Default::default() }
 }
 
 /// A plain shape with no text (arrows between steps).
 pub(super) fn deco(preset: &str, x: Xfrm, rot: f64) -> Shape {
     let mut x = x;
     x.rot = rot;
-    Shape { name: "SmartArt arrow".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() }
+    Shape { name: "Diagram arrow".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() }
 }
 
 pub(super) fn line_shape(a: (f64, f64), b: (f64, f64)) -> Shape {
     let mut x = Xfrm::new(a.0.min(b.0), a.1.min(b.1), (b.0 - a.0).abs(), (b.1 - a.1).abs());
     x.flip_h = (b.0 < a.0) != (b.1 < a.1);
     Shape {
-        name: "SmartArt connector".into(),
+        name: "Diagram connector".into(),
         xfrm: Some(x),
         geom: Geom::preset("line"),
         fill: Some(Fill::None),
@@ -257,7 +257,7 @@ fn fit_words(sh: &mut Shape) {
 
 /// A picture placeholder for node `node`: its picture when it has one, else a pale box.
 pub(super) fn picture_shape(d: &Diagram, preset: &str, x: Xfrm, i: usize, node: usize) -> Shape {
-    let mut sh = Shape { name: "SmartArt picture".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() };
+    let mut sh = Shape { name: "Diagram picture".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() };
     paint(d, &mut sh, i, true);
     if let Some(m) = d.nodes.get(node).and_then(|n| n.picture) {
         sh.fill = Some(Fill::Picture(deckcraft_model::style::PictureFill { media: m, ..Default::default() }));
