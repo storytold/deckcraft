@@ -106,7 +106,7 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
         v.push("Layout");
     }
     if deckcraft_engine::cmd::smartart::selected(st).is_some() {
-        v.push("SmartArt Design");
+        v.push(DIAGRAM_TAB_ID);
     }
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Chart(_))) {
         v.push("Chart Design");
@@ -115,6 +115,13 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
         v.push("Playback");
     }
     v
+}
+
+// This is an existing saved/control-channel key, not the displayed label.
+const DIAGRAM_TAB_ID: &str = "SmartArt Design";
+
+fn tab_label(id: &str) -> &str {
+    if id == DIAGRAM_TAB_ID { "Diagram Design" } else { id }
 }
 
 const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "Animations", "Slide Show", "Record", "Review", "View"];
@@ -150,7 +157,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
             // `name` is the tab's id (`app.ui.tab`, `view.tab`); only its caption is translated.
-            let caption = tl!(name);
+            let caption = tl!(tab_label(name));
             let font = theme::font(13.0);
             let w = ui.fonts_mut(|f| f.layout_no_wrap(caption.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
@@ -229,7 +236,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         "Table Design" => table_design(app, ui),
                         "Layout" => table_layout(app, ui),
                         "Chart Design" => chart_design(app, ui),
-                        "SmartArt Design" => smartart_design(app, ui),
+                        DIAGRAM_TAB_ID => smartart_design(app, ui),
                         "Playback" => playback(app, ui),
                         "Slide Master" => slide_master(app, ui),
                         "Handout Master" => handout_master(app, ui),
@@ -465,3 +472,13 @@ mod inktoshape_tests;
 
 #[cfg(test)]
 mod picture_styles_tests;
+
+#[cfg(test)]
+mod feature_name_tests {
+    #[test]
+    fn diagram_tab_keeps_its_saved_identity() {
+        assert_eq!(super::DIAGRAM_TAB_ID, "SmartArt Design");
+        assert_eq!(super::tab_label(super::DIAGRAM_TAB_ID), "Diagram Design");
+        assert_eq!(super::tab_label("Home"), "Home");
+    }
+}
