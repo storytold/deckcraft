@@ -166,6 +166,40 @@ mod tests {
         assert_eq!(fill_transparency_to_apply(0.0, 40.0), Some(0.0));
     }
 
+    /// The Fill slider shows every alpha a fill draws with: an RGB color's alpha byte, `alphaMod`
+    /// and `alphaOff`, and the alpha of the color an automatic fill inherits. A move to 0% is then a
+    /// change that the pane sends to `shape.fill`.
+    #[test]
+    fn fill_transparency_slider_shows_every_alpha_the_fill_draws_with() {
+        let inherited = |s: &mut Session| {
+            s.edit(|doc, sel| {
+                let id = sel.shapes[0];
+                let sh = std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).shape_mut(id).unwrap();
+                sh.style.as_mut().unwrap().fill_ref.1 = ColorRef::scheme(SchemeSlot::Accent1).with(ColorTransform::Alpha(50_000));
+                Ok(())
+            })
+            .unwrap();
+        };
+        let mut failures = vec![];
+        for (name, fill) in [
+            ("alpha byte", Some(json!({"color": "#ff000080"}))),
+            ("alphaMod", Some(json!({"color": {"rgb": "#ff0000", "alphaMod": 50_000}}))),
+            ("alphaOff", Some(json!({"color": {"rgb": "#ff0000", "alphaOff": -50_000}}))),
+            ("inherited", None),
+        ] {
+            let mut h = fill_pane(fill.clone());
+            if fill.is_none() {
+                inherited(&mut h.state_mut().session);
+                h.run_steps(3);
+            }
+            let shown = slider_values(&h);
+            if !shown.iter().any(|v| (*v - 50.0).abs() < 0.6) {
+                failures.push(format!("{name}: shows {shown:?}, not 50%"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
     fn solid_alpha(app: &SlideApp, id: u32) -> Option<i32> {
         let sh = app.session.active()?.shape(ShapeId(id))?;
         let Fill::Solid { color } = sh.fill.as_ref()? else { return None };

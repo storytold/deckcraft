@@ -44,15 +44,15 @@ pub fn gradient_json(g: &Gradient) -> Value {
     }
 }
 
-fn alpha_of(c: &ColorRef) -> f64 {
-    c.mods.iter().find_map(|m| if let ColorTransform::Alpha(a) = m { Some(*a as f64 / 100_000.0) } else { None }).unwrap_or(1.0)
+/// `c` with its alpha set to `a` (0–1), replacing every alpha it had.
+fn with_alpha(mut c: ColorRef, a: f64) -> ColorRef {
+    c.set_alpha(a);
+    c
 }
 
-fn with_alpha(mut c: ColorRef, a: f64) -> ColorRef {
-    c.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_)));
-    if a < 0.999 {
-        c.mods.push(ColorTransform::Alpha((a.clamp(0.0, 1.0) * 100_000.0).round() as i32));
-    }
+/// `c` with `transparency` (0–1), replacing every alpha it had.
+fn with_transparency(mut c: ColorRef, transparency: f64) -> ColorRef {
+    c.set_alpha(1.0 - transparency);
     c
 }
 
@@ -290,7 +290,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             widgets::color_popup(&r).show(|ui| {
                 if let Some(Some(c)) = widgets::color_grid(ui, sc, None) {
                     let mut ng = g.clone();
-                    ng.stops[sel].color = with_alpha(c, alpha_of(&s.color));
+                    ng.stops[sel].color = with_alpha(c, s.color.alpha());
                     out = Some(ng);
                 }
             });
@@ -314,14 +314,14 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         ui.horizontal(|ui| {
             let label = ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Transparency"));
             let key = ui.scope_id().with((id, "tr", sel));
-            let mut tr: f32 = ui.data_mut(|d| d.get_temp(key).unwrap_or(((1.0 - alpha_of(&s.color)) * 100.0) as f32));
+            let mut tr: f32 = ui.data_mut(|d| d.get_temp(key).unwrap_or(((1.0 - s.color.alpha()) * 100.0) as f32));
             let r = ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).suffix("%")).labelled_by(label.id);
             if r.changed() {
                 ui.data_mut(|d| d.insert_temp(key, tr));
             }
             if r.drag_stopped() || (r.changed() && !r.dragged()) {
                 let mut ng = g.clone();
-                ng.stops[sel].color = with_alpha(s.color.clone(), 1.0 - tr as f64 / 100.0);
+                ng.stops[sel].color = with_transparency(s.color.clone(), tr as f64 / 100.0);
                 ui.data_mut(|d| d.remove::<f32>(key));
                 out = Some(ng);
             }
@@ -528,5 +528,28 @@ mod tests {
             tile: [0.0; 4],
         };
         assert_eq!(gradient_json(&gradient).get("flip"), Some(&json!("xy")));
+    }
+
+    /// A stop's Transparency replaces every alpha its color had, and the slider shows that alpha.
+    #[test]
+    fn stop_transparency_replaces_every_alpha_of_the_color() {
+        use deckcraft_color::Rgba;
+        let sc = ColorScheme { name: "Test".into(), colors: [Rgba::BLACK; 12] };
+        let red = || ColorRef::rgb(Rgba::rgb(255, 0, 0));
+        let mut failures = vec![];
+        for c in
+            [ColorRef::rgb(Rgba::rgba(255, 0, 0, 128)), red().with(ColorTransform::AlphaMod(50000)), red().with(ColorTransform::AlphaOff(-50000))]
+        {
+            if (c.alpha() - 128.0 / 255.0).abs() > 0.01 {
+                failures.push(format!("{c:?}: the slider reads alpha {}", c.alpha()));
+            }
+            for (t, a) in [(0.0, 255), (0.25, 191)] {
+                let drawn = with_transparency(c.clone(), t).resolve(&sc, None).a;
+                if drawn != a {
+                    failures.push(format!("{c:?}: {t} draws alpha {drawn}, not {a}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 }

@@ -287,6 +287,21 @@ fn requested_fill(s: &mut Session, p: &Value) -> Result<Option<Option<Fill>>> {
     Ok(None)
 }
 
+/// The fill `shape` draws with: its own, or the one it inherits from its layout, master or theme
+/// style, with a solid color resolved to RGB (alpha included). `None` when nothing gives it one.
+pub fn effective_fill(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Option<Fill> {
+    let ctx = super::text::ctx_for(doc, sel)?;
+    resolved_fill(&ctx, shape)
+}
+
+fn resolved_fill(ctx: &deckcraft_model::resolve::Ctx, sh: &deckcraft_model::Shape) -> Option<Fill> {
+    let (f, ph) = deckcraft_model::resolve::fill(ctx, sh);
+    f.map(|f| match f {
+        Fill::Solid { color } => Fill::solid(ColorRef::rgb(ctx.color(&color, ph))),
+        other => other,
+    })
+}
+
 /// The effective fill of each targeted shape, for a transparency change on an inherited (style) fill.
 fn inherited_fills(s: &Session, p: &Value) -> Result<HashMap<ShapeId, Option<Fill>>> {
     let st = s.doc()?;
@@ -295,13 +310,7 @@ fn inherited_fills(s: &Session, p: &Value) -> Result<HashMap<ShapeId, Option<Fil
     for id in targets(s, p)? {
         if let Some(sh) = st.shape(id) {
             deckcraft_model::walk(std::slice::from_ref(sh), &mut |sh, _| {
-                let fill = ctx.as_ref().and_then(|c| {
-                    let (f, ph) = deckcraft_model::resolve::fill(c, sh);
-                    f.map(|f| match f {
-                        Fill::Solid { color } => Fill::solid(ColorRef::rgb(c.color(&color, ph))),
-                        other => other,
-                    })
-                });
+                let fill = ctx.as_ref().and_then(|c| resolved_fill(c, sh));
                 fills.insert(sh.id, fill);
             });
         }
@@ -331,10 +340,7 @@ fn apply_fill(
     if let Some(t) = transparency {
         let base = sh.fill.clone().or_else(|| inherited.get(&sh.id).cloned().flatten());
         if let Some(Fill::Solid { mut color }) = base {
-            color.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_)));
-            if t > 0.0 {
-                color.mods.push(ColorTransform::Alpha(((1.0 - t.clamp(0.0, 1.0)) * 100_000.0).round() as i32));
-            }
+            color.set_alpha(1.0 - t.clamp(0.0, 1.0));
             sh.fill = Some(Fill::Solid { color });
         }
     }
@@ -523,6 +529,45 @@ mod tests {
             expected.mods.push(ColorTransform::Alpha(50000));
             assert_eq!(s.doc().unwrap().shape(*id).unwrap().fill, Some(Fill::solid(expected)));
         }
+    }
+
+    /// A fill's transparency replaces every alpha its color had: the alpha of an inherited color,
+    /// an RGB color's alpha byte, `alphaMod` and `alphaOff`.
+    #[test]
+    fn fill_transparency_replaces_every_alpha_of_the_color() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let id = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap()["id"].as_u64().unwrap() as u32);
+        {
+            let st = s.doc_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut st.doc);
+            let sh = doc.slides.iter_mut().find_map(|sl| std::sync::Arc::make_mut(sl).shape_mut(id)).unwrap();
+            sh.style.as_mut().unwrap().fill_ref.1 = ColorRef::scheme(SchemeSlot::Accent1).with(ColorTransform::Alpha(50000));
+        }
+        let drawn = |s: &Session| {
+            let st = s.doc().unwrap();
+            let ctx = super::super::text::ctx_for(&st.doc, &st.selection).unwrap();
+            let (fill, ph) = deckcraft_model::resolve::fill(&ctx, st.shape(id).unwrap());
+            let Some(Fill::Solid { color }) = fill else { panic!("solid fill expected: {fill:?}") };
+            ctx.color(&color, ph)
+        };
+        assert_eq!(drawn(&s).a, 128, "the inherited color is half transparent");
+        let mut failures = vec![];
+        s.execute("shape.fill", &json!({"transparency": 0})).unwrap();
+        if drawn(&s).a != 255 {
+            failures.push(format!("inherited fill: 0 draws alpha {}", drawn(&s).a));
+        }
+        for color in [json!("#ff000080"), json!({"rgb": "#ff0000", "alphaMod": 50000}), json!({"rgb": "#ff0000", "alphaOff": -50000})] {
+            s.execute("shape.fill", &json!({"color": color})).unwrap();
+            assert_eq!(drawn(&s).a, 128, "{color} is half transparent");
+            for (t, a) in [(0.0, 255), (0.25, 191)] {
+                s.execute("shape.fill", &json!({"transparency": t})).unwrap();
+                if drawn(&s).a != a {
+                    failures.push(format!("{color}: {t} draws alpha {}, not {a}", drawn(&s).a));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]

@@ -305,6 +305,29 @@ fn background_picture_options_tile_transparency_and_copy() {
     assert_eq!(undo_len(&s), n + 1, "copying an already shared background is not an undo step");
 }
 
+/// A background's transparency replaces every alpha its color had: an RGB color's alpha byte,
+/// `alphaMod` and `alphaOff`.
+#[test]
+fn background_transparency_replaces_every_alpha_of_the_color() {
+    let mut s = Session::with_new();
+    let drawn = |s: &Session| match &s.doc().unwrap().doc.slides[0].background {
+        Some(Background::Fill { fill: Fill::Solid { color } }) => color.resolve(&scheme(s), None).a,
+        other => panic!("expected a solid background, got {other:?}"),
+    };
+    let mut failures = vec![];
+    for color in [json!("#0000c880"), json!({"rgb": "#0000c8", "alphaMod": 50000}), json!({"rgb": "#0000c8", "alphaOff": -50000})] {
+        s.execute("design.background", &json!({"color": color})).unwrap();
+        assert_eq!(drawn(&s), 128, "{color} is half transparent");
+        for (t, a) in [(0.0, 255), (0.25, 191)] {
+            s.execute("design.background", &json!({"transparency": t})).unwrap();
+            if drawn(&s) != a {
+                failures.push(format!("{color}: {t} draws alpha {}, not {a}", drawn(&s)));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn background_all_applies_to_master_and_new_slides_inherit() {
     let mut s = Session::with_new();

@@ -262,6 +262,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         ui.label(egui::RichText::new("Select a shape to format it.").color(t.text_dim));
         return;
     };
+    let effective_fill = deckcraft_engine::cmd::shape::effective_fill(&st.doc, &st.selection, &sh);
     let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, &sh);
     // Scale and a centre origin work from the shown shape's size, so they need a single shape.
     let single = st.selected_shapes().len() == 1;
@@ -415,7 +416,9 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 // already 40% transparent showed as opaque, and leaving the slider wrote 0.
                 let seed = match &sh.fill {
                     Some(Fill::Picture(pf)) => ((1.0 - pf.alpha.unwrap_or(1.0)) * 100.0) as f32,
-                    fill => solid_fill_transparency_percent(fill.as_ref()),
+                    Some(fill) => solid_fill_transparency_percent(Some(fill)),
+                    // An automatic fill shows the transparency of the fill it inherits.
+                    None => solid_fill_transparency_percent(effective_fill.as_ref()),
                 };
                 let id = ui.scope_id().with(("ftr", sh.id.0));
                 let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(seed));

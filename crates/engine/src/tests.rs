@@ -3154,6 +3154,57 @@ fn text_transparency_keeps_the_colour_and_sets_alpha() {
     assert!(s.execute("format.textTransparency", &json!({})).is_err());
 }
 
+/// Text, shadow and glow transparency replace every alpha the color had: an RGB color's alpha
+/// byte, `alphaMod` and `alphaOff`.
+#[test]
+fn text_shadow_and_glow_transparency_replace_every_alpha_of_the_color() {
+    use deckcraft_color::{ColorTransform, Rgba};
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Hi"})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let scheme = s.doc().unwrap().doc.masters[0].theme.colors.clone();
+    let drawn = |c: &ColorRef| c.resolve(&scheme, None).a;
+    let text = |s: &Session| match s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.fill.clone() {
+        Some(Fill::Solid { color }) => color,
+        other => panic!("solid fill expected: {other:?}"),
+    };
+    let fx = |s: &Session| s.doc().unwrap().shape(id).unwrap().effects.clone().unwrap_or_default();
+    s.execute("shape.effects", &json!({"shadowProps": {"blur": 4}, "glowProps": {"radius": 6}})).unwrap();
+    let red = || ColorRef::rgb(Rgba::rgb(0xC0, 0, 0));
+    let mut failures = vec![];
+    for (param, color) in [
+        (json!("#C0000080"), ColorRef::rgb(Rgba::rgba(0xC0, 0, 0, 128))),
+        (json!({"rgb": "#C00000", "alphaMod": 50000}), red().with(ColorTransform::AlphaMod(50000))),
+        (json!({"rgb": "#C00000", "alphaOff": -50000}), red().with(ColorTransform::AlphaOff(-50000))),
+    ] {
+        for (t, a) in [(0.0, 255), (0.25, 191)] {
+            s.execute("format.color", &json!({"color": param})).unwrap();
+            assert_eq!(drawn(&text(&s)), 128, "{param} is half transparent");
+            s.execute("format.textTransparency", &json!({"value": t})).unwrap();
+            if drawn(&text(&s)) != a {
+                failures.push(format!("text {param}: {t} draws alpha {}, not {a}", drawn(&text(&s))));
+            }
+
+            s.edit(|doc, _| {
+                let sh = doc.slides.iter_mut().find_map(|sl| std::sync::Arc::make_mut(sl).shape_mut(id)).unwrap();
+                let e = sh.effects.as_mut().unwrap();
+                e.outer_shadow.as_mut().unwrap().color = color.clone();
+                e.glow.as_mut().unwrap().color = color.clone();
+                Ok(())
+            })
+            .unwrap();
+            s.execute("shape.effects", &json!({"shadowProps": {"transparency": t}, "glowProps": {"transparency": t}})).unwrap();
+            for (what, c) in [("shadow", fx(&s).outer_shadow.unwrap().color), ("glow", fx(&s).glow.unwrap().color)] {
+                if drawn(&c) != a {
+                    failures.push(format!("{what} {param}: {t} draws alpha {}, not {a}", drawn(&c)));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn edit_points_turns_a_preset_into_a_freeform_and_moves_adds_deletes() {
     use deckcraft_model::Geom;
