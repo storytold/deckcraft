@@ -56,8 +56,11 @@ folders:
   its nearest existing folder's links are followed and the rest must be plain names, so `..` below a
   folder that doesn't exist is refused, as is a link that leads nowhere (writing through it would
   create its target). The result is compared with the root by whole folder names: `/work2/x` is not
-  inside `/work`. On Windows names are compared exactly after what exists is resolved to its real case (so `OUT\x` reaches the root `out` on an ordinary volume, but not in a case-sensitive folder), UNC paths (`\\server\share\...`) are resolved like
-  drive-letter ones, and device names (`CON`, `NUL`, `COM1`, `COM¹`..., also followed by an extension or a colon) are refused.
+  inside `/work`. On Windows names are compared exactly after what exists is resolved to its real case (so `OUT\x` reaches the root `out` on an ordinary volume, but not in a case-sensitive folder), and device names (`CON`, `NUL`, `COM1`, `COM¹`..., also followed by an extension or a colon) are refused.
+  A network path (`\\server\share\...`, `\\?\UNC\...`, WebDAV's `\\host@SSL\share\...`), a device path (`\\.\...`) or a
+  verbatim path that isn't a disk is refused by its name before anything looks it up, since looking it up would
+  contact that host, unless a root is on the same server and share (or the same device or prefix). A link whose
+  target is one of those is refused from the link's text, before it is followed.
 - A refused path is an ordinary tool error the agent can read and correct, for example
   `automation path rejected: outside the write root /work/project/out: /etc/x.pptx` or
   `automation filesystem access is not granted: write authority is absent: /work/project/out/x.pptx`.
