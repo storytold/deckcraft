@@ -330,20 +330,24 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         "picture" => {
             let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
             let mut b = adj.brightness as f32;
-            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
+            let r_b = ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness").update_while_editing(false));
+            if (r_b.drag_stopped() || r_b.lost_focus() || (r_b.changed() && !r_b.dragged())) && b != adj.brightness as f32 {
                 run(app, "picture.adjust", json!({"brightness": b}));
             }
             let mut c = adj.contrast as f32;
-            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
+            let r_c = ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast").update_while_editing(false));
+            if (r_c.drag_stopped() || r_c.lost_focus() || (r_c.changed() && !r_c.dragged())) && c != adj.contrast as f32 {
                 run(app, "picture.adjust", json!({"contrast": c}));
             }
             let mut s = adj.saturation.unwrap_or(1.0) as f32;
-            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
+            let r_s = ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation").update_while_editing(false));
+            if (r_s.drag_stopped() || r_s.lost_focus() || (r_s.changed() && !r_s.dragged())) && s != adj.saturation.unwrap_or(1.0) as f32 {
                 run(app, "picture.adjust", json!({"saturation": s}));
             }
             let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
             let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
+            let r_tr = ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency").update_while_editing(false));
+            if (r_tr.drag_stopped() || r_tr.lost_focus() || (r_tr.changed() && !r_tr.dragged())) && tr != (1.0 - alpha) as f32 {
                 run(app, "picture.adjust", json!({"transparency": tr}));
             }
             if ui.button("Reset Picture").clicked() {
