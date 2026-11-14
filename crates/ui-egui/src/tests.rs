@@ -2460,6 +2460,201 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
 }
 
+/// Independent sessions exchange objects through the host, by keyboard and menu, even when
+/// their plain-text alternatives are identical. Source closure does not invalidate bytes.
+#[test]
+fn system_clipboard_between_sessions_keyboard_and_menu() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    for slides in [false, true] {
+        let shared = Rc::new(RefCell::new(None::<Vec<u8>>));
+        let record = shared.clone();
+        let services = Services {
+            clipboard_set_native: Some(Box::new(move |bytes, _, text| {
+                assert!(!text.is_empty(), "textless objects still produce a paste event");
+                *record.borrow_mut() = Some(bytes.to_vec());
+                true
+            })),
+            ..Default::default()
+        };
+        let mut source = step_app(services);
+        source.state_mut().run("shape.insert", json!({"preset": "star5", "rect": [80, 80, 120, 90]})).unwrap();
+        if slides {
+            source.state_mut().run("edit.cut", json!({"scope": "slides"})).unwrap();
+            source.run_steps(1);
+        } else {
+            source.event(egui::Event::Copy);
+            source.run_steps(1);
+        }
+        assert!(shared.borrow().is_some());
+        assert!(!source.output().platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
+        drop(source);
+        let read = shared.clone();
+        let services = Services { clipboard_native: Some(Box::new(move || read.borrow().clone())), ..Default::default() };
+        let mut dest = step_app(services);
+        let before = dest.state().session.active().unwrap().doc.slides[0].shapes.len();
+        if slides {
+            dest.state_mut().run("edit.paste", json!({"scope": "slides"})).unwrap();
+        } else {
+            dest.event(egui::Event::Paste(OBJECTS_MARKER.into()));
+            dest.run_steps(1);
+        }
+        let st = dest.state().session.active().unwrap();
+        if slides {
+            assert_eq!(st.doc.slides.len(), 2);
+            assert_eq!(st.doc.slides[1].shapes.len(), before + 1);
+        } else {
+            assert_eq!(st.doc.slides[0].shapes.len(), before + 1);
+            dest.event(egui::Event::Paste(OBJECTS_MARKER.into()));
+            dest.run_steps(1);
+            assert_eq!(dest.state().session.clipboard.pastes, 2, "same offer must not reset the offset counter");
+        }
+        dest.state_mut().run("edit.undo", json!({})).unwrap();
+        dest.state_mut().run("edit.redo", json!({})).unwrap();
+    }
+}
+
+#[test]
+fn system_clipboard_invalid_native_preserves_html_fallback() {
+    let services = Services {
+        clipboard_native: Some(Box::new(|| Some(b"invalid native format".to_vec()))),
+        clipboard_html: Some(Box::new(|| Some("<p><b>External</b></p>".into()))),
+        ..Default::default()
+    };
+    let mut dest = step_app(services);
+    dest.event(egui::Event::Paste("External".into()));
+    dest.run_steps(1);
+    let st = dest.state().session.active().unwrap();
+    let text = st.doc.slides[0].shapes.iter().filter_map(|s| s.text.as_ref()).find(|t| t.text() == "External").unwrap();
+    assert_eq!(text.paragraphs[0].runs[0].props.bold, Some(true));
+}
+
+/// Paste Special (the dialog, its shortcut and each of its choices) and Paste and Match
+/// Formatting take a copy from another window, as Paste does; the last still pastes text only.
+#[test]
+fn system_clipboard_reaches_paste_special_and_paste_text() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let shared = Rc::new(RefCell::new(None::<Vec<u8>>));
+    let record = shared.clone();
+    let services = Services {
+        clipboard_set_native: Some(Box::new(move |bytes, _, _| {
+            *record.borrow_mut() = Some(bytes.to_vec());
+            true
+        })),
+        ..Default::default()
+    };
+    let mut source = step_app(services);
+    source.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [80, 90, 200, 60]})).unwrap();
+    source.state_mut().session.type_text("Northwind").unwrap();
+    source.state_mut().session.key("Escape", Mods::default()).unwrap();
+    source.state_mut().run("edit.copy", json!({})).unwrap();
+    source.run_steps(1);
+    assert!(shared.borrow().is_some());
+    drop(source);
+    let dest = || {
+        let read = shared.clone();
+        step_app(Services { clipboard_native: Some(Box::new(move || read.borrow().clone())), ..Default::default() })
+    };
+    let new_shapes = |h: &egui_kittest::Harness<'_, SlideApp>, before: &[deckcraft_model::ShapeId]| -> Vec<deckcraft_model::Shape> {
+        let st = h.state().session.active().unwrap();
+        st.doc.slides[0].shapes.iter().filter(|s| !before.contains(&s.id)).cloned().collect()
+    };
+    let ids = |h: &egui_kittest::Harness<'_, SlideApp>| -> Vec<deckcraft_model::ShapeId> {
+        h.state().session.active().unwrap().doc.slides[0].shapes.iter().map(|s| s.id).collect()
+    };
+
+    // The dialog offers the shape choices for the other window's shapes.
+    for open in ["command", "shortcut"] {
+        let mut h = dest();
+        if open == "command" {
+            h.state_mut().run("app.pasteSpecial", json!({})).unwrap();
+        } else {
+            h.event(egui::Event::Key {
+                key: egui::Key::V,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+            });
+        }
+        h.run_steps(1);
+        assert!(h.state().dialog.is_some(), "{open} opens Paste Special");
+        let clip = &h.state().session.clipboard;
+        assert!(clip.foreign && clip.shapes.len() == 1, "{open}: the dialog sees the other window's shape");
+    }
+
+    for how in ["destinationTheme", "keepSource", "picture"] {
+        let mut h = dest();
+        let before = ids(&h);
+        h.state_mut().run("edit.pasteSpecial", json!({"as": how})).unwrap();
+        let added = new_shapes(&h, &before);
+        assert_eq!(added.len(), 1, "{how}");
+        if how == "picture" {
+            assert!(added[0].text.is_none(), "{how} pastes a picture");
+        } else {
+            assert_eq!(added[0].text.as_ref().map(|t| t.text()).as_deref(), Some("Northwind"), "{how}");
+            assert_eq!(added[0].xfrm.map(|x| (x.x, x.y)), Some((80.0, 90.0)), "{how} keeps the shape");
+        }
+    }
+
+    let mut h = dest();
+    let before = ids(&h);
+    h.state_mut().run("edit.pasteText", json!({})).unwrap();
+    let added = new_shapes(&h, &before);
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].text.as_ref().map(|t| t.text()).as_deref(), Some("Northwind"));
+    assert_ne!(added[0].xfrm.map(|x| (x.x, x.y)), Some((80.0, 90.0)), "a new text box, not the shape");
+}
+
+/// Copy or Cut at a caret copies nothing. Where the host takes native objects the system
+/// clipboard keeps what it holds; elsewhere it gets the empty text it got before #1424.
+#[test]
+fn caret_copy_leaves_the_empty_text_without_native_clipboard() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let copied = |h: &egui_kittest::Harness<'_, SlideApp>| {
+        h.output().platform_output.commands.iter().find_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+    };
+    let offers = Rc::new(Cell::new(0));
+    for native in [false, true] {
+        let count = offers.clone();
+        let services = if native {
+            Services {
+                clipboard_set_native: Some(Box::new(move |_, _, _| {
+                    count.set(count.get() + 1);
+                    true
+                })),
+                ..Default::default()
+            }
+        } else {
+            Services::default()
+        };
+        let mut h = step_app(services);
+        let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+        h.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+        h.run_steps(1);
+        for (via, cut) in [("command", false), ("command", true), ("keyboard", false), ("keyboard", true)] {
+            if via == "command" {
+                h.state_mut().run(if cut { "edit.cut" } else { "edit.copy" }, json!({})).unwrap();
+            } else {
+                h.event(if cut { egui::Event::Cut } else { egui::Event::Copy });
+            }
+            h.run_steps(1);
+            let want = match (native, via) {
+                (true, _) => None,
+                (false, "command") => Some(String::new()),
+                (false, _) => Some(OBJECTS_MARKER.to_string()),
+            };
+            assert_eq!(copied(&h), want, "native={native}, {via}, cut={cut}");
+        }
+        assert_eq!(offers.get(), 0, "a caret offers no objects");
+    }
+}
+
 /// #1431: a comment card's reply row was wider than the pane, so the Comments pane grew every
 /// frame until it stuck at its widest and dragging its edge did nothing.
 #[test]

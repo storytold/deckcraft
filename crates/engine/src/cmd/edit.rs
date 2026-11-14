@@ -17,14 +17,14 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
-        cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
-        cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides} → {text, html?}", has_doc, copy),
+        cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?, copied}", has_doc, cut),
+        cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides} → {text, html?, copied}", has_doc, copy),
         cmd!(
             "edit.paste",
             "Paste",
             ["Home", "Clipboard"],
             Some("Cmd+V"),
-            "{text?: plain text to paste, html?: rich text from another app, scope?: slides}",
+            "{text?: plain text to paste, html?: rich text from another app, clipboard?: base64 native selection, scope?: slides}",
             has_doc,
             paste
         ),
@@ -97,9 +97,10 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         for sl in &slides {
             mids.extend(crate::media_refs::slide_media(sl));
         }
+        let slide_layouts = slides.iter().map(|sl| st.doc.layout(sl.layout).map(|(_, l)| (l.name.clone(), l.kind)).unwrap_or_default()).collect();
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
         let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
-        s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
+        s.clipboard = crate::Clipboard { slides, slide_layouts, media, plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
     // Selected table cells copy as their text: a tab between cells and a paragraph per row.
@@ -195,7 +196,7 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
     let caret = copying_caret(s);
     let t = copy_inner(s, p)?;
     let html = if caret { String::new() } else { copied_html(s) };
-    Ok(json!({"text": t, "html": html}))
+    Ok(json!({"text": t, "html": html, "copied": !caret}))
 }
 
 /// HTML for what was just copied, when it is text (a selection, or the text on the copied shapes).
@@ -220,11 +221,11 @@ fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let t = copy_inner(s, p)?;
     if caret {
         // Nothing is selected, so there is nothing to cut; `delete` would remove the next character.
-        return Ok(json!({"text": t, "html": ""}));
+        return Ok(json!({"text": t, "html": "", "copied": false}));
     }
     let html = copied_html(s);
     delete(s, p)?;
-    Ok(json!({"text": t, "html": html}))
+    Ok(json!({"text": t, "html": html, "copied": true}))
 }
 
 /// Give pasted shapes fresh ids (groups included) and return the old-to-new map. Connector ends
@@ -322,9 +323,14 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
+    let has_native = str_param(p, "clipboard")
+        .filter(|data| data.len() <= crate::clipboard::MAX_BYTES * 4 / 3 + 4)
+        .and_then(super::base64_decode)
+        .is_some_and(|bytes| s.clipboard.adopt_system_bytes(&bytes));
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
-    if let Some(t) = str_param(p, "text")
+    if !has_native
+        && let Some(t) = str_param(p, "text")
         && t != s.clipboard.plain
     {
         if let Some(html) = str_param(p, "html")
@@ -355,7 +361,10 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                 let map = reid("edit.paste", doc, &mut sl.shapes)?;
                 remap_animations(&mut sl.animations, &map);
                 crate::media_refs::visit_mut::slide(&mut sl, &mut remap_media(&media));
-                if doc.layout(sl.layout).is_none() {
+                if clip.foreign {
+                    let (name, kind) = clip.slide_layouts.get(k).cloned().unwrap_or_default();
+                    sl.layout = super::reuse::matching_layout(doc, &name, kind);
+                } else if doc.layout(sl.layout).is_none() {
                     sl.layout = doc.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
                 }
                 new_ids.push(sl.id);
@@ -369,11 +378,23 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         });
     }
     if !clip.shapes.is_empty() {
-        s.clipboard.pastes += 1;
-        let off = s.prefs.duplicate_offset * s.clipboard.pastes as f64;
-        // Pasting on another slide keeps the position; on the same slide it offsets.
-        let same_slide = s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()));
-        let off = if same_slide { off } else { 0.0 };
+        // Pasting on another slide keeps the position; on the same slide it offsets. Shapes from
+        // another window have no source slide here: the first paste keeps the position, and
+        // later ones offset while they land on the slide the last one did.
+        let off = if clip.foreign {
+            let here = pasting_on(s);
+            if here.is_none() || clip.pasted_on != here {
+                s.clipboard.pastes = 0;
+            }
+            let off = s.prefs.duplicate_offset * s.clipboard.pastes as f64;
+            s.clipboard.pastes += 1;
+            s.clipboard.pasted_on = here;
+            off
+        } else {
+            s.clipboard.pastes += 1;
+            let same_slide = s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()));
+            if same_slide { s.prefs.duplicate_offset * s.clipboard.pastes as f64 } else { 0.0 }
+        };
         return s.edit(|doc, sel| {
             let media = bring_media("edit.paste", doc, &clip.media)?;
             let mut shapes = clip.shapes.clone();
@@ -426,6 +447,12 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// The shape tree and slide a paste lands on, as `Clipboard::pasted_on` records it.
+fn pasting_on(s: &Session) -> Option<(crate::Target, deckcraft_model::SlideId)> {
+    let st = s.doc().ok()?;
+    st.doc.slides.get(st.selection.slide).map(|sl| (st.selection.target, sl.id))
+}
+
 fn paste_external_body(s: &mut Session, body: &TextBody) -> Result<Value> {
     if s.doc()?.selection.text.is_some() {
         return super::text::paste_body(s, body);
@@ -475,9 +502,10 @@ fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
                 bake_theme(&mut s.clipboard.placeholders, theme);
             }
             let r = paste(s, &json!({}));
-            let pastes = s.clipboard.pastes;
+            let (pastes, pasted_on) = (s.clipboard.pastes, s.clipboard.pasted_on);
             s.clipboard = saved;
             s.clipboard.pastes = pastes;
+            s.clipboard.pasted_on = pasted_on;
             r
         }
         "picture" => paste_picture(s),
@@ -567,7 +595,9 @@ fn paste_picture(s: &mut Session) -> Result<Value> {
     let img = deckcraft_render::render_shape(&doc, &slide, gid, SCALE).ok_or_else(|| bad("edit.pasteSpecial", "the shapes could not be drawn"))?;
     // render_shape draws the bounds plus an 8 pt margin (room for shadows and outlines).
     let (w, h) = (img.width as f64 / SCALE, img.height as f64 / SCALE);
-    let same_slide = clip.shapes.iter().any(|c| st.shape(c.id).is_some());
+    // As with a paste: foreign shapes count as on this slide once pasted here last.
+    let same_slide =
+        if clip.foreign { clip.pasted_on.is_some() && clip.pasted_on == pasting_on(s) } else { clip.shapes.iter().any(|c| st.shape(c.id).is_some()) };
     let off = if same_slide { s.prefs.duplicate_offset } else { 0.0 };
     let png = img.to_png();
     s.execute("insert.picture", &json!({"data": base64_encode(&png), "name": "Picture.png", "rect": [b.x0 - 8.0 + off, b.y0 - 8.0 + off, w, h]}))

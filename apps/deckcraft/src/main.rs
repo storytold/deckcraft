@@ -138,6 +138,10 @@ fn services(native_wayland: bool) -> Services {
         clipboard_image: pasteboard.then(|| Box::new(pasteboard::image_png) as Box<dyn FnMut() -> Option<Vec<u8>>>),
         clipboard_html: pasteboard.then(|| Box::new(pasteboard::html) as Box<dyn FnMut() -> Option<String>>),
         clipboard_set_html: pasteboard.then(|| Box::new(pasteboard::set_html) as Box<dyn FnMut(&str, &str) -> bool>),
+        #[cfg(target_os = "windows")]
+        clipboard_native: Some(Box::new(pasteboard::native)),
+        #[cfg(target_os = "windows")]
+        clipboard_set_native: Some(Box::new(pasteboard::set_native)),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()

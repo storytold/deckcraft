@@ -54,10 +54,8 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (O, true, false, false) => "app.openDialog",
-        (V, true, false, true) if app.session.active().is_some() => {
-            app.dialog = Some(crate::dialogs::Dialog::new("pasteSpecial"));
-            return true;
-        }
+        // Through the command, so a copy from another window offers its shapes in the dialog.
+        (V, true, false, true) if app.session.active().is_some() => "app.pasteSpecial",
         (P, true, true, false) => "app.palette",
         (Comma, true, false, false) => "app.preferences",
         (Equals | Plus, true, false, false) => "view.zoomIn",
