@@ -120,13 +120,13 @@ pub fn tool_definitions() -> Vec<Value> {
                 json!({
                     "path": string("Output path"),
                     "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
-                    "slide": int("Slide index for images"),
+                    "slide": int("0-based slide index for images (the editor shows index + 1)"),
                     "all": boolean("All slides (images)"),
                     "scale": num("Pixels per point for images (default 2)"),
                     "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
                     "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
                     "dpi": num("PDF: raster resolution of slide artwork, 36-600 (default 200)"),
-                    "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF and GIF: slide indices to export, in order (default all)"},
+                    "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF and GIF: 0-based slide indices to export, in order (default all)"},
                     "includeHidden": boolean("PDF and GIF: include hidden slides (default false)"),
                     "textLayer": boolean("PDF: invisible text layer for search, select and copy (default true)"),
                     "frame": boolean("PDF notes/handouts: thin frame around each slide (default true)"),
@@ -149,7 +149,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "inspect_document",
             "Inspect presentation",
-            "Slides (index, id, title, layout, shape count, transition, animations, notes), sections, theme, layouts, media and the selection.",
+            "Slides (index, 0-based; number, as the editor shows it; id, title, layout, shape count, transition, animations, notes), sections, theme, layouts, media and the selection.",
             obj(json!({}), &[]),
             true,
         ),
@@ -157,7 +157,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "inspect_slide",
             "Inspect slide",
             "One slide's shapes with ids, kinds, boxes [x,y,w,h], placeholder types, text, fills, tables, charts; plus background, transition, animations, notes.",
-            obj(json!({"index": int("Slide index (default: current)")}), &[]),
+            obj(json!({"index": int("0-based slide index (default: current; the editor shows index + 1)")}), &[]),
             true,
         ),
         tool(
@@ -165,7 +165,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "Render slide",
             "Render a slide to a PNG image and return it, to check your work visually.",
             obj(
-                json!({"slide": int("Slide index (default: current)"), "scale": num("Pixels per point (default 1 = 960×540 for 16:9)"), "edit": boolean("Show placeholder prompts like the editor")}),
+                json!({"slide": int("0-based slide index (default: current; the editor shows index + 1)"), "scale": num("Pixels per point (default 1 = 960×540 for 16:9)"), "edit": boolean("Show placeholder prompts like the editor")}),
                 &[],
             ),
             true,
@@ -181,7 +181,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "go_to_slide",
             "Go to slide",
             "Make a slide current (shape commands act on the current slide).",
-            obj(json!({"index": int("Slide index")}), &["index"]),
+            obj(json!({"index": int("0-based slide index (the editor shows index + 1)")}), &["index"]),
             false,
         ),
         tool(

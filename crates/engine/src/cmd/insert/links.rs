@@ -1,6 +1,6 @@
 use super::{
     Geom, Result, SchemeSlot, Session, Shape, ShapeStyle, Value, add_shape, bad, bool_or, bool_param, default_rect, edit_shapes, json, rect_param,
-    str_param, usize_param,
+    str_param,
 };
 
 pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
@@ -8,8 +8,9 @@ pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
     // `display`: what a caret with nothing to link inserts, the address or the slide's title.
     let (action, display) = if let Some(u) = str_param(p, "url") {
         (Action::Url { url: u.to_string() }, u.strip_prefix("mailto:").unwrap_or(u).to_string())
-    } else if let Some(i) = usize_param(p, "slide") {
-        let slide = s.doc()?.doc.slides.get(i).ok_or_else(|| bad("insert.hyperlink", "no such slide"))?;
+    } else if let Some(i) = crate::cmd::opt_usize_param(p, "slide", "insert.hyperlink")? {
+        let slides = &s.doc()?.doc.slides;
+        let slide = slides.get(i).ok_or_else(|| crate::cmd::no_slide("insert.hyperlink", i, slides.len()))?;
         let title = slide.title();
         (Action::Slide { slide: slide.id }, if title.is_empty() { format!("Slide {}", i + 1) } else { title })
     } else {
@@ -63,8 +64,9 @@ pub(super) fn shape_action(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "program" => Some(Action::Program { path: need("path")? }),
         "slide" => {
-            let i = usize_param(p, "slide").ok_or_else(|| bad(CMD, "missing `slide`"))?;
-            let slide = s.doc()?.doc.slides.get(i).ok_or_else(|| bad(CMD, "no such slide"))?;
+            let i = crate::cmd::opt_usize_param(p, "slide", CMD)?.ok_or_else(|| bad(CMD, "missing `slide`"))?;
+            let slides = &s.doc()?.doc.slides;
+            let slide = slides.get(i).ok_or_else(|| crate::cmd::no_slide(CMD, i, slides.len()))?;
             Some(Action::Slide { slide: slide.id })
         }
         a => return Err(bad(CMD, format!("unknown action `{a}`"))),

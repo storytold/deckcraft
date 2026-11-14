@@ -146,6 +146,7 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
     }
     let index = h.index;
     let name = h.name.to_string();
+    let sections = app.session.active().map(|st| st.doc.sections.len()).unwrap_or(0);
     resp.context_menu(|ui| {
         if ui.button("Rename Section…").clicked() {
             let mut d = crate::dialogs::Dialog::new("renameSection");
@@ -171,7 +172,7 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
             let _ = app.run("section.move", json!({"index": index, "to": index.saturating_sub(1)}));
             ui.close();
         }
-        if ui.button("Move Section Down").clicked() {
+        if ui.add_enabled(index + 1 < sections, egui::Button::new("Move Section Down")).clicked() {
             let _ = app.run("section.move", json!({"index": index, "to": index + 1}));
             ui.close();
         }

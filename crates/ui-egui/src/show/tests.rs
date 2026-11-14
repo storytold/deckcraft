@@ -1369,3 +1369,12 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
 }
+
+/// `show.start {from}` past the end names the valid range, as every slide command does.
+#[test]
+fn show_from_past_the_end_names_the_range() {
+    let app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    let e = app.show_from(&json!({"from": 5})).unwrap_err();
+    assert!(e.contains("no slide at index 5; indices run 0 through 0"), "{e}");
+    assert_eq!(app.show_from(&json!({"from": 0})), Ok(Some(0)));
+}

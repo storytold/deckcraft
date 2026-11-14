@@ -22,7 +22,7 @@ impl SlideApp {
         };
         let count = self.session.active().map_or(0, |d| d.doc.slides.len());
         if from >= count {
-            return Err(format!("no slide {from}"));
+            return Err(deckcraft_engine::cmd::no_slide_message(from, count));
         }
         Ok(Some(from))
     }
