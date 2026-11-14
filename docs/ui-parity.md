@@ -30,7 +30,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 | Contextual tabs: Shape Format, Picture Format, Table Design, Table Layout, Chart Design, Chart Format, Video/Audio Format and Playback | yes | most; checklist P0 row partial | Chart Format, media tabs thinner |
 | File tab (Backstage): Home, New, Open, Info, Save, Save As, Print, Share, Export, Close, Account, Options | yes | yes (#76), see [File tab](#file-tab-backstage); no Share (cloud) | Video/GIF/CD exports, templates beyond the built-in themes |
 | Start screen: new, themes, templates, recent, open | yes, the same page as File › Home | yes: File › Home with Home, New, Open, About and Options (#76) | |
-| Status bar: slide counter, language, notes, comments, views, zoom slider | yes | yes | |
+| Status bar: slide counter, language, notes, comments, views, zoom slider | yes | yes; in the Slide Sorter the zoom controls (and View ▸ Zoom) size the thumbnails and leave the editing zoom alone (#1753) | |
 | Command search (Tell Me) | yes | command palette | |
 | Light / dark appearance | follows the system | light or dark; doesn't follow the system (#41) | 1–2 h |
 | One window per presentation, New Window, Arrange All | yes | New Window opens one more window on the same presentation (its own slide, live with edits); tabs stay in the first window; no Arrange All | Arrange All |
