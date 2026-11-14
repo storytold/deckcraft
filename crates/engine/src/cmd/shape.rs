@@ -282,7 +282,7 @@ fn requested_fill(s: &mut Session, p: &Value) -> Result<Option<Option<Fill>>> {
         let (name, bytes) = super::insert::media_bytes(&with_param(p, "data", p.get("picture").cloned().unwrap_or_default()), "shape.fill")?;
         let ct = super::insert::content_type(&name, &bytes);
         let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("shape.fill", NO_ID_SPACE)))?;
-        return Ok(Some(Some(Fill::Picture(PictureFill { media, ..Default::default() }))));
+        return Ok(Some(Some(Fill::Picture(PictureFill { media, svg: (ct == "image/svg+xml").then_some(media), ..Default::default() }))));
     }
     Ok(None)
 }

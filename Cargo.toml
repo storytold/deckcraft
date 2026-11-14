@@ -48,6 +48,7 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
+resvg = { version = "0.47", default-features = false, features = ["text"] }
 # craft-media, craft-audio and craft-video share types and stay on one rev.
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false }
 craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
