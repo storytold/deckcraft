@@ -49,10 +49,13 @@ pub(crate) fn page_flick(wheel: egui::Vec2) -> Option<bool> {
 ///
 /// High-resolution and free-spin wheels send fractions of a line (0.125 per event on Windows), so
 /// the delta is accumulated in `carry` and each whole line is one slide; a change of direction
-/// drops what was left over. Returns the target, `None` when no wheel event was read.
-pub(super) fn wheel_slide_target(events: &[egui::Event], current: usize, slides: usize, carry: &mut f32) -> Option<usize> {
+/// drops what was left over. Returns the target and the whole lines completed this frame
+/// (positive turns forward to the next slide), `None` when no wheel event was read. A partial
+/// line still returns `Some` with zero steps so the trackpad path stays suppressed for the frame.
+pub(crate) fn wheel_slide_target(events: &[egui::Event], current: usize, slides: usize, carry: &mut f32) -> Option<(usize, i32)> {
     let last = slides.checked_sub(1)?;
     let mut target = current.min(last);
+    let mut net = 0_i32;
     let mut handled = false;
     for event in events {
         if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
@@ -72,14 +75,20 @@ pub(super) fn wheel_slide_target(events: &[egui::Event], current: usize, slides:
             let whole = (carry.abs() + 1e-4).floor();
             *carry -= whole.copysign(*carry);
             let steps = whole.min(slides as f32) as usize;
-            target = if delta.y < 0.0 { target.saturating_add(steps).min(last) } else { target.saturating_sub(steps) };
+            if delta.y < 0.0 {
+                target = target.saturating_add(steps).min(last);
+                net += steps as i32;
+            } else {
+                target = target.saturating_sub(steps);
+                net -= steps as i32;
+            }
             handled = true;
         }
     }
-    handled.then_some(target)
+    handled.then_some((target, net))
 }
 
-pub(super) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
+pub(crate) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
     events.iter().fold(egui::Vec2::ZERO, |sum, event| match event {
         egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, modifiers, .. } if !modifiers.ctrl && !modifiers.command => sum + *delta,
         _ => sum,

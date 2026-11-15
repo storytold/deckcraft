@@ -312,22 +312,48 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     {
         show.wheel_zoom(srect, p, lines);
     }
-    // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
-    if !show.pen
-        && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
-        && now - show.last_swipe > 0.35
-    {
-        show.last_swipe = now;
-        if next {
-            if show.ended {
+    // A discrete mouse-wheel notch turns one slide per line at once, without the trackpad's
+    // gesture cooldown. Point-based trackpad swipes keep their own cooldown below.
+    if !show.pen {
+        let len = doc.slides.len();
+        let current = show.state.slide;
+        let wheel = ctx.input(|i| crate::canvas::wheel_slide_target(&i.events, current, len, &mut show.wheel_carry));
+        // On the end screen a whole-line notch keeps the old semantics: forward exits the
+        // show, back resumes the last slide. A partial line does nothing either way.
+        let wheel_handled = match wheel {
+            Some((_, net)) if show.ended && net > 0 => {
                 out.keep = false;
-            } else {
-                out.actions.push(show.state.next(doc));
+                true
             }
-        } else {
-            show.ended = false;
-            out.actions.push(show.state.prev(doc));
+            Some((_, net)) if show.ended && net < 0 => {
+                show.ended = false;
+                out.actions.push(show.state.prev(doc));
+                true
+            }
+            Some((target, _)) if !show.ended && target != show.state.slide => {
+                out.actions.push(show.state.goto(doc, target));
+                true
+            }
+            // A partial line (or a target clamped to the current slide): no page turn, and
+            // the trackpad path stays suppressed for the frame.
+            Some(_) => true,
+            None => false,
+        };
+        if !wheel_handled
+            && let Some(next) = crate::canvas::page_flick(ctx.input(|i| crate::canvas::trackpad_scroll(&i.events)))
+            && now - show.last_swipe > 0.35
+        {
+            show.last_swipe = now;
+            if next {
+                if show.ended {
+                    out.keep = false;
+                } else {
+                    out.actions.push(show.state.next(doc));
+                }
+            } else {
+                show.ended = false;
+                out.actions.push(show.state.prev(doc));
+            }
         }
     }
 }
