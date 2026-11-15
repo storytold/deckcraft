@@ -233,6 +233,7 @@ struct ParaEnv<'a> {
     first_x: f64,
     rest_x: f64,
     tabs: &'a [Tab],
+    hang: Option<f64>,
 }
 
 impl ParaEnv<'_> {
@@ -312,6 +313,10 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     let first_x = first_line_start(p.bullet.is_some(), margin, indent, bullet_w);
     let rest_x = margin;
     let tabs = tabs_of(props);
+    // A hanging first line (marL > 0, indent < 0) treats the indent position (marL) as an
+    // implicit tab stop for its first tab; later lines already start there, so the stop
+    // only ever applies ahead of the first line's start.
+    let hang = (margin - first_x > 0.5 && margin.is_finite()).then_some(margin);
     let first_w = (g.col_w - first_x - mr).max(1.0);
     let rest_w = (g.col_w - rest_x - mr).max(1.0);
     let raw = break_lines(
@@ -324,13 +329,14 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
             default_tab: props.default_tab.unwrap_or(72.0),
             x0_first: first_x,
             x0_rest: rest_x,
+            hang,
         },
     );
     // The first paragraph's space before counts only when the body says so.
     let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, p.lead_size) };
     flow.y += before.max(0.0) + flow.prev_after;
     let first_line_idx = flow.lines.len();
-    let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs };
+    let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs, hang };
     for (li, rl) in raw.iter().enumerate() {
         let is_last = li + 1 == raw.len();
         let placed = place_line(&env, pi, rl, li, is_last, flow);
@@ -388,7 +394,7 @@ fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64) -> (Vec<f6
         let a = if shy_end && k + 1 == n {
             p.faces.get(c.face).zip(p.styles.get(c.style)).map(|(f, st)| measure_str(f, st.size, "-").0).unwrap_or(0.0)
         } else if c.ch == '\t' {
-            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k))
+            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), env.hang)
         } else {
             c.adv
         };
