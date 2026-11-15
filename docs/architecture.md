@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-15 · **Change:** trivial (the Library's shared crates, craft-library and craft-library-egui, come from craft-libs; previous: trivial, the same crates staged here for craft-libs; previous: trivial, containers and the Opus decoder come from craft-libs; previous: minor, native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-15 · **Change:** trivial (the Library's shared crates, craft-library and craft-library-egui, come from craft-libs; previous: trivial, containers and the Opus decoder come from craft-libs; previous: minor, native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -82,8 +82,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-15 | trivial | `craft-library` and `craft-library-egui` moved to craft-libs; DeckCraft pins them |
-| 2026-11-15 | trivial | `craft-library` and `craft-library-egui`: the Library the Craft apps share (#958), staged here for craft-libs |
+| 2026-11-15 | trivial | `craft-library` and `craft-library-egui` from craft-libs: the Library the Craft apps share (#958) |
 | 2026-11-12 | trivial | The `metafile` crate is gone: `render` reads EMF/WMF with craft-metafile from craft-libs |
 | 2026-11-12 | trivial | The `bitstream`, `h264`, `hevc`, `vp9` and `av1` crates are gone: `media` decodes video with craft-video from craft-libs |
 | 2026-11-11 | trivial | The `opus`, `ogg`, `isobmff` and `matroska` crates are gone: `media` uses craft-audio and craft-media from craft-libs |

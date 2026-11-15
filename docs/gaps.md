@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-15 · **Change:** trivial (Library: the shared crates come from craft-libs; previous: trivial, Library: named elements, shared crates and CLI folders done; other tabs, other apps and craft-libs move open; previous: trivial, Library pane, first step of #958: Slides tab done, other tabs and shared use listed as open; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-15 · **Change:** trivial (Library pane, first step of #958: Slides tab, named elements, CLI/MCP folders and shared crates in craft-libs done; other tabs, #909 and other apps' adoption listed as open; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -380,8 +380,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-15 | trivial | Library: named elements, the shared crates and CLI/MCP folders landed; other tabs, WordCraft/GridCraft adoption and the craft-libs move remain |
-| 2026-11-15 | trivial | Library pane (#958) added with its Slides tab; the other tabs, #909 and shared use are listed as open |
+| 2026-11-15 | trivial | Library pane (#958) added with its Slides tab, named elements, CLI/MCP folders and shared crates in craft-libs; the other tabs, #909 and WordCraft/GridCraft adoption are listed as open |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
