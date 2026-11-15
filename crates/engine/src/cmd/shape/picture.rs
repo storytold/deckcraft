@@ -51,9 +51,9 @@ pub(super) fn picture_reset(s: &mut Session, p: &Value) -> Result<Value> {
                 fill.media = a.original;
                 fill.svg = a.svg;
             }
+            sh.effects = None;
+            sh.line = None;
         }
-        sh.effects = None;
-        sh.line = None;
         Ok(())
     })
 }

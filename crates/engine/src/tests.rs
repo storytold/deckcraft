@@ -7169,6 +7169,32 @@ fn picture_reset_keeps_the_frame_shape() {
     assert!(doc.contains("frame shape"), "{doc}");
 }
 
+#[test]
+fn picture_reset_preserves_non_picture_styling_in_mixed_selection() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let png = image::RgbaImage::from_pixel(2, 2, image::Rgba([200, 30, 30, 255]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgba8(png).write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+    let picture = s.execute("insert.picture", &json!({"name": "original.png", "data": cmd::base64_encode(&bytes)})).unwrap()["id"].as_u64().unwrap();
+    let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("shape.line", &json!({"ids": [picture, rect], "width": 3, "color": "accent2", "dash": "dash"})).unwrap();
+    s.execute("shape.effects", &json!({"ids": [picture, rect], "shadow": "outer", "softEdges": 4})).unwrap();
+    let before = s.doc().unwrap().shape(ShapeId(rect as u32)).unwrap().clone();
+    assert!(before.line.is_some());
+    assert!(before.effects.is_some());
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selected_shapes().len(), 2);
+    s.execute("picture.reset", &json!({})).unwrap();
+    let doc = s.doc().unwrap();
+    let after = doc.shape(ShapeId(rect as u32)).unwrap();
+    assert_eq!(after.line, before.line);
+    assert_eq!(after.effects, before.effects);
+    let picture = doc.shape(ShapeId(picture as u32)).unwrap();
+    assert!(picture.line.is_none());
+    assert!(picture.effects.is_none());
+}
+
 /// HH12: exporting the same slide twice to one PNG path after an edit overwrites the file with
 /// the new picture (not a bug: the second file differs).
 #[test]
