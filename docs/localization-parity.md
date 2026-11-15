@@ -1,7 +1,6 @@
 # Localization parity with PowerPoint
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (ribbon menus and pane choices go through the catalogs, #2112; previous: minor, labels built from a number or a name and dialog choice lists go through the catalogs, #2014; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
 are looked up in the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs when the
@@ -12,7 +11,8 @@ system language (#15), or Preferences › Interface language and `app.language` 
 English. Labels built from a number or a name (`Slide {n} of {total}`, `{n} Columns`) are looked up
 with their placeholders before the value goes in, and counts take the language's plural form.
 Still English: slide placeholder prompts (drawn by the renderer), status messages from the engine,
-the native macOS menu bar and the File tab's Print page. Other requests: #30 and PR #34
+the native macOS menu bar, and three areas other open PRs translate: the File tab's Print page
+(#1530), the Background pane (#1571) and the Animation Pane's start and effect lists (#1530). Other requests: #30 and PR #34
 (Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as
 catalog-only PRs there. Dimension score: **~15% ready** (estimated: English complete, German
 mostly, slide-text script
@@ -44,7 +44,7 @@ support partly there), **45–80 h** to parity plus native-speaker review.
 | Portuguese | pt | 0 (0%) | no | full (Latin) | no | none | yes (pt-BR, pt-PT) | 3–5 |
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
-| German | de | ~840 rows (654 DeckCraft, 185 shared): ribbon, menus, palette, status bar, File tab, dialogs, panes | partly / yes / no help | full (Latin) | no | **partial** | yes | 1–3 |
+| German | de | at the pinned craft-i18n commit: 664 DeckCraft rows plus the shared `common.tsv` (1,214 rows): ribbon, menus, palette, status bar, File tab, dialogs, panes | partly / yes / no help | full (Latin) | no | **partial** | yes | 1–3 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
 

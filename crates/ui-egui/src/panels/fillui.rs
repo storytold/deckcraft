@@ -499,7 +499,7 @@ pub fn pattern_editor(ui: &mut Ui, pt: &PatternFill, sc: &ColorScheme) -> Option
     });
     for (label, foreground) in [("Foreground", true), ("Background", false)] {
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(80.0, 20.0), egui::Label::new(label));
+            ui.add_sized(vec2(80.0, 20.0), egui::Label::new(tl!(label)));
             let cur = if foreground { &pt.fg } else { &pt.bg };
             let (sw, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
             ui.painter().rect(sw, CornerRadius::same(3), c32(cur, sc), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);

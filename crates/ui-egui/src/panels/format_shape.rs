@@ -178,7 +178,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     let mut fields = |ui: &mut Ui, label: &str, id: &str, v: f64, key: &str, cmd: &str, angle: bool| {
         let (unit, suffix) = if angle { (1.0, "°") } else { (len.points_per_unit(), len.suffix()) };
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+            ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
             if let Some(nv) = widgets::spinner(ui, id, label, v / unit, 0.1, suffix, 70.0) {
                 let mut p = json!({key: nv * unit});
                 if cmd == "shape.resize" && locked {
@@ -195,7 +195,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     for (label, id, cur, base, key) in [("Scale Height", "fsh", x.h, base_h, "h"), ("Scale Width", "fsw", x.w, base_w, "w")] {
         ui.add_enabled_ui(single, |ui| {
             ui.horizontal(|ui| {
-                ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+                ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
                 let pct = if base > 0.0 { cur / base * 100.0 } else { 100.0 };
                 if let Some(nv) = widgets::spinner(ui, id, label, pct, 1.0, "%", 70.0)
                     && nv > 0.0
@@ -234,7 +234,7 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     let (px, py) = (x.x + dx, x.y + dy);
     let mut pos = |ui: &mut Ui, label: &str, id: &str, v: f64, off: f64, key: &str| {
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+            ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
             if let Some(nv) = widgets::spinner(ui, id, label, v / len.points_per_unit(), 0.1, len.suffix(), 70.0) {
                 run(app, "shape.move", json!({key: nv * len.points_per_unit() - off}));
             }
@@ -283,7 +283,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.label(tl!("Vertical alignment"));
                 for (l, a) in [("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")] {
-                    if ui.small_button(l).clicked() {
+                    if ui.small_button(tl!(l)).clicked() {
                         run(app, "format.anchor", json!({"anchor": a}));
                     }
                 }
@@ -309,7 +309,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 ("Bottom", "bottom", b.inset_b.unwrap_or(3.6)),
             ] {
                 ui.horizontal(|ui| {
-                    ui.add_sized(vec2(60.0, 20.0), egui::Label::new(l));
+                    ui.add_sized(vec2(60.0, 20.0), egui::Label::new(tl!(l)));
                     if let Some(nv) = widgets::spinner(ui, &format!("m{k}"), l, v, 1.0, " pt", 60.0) {
                         run(app, "format.margins", json!({k: nv.max(0.0)}));
                     }
@@ -330,20 +330,20 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         "picture" => {
             let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
             let mut b = adj.brightness as f32;
-            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text(tl!("Brightness"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"brightness": b}));
             }
             let mut c = adj.contrast as f32;
-            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text(tl!("Contrast"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"contrast": c}));
             }
             let mut s = adj.saturation.unwrap_or(1.0) as f32;
-            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text(tl!("Saturation"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"saturation": s}));
             }
             let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
             let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text(tl!("Transparency"))).drag_stopped() {
                 run(app, "picture.adjust", json!({"transparency": tr}));
             }
             if ui.button(tl!("Reset Picture")).clicked() {
@@ -378,7 +378,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 if k == "background" && !background_ok {
                     continue;
                 }
-                if ui.radio(kind == k, l).clicked() {
+                if ui.radio(kind == k, tl!(l)).clicked() {
                     match k {
                         "none" => run(app, "shape.fill", json!({"none": true})),
                         "solid" => run(app, "shape.fill", json!({"color": "accent1"})),
@@ -564,7 +564,7 @@ fn fx_slider(
     scale: f64,
 ) {
     ui.horizontal(|ui| {
-        let label = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+        let label = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
         // Hold the value while dragging; otherwise follow the shape.
         let sid = ui.scope_id().with(id);
         let mut v: f64 = ui.data_mut(|d| d.get_temp(sid)).unwrap_or(value);
@@ -719,7 +719,7 @@ fn three_d_combo(app: &mut SlideApp, ui: &mut Ui, id: u32, label: &str, key: &st
 /// A number field running `shape.effects` with `{threeD: {key: value}}` when it changes.
 fn three_d_drag(app: &mut SlideApp, ui: &mut Ui, label: &str, value: f64, suffix: &str, key: &str) {
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!(label)));
         let mut v = value;
         let r = ui.add(egui::DragValue::new(&mut v).suffix(suffix).max_decimals(1)).labelled_by(field.id);
         if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
