@@ -149,9 +149,7 @@ pub fn format_bytes(b: u64) -> String {
 pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();
-    if bs.save_as_filename.is_empty() {
-        bs.save_as_filename = title.clone();
-    }
+    let file_name = bs.save_as_filename.get_or_insert_with(|| title.clone());
     ui.label(RichText::new(&title).font(theme::font(15.0)).color(t.text));
     dim(ui, path.as_deref().unwrap_or("Not saved yet"));
     ui.add_space(10.0);
@@ -159,7 +157,7 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     // so a new name can be typed before the system dialog opens.
     ui.horizontal(|ui| {
         let l = ui.label("File name:");
-        ui.add(egui::TextEdit::singleline(&mut bs.save_as_filename).desired_width(340.0)).labelled_by(l.id);
+        ui.add(egui::TextEdit::singleline(file_name).desired_width(340.0)).labelled_by(l.id);
     });
     ui.add_space(14.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
@@ -196,10 +194,10 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
                 // and the dirty flag as they were; a cancelled dialog or a failed save doesn't.
                 let snapshot = |app: &SlideApp| app.session.active().map(|d| (d.path.clone(), d.is_dirty(), d.revision));
                 let before = snapshot(app);
-                app.save_as_dialog(fmt, Some(&bs.save_as_filename));
+                app.save_as_dialog(fmt, bs.save_as_filename.as_deref());
                 web || snapshot(app) != before
             } else {
-                app.export_as(fmt, json!({}))
+                app.export_named(fmt, json!({}), bs.save_as_filename.as_deref())
             };
             if done {
                 out.close = true;

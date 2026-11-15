@@ -176,10 +176,14 @@ impl SlideApp {
         }
     }
 
-    /// The file name a save or export suggests: the presentation's title with `ext`.
-    fn suggested_name(&self, ext: &str) -> String {
-        let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        format!("{name}.{ext}")
+    /// The file name a save or export suggests: `name` (Save As › File name, #1826), trimmed, or
+    /// else the presentation's title, with `.ext` unless the typed name already ends with it.
+    fn suggested_name(&self, name: Option<&str>, ext: &str) -> String {
+        let name = name
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map_or_else(|| self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into()), str::to_string);
+        if name.to_ascii_lowercase().ends_with(&format!(".{ext}")) { name } else { format!("{name}.{ext}") }
     }
 
     /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `pptx`,
@@ -187,6 +191,11 @@ impl SlideApp {
     /// on the web. `extra` adds `file.export` params (the PDF's layout, slides…). The
     /// presentation keeps its own file. Returns whether a file was written or handed over.
     pub fn export_as(&mut self, fmt: &str, extra: Value) -> bool {
+        self.export_named(fmt, extra, None)
+    }
+
+    /// [`Self::export_as`], suggesting `name` (Save As › File name, #1826) instead of the title.
+    pub fn export_named(&mut self, fmt: &str, extra: Value, name: Option<&str>) -> bool {
         let Some(slide) = self.session.active().map(|d| d.selection.slide) else { return false };
         let (ext, format, all) = match fmt {
             "pdf" => ("pdf", "pdf", false),
@@ -203,7 +212,7 @@ impl SlideApp {
                 return false;
             }
         };
-        let suggested = self.suggested_name(ext);
+        let suggested = self.suggested_name(name, ext);
         if let Some(pick) = self.services.pick_save.as_mut() {
             let Some(path) = pick(&suggested) else { return false };
             let mut params = json!({"path": path, "format": format, "all": all});
@@ -222,7 +231,7 @@ impl SlideApp {
         let bytes = match format {
             "png" | "jpeg" => {
                 // Every slide for "all slides", one download each, named like the desktop export (#64).
-                let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
+                let name = suggested.get(..suggested.len().saturating_sub(ext.len() + 1)).unwrap_or(&suggested).to_string();
                 let mut any = false;
                 let transparent = extra.get("transparentBackground").and_then(Value::as_bool).unwrap_or(false);
                 for (file, bytes) in web_image_files(&doc, slide, all, &name, ext, transparent) {
@@ -450,13 +459,8 @@ impl SlideApp {
     /// Save As: the Save dialog (desktop), the host (embedded web) or a download (web), suggesting
     /// `name` (Save As › File name, #1826) or else the presentation's title, with `format`'s extension.
     pub fn save_as_dialog(&mut self, format: &str, name: Option<&str>) {
-        let name = name
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-            .map_or_else(|| self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into()), str::to_string);
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
-        // A typed name may already carry the extension.
-        let suggested = if name.to_ascii_lowercase().ends_with(&format!(".{ext}")) { name } else { format!("{name}.{ext}") };
+        let suggested = self.suggested_name(name, ext);
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
@@ -469,7 +473,7 @@ impl SlideApp {
                 }
             }
         } else if self.services.host_save.is_some() {
-            let _ = self.save_to_host(Some(ext));
+            let _ = self.save_to_host(Some(&suggested));
         } else if let Some(dl) = self.services.download.as_mut()
             && let Some(d) = self.session.active()
         {
@@ -510,19 +514,20 @@ impl SlideApp {
     }
 
     /// Saves to the page that keeps the files ([`Services::host_save`](crate::Services::host_save)).
-    /// Save (`ext` `None`) writes the presentation's own file (the one the page sent, or the
+    /// Save (`save_as` `None`) writes the presentation's own file (the one the page sent, or the
     /// last one saved there) in that file's format, as the desktop app does; a presentation with
     /// no file of its own is a new `.deckcraft` file, the name Save suggests on the desktop. Save
-    /// As (`pptx`, `deckcraft`) is a new file named after the presentation. Once the page has the
-    /// bytes, the presentation is saved and that name is its file. Returns the name, or why it
-    /// wasn't saved (also shown in the status bar).
-    pub(super) fn save_to_host(&mut self, ext: Option<&str>) -> Result<String, String> {
+    /// As (`save_as` the file name Save As suggests, #1826) is a new file with that name. Once the
+    /// page has the bytes, the presentation is saved and that name is its file. Returns the name,
+    /// or why it wasn't saved (also shown in the status bar).
+    pub(super) fn save_to_host(&mut self, save_as: Option<&str>) -> Result<String, String> {
         use deckcraft_engine::cmd::file::{format_for_path, mark_saved, save_bytes};
         let Some(d) = self.session.active() else { return Err("no presentation is open".into()) };
         let own = d.path.as_deref().and_then(|p| std::path::Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string());
-        let (name, save_as) = match (ext, own) {
+        let (name, save_as) = match (save_as, own) {
+            (Some(name), _) => (name.to_string(), true),
             (None, Some(own)) => (own, false),
-            (ext, _) => (format!("{}.{}", d.title(), ext.unwrap_or("deckcraft")), true),
+            (None, None) => (format!("{}.deckcraft", d.title()), true),
         };
         let saved = save_bytes(&d.doc, format_for_path(&name)).map_err(|e| e.to_string()).and_then(|bytes| {
             let host = self.services.host_save.as_mut().ok_or("no page to save to")?;

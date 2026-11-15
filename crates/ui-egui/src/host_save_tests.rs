@@ -95,6 +95,20 @@ fn host_save_of_an_untitled_presentation_is_save_as() {
     assert_eq!(calls(&got), [(name.clone(), true), (name, false)]);
 }
 
+/// #1826: Save As › File name reaches the page too: the new file has the typed name (with the
+/// type's extension), and the next Save goes back to it.
+#[test]
+fn host_save_as_uses_the_typed_file_name() {
+    let (mut app, got) = host_app(false);
+    app.open_from_host(Some("deck.pptx"), &pptx(1));
+    edit(&mut app);
+    app.save_as_dialog("pptx", Some(" Quarterly review "));
+    edit(&mut app);
+    app.save();
+    assert_eq!(calls(&got), [("Quarterly review.pptx".to_string(), true), ("Quarterly review.pptx".to_string(), false)]);
+    assert_eq!(path(&app).as_deref(), Some("Quarterly review.pptx"));
+}
+
 /// A presentation the user dropped (or picked with File › Open) didn't come from the page, so
 /// its name isn't one the page holds: Save makes a new file.
 #[test]

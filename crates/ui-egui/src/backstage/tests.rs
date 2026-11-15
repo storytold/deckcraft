@@ -355,6 +355,52 @@ fn save_as_opens_the_dialog_with_the_typed_file_name() {
     assert_eq!(asked.borrow()[1..], ["Deck.PPTX".to_string(), "Deck.deckcraft".to_string()]);
 }
 
+/// #1826: clearing the File name field leaves it empty, so a new name can be typed from scratch;
+/// the title is only the field's starting value, not put back on the next frame.
+#[test]
+fn save_as_file_name_can_be_cleared() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::TextInput, "File name:").click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.key_press(Key::Backspace);
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().unwrap().save_as_filename.as_deref(), Some(""));
+    assert_eq!(h.get_by_role_and_label(Role::TextInput, "File name:").value().as_deref(), Some(""), "cleared stays cleared");
+}
+
+/// #1826: the File name is used by every Save As type, not only .pptx/.deckcraft: a PDF copy
+/// opens the Save dialog with the typed name, and the web's image download is named after it.
+#[test]
+fn save_as_copies_use_the_typed_file_name() {
+    let dir = temp_dir("saveas-copy-name");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    {
+        let bs = h.state_mut().backstage.as_mut().unwrap();
+        bs.file_type = "pdf";
+        bs.save_as_filename = Some("Quarterly review".into());
+    }
+    h.run_steps(2);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*asked.borrow(), vec!["Quarterly review.pdf".to_string()]);
+    assert!(dir.join("Quarterly review.pdf").is_file());
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let got: Rc<RefCell<Vec<String>>> = Rc::default();
+    let log = got.clone();
+    let services = Services { download: Some(Box::new(move |name: &str, _: &[u8]| log.borrow_mut().push(name.to_string()))), ..Default::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    assert!(app.export_named("png", json!({}), Some("Q1 cover")));
+    assert!(app.export_named("outline", json!({}), Some("Q1 notes.TXT")));
+    assert_eq!(*got.borrow(), ["Q1 cover.png".to_string(), "Q1 notes.TXT".to_string()]);
+}
+
 /// Export › Change File Type › PNG offers "Transparent background" (#784): the PNG it saves
 /// leaves the slide background out. Other types don't show the option.
 #[test]
