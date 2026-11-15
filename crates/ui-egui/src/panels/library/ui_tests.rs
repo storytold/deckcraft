@@ -130,7 +130,7 @@ fn search_shows_only_the_slides_that_match() {
     assert!(h.query_by_label("Slide 1: Pricing").is_some() && h.query_by_label("Slide 1: Agenda").is_some());
     h.state_mut().library.query = "THANK".into();
     h.run_steps(30);
-    assert_eq!(h.state().library.hits().map(<[_]>::len), Some(1));
+    assert_eq!(h.state().library.hits(), Some(1));
     assert!(h.query_by_label("Slide 2: Thanks").is_some());
     assert!(h.query_by_label("Slide 1: Pricing").is_none() && h.query_by_label("Slide 1: Agenda").is_none());
     h.state_mut().library.query = "nothing like it".into();
@@ -149,5 +149,31 @@ fn a_damaged_file_shows_its_error_and_the_others_still_show() {
     assert_eq!(files.len(), 2);
     assert!(files.iter().any(|f| f.error.is_some()));
     assert!(h.query_by_label("Slide 1: Fine").is_some());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_very_large_library_shows_its_first_300_files_and_says_so() {
+    let dir = folder("large");
+    let mut d = Session::with_new();
+    d.execute("slide.new", &json!({"layout": "titleOnly", "title": "Copy"})).unwrap();
+    let bytes = deckcraft_engine::cmd::file::save_bytes(&d.doc().unwrap().doc, "deckcraft").unwrap();
+    for i in 0..=super::MAX_SHOWN_FILES {
+        std::fs::write(dir.join(format!("deck{i:03}.deckcraft")), &bytes).unwrap();
+    }
+    let mut s = Session::with_new();
+    s.execute("library.addFolder", &json!({"path": dir.to_string_lossy()})).unwrap();
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("library".into());
+    let mut h = harness(app);
+    for _ in 0..400 {
+        if h.state().library.ready() {
+            break;
+        }
+        h.step();
+    }
+    assert!(h.state().library.ready());
+    h.run_steps(2);
+    assert!(h.query_by_label_contains("Showing the first 300 of 301 files").is_some());
     let _ = std::fs::remove_dir_all(dir);
 }

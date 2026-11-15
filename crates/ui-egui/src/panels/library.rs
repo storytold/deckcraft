@@ -11,6 +11,7 @@
 //! window, and only thumbnails in view are drawn.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use egui::{Color32, CornerRadius, Rect, RichText, Role, Sense, Stroke, StrokeKind, TextureOptions, Ui, WidgetInfo, vec2};
 use serde_json::{Value, json};
@@ -45,6 +46,8 @@ const THUMBS_PER_FRAME: usize = 2;
 const MAX_TEXTURES: usize = 256;
 /// Search runs this long after the last key, in seconds.
 const SEARCH_DELAY: f64 = 0.25;
+/// Files drawn at once; past this the pane asks to choose a folder or search.
+const MAX_SHOWN_FILES: usize = 300;
 /// What the pane says in the browser build.
 pub const NOT_IN_BROWSER: &str = "The Library shows the slides in folders of presentations on this computer, which the browser version can't read. Use the desktop app to browse a Library.";
 
@@ -61,8 +64,17 @@ pub struct SlideRow {
 pub struct FileRow {
     pub file: String,
     pub title: String,
-    pub slides: Option<Vec<SlideRow>>,
+    pub slides: Option<Arc<Vec<SlideRow>>>,
     pub error: Option<String>,
+}
+
+/// A group of slides under one file's heading.
+#[derive(Clone, Debug)]
+struct Group {
+    file: String,
+    title: String,
+    error: Option<String>,
+    slides: Arc<Vec<SlideRow>>,
 }
 
 enum Thumb {
@@ -88,8 +100,8 @@ pub struct State {
     pub files: Vec<FileRow>,
     /// How many of `files` have been read.
     read: usize,
-    /// What `library.search` found for `searched`: (file, slide, title).
-    hits: Option<Vec<(String, usize, String)>>,
+    /// What `library.search` found for `searched`, grouped by file.
+    hits: Option<Vec<Group>>,
     searched: String,
     typed_at: f64,
     thumbs: HashMap<ThumbKey, Thumb>,
@@ -111,9 +123,9 @@ impl State {
         self.listed_for.is_some() && self.read >= self.files.len()
     }
 
-    /// The slides a search found, when it has run.
-    pub fn hits(&self) -> Option<&[(String, usize, String)]> {
-        self.hits.as_deref()
+    /// How many slides the last search found, once it has run.
+    pub fn hits(&self) -> Option<usize> {
+        self.hits.as_ref().map(|g| g.iter().map(|g| g.slides.len()).sum())
     }
 }
 
@@ -215,13 +227,15 @@ fn rows(v: &Value) -> Vec<FileRow> {
                     file: f["file"].as_str().unwrap_or_default().to_string(),
                     title: f["title"].as_str().unwrap_or_default().to_string(),
                     slides: f["slides"].as_array().map(|s| {
-                        s.iter()
-                            .map(|x| SlideRow {
-                                index: x["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0),
-                                title: x["title"].as_str().unwrap_or_default().to_string(),
-                                hidden: x["hidden"].as_bool().unwrap_or(false),
-                            })
-                            .collect()
+                        Arc::new(
+                            s.iter()
+                                .map(|x| SlideRow {
+                                    index: x["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0),
+                                    title: x["title"].as_str().unwrap_or_default().to_string(),
+                                    hidden: x["hidden"].as_bool().unwrap_or(false),
+                                })
+                                .collect(),
+                        )
                     }),
                     error: f["error"].as_str().map(String::from),
                 })
@@ -246,7 +260,7 @@ fn list_files(app: &mut SlideApp, key: (Vec<String>, Option<String>)) {
     // A file listed with an error (too large) is not opened.
     for f in &mut files {
         if f.error.is_some() {
-            f.slides = Some(vec![]);
+            f.slides = Some(Arc::default());
         }
     }
     let lib = &mut app.library;
@@ -273,10 +287,10 @@ fn read_some(app: &mut SlideApp) {
                     row.slides = Some(r.slides.unwrap_or_default());
                     row.error = r.error;
                 }
-                None => row.slides = Some(vec![]),
+                None => row.slides = Some(Arc::default()),
             },
             Err(e) => {
-                row.slides = Some(vec![]);
+                row.slides = Some(Arc::default());
                 row.error = Some(e.to_string());
             }
         }
@@ -288,7 +302,7 @@ fn search(app: &mut SlideApp, query: &str) {
     if let Some(f) = &app.library.folder {
         p["folder"] = json!(f);
     }
-    let hits = match app.session.execute("library.search", &p) {
+    let hits: Vec<(String, usize, String)> = match app.session.execute("library.search", &p) {
         Ok(v) => v
             .as_array()
             .map(|a| {
@@ -305,36 +319,30 @@ fn search(app: &mut SlideApp, query: &str) {
             vec![]
         }
     };
-    app.library.hits = Some(hits);
+    let groups = hit_groups(&app.library.files, &hits);
+    app.library.hits = Some(groups);
     app.library.searched = query.to_string();
 }
 
-/// A group of slides under one file's heading.
-struct Group {
-    file: String,
-    title: String,
-    error: Option<String>,
-    slides: Vec<SlideRow>,
-}
-
 /// The search hits grouped by file, files in the order they were first found.
-fn hit_groups(app: &SlideApp, hits: &[(String, usize, String)]) -> Vec<Group> {
-    let mut groups: Vec<Group> = vec![];
+fn hit_groups(files: &[FileRow], hits: &[(String, usize, String)]) -> Vec<Group> {
+    let rows: HashMap<&str, &FileRow> = files.iter().map(|f| (f.file.as_str(), f)).collect();
+    let mut groups: Vec<(Group, Vec<SlideRow>)> = vec![];
+    let mut at: HashMap<&str, usize> = HashMap::new();
     for (file, slide, title) in hits {
-        let row = app.library.files.iter().find(|f| f.file == *file);
+        let row = rows.get(file.as_str()).copied();
         let hidden = row.and_then(|r| r.slides.as_ref()).and_then(|s| s.iter().find(|x| x.index == *slide)).is_some_and(|x| x.hidden);
         let entry = SlideRow { index: *slide, title: title.clone(), hidden };
-        match groups.iter_mut().find(|g| g.file == *file) {
-            Some(g) => g.slides.push(entry),
-            None => groups.push(Group {
-                file: file.clone(),
-                title: row.map(|r| r.title.clone()).unwrap_or_else(|| file.rsplit(['/', '\\']).next().unwrap_or(file).to_string()),
-                error: None,
-                slides: vec![entry],
-            }),
+        match at.get(file.as_str()).and_then(|i| groups.get_mut(*i)) {
+            Some((_, slides)) => slides.push(entry),
+            None => {
+                at.insert(file.as_str(), groups.len());
+                let title = row.map(|r| r.title.clone()).unwrap_or_else(|| file.rsplit(['/', '\\']).next().unwrap_or(file).to_string());
+                groups.push((Group { file: file.clone(), title, error: None, slides: Arc::default() }, vec![entry]));
+            }
         }
     }
-    groups
+    groups.into_iter().map(|(g, slides)| Group { slides: Arc::new(slides), ..g }).collect()
 }
 
 fn slides(app: &mut SlideApp, ui: &mut Ui) {
@@ -367,7 +375,7 @@ fn slides(app: &mut SlideApp, ui: &mut Ui) {
         ui.ctx().request_repaint();
     }
     let query = app.library.query.trim().to_string();
-    let groups = if query.is_empty() {
+    let groups: Vec<Group> = if query.is_empty() {
         app.library
             .files
             .iter()
@@ -375,6 +383,7 @@ fn slides(app: &mut SlideApp, ui: &mut Ui) {
                 let slides = f.slides.clone()?;
                 Some(Group { file: f.file.clone(), title: f.title.clone(), error: f.error.clone(), slides })
             })
+            .take(MAX_SHOWN_FILES)
             .collect()
     } else {
         if !reading && query != app.library.searched {
@@ -385,18 +394,22 @@ fn slides(app: &mut SlideApp, ui: &mut Ui) {
                 ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(SEARCH_DELAY - waited));
             }
         }
-        match app.library.hits.as_deref().filter(|_| app.library.searched == query) {
-            Some(hits) => {
-                if hits.is_empty() {
+        match app.library.hits.as_ref().filter(|_| app.library.searched == query) {
+            Some(groups) => {
+                if groups.is_empty() {
                     ui.label(dim(&t, format!("No slides match \"{query}\".")));
                 }
-                hit_groups(app, hits)
+                groups.clone()
             }
             None => vec![],
         }
     };
     if !reading && query.is_empty() && groups.is_empty() {
         ui.label(dim(&t, "No presentations in this folder."));
+    }
+    if query.is_empty() && app.library.files.len() > MAX_SHOWN_FILES {
+        let n = app.library.files.len();
+        ui.label(dim(&t, format!("Showing the first {MAX_SHOWN_FILES} of {n} files: choose a folder or search to see the others.")));
     }
     let mut budget = THUMBS_PER_FRAME;
     for g in &groups {
