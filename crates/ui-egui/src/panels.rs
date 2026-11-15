@@ -56,11 +56,12 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 ui.label(egui::RichText::new(title).font(theme::bold(16.0)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Close {title}")));
                     if resp.hovered() {
                         ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
                     }
                     icons::paint(ui.painter(), r.shrink(3.0), Icon::Close, t.text_dim, false);
-                    if resp.clicked() {
+                    if resp.on_hover_text("Close").clicked() {
                         app.ui.pane = None;
                     }
                 });
@@ -141,6 +142,14 @@ mod tests {
 
     use super::{fill_transparency_to_apply, solid_fill_transparency_percent};
     use crate::{Services, SlideApp};
+
+    #[test]
+    fn task_pane_close_is_named_and_works_through_accessibility() {
+        let mut h = fill_pane(None);
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Close Format Shape").click_accesskit();
+        h.run_steps(3);
+        assert!(h.state().ui.pane.is_none());
+    }
 
     #[test]
     fn solid_fill_transparency_reads_the_alpha_shape_fill_writes() {
