@@ -111,7 +111,7 @@ fn without(bytes: &[u8], drop: &str) -> Vec<u8> {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let f = z.by_index(i).unwrap();
-        if f.name() != drop {
+        if f.name().unwrap() != drop {
             out.raw_copy_file(f).unwrap();
         }
     }
@@ -141,6 +141,22 @@ fn missing_or_corrupt_media_is_reported() {
         m.link = Some("file:///movies/v.mp4".into());
     }
     assert!(load_checked(&save(&l).unwrap()).unwrap().1.is_empty());
+}
+
+#[test]
+fn archive_name_index_matches_zip_lookup_for_referenced_entries() {
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for name in ["presentation.json", "media/one", "chart-parts/2", "unused"] {
+        out.start_file(name, zip::write::SimpleFileOptions::default()).expect("start");
+        std::io::Write::write_all(&mut out, b"entry").expect("write");
+    }
+    let bytes = out.finish().expect("finish").into_inner();
+    let z = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).expect("zip");
+    let wanted = HashSet::from(["media/one".to_owned(), "chart-parts/2".to_owned(), "missing".to_owned()]);
+    let index = ArchiveIndex::build(&z, &wanted);
+    for name in ["media/one", "chart-parts/2", "missing"] {
+        assert_eq!(index.index_for_name(name), z.index_for_name(name), "{name}");
+    }
 }
 
 #[test]
@@ -217,7 +233,7 @@ fn repeated_media_ids_are_read_once() {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).unwrap();
-        if f.name() == "presentation.json" {
+        if f.name().unwrap() == "presentation.json" {
             let mut json = vec![];
             f.read_to_end(&mut json).unwrap();
             let mut v: serde_json::Value = serde_json::from_slice(&json).unwrap();

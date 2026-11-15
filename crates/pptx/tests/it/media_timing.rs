@@ -38,15 +38,16 @@ fn clips(nodes: impl Fn(u32, u32) -> String) -> Vec<MediaClip> {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
+        let name = f.name().expect("entry name").to_string();
         let mut d = vec![];
         f.read_to_end(&mut d).expect("read");
-        if f.name() == "ppt/slides/slide1.xml" {
+        if name == "ppt/slides/slide1.xml" {
             let s = String::from_utf8(d).expect("utf8");
             assert!(!s.contains("<p:timing"));
             let end = s.rfind("</p:sld>").expect("end");
             d = format!("{}{timing}{}", &s[..end], &s[end..]).into_bytes();
         }
-        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
+        out.start_file(name, zip::write::SimpleFileOptions::default()).expect("start");
         out.write_all(&d).expect("write");
     }
     let q = deckcraft_pptx::import(&out.finish().expect("finish").into_inner()).expect("import");
