@@ -40,7 +40,7 @@ perspective-correct subdivided meshes.
 | Effect Options per transition | yes | yes |
 | Duration, advance on click / after time, Apply To All | yes | yes |
 | Transition sounds | yes | yes: Transitions › Sound offers six built-in sounds (synthesised, no sound files shipped), Other Sound…, [Stop Previous Sound] and Loop Until Next Sound; they play in the show and round-trip |
-| Preview in the editor | yes | yes |
+| Preview in the editor | yes | yes; picking a transition in the gallery or an Effect Options entry plays it once (Preferences › Slide Show can turn this off, #1655) |
 | Going back in the show plays the left slide's transition in reverse | yes | yes (#1531); a jump (Go to Slide, links) plays the target slide's own transition |
 | Morph: objects move, resize, recolour; unmatched text boxes fade in place; a picture's crop morphs | yes | yes (#119, #118) |
 | Morph: Words and Characters | yes | yes (#5) |

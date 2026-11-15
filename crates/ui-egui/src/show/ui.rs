@@ -672,7 +672,9 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         let tex = frame_texture(show, f, &sl);
         prefetch_next(app, show, f, &sl);
         if !draw_transition(show, f, &sl, painter, &tex) {
-            show.trans = None;
+            if show.trans.take().is_some() {
+                ctx.request_repaint();
+            }
             let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
             draw_overlay(show, f, &sl, painter, &framed, full_screen);
             draw_media_controls(app, ui, show, f, &sl, painter);
