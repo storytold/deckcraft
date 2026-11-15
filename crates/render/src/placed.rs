@@ -65,17 +65,19 @@ pub fn place_slide_with(pres: &Presentation, index: usize, opts: &crate::RenderO
     let Some(slide) = pres.slides.get(index) else { return out };
     let Some(rctx) = Ctx::for_slide(pres, slide) else { return out };
     let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts, Some(slide.id));
+    // Master and layout links are never followed: their shape ids may clash with the slide's.
+    let back_fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts, None);
     let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
     if show_master {
         let mctx = Ctx::for_master(pres, rctx.master);
         for s in rctx.master.shapes.iter().filter(|s| s.ph.is_none()) {
-            place(&mut out, &mctx, &fields, s, Affine::IDENTITY, 0, None, false);
+            place(&mut out, &mctx, &back_fields, s, Affine::IDENTITY, 0, None, false);
         }
     }
     if show_layout && let Some(l) = rctx.layout {
         let lctx = Ctx::for_layout(pres, rctx.master, l);
         for s in l.shapes.iter().filter(|s| s.ph.is_none()) {
-            place(&mut out, &lctx, &fields, s, Affine::IDENTITY, 0, None, false);
+            place(&mut out, &lctx, &back_fields, s, Affine::IDENTITY, 0, None, false);
         }
     }
     for s in &slide.shapes {

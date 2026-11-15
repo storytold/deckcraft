@@ -143,7 +143,10 @@ impl Renderer {
     fn backdrop(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: &Slide, view: Affine) {
         // Backdrop graphics never take shape states: their ids may clash with the slide's shapes.
         let bopts = RenderOpts { state: None, date_text: f.opts.date_text.clone(), ..*f.opts };
-        let bf = Frame { pres: f.pres, opts: &bopts, fields: f.fields.clone() };
+        // Master and layout links are never followed: their shape ids may clash with the slide's.
+        let mut fields = f.fields.clone();
+        fields.followed.clear();
+        let bf = Frame { pres: f.pres, opts: &bopts, fields };
         let f = &bf;
         self.background(ctx, f, rctx, Some(slide), view);
         let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);

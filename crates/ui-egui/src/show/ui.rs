@@ -152,7 +152,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 let image = deckcraft_render::render_slide(
                     &doc,
                     n,
-                    &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
+                    &RenderOpts {
+                        scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+                        size: Some(size),
+                        followed: &show.followed,
+                        ..Default::default()
+                    },
                 );
                 show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
             }
