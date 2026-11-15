@@ -121,9 +121,18 @@ pub fn draw(g: &Generated, area: Xfrm) -> std::result::Result<Vec<Shape>, String
 /// borrowed; the caller writes it back to `next_id`.
 struct Ids(u32);
 
+/// The part a child plays, by its drawn name: a tick and a cross are both the checkbox's mark.
+fn role(name: &str) -> &str {
+    match name {
+        "Tick" | "Cross" => "Mark",
+        n => n,
+    }
+}
+
 /// Redraw group `sh` from `g`. Its child space is set to its box's size first, so the parts are
-/// drawn 1:1 and a stretched group draws a circle, not an ellipse. The old children's ids are
-/// reused in order (animations and selections keep pointing at a part); extra parts get new ids.
+/// drawn 1:1 and a stretched group draws a circle, not an ellipse. Each part keeps the id of the
+/// old part in the same [`role`], so animations and selections stay on it: the ring keeps its id
+/// when the wedge appears or goes. A part with no old counterpart gets a new id.
 fn rebuild(sh: &mut Shape, g: Generated, ids: &mut Ids) -> std::result::Result<(), String> {
     let frame = sh.xfrm;
     let ShapeKind::Group { children, child } = &mut sh.kind else { return Err("not a group".into()) };
@@ -134,10 +143,11 @@ fn rebuild(sh: &mut Shape, g: Generated, ids: &mut Ids) -> std::result::Result<(
     }
     // Drawn and numbered before anything changes, so a failure leaves the group as it was.
     let mut kids = draw(&g, space)?;
+    let mut old: Vec<(&str, ShapeId)> = children.iter().map(|c| (role(&c.name), c.id)).collect();
     let mut next = ids.0;
-    for (k, kid) in kids.iter_mut().enumerate() {
-        kid.id = match children.get(k) {
-            Some(old) => old.id,
+    for kid in kids.iter_mut() {
+        kid.id = match old.iter().position(|(r, _)| *r == role(&kid.name)) {
+            Some(i) => old.remove(i).1,
             None => {
                 next = next.max(1).checked_add(1).ok_or(NO_ID_SPACE)?;
                 ShapeId(next)
@@ -151,15 +161,26 @@ fn rebuild(sh: &mut Shape, g: Generated, ids: &mut Ids) -> std::result::Result<(
     Ok(())
 }
 
-/// Redraw each group in `plans` with its new description, in one edit.
-fn apply(doc: &mut Presentation, sel: &crate::Selection, cmd: &str, plans: Vec<(ShapeId, Generated)>) -> Result<()> {
+/// Redraw each group in `plans` with its new description, in one edit. A selected part the redraw
+/// removes (the tick when unchecked, the wedge at 0) leaves its element selected in its place, so
+/// the next Space or setter still finds it.
+fn apply(doc: &mut Presentation, sel: &mut crate::Selection, cmd: &str, plans: Vec<(ShapeId, Generated)>) -> Result<()> {
     let mut ids = Ids(doc.next_id);
     let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
+    let mut gone: HashMap<ShapeId, ShapeId> = HashMap::new();
     for (id, g) in plans {
         let sh = deckcraft_model::find_shape_mut(shapes, id).ok_or_else(|| bad(cmd, "no such shape"))?;
+        let before: Vec<ShapeId> = sh.children().iter().map(|c| c.id).collect();
         rebuild(sh, g, &mut ids).map_err(|e| bad(cmd, e))?;
+        let after: HashSet<ShapeId> = sh.children().iter().map(|c| c.id).collect();
+        gone.extend(before.into_iter().filter(|o| !after.contains(o)).map(|o| (o, id)));
     }
     doc.next_id = ids.0;
+    if sel.shapes.iter().any(|s| gone.contains_key(s)) {
+        let mut seen = HashSet::new();
+        let shapes = std::mem::take(&mut sel.shapes);
+        sel.shapes = shapes.into_iter().map(|s| gone.get(&s).copied().unwrap_or(s)).filter(|s| seen.insert(*s)).collect();
+    }
     Ok(())
 }
 

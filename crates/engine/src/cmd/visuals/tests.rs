@@ -587,3 +587,65 @@ fn elements_survive_a_native_save_and_stay_editable() {
     assert_eq!((ball(&s, b).value, ball(&s, b).of), (3, 3));
     assert_eq!(s.execute("checkbox.toggle", &json!({"id": c})).unwrap()["state"], "checked");
 }
+
+/// A redraw keeps each part's id with the part, not with its place in the group: the ring keeps
+/// its id when the wedge appears or goes, so a selection or animation on it stays on the ring.
+#[test]
+fn part_ids_follow_their_part_not_their_place() {
+    let mut s = deck();
+    let named = |s: &Session, g: u32| kids(s, g).into_iter().map(|k| (k.name, k.id)).collect::<Vec<_>>();
+    let id_of = |v: &[(String, ShapeId)], n: &str| v.iter().find(|(k, _)| k == n).map(|(_, id)| *id);
+    let b = id(&s.execute("insert.harveyBall", &json!({"value": 0})).unwrap());
+    let empty = named(&s, b);
+    assert_eq!(empty.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Background", "Outline"]);
+    s.execute("harveyBall.set", &json!({"id": b, "value": 1})).unwrap();
+    let quarter = named(&s, b);
+    assert_eq!(quarter.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Background", "Wedge", "Outline"]);
+    assert_eq!(id_of(&quarter, "Background"), id_of(&empty, "Background"));
+    assert_eq!(id_of(&quarter, "Outline"), id_of(&empty, "Outline"), "the ring keeps its id when the wedge appears");
+    let wedge = id_of(&quarter, "Wedge");
+    assert!(wedge.is_some() && !empty.iter().any(|(_, i)| Some(*i) == wedge), "the wedge is new: {quarter:?}");
+    s.execute("harveyBall.set", &json!({"id": b, "value": 0})).unwrap();
+    assert_eq!(named(&s, b), empty, "and when it goes");
+    // A checkbox's mark is one part, tick or cross.
+    let c = id(&s.execute("insert.checkbox", &json!({})).unwrap());
+    let ticked = named(&s, c);
+    s.execute("checkbox.set", &json!({"id": c, "state": "crossed"})).unwrap();
+    let crossed = named(&s, c);
+    assert_eq!(crossed.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Box", "Cross"]);
+    assert_eq!(crossed.iter().map(|(_, i)| *i).collect::<Vec<_>>(), ticked.iter().map(|(_, i)| *i).collect::<Vec<_>>());
+    s.execute("checkbox.set", &json!({"id": c, "state": "unchecked"})).unwrap();
+    assert_eq!(id_of(&named(&s, c), "Box"), id_of(&ticked, "Box"));
+}
+
+/// A redraw that removes a selected part (the tick when unchecked, the wedge at 0) leaves its
+/// element selected, so a second Space toggles it back.
+#[test]
+fn a_part_a_redraw_removes_leaves_its_element_selected() {
+    let mut s = deck();
+    let c = id(&s.execute("insert.checkbox", &json!({})).unwrap());
+    let tick = kids(&s, c)[1].id;
+    s.execute("edit.select", &json!({"ids": [tick.0]})).unwrap();
+    let state = |s: &Session| match shape(s, c).generated {
+        Some(Generated::Checkbox(x)) => x.state,
+        _ => panic!(),
+    };
+    assert_eq!(s.key("Space", crate::Mods::default()).unwrap()["command"], "checkbox.toggle");
+    assert_eq!(state(&s), CheckState::Unchecked);
+    assert_eq!(s.doc().unwrap().selection.shapes, [ShapeId(c)], "the checkbox stays selected");
+    assert_eq!(s.key("Space", crate::Mods::default()).unwrap()["command"], "checkbox.toggle");
+    assert_eq!(state(&s), CheckState::Checked, "a second Space toggles it back");
+    // A selected part that is still drawn stays selected as it was.
+    let bx = kids(&s, c)[0].id;
+    s.execute("edit.select", &json!({"ids": [bx.0]})).unwrap();
+    s.execute("checkbox.toggle", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.shapes, [bx]);
+    // The wedge of a ball set to 0, beside another shape that stays selected.
+    let b = id(&s.execute("insert.harveyBall", &json!({"value": 2})).unwrap());
+    let wedge = kids(&s, b)[1].id;
+    let other = id(&s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap());
+    s.execute("edit.select", &json!({"ids": [wedge.0, other]})).unwrap();
+    s.execute("harveyBall.set", &json!({"value": 0})).unwrap();
+    assert_eq!(ball(&s, b).value, 0);
+    assert_eq!(s.doc().unwrap().selection.shapes, [ShapeId(b), ShapeId(other)]);
+}
