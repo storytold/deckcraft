@@ -1483,6 +1483,8 @@ fn selecting_transition_does_not_auto_preview_when_disabled() {
     assert_eq!(doc.transition.as_ref().unwrap().kind, "push");
 }
 
+/// #1655: a transition preview ends when the transition does, even if the slide has an animation
+/// waiting for a click or still playing; a normal show keeps the slide's click sequence.
 #[test]
 fn transition_preview_closes_with_pending_or_playing_animation_steps() {
     for start in ["onClick", "withPrevious"] {

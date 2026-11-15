@@ -56,6 +56,8 @@ fn options_cancel_undoes_the_changes() {
     assert!(h.state().dialog.is_none(), "and the dialog closes");
 }
 
+/// #1655: Options › "Automatically preview transitions when selecting them" goes back to what it
+/// was when the dialog is cancelled, like the other Options settings.
 #[test]
 fn options_cancel_undoes_auto_preview_transitions() {
     let mut h = harness();

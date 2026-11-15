@@ -248,6 +248,9 @@ pub(super) fn transition_effect_rows(kind: &str, current: Option<&str>) -> Vec<(
     marked_options(opts, current)
 }
 
+/// Plays the selected slide's transition (Preview, or picking a transition or an effect option
+/// with automatic preview on, #1655): a Reading View show at that slide that only runs the
+/// transition and then closes.
 fn play_preview(app: &mut SlideApp, ui: &Ui) {
     let to = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
     app.start_show(to, true);
