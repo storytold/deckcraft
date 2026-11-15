@@ -300,6 +300,9 @@ pub struct SlideApp {
     updates_rt: updates_ui::Runtime,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
+    /// A Paste or Paste and Match Formatting asked of the system clipboard ([`Services::request_paste`])
+    /// and when: the next `Paste` event it brings is pasted with that command.
+    paste_request: Option<(&'static str, f64)>,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
     capture: capture::Capture,
     styled: bool,

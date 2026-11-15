@@ -96,7 +96,9 @@ fn run(app: &mut SlideApp, q: &QatItem) {
         "review.spelling" => app.dialog = Some(crate::dialogs::Dialog::new("spelling")),
         id => {
             let p = if q.params.is_null() { json!({}) } else { q.params.clone() };
-            let _ = app.run(id, p);
+            if !app.request_system_paste(id, &p) {
+                let _ = app.run(id, p);
+            }
         }
     }
 }

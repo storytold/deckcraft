@@ -296,6 +296,10 @@ fn main() -> eframe::Result {
             if let Some(window) = cc.winit_window().cloned() {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
+            // Paste on the ribbon and in the menus reads the system clipboard, as Ctrl+V does:
+            // egui-winit answers with the same `Paste` event (#2128).
+            let ctx = cc.egui_ctx.clone();
+            app.services.request_paste = Some(Box::new(move || ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste)));
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.

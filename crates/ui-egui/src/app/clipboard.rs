@@ -1,4 +1,8 @@
-use super::{SlideApp, Value, json};
+use super::{SlideApp, Value, json, monotonic_secs};
+
+/// How long a requested paste waits for the window's `Paste` event before a later one is an
+/// ordinary Ctrl+V again.
+const PASTE_REQUEST_SECS: f64 = 5.0;
 
 /// Text put on the system clipboard when the copied objects (a rectangle, a picture, slides…)
 /// carry no text. egui-winit drops Ctrl+V when the system clipboard is empty, so without it the
@@ -74,5 +78,35 @@ impl SlideApp {
             return;
         }
         ctx.copy_text(system_clipboard_text(&text));
+    }
+
+    /// Paste from a button or menu (the ribbon, Edit › Paste, the slide's context menu, the Quick
+    /// Access Toolbar) as Ctrl+V pastes: from the system clipboard. They used to run `edit.paste`
+    /// with no text, which pastes the session's own clipboard, so text copied in another app
+    /// replaced the selected text with nothing (#2128). When the host can read the clipboard
+    /// ([`Services::request_paste`](crate::Services::request_paste)) the paste is requested and
+    /// `true` returned; the window's `Paste` event then pastes it. A paste that brings its own
+    /// text or pastes slides runs as a command.
+    pub(crate) fn request_system_paste(&mut self, id: &str, params: &Value) -> bool {
+        let id = match id {
+            "edit.paste" => "edit.paste",
+            "edit.pasteText" => "edit.pasteText",
+            _ => return false,
+        };
+        if params.get("text").is_some() || params.get("scope").is_some() {
+            return false;
+        }
+        let Some(request) = self.services.request_paste.as_mut() else { return false };
+        request();
+        self.paste_request = Some((id, monotonic_secs()));
+        true
+    }
+
+    /// The command for a `Paste` event: Paste and Match Formatting when the menu asked for it.
+    pub(super) fn requested_paste_command(&mut self) -> &'static str {
+        match self.paste_request.take() {
+            Some((id, at)) if monotonic_secs() - at < PASTE_REQUEST_SECS => id,
+            _ => "edit.paste",
+        }
     }
 }

@@ -78,7 +78,10 @@ pub fn enabled(app: &SlideApp, id: &str) -> bool {
 }
 
 fn run(app: &mut SlideApp, id: &str, p: Value) {
-    let _ = app.run(id, p);
+    // Paste and Paste and Match Formatting take the system clipboard, as Ctrl+V does (#2128).
+    if !app.request_system_paste(id, &p) {
+        let _ = app.run(id, p);
+    }
 }
 
 /// Which contextual tabs apply to the selection.

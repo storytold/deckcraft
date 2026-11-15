@@ -166,7 +166,9 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
             });
         });
     if let Some(id) = run {
-        let _ = app.run(&id, json!({}));
+        if !app.request_system_paste(&id, &json!({})) {
+            let _ = app.run(&id, json!({}));
+        }
         close = true;
     }
     if !close {

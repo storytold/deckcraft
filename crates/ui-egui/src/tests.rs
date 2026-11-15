@@ -1248,6 +1248,51 @@ fn paste_reaches_the_focused_notes_field() {
     assert_eq!(h.state().session.active().unwrap().doc.slides[0].notes_text(), "abPASTEDTWO");
 }
 
+/// #2128: Paste on the ribbon pastes what Ctrl+V would, the system clipboard. It used to run
+/// `edit.paste` with no text, which pasted the session's own (empty) clipboard and only deleted
+/// the selected text. Paste and Match Formatting from the menu drops the clipboard's HTML.
+#[test]
+fn ribbon_paste_pastes_the_system_clipboard_over_the_selection() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let requests = Rc::new(Cell::new(0));
+    let count = requests.clone();
+    let services = Services {
+        request_paste: Some(Box::new(move || count.set(count.get() + 1))),
+        clipboard_html: Some(Box::new(|| Some("<p><b>Plain words</b></p>".into()))),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id;
+    let text = |h: &egui_kittest::Harness<'static, SlideApp>| {
+        h.state().session.active().unwrap().doc.slides[0].shape(title).and_then(|s| s.text.as_ref()).map(|t| t.text()).unwrap_or_default()
+    };
+    h.state_mut().session.execute("text.edit", &json!({"id": title.0})).unwrap();
+    h.event(egui::Event::Text("Hello".into()));
+    h.run_steps(1);
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    h.run_steps(1);
+
+    h.get_by_label("Paste").click();
+    h.run_steps(2);
+    assert_eq!(requests.get(), 1, "the window is asked for the clipboard");
+    assert_eq!(text(&h), "Hello", "nothing is replaced before the clipboard arrives");
+    h.event(egui::Event::Paste("From WhatsApp".into()));
+    h.run_steps(2);
+    assert_eq!(text(&h), "From WhatsApp");
+
+    // Paste and Match Formatting: the same text, without the HTML's bold.
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::Paste("Plain words".into()));
+    h.run_steps(2);
+    assert_eq!(text(&h), "Plain words");
+    let st = h.state().session.active().unwrap();
+    let body = st.doc.slides[0].shape(title).and_then(|s| s.text.clone()).unwrap();
+    assert!(body.paragraphs[0].runs.iter().all(|r| r.props.bold != Some(true)), "{body:?}");
+    assert_eq!(requests.get(), 2);
+}
+
 /// #1956: the ribbon's drop-downs are announced by their purpose, not by their value or an
 /// internal key. Animations › Start with a shape that has no animation was "astart"; Home's Font
 /// and Font size boxes were "font" and "size" while nothing told them a font or size.
