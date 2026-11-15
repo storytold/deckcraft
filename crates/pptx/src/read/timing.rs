@@ -205,6 +205,14 @@ fn behaviour_auto_reverses(c: &El) -> bool {
     !behaviours.is_empty() && behaviours.iter().all(|b| b.child("cTn").and_then(|t| t.bool("autoRev")).unwrap_or(false))
 }
 
+/// First finite `attr` on a behaviour's own `p:cTn` (`p:cBhvr/p:cTn`, document order, bounded).
+/// PowerPoint writes easing (`accel`/`decel`/`bounceEnd`) there instead of on the effect node.
+fn behaviour_f64(c: &El, attr: &str) -> Option<f64> {
+    let mut behaviours = vec![];
+    c.find_all("cBhvr", &mut behaviours);
+    behaviours.iter().take(1024).filter_map(|b| b.child("cTn")?.f64(attr)).next()
+}
+
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
@@ -292,9 +300,9 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             auto_reverse: c.bool("autoRev").unwrap_or(false) || (effect != "colorPulse" && behaviour_auto_reverses(c)),
             // PowerPoint's "Rewind when done playing" is `fill="remove"` on the effect node.
             rewind: c.attr("fill") == Some("remove"),
-            smooth_start: c.f64("accel").map(|v| v / 100_000.0).unwrap_or(0.0),
-            smooth_end: c.f64("decel").map(|v| v / 100_000.0).unwrap_or(0.0),
-            bounce_end: c.f64("bounceEnd").map(|v| (v / 100_000.0).clamp(0.0, 1.0)).unwrap_or(0.0),
+            smooth_start: c.f64("accel").or_else(|| behaviour_f64(c, "accel")).map(|v| v / 100_000.0).unwrap_or(0.0),
+            smooth_end: c.f64("decel").or_else(|| behaviour_f64(c, "decel")).map(|v| v / 100_000.0).unwrap_or(0.0),
+            bounce_end: c.f64("bounceEnd").or_else(|| behaviour_f64(c, "bounceEnd")).map(|v| (v / 100_000.0).clamp(0.0, 1.0)).unwrap_or(0.0),
             ..Default::default()
         };
         a.repeat = match c.attr("repeatCount") {
