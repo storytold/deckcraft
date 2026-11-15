@@ -55,6 +55,8 @@ impl SlideApp {
         // field has focus, so that a V typed there is not taken for one.
         let mut image_paste = false;
         let mut pasted_image_event = false;
+        // A text `Paste` in this batch: a requested paste is consumed by it, not by a `PasteImage`.
+        let events_have_text = events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
         for e in &events {
             match e {
                 egui::Event::PasteImage(_) => {
@@ -122,15 +124,7 @@ impl SlideApp {
             self.note_settled_composition(ctx);
             match e {
                 egui::Event::ImeResetCompleted { request_id } => self.ime_reset_completed(request_id, ctx),
-                egui::Event::PasteImage(image) => match color_image_png(&image) {
-                    Ok(png) => {
-                        let params = json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
-                        if let Err(e) = self.session.execute("insert.picture", &params) {
-                            self.set_status(e.to_string());
-                        }
-                    }
-                    Err(e) => self.set_status(e),
-                },
+                egui::Event::PasteImage(image) => self.paste_image(&image, events_have_text),
                 egui::Event::Text(t) => {
                     let revision = self.session.active().map(|d| d.revision);
                     if self.session.active().is_some_and(|d| d.selection.text.is_some() || d.selection.shapes.len() == 1)
@@ -165,7 +159,9 @@ impl SlideApp {
                             .session
                             .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
                         None => {
-                            let mut params = json!({"text": text});
+                            // Paste and Match Formatting of copied objects (the marker): the text
+                            // DeckCraft copied, not an empty string that would only delete the selection.
+                            let mut params = if text.is_empty() && !rich { json!({}) } else { json!({"text": text}) };
                             if let Some(h) = html {
                                 params["html"] = Value::String(h);
                             }
@@ -208,6 +204,28 @@ impl SlideApp {
             }
         }
         self.drain_requests();
+    }
+
+    /// A picture from the system clipboard. Paste and Match Formatting takes text only: a
+    /// picture-only clipboard ends its request here, so a later Ctrl+V isn't taken for it; with
+    /// text in the same batch (`events_have_text`), the `Paste` that follows consumes it.
+    fn paste_image(&mut self, image: &egui::ColorImage, events_have_text: bool) {
+        let text_only = self.paste_request.is_some_and(|(id, _)| id == "edit.pasteText");
+        if !events_have_text {
+            self.requested_paste_command();
+        }
+        if text_only {
+            return;
+        }
+        match color_image_png(image) {
+            Ok(png) => {
+                let params = json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
+                if let Err(e) = self.session.execute("insert.picture", &params) {
+                    self.set_status(e.to_string());
+                }
+            }
+            Err(e) => self.set_status(e),
+        }
     }
 }
 

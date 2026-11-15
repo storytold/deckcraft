@@ -1293,6 +1293,46 @@ fn ribbon_paste_pastes_the_system_clipboard_over_the_selection() {
     assert_eq!(requests.get(), 2);
 }
 
+/// #2139 review: Paste and Match Formatting is text only. A picture-only clipboard inserts no
+/// picture and ends the request, so the next Ctrl+V is an ordinary paste again; objects copied
+/// here (the marker) paste their copied text instead of deleting the selection.
+#[test]
+fn requested_paste_and_match_formatting_takes_no_picture_and_keeps_copied_text() {
+    let services =
+        Services { request_paste: Some(Box::new(|| {})), clipboard_html: Some(Box::new(|| Some("<p><b>Bold</b></p>".into()))), ..Default::default() };
+    let mut h = step_app(services);
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id;
+    let shapes = |h: &egui_kittest::Harness<'static, SlideApp>| h.state().session.active().unwrap().doc.slides[0].shapes.len();
+    let body = |h: &egui_kittest::Harness<'static, SlideApp>| {
+        h.state().session.active().unwrap().doc.slides[0].shape(title).and_then(|s| s.text.clone()).unwrap_or_default()
+    };
+    h.state_mut().session.execute("text.edit", &json!({"id": title.0})).unwrap();
+    h.event(egui::Event::Text("Copied".into()));
+    h.run_steps(1);
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+
+    let before = shapes(&h);
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::RED))));
+    h.run_steps(2);
+    assert_eq!(shapes(&h), before, "no picture for Paste and Match Formatting");
+    assert_eq!(body(&h).text(), "Copied");
+
+    // The request is over: this Paste keeps its HTML formatting, as Ctrl+V does.
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    h.event(egui::Event::Paste("Bold".into()));
+    h.run_steps(2);
+    assert_eq!(body(&h).paragraphs[0].runs[0].props.bold, Some(true), "{:?}", body(&h));
+
+    // Copied objects leave the marker on the system clipboard: the copied text is pasted.
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::Paste(crate::OBJECTS_MARKER.to_string()));
+    h.run_steps(2);
+    assert_eq!(body(&h).text(), "Copied", "the selection is not just deleted");
+}
+
 /// #1956: the ribbon's drop-downs are announced by their purpose, not by their value or an
 /// internal key. Animations › Start with a shape that has no animation was "astart"; Home's Font
 /// and Font size boxes were "font" and "size" while nothing told them a font or size.
