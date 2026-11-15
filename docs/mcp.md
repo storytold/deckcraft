@@ -45,6 +45,10 @@ folders:
   `file.open`, and `insert_picture`, `insert.picture`, `picture.change`, `insert.audio` and
   `insert.video` with a `path`. Pictures, audio and video are copied into the deck when they are
   inserted, so playing them later reads nothing from disk.
+- The Library's folders and files are read inside the read root too: `library.addFolder` refuses a
+  folder outside it, `library.folders` reports such a folder with its `error`, `library.list` and
+  `library.search` skip its files, and `library.list`, `library.thumbnail` and `library.insert`
+  refuse a file outside it.
 - Every file a command writes must lie inside the **write root**: `save_presentation`, `export`
   (every format, and every slide of an image export), `file.save`, `file.saveAs`, `file.export`,
   and `render_slide` with a `path`, plus the `.saving` temporary file a save goes through.
@@ -72,7 +76,8 @@ choice and is opened before the roots apply.
 What the roots do not cover: commands that take no path still read and change the open deck, and
 `inspect_document` and `inspect_slide` return it. The system font scan and the app's own recovery
 folder are fixed paths, not agent input, and are not checked. Anything that reads or writes a path
-goes through one place in the engine (`io::read_file` and `io::write_file`); a test keeps the rest of the
+goes through one place in the engine (`io::read_file` and `io::write_file`, and for the Library
+`io::read_dir`, `io::stat`, `io::canonical` and `io::read_path`); a test keeps the rest of the
 engine from touching the file system on its own.
 
 The checks hold for every thread of the server process. A path is checked, then opened: another
