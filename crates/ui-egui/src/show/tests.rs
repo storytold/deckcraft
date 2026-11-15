@@ -129,10 +129,19 @@ fn a_clicked_text_link_is_followed_until_the_show_ends() {
     // The slide is 960 x 540 points on a 1000 x 700 screen: 1.04 pixels per point, centred.
     harness.hover_at(pos2(50.0, 110.0));
     harness.run_steps(2);
+    // Next-slide previews drawn before the click show the link unfollowed, so they must go.
+    let doc = harness.state().session.doc().expect("a document is open").doc.clone();
+    let tex = crate::textures::upload(&harness.ctx, "presenter-next", egui::ColorImage::filled([1, 1], Color32::RED));
+    let preview = crate::presenter::Preview::from_image(&egui::ColorImage::filled([1, 1], Color32::RED)).expect("a 1 x 1 preview");
+    if let Some(show) = harness.state_mut().show.as_mut() {
+        show.next_tex = Some((doc, 1, tex));
+        show.remote_next = Some((1, preview));
+    }
     click_at(&mut harness, pos2(50.0, 110.0));
     harness.run_steps(2);
     let show = harness.state().show.as_ref().expect("the show is running");
     assert_eq!(show.state.slide, 1, "the link was followed to the next slide");
+    assert!(show.next_tex.is_none() && show.next_job.is_none() && show.remote_next.is_none(), "next-slide previews are drawn again");
     let slide = harness.state().session.doc().expect("a document is open").doc.slides[0].id;
     assert_eq!(show.followed, vec![deckcraft_model::text::FollowedLink { slide, shape: id, cell: None, para: 0, run: 0 }]);
     // A new show starts with nothing followed.

@@ -262,6 +262,10 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             && !show.followed.contains(&id)
         {
             show.followed.push(id);
+            // The next-slide previews are cached by slide only: draw them again with this link followed.
+            show.next_tex = None;
+            show.next_job = None;
+            show.remote_next = None;
         }
         match jump {
             LinkJump::Show(a) => out.actions.push(a),
