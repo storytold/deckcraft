@@ -50,6 +50,41 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
+    group(ui, |ui| {
+        rows(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Monitor:");
+                let monitors = crate::monitors::detect_monitors();
+                let primary_name = monitors.iter().find(|m| m.primary).map(|m| m.name.clone()).unwrap_or_else(|| "Primary".into());
+                let extended_name = monitors.iter().find(|m| !m.primary && m.name != primary_name).map(|m| m.name.clone()).unwrap_or_else(|| "Second Display".into());
+
+                let cur = app.ui.presentation_monitor.clone();
+                let cur_label = match cur.as_str() {
+                    "primary" => format!("Primary ({primary_name})"),
+                    "extended" => format!("Extended ({extended_name})"),
+                    _ => format!("Automatic ({extended_name})"),
+                };
+                egui::ComboBox::from_id_salt("slide_show_monitor_select")
+                    .selected_text(cur_label)
+                    .width(180.0)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(cur == "auto", format!("Automatic ({extended_name})")).clicked() {
+                            app.ui.presentation_monitor = "auto".into();
+                        }
+                        if ui.selectable_label(cur == "extended", format!("Extended Display ({extended_name})")).clicked() {
+                            app.ui.presentation_monitor = "extended".into();
+                        }
+                        if ui.selectable_label(cur == "primary", format!("Primary Monitor ({primary_name})")).clicked() {
+                            app.ui.presentation_monitor = "primary".into();
+                        }
+                    });
+            });
+            let mut pv = app.ui.presenter_view;
+            if ui.checkbox(&mut pv, "Use Presenter View").changed() {
+                app.ui.presenter_view = pv;
+            }
+        });
+    });
 }
 
 pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {

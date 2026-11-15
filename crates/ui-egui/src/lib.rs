@@ -25,6 +25,7 @@ pub mod eyedropper;
 pub mod icons;
 pub mod media;
 pub mod menus;
+pub mod monitors;
 pub mod opening;
 pub mod presenter;
 pub mod ribbon;

@@ -152,6 +152,16 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         R if plain(m) => show.timer.reset(now),
         OpenBracket if plain(m) => show.nudge_notes(-NOTES_STEP),
         CloseBracket if plain(m) => show.nudge_notes(NOTES_STEP),
+        F6 | S if (k == F6 && plain(m)) || (m.alt && !m.command && !m.shift) => {
+            show.swapped = !show.swapped;
+            let choice = show.monitor_choice.as_deref().unwrap_or("auto");
+            let (aud_mon, pres_mon) = crate::monitors::get_active_routing(choice, show.swapped);
+            crate::monitors::route_presentation(choice, show.swapped);
+            show.hud_toast = Some((
+                format!("Slide Show ➔ {} | Presenter View ➔ {}", aud_mon.name, pres_mon.name),
+                now + 2.5,
+            ));
+        }
         Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
             if let Some(d) = k.name().chars().next() {
                 show.push_slide_number(d, now);
