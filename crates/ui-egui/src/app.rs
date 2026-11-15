@@ -72,6 +72,7 @@ impl SlideApp {
             synthetic_injected_time: None,
             ribbon_scroll: HashMap::new(),
             show_instance: 0,
+            #[cfg(not(target_arch = "wasm32"))]
             opening_generation: 0,
             canvas_rect: None,
             eyedropper: None,

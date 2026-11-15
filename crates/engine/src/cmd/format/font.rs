@@ -114,6 +114,7 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
             edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
                 if let ShapeKind::Chart(ch) = &mut sh.kind {
                     ch.text_color = Some(tc.clone());
+                    ch.legend_entries.iter_mut().for_each(|e| e.color = None);
                     ch.raw = None;
                 }
                 Ok(())

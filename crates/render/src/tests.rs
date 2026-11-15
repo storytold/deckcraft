@@ -1963,6 +1963,70 @@ fn mf_ink(img: &image::RgbaImage) -> Option<(u32, u32, u32, u32)> {
 }
 
 #[test]
+fn metafile_dashed_pen_leaves_gaps() {
+    // CREATEPENINDIRECT PS_DASH | PS_ENDCAP_FLAT, 40 units (4 px) wide, black, then a line across
+    // the picture at y = 72 px: 12 px dashes with 4 px gaps.
+    let mut pen = i16s(&[0x0201, 40, 0]);
+    pen.extend(0u32.to_le_bytes());
+    let recs = vec![(0x02FA, pen), (0x012D, i16s(&[0])), (0x0214, i16s(&[720, 100])), (0x0213, i16s(&[720, 2780]))];
+    let img = crate::metafile::rasterize(&wmf_with(2880, 1440, &recs), 288).expect("raster");
+    let ink: Vec<bool> = (20..260).map(|x| img.get_pixel(x, 72)[3] > 128).collect();
+    assert!(ink.iter().filter(|b| **b).count() > 120, "dashes are drawn");
+    assert!(ink.iter().filter(|b| !**b).count() > 30, "with gaps between them");
+}
+
+#[test]
+fn metafile_skewed_bitmap_is_drawn_with_its_transform() {
+    use craft_metafile::write::{Image as MetafileImage, Op, emf};
+    use kurbo::{Affine, Rect};
+
+    let image = std::sync::Arc::new(MetafileImage { width: 2, height: 2, rgba: [255, 0, 0, 255].repeat(4) });
+    let xf = Affine::translate((25.0, 25.0)) * Affine::new([1.0, 0.25, 0.2, 1.0, 0.0, 0.0]) * Affine::scale(24.0);
+    let bytes = emf(&[Op::Image { image, xf, opacity: 1.0 }], Rect::new(0.0, 0.0, 100.0, 100.0), "DeckCraft", "skewed bitmap").expect("EMF");
+    let img = crate::metafile::rasterize(&bytes, 160).expect("raster");
+    let red: Vec<_> = img.enumerate_pixels().filter(|(_, _, p)| p[0] > 180 && p[1] < 80 && p[3] > 128).collect();
+    assert!(red.len() > 100, "the transformed image is visible: {} red pixels", red.len());
+    let (min_x, max_x) = red.iter().fold((u32::MAX, 0), |(lo, hi), (x, _, _)| (lo.min(*x), hi.max(*x)));
+    let (min_y, max_y) = red.iter().fold((u32::MAX, 0), |(lo, hi), (_, y, _)| (lo.min(*y), hi.max(*y)));
+    assert!(max_x - min_x > 25 && max_y - min_y > 25, "the image keeps both transformed axes: x={min_x}..{max_x}, y={min_y}..{max_y}");
+}
+
+#[test]
+fn metafile_clip_path_and_nondefault_pen_geometry_are_applied() {
+    use craft_metafile::write::{Op, Pen, emf};
+    use craft_metafile::{Cap, Join};
+    use kurbo::{BezPath, Rect, Shape as _};
+
+    let mut triangle = BezPath::new();
+    triangle.move_to((10.0, 10.0));
+    triangle.line_to((90.0, 10.0));
+    triangle.line_to((50.0, 90.0));
+    triangle.close_path();
+
+    let mut bevel = BezPath::new();
+    bevel.move_to((15.0, 35.0));
+    bevel.line_to((50.0, 60.0));
+    bevel.line_to((85.0, 35.0));
+    let mut miter = BezPath::new();
+    miter.move_to((15.0, 45.0));
+    miter.line_to((50.0, 70.0));
+    miter.line_to((85.0, 45.0));
+    let pen = |join| Pen { rgb: [0, 0, 0], width: 5.0, cap: Cap::Square, join, miter: 4.0, dash: None };
+    let ops = [
+        Op::Clip { path: triangle, even_odd: false },
+        Op::Fill { path: Rect::new(0.0, 0.0, 100.0, 100.0).to_path(0.1), even_odd: false, rgb: [255, 0, 0] },
+        Op::Stroke { path: bevel, pen: pen(Join::Bevel) },
+        Op::Stroke { path: miter, pen: pen(Join::Miter) },
+        Op::Unclip,
+    ];
+    let bytes = emf(&ops, Rect::new(0.0, 0.0, 100.0, 100.0), "DeckCraft", "clipped strokes").expect("EMF");
+    let img = crate::metafile::rasterize(&bytes, 160).expect("raster");
+    assert!(img.get_pixel(80, 40)[0] > 180, "inside the clip path is filled");
+    assert_eq!(img.get_pixel(8, 80)[3], 0, "outside the clip path remains transparent");
+    assert!(img.pixels().any(|p| p[3] > 128 && p[0] < 80), "square capped bevel and miter strokes are rendered");
+}
+
+#[test]
 fn metafile_text_ink_lands_at_its_reference_point() {
     // 2 × 1 inch (144 × 72 pt) drawn 288 px wide: 2 px per point. A 36-point "HH", top-left
     // aligned at (72, 18) pt.
@@ -2125,6 +2189,43 @@ fn group_child_scale_does_not_scale_line_widths() {
         assert!(n.abs_diff(drawn) * 20 < drawn, "{name}: {n} inked pixels against {drawn}");
         assert!(d * 20 < drawn, "{name}: {d} differing values against {drawn} inked pixels");
     }
+}
+
+/// #2067: a legend entry with its own text colour, size and weight (`c:legendEntry/c:txPr`) draws
+/// its name so; the other entries keep the legend's.
+#[test]
+fn a_legend_entry_draws_its_own_text_colour_and_size() {
+    let draw = |entry: Option<deckcraft_model::chart::LegendEntry>| {
+        let mut c = Chart::sample(ChartType::Line);
+        c.title = None;
+        c.legend = Some("r".into());
+        c.text_size = Some(10.0);
+        c.text_color = Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(128, 128, 128)));
+        c.legend_entries = entry.into_iter().collect();
+        let sh = Shape { id: ShapeId(634), xfrm: Some(Xfrm::new(0.0, 0.0, 480.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let green = |img: &Image| {
+        (0..480u32)
+            .flat_map(|x| (0..300u32).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[1] > 150 && p[0] < 80 && p[2] < 80
+            })
+            .count()
+    };
+    let entry = |size: Option<f64>| deckcraft_model::chart::LegendEntry {
+        idx: 0,
+        size,
+        bold: Some(true),
+        color: Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 200, 0))),
+    };
+    let none = green(&draw(None));
+    let own = green(&draw(Some(entry(None))));
+    let big = green(&draw(Some(entry(Some(20.0)))));
+    assert_eq!(none, 0, "no green in a chart without the entry");
+    assert!(own > 40, "the first entry's name is drawn in its own colour ({own})");
+    assert!(big > own * 2, "and at its own size ({own} at 10 pt, {big} at 20 pt)");
 }
 
 #[test]
