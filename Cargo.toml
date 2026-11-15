@@ -26,9 +26,6 @@ deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
-# shared with WordCraft and GridCraft; staged here for craft-libs
-craft-library = { path = "crates/craft-library" }
-craft-library-egui = { path = "crates/craft-library-egui" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
@@ -62,6 +59,10 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "63196e66f3033a6623eb629af95a104d26986725", features = ["egui"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
+# The Library shared with WordCraft and GridCraft (#958), on its own pin (with its own craft-ui)
+# until the craft-libs pin above moves past the commit that added it.
+craft-library = { git = "https://github.com/storytold/craft-libs", rev = "772e09b5bd6b39c64dce2e0982324e959753ffde", version = "=0.1.0" }
+craft-library-egui = { git = "https://github.com/storytold/craft-libs", rev = "772e09b5bd6b39c64dce2e0982324e959753ffde", version = "=0.1.0" }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }

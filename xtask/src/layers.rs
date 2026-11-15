@@ -50,11 +50,6 @@ pub const TABLE: &[(&str, Class)] = &[
     ("ui-egui", Class::Layer(6)),
     ("mcp", Class::Layer(6)),
     ("testkit", Class::Testkit),
-    // The Library shared with WordCraft and GridCraft (#958), staged here on its way to craft-libs:
-    // app-neutral, so it depends on no DeckCraft crate.
-    ("craft-library", Class::Standalone),
-    // Its pane, in egui: app-neutral too, so it depends on no DeckCraft crate (ui-egui uses it).
-    ("craft-library-egui", Class::Layer(6)),
     // L7 apps and tooling
     ("deckcraft", Class::Exempt),
     ("cli", Class::Exempt),
@@ -67,7 +62,7 @@ pub const TABLE: &[(&str, Class)] = &[
 pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["craft-library-egui", "ui-egui"]];
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));
