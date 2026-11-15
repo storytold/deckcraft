@@ -2,12 +2,23 @@
 //! mono 16-bit WAVs named like PowerPoint's (Chime, Click, Camera, Whoosh, Drum Roll, Laser).
 
 use std::f64::consts::TAU;
+use std::sync::OnceLock;
 
 /// (id, label) of the built-in sounds, in menu order.
 pub const BUILTIN: [(&str, &str); 6] =
     [("chime", "Chime"), ("click", "Click"), ("camera", "Camera"), ("whoosh", "Whoosh"), ("drumRoll", "Drum Roll"), ("laser", "Laser")];
 
 const RATE: u32 = 22_050;
+
+/// The label of the built-in sound that a media item `name` with bytes `data` is, as
+/// `transition.sound` embeds one (`{label}.wav` with that sound's bytes); `None` for any other
+/// media, such as an imported file that happens to have the same name.
+pub fn builtin_label(name: &str, data: &[u8]) -> Option<&'static str> {
+    static BYTES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+    let stem = name.strip_suffix(".wav")?;
+    let bytes = BYTES.get_or_init(|| BUILTIN.iter().map(|(id, _)| builtin(id).unwrap_or_default()).collect());
+    BUILTIN.iter().zip(bytes).find(|((_, label), b)| *label == stem && b.as_slice() == data).map(|((_, label), _)| *label)
+}
 
 /// The WAV bytes of built-in sound `id`, or `None` for an unknown id.
 pub fn builtin(id: &str) -> Option<Vec<u8>> {
@@ -103,5 +114,15 @@ mod tests {
             assert!(info.duration() > 0.01 && info.duration() < 2.0, "{id}: {}", info.duration());
         }
         assert!(builtin("nope").is_none());
+    }
+
+    #[test]
+    fn only_a_builtin_sound_has_a_builtin_label() {
+        let chime = builtin("chime").unwrap_or_default();
+        assert_eq!(builtin_label("Chime.wav", &chime), Some("Chime"));
+        // An imported file with a built-in sound's name is not that sound.
+        assert_eq!(builtin_label("Chime.wav", b"RIFF imported"), None);
+        assert_eq!(builtin_label("Chime", &chime), None);
+        assert_eq!(builtin_label("Click.wav", &chime), None);
     }
 }

@@ -80,7 +80,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
                 let name = cur
                     .as_ref()
                     .and_then(|t| t.sound)
-                    .and_then(|m| app.session.active().and_then(|d| d.doc.media(m).map(|i| tl!(i.name.trim_end_matches(".wav")).to_string())))
+                    .and_then(|m| app.session.active().and_then(|d| d.doc.media(m).map(|i| sound_caption(&i.name, &i.data))))
                     .unwrap_or_else(|| tl!(if stop { "[Stop Previous Sound]" } else { "[No Sound]" }).into());
                 let combo = craft_ui::ComboBox::from_id_salt("transition_sound").width(140.0).selected_text(name).show_ui(ui, |ui| {
                     let none = cur.as_ref().is_none_or(|t| t.sound.is_none() && !t.stop_sound);
@@ -240,6 +240,15 @@ pub fn paint_transition_tile(p: &egui::Painter, r: Rect, (id, label): (&str, &st
 
 /// A gallery tile's name, centred on `center`, in the 10 pt UI font, or smaller (down to 7 pt) when
 /// it is wider than the tile: translated names are often longer than the English.
+/// A transition sound's caption: a built-in sound's name in the interface language, an imported
+/// sound's file name as it is (without `.wav`), even when it matches a catalog entry.
+fn sound_caption(name: &str, data: &[u8]) -> String {
+    match deckcraft_engine::sounds::builtin_label(name, data) {
+        Some(label) => tl!(label).to_string(),
+        None => name.trim_end_matches(".wav").to_string(),
+    }
+}
+
 pub fn tile_label(p: &egui::Painter, center: egui::Pos2, width: f32, label: &str, color: Color32) {
     let mut galley = p.layout_no_wrap(label.to_string(), theme::font(10.0), color);
     if galley.size().x > width {
@@ -253,4 +262,21 @@ pub fn tile_label(p: &egui::Painter, center: egui::Pos2, width: f32, label: &str
 pub(super) fn transition_effect_rows(kind: &str, current: Option<&str>) -> Vec<(&'static str, bool)> {
     let opts = deckcraft_model::anim::TRANSITIONS.iter().find(|x| x.0 == kind).map(|x| x.4).unwrap_or(&[]);
     marked_options(opts, current)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::sound_caption;
+    use crate::i18n::{Lang, fixture_lang, set_current};
+
+    #[test]
+    fn an_imported_sound_keeps_its_name_even_when_it_matches_a_catalog_entry() {
+        set_current(fixture_lang("de", "@id\tlanguage.name\tDeutsch\n\tClick\tKlick\n"));
+        let click = deckcraft_engine::sounds::builtin("click").unwrap();
+        assert_eq!(sound_caption("Click.wav", &click), "Klick", "the built-in sound is translated");
+        assert_eq!(sound_caption("Click.wav", b"RIFF imported"), "Click", "an imported file is not");
+        assert_eq!(sound_caption("applause.wav", b"RIFF imported"), "applause");
+        set_current(Lang::EN);
+    }
 }
