@@ -254,6 +254,16 @@ pub struct MediaClip {
     pub height: u32,
 }
 
+impl MediaClip {
+    /// Whether the clip's frame (an audio icon, or a video's poster) stays out of the
+    /// show picture. `playing` is true while the voice exists and has not ended.
+    /// Audio with "Hide During Show" set stays hidden even while it plays; video with
+    /// "Hide While Not Playing" set shows its frame while it plays.
+    pub fn hidden_during_show(&self, playing: bool) -> bool {
+        self.hide_while_not_playing && (!self.video || !playing)
+    }
+}
+
 /// One ink stroke (Draw tab): points in slide coordinates with pressure (`0..=1`,
 /// where `1` is [`InkStroke::width`]).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
