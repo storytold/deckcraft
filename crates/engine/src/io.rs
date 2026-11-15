@@ -87,33 +87,8 @@ pub fn file_len(_path: &str) -> Option<u64> {
     None
 }
 
-/// What a folder entry is. A link is reported as a link and never followed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EntryKind {
-    File,
-    Folder,
-    Link,
-    Other,
-}
-
-/// A file's size and when it last changed: a cached reading of the file is current while these
-/// are the same.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Stamp {
-    pub len: u64,
-    pub modified: Option<std::time::SystemTime>,
-}
-
-/// One entry of a folder ([`read_dir`]).
-#[derive(Clone, Debug)]
-pub struct DirEntry {
-    pub path: std::path::PathBuf,
-    /// The file name; `None` when it isn't UTF-8 (a path a command could not name back).
-    pub name: Option<String>,
-    pub kind: EntryKind,
-    /// For a file; the default for anything else.
-    pub stamp: Stamp,
-}
+/// Folder entries and file stamps, as the Library core the Craft apps share defines them.
+pub use craft_library::{DirEntry, EntryKind, Stamp};
 
 #[cfg(not(target_arch = "wasm32"))]
 fn stamp_of(meta: &std::fs::Metadata) -> Stamp {

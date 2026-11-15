@@ -26,6 +26,9 @@ deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
+# shared with WordCraft and GridCraft; staged here for craft-libs
+craft-library = { path = "crates/craft-library" }
+craft-library-egui = { path = "crates/craft-library-egui" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }

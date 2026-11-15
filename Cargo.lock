@@ -882,6 +882,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-library"
+version = "0.19.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "craft-library-egui"
+version = "0.19.0"
+dependencies = [
+ "craft-library",
+ "craft-ui",
+ "egui",
+ "egui_kittest",
+ "image",
+ "serde_json",
+ "web-time",
+]
+
+[[package]]
 name = "craft-media"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
@@ -1110,6 +1130,7 @@ name = "deckcraft-engine"
 version = "0.19.0"
 dependencies = [
  "chrono",
+ "craft-library",
  "deckcraft-anim",
  "deckcraft-color",
  "deckcraft-fonts",
@@ -1268,6 +1289,7 @@ dependencies = [
 name = "deckcraft-ui-egui"
 version = "0.19.0"
 dependencies = [
+ "craft-library-egui",
  "craft-ui",
  "craft-update",
  "deckcraft-anim",

@@ -13,9 +13,8 @@ use std::path::{Path, PathBuf};
 use deckcraft_model::{Presentation, Shape, ShapeId};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, base64_encode, bool_or, cmd, has_doc, opt_usize_param, str_param};
-use crate::io::{self, EntryKind, Stamp};
-use crate::library::{self, Match};
+use super::{CommandSpec, always, bad, bool_or, cmd, has_doc, opt_usize_param, str_param};
+use crate::library::{self, Confined, Stamp};
 use crate::{Result, Selection, Session, Target, media_refs};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -100,84 +99,14 @@ fn native(cmd: &str) -> Result<()> {
     if cfg!(target_arch = "wasm32") { Err(bad(cmd, library::NOT_IN_BROWSER)) } else { Ok(()) }
 }
 
-/// A non-empty `key` no longer than a path may be.
-fn path_param<'a>(p: &'a Value, key: &str, cmd: &str) -> Result<&'a str> {
-    let v = str_param(p, key).map(str::trim).filter(|v| !v.is_empty()).ok_or_else(|| bad(cmd, format!("missing `{key}`")))?;
-    if v.len() > library::MAX_PATH {
-        return Err(bad(cmd, format!("`{key}` is longer than {} bytes", library::MAX_PATH)));
-    }
-    Ok(v)
-}
-
-/// The Library folder `given` names: as kept, or the same folder written another way.
-fn find_folder(s: &Session, given: &str) -> Option<String> {
-    let kept = &s.prefs.library_folders;
-    if let Some(f) = kept.iter().find(|f| f.as_str() == given) {
-        return Some(f.clone());
-    }
-    let real = io::canonical(Path::new(given)).ok()?;
-    kept.iter().find(|f| Path::new(f.as_str()) == real || io::canonical(Path::new(f.as_str())).is_ok_and(|r| r == real)).cloned()
-}
-
-/// The folders a command covers: `folder` when given (it must be a Library folder), else all.
-fn chosen_folders(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
-    match str_param(p, "folder").filter(|f| !f.trim().is_empty()) {
-        Some(f) => {
-            let f = path_param(p, "folder", cmd).map(|_| f.trim())?;
-            Ok(vec![find_folder(s, f).ok_or_else(|| bad(cmd, format!("{f} is not a Library folder (library.folders lists them)")))?])
-        }
-        None => Ok(s.prefs.library_folders.clone()),
-    }
-}
-
-/// The presentations under `folders`, each once, with the folder it was found in. A folder that
-/// can't be read is skipped when listing all of them (library.folders says why) and an error when
-/// it was asked for by name.
-fn files_in(folders: &[String], named: bool, cmd: &str) -> Result<Vec<(PathBuf, Stamp, String)>> {
-    let mut seen = HashSet::new();
-    let mut out = vec![];
-    for f in folders {
-        let w = match library::walk(Path::new(f)) {
-            Ok(w) => w,
-            Err(e) if named => return Err(bad(cmd, e)),
-            Err(_) => continue,
-        };
-        for found in w.files {
-            if seen.insert(found.path.clone()) {
-                out.push((found.path, found.stamp, f.clone()));
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// The presentation `file` names: it must be a .pptx, .potx or .deckcraft file inside a Library
-/// folder (following its links), readable under the automation read roots. Returns its real path
-/// and stamp, and the folder it is in.
+/// The Library file `p` names (`file`): its real path and stamp, and its folder.
 fn library_file(s: &Session, p: &Value, cmd: &str) -> Result<(PathBuf, Stamp, String)> {
-    let file = path_param(p, "file", cmd)?;
-    let path = Path::new(file);
-    if !path.file_name().and_then(|n| n.to_str()).is_some_and(library::is_presentation) {
-        return Err(bad(cmd, format!("{file} is not a .pptx, .potx or .deckcraft file")));
-    }
-    let real = io::canonical(path).map_err(|e| bad(cmd, e))?;
-    let folder = s
-        .prefs
-        .library_folders
-        .iter()
-        .find(|f| io::canonical(Path::new(f.as_str())).is_ok_and(|root| real.starts_with(root)))
-        .cloned()
-        .ok_or_else(|| bad(cmd, format!("{file} is not in a Library folder; library.addFolder adds its folder")))?;
-    let (kind, stamp) = io::stat(&real).map_err(|e| bad(cmd, e))?;
-    if kind != EntryKind::File {
-        return Err(bad(cmd, format!("{file} is not a file")));
-    }
-    Ok((real, stamp, folder))
+    s.library.file(&Confined, &s.prefs.library_folders, p).map_err(|e| bad(cmd, e))
 }
 
 /// The required `slide` index.
-fn slide_param(p: &Value, cmd: &str) -> Result<usize> {
-    opt_usize_param(p, "slide", cmd)?.ok_or_else(|| bad(cmd, "missing `slide` (an index from library.list, counting from 0)"))
+fn slide_param(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
+    s.library.item_param(p).map_err(|e| bad(cmd, e))
 }
 
 fn shown(path: &Path) -> String {
@@ -186,166 +115,40 @@ fn shown(path: &Path) -> String {
 
 fn folders(s: &mut Session, _p: &Value) -> Result<Value> {
     native("library.folders")?;
-    let out: Vec<Value> = s
-        .prefs
-        .library_folders
-        .iter()
-        .map(|f| match library::walk(Path::new(f)) {
-            Ok(w) => {
-                let mut v = json!({"path": f, "files": w.files.len(), "entries": w.entries});
-                if w.truncated {
-                    v["truncated"] = json!(true);
-                }
-                if w.too_deep > 0 {
-                    v["skippedDeep"] = json!(w.too_deep);
-                }
-                if w.links > 0 {
-                    v["skippedLinks"] = json!(w.links);
-                }
-                if !w.unreadable.is_empty() {
-                    v["unreadable"] = json!(w.unreadable.iter().take(16).collect::<Vec<_>>());
-                }
-                v
-            }
-            Err(e) => json!({"path": f, "files": 0, "entries": 0, "error": e}),
-        })
-        .collect();
-    Ok(Value::Array(out))
+    Ok(s.library.folders(&Confined, &s.prefs.library_folders))
 }
 
 fn add_folder(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "library.addFolder";
-    native(CMD)?;
-    let given = path_param(p, "path", CMD)?;
-    let real = io::canonical(Path::new(given)).map_err(|e| bad(CMD, e))?;
-    let (kind, _) = io::stat(&real).map_err(|e| bad(CMD, e))?;
-    if kind != EntryKind::Folder {
-        return Err(bad(CMD, format!("{given} is not a folder")));
-    }
-    let real = real.to_str().ok_or_else(|| bad(CMD, format!("{given}: the folder's path is not valid Unicode")))?.to_string();
-    if real.len() > library::MAX_PATH {
-        return Err(bad(CMD, format!("{given}: the folder's path is longer than {} bytes", library::MAX_PATH)));
-    }
-    let added = !s.prefs.library_folders.contains(&real);
-    if added {
-        if s.prefs.library_folders.len() >= library::MAX_FOLDERS {
-            return Err(bad(CMD, format!("the Library holds at most {} folders; remove one first", library::MAX_FOLDERS)));
-        }
-        s.prefs.library_folders.push(real.clone());
-    }
-    Ok(json!({"path": real, "added": added, "folders": s.prefs.library_folders}))
+    native("library.addFolder")?;
+    library::Cache::add_folder(&Confined, &mut s.prefs.library_folders, p).map_err(|e| bad("library.addFolder", e))
 }
 
 fn remove_folder(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "library.removeFolder";
-    native(CMD)?;
-    let given = path_param(p, "path", CMD)?;
-    let found = find_folder(s, given).ok_or_else(|| bad(CMD, format!("{given} is not a Library folder (library.folders lists them)")))?;
-    s.prefs.library_folders.retain(|f| *f != found);
-    Ok(json!({"path": found, "folders": s.prefs.library_folders}))
-}
-
-/// One file as `library.list` answers it.
-fn file_json(s: &mut Session, path: &Path, stamp: Stamp, folder: &str, open: bool) -> Value {
-    let mut v = json!({"file": shown(path), "folder": folder});
-    if !open {
-        v["title"] = json!(library::stem(path));
-        if stamp.len > library::MAX_FILE_BYTES {
-            v["error"] = json!(format!("larger than {} MB; not opened", library::MAX_FILE_BYTES >> 20));
-        }
-        return v;
-    }
-    let idx = s.library.index(path, stamp);
-    v["title"] = json!(idx.title);
-    v["slides"] = idx.slides.iter().enumerate().map(|(i, sl)| json!({"index": i, "title": sl.title, "hidden": sl.hidden})).collect();
-    v["slideCount"] = json!(idx.slide_count);
-    if idx.slide_count > idx.slides.len() {
-        v["truncated"] = json!(true);
-    }
-    if let Some(e) = &idx.error {
-        v["error"] = json!(e);
-    }
-    v
+    native("library.removeFolder")?;
+    library::Cache::remove_folder(&Confined, &mut s.prefs.library_folders, p).map_err(|e| bad("library.removeFolder", e))
 }
 
 fn list(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "library.list";
-    native(CMD)?;
-    let open = bool_or(p, "slides", true);
-    let files = if str_param(p, "file").is_some() {
-        vec![library_file(s, p, CMD)?]
-    } else {
-        let named = str_param(p, "folder").is_some_and(|f| !f.trim().is_empty());
-        files_in(&chosen_folders(s, p, CMD)?, named, CMD)?
-    };
-    Ok(Value::Array(files.iter().map(|(path, stamp, folder)| file_json(s, path, *stamp, folder, open)).collect()))
+    native("library.list")?;
+    s.library.list(&Confined, &s.prefs.library_folders, p).map_err(|e| bad("library.list", e))
 }
 
 fn search(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "library.search";
-    native(CMD)?;
-    let query = str_param(p, "query").map(str::trim).filter(|q| !q.is_empty()).ok_or_else(|| bad(CMD, "missing `query`"))?;
-    if query.chars().count() > library::MAX_QUERY {
-        return Err(bad(CMD, format!("`query` is longer than {} characters", library::MAX_QUERY)));
-    }
-    let limit = match p.get("limit") {
-        None | Some(Value::Null) => library::SEARCH_LIMIT,
-        Some(v) => v
-            .as_u64()
-            .and_then(|n| usize::try_from(n).ok())
-            .filter(|n| library::SEARCH_LIMITS.contains(n))
-            .ok_or_else(|| bad(CMD, format!("`limit` is a count from 1 to 500, not {v}")))?,
-    };
-    let query = query.to_lowercase();
-    let named = str_param(p, "folder").is_some_and(|f| !f.trim().is_empty());
-    let files = files_in(&chosen_folders(s, p, CMD)?, named, CMD)?;
-    // The first `limit` of each kind of match is enough to rank: title, then text, then file name.
-    let mut kinds: [Vec<library::Hit>; 3] = Default::default();
-    for (path, stamp, _) in &files {
-        let idx = s.library.index(path, *stamp);
-        for hit in library::matches(idx, path, &query) {
-            let k = match hit.how {
-                Match::Title => 0,
-                Match::Text => 1,
-                Match::File => 2,
-            };
-            if let Some(v) = kinds.get_mut(k).filter(|v| v.len() < limit) {
-                v.push(hit);
-            }
-        }
-    }
-    let hits: Vec<Value> = kinds
-        .iter()
-        .flatten()
-        .take(limit)
-        .map(|h| json!({"file": shown(&h.file), "slide": h.slide, "title": h.title, "match": h.how.name()}))
-        .collect();
-    Ok(Value::Array(hits))
+    native("library.search")?;
+    s.library.search(&Confined, &s.prefs.library_folders, p).map_err(|e| bad("library.search", e))
 }
 
 fn thumbnail(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "library.thumbnail";
-    native(CMD)?;
-    let (path, stamp, _) = library_file(s, p, CMD)?;
-    let slide = slide_param(p, CMD)?;
-    let width = match p.get("width") {
-        None | Some(Value::Null) => library::THUMB_WIDTH,
-        Some(v) => v
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .filter(|n| library::THUMB_WIDTHS.contains(n))
-            .ok_or_else(|| bad(CMD, format!("`width` is 32 to 512 pixels, not {v}")))?,
-    };
-    let t = s.library.thumbnail(&path, stamp, slide, width).map_err(|e| bad(CMD, e))?;
-    Ok(json!({"png": base64_encode(&t.png), "width": t.width, "height": t.height}))
+    native("library.thumbnail")?;
+    s.library.thumbnail(&Confined, &s.prefs.library_folders, p).map_err(|e| bad("library.thumbnail", e))
 }
 
 fn shapes_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "library.shapes";
     native(CMD)?;
     let (path, stamp, _) = library_file(s, p, CMD)?;
-    let index = slide_param(p, CMD)?;
-    let src = s.library.deck(&path, stamp).map_err(|e| bad(CMD, e))?;
+    let index = slide_param(s, p, CMD)?;
+    let src = s.library.doc(&Confined, &path, stamp).map_err(|e| bad(CMD, e))?;
     let n = src.slides.len().min(library::MAX_SLIDES);
     let slide = src.slides.get(index).filter(|_| index < n).ok_or_else(|| bad(CMD, format!("the file has {n} slides; {index} isn't one of them")))?;
     let at = Selection { slide: index, target: Target::Slides, ..Default::default() };
@@ -413,7 +216,7 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "library.insert";
     native(CMD)?;
     let (path, stamp, _) = library_file(s, p, CMD)?;
-    let slide = slide_param(p, CMD)?;
+    let slide = slide_param(s, p, CMD)?;
     let keep = bool_or(p, "keepFormatting", false);
     let names = names_param(p, CMD)?;
     let shapes = match str_param(p, "as") {
@@ -424,7 +227,7 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         Some(other) => return Err(bad(CMD, format!("`as` is slide or shapes, not {other}"))),
     };
     let at = opt_usize_param(p, "at", CMD)?;
-    let src = s.library.deck(&path, stamp).map_err(|e| bad(CMD, e))?;
+    let src = s.library.doc(&Confined, &path, stamp).map_err(|e| bad(CMD, e))?;
     let n = src.slides.len().min(library::MAX_SLIDES);
     let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
     if slide >= n {

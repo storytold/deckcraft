@@ -76,7 +76,7 @@ fn insert_library_opens_the_pane_on_its_slides_tab() {
     h.get_by_label("Library").click();
     h.run_steps(3);
     assert_eq!(h.state().ui.pane.as_deref(), Some("library"));
-    assert_eq!(h.state().library.tab, super::Tab::Slides);
+    assert_eq!(h.state().library.tab, super::ITEMS);
     assert!(h.query_by_label("Slides").is_some(), "the tab strip");
     // No folders yet: the pane says what to do, and Add Folder… (no picker here) takes a path.
     assert!(h.query_by_label_contains("Add a folder of .pptx").is_some());
