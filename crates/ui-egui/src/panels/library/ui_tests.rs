@@ -135,7 +135,7 @@ fn search_shows_only_the_slides_that_match() {
     assert!(h.query_by_label("Slide 1: Pricing").is_none() && h.query_by_label("Slide 1: Agenda").is_none());
     h.state_mut().library.query = "nothing like it".into();
     h.run_steps(30);
-    assert!(h.query_by_label_contains("No slides match").is_some());
+    assert!(h.query_by_label_contains("Nothing matches").is_some());
     let _ = std::fs::remove_dir_all(dir);
 }
 

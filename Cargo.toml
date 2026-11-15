@@ -61,8 +61,8 @@ craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
 # The Library shared with WordCraft and GridCraft (#958), on its own pin (with its own craft-ui)
 # until the craft-libs pin above moves past the commit that added it.
-craft-library = { git = "https://github.com/storytold/craft-libs", rev = "772e09b5bd6b39c64dce2e0982324e959753ffde", version = "=0.1.0" }
-craft-library-egui = { git = "https://github.com/storytold/craft-libs", rev = "772e09b5bd6b39c64dce2e0982324e959753ffde", version = "=0.1.0" }
+craft-library = { git = "https://github.com/storytold/craft-libs", rev = "f6e5e0857316007a5ea34df6b28c429d0cd1dc16", version = "=0.1.0" }
+craft-library-egui = { git = "https://github.com/storytold/craft-libs", rev = "f6e5e0857316007a5ea34df6b28c429d0cd1dc16", version = "=0.1.0" }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }

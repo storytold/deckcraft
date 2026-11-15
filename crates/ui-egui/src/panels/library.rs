@@ -28,6 +28,7 @@ pub const LABELS: Labels = Labels {
     empty: "Add a folder of .pptx, .potx or .deckcraft presentations to see their slides here. Click a slide to insert it.",
     not_in_browser: "The Library shows the slides in folders of presentations on this computer, which the browser version can't read. Use the desktop app to browse a Library.",
     aspect: 0.5625,
+    one_per_file: false,
 };
 
 /// The app, as the shared pane sees it.
