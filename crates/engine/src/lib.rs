@@ -415,6 +415,25 @@ impl Prefs {
     }
 }
 
+/// The preferences file ([`Prefs`]) in [`settings_dir`].
+pub const PREFS_FILE: &str = "prefs.json";
+
+/// The per-user settings folder the desktop app keeps `prefs.json`, `ui.json` and its logs in; the
+/// CLI reads the Library folders from there too. Only the path: nothing is read here.
+pub fn settings_dir() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/DeckCraft"))
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("DeckCraft"))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .map(|c| c.join("deckcraft"))
+    }
+}
+
 /// The most undo steps [`Prefs::undo_limit`] can keep.
 pub const MAX_UNDO_LIMIT: usize = 10_000;
 

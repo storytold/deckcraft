@@ -71,16 +71,7 @@ impl eframe::App for App {
 
 /// The per-user settings directory: `ui.json`, `prefs.json` and `logs/` live here.
 fn config_dir() -> Option<std::path::PathBuf> {
-    if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/DeckCraft"))
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("DeckCraft"))
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("deckcraft"))
-    }
+    deckcraft_engine::settings_dir()
 }
 
 fn load_prefs(app: &mut SlideApp) {

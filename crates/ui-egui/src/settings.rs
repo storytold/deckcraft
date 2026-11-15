@@ -12,7 +12,7 @@ use deckcraft_engine::Prefs;
 use crate::UiState;
 
 pub const UI_FILE: &str = "ui.json";
-pub const PREFS_FILE: &str = "prefs.json";
+pub const PREFS_FILE: &str = deckcraft_engine::PREFS_FILE;
 /// Larger settings files are not settings.
 pub const MAX_BYTES: u64 = 4 << 20;
 
