@@ -99,6 +99,8 @@ struct PendingPick {
     answer: std::sync::mpsc::Receiver<Option<String>>,
     then: AfterPick,
     target: FileTarget,
+    /// The slides selected when the dialog opened (transition sounds apply to all of them).
+    slides: Vec<SlideId>,
 }
 
 /// What a picked path is for.
@@ -107,6 +109,8 @@ enum AfterPick {
     Open,
     /// Run `cmd` with the file added to `args`, as the blocking `pick_open` path does.
     Run { cmd: String, args: serde_json::Value },
+    /// Offer the presentation's slides to Reuse Slides (`keep`: Keep source formatting).
+    Reuse { keep: bool },
 }
 
 /// UI-only commands (id, label, shortcut, params).

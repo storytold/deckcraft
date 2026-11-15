@@ -49,8 +49,9 @@ pub struct Services {
     /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
     pub pick_open: Option<PickFn>,
     /// Open-file dialog that answers later (desktop), so the window keeps handling events while
-    /// it is open (#2040). Open and the single-file picks (Insert/Change Picture, Insert Audio
-    /// and Video, transition sounds, Browse for Themes, Compare) use it in place of `pick_open`.
+    /// it is open (#2040). Open, Reuse Slides and the single-file picks (Insert/Change Picture,
+    /// Insert Audio and Video, transition sounds, Browse for Themes, Compare) use it in place of
+    /// `pick_open`.
     pub open_dialog: Option<OpenDialogFn>,
     /// Save dialog with a suggested name → path.
     pub pick_save: Option<PickFn>,

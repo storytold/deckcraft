@@ -2,6 +2,7 @@ use super::{
     AfterPick, FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, PendingPick, RECENT_MAX, SlideApp, Target, UiRequest,
     Value, ViewMode, dialogs, json, media,
 };
+use deckcraft_model::SlideId;
 
 #[derive(Default)]
 pub(crate) struct PrintPreviews(Vec<std::path::PathBuf>);
@@ -353,17 +354,28 @@ impl SlideApp {
     /// Home › New Slide › Reuse Slides…: pick a presentation and insert all its slides after the
     /// current one (desktop only: the browser picker opens what it picks as a document).
     pub(super) fn pick_and_reuse(&mut self, keep: bool) {
+        if self.services.open_dialog.is_some() {
+            self.start_pick("open", AfterPick::Reuse { keep });
+            return;
+        }
         let Some(pick) = self.services.pick_open.as_mut() else {
             self.set_status("Reuse Slides needs the desktop app".to_string());
             return;
         };
         let Some(path) = pick("open") else { return };
+        let target = self.capture_file_target();
+        self.offer_reuse(&path, keep, target);
+    }
+
+    /// List the slides of the presentation at `path` in the Reuse Slides dialog; the ones picked
+    /// go after the slide `target` names.
+    fn offer_reuse(&mut self, path: &str, keep: bool, target: FileTarget) {
         // Read the file once: the list shown and the slides inserted come from the same bytes, even
         // if the file changes while the dialog is open. Without a reader the path is used as is.
         let mut source = json!({});
-        match self.services.read.as_ref().map(|r| r(&path)) {
+        match self.services.read.as_ref().map(|r| r(path)) {
             Some(Ok(bytes)) => {
-                let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 source["name"] = json!(name);
                 source["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
             }
@@ -378,7 +390,7 @@ impl SlideApp {
             Ok(list) => {
                 let mut d = dialogs::Dialog::new("reuseSlides");
                 d.params = json!({"path": path, "source": source, "keep": keep, "slides": list["slides"]});
-                self.reuse_target = Some(self.capture_file_target());
+                self.reuse_target = Some(target);
                 self.dialog = Some(d);
             }
             Err(e) => self.set_status(e.to_string()),
@@ -394,7 +406,7 @@ impl SlideApp {
         args["keepFormatting"] = json!(keep);
         args["slides"] = json!(picked);
         let result = match self.reuse_target {
-            Some(target) if !self.viewing_target(&target) => self.execute_on_target(&target, "Reuse Slides", "slide.reuse", &args),
+            Some(target) if !self.viewing_target(&target) => self.execute_on_target(&target, "Reuse Slides", "slide.reuse", &args, &[]),
             _ => self.session.execute("slide.reuse", &args).map(|_| ()).map_err(|e| e.to_string()),
         };
         match result {
@@ -461,9 +473,13 @@ impl SlideApp {
             return;
         }
         let target = self.capture_file_target();
+        let slides = match self.session.active() {
+            Some(d) if d.selection.target == Target::Slides => d.selection.slides.clone(),
+            _ => Vec::new(),
+        };
         let Some(open) = self.services.open_dialog.as_mut() else { return };
         let answer = open(purpose);
-        self.pending_pick = Some(PendingPick { answer, then, target });
+        self.pending_pick = Some(PendingPick { answer, then, target, slides });
     }
 
     /// Finish the open dialog once it has answered: open the presentation, or run the command
@@ -476,22 +492,26 @@ impl SlideApp {
             // The host dropped the dialog without an answer: a cancel.
             Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
         };
-        let Some(PendingPick { then, target, .. }) = self.pending_pick.take() else { return };
+        let Some(PendingPick { then, target, slides, .. }) = self.pending_pick.take() else { return };
         let Some(path) = path else { return };
         match then {
             AfterPick::Open => self.open_path_in_background(&path),
             AfterPick::Run { cmd, args } => {
                 let (name, params) = self.file_params(args, &path);
-                let result = if self.viewing_target(&target) {
+                // Still on the same slide with the same slides selected: run it as it is.
+                // Otherwise the slides selected when the dialog opened get it (#2040).
+                let unchanged = self.viewing_target(&target) && self.session.active().is_some_and(|d| d.selection.slides == slides);
+                let result = if unchanged {
                     self.session.execute(&cmd, &params).map(|_| ()).map_err(|e| e.to_string())
                 } else {
-                    self.execute_on_target(&target, &name, &cmd, &params)
+                    self.execute_on_target(&target, &name, &cmd, &params, &slides)
                 };
                 if let Err(e) = result {
                     self.set_status(e);
                 }
                 self.drain_requests();
             }
+            AfterPick::Reuse { keep } => self.offer_reuse(&path, keep, target),
         }
     }
 
@@ -752,7 +772,7 @@ impl SlideApp {
         let result = if cmd == "file.openBytes" || self.viewing_target(&req.target) {
             self.session.execute(cmd, &params).map(|_| ()).map_err(|e| e.to_string())
         } else {
-            self.execute_on_target(&req.target, name, cmd, &params)
+            self.execute_on_target(&req.target, name, cmd, &params, &[])
         };
         match result {
             Err(e) if cmd == "file.openBytes" => self.notify(e),
@@ -762,9 +782,10 @@ impl SlideApp {
         self.drain_requests();
     }
 
-    /// Run `cmd` on the document and slide captured for the request, then put the view back
-    /// if the user has since moved. A missing document or slide cancels the file.
-    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
+    /// Run `cmd` on the document and slide captured for the request, with `slides` (the slides
+    /// selected then; empty for the current one only) selected, then put the view back if the
+    /// user has since moved. A missing document or slide cancels the file.
+    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value, slides: &[SlideId]) -> Result<(), String> {
         let FileTarget::Document { doc, place } = target else {
             self.session.execute("file.new", &json!({})).map_err(|e| e.to_string())?;
             return self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
@@ -786,7 +807,7 @@ impl SlideApp {
             st.selection.target = located.target;
             if let Some(slide) = located.slide {
                 st.selection.slide = slide;
-                st.selection.slides.clear();
+                st.selection.slides = slides.iter().copied().filter(|id| st.doc.slide(*id).is_some()).collect();
             }
             st.selection.shapes.clear();
             st.selection.text = None;

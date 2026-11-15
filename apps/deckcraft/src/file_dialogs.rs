@@ -11,6 +11,7 @@
 
 use std::pin::Pin;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, Instant};
 
 use deckcraft_ui_egui::OpenDialogFn;
 
@@ -45,13 +46,18 @@ impl Launcher {
     pub fn show(&self, parent: &eframe::Frame) {
         while let Ok((purpose, answer)) = self.queue.try_recv() {
             // Built here, on the UI thread: macOS shows the panel as a sheet on the window now.
-            let dialog =
-                open_filters(&purpose).iter().fold(rfd::AsyncFileDialog::new().set_parent(parent), |d, (name, ext)| d.add_filter(*name, ext));
-            let picking: Picking = Box::pin(dialog.pick_file());
+            let picking: Picking = Box::pin(dialog(&purpose).set_parent(parent).pick_file());
             let ctx = self.ctx.clone();
             let waiting = std::thread::Builder::new().name("file dialog".into()).spawn(move || {
-                let picked = pollster::block_on(picking).map(|f| f.path().to_string_lossy().to_string());
-                let _ = answer.send(picked);
+                let started = Instant::now();
+                let mut picked = pollster::block_on(picking);
+                // Some Linux portals can't parent the dialog (xdg-foreign on Wayland) and rfd
+                // reports that as a cancel: ask once more without a parent, as the old dialog did.
+                if picked.is_none() && failed_at_once(started.elapsed()) {
+                    log::info!("the parented file dialog closed at once; showing it without a parent");
+                    picked = pollster::block_on(dialog(&purpose).pick_file());
+                }
+                let _ = answer.send(picked.map(|f| f.path().to_string_lossy().to_string()));
                 ctx.request_repaint();
             });
             // The answer's sender went with the closure, so the app sees the dialog as cancelled.
@@ -60,6 +66,18 @@ impl Launcher {
             }
         }
     }
+}
+
+/// A cancel this soon after the dialog was asked for is the portal failing, not the user.
+const AT_ONCE: Duration = Duration::from_millis(500);
+
+fn failed_at_once(elapsed: Duration) -> bool {
+    elapsed < AT_ONCE
+}
+
+/// An open dialog for `purpose`, offering its file types.
+fn dialog(purpose: &str) -> rfd::AsyncFileDialog {
+    open_filters(purpose).iter().fold(rfd::AsyncFileDialog::new(), |d, (name, ext)| d.add_filter(*name, ext))
 }
 
 /// The file types an open dialog offers for `purpose`, first filter selected.
@@ -77,5 +95,16 @@ pub fn open_filters(purpose: &str) -> &'static [(&'static str, &'static [&'stati
             ("PowerPoint", &["pptx", "potx", "ppsx"]),
             ("Outline", &["txt", "md"]),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_immediate_cancel_retries_without_a_parent() {
+        assert!(failed_at_once(Duration::from_millis(20)));
+        assert!(!failed_at_once(Duration::from_secs(3)), "a user who cancels is not asked again");
     }
 }
