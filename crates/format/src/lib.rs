@@ -5,7 +5,6 @@
 #![forbid(unsafe_code)]
 
 mod chart_parts;
-mod finite;
 pub mod rtf;
 
 #[cfg(test)]
@@ -13,63 +12,14 @@ mod chart_parts_tests;
 #[cfg(test)]
 mod golden_tests;
 
-use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use deckcraft_model::text::{Paragraph, TextBody};
 use deckcraft_model::{LayoutType, Presentation, ShapeKind, defaults};
 
-pub const MIMETYPE: &str = "application/vnd.storyteller.deckcraft+zip";
-/// Files written before the SlideCraft → DeckCraft rename (`.slidecraft`) are still read.
-pub const LEGACY_MIMETYPE: &str = concat!("application/vnd.storyteller.", "slide", "craft+zip");
-pub const EXTENSION: &str = "deckcraft";
-/// Format version written into the manifest.
-pub const VERSION: u32 = 1;
-/// Largest entry we will inflate (guards against zip bombs).
-const MAX_ENTRY: u64 = 2 << 30;
-/// All embedded media and chart sidecars together, inflated (#393).
-const MAX_TOTAL_MEDIA: u64 = 4 << 30;
-/// Media items and chart sidecar parts one file may list.
-const MAX_MEDIA_ITEMS: usize = 100_000;
-/// Largest `presentation.json` we will inflate. The manifest holds no media bytes, so it is far
-/// smaller than a media entry may be; inflating and parsing one is what dominates memory.
-const MAX_MANIFEST: u64 = 256 << 20;
-
-/// What one load may inflate.
-#[derive(Clone, Copy)]
-struct Budget {
-    total: u64,
-    items: usize,
-    manifest: u64,
-}
-
-#[cfg(test)]
-impl Budget {
-    /// A media budget with the default manifest limit.
-    fn media(total: u64, items: usize) -> Self {
-        Budget { total, items, manifest: MAX_MANIFEST }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum FormatError {
-    #[error("not a DeckCraft file: {0}")]
-    NotOurs(String),
-    #[error("damaged file: {0}")]
-    Damaged(String),
-    #[error("write failed: {0}")]
-    Write(String),
-}
-
-pub type Result<T> = std::result::Result<T, FormatError>;
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Manifest {
-    format: String,
-    version: u32,
-    generator: String,
-    presentation: Presentation,
-}
+// The package itself (identity, manifest, member names, bounded reads) is shared.
+pub use craft_deckcraft_format::{Budget, EXTENSION, FormatError, LEGACY_MIMETYPE, MIMETYPE, Result, VERSION, sniff};
+use craft_deckcraft_format::{Member, Package, media_entry};
 
 /// Serialize a presentation.
 pub fn save(p: &Presentation) -> Result<Vec<u8>> {
@@ -78,89 +28,38 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
 
 /// [`save`] naming `generator` in the manifest.
 fn save_as(p: &Presentation, generator: &str) -> Result<Vec<u8>> {
-    let mut buf = Cursor::new(Vec::new());
-    {
-        let mut z = zip::ZipWriter::new(&mut buf);
-        let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        let deflate = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        let w = |e: zip::result::ZipError| FormatError::Write(e.to_string());
-        z.start_file("mimetype", stored).map_err(w)?;
-        z.write_all(MIMETYPE.as_bytes()).map_err(|e| FormatError::Write(e.to_string()))?;
-        let mut presentation = p.clone();
-        let parts = chart_parts::separate(&mut presentation)?;
-        let m = Manifest { format: "deckcraft".into(), version: VERSION, generator: generator.to_string(), presentation };
-        let json = serde_json::to_vec(&finite::Finite(&m)).map_err(|e| FormatError::Write(e.to_string()))?;
-        z.start_file("presentation.json", deflate).map_err(w)?;
-        z.write_all(&json).map_err(|e| FormatError::Write(e.to_string()))?;
-        for item in &p.media {
-            if item.link.is_some() && item.data.is_empty() {
-                continue;
-            }
-            // Already-compressed media is stored, not deflated again.
-            let opts = if is_compressed(&item.content_type) { stored } else { deflate };
-            z.start_file(format!("media/{}", item.id.0), opts).map_err(w)?;
-            z.write_all(&item.data).map_err(|e| FormatError::Write(e.to_string()))?;
-        }
-        for (name, content_type, bytes) in parts {
-            let opts = if is_compressed(&content_type) { stored } else { deflate };
-            z.start_file(name, opts).map_err(w)?;
-            z.write_all(&bytes).map_err(|e| FormatError::Write(e.to_string()))?;
-        }
-        z.finish().map_err(w)?;
-    }
-    Ok(buf.into_inner())
+    let mut presentation = p.clone();
+    let parts = chart_parts::separate(&mut presentation)?;
+    // Linked media saved without its bytes has no member.
+    let media: Vec<(String, &deckcraft_model::MediaItem)> =
+        p.media.iter().filter(|item| !(item.link.is_some() && item.data.is_empty())).map(|item| (media_entry(item.id.0), item)).collect();
+    let members: Vec<Member<'_>> = media
+        .iter()
+        .map(|(name, item)| Member { name, content_type: &item.content_type, bytes: &item.data })
+        .chain(parts.iter().map(|(name, content_type, bytes)| Member { name, content_type, bytes }))
+        .collect();
+    craft_deckcraft_format::write(&presentation, generator, &members)
 }
 
-fn is_compressed(ct: &str) -> bool {
-    ct.starts_with("image/jpeg")
-        || ct.starts_with("image/png")
-        || ct.starts_with("video/")
-        || ct.starts_with("audio/mpeg")
-        || ct.starts_with("audio/mp4")
-        || ct.contains("zip")
-}
-
-/// Does this look like a `.deckcraft` file?
-pub fn sniff(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"PK") && [MIMETYPE, LEGACY_MIMETYPE].iter().any(|m| bytes.windows(m.len()).take(200).any(|w| w == m.as_bytes()))
-}
-
+/// A member of a package a test built or rewrote with `zip`, within `max` bytes.
 #[cfg(test)]
-fn read_entry(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>> {
-    read_entry_max(z, name, MAX_ENTRY)
-}
-
-/// Read one member, refusing it before inflating if it declares more than `max` bytes, and
-/// stopping at `max` if it inflates further than it declared.
-fn read_entry_max(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, max: u64) -> Result<Vec<u8>> {
-    read_entry_counted(z, name, max, &mut 0)
-}
-
-/// [`read_entry_max`] within `left` (and [`MAX_ENTRY`]), charging `left` for every byte inflated,
-/// including those inflated before a decode or CRC error, so a member that fails late still
-/// spends the shared budget it used.
-fn read_entry_charged(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, left: &mut u64) -> Result<Vec<u8>> {
-    let mut spent = 0;
-    let out = read_entry_counted(z, name, (*left).min(MAX_ENTRY), &mut spent);
-    *left = left.saturating_sub(spent);
-    out
-}
-
-/// [`read_entry_max`], adding the bytes inflated to `spent` whether or not the read succeeds.
-fn read_entry_counted(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, max: u64, spent: &mut u64) -> Result<Vec<u8>> {
+fn read_entry_max(z: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &str, max: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
     let f = z.by_name(name).map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
     if f.size() > max {
         return Err(FormatError::Damaged(format!("{name} is too large")));
     }
-    let mut out = Vec::with_capacity(f.size().min(64 << 20) as usize);
-    let mut f = f.take(max.saturating_add(1));
-    let read = f.read_to_end(&mut out);
-    *spent = spent.saturating_add(out.len() as u64);
-    read.map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
+    let mut out = vec![];
+    f.take(max.saturating_add(1)).read_to_end(&mut out).map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
     if out.len() as u64 > max {
         return Err(FormatError::Damaged(format!("{name} is too large")));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+fn read_entry(z: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>> {
+    read_entry_max(z, name, craft_deckcraft_format::MAX_ENTRY)
 }
 
 /// Read a presentation. Missing media/chart parts are left empty; use [`load_checked`] to
@@ -173,19 +72,11 @@ pub fn load(bytes: &[u8]) -> Result<Presentation> {
 /// A chart member that is present but fails decoding, CRC or its entry limit refuses the file.
 /// Linked media saved without its bytes isn't damage.
 pub fn load_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
-    load_within(bytes, Budget { total: MAX_TOTAL_MEDIA, items: MAX_MEDIA_ITEMS, manifest: MAX_MANIFEST })
+    load_within(bytes, Budget::default())
 }
 
 fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String>)> {
-    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| FormatError::NotOurs(e.to_string()))?;
-    if z.index_for_name("presentation.json").is_none() {
-        return Err(FormatError::NotOurs("no presentation.json".into()));
-    }
-    let json = read_entry_max(&mut z, "presentation.json", budget.manifest)?;
-    let m = parse_manifest(&json)?;
-    if m.format != "deckcraft" {
-        return Err(FormatError::NotOurs(m.format));
-    }
+    let (m, mut z) = Package::open_manifest::<Presentation>(bytes, budget.manifest)?;
     let mut p = m.presentation;
     let mut damaged = vec![];
     let items = p.media.len();
@@ -198,13 +89,13 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     p.media.retain(|m| seen.insert(m.id));
     let mut left = budget.total;
     for item in &mut p.media {
-        let name = format!("media/{}", item.id.0);
-        let linked_only = item.link.is_some() && z.index_for_name(&name).is_none();
-        if z.by_name(&name).is_ok_and(|f| f.size() > left) {
+        let name = media_entry(item.id.0);
+        let linked_only = item.link.is_some() && !z.contains(&name);
+        if z.declared_size(&name).is_some_and(|size| size > left) {
             return Err(FormatError::Damaged("embedded media is larger than DeckCraft can open".into()));
         }
         // A failed read is charged for what it inflated, so later members can't reuse that budget.
-        match read_entry_charged(&mut z, &name, &mut left) {
+        match z.read_charged(&name, &mut left) {
             Ok(data) => item.data = Arc::new(data),
             Err(_) if linked_only => {}
             Err(e) => damaged.push(e.to_string()),
@@ -350,100 +241,6 @@ fn add_outline_slides(p: &mut Presentation, slides: OutlineSlides) -> usize {
         made += 1;
     }
     made
-}
-
-/// Most `null`s standing in for numbers that [`parse_manifest`] patches in one file, and the
-/// candidates it tries for each.
-const MAX_NULL_FIXES: usize = 256;
-const MAX_TRIES_PER_FIX: usize = 32;
-/// Bytes [`parse_manifest`] may re-parse in all while patching, so a hostile file full of `null`s
-/// can't keep it busy: past this the file is reported damaged.
-const MAX_REPARSE_BYTES: usize = 256 * 1024 * 1024;
-
-/// Where a parse failed, comparable: later is progress.
-fn failure(src: &[u8]) -> std::result::Result<Manifest, (String, (usize, usize))> {
-    serde_json::from_slice::<Manifest>(src).map_err(|e| (e.to_string(), (e.line(), e.column())))
-}
-
-/// Parse `presentation.json`. serde_json writes a NaN or infinite number as `null`, which then
-/// fails to read back as a number ("invalid type: null, expected f64"), so DeckCraft could save
-/// a file it couldn't open. Each such `null` is read as 0 instead ([`repair`] then brings the
-/// value into range); anything else that doesn't parse is damage.
-///
-/// serde reports the failing `null` exactly, except inside tagged enums (buffered), where it
-/// reports the end of the enclosing object: there the `null`s before that point are tried
-/// nearest first, and a patch is kept only if the parse then gets further. (Files saved since
-/// [`finite::Finite`] never contain such `null`s; this reads older ones.)
-fn parse_manifest(json: &[u8]) -> Result<Manifest> {
-    // Parse the inflated text as it is: only a file that fails on a `null` number is copied for
-    // patching (the copy is bounded by `MAX_MANIFEST`).
-    let mut last = match failure(json) {
-        Ok(m) => return Ok(m),
-        Err(f) => f,
-    };
-    if !is_null_number(&last.0) {
-        return Err(FormatError::Damaged(last.0));
-    }
-    let mut src = json.to_vec();
-    let mut budget = MAX_REPARSE_BYTES;
-    'fixes: for _ in 0..MAX_NULL_FIXES {
-        let (msg, pos) = &last;
-        if !is_null_number(msg) {
-            break;
-        }
-        let end = offset(&src, pos.0, pos.1).unwrap_or(src.len());
-        let mut progressed = false;
-        let candidates: Vec<usize> = value_nulls_before(&src, end + 4).take(MAX_TRIES_PER_FIX).collect();
-        for at in candidates {
-            let (Some(head), Some(tail)) = (src.get(..at), src.get(at.saturating_add(4)..)) else { continue };
-            let Some(left) = budget.checked_sub(src.len()) else { break 'fixes };
-            budget = left;
-            let mut next = Vec::with_capacity(src.len());
-            next.extend_from_slice(head);
-            next.push(b'0');
-            next.extend_from_slice(tail);
-            match failure(&next) {
-                Ok(m) => return Ok(m),
-                // The patch shortened the text by 3 bytes before the error: compare positions
-                // allowing for that.
-                Err(f) if f.1 > (pos.0, pos.1.saturating_sub(3)) => {
-                    src = next;
-                    last = f;
-                    progressed = true;
-                    break;
-                }
-                Err(_) => {}
-            }
-        }
-        if !progressed {
-            break;
-        }
-    }
-    Err(FormatError::Damaged(last.0))
-}
-
-/// Is this parse error a `null` where a number belongs (a NaN or infinity serde_json wrote)?
-fn is_null_number(msg: &str) -> bool {
-    msg.starts_with("invalid type: null, expected f") || msg.starts_with("invalid type: null, expected a number")
-}
-
-/// Byte offset of a 1-based `line`:`column`.
-fn offset(src: &[u8], line: usize, column: usize) -> Option<usize> {
-    let mut start = 0;
-    for _ in 1..line {
-        start += src.get(start..)?.iter().position(|b| *b == b'\n')? + 1;
-    }
-    Some((start + column).min(src.len()))
-}
-
-/// Starts of `null` tokens in value position (after `:`, `[` or `,`) before `end`, nearest first.
-fn value_nulls_before(src: &[u8], end: usize) -> impl Iterator<Item = usize> + '_ {
-    let end = end.min(src.len());
-    (0..end.saturating_sub(3)).rev().filter(move |&i| {
-        src.get(i..i + 4) == Some(b"null")
-            && src[..i].iter().rev().find(|b| !b.is_ascii_whitespace()).is_some_and(|b| matches!(b, b':' | b'[' | b','))
-            && src.get(i + 4).is_none_or(|b| !b.is_ascii_alphanumeric())
-    })
 }
 
 /// Largest coordinate or size kept, in points (about 350 m; PowerPoint's own limit is far smaller).
