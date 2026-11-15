@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-09 · **Change:** trivial (ordered discrete wheel navigation and immediate media cues, #1724; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-15 · **Change:** trivial (ordered discrete wheel navigation and immediate media cues; tilt and Shift+wheel notches; bounded steps per wheel event, #1724; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -155,6 +155,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-15 | Slide show: tilt-wheel and Shift+wheel notches turn the page; one wheel event takes at most a full pass through the show, so a huge delta can't spin a frame (#1724 review) |
 | 2026-11-10 | Slide-show swipe navigation ignores discrete wheel smoothing tails, including after a stalled frame, while subsequent real Point swipes keep their threshold and cooldown (#1724 review) |
 | 2026-11-09 | Slide-show discrete wheel notches retain event order and apply each action before changing slides again; pixel-only wheels still require upstream source metadata to distinguish trackpads safely (#1724 review) |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
@@ -345,6 +346,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | trivial | Slide-show tilt and Shift+wheel notches, and bounded wheel steps; parity scores unchanged |
 | 2026-11-10 | trivial | Slide-show discrete wheel smoothing tails no longer trigger an extra swipe; pixel-only wheel source metadata remains unresolved; parity scores unchanged |
 | 2026-11-09 | trivial | Discrete wheel event ordering and media cues corrected; Point input retains trackpad handling; scores unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |

@@ -30,7 +30,7 @@ pub use ime::ime_area;
 use ime::ime_output;
 #[cfg(test)]
 use input::resize_cursor;
-pub(crate) use input::{page_flick, trackpad_scroll, trackpad_twist};
+pub(crate) use input::{page_flick, trackpad_scroll, trackpad_twist, whole_notches};
 use input::{pointer, wheel_slide_target};
 use media::{gif_buttons, media_bar, media_frames};
 use overlays::overlays;

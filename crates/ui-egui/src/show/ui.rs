@@ -300,7 +300,9 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
 }
 
 /// Visit whole discrete wheel steps in event order, retaining fractions in `carry`.
-/// Returns whether a discrete wheel event was handled; `visit` can stop the batch.
+/// Returns whether a discrete wheel event was handled; `visit` can stop the batch. The wheel's
+/// main axis counts: a tilt wheel or Shift+wheel (sent sideways) turns the page as a vertical
+/// wheel does, as the gesture path did before; Ctrl/Cmd+wheel is left to zoom.
 fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32, mut visit: impl FnMut(i32) -> bool) -> bool {
     let mut has_wheel = false;
     for event in events {
@@ -308,27 +310,32 @@ fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32, mut visit: impl Fn
             && matches!(unit, egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page)
             && !modifiers.ctrl
             && !modifiers.command
-            && !modifiers.shift
-            && delta.y.is_finite()
-            && delta.y.abs() > 0.0
-            && delta.y.abs() >= delta.x.abs()
         {
-            has_wheel = true;
-            if *carry * delta.y < 0.0 {
-                *carry = 0.0;
+            let along = if delta.x.abs() > delta.y.abs() { delta.x } else { delta.y };
+            if !along.is_finite() || along == 0.0 {
+                continue;
             }
-            *carry += delta.y;
-            let whole = (carry.abs() + 1e-4).floor();
-            if whole >= 1.0 {
-                *carry -= whole.copysign(*carry);
-                let steps = if delta.y < 0.0 { whole as i32 } else { -(whole as i32) };
-                if !visit(steps) {
-                    break;
-                }
+            has_wheel = true;
+            // Saturates for a hostile delta; the caller bounds how many steps it takes.
+            let whole = crate::canvas::whole_notches(carry, along) as i32;
+            if whole >= 1 && !visit(if along < 0.0 { whole } else { -whole }) {
+                break;
             }
         }
     }
     has_wheel
+}
+
+/// The most steps one wheel batch takes: enough to go through every place in the show (each
+/// slide and each of its animation steps, which can take two actions: play, then finish) and the
+/// end screen. Past that a show has ended or, looping, gone all the way round, so a hostile delta
+/// (`i32::MAX` lines) can't keep one frame turning pages.
+fn wheel_step_limit(doc: &Presentation, steps: u32) -> u32 {
+    if steps as usize <= doc.slides.len() {
+        return steps; // below the limit whatever the slides hold
+    }
+    let places = (0..doc.slides.len()).fold(1usize, |n, i| n.saturating_add(2).saturating_add(ShowState::steps(doc, i).saturating_mul(2)));
+    steps.min(u32::try_from(places).unwrap_or(u32::MAX))
 }
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
@@ -350,7 +357,7 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
         let has_wheel = ctx.input(|i| {
             mouse_wheel_steps(&i.events, &mut carry, |steps| {
                 show.last_swipe = now;
-                for _ in 0..steps.unsigned_abs() {
+                for _ in 0..wheel_step_limit(doc, steps.unsigned_abs()) {
                     let action = if steps > 0 {
                         if show.ended {
                             out.keep = false;
@@ -361,6 +368,10 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
                         show.ended = false;
                         show.state.prev(doc)
                     };
+                    // Back on the first slide: nothing more to do for this batch.
+                    if action == ShowAction::None {
+                        break;
+                    }
                     // Apply before the next notch can change the slide used by media cues.
                     if !show.apply(action, doc, now) {
                         out.keep = false;
@@ -943,10 +954,13 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
 mod wheel_tests {
     use super::*;
 
+    /// A vertical wheel event of `y` in `unit`s with `modifiers`.
     fn wheel_event(unit: egui::MouseWheelUnit, y: f32, modifiers: egui::Modifiers) -> egui::Event {
         egui::Event::MouseWheel { unit, delta: vec2(0.0, y), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Unknown, modifiers }
     }
 
+    /// Runs one show frame's wheel and swipe handling on `events` at `now`, applying the actions
+    /// as the show does; returns whether the show keeps running.
     fn wheel_frame(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, events: Vec<egui::Event>) -> bool {
         let input = egui::RawInput { time: Some(now), events, ..Default::default() };
         let mut out = Out { keep: true, actions: vec![] };
@@ -963,6 +977,7 @@ mod wheel_tests {
         out.keep
     }
 
+    /// One frame of plain vertical Line notches, one event per delta.
     fn wheel(show: &mut Show, doc: &std::sync::Arc<Presentation>, deltas: &[f32]) -> bool {
         let events = deltas.iter().map(|&y| wheel_event(egui::MouseWheelUnit::Line, y, egui::Modifiers::NONE)).collect();
         wheel_frame(&egui::Context::default(), show, doc, 1.0, events)
@@ -1053,5 +1068,52 @@ mod wheel_tests {
             assert_eq!(show.state.slide, 1, "drawing ignores Point swipes");
             assert!(!show.ended, "drawing cannot enter the end screen");
         }
+    }
+
+    /// #1733 review: a tilt wheel (sideways Line notches) and Shift+wheel turn the page, as they
+    /// did through the gesture path before discrete notches got their own.
+    #[test]
+    fn tilt_and_shift_wheel_notches_turn_the_page() {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..3 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        let doc = session.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, false);
+        let ctx = egui::Context::default();
+        let tilt = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(-1.0, 0.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        };
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.0, vec![tilt]));
+        assert_eq!(show.state.slide, 1, "a tilt notch is a step");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.1, vec![wheel_event(egui::MouseWheelUnit::Line, -1.0, egui::Modifiers::SHIFT)]));
+        assert_eq!(show.state.slide, 2, "Shift+wheel is a step");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.2, vec![wheel_event(egui::MouseWheelUnit::Line, 1.0, egui::Modifiers::SHIFT)]));
+        assert_eq!(show.state.slide, 1, "Shift+wheel back");
+    }
+
+    /// #1733 review: one wheel event claiming billions of lines takes a bounded number of steps:
+    /// rewinding on the first slide stops at once, and a looping show goes round at most once,
+    /// instead of spinning `i32::MAX` times in one frame.
+    #[test]
+    fn a_huge_wheel_delta_takes_a_bounded_number_of_steps() {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut session = deckcraft_engine::Session::with_new();
+            session.execute("slide.new", &json!({})).unwrap();
+            let mut doc = session.active().unwrap().doc.clone();
+            let mut show = Show::new(&doc, 0, false, false);
+            assert!(wheel(&mut show, &doc, &[1.0e12]));
+            assert_eq!(show.state.slide, 0, "back from the first slide stays there");
+            std::sync::Arc::make_mut(&mut doc).show.loop_until_esc = true;
+            let mut show = Show::new(&doc, 0, false, false);
+            assert!(wheel(&mut show, &doc, &[-1.0e12]), "a looping show keeps running");
+            let _ = done.send(());
+        });
+        assert!(finished.recv_timeout(std::time::Duration::from_secs(30)).is_ok(), "the wheel steps never finished");
     }
 }

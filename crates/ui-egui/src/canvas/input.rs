@@ -64,14 +64,7 @@ pub(super) fn wheel_slide_target(events: &[egui::Event], current: usize, slides:
             && delta.y.abs() > 0.0
             && delta.y.abs() >= delta.x.abs()
         {
-            if *carry * delta.y < 0.0 {
-                *carry = 0.0;
-            }
-            *carry += delta.y;
-            // The small slack keeps sums such as 10 × 0.1 from falling just short of a line.
-            let whole = (carry.abs() + 1e-4).floor();
-            *carry -= whole.copysign(*carry);
-            let steps = whole.min(slides as f32) as usize;
+            let steps = whole_notches(carry, delta.y).min(slides as f32) as usize;
             target = if delta.y < 0.0 { target.saturating_add(steps).min(last) } else { target.saturating_sub(steps) };
             handled = true;
         }
@@ -79,6 +72,22 @@ pub(super) fn wheel_slide_target(events: &[egui::Event], current: usize, slides:
     handled.then_some(target)
 }
 
+/// Adds a discrete wheel `delta` (lines or pages) to `carry` and takes out the whole notches it
+/// now holds, returned as a count (≥ 0); a change of direction drops what was left over. Shared
+/// by the normal view and the slide show (#1724) so both count high-resolution notches alike.
+pub(crate) fn whole_notches(carry: &mut f32, delta: f32) -> f32 {
+    if *carry * delta < 0.0 {
+        *carry = 0.0;
+    }
+    *carry += delta;
+    // The small slack keeps sums such as 10 × 0.1 from falling just short of a line.
+    let whole = (carry.abs() + 1e-4).floor();
+    *carry -= whole.copysign(*carry);
+    whole
+}
+
+/// The raw trackpad (pixel, `Point`) scroll in `events`, summed; Ctrl/Cmd+scroll (zoom) and
+/// discrete Line/Page wheel events are left out, so a wheel's smoothing tail can't flick a page.
 pub(crate) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
     events.iter().fold(egui::Vec2::ZERO, |sum, event| match event {
         egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, modifiers, .. } if !modifiers.ctrl && !modifiers.command => sum + *delta,
