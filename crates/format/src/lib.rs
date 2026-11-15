@@ -10,6 +10,8 @@ pub mod rtf;
 
 #[cfg(test)]
 mod chart_parts_tests;
+#[cfg(test)]
+mod golden_tests;
 
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
@@ -71,6 +73,11 @@ struct Manifest {
 
 /// Serialize a presentation.
 pub fn save(p: &Presentation) -> Result<Vec<u8>> {
+    save_as(p, &format!("DeckCraft {}", env!("CARGO_PKG_VERSION")))
+}
+
+/// [`save`] naming `generator` in the manifest.
+fn save_as(p: &Presentation, generator: &str) -> Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     {
         let mut z = zip::ZipWriter::new(&mut buf);
@@ -81,8 +88,7 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
         z.write_all(MIMETYPE.as_bytes()).map_err(|e| FormatError::Write(e.to_string()))?;
         let mut presentation = p.clone();
         let parts = chart_parts::separate(&mut presentation)?;
-        let m =
-            Manifest { format: "deckcraft".into(), version: VERSION, generator: format!("DeckCraft {}", env!("CARGO_PKG_VERSION")), presentation };
+        let m = Manifest { format: "deckcraft".into(), version: VERSION, generator: generator.to_string(), presentation };
         let json = serde_json::to_vec(&finite::Finite(&m)).map_err(|e| FormatError::Write(e.to_string()))?;
         z.start_file("presentation.json", deflate).map_err(w)?;
         z.write_all(&json).map_err(|e| FormatError::Write(e.to_string()))?;
