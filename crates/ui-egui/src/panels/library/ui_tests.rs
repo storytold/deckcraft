@@ -177,3 +177,31 @@ fn a_very_large_library_shows_its_first_300_files_and_says_so() {
     assert!(h.query_by_label_contains("Showing the first 300 of 301 files").is_some());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn insert_element_puts_one_named_shape_on_the_slide() {
+    let dir = folder("element");
+    let mut d = Session::with_new();
+    d.execute("slide.new", &json!({"layout": "titleOnly", "title": "Kit"})).unwrap();
+    let star = d.execute("shape.insert", &json!({"preset": "star5", "rect": [100, 120, 200, 150]})).unwrap()["id"].as_u64().unwrap();
+    d.execute("shape.rename", &json!({"id": star, "name": "Gold star"})).unwrap();
+    let boxed = d.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 120, 200, 150]})).unwrap()["id"].as_u64().unwrap();
+    d.execute("shape.rename", &json!({"id": boxed, "name": "Plain box"})).unwrap();
+    d.execute("slide.delete", &json!({"index": 0})).unwrap();
+    std::fs::write(dir.join("kit.pptx"), deckcraft_engine::cmd::file::save_bytes(&d.doc().unwrap().doc, "pptx").unwrap()).unwrap();
+    let mut h = open_on(&dir);
+    h.state_mut().run("slide.new", json!({"layout": "blank"})).unwrap();
+    h.run_steps(2);
+    let undo = h.state().session.active().unwrap().history.undo.len();
+    let at = h.get_by_label("Slide 1: Kit").rect().center();
+    right_click(&mut h, at);
+    h.get_by_label("Insert element").click();
+    h.run_steps(2);
+    h.get_by_label("Gold star").click();
+    h.run_steps(3);
+    let st = h.state().session.active().unwrap();
+    let names: Vec<&str> = st.current_slide().unwrap().shapes.iter().map(|x| x.name.as_str()).collect();
+    assert_eq!(names, ["Gold star"]);
+    assert_eq!(st.history.undo.len(), undo + 1, "one undo step");
+    let _ = std::fs::remove_dir_all(dir);
+}

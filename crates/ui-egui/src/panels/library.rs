@@ -48,6 +48,9 @@ const MAX_TEXTURES: usize = 256;
 const SEARCH_DELAY: f64 = 0.25;
 /// Files drawn at once; past this the pane asks to choose a folder or search.
 const MAX_SHOWN_FILES: usize = 300;
+/// Elements listed in a slide's Insert Element menu, and slides whose lists are kept.
+const MAX_MENU_ELEMENTS: usize = 40;
+const MAX_ELEMENT_LISTS: usize = 64;
 /// What the pane says in the browser build.
 pub const NOT_IN_BROWSER: &str = "The Library shows the slides in folders of presentations on this computer, which the browser version can't read. Use the desktop app to browse a Library.";
 
@@ -106,6 +109,8 @@ pub struct State {
     typed_at: f64,
     thumbs: HashMap<ThumbKey, Thumb>,
     thumb_order: VecDeque<ThumbKey>,
+    /// A slide's top-level shape names and how many shapes carry each, for Insert Element.
+    elements: HashMap<(String, usize), Vec<(String, usize)>>,
 }
 
 impl State {
@@ -116,6 +121,7 @@ impl State {
         self.searched.clear();
         self.thumbs.clear();
         self.thumb_order.clear();
+        self.elements.clear();
     }
 
     /// Every file has been read.
@@ -509,7 +515,49 @@ fn cell(app: &mut SlideApp, ui: &mut Ui, file: &str, s: &SlideRow, w: f32, px: u
             let _ = app.run("library.insert", json!({"file": file, "slide": s.index, "as": "shapes"}));
             ui.close();
         }
+        let names = element_names(app, file, s.index);
+        ui.add_enabled_ui(on_slide && !names.is_empty(), |ui| {
+            ui.menu_button("Insert element", |ui| {
+                for (name, count) in names.iter().take(MAX_MENU_ELEMENTS) {
+                    let label = if *count > 1 { format!("{name} (×{count})") } else { name.clone() };
+                    if ui.button(label).on_hover_text("Put this element on the current slide where it is on this one").clicked() {
+                        let _ = app.run("library.insert", json!({"file": file, "slide": s.index, "names": [name]}));
+                        ui.close();
+                    }
+                }
+                if names.len() > MAX_MENU_ELEMENTS {
+                    ui.label(dim(&Tokens::get(ui.ctx()), format!("and {} more", names.len() - MAX_MENU_ELEMENTS)));
+                }
+            });
+        });
     });
+}
+
+/// The names of slide `index`'s top-level shapes that Insert Element offers (not empty
+/// placeholders), each with how many shapes carry it; asked for once per slide.
+fn element_names(app: &mut SlideApp, file: &str, index: usize) -> Vec<(String, usize)> {
+    let key = (file.to_string(), index);
+    if let Some(names) = app.library.elements.get(&key) {
+        return names.clone();
+    }
+    let mut names: Vec<(String, usize)> = vec![];
+    if let Ok(v) = app.session.execute("library.shapes", &json!({"file": file, "slide": index})) {
+        for sh in v["shapes"].as_array().into_iter().flatten() {
+            let name = sh["name"].as_str().unwrap_or_default().trim();
+            if name.is_empty() || sh.get("parent").is_some() || sh["empty"].as_bool() == Some(true) {
+                continue;
+            }
+            match names.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                Some((_, c)) => *c += 1,
+                None => names.push((name.to_string(), 1)),
+            }
+        }
+    }
+    if app.library.elements.len() >= MAX_ELEMENT_LISTS {
+        app.library.elements.clear();
+    }
+    app.library.elements.insert(key, names.clone());
+    names
 }
 
 /// Draw a thumbnail through `library.thumbnail` into a texture; one that can't be drawn is
