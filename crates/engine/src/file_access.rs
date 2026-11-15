@@ -173,7 +173,7 @@ pub fn current() -> Option<Arc<AutomationRoots>> {
 }
 
 /// `path` without Windows' `\\?\` prefix (which `canonicalize` adds), for people to read.
-fn plain(path: PathBuf) -> PathBuf {
+pub(crate) fn plain(path: PathBuf) -> PathBuf {
     if !cfg!(windows) {
         return path;
     }
@@ -190,6 +190,11 @@ fn plain(path: PathBuf) -> PathBuf {
 /// May `path` be read here? Always, without roots in force.
 pub fn check_read(path: &str) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check(path, Access::Read))
+}
+
+/// May `path` be read here? Always, without roots in force. For a path that may not be UTF-8.
+pub fn check_read_path(path: &Path) -> Result<(), String> {
+    current().map_or(Ok(()), |r| r.check_path(path, Access::Read))
 }
 
 /// May `path` be written here? Always, without roots in force.

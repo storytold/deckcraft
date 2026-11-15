@@ -187,7 +187,7 @@ fn reuse_list(_s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Point every media id under `x` at its copy in the destination (`map`: source → destination).
-fn remap(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_ {
+pub(crate) fn remap(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_ {
     move |id: &mut MediaId| {
         if let Some(to) = map.get(id) {
             *id = *to;
@@ -272,7 +272,7 @@ fn relink_shapes(shapes: &mut [deckcraft_model::Shape], map: &HashMap<SlideId, S
 }
 
 /// Fresh shape ids for `shapes`, and the old → new map.
-fn renumber(cmd: &str, doc: &mut Presentation, shapes: &mut [deckcraft_model::Shape]) -> Result<HashMap<ShapeId, ShapeId>> {
+pub(crate) fn renumber(cmd: &str, doc: &mut Presentation, shapes: &mut [deckcraft_model::Shape]) -> Result<HashMap<ShapeId, ShapeId>> {
     let old = shape_ids(shapes);
     super::edit::reid(cmd, doc, shapes)?;
     let map: HashMap<ShapeId, ShapeId> = old.into_iter().zip(shape_ids(shapes)).collect();
@@ -291,7 +291,7 @@ fn matching_layout(doc: &Presentation, name: &str, kind: deckcraft_model::Layout
         .unwrap_or_default()
 }
 
-fn collect_table_styles(shapes: &[deckcraft_model::Shape], styles: &mut Vec<String>, seen: &mut HashSet<String>, depth: usize) {
+pub(crate) fn collect_table_styles(shapes: &[deckcraft_model::Shape], styles: &mut Vec<String>, seen: &mut HashSet<String>, depth: usize) {
     if depth > 64 {
         return;
     }
@@ -305,7 +305,7 @@ fn collect_table_styles(shapes: &[deckcraft_model::Shape], styles: &mut Vec<Stri
     }
 }
 
-fn remap_table_styles(shapes: &mut [deckcraft_model::Shape], styles: &HashMap<String, String>, depth: usize) {
+pub(crate) fn remap_table_styles(shapes: &mut [deckcraft_model::Shape], styles: &HashMap<String, String>, depth: usize) {
     if depth > 64 {
         return;
     }
@@ -327,7 +327,7 @@ fn same_table_style(a: &TableStyleDef, b: &TableStyleDef) -> bool {
 
 /// Copy only definitions used on selected slides. Conflicting GUIDs receive a fresh GUID so
 /// existing destination tables continue to resolve to their original definitions.
-fn import_table_styles(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[String]) -> Result<HashMap<String, String>> {
+pub(crate) fn import_table_styles(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[String]) -> Result<HashMap<String, String>> {
     let mut map = HashMap::new();
     let mut source_defs = HashMap::new();
     let mut source_ids = HashSet::new();
@@ -399,17 +399,32 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let keep = bool_or(p, "keepFormatting", false);
     let at = usize_param(p, "at");
+    reuse_slides(s, "slide.reuse", &name, &src, &picked, keep, at)
+}
+
+/// Insert slides `picked` of `src` (named `name`) after the current slide, or at `at`: the work of
+/// `slide.reuse`, also done by `library.insert` (`cmd` names the command in errors). With `keep`
+/// the source masters come along; otherwise each slide moves to the matching destination layout.
+pub(crate) fn reuse_slides(
+    s: &mut Session,
+    cmd: &str,
+    name: &str,
+    src: &Presentation,
+    picked: &[usize],
+    keep: bool,
+    at: Option<usize>,
+) -> Result<Value> {
     let source_size = src.slide_size;
     s.edit(|doc, sel| {
         let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
         let mut used_table_styles = Vec::new();
         let mut seen_table_styles = HashSet::new();
-        for &i in &picked {
+        for &i in picked {
             if let Some(slide) = src.slides.get(i) {
                 collect_table_styles(&slide.shapes, &mut used_table_styles, &mut seen_table_styles, 0);
             }
         }
-        let table_style_map = import_table_styles("slide.reuse", doc, &src, &used_table_styles)?;
+        let table_style_map = import_table_styles(cmd, doc, src, &used_table_styles)?;
         let scale = |source: f64, destination: f64| {
             let ratio = destination / source;
             if source > 0.0 && destination > 0.0 && ratio.is_finite() && ratio > 0.0 { ratio } else { 1.0 }
@@ -422,13 +437,13 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         let mut layout_map: HashMap<LayoutId, LayoutId> = HashMap::new();
         if keep {
             let mut masters_done: Vec<MasterId> = vec![];
-            for &i in &picked {
+            for &i in picked {
                 let Some((m, _)) = src.slides.get(i).and_then(|sl| src.master_for(sl)) else { continue };
                 if masters_done.contains(&m.id) {
                     continue;
                 }
                 masters_done.push(m.id);
-                let mut m = import_master("slide.reuse", doc, &src, m, &mut media_map, &mut layout_map)?;
+                let mut m = import_master(cmd, doc, src, m, &mut media_map, &mut layout_map)?;
                 scale_master(&mut m, sx, sy);
                 doc.masters.push(Arc::new(m));
             }
@@ -436,15 +451,15 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         let mut copies: Vec<Slide> = vec![];
         // Source slide → its copy, so links between reused slides follow (forward ones too).
         let mut slide_map: HashMap<SlideId, SlideId> = HashMap::new();
-        for &i in &picked {
+        for &i in picked {
             let Some(from) = src.slides.get(i) else { continue };
-            copy_media("slide.reuse", doc, &src, &media_refs::slide_media(from), &mut media_map)?;
+            copy_media(cmd, doc, src, &media_refs::slide_media(from), &mut media_map)?;
             let mut sl: Slide = from.as_ref().clone();
             remap_table_styles(&mut sl.shapes, &table_style_map, 0);
             scale_shapes(&mut sl.shapes, sx, sy, 0);
             media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map));
-            sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
-            let map = renumber("slide.reuse", doc, &mut sl.shapes)?;
+            sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+            let map = renumber(cmd, doc, &mut sl.shapes)?;
             for a in &mut sl.animations {
                 a.shape = map.get(&a.shape).copied().unwrap_or(a.shape);
                 a.trigger = a.trigger.map(|t| map.get(&t).copied().unwrap_or(t));
@@ -503,7 +518,7 @@ pub(crate) fn import_master(
 
 /// Copy the source media `used` into `doc` under fresh ids, once each (identical bytes already in
 /// `doc` are shared; a linked item keeps its link).
-fn copy_media(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[MediaId], map: &mut HashMap<MediaId, MediaId>) -> Result<()> {
+pub(crate) fn copy_media(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[MediaId], map: &mut HashMap<MediaId, MediaId>) -> Result<()> {
     for &id in used {
         if map.contains_key(&id) {
             continue;
