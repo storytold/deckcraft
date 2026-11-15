@@ -179,7 +179,7 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 break;
             }
             let adv = if c == '\t' {
-                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i))
+                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i), avail)
             } else {
                 p.cells.get(i).map(|c| c.adv).unwrap_or(0.0)
             };
@@ -305,11 +305,15 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// Advance of a tab at `x` (from the start edge) to the next stop, placing the text after it
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
-pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
+///
+/// `avail` is the line's width from the start edge: a stop set past the right edge acts as one at
+/// the edge, as PowerPoint treats it (a right-aligned stop there ends the text at the margin).
+pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), avail: f64) -> f64 {
     // `stops` is in position order (`tabs_of`): the next stop is the first past x.
     // A NaN `x` (a NaN spacing upstream) skips the lookup and takes the finite default-stop path.
     if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)).filter(|_| !x.is_nan()) {
-        let to = s.pos - x;
+        let pos = if avail.is_finite() && avail > 0.0 { s.pos.min(avail) } else { s.pos };
+        let to = (pos - x).max(0.0);
         return match s.align {
             TabAlign::Left => to,
             TabAlign::Right => (to - seg.0).max(0.0),
@@ -329,7 +333,16 @@ mod tab_tests {
     #[test]
     fn a_nan_position_takes_the_finite_default_stop() {
         let stops = [Tab { pos: 100.0, align: TabAlign::Left }];
-        assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0)).is_finite());
-        assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0)), 90.0);
+        assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0), 600.0).is_finite());
+        assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0), 600.0), 90.0);
+    }
+
+    #[test]
+    fn a_stop_past_the_line_ends_at_its_edge() {
+        let stops = [Tab { pos: 700.0, align: TabAlign::Right }];
+        // Right-aligned text after the tab ends at the line's right edge, not 700.
+        assert_eq!(tab_advance(0.0, &stops, 72.0, (100.0, 100.0), 600.0), 500.0);
+        // A stop inside the line keeps its own position.
+        assert_eq!(tab_advance(0.0, &stops, 72.0, (100.0, 100.0), 800.0), 600.0);
     }
 }

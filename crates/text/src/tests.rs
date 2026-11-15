@@ -1417,6 +1417,17 @@ fn tab_stops_align_the_text_after_them() {
 }
 
 #[test]
+fn a_right_tab_stop_past_the_margin_ends_the_text_at_the_margin() {
+    // #1663: a layout may set a right tab stop a little past the text area's right edge.
+    // PowerPoint treats it as one at the margin: the text after it stays on one line and ends
+    // at the right edge. DeckCraft started it too far right and wrapped the rest.
+    let l = tabbed("x\tCorrie Ten Boom", &[(700.0, "r")], 600.0);
+    assert_eq!(l.lines.len(), 1, "{:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
+    let right = l.inner.x0 + l.inner.width();
+    assert!((l.lines[0].extent.1 - right).abs() < 0.01, "ends at {:?}, margin {right}", l.lines[0].extent);
+}
+
+#[test]
 fn many_tabs_over_many_stops_lay_out_by_position() {
     // 20,000 stops given out of order, and 2,000 tabs: each tab finds the next stop by position.
     let mut stops: Vec<(f64, &str)> = (1..=20_000).rev().map(|k| (k as f64 * 0.05 + 30.0, "l")).collect();
