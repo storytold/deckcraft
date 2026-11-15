@@ -357,6 +357,14 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
         let has_wheel = ctx.input(|i| {
             mouse_wheel_steps(&i.events, &mut carry, |steps| {
                 show.last_swipe = now;
+                // A click in this frame changed the show and queued its action: apply it before a
+                // notch moves on, so its media cues and clock use the slide it was made on.
+                for a in out.actions.drain(..) {
+                    if !show.apply(a, doc, now) {
+                        out.keep = false;
+                        return false;
+                    }
+                }
                 for _ in 0..wheel_step_limit(doc, steps.unsigned_abs()) {
                     let action = if steps > 0 {
                         if show.ended {
@@ -962,8 +970,20 @@ mod wheel_tests {
     /// Runs one show frame's wheel and swipe handling on `events` at `now`, applying the actions
     /// as the show does; returns whether the show keeps running.
     fn wheel_frame(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, events: Vec<egui::Event>) -> bool {
+        wheel_frame_after(ctx, show, doc, now, vec![], events)
+    }
+
+    /// [`wheel_frame`] with `queued`, the actions earlier input (a click) left for this frame.
+    fn wheel_frame_after(
+        ctx: &egui::Context,
+        show: &mut Show,
+        doc: &std::sync::Arc<Presentation>,
+        now: f64,
+        queued: Vec<ShowAction>,
+        events: Vec<egui::Event>,
+    ) -> bool {
         let input = egui::RawInput { time: Some(now), events, ..Default::default() };
-        let mut out = Out { keep: true, actions: vec![] };
+        let mut out = Out { keep: true, actions: queued };
         ctx.run_ui(input, |ui| {
             let full = ui.max_rect();
             let f = Fr { ctx: ui.ctx(), doc, doc_uid: 0, now, full, srect: full, clicked: false, secondary: false, pointer: Some(full.center()) };
@@ -1018,6 +1038,34 @@ mod wheel_tests {
         assert!(wheel(&mut show, &doc, &[-2.0]));
         assert_eq!(show.state.slide, 1);
         assert_eq!(show.media_cues, [(id, "play".to_string())], "the interrupted step cues the original slide's media");
+    }
+
+    /// A click and a wheel notch in one frame: the click's queued `FinishStep` is applied before
+    /// the notch enters the next slide, so the interrupted step still cues its own slide's media.
+    #[test]
+    fn a_click_queued_in_the_same_frame_applies_before_the_wheel() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let mut doc = session.active().unwrap().doc.clone();
+        let id = doc.slides[0].shapes[0].id;
+        std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut doc).slides[0]).animations = vec![deckcraft_model::Animation {
+            shape: id,
+            class: deckcraft_model::AnimClass::Media,
+            effect: "play".into(),
+            delay_ms: 2000,
+            duration_ms: 5000,
+            ..Default::default()
+        }];
+        let mut show = Show::new(&doc, 0, false, false);
+        let play = show.state.next(&doc);
+        assert!(show.apply(play, &doc, 0.0));
+        // The click finishes the playing step (its state change happens now, its action is queued).
+        let click = show.state.next(&doc);
+        assert!(matches!(click, ShowAction::FinishStep(0)), "{click:?}");
+        let notch = wheel_event(egui::MouseWheelUnit::Line, -1.0, egui::Modifiers::NONE);
+        assert!(wheel_frame_after(&egui::Context::default(), &mut show, &doc, 1.0, vec![click], vec![notch]));
+        assert_eq!(show.state.slide, 1);
+        assert_eq!(show.media_cues, [(id, "play".to_string())], "the clicked step cues its own slide's media");
     }
 
     #[test]
