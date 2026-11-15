@@ -311,6 +311,15 @@ fn draw_insert_to_design(p: &Pen<'_>, icon: Icon) -> bool {
             p.rect((6.5, 7.5, 17.5, 16.5), 1.0, t(B), B);
             p.seg((6.5, 10.0), (17.5, 10.0), B);
         }
+        I::Library => {
+            // Three books on a shelf, the last one leaning.
+            p.seg((2.0, 21.5), (22.0, 21.5), K);
+            p.rect((3.5, 5.0, 7.5, 21.0), 0.6, t(B), B);
+            p.seg((3.5, 8.5), (7.5, 8.5), B);
+            p.rect((8.5, 3.0, 12.5, 21.0), 0.6, t(O), O);
+            p.seg((8.5, 6.5), (12.5, 6.5), O);
+            p.poly(&[(13.5, 20.2), (17.2, 21.2), (21.0, 7.4), (17.3, 6.4)], t(G), G);
+        }
         I::Icons => {
             p.person(6.75, 2.5, 0.75, B);
             p.star((17.0, 7.0), 5.0, Y, N);

@@ -125,6 +125,7 @@ icons! {
     Picture => "picture",
     Screenshot => "screenshot",
     Icons => "icons",
+    Library => "library",
     Models3d => "models-3d",
     SmartArt => "smart-art",
     Chart => "chart",

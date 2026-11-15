@@ -115,6 +115,10 @@ fn services(native_wayland: bool) -> Services {
     let pasteboard = !native_wayland;
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
+            // Insert ▸ Library ▸ Add Folder… picks a folder, not a file.
+            if purpose == "folder" {
+                return rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().to_string());
+            }
             let d = rfd::FileDialog::new();
             let d = match purpose {
                 "picture" => d.add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]),

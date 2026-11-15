@@ -40,6 +40,14 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         }
     });
     group(ui, |ui| {
+        let open = app.ui.pane.as_deref() == Some("library");
+        let r = big_button_ex(ui, Icon::Library, "Library", true, false, open).0;
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Library"));
+        if r.on_hover_text("Slides and elements from your folders of presentations").clicked() {
+            run(app, "view.pane", json!({"pane": "library", "toggle": true}));
+        }
+    });
+    group(ui, |ui| {
         let r = big_button(ui, Icon::Table, "Table", enabled(app, "insert.table"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some((rr, cc)) = table_grid_picker(ui) {

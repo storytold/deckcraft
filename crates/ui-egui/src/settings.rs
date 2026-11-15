@@ -141,6 +141,26 @@ mod tests {
         save(&d.join("blocked"), &ui, &prefs);
     }
 
+    /// The Library's folders are kept in `prefs.json`: a fresh session that loads it browses them
+    /// again, and a hand-edited list is brought back within bounds.
+    #[test]
+    fn library_folders_are_saved_with_the_preferences() {
+        let d = dir("library");
+        let lib = d.join("decks");
+        std::fs::create_dir_all(&lib).unwrap();
+        let mut s = deckcraft_engine::Session::with_new();
+        s.execute("library.addFolder", &serde_json::json!({"path": lib.to_string_lossy()})).unwrap();
+        save(&d, &UiState::default(), &s.prefs);
+        let mut fresh = deckcraft_engine::Session::with_new();
+        fresh.prefs = load(&d).1.unwrap();
+        let listed = fresh.execute("library.folders", &serde_json::json!({})).unwrap();
+        assert_eq!(listed.as_array().map(Vec::len), Some(1), "{listed}");
+        assert!(listed[0].get("error").is_none(), "{listed}");
+        let many: Vec<String> = (0..500).map(|i| format!("/library/{i}")).collect();
+        std::fs::write(d.join(PREFS_FILE), serde_json::json!({"libraryFolders": many}).to_string()).unwrap();
+        assert_eq!(load(&d).1.unwrap().library_folders.len(), deckcraft_engine::library::MAX_FOLDERS);
+    }
+
     /// The window opens with the worst `ui.json` values once they are sanitized; a zoom of
     /// 10,000 % used to panic in egui and 1e30 exhausted memory at start-up.
     #[test]
