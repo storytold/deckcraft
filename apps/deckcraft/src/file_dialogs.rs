@@ -53,6 +53,7 @@ impl Launcher {
                 let mut picked = pollster::block_on(picking);
                 // Some Linux portals can't parent the dialog (xdg-foreign on Wayland) and rfd
                 // reports that as a cancel: ask once more without a parent, as the old dialog did.
+                // Only on Linux and the BSDs, and only quicker than anyone could dismiss a dialog.
                 if picked.is_none() && failed_at_once(started.elapsed()) {
                     log::info!("the parented file dialog closed at once; showing it without a parent");
                     picked = pollster::block_on(dialog(&purpose).pick_file());
@@ -68,11 +69,16 @@ impl Launcher {
     }
 }
 
-/// A cancel this soon after the dialog was asked for is the portal failing, not the user.
-const AT_ONCE: Duration = Duration::from_millis(500);
+/// Quicker than anyone can see a dialog and dismiss it (WordCraft uses the same bound): a cancel
+/// this soon is the portal failing, not the user. A timing heuristic, as rfd folds the portal's
+/// failure into "cancelled"; a portal failing slower than this still reads as a cancel.
+const AT_ONCE: Duration = Duration::from_millis(300);
 
+/// The parented dialog failed rather than being cancelled. Only the xdg-desktop-portal (Linux and
+/// the BSDs) folds a failure into a cancel; Windows and macOS always show their dialog, so a quick
+/// cancel there is the user's and is answered as one.
 fn failed_at_once(elapsed: Duration) -> bool {
-    elapsed < AT_ONCE
+    cfg!(all(unix, not(target_os = "macos"))) && elapsed < AT_ONCE
 }
 
 /// An open dialog for `purpose`, offering its file types.
@@ -103,8 +109,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_an_immediate_cancel_retries_without_a_parent() {
-        assert!(failed_at_once(Duration::from_millis(20)));
+    fn only_an_immediate_portal_cancel_retries_without_a_parent() {
+        let portal = cfg!(all(unix, not(target_os = "macos")));
+        assert_eq!(failed_at_once(Duration::from_millis(20)), portal, "a portal that failed at once is asked again");
+        assert!(!failed_at_once(Duration::from_millis(400)), "an Escape a moment after the dialog showed is a cancel");
         assert!(!failed_at_once(Duration::from_secs(3)), "a user who cancels is not asked again");
     }
 }
