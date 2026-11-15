@@ -83,8 +83,10 @@ fn locales(dir: &std::path::Path) -> Result<Vec<Locale>, String> {
     if !dir.is_absolute() {
         return Err(format!("{} is not an absolute path", dir.display()));
     }
-    let list = std::fs::read_dir(dir).map_err(|e| format!("{} is not a craft-i18n checkout ({e})", dir.display()))?;
+    // Before reading it: a directory that doesn't exist yet (craft-i18n cloned after the first
+    // build) must make Cargo run this script again once it does, not leave the build English.
     println!("cargo::rerun-if-changed={}", dir.display());
+    let list = std::fs::read_dir(dir).map_err(|e| format!("{} is not a craft-i18n checkout ({e})", dir.display()))?;
     let mut out = Vec::new();
     for entry in list.flatten() {
         let path = entry.path();

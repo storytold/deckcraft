@@ -149,7 +149,15 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
 fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
     let mut v = d.get(key, default);
     ui.horizontal(|ui| {
-        let l = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(tl!(label)));
+        // A 120-point column so the fields line up. A longer translation widens it as far as the
+        // field leaves room for, then wraps, rather than being cut off or squeezing the field.
+        let text = tl!(label);
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let w = ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font, egui::Color32::PLACEHOLDER).size().x) + 8.0;
+        let room = ui.available_width() - 180.0 - ui.spacing().item_spacing.x;
+        let lw = w.min(room).max(120.0);
+        let layout = egui::Layout::centered_and_justified(egui::Direction::TopDown);
+        let l = ui.allocate_ui_with_layout(vec2(lw, 20.0), layout, |ui| ui.add(egui::Label::new(text).wrap())).inner;
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(180.0)).labelled_by(l.id);
     });
     d.fields.insert(key.into(), v);

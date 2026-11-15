@@ -58,7 +58,7 @@ pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
         });
         let shown = lang_label.to_string();
         opened.response.widget_info(move || {
-            let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Language");
+            let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Language"));
             info.current_text_value = Some(shown.clone());
             info
         });

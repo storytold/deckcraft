@@ -152,7 +152,11 @@ fn embedded_catalogs_parse_cleanly() {
         eprintln!("skipped: built without craft-i18n (CRAFT_I18N_DIR); the interface is English only");
         return;
     }
-    let (i18n, problems) = I18n::new(CRAFT_I18N, &LANGUAGES);
+    // Only the offered languages' catalogs are checked: a row in one DeckCraft doesn't offer yet is
+    // craft-i18n's to fix and must not fail a `craft-i18n.rev` bump here.
+    let offered: Vec<_> = CRAFT_I18N.iter().filter(|(code, ..)| LANGUAGES.contains(code)).copied().collect();
+    let offered: &'static craft_i18n::Embedded = Box::leak(offered.into_boxed_slice());
+    let (i18n, problems) = I18n::new(offered, &LANGUAGES);
     assert!(problems.is_empty(), "{problems:?}");
     let rows = i18n.check_all();
     assert!(rows.is_empty(), "{rows:#?}");
@@ -162,4 +166,37 @@ fn embedded_catalogs_parse_cleanly() {
             assert!(Lang::all().all(|l| l.code() != *code), "{code} is not in the language list");
         }
     }
+}
+
+/// Buttons that set their own accessible name (Insert › Date & Time, Design › Colors) keep the
+/// translated one, so a screen reader hears the interface language (#2142).
+#[test]
+fn ribbon_buttons_that_name_themselves_are_translated() {
+    use_fixture("de", "@id\tlanguage.name\tDeutsch\n\tDate &\\nTime\tDatum und\\nUhrzeit\n\tColors\tFarben\n");
+    let mut h = harness(SlideApp::new(Session::with_new(), Services::default()));
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.state_mut().run("view.tab", json!({"tab": "Insert"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_role_and_label(Role::Button, "Date & Time").is_none());
+    h.get_by_role_and_label(Role::Button, "Datum und Uhrzeit");
+    h.state_mut().run("view.tab", json!({"tab": "Design"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_role_and_label(Role::Button, "Colors").is_none());
+    h.get_by_role_and_label(Role::Button, "Farben");
+}
+
+/// A dialog field's label grows past its 120-point column for a longer translation, or wraps,
+/// instead of being cut off, and the field keeps its width (#2142).
+#[test]
+fn a_long_field_label_is_not_clipped() {
+    use_fixture("de", "@id\tlanguage.name\tDeutsch\n\tNew show name:\tName der neuen benutzerdefinierten Präsentation:\n");
+    let mut h = harness(SlideApp::new(Session::with_new(), Services::default()));
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.state_mut().dialog = Some(crate::dialogs::Dialog::new("customShow"));
+    h.run_steps(4);
+    let text = "Name der neuen benutzerdefinierten Präsentation:";
+    let label = h.get_by_role_and_label(Role::Label, text).rect();
+    assert!(label.width() > 125.0 || label.height() > 25.0, "the label shows its whole text, wider or on two lines: {label:?}");
+    let field = h.get_by_role_and_label(Role::TextInput, text).rect();
+    assert!(field.width() > 150.0, "the field keeps its width: {field:?}");
 }

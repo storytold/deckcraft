@@ -231,7 +231,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 }
                 if show.zoom_arm {
                     let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
-                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
+                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Zoom")));
                     if hit.clicked()
                         && let Some(p) = hit.interact_pointer_pos()
                         && cr.width() > 1.0
@@ -245,7 +245,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
                 }
                 let nr = next_rect(right, doc);
-                ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
+                ui.painter().text(right.min, Align2::LEFT_TOP, tl!("Next"), theme::font(13.0), Color32::from_gray(170));
                 match &next_tex {
                     Some(t) => {
                         ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);

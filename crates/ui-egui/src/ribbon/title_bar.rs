@@ -37,7 +37,7 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         // Dragging the empty title bar moves the window.
         let drag = ui.interact(rect, ui.scope_id().with("titledrag"), Sense::click_and_drag());
         // The drag surface is not a button: a full-width Button would be announced as one.
-        drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, "Window title bar"));
+        drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, tl!("Window title bar")));
         if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }

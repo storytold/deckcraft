@@ -700,7 +700,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     // Pen.
     let resp = ui.interact(full, ui.scope_id().with("show_pen"), if show.pen { Sense::drag() } else { Sense::hover() });
     if show.pen {
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Pen")));
     }
     if show.pen {
         if resp.drag_started() {
