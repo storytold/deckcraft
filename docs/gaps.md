@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-15 · **Change:** trivial (Library pane, first step of #958: Slides tab done, other tabs and shared use listed as open; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-15 · **Change:** trivial (Library: named elements, shared crates and CLI folders done; other tabs, other apps and craft-libs move open; previous: trivial, Library pane, first step of #958: Slides tab done, other tabs and shared use listed as open; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -283,13 +283,15 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 
 ### Library pane: the Slides tab only (#958)
 
-Insert ▸ Library browses the user's own folders of presentations and inserts slides or their
-shapes (`library.*`). Still open: the other tabs #958 asks for (shapes, icons, diagrams, charts,
-later pictures), #909's tab of objects already in the deck, sharing the pane with WordCraft and
-GridCraft (#958 is marked `shared` and `needs decision`), dragging from the pane onto a slide,
-inserting one named element rather than every shape of a slide, and original content to fill it
-(none ships). The browser build has no folders to read. Folders are saved with the preferences
-when the app quits.
+Insert ▸ Library browses the user's own folders of presentations and inserts slides, their
+shapes or one named element (`library.*`). The core and the pane are app-neutral crates
+(`craft-library`, `craft-library-egui`) for WordCraft and GridCraft to share, staged in this
+workspace until they move to craft-libs. Still open: the other tabs #958 asks for (shapes, icons,
+diagrams, charts, later pictures), #909's tab of objects already in the deck, WordCraft's and
+GridCraft's own `Kind`s and adoption, the move to craft-libs (#958 is marked `shared` and `needs
+decision`), dragging from the pane onto a slide, search over element names, and original content
+to fill it (none ships). The browser build has no folders to read. The app saves the folders with
+its preferences when it quits; `deckcraft-cli run` and `mcp` read them from there.
 
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
@@ -378,6 +380,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | trivial | Library: named elements, the shared crates and CLI/MCP folders landed; other tabs, WordCraft/GridCraft adoption and the craft-libs move remain |
 | 2026-11-15 | trivial | Library pane (#958) added with its Slides tab; the other tabs, #909 and shared use are listed as open |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |

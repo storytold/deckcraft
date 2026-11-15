@@ -73,7 +73,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Slide Master | Insert Layout, Rename, Delete, Preserve, Insert Placeholder, Title and Footers | Insert Layout, Rename, Delete, Insert Placeholder, and Preserve, Title and Footers checkboxes (`master.preserve`, `master.placeholders`). A master thumbnail selects the master |
 | Format Background pane | yes | yes: solid transparency; picture transparency, tile, offset, scale, alignment and mirror; Apply to All copies a picture. Stretch insets and rotate-with-shape are command parameters |
 | Selection Pane | front-most first, groups fold, drag to restack, Bring Forward / Send Backward arrows, Show All / Hide All, eye, padlock (Lock), rename in place | same: drag restacks among siblings (a child stays in its group), Ctrl+click toggles, Shift+click selects a run, arrows / Home / End / F2 / Esc in the list, right-click menu |
-| Library pane (Insert ▸ Library, #958) | none built in; Reuse Slides browses one file at a time | Slides tab: thumbnails of the slides in your own folders of .pptx, .potx and .deckcraft files, grouped by file; a folder drop-down with Add Folder… and Remove; search over slide titles, slide text and file names; click a slide to insert it, or right-click to put its shapes on the current slide. Other tabs (#958) and the deck's own objects (#909) are to come; the browser build has no folders to read |
+| Library pane (Insert ▸ Library, #958) | none built in; Reuse Slides browses one file at a time | Slides tab: thumbnails of the slides in your own folders of .pptx, .potx and .deckcraft files, grouped by file; a folder drop-down with Add Folder… and Remove; search over slide titles, slide text and file names; click a slide to insert it, or right-click to put its shapes, or one named element (Insert element), on the current slide. Other tabs (#958) and the deck's own objects (#909) are to come; the browser build has no folders to read |
 | Comments pane (threads) | yes | yes: every slide, with Previous and Next on the Review tab |
 | Animation Pane | list + advanced timeline | list, reorder, timing, an advanced timeline with draggable bars, play the current slide on the canvas, and Play From starts at the selected effect |
 | Design Ideas (Designer) | yes (cloud) | no |
@@ -174,7 +174,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-15 | trivial | Library pane (Insert ▸ Library, #958): Slides tab over the user's own folders of presentations; scores unchanged |
+| 2026-11-15 | trivial | Library pane (Insert ▸ Library, #958): Slides tab over the user's own folders of presentations, with Insert element; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |

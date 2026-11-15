@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-15 | Library, continued (#958): `library.insert` with `names` brings one named element (a group whole, a grouped shape out of its group where it is drawn), listed by `library.shapes` and the pane's Insert element menu; a connector whose shape stays behind comes unglued. `deckcraft-cli run` and `mcp` browse the folders the app keeps in its preferences. The core and the pane are now app-neutral crates (`craft-library`, `craft-library-egui`) for WordCraft and GridCraft, staged here for craft-libs |
 | 2026-11-15 | Library pane (Insert ▸ Library), the first step of #958: a side pane whose Slides tab shows the slides of the presentations (.pptx, .potx, .deckcraft) in folders you choose, as thumbnails grouped by file, with search over titles, text and file names. Click a slide to insert it (through Reuse Slides) or put its shapes on the current slide; either is one undo step. The `library.*` commands do the same for the CLI, MCP and the control channel, inside the automation read roots. Scans are bounded (32 folders, 5,000 entries and 8 levels per folder, 256 MB files, 2,000 slides per file), links are not followed, and an unreadable file is listed with its error. No templates ship with it |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
@@ -343,7 +344,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-15 | trivial | Progress log: Library pane (Insert ▸ Library, #958); stage and scores unchanged |
+| 2026-11-15 | trivial | Progress log: Library pane (Insert ▸ Library, #958), named elements, shared crates; stage and scores unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |

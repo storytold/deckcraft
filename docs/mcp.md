@@ -47,8 +47,10 @@ folders:
   inserted, so playing them later reads nothing from disk.
 - The Library's folders and files are read inside the read root too: `library.addFolder` refuses a
   folder outside it, `library.folders` reports such a folder with its `error`, `library.list` and
-  `library.search` skip its files, and `library.list`, `library.thumbnail` and `library.insert`
-  refuse a file outside it.
+  `library.search` skip its files, and `library.list`, `library.thumbnail`, `library.shapes` and
+  `library.insert` refuse a file outside it. The headless server starts with the Library folders
+  the desktop app keeps in its preferences (and no other preference; `DECKCRAFT_NO_PREFS` leaves
+  them out); a folder outside the read root is reported, not read.
 - Every file a command writes must lie inside the **write root**: `save_presentation`, `export`
   (every format, and every slide of an image export), `file.save`, `file.saveAs`, `file.export`,
   and `render_slide` with a `path`, plus the `.saving` temporary file a save goes through.
