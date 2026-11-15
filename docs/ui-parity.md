@@ -23,7 +23,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 | Element | PowerPoint for Mac | DeckCraft | Gap |
 |---|---|---|---|
 | Title bar: AutoSave, Home, Save, Undo/Redo, document title, Share, search | yes | yes, plus Export; no Share (cloud) | #71 macOS window controls misaligned |
-| Native macOS menu bar (File, Edit, View, Insert, Format, Arrange, Tools, Slide Show, Window, Help) | yes | **no** (`menus::menu_tree()` is defined but not installed) | 3–5 h |
+| Native macOS menu bar (File, Edit, View, Insert, Format, Arrange, Tools, Slide Show, Window, Help) | yes | yes (`apps/deckcraft/src/native_menu.rs`; entries dim while their command can't run) | — |
 | Menu-bar items with a DeckCraft equivalent | 217 app-specific items | 128 matched by name (59%, heuristic lower bound) | See [target-app-parity.md](target-app-parity.md) |
 | Ribbon tabs: Home, Insert, Draw, Design, Transitions, Animations, Slide Show, Record, Review, View | 10 | 10 | Record tab is a placeholder |
 | Colour menus: theme and standard colours, hex field, Eyedropper | yes (plus a More Colors dialog) | yes: theme and standard colours, hex field and an Eyedropper that takes the colour drawn under the pointer on the slide (#367) | More Colors dialog; Eyedropper only takes colours from the slide, not the rest of the screen |
@@ -159,7 +159,6 @@ consistency is open (#73, #56).
 
 | Work | Hours |
 |---|---|
-| Native macOS menu bar from `menu_tree()`, filled out to PowerPoint's menu items | 3–5 |
 | Format Shape pane depth | 6–10 |
 | Missing dialogs (Print, Insert Object and the rest of PowerPoint's ~60) | 4–8 |
 | Window chrome and system appearance (#41, #71) | 3–5 |
@@ -167,12 +166,13 @@ consistency is open (#73, #56).
 | Edit points UI, crop depth | 3–6 |
 | Multiple windows | 3–5 |
 | A screenshot comparison pass on the most-used tabs | 2–4 |
-| **Total** | **~26–46** |
+| **Total** | **~23–41** |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | minor | Native macOS menu bar (File, Edit, View, Insert, Format, Arrange, Tools, Slide Show, Window, Help) runs DeckCraft commands and dims entries that cannot run; estimates re-totalled (~23–41 h) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |

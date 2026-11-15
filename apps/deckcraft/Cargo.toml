@@ -39,6 +39,18 @@ cpal = "0.16"
 # GridCraft, PdfCraft and PhotoCraft) registers the handler (Objective-C interop needs unsafe, which
 # our workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
+# The native menu bar (`src/native_menu.rs`); same crate and features as GridCraft.
+muda = { version = "0.21", default-features = false }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# tests/mac_menu_appkit.rs: reads AppKit's menu bar back. Already in Cargo.lock (muda, winit).
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+
+[[test]]
+name = "mac_menu_appkit"
+harness = false

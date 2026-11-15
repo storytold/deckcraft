@@ -295,8 +295,6 @@ agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D mode
 
 Detail in [ui-parity.md](ui-parity.md).
 
-- **No native macOS menu bar.** `menus::menu_tree()` exists but nothing installs it. 3–5 h. **Beta
-  blocker.**
 - **Format Shape pane thinner than PowerPoint's** (Fill/Line/Effects/Size/Text Box pages, picture
   and texture options, 3-D). 6–10 h. **Beta blocker.**
 - **File tab depth** (#76 landed the Backstage): no online templates, cloud places, printer
