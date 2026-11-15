@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-15 · **Change:** trivial (DeckCraft v0.19.0 released; the SmartArt and WordArt display names become Diagram and Decorative Text in DeckCraft's own feature labels — commands, contextual tab labels and messages — with the neutral labels guarded by tests (the PowerPoint-matching empty-diagram placeholder prompt still reads "Click icon to add SmartArt graphic", and saved control-channel identifiers such as the tab id "SmartArt Design" keep their keys); the wasm32 build no longer refers to the native-only opening generation; the control-protocol method reference is corrected; previous: reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -288,6 +288,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | trivial | DeckCraft v0.19.0 released; the SmartArt and WordArt display names become Diagram and Decorative Text in DeckCraft's own labels (#1981; the PowerPoint-matching empty-placeholder prompt still reads "Click icon to add SmartArt graphic"); wasm32 build fix (#1954); control-protocol method reference corrected (#2132). Parity estimates unchanged, not re-measured |
 | 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |
