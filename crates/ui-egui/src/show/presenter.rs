@@ -76,8 +76,14 @@ pub(super) fn wall_clock() -> String {
 }
 
 /// The Presenter View's preview of slide `n`, `size` pixels.
-fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) -> egui::ColorImage {
-    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
+fn render_preview(
+    doc: &Presentation,
+    n: usize,
+    size: (u32, u32),
+    threads: u16,
+    followed: &[deckcraft_model::text::FollowedLink],
+) -> egui::ColorImage {
+    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, followed, ..Default::default() };
     crate::textures::to_color_image(&deckcraft_render::render_slide(doc, n, &opts), false)
 }
 
@@ -106,19 +112,21 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 Err(std::sync::mpsc::TryRecvError::Empty) => show.next_job = Some((d, k, rx)),
                 // The worker died: render this one here, as before, rather than start another.
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    show.next_tex = Some((doc.clone(), n, crate::textures::upload(ctx, "presenter-next", render_preview(doc, n, next_size, 0))));
+                    show.next_tex =
+                        Some((doc.clone(), n, crate::textures::upload(ctx, "presenter-next", render_preview(doc, n, next_size, 0, &show.followed))));
                 }
             }
         }
         if show.next_job.is_none() && show.next_tex.as_ref().is_none_or(|(d, k, _)| !is(d, *k, n)) {
             let (tx, rx) = std::sync::mpsc::channel();
             let worker_doc = doc.clone();
+            let worker_followed = show.followed.clone();
             // The web has no threads: render it here.
             let spawned = !cfg!(target_arch = "wasm32")
                 && std::thread::Builder::new()
                     .name("show-next-preview".into())
                     .spawn(move || {
-                        let _ = tx.send(render_preview(&worker_doc, n, next_size, 1));
+                        let _ = tx.send(render_preview(&worker_doc, n, next_size, 1, &worker_followed));
                     })
                     .is_ok();
             if spawned {
@@ -128,7 +136,8 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 }
                 show.next_job = Some((doc.clone(), n, rx));
             } else {
-                show.next_tex = Some((doc.clone(), n, crate::textures::upload(ctx, "presenter-next", render_preview(doc, n, next_size, 0))));
+                show.next_tex =
+                    Some((doc.clone(), n, crate::textures::upload(ctx, "presenter-next", render_preview(doc, n, next_size, 0, &show.followed))));
             }
         }
         if show.next_job.is_some() {
