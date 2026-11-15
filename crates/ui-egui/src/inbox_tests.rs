@@ -346,6 +346,7 @@ fn reuse_slides_uses_the_nonblocking_dialog() {
     let first = app.session.active().unwrap().current_slide().unwrap().id;
     app.session.execute("slide.new", &json!({})).unwrap();
     app.session.execute("slide.go", &json!({"index": 0})).unwrap();
+    let second = app.session.active().unwrap().doc.slides[1].id;
     app.run("app.reuseSlidesDialog", json!({})).unwrap();
     assert!(app.dialog.is_none(), "nothing is listed before the dialog answers");
     app.session.execute("slide.go", &json!({"index": 1})).unwrap();
@@ -356,4 +357,5 @@ fn reuse_slides_uses_the_nonblocking_dialog() {
     assert_eq!(st.doc.slides.len(), 3);
     assert_eq!(st.doc.slides[0].id, first);
     assert_eq!(st.doc.slides[1].title(), "From elsewhere", "inserted after the slide current when the dialog opened");
+    assert_eq!(st.doc.slides[st.selection.slide].id, second, "the slide in view stays in view");
 }

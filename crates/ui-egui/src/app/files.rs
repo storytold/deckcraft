@@ -795,6 +795,7 @@ impl SlideApp {
         };
         let view = self.session.active_index();
         let saved = self.session.documents().get(idx).map(|d| d.selection.clone());
+        let viewed = self.session.documents().get(idx).and_then(|d| d.doc.slides.get(d.selection.slide)).map(|s| s.id);
         self.session.set_active(idx);
         let located = match self.locate_place(place) {
             Ok(located) => located,
@@ -815,7 +816,11 @@ impl SlideApp {
         }
         let result = self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
         if view == Some(idx) {
-            if let (Some(sel), Some(st)) = (saved, self.session.active_mut()) {
+            if let (Some(mut sel), Some(st)) = (saved, self.session.active_mut()) {
+                // Slides inserted before the one in view move it along: keep showing that slide.
+                if let Some(i) = viewed.and_then(|id| st.doc.slide_index(id)) {
+                    sel.slide = i;
+                }
                 st.selection = sel;
             }
         } else {
