@@ -854,6 +854,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-codepage"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
+
+[[package]]
 name = "craft-fonts-build"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
@@ -907,6 +912,15 @@ source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb62
 dependencies = [
  "krilla",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "craft-rtf"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
+dependencies = [
+ "craft-codepage",
+ "encoding_rs",
 ]
 
 [[package]]
@@ -1147,6 +1161,7 @@ dependencies = [
 name = "deckcraft-format"
 version = "0.19.0"
 dependencies = [
+ "craft-rtf",
  "deckcraft-model",
  "serde",
  "serde_json",
