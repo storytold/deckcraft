@@ -628,6 +628,7 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut acc = 0u32;
     let mut bits = 0;
+    let mut padded = false;
     for c in s.bytes() {
         let v = match c {
             b'A'..=b'Z' => c - b'A',
@@ -635,9 +636,17 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             b'0'..=b'9' => c - b'0' + 52,
             b'+' | b'-' => 62,
             b'/' | b'_' => 63,
-            b'=' | b'\n' | b'\r' | b' ' => continue,
+            b'=' => {
+                padded = true;
+                continue;
+            }
+            b'\n' | b'\r' | b' ' => continue,
             _ => return None,
         } as u32;
+        // Padding ends the payload; no further data may be decoded.
+        if padded {
+            return None;
+        }
         acc = (acc << 6) | v;
         bits += 6;
         if bits >= 8 {
@@ -669,6 +678,14 @@ mod tests {
             assert_eq!(base64_decode(encoded).as_deref(), Some(decoded), "{encoded:?}");
         }
         for encoded in ["A", "AAAAA", "Zm9vZ", " Zm9vZ \r\n", "data:text/plain;base64,Z"] {
+            assert!(base64_decode(encoded).is_none(), "{encoded:?}");
+        }
+    }
+
+    #[test]
+    fn base64_rejects_data_after_padding() {
+        assert_eq!(base64_decode("Zg== \r\n=="), Some(b"f".to_vec()));
+        for encoded in ["Zg==A", "Zg== Zm8=", "Zm8=A", "=Zg", "Zg==\r\nA", "data:text/plain;base64,Zg==A"] {
             assert!(base64_decode(encoded).is_none(), "{encoded:?}");
         }
     }
