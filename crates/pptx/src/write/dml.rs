@@ -164,15 +164,16 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
             .artistic
             .as_ref()
             .filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()))
-            .and_then(|art| x.media_rel(o, art.svg.unwrap_or(art.original), "image").map(|orig| (art, orig)));
+            // CT_PictureLayer permits only r:embed. Omit a linked-only original rather than
+            // writing a nonconforming r:link attribute or fetching an untrusted URL.
+            .and_then(|art| x.media_rel_new(o, art.svg.unwrap_or(art.original), "image").map(|orig| (art, orig)));
         if art.is_some() || svg_rel.is_some() {
             w.open0("a:extLst");
             if let Some((art, orig)) = &art {
                 w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
                 w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
                 // Keep the vector original on this layer, never beside the processed raster.
-                let original_linked = x.p.media(art.svg.unwrap_or(art.original)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
-                w.open("a14:imgLayer", A::new().a(if original_linked { "r:link" } else { "r:embed" }, orig));
+                w.open("a14:imgLayer", A::new().a("r:embed", orig));
                 w.open0("a14:imgEffect");
                 w.empty0(&format!("a14:{}", art.effect));
                 w.close("a14:imgEffect");

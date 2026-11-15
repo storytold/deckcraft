@@ -114,3 +114,32 @@ fn artistic_svg_survives_repeated_pptx_round_trips() {
         assert_eq!(p.media(fill.media).expect("processed raster").data.as_slice(), png());
     }
 }
+
+#[test]
+fn linked_only_artistic_original_does_not_write_a_picture_layer() {
+    let mut p = deckcraft_pptx::import(&deck()).expect("import");
+    let original = deckcraft_model::MediaId(p.alloc_id().expect("ids"));
+    p.media.push(deckcraft_model::MediaItem {
+        id: original,
+        name: "original.svg".into(),
+        content_type: "image/svg+xml".into(),
+        data: std::sync::Arc::new(Vec::new()),
+        link: Some("https://example.invalid/original.svg".into()),
+    });
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    let shape = slide.shapes.iter_mut().find(|s| s.name == "Step").expect("picture");
+    let ShapeKind::Picture { fill } = &mut shape.kind else { panic!("picture") };
+    fill.svg = None;
+    fill.artistic = Some(deckcraft_model::style::Artistic { effect: "artisticBlur".into(), original, svg: None });
+
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = slide_xml(&bytes);
+    assert!(xml.contains("<a:blip r:embed="), "the processed raster must remain embedded: {xml}");
+    assert!(!xml.contains("a14:imgLayer"), "a linked original cannot be written as CT_PictureLayer: {xml}");
+    assert!(!xml.contains("r:link="), "CT_PictureLayer does not permit r:link: {xml}");
+
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+    let mut rels = String::new();
+    z.by_name("ppt/slides/_rels/slide1.xml.rels").expect("rels").read_to_string(&mut rels).expect("utf8");
+    assert!(!rels.contains("https://example.invalid/original.svg"), "unused linked original relationship: {rels}");
+}
