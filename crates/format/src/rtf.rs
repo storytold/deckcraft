@@ -71,7 +71,8 @@ pub fn slides_to_rtf(p: &Presentation) -> String {
         }
         out.push_str("\\b0\\par\n");
         for sh in &s.shapes {
-            if sh.ph_type().is_some_and(|k| k.is_title()) {
+            // As in the text outline: footer, date and slide-number placeholders are not body text.
+            if sh.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind()) {
                 continue;
             }
             let Some(t) = &sh.text else { continue };
@@ -275,6 +276,9 @@ impl Outline<'_> {
         while k > 0 && self.i < self.b.len() {
             if self.b[self.i] == b'\\' && self.b.get(self.i + 1) == Some(&b'\'') {
                 self.i = advance(self.rtf, self.i, 4);
+            } else if self.b[self.i] == b'\\' && self.b.get(self.i + 1).is_some_and(|b| !b.is_ascii_alphabetic()) {
+                // An escaped control symbol counts as one Unicode fallback character.
+                self.i = advance(self.rtf, self.i + 1, 1);
             } else if matches!(self.b[self.i], b'{' | b'}' | b'\\') {
                 break;
             } else {
@@ -299,7 +303,8 @@ impl Outline<'_> {
 
     /// A one-character control symbol (`\\`, `\{`, `\~`, ...).
     fn symbol(&mut self, n: u8) {
-        self.i += 1;
+        let c = self.rtf.get(self.i..).and_then(|r| r.chars().next());
+        self.i = advance(self.rtf, self.i, 1);
         if self.st.skip {
             return;
         }
@@ -308,6 +313,7 @@ impl Outline<'_> {
             b'~' => self.line.push('\u{a0}'),
             b'_' => self.line.push('\u{2011}'),
             b'\n' | b'\r' => self.flush(),
+            _ if !n.is_ascii() => self.line.extend(c),
             _ => {}
         }
     }
@@ -417,6 +423,28 @@ mod tests {
         assert_eq!(rtf_to_outline(r"{\rtf1 a\'00bé\par}"), "abé\n");
         assert_eq!(rtf_to_outline("{\\rtf1 a\0b\\par}\0\0"), "ab\n");
         assert_eq!(rtf_to_outline(r"{\rtf1 x\u-70000?y\par}"), "x\u{ee90}y\n");
+    }
+
+    #[test]
+    fn unicode_fallback_control_symbols_are_skipped() {
+        for (rtf, expected) in [
+            (r"{\rtf1\uc1 \u92\\X\par}", "\\X\n"),
+            (r"{\rtf1\uc1 \u123\{X\par}", "{X\n"),
+            (r"{\rtf1\uc1 \u125\}X\par}", "}X\n"),
+            (r"{\rtf1\uc2 \u233\{\}X\par}", "éX\n"),
+            (r"{\rtf1\uc0 \u92\\X\par}", "\\\\X\n"),
+            (r"{\rtf1 \\ \{ \}X\par}", "\\ { }X\n"),
+            (r"{\rtf1\uc1 \u233{X}\par}", "éX\n"),
+            (r"{\rtf1\uc1 \u233\éX\par}", "éX\n"),
+            (r"{\rtf1\uc1 \u233\", "é\n"),
+        ] {
+            assert_eq!(rtf_to_outline(rtf), expected, "{rtf:?}");
+        }
+    }
+
+    #[test]
+    fn multibyte_control_symbol_keeps_character_and_following_text() {
+        assert_eq!(rtf_to_outline("{\\rtf1 A\\éB\\par}"), "AéB\n");
     }
 
     /// `\\_` is RTF's non-breaking hyphen: a visible character, not markup.

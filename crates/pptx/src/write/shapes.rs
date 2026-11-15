@@ -106,7 +106,9 @@ pub fn geometry(w: &mut W, g: &Geom) {
                 let single = !adj1 && if defaults.is_empty() { vals.len() == 1 } else { defaults.len() == 1 };
                 for (i, v) in vals.iter().enumerate() {
                     let n = if single && i == 0 { "adj".to_string() } else { format!("adj{}", i + 1) };
-                    let v = if v.is_finite() { v.round().clamp(-2.0e9, 2.0e9) as i64 } else { 0 };
+                    // A near-zero-width connector can need a large ratio for an ordinary-size bend.
+                    // Keep guide literals bounded to the signed integer serialization domain.
+                    let v = if v.is_finite() { v.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64 } else { 0 };
                     w.empty("a:gd", A::new().a("name", n).a("fmla", format!("val {v}")));
                 }
                 for (n, v) in extra_guides(name) {
@@ -303,7 +305,8 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.close("p:nvPicPr");
             dml::blip_fill(w, x, o, "p:blipFill", fill);
             let mut s2 = s.clone();
-            if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+            // Group fill is a separate backing behind transparent image pixels.
+            if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background)) {
                 s2.fill = None;
             }
             sp_pr(w, x, o, &s2, true);
@@ -334,7 +337,20 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 dml::fill(w, x, o, f);
             }
             if let Some(fx) = &s.effects {
-                dml::effects(w, fx);
+                if fx.fill_overlay.is_some()
+                    || fx.glow.is_some()
+                    || fx.inner_shadow.is_some()
+                    || fx.outer_shadow.is_some()
+                    || fx.reflection.is_some()
+                    || fx.soft_edge.is_some()
+                {
+                    dml::effects(w, fx);
+                }
+                if let Some(raw) =
+                    fx.raw3d.as_deref().map(|s| s.find("<a:sp3d").map_or(s, |i| &s[..i])).and_then(|s| dml::valid_raw3d(s, &["scene3d"]))
+                {
+                    w.raw(raw);
+                }
             }
             w.close("p:grpSpPr");
             shapes(w, x, o, cx, children, depth + 1);
@@ -446,7 +462,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
 }
 
 fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Option<String> {
-    if x.p.media(media).is_none_or(|m| m.data.is_empty()) {
+    if x.media(media).is_none_or(|m| m.data.is_empty()) {
         return None;
     }
     x.media_rel(o, media, crate::opc::RT_MODEL3D)
@@ -479,7 +495,7 @@ fn write_model(
         return;
     };
     let id = cx.id_for(s);
-    let poster = poster.filter(|p| x.p.media(*p).is_some_and(|m| !m.data.is_empty()));
+    let poster = poster.filter(|p| x.media(*p).is_some_and(|m| !m.data.is_empty()));
     let Some(poster) = poster else {
         write_model_part(w, x, o, id, s, &rid);
         return;
@@ -529,10 +545,22 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     let (sx, sy) = (frame.w / child.w.max(1e-6), frame.h / child.h.max(1e-6));
     let mut k = 0;
     let mut flat = vec![];
-    walk(children, &mut |c, _| {
-        if matches!(c.kind, ShapeKind::Shape) {
-            flat.push(c.clone());
+    walk(children, &mut |c, _| match &c.kind {
+        ShapeKind::Shape => flat.push(c.clone()),
+        ShapeKind::Connector { .. } => {
+            let mut sc = c.clone();
+            if sc.geom.preset_name() == Some("rect") {
+                sc.geom = Geom::preset("line");
+            }
+            flat.push(sc);
         }
+        ShapeKind::Picture { fill } => {
+            let mut sc = c.clone();
+            sc.kind = ShapeKind::Shape;
+            sc.fill = Some(deckcraft_model::style::Fill::Picture(fill.clone()));
+            flat.push(sc);
+        }
+        _ => {}
     });
     for mut c in flat.into_iter().take(10_000) {
         if let Some(xf) = &mut c.xfrm {
@@ -700,7 +728,7 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
     t.normalize();
     w.open0("a:tbl");
     let (guid, _) = crate::tables::guid_for_style(&t.style);
-    if !x.table_styles.contains(&t.style) {
+    if x.table_style_set.insert(t.style.clone()) {
         x.table_styles.push(t.style.clone());
     }
     w.open(
@@ -711,7 +739,8 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
             .t("lastRow", t.last_row)
             .t("lastCol", t.last_col)
             .t("bandRow", t.band_row)
-            .t("bandCol", t.band_col),
+            .t("bandCol", t.band_col)
+            .b("rtl", t.rtl),
     );
     if let Some(f) = &t.background {
         dml::fill(w, x, o, f);
@@ -746,6 +775,8 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
                     other => other.xml(),
                 }),
             );
+            a = a.b("anchorCtr", c.anchor_ctr);
+            a = a.o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(c.horz_overflow));
             w.open("a:tcPr", a);
             for (tag, l) in [
                 ("a:lnL", &c.borders[0]),
@@ -881,7 +912,7 @@ fn opaque(
         p.name = label.to_string();
     }
     match preview {
-        Some(m) if x.p.media(m).is_some() => {
+        Some(m) if x.media(m).is_some() => {
             p.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: m, ..Default::default() } };
             p.ph = None;
             shape_with_id(w, x, o, cx, &p, id);
@@ -912,7 +943,7 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
         // As for any picture, a colour or pattern fill shows behind the image (an object's preview
         // keeps its fallback picture's fill).
         let mut s2 = s.clone();
-        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background)) {
             s2.fill = None;
         }
         sp_pr(w, x, o, &s2, true);
@@ -1002,6 +1033,23 @@ pub fn tree_header(w: &mut W) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guide_literals_remain_finite_bounded_integers() {
+        for (guide, expected) in [
+            (f64::NAN, 0),
+            (f64::INFINITY, 0),
+            (f64::NEG_INFINITY, 0),
+            (f64::MAX, i64::MAX),
+            (f64::MIN, i64::MIN),
+            (12500.6, 12501),
+            (-12500.6, -12501),
+        ] {
+            let mut w = W::frag();
+            geometry(&mut w, &Geom::Preset { name: "bentConnector3".into(), adj: vec![guide] });
+            assert!(w.s.contains(&format!(r#"fmla="val {expected}""#)), "{}", w.s);
+        }
+    }
 
     /// PowerPoint asks to repair a `star5` whose guide list lacks `hf`/`vf` (found black-box).
     #[test]

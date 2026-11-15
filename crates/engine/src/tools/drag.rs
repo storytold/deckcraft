@@ -12,8 +12,16 @@ struct MoveDrag {
     enter_text: Option<(ShapeId, Point)>,
 }
 
+/// Samples one ink or freeform gesture keeps; later pointer moves extend it no further.
+pub(crate) const MAX_GESTURE_POINTS: usize = 100_000;
+
 impl Session {
+    /// Update the active drag interaction using the pointer position and modifiers.
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
+        if matches!(self.tool.drag, Some(Drag::Ink { .. })) {
+            self.extend_ink(p);
+            return Ok(Value::Null);
+        }
         let Some(drag) = self.tool.drag.clone() else { return Ok(Value::Null) };
         match drag {
             Drag::Guide { index } => {
@@ -26,10 +34,48 @@ impl Session {
             Drag::Move { ids, start, origs, moved, duplicate, enter_text } => {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
-            Drag::Resize { id, handle, orig, start } => {
-                let nx = resize_box(&orig, handle, p - start, mods.shift || self.is_picture(id), mods.alt);
-                let nx = self.snap_resize(nx, &orig, handle, id, tol);
-                self.set_xfrm(id, nx)?;
+            Drag::Resize { id, orig, ids, handle, origs, start } => {
+                let keep_aspect = mods.shift || self.is_picture(id);
+                let nx = resize_box(&orig, handle, p - start, keep_aspect, mods.alt);
+                let nx = self.snap_resize(nx, handle, &ids, tol);
+                let sx = if orig.w > 1e-9 { (nx.w / orig.w) * if nx.flip_h != orig.flip_h { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
+                let sy = if orig.h > 1e-9 { (nx.h / orig.h) * if nx.flip_v != orig.flip_v { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
+                let div = if mods.alt { 2.0 } else { 1.0 };
+                let hx = match handle {
+                    0 | 6 | 7 => -1.0,
+                    2..=4 => 1.0,
+                    _ => 0.0,
+                };
+                let hy = match handle {
+                    0..=2 => -1.0,
+                    4..=6 => 1.0,
+                    _ => 0.0,
+                };
+                for (tid, o) in &origs {
+                    let target_nx = if *tid == id {
+                        nx
+                    } else {
+                        let picture = self.is_picture(*tid);
+                        let (sx, sy) = if picture && matches!(handle, 0 | 2 | 4 | 6) {
+                            // Use the axis with the larger relative change so an unchanged
+                            // dimension cannot cancel shrinking. Preserve each axis's flip.
+                            let scale_x = 1.0 + sx;
+                            let scale_y = 1.0 + sy;
+                            let scale = if sx.abs() >= sy.abs() { scale_x.abs() } else { scale_y.abs() };
+                            (scale.copysign(scale_x) - 1.0, scale.copysign(scale_y) - 1.0)
+                        } else {
+                            (sx, sy)
+                        };
+
+                        let lp = Affine::rotate(o.rot.to_radians())
+                            * Point::new(
+                                hx * sx * o.w / div * if o.flip_h { -1.0 } else { 1.0 },
+                                hy * sy * o.h / div * if o.flip_v { -1.0 } else { 1.0 },
+                            );
+                        resize_box(o, handle, Vec2::new(lp.x, lp.y), picture, mods.alt)
+                    };
+                    self.set_xfrm(*tid, target_nx)?;
+                }
             }
             Drag::LineEnd { id, end, orig } => {
                 let a = orig.affine();
@@ -142,7 +188,7 @@ impl Session {
             }
             Drag::Freeform { mode, mut points, pressed } => {
                 // Dragging scribbles (except for curves, which only take clicked points).
-                if pressed && mode != "curve" && points.last().is_none_or(|l| (*l - p).hypot() >= 1.5) {
+                if pressed && mode != "curve" && points.len() < MAX_GESTURE_POINTS && points.last().is_none_or(|l| (*l - p).hypot() >= 1.5) {
                     points.push(p);
                 }
                 let mut v = points.clone();
@@ -152,13 +198,22 @@ impl Session {
                 self.tool.path_preview = v;
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed });
             }
-            Drag::Ink { mut points } => {
-                points.push(self.ink_sample(p));
-                self.tool.ink_preview = points.clone();
-                self.tool.drag = Some(Drag::Ink { points });
-            }
+            // Handled above.
+            Drag::Ink { .. } => {}
         }
         Ok(Value::Null)
+    }
+
+    /// Ink grows by one sample per move: extend it (and its preview) in place rather than
+    /// copying the whole stroke twice per event, up to [`MAX_GESTURE_POINTS`].
+    fn extend_ink(&mut self, p: Point) {
+        let sample = self.ink_sample(p);
+        if let Some(Drag::Ink { points }) = self.tool.drag.as_mut()
+            && points.len() < MAX_GESTURE_POINTS
+        {
+            points.push(sample);
+            self.tool.ink_preview.push(sample);
+        }
     }
 
     fn drag_move(&mut self, drag: MoveDrag, p: Point, mods: Mods, tol: f64) -> Result<Value> {
@@ -197,7 +252,12 @@ impl Session {
                 }
             }
             // A connector dragged away from shapes that stay put comes unglued at those ends.
-            let moved: Vec<ShapeId> = origs2.iter().map(|o| o.0).collect();
+            let mut moved: Vec<ShapeId> = vec![];
+            for (id, _) in &origs2 {
+                if let Some(sh) = deckcraft_model::find_shape(list, *id) {
+                    deckcraft_model::walk(std::slice::from_ref(sh), &mut |s, _| moved.push(s.id));
+                }
+            }
             for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
                 if let ShapeKind::Connector { start, end } = &mut sh.kind {
                     for c in [start, end] {

@@ -148,6 +148,36 @@ fn windows_family_names_find_their_faces() {
 }
 
 #[test]
+fn variable_font_instances_answer_to_their_windows_names() {
+    // Windows lists a variable font's named instances other than Regular, Italic, Bold and
+    // Bold Italic as families of their own, and documents name them that way ("Montserrat
+    // ExtraBold"). The bundled Montserrat is variable, so these names found no face and drew
+    // in Inter Regular, even with the family's static files installed (their faces are
+    // skipped as already present).
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    if !db.is_loaded("Montserrat") {
+        return; // built without craft-fonts
+    }
+    for (name, style, weight, italic) in [
+        ("Montserrat ExtraBold", "Regular", 800.0, false),
+        ("Montserrat SemiBold", "Regular", 600.0, false),
+        ("Montserrat Medium", "Regular", 500.0, false),
+        ("Montserrat Medium", "Italic", 500.0, true),
+        ("Montserrat Thin", "Bold", 100.0, false),
+    ] {
+        assert!(db.has_family(name), "{name}");
+        let f = db.face(name, style);
+        assert_eq!((f.family.as_str(), f.weight, f.italic), ("Montserrat", weight, italic), "{name} {style}");
+        assert_eq!(db.document_face(name, style).family, "Montserrat", "{name}: installed, so not Calibri");
+    }
+    // Regular and Bold are the family itself, not families of their own.
+    assert!(!db.has_family("Montserrat Regular"));
+    assert!(!db.has_family("Montserrat Bold"));
+    assert_eq!(db.face("Montserrat", "Bold").weight, 700.0);
+}
+
+#[test]
 fn faces_without_outlines_are_not_cataloged() {
     // Rename the Semibold's `glyf` table, as in fonts whose glyphs are bitmaps or are stored in
     // Apple's `hvgl` table. The face still maps "A", but its outline is empty. The new tag
@@ -186,9 +216,13 @@ fn missing_document_fonts_are_drawn_in_calibri() {
         assert_eq!(f.family, db.face(MISSING_FONT_FAMILY, "Bold").family, "{missing:?}");
     }
     // PowerPoint's own twins and Windows' substitutes, when the font itself is missing.
-    for (missing, twin) in
-        [("Liberation Sans", "Arial"), ("Liberation Serif", "Times New Roman"), ("Arial CE", "Arial"), ("Times New Roman CYR", "Times New Roman")]
-    {
+    for (missing, twin) in [
+        ("Liberation Sans", "Arial"),
+        ("Liberation Serif", "Times New Roman"),
+        ("Arial CE", "Arial"),
+        ("Times New Roman CYR", "Times New Roman"),
+        ("Courier New CE", "Courier New"),
+    ] {
         if !db.has_family(missing) {
             assert_eq!(db.document_face(missing, "Regular").family, db.face(twin, "Regular").family, "{missing}");
         }
@@ -207,6 +241,73 @@ fn office_fonts_have_substitutes() {
     assert!(substitutes("Times New Roman").contains(&"Liberation Serif"));
     assert!(substitutes("Aptos").contains(&"Inter"));
     assert!(substitutes("zzz").is_empty());
+
+    for mono in [
+        "Courier New",
+        "Cousine",
+        "Consolas",
+        "Menlo",
+        "Monaco",
+        "Source Code Pro",
+        "JetBrains Mono",
+        "Cascadia Code",
+        "Cascadia Code PL",
+        "Cascadia Mono",
+        "Fira Code",
+        "Inconsolata",
+        "DejaVu Sans Mono",
+        "Roboto Mono",
+        "Hack",
+        "Ubuntu Mono",
+        "Custom Monospace",
+        "Fantasque Sans Mono",
+    ] {
+        assert!(substitutes(mono).contains(&"Liberation Mono"), "{mono} should have Liberation Mono substitute");
+        assert!(is_monospace_family(mono), "{mono} should be recognized as monospace");
+    }
+
+    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monoton", "Monotype Baskerville", "Code Pro", "zzz"] {
+        assert!(!is_monospace_family(prop), "{prop} should not be recognized as monospace");
+    }
+
+    // Explicit checks requested in review: Consolas, Courier New, Fira Code, Monotype Corsiva, Monoton,
+    // and ensuring proportional families maintain their unchanged substitutes.
+    assert!(is_monospace_family("Consolas"));
+    assert!(is_monospace_family("Courier New"));
+    assert!(is_monospace_family("Fira Code"));
+    assert!(!is_monospace_family("Monotype Corsiva"));
+    assert!(!is_monospace_family("Monoton"));
+
+    assert_eq!(substitutes("Calibri"), &["Carlito", "Liberation Sans", "Arial", "Inter"]);
+    assert_eq!(substitutes("Arial"), &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"]);
+    assert_eq!(substitutes("Times New Roman"), &["Liberation Serif", "Times New Roman", "Times", "Merriweather"]);
+    assert_eq!(substitutes("Georgia"), &["Merriweather", "Liberation Serif", "Georgia"]);
+    assert!(substitutes("Monotype Corsiva").is_empty());
+    assert!(substitutes("Monoton").is_empty());
+}
+
+#[test]
+fn missing_monospace_fonts_keep_monospace_fallback() {
+    let db = FontDb::global();
+    let mono_sub = db.face("Unavailable JetBrains Mono", "Regular").family.clone();
+    let calibri_target = db.face(MISSING_FONT_FAMILY, "Regular").family.clone();
+
+    assert!(is_monospace_family(&mono_sub), "substitute {mono_sub} must be monospace");
+
+    // Cousine is metric-compatible with Courier New / Liberation Mono and must not fall back to Calibri.
+    if !db.has_family("Cousine") {
+        assert_eq!(db.document_face("Cousine", "Regular").family, mono_sub);
+    }
+
+    // Monospace fonts missing from the system must resolve to a monospace substitute.
+    for mono in ["Unavailable JetBrains Mono", "Custom App Code", "Unknown Space Mono", "Mock Terminal Font"] {
+        let f = db.document_face(mono, "Regular");
+        assert_eq!(f.family, mono_sub, "{mono}");
+        assert!(is_monospace_family(&f.family), "{mono} must resolve to a monospace family");
+        if mono_sub != calibri_target {
+            assert_ne!(f.family, calibri_target, "{mono} must not fall back to Calibri");
+        }
+    }
 }
 
 #[test]
@@ -323,4 +424,12 @@ fn the_font_scan_skips_fifos_folders_and_link_loops() {
     assert!(n >= 1, "the real font was found");
     assert!(fifo || n >= 1);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn disabling_system_fallback_gates_automatic_family_loads() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert!(cfg!(target_arch = "wasm32") || db.system_fallback_enabled());
+    db.set_system_fallback(false);
+    assert!(!db.system_fallback_enabled());
 }

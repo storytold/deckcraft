@@ -928,11 +928,25 @@ impl Warp {
             k_fill = 1.0;
         }
         zoom = zoom.max(k_fill);
+        // Per band, measured once: its widest line and its first and last lines' baselines.
+        let mut stats: Vec<Option<(f64, f64, f64)>> = vec![None; nb];
+        for (l, &b) in lines.iter().zip(&band_of) {
+            let w = l.extent.1 - l.extent.0;
+            if let Some(slot) = stats.get_mut(b) {
+                match slot {
+                    Some((widest, _, last)) => {
+                        *widest = widest.max(w);
+                        *last = l.ref_y;
+                    }
+                    None => *slot = Some((0.0f64.max(w), l.ref_y, l.ref_y)),
+                }
+            }
+        }
         let mut maps = Vec::with_capacity(n);
         let mut offsets = Vec::new();
         for (i, l) in lines.iter().enumerate() {
             let b = band_of.get(i).copied().unwrap_or(0);
-            let in_band = |j: &usize| band_of.get(*j) == Some(&b);
+            let band = stats.get(b).copied().flatten();
             match self.bands.get(b) {
                 Some(Band::Fill { .. }) | None => {
                     let (y0, y1) = band_y.get(b).copied().flatten().unwrap_or((0.0, 1.0));
@@ -941,16 +955,12 @@ impl Warp {
                 }
                 Some(Band::Follow { path, anchor }) => {
                     let len = path.length();
-                    let widest = (0..n).filter(in_band).filter_map(|j| lines.get(j)).map(|l| l.extent.1 - l.extent.0).fold(0.0, f64::max);
+                    let widest = band.map_or(0.0, |s| s.0);
                     let k = if widest > len && widest > 1e-9 { len / widest } else { 1.0 };
-                    let members: Vec<&WarpLine> = (0..n).filter(in_band).filter_map(|j| lines.get(j)).collect();
                     let ref_y = match anchor {
-                        LineAnchor::Last => members.last().map(|l| l.ref_y),
-                        LineAnchor::First => members.first().map(|l| l.ref_y),
-                        LineAnchor::Middle => match (members.first(), members.last()) {
-                            (Some(a), Some(z)) => Some((a.ref_y + z.ref_y) / 2.0),
-                            _ => None,
-                        },
+                        LineAnchor::Last => band.map(|s| s.2),
+                        LineAnchor::First => band.map(|s| s.1),
+                        LineAnchor::Middle => band.map(|s| (s.1 + s.2) / 2.0),
                     }
                     .unwrap_or(l.ref_y);
                     // Lines off the guide run on a parallel curve at their natural length.

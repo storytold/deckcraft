@@ -45,14 +45,17 @@ fi
 # Refuse placeholder, wrong-arch or non-FreeBSD binaries (also with --skip-build). Bytes: ELF magic,
 # 64-bit little-endian, OSABI SYSV or FreeBSD, e_machine.
 case "$ARCH" in
-  x86_64) MACHINE=" 3e 00" ;;
-  aarch64) MACHINE=" b7 00" ;;
+  x86_64) MACHINE=3e00 ;;
+  aarch64) MACHINE=b700 ;;
   *) echo "error: no ELF machine check for arch '$ARCH'" >&2; exit 1 ;;
 esac
+# FreeBSD's od pads its columns differently from GNU od, so compare the hex digits alone.
+hex() { od -An -tx1 "$@" | tr -d ' \n'; }
 for f in "$BIN/deckcraft" "$BIN/deckcraft-cli"; do
-  [[ "$(od -An -tx1 -N6 "$f" 2>/dev/null)" == " 7f 45 4c 46 02 01" ]] || { echo "error: $f is not a 64-bit little-endian ELF" >&2; exit 1; }
-  [[ "$(od -An -tx1 -j7 -N1 "$f")" =~ ^\ (00|09)$ ]] || { echo "error: $f is not a FreeBSD ELF (OSABI)" >&2; exit 1; }
-  [[ "$(od -An -tx1 -j18 -N2 "$f")" == "$MACHINE" ]] || { echo "error: $f is not an ELF for $ARCH" >&2; exit 1; }
+  [[ -f "$f" ]] || { echo "error: $f was not built" >&2; exit 1; }
+  [[ "$(hex -N6 "$f")" == 7f454c460201 ]] || { echo "error: $f is not a 64-bit little-endian ELF (starts $(hex -N6 "$f"))" >&2; exit 1; }
+  [[ "$(hex -j7 -N1 "$f")" =~ ^(00|09)$ ]] || { echo "error: $f is not a FreeBSD ELF (OSABI $(hex -j7 -N1 "$f"))" >&2; exit 1; }
+  [[ "$(hex -j18 -N2 "$f")" == "$MACHINE" ]] || { echo "error: $f is not an ELF for $ARCH (e_machine $(hex -j18 -N2 "$f"))" >&2; exit 1; }
 done
 
 NAME="deckcraft-$VERSION-freebsd-$ARCH"

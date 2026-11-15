@@ -103,7 +103,7 @@ fn effects_and_links() -> Vec<u8> {
         "Reflected",
         "",
         8636000,
-        r#"<a:reflection blurRad="6350" stA="50000" endA="300" endPos="55500" dist="50800" dir="5400000" sy="-100000" algn="bl" rotWithShape="0"/>"#,
+        r#"<a:reflection blurRad="6350" stA="50000" endA="300" endPos="55500" dist="50800" stPos="20000" dir="5400000" fadeDir="0" sx="75000" sy="-50000" kx="600000" ky="-300000" algn="bl" rotWithShape="0"/>"#,
         r#"<a:p><a:r><a:rPr lang="en-US"><a:hlinkMouseOver r:id="rId90" tooltip="Preview"/></a:rPr><a:t>Hover me</a:t></a:r></a:p>"#,
     );
     let slide = format!(
@@ -134,6 +134,11 @@ fn effects_and_links_survive_a_round_trip() {
     assert_eq!(fx(get("Soft edged")).soft_edge, Some(5.0));
     let r = fx(get("Reflected")).reflection.expect("reflection");
     assert!((r.end_pos - 0.555).abs() < 1e-6 && (r.dist - 4.0).abs() < 1e-6, "{r:?}");
+    assert_eq!(
+        (r.st_pos, r.dir, r.fade_dir, r.sx, r.sy, r.kx, r.ky),
+        (Some(20_000), Some(5_400_000), Some(0), Some(75_000), Some(-50_000), Some(600_000), Some(-300_000))
+    );
+    assert_eq!((r.align.as_deref(), r.rotate_with_shape), (Some("bl"), Some(false)));
     let shape = get("Shadowed");
     assert!(matches!(shape.click.as_ref().map(|h| (&h.action, h.highlight_click)), Some((Action::EndShow, true))));
     assert!(
@@ -173,7 +178,17 @@ fn effects_and_links_survive_resave(a: &Presentation) {
         assert_eq!(ha, hb, "text hover of {n}");
     }
     let out = deckcraft_pptx::export(&b).expect("export");
-    assert!(part(&out, "ppt/slides/slide1.xml").contains("hlinkMouseOver"));
+    let xml = part(&out, "ppt/slides/slide1.xml");
+    assert!(xml.contains("hlinkMouseOver"));
+    let c = deckcraft_pptx::import(&out).expect("second reopen");
+    assert_eq!(fx(shapes_named(&b, 0)("Reflected")).reflection, fx(shapes_named(&c, 0)("Reflected")).reflection);
+    assert!(
+        xml.contains("stPos=\"20000\"")
+            && xml.contains("fadeDir=\"0\"")
+            && xml.contains("sx=\"75000\"")
+            && xml.contains("sy=\"-50000\"")
+            && xml.contains("kx=\"600000\"")
+    );
 }
 
 /// Two masters with their own themes (colours, fonts) and layouts, slides on each.

@@ -45,11 +45,20 @@ pub fn validate(v: &str) -> Result<(), String> {
         None => (v, None),
     };
     let nums: Vec<&str> = core.split('.').collect();
-    if nums.len() != 3 || nums.iter().any(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) || (n.len() > 1 && n.starts_with('0'))) {
+    if nums.len() != 3
+        || nums
+            .iter()
+            .any(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) || n.parse::<u64>().is_err() || (n.len() > 1 && n.starts_with('0')))
+    {
         return bad();
     }
     if let Some(p) = pre
-        && (p.is_empty() || p.split('.').any(|id| id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')))
+        && (p.is_empty()
+            || p.split('.').any(|id| {
+                id.is_empty()
+                    || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    || (id.len() > 1 && id.starts_with('0') && id.bytes().all(|b| b.is_ascii_digit()))
+            }))
     {
         return bad();
     }
@@ -138,10 +147,22 @@ mod tests {
         for ok in ["0.1.0", "1.20.300", "1.0.0-rc.1", "1.0.0-alpha", "1.0.0-x-y.2"] {
             assert!(validate(ok).is_ok(), "{ok}");
         }
-        for bad in ["1.0", "1.0.0.0", "v1.0.0", "01.0.0", "1.0.0-", "1.0.0-a..b", "1.0.0+meta", "1.a.0", ""] {
+        for bad in ["1.0", "1.0.0.0", "v1.0.0", "01.0.0", "1.0.0-", "1.0.0-a..b", "1.0.0+meta", "1.a.0", "18446744073709551616.0.0", ""] {
             assert!(validate(bad).is_err(), "{bad}");
         }
         assert!(replace(MANIFEST, "nope").is_err());
+    }
+
+    #[test]
+    fn numeric_prerelease_identifiers_have_no_leading_zeroes() {
+        for bad in ["1.0.0-00", "1.0.0-01", "1.0.0-rc.01"] {
+            assert!(validate(bad).is_err(), "{bad}");
+            assert!(replace(MANIFEST, bad).is_err(), "{bad} must not reach the manifest");
+        }
+        for ok in ["1.0.0-0", "1.0.0-rc.0", "1.0.0-01a", "1.0.0-0-1"] {
+            assert!(validate(ok).is_ok(), "{ok}");
+            assert_eq!(read(&replace(MANIFEST, ok).unwrap()).unwrap(), ok);
+        }
     }
 
     #[test]

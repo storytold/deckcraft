@@ -1,10 +1,10 @@
-//! Video decoding: MP4/MOV and WebM/Matroska demuxing, H.264 / HEVC / VP9 / AV1 decoding (our own
-//! decoders), RGBA frames and poster frames.
+//! Video decoding: MP4/MOV and WebM/Matroska demuxing, H.264 / HEVC / VP9 / AV1 decoding
+//! (craft-video), RGBA frames and poster frames.
 
 use std::collections::VecDeque;
 
-use deckcraft_isobmff::CodecConfig;
-use deckcraft_matroska::Codec as MkvCodec;
+use craft_media::isobmff::CodecConfig;
+use craft_media::matroska::Codec as MkvCodec;
 
 use crate::yuv::{self, Matrix, Planes};
 use crate::{Bytes, Container, MediaError, Result};
@@ -41,15 +41,15 @@ fn dec_err(e: impl std::fmt::Display) -> MediaError {
 
 struct H264 {
     avcc: Vec<u8>,
-    dec: deckcraft_h264::Decoder,
+    dec: craft_video::h264::decode::Decoder,
 }
 
 impl H264 {
     fn new(avcc: Vec<u8>) -> Result<H264> {
-        let dec = deckcraft_h264::Decoder::from_avcc(&avcc).map_err(dec_err)?;
+        let dec = craft_video::h264::decode::Decoder::from_avcc(&avcc).map_err(dec_err)?;
         Ok(H264 { avcc, dec })
     }
-    fn convert(p: deckcraft_h264::Picture) -> Pic {
+    fn convert(p: craft_video::h264::decode::Picture) -> Pic {
         let (w, h) = (p.width as usize, p.height as usize);
         let planes = Planes {
             y: &p.y,
@@ -77,7 +77,7 @@ impl Codec for H264 {
         self.dec.flush().into_iter().map(H264::convert).collect()
     }
     fn reset(&mut self) {
-        if let Ok(d) = deckcraft_h264::Decoder::from_avcc(&self.avcc) {
+        if let Ok(d) = craft_video::h264::decode::Decoder::from_avcc(&self.avcc) {
             self.dec = d;
         }
     }
@@ -120,19 +120,19 @@ macro_rules! plane_pic {
 
 struct Hevc {
     hvcc: Vec<u8>,
-    dec: deckcraft_hevc::Decoder,
+    dec: craft_video::hevc::decode::Decoder,
 }
 
 impl Hevc {
     fn new(hvcc: Vec<u8>) -> Result<Hevc> {
-        let dec = deckcraft_hevc::Decoder::from_hvcc(&hvcc).map_err(dec_err)?;
+        let dec = craft_video::hevc::decode::Decoder::from_hvcc(&hvcc).map_err(dec_err)?;
         Ok(Hevc { hvcc, dec })
     }
-    fn convert(p: deckcraft_hevc::Picture) -> Pic {
+    fn convert(p: craft_video::hevc::decode::Picture) -> Pic {
         let sx = u32::from(p.chroma_width < p.width);
         let sy = u32::from(p.chroma_height < p.height);
         let m = Matrix::from_code(p.color.matrix, p.height);
-        plane_pic!(&p, deckcraft_hevc::Plane, sx, sy, m, p.color.full_range, p.chroma_width == 0)
+        plane_pic!(&p, craft_video::hevc::decode::Plane, sx, sy, m, p.color.full_range, p.chroma_width == 0)
     }
 }
 
@@ -144,23 +144,23 @@ impl Codec for Hevc {
         self.dec.flush().into_iter().map(Hevc::convert).collect()
     }
     fn reset(&mut self) {
-        if let Ok(d) = deckcraft_hevc::Decoder::from_hvcc(&self.hvcc) {
+        if let Ok(d) = craft_video::hevc::decode::Decoder::from_hvcc(&self.hvcc) {
             self.dec = d;
         }
     }
 }
 
 struct Vp9 {
-    dec: deckcraft_vp9::Decoder,
+    dec: craft_video::vp9::decode::Decoder,
 }
 
 impl Vp9 {
-    fn convert(p: deckcraft_vp9::Picture) -> Pic {
+    fn convert(p: craft_video::vp9::decode::Picture) -> Pic {
         let (w, h) = (p.width as usize, p.height as usize);
         if p.color.color_space == 7 {
             // RGB (4:4:4): the planes carry G, B, R.
             let shift = p.bit_depth.saturating_sub(8);
-            let at = |pl: &deckcraft_vp9::Plane, i: usize| if i < pl.len() { (pl.get(i) >> shift) as u8 } else { 0 };
+            let at = |pl: &craft_video::vp9::decode::Plane, i: usize| if i < pl.len() { (pl.get(i) >> shift) as u8 } else { 0 };
             let mut rgba = Vec::with_capacity(w * h * 4);
             for row in 0..h {
                 for col in 0..w {
@@ -178,7 +178,7 @@ impl Vp9 {
             5 => Matrix::Bt2020,
             _ => Matrix::from_code(2, p.height),
         };
-        plane_pic!(&p, deckcraft_vp9::Plane, u32::from(p.subsampling_x), u32::from(p.subsampling_y), m, p.color.full_range, false)
+        plane_pic!(&p, craft_video::vp9::decode::Plane, u32::from(p.subsampling_x), u32::from(p.subsampling_y), m, p.color.full_range, false)
     }
 }
 
@@ -195,13 +195,13 @@ impl Codec for Vp9 {
 }
 
 struct Av1 {
-    dec: deckcraft_av1::Decoder,
+    dec: craft_video::av1::decode::Decoder,
     config_obus: Vec<u8>,
     primed: bool,
 }
 
 impl Av1 {
-    fn convert(p: deckcraft_av1::Picture) -> Pic {
+    fn convert(p: craft_video::av1::decode::Picture) -> Pic {
         let (w, h) = (p.width as usize, p.height as usize);
         let cw = p.plane_width(1) as usize;
         let rgba = yuv::to_rgba(
@@ -239,7 +239,7 @@ impl Codec for Av1 {
         self.dec.flush().into_iter().map(Av1::convert).collect()
     }
     fn reset(&mut self) {
-        self.dec = deckcraft_av1::Decoder::new();
+        self.dec = craft_video::av1::decode::Decoder::new();
         self.primed = false;
     }
 }
@@ -257,8 +257,8 @@ struct Track {
 }
 
 enum Demux {
-    Mp4(Box<deckcraft_isobmff::Mp4File>, usize),
-    Mkv(Box<deckcraft_matroska::MkvFile>, usize),
+    Mp4(Box<craft_media::isobmff::Mp4File>, usize),
+    Mkv(Box<craft_media::matroska::MkvFile>, usize),
 }
 
 impl Demux {
@@ -273,15 +273,17 @@ impl Demux {
 fn open_track(bytes: &[u8]) -> Result<(Demux, Track, Box<dyn Codec>)> {
     match Container::sniff(bytes) {
         Container::Mp4 => {
-            let f = deckcraft_isobmff::open(bytes).map_err(dec_err)?;
-            let ti = f.track_of_kind(deckcraft_isobmff::TrackKind::Video).ok_or(MediaError::Missing("video track"))?;
+            let f = craft_media::isobmff::open(bytes).map_err(dec_err)?;
+            let ti = f.track_of_kind(craft_media::isobmff::TrackKind::Video).ok_or(MediaError::Missing("video track"))?;
             let t = &f.tracks[ti];
             let entry = t.entries.first().ok_or(MediaError::Missing("video track"))?;
             let codec: Box<dyn Codec> = match &entry.codec {
                 CodecConfig::Avc(a) => Box::new(H264::new(a.to_bytes())?),
                 CodecConfig::Hevc(c) => Box::new(Hevc::new(c.to_bytes())?),
-                CodecConfig::Vp9(_) => Box::new(Vp9 { dec: deckcraft_vp9::Decoder::new() }),
-                CodecConfig::Av1(c) => Box::new(Av1 { dec: deckcraft_av1::Decoder::new(), config_obus: c.config_obus.clone(), primed: false }),
+                CodecConfig::Vp9(_) => Box::new(Vp9 { dec: craft_video::vp9::decode::Decoder::new() }),
+                CodecConfig::Av1(c) => {
+                    Box::new(Av1 { dec: craft_video::av1::decode::Decoder::new(), config_obus: c.config_obus.clone(), primed: false })
+                }
                 other => return Err(MediaError::Unsupported(format!("{} video", codec_name(other)))),
             };
             let (w, h) = entry.video.as_ref().map(|v| (v.width as u32, v.height as u32)).unwrap_or((t.width, t.height));
@@ -290,20 +292,20 @@ fn open_track(bytes: &[u8]) -> Result<(Demux, Track, Box<dyn Codec>)> {
             Ok((Demux::Mp4(Box::new(f), ti), track, codec))
         }
         Container::Matroska => {
-            let f = deckcraft_matroska::open(bytes).map_err(dec_err)?;
+            let f = craft_media::matroska::open(bytes).map_err(dec_err)?;
             let ti = f
                 .tracks
                 .iter()
-                .position(|t| t.kind == deckcraft_matroska::TrackKind::Video && !t.samples.is_empty())
+                .position(|t| t.kind == craft_media::matroska::TrackKind::Video && !t.samples.is_empty())
                 .ok_or(MediaError::Missing("video track"))?;
             let t = &f.tracks[ti];
             let codec: Box<dyn Codec> = match &t.codec {
                 MkvCodec::Avc { avcc } => Box::new(H264::new(avcc.clone())?),
                 MkvCodec::Hevc { hvcc } => Box::new(Hevc::new(hvcc.clone())?),
-                MkvCodec::Vp9 { .. } => Box::new(Vp9 { dec: deckcraft_vp9::Decoder::new() }),
+                MkvCodec::Vp9 { .. } => Box::new(Vp9 { dec: craft_video::vp9::decode::Decoder::new() }),
                 MkvCodec::Av1 { av1c } => Box::new(Av1 {
-                    dec: deckcraft_av1::Decoder::new(),
-                    config_obus: deckcraft_isobmff::Av1Config::parse(av1c).map(|c| c.config_obus).unwrap_or_default(),
+                    dec: craft_video::av1::decode::Decoder::new(),
+                    config_obus: craft_media::isobmff::Av1Config::parse(av1c).map(|c| c.config_obus).unwrap_or_default(),
                     primed: false,
                 }),
                 other => return Err(MediaError::Unsupported(format!("{} video", mkv_codec_name(other)))),

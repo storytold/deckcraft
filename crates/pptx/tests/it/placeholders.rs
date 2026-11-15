@@ -2,7 +2,9 @@
 
 use std::io::{Cursor, Read, Write};
 
-use deckcraft_model::{Geom, defaults};
+use deckcraft_geom::Xfrm;
+use deckcraft_model::style::PictureFill;
+use deckcraft_model::{Geom, PhType, Placeholder, Shape, ShapeId, ShapeKind, defaults};
 
 /// `bytes` with `edit` applied to every slide part.
 fn edit_slides(bytes: &[u8], edit: impl Fn(String) -> String) -> Vec<u8> {
@@ -61,4 +63,48 @@ fn a_placeholder_without_geometry_takes_its_layouts() {
     }
     let q = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("import");
     assert!(q.slides[0].shapes.iter().filter(|s| s.ph.is_some()).all(|s| matches!(&s.geom, Geom::Preset { name, .. } if name == "triangle")));
+}
+
+#[test]
+fn a_picture_placeholder_without_geometry_takes_its_layouts() {
+    // The slide's picture sits in a layout's picture placeholder drawn as an ellipse; PowerPoint
+    // writes its spPr with a frame only and shows the picture cut into the circle.
+    let mut p = defaults::new_presentation(None);
+    let img = {
+        let mut out = Cursor::new(vec![]);
+        let px = image::RgbImage::from_pixel(4, 4, image::Rgb([10, 200, 30]));
+        image::DynamicImage::ImageRgb8(px).write_to(&mut out, image::ImageFormat::Png).expect("png");
+        p.add_media("image1.png", "image/png", out.into_inner()).expect("media")
+    };
+    let ph = Placeholder { kind: PhType::Picture, idx: 15, ..Default::default() };
+    let layout = p.slides[0].layout;
+    let slot = Shape {
+        id: ShapeId(p.alloc_id().expect("ids")),
+        name: "Picture Placeholder".into(),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 200.0)),
+        geom: Geom::Preset { name: "ellipse".into(), adj: vec![] },
+        ph: Some(ph.clone()),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut p.masters[0]).layouts.iter_mut().find(|l| l.id == layout).expect("layout").shapes.push(slot);
+    let pic = Shape {
+        id: ShapeId(p.alloc_id().expect("ids")),
+        name: "Photo".into(),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 200.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media: img, ..Default::default() } },
+        ph: Some(ph),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![pic];
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let bare = edit_slides(&bytes, |mut s| {
+        while let Some(i) = s.find("<a:prstGeom") {
+            let Some(j) = s[i..].find("</a:prstGeom>").map(|j| j + i + "</a:prstGeom>".len()) else { break };
+            s.replace_range(i..j, "");
+        }
+        s
+    });
+    let q = deckcraft_pptx::import(&bare).expect("import");
+    let photo = q.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Picture { .. })).expect("picture");
+    assert!(matches!(&photo.geom, Geom::Preset { name, .. } if name == "ellipse"), "{:?}", photo.geom);
 }

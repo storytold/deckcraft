@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 fn cli(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).args(args).output().unwrap()
+    Command::new(crate::deckcraft_cli()).args(args).output().unwrap()
 }
 
 fn temp_dir(name: &str) -> PathBuf {

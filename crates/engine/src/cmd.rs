@@ -466,22 +466,26 @@ fn ctx_xfrm(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: 
 
 /// Run `f` on each target shape (copy-on-write), materialising inherited boxes first.
 pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
-    let ids = targets(s, p)?;
+    let mut ids = targets(s, p)?;
     if ids.is_empty() {
         return Err(bad(cmd, "no shapes selected"));
     }
+    // A shape named twice is edited once.
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(*id));
     s.edit(|doc, sel| {
-        let boxes: Vec<(ShapeId, Xfrm)> = {
-            let st_shapes: Vec<deckcraft_model::Shape> =
-                ids.iter().filter_map(|id| current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)).cloned()).collect();
-            st_shapes.iter().map(|sh| (sh.id, xfrm_of(doc, sel, sh))).collect()
-        };
+        // The boxes are read from the shapes in place: no copy of a shape (and its text) per id.
+        let boxes: std::collections::HashMap<ShapeId, Xfrm> = ids
+            .iter()
+            .filter_map(|id| current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)))
+            .map(|sh| (sh.id, xfrm_of(doc, sel, sh)))
+            .collect();
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         let mut n = 0;
         for id in &ids {
             if let Some(sh) = deckcraft_model::find_shape_mut(shapes, *id) {
                 if sh.xfrm.is_none() {
-                    sh.xfrm = boxes.iter().find(|(i, _)| i == id).map(|(_, x)| *x);
+                    sh.xfrm = boxes.get(id).copied();
                 }
                 f(sh)?;
                 n += 1;
@@ -515,8 +519,18 @@ pub(crate) fn current_shapes<'a>(doc: &'a deckcraft_model::Presentation, sel: &c
     }
 }
 
-pub(crate) fn current_names(doc: &deckcraft_model::Presentation, sel: &crate::Selection) -> std::collections::HashSet<String> {
-    current_shapes(doc, sel).map(|v| v.iter().map(|s| s.name.clone()).collect()).unwrap_or_default()
+/// Every name on the slide, group members included, and the number of shapes (which exceeds the
+/// number of names when two shapes share one).
+pub(crate) fn current_names(doc: &deckcraft_model::Presentation, sel: &crate::Selection) -> (std::collections::HashSet<String>, usize) {
+    let mut names = std::collections::HashSet::new();
+    let mut count = 0;
+    if let Some(v) = current_shapes(doc, sel) {
+        deckcraft_model::walk(v, &mut |sh, _| {
+            names.insert(sh.name.clone());
+            count += 1;
+        });
+    }
+    (names, count)
 }
 
 /// The command palette runs a command with `{}`. True when the params doc names a value that
@@ -614,6 +628,7 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut acc = 0u32;
     let mut bits = 0;
+    let mut padded = false;
     for c in s.bytes() {
         let v = match c {
             b'A'..=b'Z' => c - b'A',
@@ -621,9 +636,17 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             b'0'..=b'9' => c - b'0' + 52,
             b'+' | b'-' => 62,
             b'/' | b'_' => 63,
-            b'=' | b'\n' | b'\r' | b' ' => continue,
+            b'=' => {
+                padded = true;
+                continue;
+            }
+            b'\n' | b'\r' | b' ' => continue,
             _ => return None,
         } as u32;
+        // Padding ends the payload; no further data may be decoded.
+        if padded {
+            return None;
+        }
         acc = (acc << 6) | v;
         bits += 6;
         if bits >= 8 {
@@ -631,12 +654,41 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             out.push(((acc >> bits) & 0xff) as u8);
         }
     }
-    Some(out)
+    // A trailing lone Base64 character cannot encode another byte.
+    (bits != 6).then_some(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_rejects_a_single_character_tail() {
+        for (encoded, decoded) in [
+            ("", b"".as_slice()),
+            ("Zg==", b"f"),
+            ("Zg", b"f"),
+            ("Zm8=", b"fo"),
+            ("Zm8", b"fo"),
+            (" Zm9v \r\n", b"foo"),
+            ("data:text/plain;base64,Zm9v", b"foo"),
+            ("+/8=", &[0xfb, 0xff]),
+            ("-_8=", &[0xfb, 0xff]),
+        ] {
+            assert_eq!(base64_decode(encoded).as_deref(), Some(decoded), "{encoded:?}");
+        }
+        for encoded in ["A", "AAAAA", "Zm9vZ", " Zm9vZ \r\n", "data:text/plain;base64,Z"] {
+            assert!(base64_decode(encoded).is_none(), "{encoded:?}");
+        }
+    }
+
+    #[test]
+    fn base64_rejects_data_after_padding() {
+        assert_eq!(base64_decode("Zg== \r\n=="), Some(b"f".to_vec()));
+        for encoded in ["Zg==A", "Zg== Zm8=", "Zm8=A", "=Zg", "Zg==\r\nA", "data:text/plain;base64,Zg==A"] {
+            assert!(base64_decode(encoded).is_none(), "{encoded:?}");
+        }
+    }
 
     #[test]
     fn the_palette_skips_a_command_that_needs_a_value() {
