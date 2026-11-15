@@ -27,6 +27,7 @@ pub(super) fn separate(p: &mut Presentation) -> Result<Vec<Payload>> {
 pub(super) fn restore(
     p: &mut Presentation,
     z: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    names: &HashSet<String>,
     left: &mut u64,
     mut items: usize,
     max_items: usize,
@@ -44,7 +45,7 @@ pub(super) fn restore(
             if !canonical || !seen.insert(entry.clone()) || !part.bytes.is_empty() {
                 return Err(FormatError::Damaged("invalid or ambiguous chart part reference".into()));
             }
-            if z.index_for_name(&entry).is_none() {
+            if !names.contains(&entry) {
                 // Missing members consume no inflation work and can be reported for recovery.
                 damaged.push(format!("{entry}: missing chart part"));
                 return Ok(());

@@ -190,10 +190,20 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     // and the deck can be saved again (a zip can't hold two `media/<id>`).
     let mut seen = std::collections::HashSet::new();
     p.media.retain(|m| seen.insert(m.id));
+    // zip 9 compares every entry's name for one it hasn't indexed, so a deck naming many missing
+    // members would scan the archive for each; they're looked up in this one pass instead.
+    let names = member_index(z.file_names().filter_map(|n| n.ok()));
     let mut left = budget.total;
     for item in &mut p.media {
         let name = format!("media/{}", item.id.0);
-        let linked_only = item.link.is_some() && z.index_for_name(&name).is_none();
+        let present = names.contains(&name);
+        let linked_only = item.link.is_some() && !present;
+        if !present {
+            if !linked_only {
+                damaged.push(FormatError::Damaged(format!("{name}: {}", zip::result::ZipError::FileNotFound)).to_string());
+            }
+            continue;
+        }
         if z.by_name(&name).is_ok_and(|f| f.size() > left) {
             return Err(FormatError::Damaged("embedded media is larger than DeckCraft can open".into()));
         }
@@ -204,9 +214,19 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
             Err(e) => damaged.push(e.to_string()),
         }
     }
-    chart_parts::restore(&mut p, &mut z, &mut left, items, budget.items, &mut damaged)?;
+    chart_parts::restore(&mut p, &mut z, &names, &mut left, items, budget.items, &mut damaged)?;
     repair(&mut p);
     Ok((p, damaged))
+}
+
+/// The members a deck can reference (`media/<id>`, `chart-parts/<n>`), by name. Any other or
+/// longer name is never looked up, so a hostile archive can't make the index grow with unrelated names.
+fn member_index<S: AsRef<str>>(names: impl Iterator<Item = S>) -> std::collections::HashSet<String> {
+    const MAX_NAME: usize = 64;
+    names
+        .filter(|n| n.as_ref().len() <= MAX_NAME && (n.as_ref().starts_with("media/") || n.as_ref().starts_with("chart-parts/")))
+        .map(|n| n.as_ref().to_owned())
+        .collect()
 }
 
 /// Make a loaded presentation safe to edit: a master exists, every slide's layout exists, tables

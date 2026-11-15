@@ -26,7 +26,7 @@ fn tags_survive_round_trip() {
     let mut ct = String::new();
     zip.by_name("[Content_Types].xml").expect("ct").read_to_string(&mut ct).expect("read");
     assert!(ct.contains("presentationml.tags+xml"));
-    assert_eq!((0..zip.len()).filter(|i| zip.by_index(*i).is_ok_and(|f| f.name().starts_with("ppt/tags/"))).count(), 3);
+    assert_eq!((0..zip.len()).filter(|i| zip.by_index(*i).is_ok_and(|f| f.name().unwrap().starts_with("ppt/tags/"))).count(), 3);
 
     let back = deckcraft_pptx::import(&bytes).expect("import");
     assert_eq!(back.tags, p.tags);

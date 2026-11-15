@@ -111,7 +111,7 @@ fn without(bytes: &[u8], drop: &str) -> Vec<u8> {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let f = z.by_index(i).unwrap();
-        if f.name() != drop {
+        if f.name().unwrap() != drop {
             out.raw_copy_file(f).unwrap();
         }
     }
@@ -217,7 +217,7 @@ fn repeated_media_ids_are_read_once() {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).unwrap();
-        if f.name() == "presentation.json" {
+        if f.name().unwrap() == "presentation.json" {
             let mut json = vec![];
             f.read_to_end(&mut json).unwrap();
             let mut v: serde_json::Value = serde_json::from_slice(&json).unwrap();
@@ -587,4 +587,14 @@ fn outline_includes_table_text() {
     assert!(out.contains("Text box body"), "{out}");
     assert!(out.contains("Cell A1\tCell B1"), "{out}");
     assert!(out.contains("Cell A2\tCell B2"), "{out}");
+}
+
+#[test]
+fn member_index_keeps_only_referenceable_short_names() {
+    let long = format!("media/{}", "x".repeat(10_000));
+    let names = ["media/7", "chart-parts/0", "presentation.json", "unrelated/zzz", long.as_str()];
+    let index = super::member_index(names.into_iter());
+    let mut got: Vec<_> = index.iter().map(String::as_str).collect();
+    got.sort();
+    assert_eq!(got, ["chart-parts/0", "media/7"]);
 }
