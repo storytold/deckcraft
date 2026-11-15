@@ -1,4 +1,5 @@
-//! Generated elements: Harvey balls and checkboxes.
+//! Business visuals: Harvey balls and checkboxes, the generated elements of
+//! [`Shape::generated`](deckcraft_model::Shape::generated).
 //!
 //! Each is a group whose `generated` field says what it shows (a ball's value, a checkbox's state).
 //! Its children are drawn from that inside the largest centred square of the group's child

@@ -34,7 +34,7 @@ fn blank() -> Session {
 /// The element the app has selected.
 fn selected(h: &Harness<'static, SlideApp>) -> Generated {
     let st = h.state().session.active().unwrap();
-    deckcraft_engine::cmd::generated::selected(st).expect("an element is selected").1
+    deckcraft_engine::cmd::visuals::selected(st).expect("an element is selected").1
 }
 
 fn click(h: &mut Harness<'static, SlideApp>, role: Role, name: &str) {

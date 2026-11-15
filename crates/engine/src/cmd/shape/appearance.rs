@@ -123,7 +123,7 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
 fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
     fn apply(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
         // A Harvey ball or checkbox in the group took the colours its description holds
-        // (`generated::route_format`); its parts are drawn from that, not formatted by hand.
+        // (`visuals::route_format`); its parts are drawn from that, not formatted by hand.
         if depth > 64 || sh.generated.is_some() {
             return Ok(());
         }
@@ -141,10 +141,10 @@ fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut 
 pub(super) fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     // A Harvey ball's or checkbox's colour lives in its description, which redraws replay.
     let rest;
-    let p = match crate::cmd::generated::route_format(s, p, "shape.fill")? {
-        crate::cmd::generated::Format::Unchanged => p,
-        crate::cmd::generated::Format::Done(v) => return Ok(v),
-        crate::cmd::generated::Format::Rest(q) => {
+    let p = match crate::cmd::visuals::route_format(s, p, "shape.fill")? {
+        crate::cmd::visuals::Format::Unchanged => p,
+        crate::cmd::visuals::Format::Done(v) => return Ok(v),
+        crate::cmd::visuals::Format::Rest(q) => {
             rest = q;
             &rest
         }
@@ -251,10 +251,10 @@ fn line_end(v: &str) -> Option<LineEnd> {
 pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
     // A Harvey ball's outline and a checkbox's colour live in its description (see `fill`).
     let rest;
-    let p = match crate::cmd::generated::route_format(s, p, "shape.line")? {
-        crate::cmd::generated::Format::Unchanged => p,
-        crate::cmd::generated::Format::Done(v) => return Ok(v),
-        crate::cmd::generated::Format::Rest(q) => {
+    let p = match crate::cmd::visuals::route_format(s, p, "shape.line")? {
+        crate::cmd::visuals::Format::Unchanged => p,
+        crate::cmd::visuals::Format::Done(v) => return Ok(v),
+        crate::cmd::visuals::Format::Rest(q) => {
             rest = q;
             &rest
         }

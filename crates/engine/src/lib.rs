@@ -650,8 +650,8 @@ impl Session {
             let named = (e == cmd::NOTHING_SELECTED
                 || e == cmd::SELECT_TWO
                 || e == cmd::merge::IN_GROUP
-                || e == cmd::generated::SELECT_HARVEY
-                || e == cmd::generated::SELECT_CHECKBOX)
+                || e == cmd::visuals::SELECT_HARVEY
+                || e == cmd::visuals::SELECT_CHECKBOX)
                 && (params.get("ids").is_some() || params.get("id").is_some());
             if !named {
                 return Err(EngineError::Disabled(id.into(), e));
@@ -737,7 +737,7 @@ impl Session {
         let r = f(&mut doc, &mut sel)?;
         cmd::arrange::refit_groups(&st.doc, &mut doc);
         // Harvey balls and checkboxes: redrawn when resized, their parts not moved on their own.
-        cmd::generated::keep_whole(&st.doc, &mut doc)?;
+        cmd::visuals::keep_whole(&st.doc, &mut doc)?;
         connect::reroute(&mut doc, &sel);
         st.doc = Arc::new(doc);
         st.selection = sel;

@@ -110,7 +110,7 @@ pub fn specs() -> Vec<CommandSpec> {
             None,
             "{value?: 0..=of (1), of?: 1..=100 (4), size?: pt 4..=400 (14), fill?: color (tx1), background?: color|null (null), outline?: color|null (tx1), outlineWidth?: pt 0..=20 (0.75), rect?: [x,y,w,h]} → {id}",
             has_slide,
-            super::generated::insert_harvey_ball
+            super::visuals::insert_harvey_ball
         ),
         cmd!(
             "insert.checkbox",
@@ -119,7 +119,7 @@ pub fn specs() -> Vec<CommandSpec> {
             None,
             "{state?: checked|unchecked|crossed (checked), size?: pt 4..=400 (14), color?: color (tx1), boxed?: bool (true), rect?: [x,y,w,h]} → {id}",
             has_slide,
-            super::generated::insert_checkbox
+            super::visuals::insert_checkbox
         ),
         cmd!(
             "shape.action",

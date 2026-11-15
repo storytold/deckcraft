@@ -112,7 +112,7 @@ fn stroke_guide(p: &egui::Painter, g: &deckcraft_geom::warp::Guide, color: Color
 /// Render the Shape Format tab's shape, fill, outline, effects, text, arrange, and size controls.
 pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
-    if let Some((gid, g)) = app.session.active().and_then(deckcraft_engine::cmd::generated::selected) {
+    if let Some((gid, g)) = app.session.active().and_then(deckcraft_engine::cmd::visuals::selected) {
         generated_group(app, ui, gid, &g, &sc);
     }
     let sel = enabled(app, "shape.fill");
