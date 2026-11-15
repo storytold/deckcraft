@@ -528,7 +528,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
             "fwd" => "Forward 0.25 seconds",
             _ => "Media control",
         };
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!(name)));
         if resp.hovered() {
             painter.rect_filled(r, CornerRadius::same(3), Color32::from_white_alpha(28));
         }
