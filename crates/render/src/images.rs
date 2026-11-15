@@ -434,12 +434,13 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     }
     // Scale the frames down so all of them fit the budget, rather than keeping only the first
     // ones: a 1000×560 GIF of 120 frames played its first 29 and looped them (#873).
-    let count = gif_frame_count(bytes, GIF_MAX_FRAMES).max(1);
+    let canvas_pixels = (w as u64) * (h as u64);
+    let max_frames = usize::try_from(GIF_MAX_TOTAL_CANVAS_PIXELS / canvas_pixels).unwrap_or(GIF_MAX_FRAMES).min(GIF_MAX_FRAMES);
+    let count = gif_frame_count(bytes, max_frames).max(1);
     let fit = ((GIF_BUDGET / count / 4) as f64 / (w as f64 * h as f64)).sqrt();
     let k = (GIF_SIDE as f64 / w.max(h) as f64).min(fit).min(1.0);
     let (nw, nh) = (((w as f64 * k).floor() as u32).max(1), ((h as f64 * k).floor() as u32).max(1));
     let size = nw as usize * nh as usize * 4;
-    let canvas_pixels = (w as u64) * (h as u64);
     let mut total_canvas_pixels: u64 = 0;
     let (mut frames, mut ends, mut t) = (Vec::new(), Vec::new(), 0.0);
     let mut iter = dec.into_frames();
