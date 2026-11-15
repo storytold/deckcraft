@@ -1333,6 +1333,41 @@ fn requested_paste_and_match_formatting_takes_no_picture_and_keeps_copied_text()
     assert_eq!(body(&h).text(), "Copied", "the selection is not just deleted");
 }
 
+/// #2139 review: a Paste and Match Formatting request that never got an answer expires, so a
+/// later picture paste inserts the picture; and the menu command with only a textless shape
+/// copied here leaves the selected text alone instead of deleting it.
+#[test]
+fn an_expired_text_only_request_does_not_drop_a_picture_and_textless_copies_delete_nothing() {
+    let services = Services { request_paste: Some(Box::new(|| {})), ..Default::default() };
+    let mut h = step_app(services);
+    let shapes = |h: &egui_kittest::Harness<'static, SlideApp>| h.state().session.active().unwrap().doc.slides[0].shapes.len();
+    let before = shapes(&h);
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    // Its answer never came, and the request is older than the window.
+    if let Some((_, at)) = h.state_mut().paste_request.as_mut() {
+        *at -= 60.0;
+    }
+    h.event(egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::RED))));
+    h.run_steps(2);
+    assert_eq!(shapes(&h), before + 1, "an ordinary picture paste after the request expired");
+
+    // A shape with no text is copied: the system clipboard gets the marker, the session no text.
+    let rect = h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [300.0, 300.0, 50.0, 50.0]})).unwrap()["id"].clone();
+    h.state_mut().run("edit.select", json!({"ids": [rect]})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+    assert!(h.state().session.clipboard.plain.is_empty());
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id;
+    h.state_mut().session.execute("text.edit", &json!({"id": title.0})).unwrap();
+    h.event(egui::Event::Text("Keep me".into()));
+    h.run_steps(1);
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::Paste(crate::OBJECTS_MARKER.to_string()));
+    h.run_steps(2);
+    let text = h.state().session.active().unwrap().doc.slides[0].shape(title).and_then(|s| s.text.as_ref()).map(|t| t.text()).unwrap_or_default();
+    assert_eq!(text, "Keep me");
+}
+
 /// #1956: the ribbon's drop-downs are announced by their purpose, not by their value or an
 /// internal key. Animations › Start with a shape that has no animation was "astart"; Home's Font
 /// and Font size boxes were "font" and "size" while nothing told them a font or size.

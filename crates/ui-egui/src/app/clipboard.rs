@@ -102,11 +102,15 @@ impl SlideApp {
         true
     }
 
+    /// The menu-requested paste still waiting for the window's answer, if not expired.
+    pub(super) fn pending_paste_request(&self) -> Option<&'static str> {
+        self.paste_request.filter(|(_, at)| monotonic_secs() - at < PASTE_REQUEST_SECS).map(|(id, _)| id)
+    }
+
     /// The command for a `Paste` event: Paste and Match Formatting when the menu asked for it.
     pub(super) fn requested_paste_command(&mut self) -> &'static str {
-        match self.paste_request.take() {
-            Some((id, at)) if monotonic_secs() - at < PASTE_REQUEST_SECS => id,
-            _ => "edit.paste",
-        }
+        let id = self.pending_paste_request().unwrap_or("edit.paste");
+        self.paste_request = None;
+        id
     }
 }

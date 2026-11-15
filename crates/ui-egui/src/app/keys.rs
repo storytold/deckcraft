@@ -158,6 +158,9 @@ impl SlideApp {
                         Some(png) => self
                             .session
                             .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
+                        // Paste and Match Formatting of textless objects copied here (the marker,
+                        // and nothing copied as text) has no text: leave the selection alone.
+                        None if !rich && text.is_empty() && self.session.clipboard.plain.is_empty() => Ok(Value::Null),
                         None => {
                             // Paste and Match Formatting of copied objects (the marker): the text
                             // DeckCraft copied, not an empty string that would only delete the selection.
@@ -210,7 +213,8 @@ impl SlideApp {
     /// picture-only clipboard ends its request here, so a later Ctrl+V isn't taken for it; with
     /// text in the same batch (`events_have_text`), the `Paste` that follows consumes it.
     fn paste_image(&mut self, image: &egui::ColorImage, events_have_text: bool) {
-        let text_only = self.paste_request.is_some_and(|(id, _)| id == "edit.pasteText");
+        // An expired request is no longer Paste and Match Formatting: the picture pastes.
+        let text_only = self.pending_paste_request() == Some("edit.pasteText");
         if !events_have_text {
             self.requested_paste_command();
         }
