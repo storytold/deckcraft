@@ -133,7 +133,8 @@ fn a_clicked_text_link_is_followed_until_the_show_ends() {
     harness.run_steps(2);
     let show = harness.state().show.as_ref().expect("the show is running");
     assert_eq!(show.state.slide, 1, "the link was followed to the next slide");
-    assert_eq!(show.followed, vec![deckcraft_model::text::FollowedLink { shape: id, para: 0, run: 0 }]);
+    let slide = harness.state().session.doc().expect("a document is open").doc.slides[0].id;
+    assert_eq!(show.followed, vec![deckcraft_model::text::FollowedLink { slide, shape: id, cell: None, para: 0, run: 0 }]);
     // A new show starts with nothing followed.
     harness.state_mut().show = None;
     harness.state_mut().start_show(0, false);

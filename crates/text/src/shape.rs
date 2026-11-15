@@ -1,6 +1,5 @@
 use deckcraft_color::SchemeSlot;
 use deckcraft_model::style::ColorRef;
-use deckcraft_model::text::FollowedLink;
 
 use super::autonum::autonum;
 use super::run::{RunEffects, TextShadow};
@@ -55,10 +54,22 @@ pub(crate) fn shape_para(
     // The logical paragraph: its text and each character's style.
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
+    // The first run of the link the current run belongs to, tracked on the way so that a link in
+    // many runs is not searched back to its start for every run.
+    let mut link_start = 0;
     for (ri, run) in para.runs.iter().enumerate() {
         let mut rp = resolve::run(ctx, shape, para, &run.props);
-        if run.props.link.is_some() && opts.fields.followed(&FollowedLink { shape: shape.id, para: pi, run: para.link_start(ri) }) {
-            followed_colour(&mut rp);
+        match &run.props.link {
+            Some(link) => {
+                let continues = ri > 0 && para.runs.get(ri - 1).and_then(|r| r.props.link.as_ref()) == Some(link);
+                if !continues {
+                    link_start = ri;
+                }
+                if opts.fields.followed(shape.id, pi, link_start) {
+                    followed_colour(&mut rp);
+                }
+            }
+            None => link_start = ri,
         }
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
         let t: String = match &run.kind {

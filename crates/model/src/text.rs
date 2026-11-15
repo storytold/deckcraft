@@ -478,12 +478,16 @@ pub struct Hyperlink {
     pub zoom_return: Option<crate::SlideId>,
 }
 
-/// One hyperlink in text, as the slide show tells it apart from the others: the shape holding
-/// the text, the paragraph, and the first run of the link (see [`Paragraph::link_start`]).
-/// Two links that point at the same place are still two links.
+/// One hyperlink in text, as the slide show tells it apart from the others: the slide, the shape
+/// holding the text (and the table cell, in a table), the paragraph, and the first run of the link
+/// (see [`Paragraph::link_start`]). Two links that point at the same place are still two links, and
+/// so are links at the same place on two slides: imported decks repeat shape ids from slide to slide.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FollowedLink {
+    pub slide: crate::SlideId,
     pub shape: crate::ShapeId,
+    /// The `(row, column)` of the table cell holding the link, when `shape` is a table.
+    pub cell: Option<(usize, usize)>,
     pub para: usize,
     pub run: usize,
 }

@@ -198,7 +198,7 @@ pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale:
     let h = (b.height() * fit).ceil().clamp(1.0, 2048.0) as u16;
     let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
     let opts = RenderOpts { scale: fit, ..Default::default() };
-    let f = Frame { pres, opts: &opts, fields: SlideFields::new(1, String::new(), &opts) };
+    let f = Frame { pres, opts: &opts, fields: SlideFields::new(1, String::new(), &opts, None) };
     let view = Affine::scale(fit) * Affine::translate(-b.origin().to_vec2());
     RENDERER.with(|r| {
         let mut r = r.borrow_mut();
@@ -219,7 +219,7 @@ pub fn render_shape(pres: &Presentation, slide: &Slide, id: ShapeId, scale: f64)
     let h = (b.height() * scale).ceil().clamp(1.0, MAX_SIDE as f64) as u16;
     let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
     let opts = RenderOpts { scale, ..Default::default() };
-    let f = Frame { pres, opts: &opts, fields: SlideFields::new(1, String::new(), &opts) };
+    let f = Frame { pres, opts: &opts, fields: SlideFields::new(1, String::new(), &opts, None) };
     let view = Affine::scale(scale) * Affine::translate(-b.origin().to_vec2());
     RENDERER.with(|r| {
         let mut r = r.borrow_mut();

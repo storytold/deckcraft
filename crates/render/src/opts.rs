@@ -1,6 +1,7 @@
 use deckcraft_model::text::FollowedLink;
 
 use super::{DateTime, Fields, Rgba, ShapeId, Vec2, datetime};
+use deckcraft_model::SlideId;
 
 /// Animation state of one shape during a slide show or preview.
 #[derive(Clone, Debug)]
@@ -74,6 +75,7 @@ pub struct RenderOpts<'a> {
     /// background. Shapes filled with the background (`useBgFill`) still show it.
     pub transparent_background: bool,
     /// Text hyperlinks the slide show has followed: drawn in the theme's followed hyperlink colour.
+    /// Each names its slide, so one slide's links never recolour another's.
     pub followed: &'a [FollowedLink],
 }
 
@@ -108,13 +110,45 @@ pub(crate) struct SlideFields {
     pub(crate) footer: String,
     /// The local date and time date fields show; `None`: they keep their saved text.
     pub(crate) now: Option<DateTime>,
-    /// Followed text hyperlinks ([`RenderOpts::followed`]).
+    /// The slide's followed text hyperlinks ([`RenderOpts::followed`], this slide's only).
     pub(crate) followed: Vec<FollowedLink>,
+    /// The slide these fields are for; `None` when it is not a slide of the deck.
+    pub(crate) slide: Option<SlideId>,
 }
 
 impl SlideFields {
-    pub(crate) fn new(num: u32, footer: String, opts: &RenderOpts) -> Self {
-        SlideFields { num, date: opts.date_text.clone(), footer, now: opts.now.or_else(DateTime::now_local), followed: opts.followed.to_vec() }
+    /// Fields for slide `slide` (`None`: not a slide of the deck, so no link is followed).
+    pub(crate) fn new(num: u32, footer: String, opts: &RenderOpts, slide: Option<SlideId>) -> Self {
+        let followed = match slide {
+            Some(id) => opts.followed.iter().filter(|l| l.slide == id).copied().collect(),
+            None => vec![],
+        };
+        SlideFields { num, date: opts.date_text.clone(), footer, now: opts.now.or_else(DateTime::now_local), followed, slide }
+    }
+
+    fn is_followed(&self, shape: ShapeId, cell: Option<(usize, usize)>, para: usize, run: usize) -> bool {
+        self.followed.iter().any(|l| l.shape == shape && l.cell == cell && l.para == para && l.run == run)
+    }
+}
+
+/// [`SlideFields`] for the text of one table cell: its links are told apart from the other cells'.
+struct CellFields<'a> {
+    slide: &'a SlideFields,
+    table: ShapeId,
+    cell: (usize, usize),
+}
+
+impl Fields for CellFields<'_> {
+    fn field(&self, kind: &str) -> Option<String> {
+        self.slide.field(kind)
+    }
+
+    fn field_in(&self, kind: &str, lang: Option<&str>) -> Option<String> {
+        self.slide.field_in(kind, lang)
+    }
+
+    fn followed(&self, _shape: ShapeId, para: usize, run: usize) -> bool {
+        self.slide.is_followed(self.table, Some(self.cell), para, run)
     }
 }
 
@@ -138,7 +172,11 @@ impl Fields for SlideFields {
         None
     }
 
-    fn followed(&self, link: &FollowedLink) -> bool {
-        self.followed.contains(link)
+    fn followed(&self, shape: ShapeId, para: usize, run: usize) -> bool {
+        self.is_followed(shape, None, para, run)
+    }
+
+    fn in_cell(&self, table: ShapeId, row: usize, col: usize) -> Option<Box<dyn Fields + '_>> {
+        Some(Box::new(CellFields { slide: self, table, cell: (row, col) }))
     }
 }

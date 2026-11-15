@@ -1053,7 +1053,8 @@ fn followed_links_draw_in_the_followed_hyperlink_colour() {
     let plain = deck(link(), link(), link(), link());
     let at = |p: &Presentation, followed: &[FollowedLink]| render_slide(p, 0, &RenderOpts { scale: 0.5, followed, ..Default::default() });
     let diff = |a: &Image, b: &Image| a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 64).count();
-    let key = |run| FollowedLink { shape: ShapeId(1), para: 0, run };
+    let slide = plain.slides[0].id;
+    let key = |run| FollowedLink { slide, shape: ShapeId(1), cell: None, para: 0, run };
     let _ = at(&plain, &[]); // faces load lazily
     let base = at(&plain, &[]);
 
@@ -1067,7 +1068,88 @@ fn followed_links_draw_in_the_followed_hyperlink_colour() {
     // Runs side by side with one link are one link: following it recolours both.
     assert_eq!(diff(&at(&plain, &[key(4)]), &at(&deck(link(), link(), followed_look(), followed_look()), &[])), 0);
     // A different shape's key does nothing here.
-    assert_eq!(diff(&base, &at(&plain, &[FollowedLink { shape: ShapeId(2), para: 0, run: 0 }])), 0);
+    assert_eq!(diff(&base, &at(&plain, &[FollowedLink { slide, shape: ShapeId(2), cell: None, para: 0, run: 0 }])), 0);
+}
+
+/// A hyperlink run in 40 pt text, for the followed-link tests.
+fn linked_body(text: &str) -> TextBody {
+    use deckcraft_model::RunProps;
+    use deckcraft_model::text::{Action, Hyperlink, Run};
+    let mut body = TextBody::from_text("x");
+    let mut run = Run::new(text);
+    run.props = RunProps {
+        size: Some(40.0),
+        link: Some(Hyperlink {
+            action: Action::Url { url: "https://example.org".into() },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }),
+        ..Default::default()
+    };
+    body.paragraphs[0].runs = vec![run];
+    body
+}
+
+fn pixels_differing(a: &Image, b: &Image) -> usize {
+    a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 64).count()
+}
+
+/// #1937: imported decks repeat shape ids from slide to slide, so a link followed on one slide
+/// must not recolour the link at the same shape, paragraph and run of another slide.
+#[test]
+fn a_followed_link_does_not_recolour_the_same_link_on_another_slide() {
+    use deckcraft_model::SlideId;
+    use deckcraft_model::text::FollowedLink;
+    let mut sh = text_shape(1, "x", 40.0, 40.0);
+    sh.text = Some(linked_body("Link"));
+    let mut p = deck_with(vec![sh]);
+    let mut second = (*p.slides[0]).clone();
+    second.id = SlideId(p.slides[0].id.0 + 1000);
+    p.slides.push(std::sync::Arc::new(second));
+    let (a, b) = (p.slides[0].id, p.slides[1].id);
+    let at = |i: usize, followed: &[FollowedLink]| render_slide(&p, i, &RenderOpts { scale: 0.5, followed, ..Default::default() });
+    let key = |slide| FollowedLink { slide, shape: ShapeId(1), cell: None, para: 0, run: 0 };
+    let _ = at(0, &[]); // faces load lazily
+    let (base_a, base_b) = (at(0, &[]), at(1, &[]));
+    assert_eq!(pixels_differing(&base_a, &base_b), 0, "the two slides look alike");
+    let followed = [key(a)];
+    assert!(pixels_differing(&base_a, &at(0, &followed)) > 100, "the link on the followed slide is recoloured");
+    assert_eq!(pixels_differing(&base_b, &at(1, &followed)), 0, "the same link on the other slide is not");
+    // Both are followed once each has been clicked.
+    assert!(pixels_differing(&base_b, &at(1, &[key(a), key(b)])) > 100);
+    // A text link remembers its slide, for the show to follow.
+    let placed = place_slide(&p, 1);
+    assert_eq!(placed.links.iter().filter_map(|l| l.followed).collect::<Vec<_>>(), vec![key(b)]);
+}
+
+/// #1937: links in table cells are followed per cell: the click records the cell and the draw
+/// looks it up the same way.
+#[test]
+fn followed_links_in_table_cells_are_told_apart_per_cell() {
+    use deckcraft_model::text::FollowedLink;
+    let mut t = Table::new(1, 2, 600.0, 80.0);
+    for c in 0..2 {
+        if let Some(cell) = t.cell_mut(0, c) {
+            cell.text = linked_body("Link");
+        }
+    }
+    let table = Shape { id: ShapeId(5), xfrm: Some(Xfrm::new(20.0, 20.0, 600.0, 80.0)), kind: ShapeKind::Table(t), ..Default::default() };
+    let p = deck_with(vec![table]);
+    let slide = p.slides[0].id;
+    let at = |followed: &[FollowedLink]| render_slide(&p, 0, &RenderOpts { scale: 0.5, followed, ..Default::default() });
+    let key = |c| FollowedLink { slide, shape: ShapeId(5), cell: Some((0, c)), para: 0, run: 0 };
+    let _ = at(&[]); // faces load lazily
+    let base = at(&[]);
+    let (first, second) = (at(&[key(0)]), at(&[key(1)]));
+    assert!(pixels_differing(&base, &first) > 100, "a followed link in the first cell is recoloured");
+    assert!(pixels_differing(&base, &second) > 100, "a followed link in the second cell is recoloured");
+    assert!(pixels_differing(&first, &second) > 100, "and only that cell's");
+    // The click on a cell's link records that cell.
+    let keys: Vec<_> = place_slide(&p, 0).links.iter().filter_map(|l| l.followed).collect();
+    assert_eq!(keys, vec![key(0), key(1)]);
 }
 
 #[test]

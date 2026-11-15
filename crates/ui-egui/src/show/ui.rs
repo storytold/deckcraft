@@ -493,8 +493,14 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
     if let (Some((from, m)), Some(tr)) = (morph, show.trans.as_mut()) {
         let f = |id: ShapeId| ShapeState { opacity: m.opacity_of(id), ..Default::default() };
         let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
-        let opts =
-            RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), state: Some(&f), threads, ..Default::default() };
+        let opts = RenderOpts {
+            scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+            size: Some(size),
+            state: Some(&f),
+            threads,
+            followed: &show.followed,
+            ..Default::default()
+        };
         let text: Vec<deckcraft_render::TextMorph> =
             m.text.iter().map(|x| deckcraft_render::TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix }).collect();
         let paths: Vec<deckcraft_render::PathMorph> = m
@@ -521,7 +527,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
             // Slides split into background and content are rendered once per transition;
             // every frame only composites cached textures.
             if tr.parts.is_none() && deckcraft_anim::uses_slide_parts(&tr.kind, &tr.option) {
-                tr.parts = Some(part_textures(ctx, doc, tr.from, idx, size));
+                tr.parts = Some(part_textures(ctx, doc, tr.from, idx, size, &show.followed));
             }
             if tr.old.is_none()
                 && let Some(prev) = tr.from

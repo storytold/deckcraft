@@ -136,7 +136,7 @@ impl Renderer {
     }
 
     pub(crate) fn fields(pres: &Presentation, index: usize, opts: &RenderOpts) -> SlideFields {
-        SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts)
+        SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts, pres.slides.get(index).map(|s| s.id))
     }
 
     /// Background plus the master and layout graphics the slide shows.
@@ -273,7 +273,7 @@ impl Renderer {
         let (w, h) = output_size(pres, opts);
         let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
         let view = Affine::translate((opts.offset.0, opts.offset.1)) * Affine::scale(opts.scale);
-        let f = Frame { pres, opts, fields: SlideFields::new(1, String::new(), opts) };
+        let f = Frame { pres, opts, fields: SlideFields::new(1, String::new(), opts, None) };
         if let Some(m) = pres.masters.get(mi) {
             match li.and_then(|i| m.layouts.get(i)) {
                 Some(l) => {
@@ -504,7 +504,7 @@ impl Renderer {
             }
             ShapeKind::Table(t) => {
                 // Rows grow with their text: what the cells cover, borders included.
-                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, f.opts.edit && f.opts.editing_text == Some(s.id));
+                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, s.id, f.opts.edit && f.opts.editing_text == Some(s.id));
                 self.track(m, cells.unwrap_or(Rect::new(0.0, 0.0, x.w, x.h)).inflate(2.0, 2.0));
             }
             ShapeKind::Chart(c) => {

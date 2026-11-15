@@ -194,10 +194,17 @@ pub(super) fn quad_mesh(tex: Option<egui::TextureId>, rect: Rect, l: &Layer, col
 }
 
 /// Render the backgrounds and contents of a transition's two slides into textures, once.
-pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Option<usize>, to: usize, size: (u32, u32)) -> [Option<TextureHandle>; 4] {
+pub(super) fn part_textures(
+    ctx: &egui::Context,
+    doc: &Presentation,
+    from: Option<usize>,
+    to: usize,
+    size: (u32, u32),
+    followed: &[FollowedLink],
+) -> [Option<TextureHandle>; 4] {
     use deckcraft_render::SlidePart;
     let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
-    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
+    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, followed, ..Default::default() };
     let tex = |i: usize, part: SlidePart, name: &str| {
         let img = deckcraft_render::render_slide_part(doc, i, part, &opts);
         crate::textures::upload(ctx, name, crate::textures::to_color_image(&img, false))
