@@ -24,8 +24,9 @@ struct Item {
     action: &'static str,
     keys: Option<&'static str>,
     widget: Widget,
-    /// What the menu shows now (enabled, checked), so a frame only calls AppKit for changes.
-    shown: (bool, bool),
+    /// What the menu shows now (enabled, checked), so a frame only calls AppKit for changes;
+    /// `None` once AppKit has toggled a check mark on a click.
+    shown: Option<(bool, bool)>,
 }
 
 pub struct NativeMenu {
@@ -49,7 +50,7 @@ fn add(parent: &Submenu, items: &mut Vec<Item>, app: &SlideApp, label: &str, act
         Widget::Plain(w) => parent.append(w),
         Widget::Check(w) => parent.append(w),
     };
-    items.push(Item { action, keys, widget, shown: (false, false) });
+    items.push(Item { action, keys, widget, shown: None });
 }
 
 fn fill(parent: &Submenu, entries: &[Entry], items: &mut Vec<Item>, app: &SlideApp) {
@@ -122,8 +123,8 @@ impl NativeMenu {
     }
 
     /// Runs the entries clicked (or whose shortcut was pressed) since the last frame.
-    pub fn poll(&self, app: &mut SlideApp, ctx: &egui::Context) {
-        let text_field = ctx.egui_wants_keyboard_input();
+    pub fn poll(&mut self, app: &mut SlideApp, ctx: &egui::Context) {
+        let text_field = ctx.text_edit_focused();
         while let Ok(e) = self.events.try_recv() {
             let id = e.id().0.as_str();
             if id == QUIT {
@@ -131,10 +132,14 @@ impl NativeMenu {
                 continue;
             }
             if let Some(i) = id.strip_prefix(DOC).and_then(|i| i.parse::<usize>().ok()) {
-                let _ = app.run("window.next", json!({"index": i}));
+                // An open dialog would apply its values to the other presentation.
+                if menus::menu_enabled(app, "window.next", false) {
+                    let _ = app.run("window.next", json!({"index": i}));
+                }
                 continue;
             }
-            let Some(item) = id.parse::<usize>().ok().and_then(|i| self.items.get(i)) else { continue };
+            let Some(item) = id.parse::<usize>().ok().and_then(|i| self.items.get_mut(i)) else { continue };
+            item.shown = None;
             // The state may have changed since the menu was drawn.
             if !menus::menu_enabled(app, item.action, text_field) {
                 continue;
@@ -158,10 +163,10 @@ impl NativeMenu {
 
     /// Dims, enables and checks the entries for the state at the end of this frame.
     pub fn refresh(&mut self, app: &SlideApp, ctx: &egui::Context) {
-        let text_field = ctx.egui_wants_keyboard_input();
+        let text_field = ctx.text_edit_focused();
         for item in &mut self.items {
             let now = (menus::menu_enabled(app, item.action, text_field), menus::menu_checked(app, item.action).unwrap_or(false));
-            if now == item.shown {
+            if item.shown == Some(now) {
                 continue;
             }
             match &item.widget {
@@ -171,7 +176,7 @@ impl NativeMenu {
                     w.set_checked(now.1);
                 }
             }
-            item.shown = now;
+            item.shown = Some(now);
         }
         let titles: Vec<String> = app.session.documents().iter().map(|d| d.title()).collect();
         if titles != self.doc_titles {

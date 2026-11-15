@@ -46,7 +46,7 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
         #[cfg(target_os = "macos")]
-        if let Some(m) = &self.2 {
+        if let Some(m) = &mut self.2 {
             m.poll(&mut self.0, ctx);
         }
         self.0.logic(ctx);

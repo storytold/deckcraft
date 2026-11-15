@@ -41,6 +41,15 @@ fn main() {
     let tools = bar.itemWithTitle(&NSString::from_str("Tools")).and_then(|i| i.submenu()).expect("Tools");
     assert!(!tools.itemWithTitle(&NSString::from_str("Add-ins…")).expect("Add-ins…").isEnabled(), "no add-ins yet");
 
+    // Clicking the current view: AppKit unchecks it, the view doesn't change, the mark comes back.
+    let view = bar.itemWithTitle(&NSString::from_str("View")).and_then(|i| i.submenu()).expect("View");
+    let normal = view.indexOfItemWithTitle(&NSString::from_str("Normal"));
+    assert_eq!(view.itemAtIndex(normal).expect("Normal").state(), objc2_app_kit::NSControlStateValueOn);
+    view.performActionForItemAtIndex(normal);
+    menu.poll(&mut app, &ctx);
+    menu.refresh(&app, &ctx);
+    assert_eq!(view.itemAtIndex(normal).expect("Normal").state(), objc2_app_kit::NSControlStateValueOn, "Normal is still checked");
+
     println!("mac_menu_appkit: ok");
 }
 

@@ -71,7 +71,8 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (F, true, false, false) => "app.find",
-        (H, true, false, false) => "app.replace",
+        // Ctrl+H is PowerPoint's; macOS keeps Cmd+H for Hide and uses Option+Cmd+F.
+        (H, true, false, false) | (F, true, false, true) => "app.replace",
         (Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9, false, false, true) => {
             if app.session.mac_keys || app.backstage.is_some() || app.session.active().is_some_and(|d| d.selection.text.is_some()) {
                 return false;
@@ -243,8 +244,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Entry>)> {
                     "Find",
                     vec![
                         key("Find…", "app.find", "Cmd+F"),
-                        // Cmd+H also replaces, but the menu bar gives it to Hide DeckCraft.
-                        it("Replace…", "app.replace"),
+                        key("Find and Replace…", "app.replace", "Cmd+Alt+F"),
                         it("Replace Fonts…", r#"app.dialog {"id":"replaceFonts"}"#),
                     ],
                 ),
@@ -553,12 +553,13 @@ const DOCLESS: &[&str] = &["app.openDialog", "app.about", "app.checkUpdates", "a
 /// Whether a menu entry can run now; the menu bar dims it otherwise. `text_field`: a text field
 /// has the keyboard, so the clipboard and undo entries go to it.
 pub fn menu_enabled(app: &SlideApp, action: &str, text_field: bool) -> bool {
-    if action.is_empty() || app.dialog.is_some() || app.palette.is_some() || app.show.is_some() {
-        return false;
-    }
     let (id, p) = split_action(action);
+    // Also a dialog's or the palette's field.
     if text_field && matches!(id, "edit.undo" | "edit.redo" | "edit.cut" | "edit.copy" | "edit.paste" | "edit.selectAll") {
         return true;
+    }
+    if action.is_empty() || app.dialog.is_some() || app.palette.is_some() || app.show.is_some() {
+        return false;
     }
     let gate = p.get("id").or_else(|| p.get("pane")).and_then(|v| v.as_str()).and_then(|g| GATES.iter().find(|x| x.0 == g)).map(|x| x.1);
     let id = if action.starts_with("tool:") { "shape.insert" } else { gate.unwrap_or(id) };
@@ -567,7 +568,8 @@ pub fn menu_enabled(app: &SlideApp, action: &str, text_field: bool) -> bool {
         return crate::backstage::Page::parse(page).is_some_and(|pg| !pg.needs_doc() || app.session.active().is_some());
     }
     match deckcraft_engine::find_command(id) {
-        Some(c) => (c.enabled)(&app.session).is_ok(),
+        // The File tab hides the presentation: nothing edits it from there, as with the keys.
+        Some(c) => !(c.undoable && app.backstage.is_some()) && (c.enabled)(&app.session).is_ok(),
         None => crate::UI_COMMANDS.iter().any(|c| c.0 == id) && (DOCLESS.contains(&id) || app.session.active().is_some()),
     }
 }
@@ -713,9 +715,16 @@ mod tests {
         }
         // A text field takes Undo and the clipboard.
         assert!(super::menu_enabled(&a, "edit.undo", true));
-        // An open dialog takes the keyboard and the mouse.
+        // An open dialog takes the keyboard and the mouse, but its own text fields keep the clipboard.
         a.dialog = Some(crate::dialogs::Dialog::new("about"));
         assert!(!on(&a, "file.save"));
+        assert!(!on(&a, "window.next"), "the dialog's values would go to the other presentation");
+        assert!(super::menu_enabled(&a, "edit.paste", true));
+        // The File tab hides the presentation: nothing edits it, but Save still works.
+        a.dialog = None;
+        a.run("app.backstage", serde_json::json!({})).unwrap();
+        assert!(!on(&a, "slide.delete") && !on(&a, "slide.new"));
+        assert!(on(&a, "file.save"));
     }
 
     #[test]
