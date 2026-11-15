@@ -106,7 +106,7 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
         v.push("Layout");
     }
     if deckcraft_engine::cmd::smartart::selected(st).is_some() {
-        v.push("SmartArt Design");
+        v.push(DIAGRAM_TAB_ID);
     }
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Chart(_))) {
         v.push("Chart Design");
@@ -115,6 +115,13 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
         v.push("Playback");
     }
     v
+}
+
+// This is an existing saved/control-channel key, not the displayed label.
+const DIAGRAM_TAB_ID: &str = "SmartArt Design";
+
+fn tab_label(id: &str) -> &str {
+    if id == DIAGRAM_TAB_ID { "Diagram Design" } else { id }
 }
 
 const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "Animations", "Slide Show", "Record", "Review", "View"];
@@ -149,20 +156,21 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
-            // `name` is the tab's id (`app.ui.tab`, `view.tab`); only its caption is translated.
-            let caption = tl!(name);
+            // `name` is the tab's id (`app.ui.tab`, `view.tab`); only its caption is translated,
+            // from the display name `tab_label` gives it.
+            let label = tl!(tab_label(name));
             let font = theme::font(13.0);
-            let w = ui.fonts_mut(|f| f.layout_no_wrap(caption.to_string(), font.clone(), t.text).size().x) + 18.0;
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, caption));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
             let active = app.ui.tab == name;
             if resp.hovered() && !active {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
             let col = if contextual { t.contextual } else { t.text };
             let f = if active { theme::bold(13.0) } else { font };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, caption, f, col);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, label, f, col);
             if active {
                 let uw = (w - 20.0).max(16.0);
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
@@ -229,7 +237,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         "Table Design" => table_design(app, ui),
                         "Layout" => table_layout(app, ui),
                         "Chart Design" => chart_design(app, ui),
-                        "SmartArt Design" => smartart_design(app, ui),
+                        DIAGRAM_TAB_ID => smartart_design(app, ui),
                         "Playback" => playback(app, ui),
                         "Slide Master" => slide_master(app, ui),
                         "Handout Master" => handout_master(app, ui),
@@ -239,6 +247,17 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
         let r = scroll.inner_rect;
+        // A gallery sized from this reads it on the next frame, so a change (a resize, a tab
+        // shown for the first time) asks for one; within half a point it is the same layout.
+        let spare = r.width() - scroll.content_size.x;
+        let moved = ui.ctx().data_mut(|d| {
+            let was = d.get_temp::<f32>(spare_room_id(&tab));
+            d.insert_temp(spare_room_id(&tab), spare);
+            was.is_none_or(|was| (was - spare).abs() > 0.5)
+        });
+        if moved {
+            ui.ctx().request_repaint();
+        }
         let overflow = (scroll.content_size.x - r.width()).max(0.0);
         let offset = scroll.state.clamped_offset().x;
         // Record the rendered offset for `InputTarget`: the same window point hits a different
@@ -263,6 +282,17 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.ctx().request_repaint();
         }
     });
+}
+
+fn spare_room_id(tab: &str) -> egui::Id {
+    egui::Id::unique(("ribbon_spare_room", tab))
+}
+
+/// The width the tab's groups left free in the ribbon on the last frame it was drawn; negative
+/// when they ran past its edge. A gallery that gives way to the groups after it sizes itself
+/// from this.
+pub(super) fn spare_room(ctx: &egui::Context, tab: &str) -> Option<f32> {
+    ctx.data(|d| d.get_temp::<f32>(spare_room_id(tab)))
 }
 
 /// A chevron over a ribbon edge that scrolls it; `true` on the frame it is clicked.
@@ -411,6 +441,9 @@ mod master_layout_tests;
 mod icons_popup_tests;
 
 #[cfg(test)]
+mod add_animation_menu_tests;
+
+#[cfg(test)]
 mod align_tests;
 
 #[cfg(test)]
@@ -437,3 +470,16 @@ mod drawtable_tests;
 
 #[cfg(test)]
 mod inktoshape_tests;
+
+#[cfg(test)]
+mod picture_styles_tests;
+
+#[cfg(test)]
+mod feature_name_tests {
+    #[test]
+    fn diagram_tab_keeps_its_saved_identity() {
+        assert_eq!(super::DIAGRAM_TAB_ID, "SmartArt Design");
+        assert_eq!(super::tab_label(super::DIAGRAM_TAB_ID), "Diagram Design");
+        assert_eq!(super::tab_label("Home"), "Home");
+    }
+}

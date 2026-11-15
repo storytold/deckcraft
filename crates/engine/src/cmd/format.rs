@@ -8,7 +8,7 @@ use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot,
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::text::{format_body, format_para, format_run};
+use super::text::{format_body, format_para, format_run, format_run_levels};
 use super::{
     CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, color_param, edit_shapes, f64_or, f64_param, has_doc, has_text,
     has_text_or_shapes, ids_param, ok, str_param,
@@ -70,7 +70,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textTransparency",
             "Text Transparency",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{value: 0..1} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
@@ -128,7 +128,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textOutline",
             "Text Outline",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{color?, width?: pt} (no color = none)",
             has_text_or_shapes,
@@ -137,7 +137,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textWarp",
             "Text Transform",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{preset: a prstTxWarp name or none, adj?: [finite raw guide values, at most 8]} — none clears the transform; omitted adj uses the preset's defaults",
             has_text_or_shapes,
@@ -179,7 +179,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Numbering",
             ["Home", "Paragraph"],
             None,
-            "{on?: bool, scheme?: arabicPeriod|arabicParenR|romanUcPeriod|romanLcPeriod|alphaUcPeriod|alphaLcParenR|alphaLcPeriod, start?: n, color?, size?: % of text}",
+            "{on?: bool, scheme?: arabicPeriod|arabicParenR|romanUcPeriod|romanLcPeriod|alphaUcPeriod|alphaLcParenR|alphaLcPeriod, start?: n (a numbered paragraph whose start differs from that of the last numbered paragraph at its level begins a new run of numbers at n, as PowerPoint's Start at does), color?, size?: % of text}",
             has_text_or_shapes,
             numbering
         ),

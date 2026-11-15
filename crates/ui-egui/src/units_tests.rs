@@ -211,3 +211,41 @@ fn the_ruler_counts_centimetres_in_halves_and_inches_in_quarters() {
     // A hand-edited prefs.json can say points: the ruler stays in inches rather than a tick per point.
     assert_eq!(crate::canvas::ruler_steps(Unit::Points), (72.0, 4));
 }
+
+fn type_into(h: &mut Harness<'_, SlideApp>, shown: &str, text: &str) {
+    h.query_all_by_role(Role::TextInput).rfind(|n| n.value().as_deref() == Some(shown)).unwrap().focus();
+    h.run_steps(1);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.query_all_by_role(Role::TextInput).find(|n| n.is_focused()).unwrap().type_text(text);
+    h.run_steps(1);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+}
+
+/// Format Shape › Size & Properties: Scale Width/Height and the From origin of Position.
+#[test]
+fn the_format_pane_scales_and_positions_from_the_centre() {
+    let mut app = app_with_shape(Unit::default());
+    app.ui.pane = Some("format".into());
+    app.ui.format_tab = "size".into();
+    let mut h = harness(app);
+    h.run_steps(3);
+    let shown = text_values(&h);
+    assert_eq!(shown.iter().filter(|s| *s == "100%").count(), 2, "{shown:?}");
+    // 50% Scale Width (the last "100%" row) halves the 144 pt width.
+    type_into(&mut h, "100%", "50");
+    let x = selected_xfrm(h.state());
+    assert!((x.w - 72.0).abs() < 1e-6 && (x.h - 108.0).abs() < 1e-6, "{x:?}");
+    assert!(text_values(&h).iter().any(|s| s == "50%"));
+    // From Center: the fields read the middle of the box, and typing moves the middle.
+    h.get_by_role_and_label(Role::ComboBox, "From").click();
+    h.run_steps(2);
+    h.get_by_label("Center").click();
+    h.run_steps(3);
+    // Box is now (72, 36, 72, 108): its centre is (108, 90) pt = (1.5", 1.25").
+    let shown = text_values(&h);
+    assert!(shown.iter().any(|s| s == "1.5\"") && shown.iter().any(|s| s == "1.25\""), "{shown:?}");
+    type_into(&mut h, "1.5\"", "3");
+    let x = selected_xfrm(h.state());
+    assert!((x.x - 180.0).abs() < 1e-6 && (x.w - 72.0).abs() < 1e-6 && (x.y - 36.0).abs() < 1e-6, "{x:?}");
+}

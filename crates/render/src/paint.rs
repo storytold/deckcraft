@@ -91,7 +91,10 @@ pub fn fill_path(
                 let on_path = m * path.clone();
                 ctx.set_transform(Affine::IDENTITY);
                 ctx.push_clip_layer(&on_path);
-                picture(ctx, pres, &resolved(rctx, pf, ph), on_slide, Affine::IDENTITY, None);
+                // Drawn in device pixels, so a tile (given in shape units) is sized to pixels first.
+                let tiled = tiled_per_point(fill, (c[0].hypot(c[1]), c[2].hypot(c[3])));
+                let upright = if let Fill::Picture(p) = tiled.as_ref() { p } else { pf };
+                picture(ctx, pres, &resolved(rctx, upright, ph), on_slide, Affine::IDENTITY, None);
                 ctx.pop_layer();
                 return;
             }
@@ -226,9 +229,12 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         }
         let (nw, nh) = images::natural_size(&item.data).unwrap_or((iw, ih));
         // PowerPoint draws the tile at a whole number of output pixels.
-        let k = px_scale.max(1e-9);
-        let snap = |v: f64| (v * k).round().max(1.0) / k;
-        let (tile_w, tile_h) = (snap(nw * 0.75 * sx), snap(nh * 0.75 * sy));
+        // Per axis: a group can stretch its child space unevenly, and a pixel is then a different
+        // number of shape units across and down.
+        let c = m.as_coeffs();
+        let (kx, ky) = (c[0].hypot(c[1]).max(1e-9), c[2].hypot(c[3]).max(1e-9));
+        let snap = |v: f64, k: f64| (v * k).round().max(1.0) / k;
+        let (tile_w, tile_h) = (snap(nw * 0.75 * sx, kx), snap(nh * 0.75 * sy, ky));
         if !(tile_w > 1e-6 && tile_h > 1e-6 && tile_w.is_finite() && tile_h.is_finite()) {
             return;
         }
@@ -258,6 +264,31 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         return;
     }
     draw_image(ctx, &image, iw, ih, dest, m, alpha);
+}
+
+/// `fill`, with a tiled picture's tile size and offset moved from points to shape units, given
+/// the shape units to the point along x and y. A group's child coordinates scale its shapes'
+/// boxes (a group can stretch them unevenly), but a tile keeps its size on the slide as PowerPoint
+/// draws it, so in a group with a legacy child space the tile would otherwise cover hundreds of
+/// boxes and the fill show one flat texel. Anything but a tiled picture, or a unit scale, is
+/// returned as it is.
+pub fn tiled_per_point(fill: &Fill, per_point: (f64, f64)) -> std::borrow::Cow<'_, Fill> {
+    let Fill::Picture(pf) = fill else { return std::borrow::Cow::Borrowed(fill) };
+    match tiled_picture_per_point(pf, per_point) {
+        std::borrow::Cow::Borrowed(_) => std::borrow::Cow::Borrowed(fill),
+        std::borrow::Cow::Owned(p) => std::borrow::Cow::Owned(Fill::Picture(p)),
+    }
+}
+
+/// [`tiled_per_point`] for a picture fill itself (a picture shape's own fill is not a [`Fill`]).
+pub fn tiled_picture_per_point(pf: &PictureFill, per_point: (f64, f64)) -> std::borrow::Cow<'_, PictureFill> {
+    let PictureMode::Tile { tx, ty, sx, sy, flip, align } = &pf.mode else { return std::borrow::Cow::Borrowed(pf) };
+    let (kx, ky) = per_point;
+    if !(kx.is_finite() && ky.is_finite() && kx > 1e-12 && ky > 1e-12) || ((kx - 1.0).abs() < 1e-9 && (ky - 1.0).abs() < 1e-9) {
+        return std::borrow::Cow::Borrowed(pf);
+    }
+    let mode = PictureMode::Tile { tx: tx * kx, ty: ty * ky, sx: sx * kx, sy: sy * ky, flip: flip.clone(), align: align.clone() };
+    std::borrow::Cow::Owned(PictureFill { mode, ..pf.clone() })
 }
 
 /// Where the first tile of a tiled picture fill goes in `bounds`: its corner, edge middle or

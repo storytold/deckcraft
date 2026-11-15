@@ -435,4 +435,15 @@ mod tests {
         assert_eq!(effect_for_preset(AnimClass::Entrance, 2), Some("fly"));
         assert_eq!(effect_for_preset(AnimClass::Emphasis, 8), Some("spin"));
     }
+
+    /// PowerPoint's own ids: Darken is 24 and Desaturate 25 (read back from its saved file).
+    #[test]
+    fn darken_and_desaturate_use_powerpoints_ids() {
+        assert_eq!(effect_for_preset(AnimClass::Emphasis, 24), Some("darken"));
+        assert_eq!(effect_for_preset(AnimClass::Emphasis, 25), Some("desaturate"));
+        for (effect, id) in [("darken", 24), ("desaturate", 25)] {
+            let a = deckcraft_model::Animation { class: AnimClass::Emphasis, effect: effect.into(), ..Default::default() };
+            assert_eq!(preset_for(&a), id, "{effect}");
+        }
+    }
 }

@@ -101,26 +101,45 @@ fn run(app: &mut SlideApp, q: &QatItem) {
     }
 }
 
-fn tip(q: &QatItem) -> String {
+/// Whether a Quick Access Toolbar item can be run right now.
+pub fn is_enabled(app: &SlideApp, id: &str) -> bool {
+    match id {
+        "app.home" => true,
+        "file.save" | "show.fromStart" | "review.spelling" | "app.find" => app.session.active().is_some(),
+        id => crate::ribbon::enabled(app, id),
+    }
+}
+
+/// Runs the Quick Access Toolbar item at `index` (0-based) if it exists and is enabled. Returns `true` if run.
+pub fn run_index(app: &mut SlideApp, index: usize) -> bool {
+    let Some(q) = app.ui.qat.get(index).cloned() else { return false };
+    if !is_enabled(app, &q.id) {
+        return false;
+    }
+    run(app, &q);
+    true
+}
+
+fn tip(q: &QatItem, index: usize, mac: bool) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));
-    match sc {
-        Some(s) => format!("{} ({})", tl!(&q.label), crate::ribbon::pretty_shortcut(s)),
-        None => q.label.clone(),
+    let qat_sc = if !mac && index < 9 { Some(format!("Alt+{}", index + 1)) } else { None };
+    match (sc, qat_sc) {
+        (Some(s), Some(qsc)) => format!("{} ({}, {})", crate::i18n::t_flat(&q.label), crate::ribbon::pretty_shortcut(s), qsc),
+        (Some(s), None) => format!("{} ({})", crate::i18n::t_flat(&q.label), crate::ribbon::pretty_shortcut(s)),
+        (None, Some(qsc)) => format!("{} ({})", crate::i18n::t_flat(&q.label), qsc),
+        (None, None) => crate::i18n::t_flat(&q.label),
     }
 }
 
 /// Draw the toolbar and its Customize menu into a left-to-right row of the title bar.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let items = app.ui.qat.clone();
-    for q in &items {
+    let mac = app.session.mac_keys;
+    for (i, q) in items.iter().enumerate() {
         let on = q.id == "app.home" && app.backstage_open();
-        let en = match q.id.as_str() {
-            "app.home" => true,
-            "file.save" | "show.fromStart" | "review.spelling" | "app.find" => app.session.active().is_some(),
-            id => crate::ribbon::enabled(app, id),
-        };
-        let r = crate::widgets::icon_toggle(ui, q.icon(), &tip(q), en, on);
+        let en = is_enabled(app, &q.id);
+        let r = crate::widgets::icon_toggle(ui, q.icon(), &tip(q, i, mac), en, on);
         if r.clicked() {
             run(app, q);
         }
@@ -136,7 +155,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.label(egui::RichText::new(tl!("Customize Quick Access Toolbar")).strong());
         for c in common() {
             let mut on = app.ui.qat.iter().any(|q| q.same(&c.id, &Value::Null));
-            if ui.checkbox(&mut on, tl!(&c.label)).changed() {
+            if ui.checkbox(&mut on, crate::i18n::t_flat(&c.label)).changed() {
                 let key = if on { "add" } else { "remove" };
                 let _ = command(app, &json!({key: c.id}));
             }
@@ -146,7 +165,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             for q in extra {
                 let mut on = true;
-                if ui.checkbox(&mut on, tl!(&q.label)).changed() {
+                if ui.checkbox(&mut on, crate::i18n::t_flat(&q.label)).changed() {
                     let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 }
             }
@@ -165,7 +184,7 @@ pub fn ribbon_menu(app: &mut SlideApp, r: &egui::Response, icon: Icon, label: &s
     r.context_menu(|ui| {
         let has = app.ui.qat.iter().any(|q| q.same(id, p));
         let text = if has { "Remove from Quick Access Toolbar" } else { "Add to Quick Access Toolbar" };
-        if ui.button(text).clicked() {
+        if ui.button(tl!(text)).clicked() {
             let label = label.replace('\n', " ");
             let key = if has { "remove" } else { "add" };
             let _ = command(app, &json!({key: id, "params": p, "label": label, "icon": icon.name()}));

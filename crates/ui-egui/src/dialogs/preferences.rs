@@ -21,8 +21,10 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     if let Some(scale) = before.get("uiScale").and_then(Value::as_f64) {
         app.ui.ui_scale = scale as f32;
     }
+    // Written back as it was: `app.language` refuses a code this build doesn't offer, which the
+    // setting keeps (`UiState::sanitized`).
     if let Some(language) = before.get("language").and_then(Value::as_str) {
-        let _ = app.run("app.language", json!({ "language": language }));
+        app.ui.language = language.to_string();
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;
@@ -33,7 +35,8 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
 /// catalogs for, each named in itself. It applies at once, like the other controls here.
 pub(super) fn language_row(app: &mut SlideApp, ui: &mut egui::Ui) {
     let auto = crate::i18n::AUTO;
-    let name = |code: &str| if code == auto { tl!("System language").to_string() } else { crate::i18n::Lang::from_pref(code).name().to_string() };
+    // A saved code this build doesn't offer follows the system, so it shows as System language.
+    let name = |code: &str| crate::i18n::Lang::from_code(code).map_or_else(|| tl!("System language").to_string(), |l| l.name().to_string());
     let mut chosen = app.ui.language.clone();
     ui.horizontal(|ui| {
         ui.label(tl!("Interface language:"));

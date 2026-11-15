@@ -26,6 +26,8 @@
 //! 2. Add its code to [`LANGUAGES`].
 //!
 //! The Preferences dropdown, `app.language` and the system-language match pick it up from there.
+//! Until then a catalog craft-i18n already has is embedded but not offered: the interface
+//! doesn't show that language, and moving `craft-i18n.rev` past it changes nothing here.
 //!
 //! # Looking strings up
 //! - [`tl!`](crate::tl) / [`t`]: a string in the current language. [`tr`]: in a given one.
@@ -55,13 +57,10 @@ pub const AUTO: &str = "auto";
 
 /// The languages DeckCraft offers, as lowercase BCP 47 codes (also the `language` setting's value
 /// and the craft-i18n locale), when their catalogs are embedded. English first: it is the source
-/// language and the fallback.
-pub static LANGUAGES: [&str; 3] = [
-    "en", // German, neutral across Germany, Austria and Switzerland; `de-DE`, `de-AT`, `de_CH.UTF-8` …
-    // resolve here.
-    "de", // Turkish; `tr-TR`, `tr-CY` and `tr_TR.UTF-8` resolve here.
-    "tr",
-];
+/// language and the fallback. German (`de`) is neutral across Germany, Austria and Switzerland:
+/// `de-DE`, `de-AT`, `de_CH.UTF-8` … resolve to it. Turkish (`tr`): `tr-TR`, `tr-CY` and
+/// `tr_TR.UTF-8` resolve to it.
+pub static LANGUAGES: [&str; 3] = ["en", "de", "tr"];
 
 /// A language the UI can be shown in: English, or an offered language whose catalogs are embedded.
 #[derive(Clone, Copy)]
@@ -205,6 +204,29 @@ pub fn tc<'a>(context: &str, s: &'a str) -> &'a str {
 pub fn tn(n: u64, one: &str, other: &str) -> String {
     let lang = current();
     lang.i18n().trn(lang.lang, n, one, other)
+}
+
+/// A ribbon caption whose line break was saved as a space (a Quick Access Toolbar label such as
+/// `New Slide`, from `New\nSlide`) in the current language, on one line.
+pub fn t_flat(s: &str) -> String {
+    let lang = current();
+    if has(lang, s) {
+        return t(s).replace('\n', " ");
+    }
+    // Try the break at each space: captions have one at most.
+    let found = s.match_indices(' ').map(|(i, _)| format!("{}\n{}", &s[..i], &s[i + 1..])).find(|k| has(lang, k));
+    found.map_or_else(|| s.to_string(), |k| t(&k).replace('\n', " "))
+}
+
+/// Whether `code` is shaped like a language code (`fr`, `pt-br`, `zh_Hans`), offered or not.
+/// A saved setting of that shape is kept when this build doesn't offer it, so switching between
+/// a release and a build without catalogs doesn't lose the choice.
+pub fn well_formed_code(code: &str) -> bool {
+    let mut parts = code.split(['-', '_']);
+    let primary = parts.next().unwrap_or("");
+    (2..=3).contains(&primary.len())
+        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+        && parts.all(|p| (1..=8).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// A ribbon location (`Home › Font`) in the current language, segment by segment.
