@@ -45,7 +45,11 @@ pub fn validate(v: &str) -> Result<(), String> {
         None => (v, None),
     };
     let nums: Vec<&str> = core.split('.').collect();
-    if nums.len() != 3 || nums.iter().any(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) || (n.len() > 1 && n.starts_with('0'))) {
+    if nums.len() != 3
+        || nums
+            .iter()
+            .any(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) || n.parse::<u64>().is_err() || (n.len() > 1 && n.starts_with('0')))
+    {
         return bad();
     }
     if let Some(p) = pre
