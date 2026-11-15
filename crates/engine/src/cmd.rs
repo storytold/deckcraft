@@ -612,42 +612,81 @@ pub fn base64_encode(data: &[u8]) -> String {
 
 pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let s = s.split_once("base64,").map(|(_, b)| b).unwrap_or(s);
-    let mut out = Vec::with_capacity(s.len() / 4 * 3);
-    let mut acc = 0u32;
-    let mut bits = 0;
-    let mut padded = false;
+    // Preserve the command transport's admission rules before the shared legacy decoder:
+    // padding ends the payload and one trailing symbol cannot encode a byte.
+    let (mut symbols_mod_four, mut padded) = (0u8, false);
     for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' | b'-' => 62,
-            b'/' | b'_' => 63,
-            b'=' => {
-                padded = true;
-                continue;
+        match c {
+            b'=' => padded = true,
+            b'\n' | b'\r' | b' ' => {}
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'-' | b'/' | b'_' if !padded => {
+                symbols_mod_four = (symbols_mod_four + 1) % 4;
             }
-            b'\n' | b'\r' | b' ' => continue,
             _ => return None,
-        } as u32;
-        // Padding ends the payload; no further data may be decoded.
-        if padded {
-            return None;
-        }
-        acc = (acc << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((acc >> bits) & 0xff) as u8);
         }
     }
-    // A trailing lone Base64 character cannot encode another byte.
-    (bits != 6).then_some(out)
+    if symbols_mod_four == 1 {
+        return None;
+    }
+    craft_mime::base64_compat::decode(s).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Frozen pre-cutover implementation (Brandon Thomas, with Mex's padding/tail fixes).
+    fn previous_base64_decode(s: &str) -> Option<Vec<u8>> {
+        let s = s.split_once("base64,").map(|(_, b)| b).unwrap_or(s);
+        let mut out = Vec::with_capacity(s.len() / 4 * 3);
+        let mut acc = 0u32;
+        let mut bits = 0;
+        let mut padded = false;
+        for c in s.bytes() {
+            let v = match c {
+                b'A'..=b'Z' => c - b'A',
+                b'a'..=b'z' => c - b'a' + 26,
+                b'0'..=b'9' => c - b'0' + 52,
+                b'+' | b'-' => 62,
+                b'/' | b'_' => 63,
+                b'=' => {
+                    padded = true;
+                    continue;
+                }
+                b'\n' | b'\r' | b' ' => continue,
+                _ => return None,
+            } as u32;
+            // Padding ends the payload; no further data may be decoded.
+            if padded {
+                return None;
+            }
+            acc = (acc << 6) | v;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push(((acc >> bits) & 0xff) as u8);
+            }
+        }
+        // A trailing lone Base64 character cannot encode another byte.
+        (bits != 6).then_some(out)
+    }
+
+    #[test]
+    fn shared_decoder_preserves_command_transport_admission() {
+        for text in ["", "=", "Zg== \r\n==", "Zg==A", "A", "AAAAA", "AB", "+_8=", "Z=m9v", "Zm9v\t", "Zm9v!", "data:text/plain;base64,Zm9v"] {
+            assert_eq!(base64_decode(text), previous_base64_decode(text), "{text:?}");
+        }
+        let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_= \r\n!\t";
+        let mut seed = 0x1234_5678u32;
+        for n in 0..50_000 {
+            let mut text = String::new();
+            for _ in 0..n % 65 {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                text.push(char::from(alphabet[(seed as usize) % alphabet.len()]));
+            }
+            assert_eq!(base64_decode(&text), previous_base64_decode(&text), "{text:?}");
+        }
+    }
 
     #[test]
     fn shared_encoder_preserves_rfc4648_and_all_byte_remainders() {
