@@ -276,6 +276,9 @@ impl Outline<'_> {
         while k > 0 && self.i < self.b.len() {
             if self.b[self.i] == b'\\' && self.b.get(self.i + 1) == Some(&b'\'') {
                 self.i = advance(self.rtf, self.i, 4);
+            } else if self.b[self.i] == b'\\' && self.b.get(self.i + 1).is_some_and(|b| !b.is_ascii_alphabetic()) {
+                // An escaped control symbol counts as one Unicode fallback character.
+                self.i = advance(self.rtf, self.i + 1, 1);
             } else if matches!(self.b[self.i], b'{' | b'}' | b'\\') {
                 break;
             } else {
@@ -420,6 +423,23 @@ mod tests {
         assert_eq!(rtf_to_outline(r"{\rtf1 a\'00bé\par}"), "abé\n");
         assert_eq!(rtf_to_outline("{\\rtf1 a\0b\\par}\0\0"), "ab\n");
         assert_eq!(rtf_to_outline(r"{\rtf1 x\u-70000?y\par}"), "x\u{ee90}y\n");
+    }
+
+    #[test]
+    fn unicode_fallback_control_symbols_are_skipped() {
+        for (rtf, expected) in [
+            (r"{\rtf1\uc1 \u92\\X\par}", "\\X\n"),
+            (r"{\rtf1\uc1 \u123\{X\par}", "{X\n"),
+            (r"{\rtf1\uc1 \u125\}X\par}", "}X\n"),
+            (r"{\rtf1\uc2 \u233\{\}X\par}", "éX\n"),
+            (r"{\rtf1\uc0 \u92\\X\par}", "\\\\X\n"),
+            (r"{\rtf1 \\ \{ \}X\par}", "\\ { }X\n"),
+            (r"{\rtf1\uc1 \u233{X}\par}", "éX\n"),
+            (r"{\rtf1\uc1 \u233\éX\par}", "éX\n"),
+            (r"{\rtf1\uc1 \u233\", "é\n"),
+        ] {
+            assert_eq!(rtf_to_outline(rtf), expected, "{rtf:?}");
+        }
     }
 
     #[test]
