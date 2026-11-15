@@ -1,8 +1,21 @@
 use super::{SlideApp, Value, json, monotonic_secs};
+use crate::PasteAnswer;
 
-/// How long a requested paste waits for the window's `Paste` event before a later one is an
-/// ordinary Ctrl+V again.
+/// The longest a request answered with the next frame's input waits, should no input batch
+/// reach [`SlideApp::keyboard`] meanwhile (a slide show, a discarded pass).
 const PASTE_REQUEST_SECS: f64 = 5.0;
+
+/// A Paste or Paste and Match Formatting asked of the system clipboard
+/// ([`Services::request_paste`](crate::Services::request_paste)), waiting for its `Paste` event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PasteRequest {
+    id: &'static str,
+    answer: PasteAnswer,
+    at: f64,
+    /// The frame whose input [`SlideApp::keyboard`] had last read when the request was made: the
+    /// answer comes in a later frame's input.
+    frame: u64,
+}
 
 /// Text put on the system clipboard when the copied objects (a rectangle, a picture, slides…)
 /// carry no text. egui-winit drops Ctrl+V when the system clipboard is empty, so without it the
@@ -97,14 +110,23 @@ impl SlideApp {
             return false;
         }
         let Some(request) = self.services.request_paste.as_mut() else { return false };
-        request();
-        self.paste_request = Some((id, monotonic_secs()));
+        let answer = request();
+        self.paste_request = Some(PasteRequest { id, answer, at: monotonic_secs(), frame: self.keyboard_frame });
         true
     }
 
-    /// The menu-requested paste still waiting for the window's answer, if not expired.
+    /// The menu-requested paste still waiting for the window's answer. One answered with the next
+    /// frame's input ends with that batch ([`Self::keyboard`]); one answered later, when its time is up.
     pub(super) fn pending_paste_request(&self) -> Option<&'static str> {
-        self.paste_request.filter(|(_, at)| monotonic_secs() - at < PASTE_REQUEST_SECS).map(|(id, _)| id)
+        self.paste_request
+            .filter(|r| {
+                let secs = match r.answer {
+                    PasteAnswer::NextFrame => PASTE_REQUEST_SECS,
+                    PasteAnswer::WithinSecs(secs) => secs,
+                };
+                monotonic_secs() - r.at < secs
+            })
+            .map(|r| r.id)
     }
 
     /// The command for a `Paste` event: Paste and Match Formatting when the menu asked for it.
@@ -112,5 +134,15 @@ impl SlideApp {
         let id = self.pending_paste_request().unwrap_or("edit.paste");
         self.paste_request = None;
         id
+    }
+
+    /// After [`SlideApp::keyboard`] read frame `frame`'s input: a request answered with the next
+    /// frame's input that this batch didn't consume got nothing (an empty clipboard sends no
+    /// event), so a later paste is the user's own Ctrl+V. A request made during this frame (in a
+    /// pass after the input was read) waits for the next one.
+    pub(super) fn end_unanswered_paste_request(&mut self, frame: u64) {
+        if self.paste_request.is_some_and(|r| r.answer == PasteAnswer::NextFrame && r.frame < frame) {
+            self.paste_request = None;
+        }
     }
 }

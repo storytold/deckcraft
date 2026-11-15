@@ -47,8 +47,16 @@ impl SlideApp {
         }
     }
 
-    /// Keyboard and clipboard for the slide (when no text field has focus).
+    /// Keyboard and clipboard for the slide (when no text field has focus). A menu-requested
+    /// paste answered with the next frame's input ends with that frame's batch, answered or not.
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
+        let frame = ctx.cumulative_frame_nr();
+        self.keyboard_frame = frame;
+        self.keyboard_batch(ctx);
+        self.end_unanswered_paste_request(frame);
+    }
+
+    fn keyboard_batch(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
         // Ctrl+V with only an image on the clipboard: egui-winit sends no Paste event and swallows the
         // key press, so the release of a V press never seen is the paste. Tracked even while a text

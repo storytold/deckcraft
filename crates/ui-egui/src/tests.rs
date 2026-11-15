@@ -1258,7 +1258,10 @@ fn ribbon_paste_pastes_the_system_clipboard_over_the_selection() {
     let requests = Rc::new(Cell::new(0));
     let count = requests.clone();
     let services = Services {
-        request_paste: Some(Box::new(move || count.set(count.get() + 1))),
+        request_paste: Some(Box::new(move || {
+            count.set(count.get() + 1);
+            PasteAnswer::NextFrame
+        })),
         clipboard_html: Some(Box::new(|| Some("<p><b>Plain words</b></p>".into()))),
         ..Default::default()
     };
@@ -1298,8 +1301,11 @@ fn ribbon_paste_pastes_the_system_clipboard_over_the_selection() {
 /// here (the marker) paste their copied text instead of deleting the selection.
 #[test]
 fn requested_paste_and_match_formatting_takes_no_picture_and_keeps_copied_text() {
-    let services =
-        Services { request_paste: Some(Box::new(|| {})), clipboard_html: Some(Box::new(|| Some("<p><b>Bold</b></p>".into()))), ..Default::default() };
+    let services = Services {
+        request_paste: Some(Box::new(|| PasteAnswer::NextFrame)),
+        clipboard_html: Some(Box::new(|| Some("<p><b>Bold</b></p>".into()))),
+        ..Default::default()
+    };
     let mut h = step_app(services);
     let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id;
     let shapes = |h: &egui_kittest::Harness<'static, SlideApp>| h.state().session.active().unwrap().doc.slides[0].shapes.len();
@@ -1333,23 +1339,43 @@ fn requested_paste_and_match_formatting_takes_no_picture_and_keeps_copied_text()
     assert_eq!(body(&h).text(), "Copied", "the selection is not just deleted");
 }
 
-/// #2139 review: a Paste and Match Formatting request that never got an answer expires, so a
-/// later picture paste inserts the picture; and the menu command with only a textless shape
-/// copied here leaves the selected text alone instead of deleting it.
+/// #2139 review: a Paste and Match Formatting request the window never answers (an empty
+/// clipboard sends no `Paste` event) is not applied to a later paste. Answered with the next
+/// frame's input, it ends with that frame; answered by a background read, it waits for its time.
+/// And the menu command with only a textless shape copied here leaves the selected text alone.
 #[test]
-fn an_expired_text_only_request_does_not_drop_a_picture_and_textless_copies_delete_nothing() {
-    let services = Services { request_paste: Some(Box::new(|| {})), ..Default::default() };
+fn an_unanswered_text_only_request_does_not_drop_a_later_picture_and_textless_copies_delete_nothing() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let answer = Rc::new(Cell::new(PasteAnswer::NextFrame));
+    let reply = answer.clone();
+    let services = Services { request_paste: Some(Box::new(move || reply.get())), ..Default::default() };
     let mut h = step_app(services);
     let shapes = |h: &egui_kittest::Harness<'static, SlideApp>| h.state().session.active().unwrap().doc.slides[0].shapes.len();
+    let picture = || egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::RED)));
     let before = shapes(&h);
+
+    // The next frame brought nothing: the user's Ctrl+V of a picture a frame later pastes it.
     assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
-    // Its answer never came, and the request is older than the window.
-    if let Some((_, at)) = h.state_mut().paste_request.as_mut() {
-        *at -= 60.0;
-    }
-    h.event(egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::RED))));
-    h.run_steps(2);
-    assert_eq!(shapes(&h), before + 1, "an ordinary picture paste after the request expired");
+    h.run_steps(1);
+    h.event(picture());
+    h.run_steps(1);
+    assert_eq!(shapes(&h), before + 1, "a picture pasted after the unanswered request");
+
+    // A background read may answer frames later, so its request still holds then...
+    answer.set(PasteAnswer::WithinSecs(60.0));
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.run_steps(1);
+    h.event(picture());
+    h.run_steps(1);
+    assert_eq!(shapes(&h), before + 1, "the late answer of a text-only request inserts no picture");
+    // ...until its time is up.
+    answer.set(PasteAnswer::WithinSecs(0.0));
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(picture());
+    h.run_steps(1);
+    assert_eq!(shapes(&h), before + 2, "a picture pasted after the request's time");
+    answer.set(PasteAnswer::NextFrame);
 
     // A shape with no text is copied: the system clipboard gets the marker, the session no text.
     let rect = h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [300.0, 300.0, 50.0, 50.0]})).unwrap()["id"].clone();

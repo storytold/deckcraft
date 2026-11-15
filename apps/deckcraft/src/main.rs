@@ -27,7 +27,7 @@ mod logging;
 mod pasteboard;
 
 use deckcraft_engine::Session;
-use deckcraft_ui_egui::{Services, SlideApp};
+use deckcraft_ui_egui::{PasteAnswer, Services, SlideApp};
 
 struct App(
     SlideApp,
@@ -297,9 +297,15 @@ fn main() -> eframe::Result {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
             // Paste on the ribbon and in the menus reads the system clipboard, as Ctrl+V does:
-            // egui-winit answers with the same `Paste` event (#2128).
+            // egui-winit answers with the same `Paste` event (#2128). It reads the clipboard at
+            // once, into the next frame's input, except on native Wayland: there a background
+            // read has 3 s (egui-winit's delivery budget), plus the repaint that delivers it.
             let ctx = cc.egui_ctx.clone();
-            app.services.request_paste = Some(Box::new(move || ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste)));
+            let answer = if native_wayland { PasteAnswer::WithinSecs(3.5) } else { PasteAnswer::NextFrame };
+            app.services.request_paste = Some(Box::new(move || {
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                answer
+            }));
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
