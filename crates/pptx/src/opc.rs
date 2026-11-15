@@ -7,11 +7,11 @@ use crate::PptxError;
 use crate::xml::{self, A, W};
 
 /// Largest single part we decompress (media included).
-pub const MAX_PART: u64 = 512 * 1024 * 1024;
+pub const MAX_PART: u64 = 8 * 1024 * 1024 * 1024;
 /// Largest XML part we parse.
 pub const MAX_XML_PART: usize = 96 * 1024 * 1024;
 /// Total decompressed bytes accepted for one package.
-pub const MAX_TOTAL: u64 = 2 * 1024 * 1024 * 1024;
+pub const MAX_TOTAL: u64 = 16 * 1024 * 1024 * 1024;
 /// Total bytes we are willing to decompress for one package, counting parts we then discard
 /// (too large, or failing part-way): bounds inflate work, not just what is kept.
 pub const MAX_INFLATE_WORK: u64 = 2 * MAX_TOTAL;
