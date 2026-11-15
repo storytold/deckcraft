@@ -361,6 +361,12 @@ fn inspect_shows_what_a_group_was_generated_from() {
     );
     let presets: Vec<_> = g["children"].as_array().unwrap().iter().map(|c| c["preset"].as_str().unwrap_or_default()).collect();
     assert_eq!(presets, ["ellipse", "pie", "ellipse"]);
+    // Still a Harvey ball, not just its shapes: it edits as one.
+    let gid = g["id"].as_u64().unwrap() as u32;
+    let slide = s.doc().unwrap().doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, ShapeId(gid)).is_some()).unwrap();
+    s.execute("slide.go", &json!({"index": slide})).unwrap();
+    s.execute("harveyBall.set", &json!({"id": gid, "value": 4})).unwrap();
+    assert_eq!(kids(&s, gid).len(), 3, "redrawn full: background, disc, ring");
 }
 
 /// A description no command would write (a hostile `.deckcraft`) never panics: a resize leaves the
@@ -522,4 +528,62 @@ fn formatting_a_group_passes_colours_on_to_the_elements_inside() {
     s.execute("shape.line", &json!({"id": outer, "dash": "dash"})).unwrap();
     assert_eq!((shape(&s, b), shape(&s, c)), (ball_before, check_before));
     assert!(matches!(shape(&s, r).fill, Some(Fill::Gradient(_))), "the rectangle takes the gradient");
+}
+
+/// deckcraft#2127: at 8 pt the ring doesn't hide the sector. A ¼ ball with a red wedge and a blue
+/// ring, drawn at 1× (8 pixels across) and 2×: at least half of the wedge inside the ring shows red,
+/// no other quarter does, and the ring shows in every quarter.
+#[test]
+fn at_8_pt_the_ring_does_not_hide_the_wedge() {
+    for scale in [1.0, 2.0] {
+        let mut s = deck();
+        s.execute("insert.harveyBall", &json!({"value": 1, "of": 4, "rect": [100, 100, 8, 8], "fill": "#FF0000", "outline": "#0000FF"})).unwrap();
+        let st = s.doc().unwrap();
+        let img = deckcraft_render::render_slide(&st.doc, st.selection.slide, &deckcraft_render::RenderOpts { scale, ..Default::default() });
+        let (x0, y0, side) = ((100.0 * scale) as u32, (100.0 * scale) as u32, (8.0 * scale) as u32);
+        // Per quarter (top left, top right, bottom left, bottom right): red pixels, blue pixels.
+        let mut quarter = [[0u32; 2]; 4];
+        for y in y0..y0 + side {
+            for x in x0..x0 + side {
+                let i = ((y * img.width + x) * 4) as usize;
+                let (r, g, b) = (img.pixels[i], img.pixels[i + 1], img.pixels[i + 2]);
+                let q = usize::from(x >= x0 + side / 2) + 2 * usize::from(y >= y0 + side / 2);
+                if r > 150 && g < 110 && b < 110 {
+                    quarter[q][0] += 1;
+                } else if b > 150 && r < 110 && g < 110 {
+                    quarter[q][1] += 1;
+                }
+            }
+        }
+        // The wedge inside the ring: a quarter disc of radius 4 pt less half the 0.75 pt ring.
+        let inside = std::f64::consts::PI * ((4.0 - 0.375) * scale).powi(2) / 4.0;
+        assert!(f64::from(quarter[1][0]) >= inside / 2.0, "{scale}×: the wedge shows {} of ~{inside:.0} pixels: {quarter:?}", quarter[1][0]);
+        assert!([0, 2, 3].iter().all(|q| quarter[*q][0] == 0), "{scale}×: red outside the wedge's quarter: {quarter:?}");
+        assert!(quarter.iter().all(|q| q[1] > 0), "{scale}×: the ring shows all round: {quarter:?}");
+    }
+}
+
+/// deckcraft#2127 and #2137: the parameters survive a native `.deckcraft` save and reopen, and the
+/// elements stay editable.
+#[test]
+fn elements_survive_a_native_save_and_stay_editable() {
+    let mut s = deck();
+    let b =
+        id(&s.execute("insert.harveyBall", &json!({"value": 2, "of": 3, "fill": "accent2", "background": "#EEEEEE", "outlineWidth": 1.5})).unwrap());
+    let c = id(&s.execute("insert.checkbox", &json!({"state": "crossed", "color": "#C00000", "boxed": false})).unwrap());
+    let (ball_before, check_before) = (shape(&s, b), shape(&s, c));
+    let data = s.execute("file.saveBytes", &json!({"format": "deckcraft"})).unwrap()["data"].as_str().unwrap().to_string();
+    s.execute("file.openBytes", &json!({"name": "t.deckcraft", "data": data})).unwrap();
+    assert_eq!(s.documents().len(), 2, "opened as a second presentation");
+    let reopened = |s: &Session, id: u32| {
+        let st = s.doc().unwrap();
+        st.doc.slides.iter().find_map(|sl| deckcraft_model::find_shape(&sl.shapes, ShapeId(id)).cloned()).unwrap()
+    };
+    assert_eq!(reopened(&s, b), ball_before, "the ball, its description and its shapes");
+    assert_eq!(reopened(&s, c), check_before);
+    let slide = s.doc().unwrap().doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, ShapeId(b)).is_some()).unwrap();
+    s.execute("slide.go", &json!({"index": slide})).unwrap();
+    s.execute("harveyBall.set", &json!({"id": b, "value": 3})).unwrap();
+    assert_eq!((ball(&s, b).value, ball(&s, b).of), (3, 3));
+    assert_eq!(s.execute("checkbox.toggle", &json!({"id": c})).unwrap()["state"], "checked");
 }
