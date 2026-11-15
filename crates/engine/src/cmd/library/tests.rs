@@ -478,10 +478,10 @@ fn hostile_library_params_are_errors_not_panics() {
     ];
     let ids: Vec<&str> =
         crate::command_specs().iter().map(|c| c.id).filter(|id| id.starts_with("library.") && *id != "library.removeFolder").collect();
-    assert_eq!(ids.len(), 6);
+    assert_eq!(ids.len(), 7);
     for id in &ids {
         for v in &values {
-            for key in ["path", "file", "folder", "query", "slide", "width", "limit", "as", "at", "slides"] {
+            for key in ["path", "file", "folder", "query", "slide", "width", "limit", "as", "at", "slides", "names"] {
                 let mut p = json!({"file": file, "slide": 0, "query": "a", "path": s(&dir)});
                 p[key] = v.clone();
                 let _ = ss.execute(id, &p);
@@ -492,5 +492,160 @@ fn hostile_library_params_are_errors_not_panics() {
     assert!(ss.prefs.library_folders.len() <= MAX_FOLDERS);
     assert!(ss.doc().expect("doc").doc.validate().is_empty());
     ss.execute("library.removeFolder", &json!({"path": s(&dir)})).expect("remove");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A library deck whose second slide holds, back to front: a title, a star "Rating star", a group
+/// "Badge" (ring and label, then stretched so its children are drawn bigger than they are stored),
+/// and two boxes "A" and "B" joined by a connector "Link".
+fn elements(dir: &Path) -> (String, deckcraft_geom::Xfrm) {
+    let mut lib = Session::with_new();
+    lib.execute("slide.new", &json!({"layout": "titleOnly", "title": "Elements"})).expect("slide");
+    let id = |v: Value| v["id"].as_u64().unwrap_or(0);
+    let star = id(lib.execute("shape.insert", &json!({"preset": "star5", "rect": [100, 120, 200, 150]})).expect("star"));
+    lib.execute("shape.rename", &json!({"id": star, "name": "Rating star"})).expect("rename");
+    let ring = id(lib.execute("shape.insert", &json!({"preset": "ellipse", "rect": [400, 120, 100, 100]})).expect("ring"));
+    let label = id(lib.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 230, 100, 30], "text": "New"})).expect("label"));
+    lib.execute("shape.rename", &json!({"id": ring, "name": "Badge ring"})).expect("rename");
+    lib.execute("shape.rename", &json!({"id": label, "name": "Badge label"})).expect("rename");
+    let badge = id(lib.execute("arrange.group", &json!({"ids": [ring, label]})).expect("group"));
+    lib.execute("shape.rename", &json!({"id": badge, "name": "Badge"})).expect("rename");
+    lib.execute("shape.resize", &json!({"ids": [badge], "w": 200, "h": 280})).expect("stretch the group");
+    let a = id(lib.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 380, 80, 60]})).expect("a"));
+    let b = id(lib.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 380, 80, 60]})).expect("b"));
+    lib.execute("shape.rename", &json!({"id": a, "name": "A"})).expect("rename");
+    lib.execute("shape.rename", &json!({"id": b, "name": "B"})).expect("rename");
+    let link = id(lib.execute("shape.connect", &json!({"from": a, "to": b})).expect("connect"));
+    lib.execute("shape.rename", &json!({"id": link, "name": "Link"})).expect("rename");
+    let path = dir.join("elements.pptx");
+    std::fs::write(&path, crate::cmd::file::save_bytes(&lib.doc().expect("doc").doc, "pptx").expect("save")).expect("write");
+    // Where Ungroup puts the label is where it is drawn.
+    lib.execute("arrange.ungroup", &json!({"ids": [badge]})).expect("ungroup");
+    let st = lib.doc().expect("doc");
+    let drawn = st.shapes().iter().find(|x| x.name == "Badge label").and_then(|x| x.xfrm).expect("label box");
+    assert!((drawn.w - 200.0).abs() < 0.5 && (drawn.h - 60.0).abs() < 0.5, "the stretched group draws the label bigger: {drawn:?}");
+    (s(&path), drawn)
+}
+
+fn current_shapes(ss: &Session) -> Vec<deckcraft_model::Shape> {
+    ss.doc().expect("doc").current_slide().map(|x| x.shapes.clone()).unwrap_or_default()
+}
+
+fn near(a: deckcraft_geom::Xfrm, b: deckcraft_geom::Xfrm) -> bool {
+    [(a.x, b.x), (a.y, b.y), (a.w, b.w), (a.h, b.h)].iter().all(|(p, q)| (p - q).abs() < 0.5)
+}
+
+#[test]
+fn named_shapes_come_in_alone_where_they_were() {
+    let dir = folder("named");
+    let (file, label_box) = elements(&dir);
+    let mut ss = session_with(&dir);
+    ss.execute("slide.new", &json!({"layout": "blank"})).expect("slide");
+    let undo = ss.doc().expect("doc").history.undo.len();
+    // One shape, named in another case; `as` follows from `names`.
+    let r = ss.execute("library.insert", &json!({"file": file, "slide": 1, "names": ["rating STAR"]})).expect("insert");
+    assert_eq!(r["as"], json!("shapes"));
+    let shapes = current_shapes(&ss);
+    assert_eq!(shapes.len(), 1);
+    assert_eq!(shapes[0].name, "Rating star");
+    assert!(near(shapes[0].xfrm.expect("box"), deckcraft_geom::Xfrm::new(100.0, 120.0, 200.0, 150.0)), "{:?}", shapes[0].xfrm);
+    assert_eq!(ss.doc().expect("doc").history.undo.len(), undo + 1, "one undo step");
+    ss.execute("edit.undo", &json!({})).expect("undo");
+    assert!(current_shapes(&ss).is_empty());
+    // A group comes whole.
+    ss.execute("library.insert", &json!({"file": file, "slide": 1, "names": "Badge"})).expect("group");
+    let shapes = current_shapes(&ss);
+    assert_eq!((shapes.len(), shapes[0].children().len()), (1, 2));
+    ss.execute("edit.undo", &json!({})).expect("undo");
+    // A grouped shape comes out of its group, drawn where it was.
+    ss.execute("library.insert", &json!({"file": file, "slide": 1, "as": "shapes", "names": ["Badge label"]})).expect("child");
+    let shapes = current_shapes(&ss);
+    assert_eq!(shapes.len(), 1);
+    assert!(!shapes[0].is_group() && shapes[0].text.as_ref().is_some_and(|t| t.text() == "New"));
+    assert!(near(shapes[0].xfrm.expect("box"), label_box), "{:?} vs {label_box:?}", shapes[0].xfrm);
+    ss.execute("edit.undo", &json!({})).expect("undo");
+    // Several names.
+    ss.execute("library.insert", &json!({"file": file, "slide": 1, "names": ["Rating star", "Badge"]})).expect("two");
+    assert_eq!(current_shapes(&ss).len(), 2);
+    assert!(ss.doc().expect("doc").doc.validate().is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_connector_keeps_only_the_glue_that_came_with_it() {
+    let dir = folder("glue");
+    let (file, _) = elements(&dir);
+    let mut ss = session_with(&dir);
+    ss.execute("slide.new", &json!({"layout": "blank"})).expect("slide");
+    let ends = |ss: &Session| -> Vec<Option<u32>> {
+        let shapes = current_shapes(ss);
+        let link = shapes.iter().find(|x| x.name == "Link").expect("link");
+        match &link.kind {
+            deckcraft_model::ShapeKind::Connector { start, end } => vec![start.map(|(i, _)| i.0), end.map(|(i, _)| i.0)],
+            other => panic!("not a connector: {other:?}"),
+        }
+    };
+    let id_of = |ss: &Session, name: &str| current_shapes(ss).iter().find(|x| x.name == name).map(|x| x.id.0);
+    // Every shape: the connector is glued to the new boxes.
+    ss.execute("library.insert", &json!({"file": file, "slide": 1, "as": "shapes"})).expect("all");
+    let (a, b) = (id_of(&ss, "A"), id_of(&ss, "B"));
+    let mut glued = ends(&ss);
+    glued.sort();
+    let mut want = vec![a, b];
+    want.sort();
+    assert_eq!(glued, want);
+    ss.execute("edit.undo", &json!({})).expect("undo");
+    // The connector alone: nothing to glue to, so neither end is glued (not to some other shape
+    // that happens to have the source's id).
+    ss.execute("library.insert", &json!({"file": file, "slide": 1, "names": ["Link"]})).expect("link");
+    assert_eq!(ends(&ss), vec![None, None]);
+    ss.execute("edit.undo", &json!({})).expect("undo");
+    // With one box: glued at that end only.
+    ss.execute("library.insert", &json!({"file": file, "slide": 1, "names": ["A", "Link"]})).expect("a and link");
+    let a = id_of(&ss, "A");
+    let e = ends(&ss);
+    assert_eq!(e.iter().filter(|x| x.is_some()).count(), 1);
+    assert!(e.contains(&a));
+    assert!(ss.doc().expect("doc").doc.validate().is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn bad_names_are_refused_and_say_what_is_there() {
+    let dir = folder("bad-names");
+    let (file, _) = elements(&dir);
+    let mut ss = session_with(&dir);
+    let e = ss.execute("library.insert", &json!({"file": file, "slide": 1, "names": ["Badge", "Nope"]})).expect_err("missing");
+    let e = e.to_string();
+    assert!(e.contains("no shape named Nope") && e.contains("\"Rating star\""), "{e}");
+    let many: Vec<String> = (0..65).map(|i| format!("n{i}")).collect();
+    for bad in [json!([]), json!([5]), json!([""]), json!(many), json!("x".repeat(300)), json!({"a": 1})] {
+        assert!(ss.execute("library.insert", &json!({"file": file, "slide": 1, "names": bad})).is_err(), "{bad}");
+    }
+    let e = ss.execute("library.insert", &json!({"file": file, "slide": 1, "as": "slide", "names": ["Badge"]})).expect_err("slide");
+    assert!(e.to_string().contains("as: shapes"), "{e}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn library_shapes_lists_names_kinds_groups_and_boxes() {
+    let dir = folder("list-shapes");
+    let (file, label_box) = elements(&dir);
+    let mut ss = session_with(&dir);
+    let r = ss.execute("library.shapes", &json!({"file": file, "slide": 1})).expect("shapes");
+    let shapes = r["shapes"].as_array().cloned().unwrap_or_default();
+    let names: Vec<&str> = shapes.iter().filter_map(|x| x["name"].as_str()).collect();
+    for n in ["Rating star", "Badge", "Badge ring", "Badge label", "A", "B", "Link"] {
+        assert!(names.contains(&n), "{n} in {names:?}");
+    }
+    let find = |n: &str| shapes.iter().find(|x| x["name"] == json!(n)).cloned().unwrap_or_default();
+    assert_eq!(find("Badge")["kind"], json!("group"));
+    assert_eq!(find("Link")["kind"], json!("connector"));
+    assert_eq!(find("Badge label")["parent"], json!("Badge"));
+    assert!(find("Rating star").get("parent").is_none());
+    let b: Vec<f64> = find("Badge label")["box"].as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+    assert!(near(deckcraft_geom::Xfrm::new(b[0], b[1], b[2], b[3]), label_box), "{b:?} vs {label_box:?}");
+    assert!(ss.execute("library.shapes", &json!({"file": file, "slide": 9})).is_err());
+    assert!(ss.execute("library.shapes", &json!({"file": file})).is_err());
     let _ = std::fs::remove_dir_all(dir);
 }
