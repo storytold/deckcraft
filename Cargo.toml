@@ -11,6 +11,8 @@ rust-version = "1.95"
 repository = "https://github.com/storytold/deckcraft"
 
 [workspace.dependencies]
+# OPC part-name primitives; relationship admission stays app-local.
+craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
 # XML writer primitives; parser admission and OOXML policy stay app-local.
 craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
 # internal
@@ -58,6 +60,8 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
+# Base64 for command payloads (engine); base64_compat keeps the legacy lenient decoder. Same rev as craft-deckcraft-format.
+craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "254e9a409b410dc93c0e06ff66cd1e767893ac32", version = "=0.1.0" }
 # craft-media, craft-audio and craft-video share types and stay on one rev.
 # The .deckcraft package layer (identity, manifest, member names, bounded reads); crates/format maps the presentation onto it.
 craft-deckcraft-format = { git = "https://github.com/storytold/craft-libs", rev = "254e9a409b410dc93c0e06ff66cd1e767893ac32", version = "=0.1.0" }
