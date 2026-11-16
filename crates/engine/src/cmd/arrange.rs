@@ -417,17 +417,36 @@ fn regroup(s: &mut Session, _p: &Value) -> Result<Value> {
     }
 }
 
+/// `to` of arrange.align and arrange.distribute: `Some(true)` for the slide, `Some(false)` for the
+/// selection, `None` when it is left out. Any other value, a non-string included, is refused.
+fn align_to(cmd: &str, p: &Value) -> Result<Option<bool>> {
+    match p.get("to").map(Value::as_str) {
+        None => Ok(None),
+        Some(Some("slide")) => Ok(Some(true)),
+        Some(Some("selection")) => Ok(Some(false)),
+        Some(_) => Err(bad(cmd, "`to` must be slide or selection")),
+    }
+}
+
+/// The validated `edge` and `to` of `arrange.align`, parsed once for both paths: the single-user
+/// command and a collaborating replica that sends the same boxes as final bounds, so neither
+/// accepts a value the other refuses.
+pub fn align_params(p: &Value) -> Result<(&str, Option<bool>)> {
+    let edge = match str_param(p, "edge") {
+        Some(e @ ("left" | "center" | "right" | "top" | "middle" | "bottom")) => e,
+        _ => return Err(bad("arrange.align", "`edge` must be left, center, right, top, middle or bottom")),
+    };
+    Ok((edge, align_to("arrange.align", p)?))
+}
+
 /// Final boxes `arrange.align` gives its targets, in parent space. The command applies them; a
 /// collaborating replica sends the same values as final bounds in one step, so no replica
-/// recomputes the reference (RFC §3.2.1, RFC §13 item 4).
-pub fn align_plan(st: &crate::DocState, ids: &[ShapeId], edge: &str, to: Option<&str>) -> Vec<(ShapeId, Xfrm)> {
+/// recomputes the reference (RFC §3.2.1, RFC §13 item 4). `edge` and `to` are the values
+/// [`align_params`] validated.
+pub fn align_plan(st: &crate::DocState, ids: &[ShapeId], edge: &str, to: Option<bool>) -> Vec<(ShapeId, Xfrm)> {
     let size = st.doc.slide_size;
     let boxes: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).collect();
-    let to_slide = match to {
-        Some("slide") => true,
-        Some(_) => false,
-        None => boxes.len() < 2,
-    };
+    let to_slide = to.unwrap_or(boxes.len() < 2);
     let reference = if to_slide {
         Rect::new(0.0, 0.0, size.width, size.height)
     } else {
@@ -454,9 +473,9 @@ pub fn align_plan(st: &crate::DocState, ids: &[ShapeId], edge: &str, to: Option<
 }
 
 fn align(s: &mut Session, p: &Value) -> Result<Value> {
-    let edge = str_param(p, "edge").unwrap_or("left").to_string();
+    let (edge, to) = align_params(p)?;
     let ids = targets(s, p)?;
-    let plan = align_plan(s.doc()?, &ids, &edge, str_param(p, "to"));
+    let plan = align_plan(s.doc()?, &ids, edge, to);
     edit_geometry(s, p, "arrange.align", |sh| {
         if let (Some(x), Some((_, target))) = (sh.xfrm.as_mut(), plan.iter().find(|(i, _)| *i == sh.id)) {
             *x = *target;
@@ -465,14 +484,27 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// The validated `dir` and `to` of `arrange.distribute`, parsed once for both paths, like
+/// [`align_params`].
+pub fn distribute_params(p: &Value) -> Result<(Option<&str>, Option<bool>)> {
+    let dir = match p.get("dir").map(Value::as_str) {
+        None => None,
+        Some(Some("horizontal")) => Some("horizontal"),
+        Some(Some("vertical")) => Some("vertical"),
+        Some(_) => return Err(bad("arrange.distribute", "`dir` must be horizontal or vertical")),
+    };
+    Ok((dir, align_to("arrange.distribute", p)?))
+}
+
 /// Final boxes `arrange.distribute` gives its targets, sorted by the distributing axis. The
-/// command applies them; a collaborating replica sends the same values as final bounds.
-pub fn distribute_plan(st: &crate::DocState, ids: &[ShapeId], dir: Option<&str>) -> Vec<(ShapeId, Xfrm)> {
-    let horiz = !dir.unwrap_or("horizontal").starts_with('v');
+/// command applies them; a collaborating replica sends the same values as final bounds. `dir` and
+/// `to` are the values [`distribute_params`] validated.
+pub fn distribute_plan(st: &crate::DocState, ids: &[ShapeId], dir: Option<&str>, to: Option<bool>) -> Vec<(ShapeId, Xfrm)> {
+    let horiz = dir != Some("vertical");
     let size = st.doc.slide_size;
     let mut boxes: Vec<(ShapeId, Rect, Xfrm)> =
         ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).map(|(id, x)| (id, x.bounds(), x)).collect();
-    let to_slide = dir == Some("slide") || boxes.len() < 3;
+    let to_slide = to == Some(true) || boxes.len() < 3;
     if boxes.is_empty() {
         return Vec::new();
     }
@@ -508,8 +540,9 @@ pub fn distribute_plan(st: &crate::DocState, ids: &[ShapeId], dir: Option<&str>)
 }
 
 fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
+    let (dir, to) = distribute_params(p)?;
     let ids = targets(s, p)?;
-    let plan = distribute_plan(s.doc()?, &ids, str_param(p, "dir"));
+    let plan = distribute_plan(s.doc()?, &ids, dir, to);
     edit_geometry(s, p, "arrange.distribute", |sh| {
         if let (Some(x), Some((_, target))) = (sh.xfrm.as_mut(), plan.iter().find(|(i, _)| *i == sh.id)) {
             *x = *target;

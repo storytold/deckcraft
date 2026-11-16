@@ -909,6 +909,11 @@ dependencies = [
 [[package]]
 name = "craft-codepage"
 version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32#254e9a409b410dc93c0e06ff66cd1e767893ac32"
+
+[[package]]
+name = "craft-codepage"
+version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
 
 [[package]]
@@ -916,7 +921,7 @@ name = "craft-deckcraft-format"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32#254e9a409b410dc93c0e06ff66cd1e767893ac32"
 dependencies = [
- "craft-zip",
+ "craft-zip 0.1.0 (git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32)",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -971,6 +976,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-mime"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32#254e9a409b410dc93c0e06ff66cd1e767893ac32"
+dependencies = [
+ "chrono",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32)",
+ "encoding_rs",
+]
+
+[[package]]
+name = "craft-opc"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10#ea24422ae9859dc5da398d0462bc87f8e02e0d10"
+dependencies = [
+ "craft-xml",
+ "craft-zip 0.1.0 (git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10)",
+ "log",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "craft-pdf"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
@@ -984,7 +1010,7 @@ name = "craft-rtf"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
 dependencies = [
- "craft-codepage",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725)",
  "encoding_rs",
 ]
 
@@ -1078,6 +1104,16 @@ dependencies = [
 name = "craft-zip"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32#254e9a409b410dc93c0e06ff66cd1e767893ac32"
+dependencies = [
+ "flate2",
+ "thiserror 2.0.21",
+ "zip 9.1.0",
+]
+
+[[package]]
+name = "craft-zip"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10#ea24422ae9859dc5da398d0462bc87f8e02e0d10"
 dependencies = [
  "flate2",
  "thiserror 2.0.21",
@@ -1325,6 +1361,7 @@ name = "deckcraft-engine"
 version = "0.19.0"
 dependencies = [
  "chrono",
+ "craft-mime",
  "deckcraft-anim",
  "deckcraft-color",
  "deckcraft-fonts",
@@ -1434,6 +1471,7 @@ dependencies = [
 name = "deckcraft-pptx"
 version = "0.19.0"
 dependencies = [
+ "craft-opc",
  "craft-xml",
  "deckcraft-color",
  "deckcraft-engine",

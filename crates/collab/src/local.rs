@@ -1339,16 +1339,14 @@ pub fn normalize_with_painter(
             }
             // Final boxes come from the engine's own plan, so a shared session reaches exactly the
             // values the single-user command would set. One operation for the whole selection
-            // means one version and one undo step (RFC §3.2.1, §13 item 4).
+            // means one version and one undo step (RFC §3.2.1, §13 item 4). `edge`/`dir`/`to` are
+            // parsed by the engine, so a value neither command names is refused here too.
             let plan = if cmd == "arrange.align" {
-                deckcraft_engine::cmd::arrange::align_plan(
-                    st,
-                    &ids,
-                    p.get("edge").and_then(Value::as_str).unwrap_or("left"),
-                    p.get("to").and_then(Value::as_str),
-                )
+                let (edge, to) = deckcraft_engine::cmd::arrange::align_params(p).map_err(|e| LocalError::BadParams(e.to_string()))?;
+                deckcraft_engine::cmd::arrange::align_plan(st, &ids, edge, to)
             } else {
-                deckcraft_engine::cmd::arrange::distribute_plan(st, &ids, p.get("dir").and_then(Value::as_str))
+                let (dir, to) = deckcraft_engine::cmd::arrange::distribute_params(p).map_err(|e| LocalError::BadParams(e.to_string()))?;
+                deckcraft_engine::cmd::arrange::distribute_plan(st, &ids, dir, to)
             };
             let mut items = Vec::new();
             for (id, xf) in plan {
