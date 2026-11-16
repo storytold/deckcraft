@@ -106,13 +106,15 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Evidence:** the shared `craft-svg` reader parses SVG (usvg behind its bounded preflight), and
 `crates/svg` maps the tree onto DeckCraft geometry: paths, basic shapes, markers, gradients with
 their stops and space, and text as outline glyphs laid out with the fonts this app ships.
-`crates/render/src/svg.rs` draws the result as vectors. SVG's `filter`, `mask`, `clipPath` and
-`pattern` elements are parsed but not applied, and a picture that uses one of them, or an embedded
-`image`, reports it in `Svg::skipped`, so import prefers that picture's raster copy where the file
-has one (and keeps the vector where it has none).
-- **Impact:** a picture that draws its glow, shadow or blur through `feGaussianBlur`/`feMerge` paints
-flat, and one that clips artwork gets the unclipped shapes: on PowerPoint-written SVG decks this is
-the visible remainder against a PowerPoint PDF render (measured 2026-11-13). A group's opacity
+`crates/render/src/svg.rs` draws the result as vectors. SVG's `filter`, `mask`, `clipPath`,
+`pattern` and embedded `image` need SVG's own compositing, which the mapping does not model; a
+picture that uses one reports it in `Svg::skipped` and is drawn whole by `craft_svg::tree::draw`
+(the shared, memory-checked resvg path) at the size on screen instead, and the vector mapping
+stands in only if that draw is refused by its budget.
+- **Impact:** a picture that needs compositing (glow, shadow, blur, a clip, a mask, a pattern) is a
+bitmap at the size on screen, so it is as sharp as the display and not resolution-independent like
+the vector pictures around it. An extreme filter region or a very large embedded image can exceed
+the draw budget, and that picture then falls back to the mapping, which draws it without them. A group's opacity
 applies to each shape in it rather than to the composited group, and a `url(#…)` paint that resolves
 to nothing is drawn black where a browser draws nothing.
 - **Estimate:** 10–16 h (a bounded filter graph: `feGaussianBlur`, `feOffset`, `feFlood`,
@@ -376,6 +378,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | SVG pictures that need filters, masks, clip paths, patterns or embedded images are composed by the shared `craft_svg::tree::draw` within its memory budget, so nothing is left undrawn; those pictures are bitmaps at display size, everything else stays vector |
 | 2026-11-16 | minor | SVG pictures read through the shared `craft-svg` crate (usvg behind its bounded preflight); the app keeps only the mapping onto its geometry, paints and text outlines. A vector-only picture still shows when it would draw incomplete |
 | 2026-11-14 | minor | SVG pictures are saved with a PNG fallback in `a:blip/@r:embed` and the vector in `asvg:svgBlip`, so readers without SVG support draw them; the export shortfall is closed and the ranking row keeps only the filters, masks and clip paths |
 | 2026-11-13 | trivial | The remaining SVG limits are two entries now: filters, masks, clip paths and patterns (10–16 h) and export without a PNG fallback (2–4 h) |
