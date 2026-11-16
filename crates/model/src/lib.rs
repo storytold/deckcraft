@@ -323,7 +323,34 @@ pub enum ShapeKind {
         /// back: (relationship id used in `xml`, relationship type, the part as a media item).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         parts: Vec<(String, String, MediaId)>,
+        /// The relationships of those parts, and of the parts they reach in turn, so a kept part
+        /// that uses pictures, other parts or links of its own is written back whole (#1993).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        part_rels: Vec<PartRel>,
     },
+}
+
+/// A relationship of a part an unmodelled object keeps (see [`ShapeKind::Opaque`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartRel {
+    /// The kept part the relationship belongs to.
+    pub from: MediaId,
+    /// Relationship id, as the part's XML uses it.
+    pub id: String,
+    /// Full relationship type.
+    pub rel_type: String,
+    pub target: PartRelTarget,
+}
+
+/// Where a [`PartRel`] points.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PartRelTarget {
+    /// Another kept part.
+    Part(MediaId),
+    /// An external target (`TargetMode="External"`), as written; never fetched.
+    External(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -165,13 +165,20 @@ macro_rules! walkers {
                     }
                 }
                 // Every field named, so a new one can't slip past.
-                ShapeKind::Opaque { xml: _, preview, label: _, parts } => {
+                ShapeKind::Opaque { xml: _, preview, label: _, parts, part_rels } => {
                     if let Some(p) = preview {
                         f(p);
                     }
                     // SmartArt data, OLE embeddings… kept as media items (#209).
                     for (_, _, id) in parts {
                         f(id);
+                    }
+                    // The parts those reach in turn (#1993).
+                    for r in part_rels {
+                        f(&$($m)? r.from);
+                        if let deckcraft_model::PartRelTarget::Part(id) = &$($m)? r.target {
+                            f(id);
+                        }
                     }
                 }
             }
@@ -394,18 +401,25 @@ mod tests {
         assert_eq!(got, (9101..=9108).map(MediaId).collect::<Vec<_>>());
     }
 
-    /// SmartArt and OLE objects keep their parts as media items (#209); those count as used.
+    /// SmartArt and OLE objects keep their parts as media items (#209), and the parts those reach
+    /// (#1993); all of them count as used.
     #[test]
     fn kept_parts_of_unmodelled_objects_are_references() {
+        use deckcraft_model::{PartRel, PartRelTarget};
+        let rel = |to| PartRel { from: MediaId(9102), id: "rId1".into(), rel_type: "image".into(), target: to };
         let opaque = Shape {
             kind: ShapeKind::Opaque {
                 xml: String::new(),
                 preview: Some(MediaId(9101)),
                 label: "object".into(),
                 parts: vec![("rId2".into(), "oleObject".into(), MediaId(9102))],
+                part_rels: vec![rel(PartRelTarget::Part(MediaId(9103))), rel(PartRelTarget::External("https://example.com/".into()))],
             },
             ..Default::default()
         };
-        assert_eq!(shapes_media(std::slice::from_ref(&opaque)), vec![MediaId(9101), MediaId(9102)]);
+        let mut got = shapes_media(std::slice::from_ref(&opaque));
+        got.sort();
+        got.dedup();
+        assert_eq!(got, vec![MediaId(9101), MediaId(9102), MediaId(9103)]);
     }
 }

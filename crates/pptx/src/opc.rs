@@ -254,6 +254,46 @@ pub fn sidecar_part(name: &str) -> bool {
     !(stem != file && !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// A relationship we can write back as it was read: id, type and target present, of a sane
+/// length, and free of control characters and of characters that would need escaping.
+pub fn safe_rel(id: &str, ty: &str, target: &str) -> bool {
+    [id, ty, target].iter().all(|s| !s.is_empty() && s.len() <= 4096 && !s.chars().any(|c| c.is_control() || matches!(c, '<' | '>' | '"' | '\'')))
+}
+
+/// The part an internal relationship of `part` reaches, when an unmodelled object may carry it
+/// along (#1993): a plain relative path that stays inside the package and lands in one of the
+/// folders embedded objects keep their parts in. `None` for an absolute or empty target, one with
+/// a scheme, query, fragment or backslash (before or after percent-decoding), one climbing above
+/// the package root, a relationships part, and anything else: the object then falls back to its
+/// preview.
+pub fn kept_target(part: &str, raw: &str) -> Option<String> {
+    let plain = |s: &str| !s.is_empty() && !s.starts_with('/') && !s.chars().any(|c| c.is_control() || matches!(c, ':' | '\\' | '#' | '?'));
+    if !plain(raw) {
+        return None;
+    }
+    let decoded = percent_decode(raw);
+    if !plain(&decoded) {
+        return None;
+    }
+    let base = dir_of(part);
+    let mut segs: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
+    for s in decoded.split('/') {
+        match s {
+            "" => return None,
+            "." => {}
+            ".." => {
+                segs.pop()?;
+            }
+            s => segs.push(s),
+        }
+    }
+    let name = segs.join("/");
+    let n = norm(&name);
+    let mut it = n.split('/');
+    let kept_area = it.next() == Some("ppt") && matches!(it.next(), Some("embeddings" | "media" | "diagrams" | "drawings")) && it.next().is_some();
+    (kept_area && !n.split('/').any(|s| s == "_rels")).then_some(name)
+}
+
 pub fn dir_of(part: &str) -> String {
     craft_opc::dir_of(part).to_owned()
 }

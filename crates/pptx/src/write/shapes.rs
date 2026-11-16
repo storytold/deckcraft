@@ -457,7 +457,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             w.close("p:grpSp");
         }
-        ShapeKind::Opaque { xml, preview, label, parts } => opaque(w, x, o, cx, s, xml, *preview, label, parts),
+        ShapeKind::Opaque { xml, preview, label, parts, part_rels } => opaque(w, x, o, cx, s, xml, *preview, label, parts, part_rels),
     }
 }
 
@@ -878,9 +878,10 @@ fn opaque(
     preview: Option<deckcraft_model::MediaId>,
     label: &str,
     parts: &[(String, String, deckcraft_model::MediaId)],
+    part_rels: &[deckcraft_model::PartRel],
 ) {
     // Kept XML is written back as it was when every part it references was kept too, with those
-    // parts re-added under this slide's relationship ids.
+    // parts re-added under this slide's relationship ids, and their own relationships (#1993).
     if let Ok(doc) = crate::xml::parse(xml.as_bytes())
         && matches!(doc.root.local(), "graphicFrame" | "sp" | "grpSp" | "cxnSp")
     {
@@ -895,6 +896,7 @@ fn opaque(
                 Some((r.clone(), x.media_rel(o, *m, kind)?))
             })
             .collect::<Option<std::collections::HashMap<_, _>>>()
+            && x.kept_part_rels(part_rels).is_some()
         {
             let mut root = doc.root;
             set_rel_ids(&mut root, &ids, 0);

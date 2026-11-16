@@ -2,14 +2,16 @@
 //! OLE and other objects) and `p:contentPart` (3-D models).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use deckcraft_color::SchemeSlot;
 use deckcraft_geom::{Xfrm, preset};
 use deckcraft_model::style::{ColorRef, Effects, Fill};
 use deckcraft_model::table::{Cell, Row, Table};
 use deckcraft_model::text::{Anchor, TextDir};
-use deckcraft_model::{Geom, MediaClip, PhType, Placeholder, Shape, ShapeId, ShapeKind, ShapeStyle};
+use deckcraft_model::{Geom, MediaClip, PartRel, PartRelTarget, PhType, Placeholder, Shape, ShapeId, ShapeKind, ShapeStyle};
 
+use super::chart::{MAX_KEPT_DEPTH, MAX_KEPT_PARTS, MAX_KEPT_TOTAL_BYTES};
 use super::{Imp, Part, dml};
 use crate::xml::El;
 
@@ -472,24 +474,29 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
     } else {
         uri.rsplit('/').next().unwrap_or("Object").to_string()
     };
-    // Keep the parts it points to so a save writes it back whole (#203). A part with relationships
-    // of its own, or an external link, can't be carried: the save then falls back to the preview.
-    // Validate every relationship (and charge the budget) before copying anything, so a fallback
-    // that cannot be kept whole copies no part at all.
+    // Keep the parts it points to so a save writes it back whole (#203), with the parts those
+    // reach in turn and its external links (#1993). Validate every relationship (and charge the
+    // budget) before copying anything, so an object that cannot be kept whole keeps no part at
+    // all: a save then falls back to the preview.
     let mark = imp.mark();
     let mut planned = Vec::new();
     let mut spent = imp.diagram_xml_bytes;
     let mut ok = true;
     for id in super::rel_refs(e) {
-        let Some(rel) = part.rels.get(&id).filter(|r| !r.external) else {
+        let Some(rel) = part.rels.get(&id) else {
             ok = false;
             break;
         };
-        let pkg = imp.pkg;
-        if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
-            ok = false;
-            break;
+        // A linked object (or a hyperlink): the target stays a link and is never fetched.
+        if rel.external {
+            if !crate::opc::safe_rel(&rel.id, &rel.ty, &rel.target_raw) {
+                ok = false;
+                break;
+            }
+            planned.push((id, rel.ty.clone(), rel.target_raw.clone(), Keep::Link));
+            continue;
         }
+        let pkg = imp.pkg;
         // A diagram's definition parts copied here count against the same presentation-wide budget.
         if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&rel.target)) {
             let len = pkg.get(&rel.target).map_or(0, |b| b.len());
@@ -503,27 +510,145 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             ok = false;
             break;
         }
-        planned.push((id, rel.ty.clone(), rel.target.clone(), rel.kind == "diagramData"));
+        let keep = if rel.kind == "diagramData" { Keep::Data } else { Keep::Part };
+        planned.push((id, rel.ty.clone(), rel.target.clone(), keep));
     }
-    let parts = if ok {
+    let kept = if ok {
         imp.diagram_xml_bytes = spent;
-        let copied: Option<Vec<_>> = planned
-            .into_iter()
-            .map(|(id, kind, target, data)| {
-                let media = if data { diagram_data(imp, &target) } else { imp.media_for(&target) };
-                Some((id, kind, media?))
-            })
-            .collect();
-        if copied.is_none() {
+        let kept = keep_parts(imp, planned);
+        if kept.is_none() {
             imp.rollback(&mark);
         }
-        copied
+        kept
     } else {
         None
     };
-    let parts = parts.unwrap_or_default();
-    s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label, parts };
+    let (parts, part_rels) = kept.unwrap_or_default();
+    s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label, parts, part_rels };
     s
+}
+
+/// How an unmodelled object keeps one of its relationships.
+enum Keep {
+    /// An external target, kept as a link.
+    Link,
+    /// A diagram's data part (see [`diagram_data`]).
+    Data,
+    /// Any other part, as it is.
+    Part,
+}
+
+/// Relationships an unmodelled object keeps from the parts it carries along, all of them: one
+/// part's own relationships can't run past this.
+const MAX_OBJECT_RELS: usize = 1024;
+
+/// The parts an unmodelled object keeps, and the relationships of those parts.
+type KeptParts = (Vec<(String, String, deckcraft_model::MediaId)>, Vec<PartRel>);
+
+/// The parts an unmodelled object has kept so far, and their relationships.
+#[derive(Default)]
+struct Graph {
+    /// Each part visited, by normalized name, and the media item it is kept as: a cycle ends here.
+    seen: HashMap<String, deckcraft_model::MediaId>,
+    rels: Vec<PartRel>,
+}
+
+/// Copy what `planned` (relationship id, type, target, how) reaches, with the parts those reach
+/// in turn (see [`keep_rels`]). `None` when any of it can't be kept.
+fn keep_parts(imp: &mut Imp, planned: Vec<(String, String, String, Keep)>) -> Option<KeptParts> {
+    let mut g = Graph::default();
+    let mut parts = Vec::with_capacity(planned.len());
+    for (id, ty, target, keep) in planned {
+        let media = match keep {
+            Keep::Link => imp.media_link(&target),
+            Keep::Data => diagram_data(imp, &target)?,
+            Keep::Part => imp.media_for(&target)?,
+        };
+        if !matches!(keep, Keep::Link) {
+            keep_rels(imp, &target, media, &mut g, 0)?;
+        }
+        parts.push((id, ty, media));
+    }
+    Some((parts, g.rels))
+}
+
+/// The relationships of `part`, kept as `from`, and of the parts they reach in turn (#1993).
+/// Internal targets are copied as media items, which a save writes under new names, and external
+/// ones stay links that are never fetched. `None`, so the object falls back to its preview, when
+/// any of it can't be kept safely: a target [`crate::opc::kept_target`] refuses, a relationship
+/// that can't be written back as it was, a missing part, or a graph past the depth, part,
+/// relationship or retained-byte limits the chart sidecars use too.
+fn keep_rels(imp: &mut Imp, part: &str, from: deckcraft_model::MediaId, g: &mut Graph, depth: usize) -> Option<()> {
+    let key = crate::opc::norm(part);
+    if g.seen.contains_key(&key) {
+        return Some(());
+    }
+    if g.seen.len() >= MAX_KEPT_PARTS {
+        log::warn!("pptx: object part closure stopped at {part}");
+        return None;
+    }
+    g.seen.insert(key.clone(), from);
+    let pkg = imp.pkg;
+    let rels = Arc::clone(imp.part_rels.entry(key).or_insert_with(|| Arc::new(pkg.rels(part))));
+    if rels.items.is_empty() {
+        return Some(());
+    }
+    if depth >= MAX_KEPT_DEPTH {
+        log::warn!("pptx: object part closure stopped at {part}");
+        return None;
+    }
+    let mut ids = HashSet::new();
+    for r in &rels.items {
+        // As `Rels::get`: the first relationship with an id is the one the part's XML reaches.
+        if !ids.insert(r.id.as_str()) {
+            continue;
+        }
+        if g.rels.len() >= MAX_OBJECT_RELS || !crate::opc::safe_rel(&r.id, &r.ty, &r.target_raw) {
+            log::warn!("pptx: relationship {} of {part} can't be kept", r.id);
+            return None;
+        }
+        let mut cost = r.id.len() + r.ty.len() + r.target_raw.len();
+        let target = if r.external {
+            PartRelTarget::External(r.target_raw.clone())
+        } else {
+            let Some(name) = crate::opc::kept_target(part, &r.target_raw) else {
+                log::warn!("pptx: relationship {} of {part} points outside what an object may keep", r.id);
+                return None;
+            };
+            let to_key = crate::opc::norm(&name);
+            let to = match g.seen.get(&to_key) {
+                Some(&m) => m,
+                None => {
+                    let Some(bytes) = pkg.get(&name) else {
+                        log::warn!("pptx: relationship {} of {part} points at a missing part", r.id);
+                        return None;
+                    };
+                    // A part already read (a picture on a slide, another object's) costs nothing more.
+                    if !imp.media_by_part.contains_key(&to_key) {
+                        cost = cost.saturating_add(bytes.len());
+                    }
+                    charge(imp, std::mem::take(&mut cost))?;
+                    let m = imp.media_for(&name)?;
+                    keep_rels(imp, &name, m, g, depth + 1)?;
+                    m
+                }
+            };
+            PartRelTarget::Part(to)
+        };
+        charge(imp, cost)?;
+        g.rels.push(PartRel { from, id: r.id.clone(), rel_type: r.ty.clone(), target });
+    }
+    Some(())
+}
+
+/// Charge `bytes` an object carries along to the presentation's retained-sidecar budget.
+fn charge(imp: &mut Imp, bytes: usize) -> Option<()> {
+    let Some(total) = imp.kept_sidecar_bytes.checked_add(bytes).filter(|t| *t <= MAX_KEPT_TOTAL_BYTES) else {
+        log::warn!("pptx: retained byte budget exceeded by an object's parts");
+        return None;
+    };
+    imp.kept_sidecar_bytes = total;
+    Some(())
 }
 
 /// The preview picture of an old-style embedded object (`p:oleObj spid` with no `p:pic`): the

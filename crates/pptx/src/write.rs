@@ -172,6 +172,34 @@ impl<'a> Exp<'a> {
         let part = self.media_part(id)?;
         Some(o.rels.add(kind, &opc::relative(&o.name, &part), false))
     }
+    /// The relationships of the parts an unmodelled object keeps (#1993). Each part keeps the
+    /// relationship ids its XML uses; the parts they reach are written once each under new names
+    /// (as any media item), and external targets stay links. `None` when a part can't be written.
+    pub fn kept_part_rels(&mut self, rels: &[deckcraft_model::PartRel]) -> Option<()> {
+        use deckcraft_model::PartRelTarget;
+        // Part name → its relationships and the ids already in them, in the order first met.
+        let mut out: Vec<(String, RelsOut, std::collections::HashSet<&str>)> = vec![];
+        let mut at: HashMap<String, usize> = HashMap::new();
+        for r in rels {
+            let from = self.media_part(r.from)?;
+            let (target, external) = match &r.target {
+                PartRelTarget::Part(m) => (opc::relative(&from, &self.media_part(*m)?), false),
+                PartRelTarget::External(url) => (url.clone(), true),
+            };
+            let i = *at.entry(from.clone()).or_insert_with(|| {
+                out.push((from, RelsOut::default(), Default::default()));
+                out.len() - 1
+            });
+            let Some((_, part_rels, ids)) = out.get_mut(i) else { continue };
+            if ids.insert(r.id.as_str()) {
+                part_rels.items.push((r.id.clone(), r.rel_type.clone(), target, external));
+            }
+        }
+        for (part, part_rels, _) in &out {
+            self.pkg.rels(part, part_rels);
+        }
+        Some(())
+    }
     /// A tiny transparent PNG for pictures whose image is missing.
     pub fn placeholder_rel(&mut self, o: &mut Out) -> String {
         let part = match &self.placeholder {

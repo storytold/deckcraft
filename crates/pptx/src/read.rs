@@ -50,7 +50,8 @@ pub struct Imp<'a> {
     pub table_style_ids: Vec<String>,
     /// Per legacy VML drawing part: shape id → preview picture part (see `shapes::vml_preview`).
     pub vml_previews: HashMap<String, HashMap<String, String>>,
-    /// Aggregate byte count of retained chart sidecars across the presentation.
+    /// Aggregate byte count of retained chart sidecars, and of the parts (and relationships) an
+    /// unmodelled object carries along from its own parts (#1993), across the presentation.
     pub kept_sidecar_bytes: usize,
     /// Data slots of the charts decoded so far (see `chart::MAX_PRESENTATION_CHART_POINTS`).
     pub chart_points: usize,
@@ -77,9 +78,9 @@ pub struct Imp<'a> {
     pub smartart_shapes: usize,
     /// Bytes of SmartArt layout, style and colour definitions copied into diagrams so far.
     pub diagram_xml_bytes: usize,
-    /// Whether a part has relationships of its own, by normalized part name: looked up once
-    /// however many embedded objects point at the part.
-    pub has_rels: HashMap<String, bool>,
+    /// The relationships of the parts unmodelled objects keep, by normalized part name: parsed
+    /// once however many embedded objects point at the part.
+    pub part_rels: HashMap<String, Arc<Rels>>,
 }
 
 impl Imp<'_> {
@@ -601,7 +602,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         theme_extra_bytes: 0,
         smartart_shapes: 0,
         diagram_xml_bytes: 0,
-        has_rels: HashMap::new(),
+        part_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -666,7 +667,7 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
         theme_extra_bytes: 0,
         smartart_shapes: 0,
         diagram_xml_bytes: 0,
-        has_rels: HashMap::new(),
+        part_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let slide_ids = register_slides(&mut imp, &docs, &slide_entries, &mut lost_slides);
@@ -1640,7 +1641,7 @@ mod rollback_tests {
             theme_extra_bytes: 0,
             smartart_shapes: 0,
             diagram_xml_bytes: 0,
-            has_rels: HashMap::new(),
+            part_rels: HashMap::new(),
         };
         let kept_before = imp.media_for("ppt/presentation.xml").expect("media");
         let (m, items) = (imp.mark(), imp.media.len());
