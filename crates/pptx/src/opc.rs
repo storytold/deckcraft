@@ -257,46 +257,11 @@ pub fn sidecar_part(name: &str) -> bool {
 }
 
 pub fn dir_of(part: &str) -> String {
-    let p = part.trim_start_matches('/');
-    match p.rfind('/') {
-        Some(i) => p.get(..i).unwrap_or("").to_string(),
-        None => String::new(),
-    }
+    craft_opc::dir_of(part).to_owned()
 }
 
-pub fn file_of(part: &str) -> &str {
-    part.rsplit('/').next().unwrap_or(part)
-}
-
-pub fn rels_path(part: &str) -> String {
-    let p = part.trim_start_matches('/');
-    let dir = dir_of(p);
-    let file = file_of(p);
-    if dir.is_empty() { format!("_rels/{file}.rels") } else { format!("{dir}/_rels/{file}.rels") }
-}
-
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let c = b.get(i).copied().unwrap_or(0);
-        if c == b'%'
-            && let Some(h) = b
-                .get(i + 1..i + 3)
-                .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
-                .and_then(|h| std::str::from_utf8(h).ok())
-                .and_then(|h| u8::from_str_radix(h, 16).ok())
-        {
-            out.push(h);
-            i += 3;
-            continue;
-        }
-        out.push(c);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+use craft_opc::percent_decode;
+pub use craft_opc::{file_of, rels_path};
 
 /// Resolve a relative target against a base directory into a part name.
 pub fn resolve(base: &str, target: &str) -> String {
@@ -470,6 +435,27 @@ impl PackageOut {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_names_preserve_relationship_wire_policy() {
+        for (part, dir, file, rels) in [
+            ("", "", "", "_rels/.rels"),
+            ("/", "", "", "_rels/.rels"),
+            ("///ppt/slides/slide1.xml", "ppt/slides", "slide1.xml", "ppt/slides/_rels/slide1.xml.rels"),
+            ("ppt/", "ppt", "", "ppt/_rels/.rels"),
+            ("é/😀.xml", "é", "😀.xml", "é/_rels/😀.xml.rels"),
+        ] {
+            assert_eq!(dir_of(part), dir);
+            assert_eq!(file_of(part), file);
+            assert_eq!(rels_path(part), rels);
+        }
+        assert_eq!(percent_decode("a+b%20c%2Fd%23e"), "a+b c/d#e");
+        assert_eq!(percent_decode("% %1 %zz %+1 %ff"), "% %1 %zz %+1 �");
+        // Keep Deck's policy: strip the raw fragment first, then decode percent escapes once.
+        assert_eq!(resolve("ppt/slides", "../media/a%23b.png#ignored"), "ppt/media/a#b.png");
+        assert_eq!(resolve("ppt/slides", "%252e%252e/a"), "ppt/slides/%2e%2e/a");
+        assert_eq!(resolve("ppt/slides", "%2e%2e/%2e%2e/%2e%2e/a"), "a");
+    }
 
     #[test]
     fn resolve_keeps_encoded_hash_and_strips_fragment() {

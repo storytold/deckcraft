@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -156,6 +156,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|
 | 2026-11-16 | SVG pictures read through the shared `craft-svg` crate (usvg behind its bounded preflight): the app keeps only the mapping onto its geometry, paints and text outlines, and a vector-only picture still shows when it would draw incomplete |
 | 2026-11-14 | Saved packages carry a PNG fallback beside every SVG picture, the way PowerPoint writes it: `a:blip/@r:embed` is the raster, `asvg:svgBlip` the vector, so readers without SVG support draw the picture. The writer takes the rasterizer from above it (layering), the engine draws it at twice the picture size (512–2048 px) from `crates/render/src/svg.rs` |
+| 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-13 | SVG review pass: gradients follow the element transform and resolve viewport percentages, markers cannot recurse and follow a curve's tangent, a stroked label without a fill draws, and text positions follow the nearest `tspan`. Limits unchanged (filters, masks, clip paths, export fallback) |
 | 2026-11-13 | SVG pictures draw their text (`text`/`tspan`, font family, size, weight, style, `text-anchor`, letter spacing, whitespace as SVG reads it), real gradient ramps (stops, `objectBoundingBox`/`userSpaceOnUse`, `gradientTransform`, `spreadMethod`) and markers (`marker-start`/`-mid`/`-end`, `orient`, `markerUnits`, view box). Filters, masks and clip paths are still not read. Checklist Pictures 64%, unchanged |
 | 2026-11-13 | SVG pictures: `crates/svg` reads paths, basic shapes, groups, transforms, `use` and solid or gradient fills, and `crates/render/src/svg.rs` draws them as vectors, so SVG files insert at their own size and render; import takes `asvg:svgBlip` over the PNG fallback. Export still writes no raster fallback. Checklist Pictures 60 → 64% |
@@ -351,6 +352,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-14 | minor | SVG pictures save a PNG fallback beside the vector; the export shortfall is closed, Pictures 64% unchanged |
 | 2026-11-13 | minor | SVG pictures draw text, real gradient ramps and markers; Pictures 64%, unchanged |
 | 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from PowerPoint files; Pictures 60 → 64%, weighted breadth unchanged |
+| 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
