@@ -9,7 +9,7 @@
 //!   folder, the rest of the path being plain names (`..` below a missing folder is refused, and so
 //!   is a link that leads nowhere).
 //! - The result must lie inside the root, compared by whole components (`/work2` isn't inside
-//!   `/work`), without regard to case on Windows.
+//!   `/work`), exactly: on Windows what exists is resolved to its real case first.
 //! - Read and write access are separate: a root given alone grants only its own kind of access.
 //!
 //! Roots are in force on a thread inside [`confine`], and in the whole process after
@@ -249,30 +249,19 @@ fn resolve(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// Is `path` (resolved) `root` or inside it, component by component (without regard to case on
-/// Windows, whose file systems ignore it)?
+/// Is `path` (resolved) `root` or inside it, component by component? Exactly, on Windows too: what
+/// exists has its real case from [`resolve`], and a folder that doesn't exist yet may be a different
+/// one from the root where a parent folder is case sensitive.
 fn inside(path: &Path, root: &Path) -> bool {
     let mut path = path.components();
-    root.components().all(|r| path.next().is_some_and(|p| same_component(p, r)))
+    root.components().all(|r| path.next() == Some(r))
 }
 
-fn same_component(a: Component, b: Component) -> bool {
-    if a == b {
-        return true;
-    }
-    if !cfg!(windows) {
-        return false;
-    }
-    match (a.as_os_str().to_str(), b.as_os_str().to_str()) {
-        (Some(a), Some(b)) => a.to_lowercase() == b.to_lowercase(),
-        _ => false,
-    }
-}
-
-/// A Windows device name (`CON`, `NUL`, `COM1`… also with an extension), which names no file.
+/// A Windows device name (`CON`, `NUL`, `COM1`, `COM¹`… also with an extension or a colon), which names no file.
 fn is_device_name(component: &str) -> bool {
-    let stem = component.split('.').next().unwrap_or(component).trim_end_matches(' ').to_ascii_uppercase();
-    let numbered = |prefix: &str| stem.strip_prefix(prefix).is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"));
+    let stem = component.split(['.', ':']).next().unwrap_or(component).trim_end_matches(' ').to_ascii_uppercase();
+    let numbered =
+        |prefix: &str| stem.strip_prefix(prefix).is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
     matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT")
 }
 
@@ -377,6 +366,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// A root and a path reached through links are compared after the links are followed.
     #[test]
     fn links_are_followed_before_comparing() {
         let (base, roots) = folders("links");
@@ -413,20 +403,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// A name that differs in case is another name until the file system says otherwise.
+    #[test]
+    fn names_are_compared_exactly() {
+        let root = Path::new("/work/In");
+        assert!(inside(Path::new("/work/In/new/a.deckcraft"), root));
+        assert!(!inside(Path::new("/work/IN/a.deckcraft"), root));
+        assert!(!inside(Path::new("/WORK/In/a.deckcraft"), root));
+        assert!(!inside(Path::new("/work/in\u{212A}/a.deckcraft"), Path::new("/work/ink")), "the Kelvin sign folds to k");
+        if cfg!(windows) {
+            let root = Path::new(r"C:\work\In");
+            assert!(inside(Path::new(r"c:\work\In\a.deckcraft"), root), "a drive letter is one drive in either case");
+            assert!(!inside(Path::new(r"C:\work\IN\a.deckcraft"), root));
+        }
+    }
+
+    /// In a case-sensitive folder, `IN` beside the root `in` is another folder, there or not yet.
     #[cfg(windows)]
     #[test]
-    fn windows_ignores_case_and_refuses_devices() {
+    fn a_case_sensitive_folder_keeps_a_differently_cased_name_out() {
+        let base = std::env::temp_dir().join(format!("dc-file-access-case-sensitive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let set = std::process::Command::new("fsutil").args(["file", "setCaseSensitiveInfo"]).arg(&base).arg("enable").output();
+        if !set.as_ref().is_ok_and(|o| o.status.success()) {
+            eprintln!("skipped: a case-sensitive folder can't be made here: {set:?}");
+            let _ = std::fs::remove_dir_all(base);
+            return;
+        }
+        std::fs::create_dir(base.join("in")).unwrap();
+        let root = [base.join("in")];
+        let roots = AutomationRoots::new(&root, &root).unwrap().unwrap();
+        assert_eq!(roots.check(&s(base.join("in/new.deckcraft")), Access::Write), Ok(()));
+        let e = roots.check(&s(base.join("IN/new.deckcraft")), Access::Write).unwrap_err();
+        assert!(e.contains("outside the write root"), "{e}");
+        std::fs::create_dir(base.join("IN")).unwrap();
+        std::fs::write(base.join("IN/secret.deckcraft"), "x").unwrap();
+        let e = roots.check(&s(base.join("IN/secret.deckcraft")), Access::Read).unwrap_err();
+        assert!(e.contains("outside the read root"), "{e}");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(windows)]
+    /// On Windows a path finds its real case on disk, and device names are refused.
+    #[test]
+    fn windows_finds_the_real_case_and_refuses_devices() {
         let (base, roots) = folders("case");
         let upper = s(base.join("IN/a.deckcraft"));
         assert_eq!(roots.check(&upper, Access::Read), Ok(()), "{upper}");
         assert_eq!(roots.check(&s(base.join("In/Sub/New.deckcraft")), Access::Read), Ok(()));
+        assert_eq!(roots.check(&s(base.join("OUT/New.deckcraft")), Access::Write), Ok(()));
+        assert_eq!(roots.check(&s(base.join("OUT")), Access::Write), Ok(()));
         let e = roots.check(&s(base.join("out/NUL")), Access::Write).unwrap_err();
         assert!(e.contains("reserved device names"), "{e}");
         assert!(roots.check(&s(base.join("out/com1.txt")), Access::Write).is_err());
+        let e = roots.check(&s(base.join("out/COM¹.txt")), Access::Write).unwrap_err();
+        assert!(e.contains("reserved device names"), "{e}");
         assert_eq!(roots.check(&s(base.join("out/console.txt")), Access::Write), Ok(()));
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// Scopes nest, and a scope applies only on the thread that set it.
     #[test]
     fn scopes_nest_and_stay_on_their_thread() {
         let (base, roots) = folders("scopes");
@@ -448,12 +485,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// What is a device name, with superscript digits and a name before a colon, and what isn't.
     #[test]
     fn device_names() {
-        for d in ["CON", "nul", "Com1", "LPT9.txt", "aux.deckcraft", "NUL "] {
+        for d in ["CON", "nul", "Com1", "LPT9.txt", "aux.deckcraft", "NUL ", "COM¹", "Lpt²", "lpt³.txt", "COM1:", "nul:x", "COM¹:"] {
             assert!(is_device_name(d), "{d}");
         }
-        for f in ["console", "com10", "COM0", "lpt", "a.deckcraft", "nul-x"] {
+        for f in ["console", "com10", "COM0", "lpt", "a.deckcraft", "nul-x", "COM⁴", "com¹0", "lpt¹x", "console:x"] {
             assert!(!is_device_name(f), "{f}");
         }
     }
