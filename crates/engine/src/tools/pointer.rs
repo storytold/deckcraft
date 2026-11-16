@@ -353,7 +353,7 @@ impl Session {
                     bp.warp.map(|n| (n, bp.warp_adj))
                 });
                 if let Some((name, base)) = found {
-                    self.begin("Adjust WordArt");
+                    self.begin("Adjust Decorative Text");
                     self.tool.drag = Some(Drag::Warp { id, index, name, base, orig });
                 }
             }

@@ -106,7 +106,7 @@ pub fn text_warp(rctx: &Ctx, s: &Shape, tr: Rect) -> Option<deckcraft_geom::warp
 
 /// The stops of a text gradient as drawn: position and colour.
 fn gradient_stops(g: &deckcraft_model::style::Gradient) -> Vec<(f64, Rgba)> {
-    let scheme = deckcraft_color::ColorScheme { name: String::new(), colors: [Rgba::BLACK; 12] };
+    let scheme = deckcraft_color::ColorScheme::new(String::new(), [Rgba::BLACK; 12]);
     g.stops.iter().map(|s| (s.pos, s.color.resolve(&scheme, None))).collect()
 }
 
