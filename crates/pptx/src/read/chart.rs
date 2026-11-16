@@ -600,6 +600,7 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
         return ChartKept::default();
     }
     imp.kept_sidecar_bytes += rel_total;
+    imp.kept_chart_keys.push(key.clone());
     imp.kept_charts.insert(key, kept.clone());
     kept
 }
