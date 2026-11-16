@@ -4723,7 +4723,7 @@ fn a_smartart_node_picture_is_one_final_value_with_a_checked_place() {
     let got = d.nodes[0].picture_place.clone().expect("the place is kept");
     assert_eq!(got.crop, [0.1, 0.0, 0.2, 0.0]);
     assert_eq!(got.alpha, Some(0.8));
-    let child = group(&s).children().iter().find(|c| c.name == "SmartArt picture").expect("the placeholder").clone();
+    let child = group(&s).children().iter().find(|c| c.name == "Diagram picture").expect("the placeholder").clone();
     match child.fill {
         Some(deckcraft_model::Fill::Picture(fill)) => {
             assert_eq!(fill.crop, [0.1, 0.0, 0.2, 0.0], "the placeholder draws the place");
