@@ -27,6 +27,10 @@ pub const NS_P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/ma
 pub const NS_P15: &str = "http://schemas.microsoft.com/office/powerpoint/2012/main";
 pub const NS_P159: &str = "http://schemas.microsoft.com/office/powerpoint/2015/09/main";
 pub const NS_A14: &str = "http://schemas.microsoft.com/office/drawing/2010/main";
+/// DeckCraft's extra theme colours and tint rows, an `a:ext` of the colour scheme that other
+/// applications skip (PowerPoint shows the twelve slots only).
+pub const NS_DC_COLORS: &str = "urn:deckcraft:theme:extra-colors:1";
+pub const EXT_DC_COLORS: &str = "{D3C7C0DE-0C0A-4E57-9A1E-5C0E0C0DEC01}";
 /// Modern (threaded) comments, Office 2018/8 schema.
 pub const NS_P188: &str = "http://schemas.microsoft.com/office/powerpoint/2018/8/main";
 

@@ -1,10 +1,11 @@
 //! Theme parts (`a:theme`).
 
-use deckcraft_color::{ColorScheme, Rgba, SchemeSlot};
+use deckcraft_color::{ColorScheme, ExtraColor, MAX_TINT_ROWS, Rgba, SchemeSlot};
 use deckcraft_model::style::{ColorBase, Effects};
 use deckcraft_model::theme::{FontScheme, FontSet, FormatScheme, ScriptFont, Theme, default_format};
 
 use super::{Imp, Part, dml};
+use crate::opc::EXT_DC_COLORS;
 use crate::xml::El;
 
 fn font_set(e: Option<&El>) -> FontSet {
@@ -24,7 +25,7 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
     let mut t = Theme { name: root.attr("name").unwrap_or("Theme").to_string(), ..Default::default() };
     let Some(te) = root.child("themeElements") else { return t };
     if let Some(cs) = te.child("clrScheme") {
-        let mut scheme = ColorScheme { name: cs.attr("name").unwrap_or("").to_string(), colors: t.colors.colors };
+        let mut scheme = ColorScheme::new(cs.attr("name").unwrap_or(""), t.colors.colors);
         for slot in SchemeSlot::THEME {
             if let Some(c) = cs.child(slot.xml_name()).and_then(dml::color) {
                 let rgb = match c.base {
@@ -36,6 +37,7 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
                 scheme.set(slot, rgb);
             }
         }
+        extra_colors(cs, &mut scheme);
         t.colors = scheme;
     }
     if let Some(fs) = te.child("fontScheme") {
@@ -93,6 +95,32 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
         t.raw_extra = Some(extra);
     }
     t
+}
+
+/// DeckCraft's extra named colours and tint rows (see `write::theme::extra_colors`); a scheme
+/// saved by another application has none.
+fn extra_colors(cs: &El, scheme: &mut ColorScheme) {
+    let Some(x) =
+        cs.child("extLst").and_then(|l| l.children_named("ext").find(|e| e.attr("uri") == Some(EXT_DC_COLORS))).and_then(|e| e.child("extraColors"))
+    else {
+        return;
+    };
+    let clrs = |e: &El| -> Vec<Rgba> { e.children_named("clr").filter_map(|c| c.attr("val").and_then(Rgba::from_hex)).take(MAX_TINT_ROWS).collect() };
+    scheme.computed_tints = x.attr("computed") != Some("0");
+    for t in x.children_named("tints").take(SchemeSlot::THEME.len()) {
+        if let Some(slot) = t.attr("slot").and_then(SchemeSlot::from_xml)
+            && SchemeSlot::THEME.contains(&slot)
+        {
+            scheme.tints.insert(slot, clrs(t));
+        }
+    }
+    for c in x.children_named("color").take(deckcraft_color::MAX_EXTRA_COLORS) {
+        let (Some(name), Some(color)) = (c.attr("name"), c.attr("val").and_then(Rgba::from_hex)) else { continue };
+        if name.trim().is_empty() {
+            continue;
+        }
+        scheme.extra.push(ExtraColor { name: name.to_string(), color, tints: c.child("tints").map(clrs) });
+    }
 }
 
 fn pad<T: Clone>(v: &mut Vec<T>, d: &[T]) {

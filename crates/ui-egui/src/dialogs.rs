@@ -92,7 +92,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     // Two columns of colour rows plus Save must fit the first frame (Theme Colors), as must Save
     // in Theme Fonts. A later resize clips the buttons (the window size sticks) and clicks miss them.
     if d.id == "themeColors" {
-        window = window.default_size(vec2(760.0, 420.0)).min_width(720.0).min_height(420.0);
+        window = window.default_size(vec2(760.0, 600.0)).min_width(720.0).min_height(600.0);
     } else if d.id == "themeFonts" {
         window = window.default_size(vec2(460.0, 320.0)).min_width(420.0).min_height(300.0);
     }
@@ -103,7 +103,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
             _ => 340.0,
         });
         if d.id == "themeColors" {
-            ui.set_min_height(360.0);
+            ui.set_min_height(540.0);
         } else if d.id == "themeFonts" {
             ui.set_min_height(280.0);
         }
