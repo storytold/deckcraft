@@ -773,11 +773,12 @@ fn show_of_three() -> egui_kittest::Harness<'static, SlideApp> {
     show_of_three_with_hidden(&[])
 }
 
-/// A running show on the first of three slides, with `hidden` slides hidden.
-fn show_of_three_with_hidden(hidden: &[usize]) -> egui_kittest::Harness<'static, SlideApp> {
+/// A running show on the first of `slides`, with `hidden` slides hidden.
+fn show_of_with_hidden(slides: usize, hidden: &[usize]) -> egui_kittest::Harness<'static, SlideApp> {
     let mut session = deckcraft_engine::Session::with_new();
-    session.execute("slide.new", &json!({})).unwrap();
-    session.execute("slide.new", &json!({})).unwrap();
+    for _ in 1..slides {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
     for &i in hidden {
         session.execute("slide.hide", &json!({"index": i, "hidden": true})).unwrap();
     }
@@ -794,6 +795,11 @@ fn show_of_three_with_hidden(hidden: &[usize]) -> egui_kittest::Harness<'static,
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
     harness
+}
+
+/// A running show on the first of three slides, with `hidden` slides hidden.
+fn show_of_three_with_hidden(hidden: &[usize]) -> egui_kittest::Harness<'static, SlideApp> {
+    show_of_with_hidden(3, hidden)
 }
 
 fn show_wheel(harness: &mut egui_kittest::Harness<'static, SlideApp>, at: Pos2, y: f32, modifiers: egui::Modifiers) {
@@ -962,6 +968,35 @@ fn a_backward_then_forward_notch_in_one_frame_still_moves_forward() {
     }
     h.run_steps(4);
     assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the forward notch still moves one slide");
+}
+
+/// A backward notch with two lines on the end screen resumes the last slide and still steps one
+/// more back, matching the per-line contract of the ordinary-slide path.
+#[test]
+fn two_backward_lines_on_the_end_screen_reach_the_penultimate_slide() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "at the end screen");
+    show_wheel(&mut h, centre, 2.0, egui::Modifiers::NONE);
+    let show = h.state().show.as_ref().expect("still showing");
+    assert!(!show.ended, "two backward lines leave the end screen");
+    assert_eq!(show.state.slide, 1, "the last slide then one more back");
+}
+
+/// A hidden slide after the last visible one has no forward neighbour; a notch there still shows
+/// the end screen instead of doing nothing.
+#[test]
+fn a_forward_notch_on_a_hidden_slide_after_the_last_visible_ones_ends_the_show() {
+    let mut h = show_of_with_hidden(4, &[3]);
+    let doc = h.state().session.active().unwrap().doc.clone();
+    h.state_mut().show.as_mut().unwrap().state.goto(&doc, 3);
+    h.run_steps(2);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 3);
+    show_wheel(&mut h, pos2(500.0, 350.0), -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "no visible slide ahead: the end screen");
 }
 
 /// On the end screen, notches are processed in arrival order too: a forward notch exits even

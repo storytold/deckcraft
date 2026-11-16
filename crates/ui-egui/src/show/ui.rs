@@ -330,14 +330,23 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
                         }
                         show.ended = false;
                         out.actions.push(show.state.prev(doc));
+                        // `prev` resumes the last visible slide; any further lines of this notch
+                        // still step back from there.
+                        let rest = (by.unsigned_abs() as usize).saturating_sub(1);
+                        if rest > 0
+                            && let Some(target) = show.state.visible_step_clamped(doc, show.state.slide, false, rest)
+                            && target != show.state.slide
+                        {
+                            out.actions.push(show.state.goto(doc, target));
+                        }
                         continue;
                     }
                     let forward = by > 0;
                     match show.state.visible_step_clamped(doc, show.state.slide, forward, by.unsigned_abs() as usize) {
                         Some(target) if target != show.state.slide => out.actions.push(show.state.goto(doc, target)),
-                        // A notch that cannot move further forward (the last visible slide) shows
-                        // the end screen instead of being swallowed.
-                        Some(_) if forward => {
+                        // A notch that cannot move further forward (the last visible slide, or a
+                        // hidden slide after it) shows the end screen instead of being swallowed.
+                        Some(_) | None if forward => {
                             show.state.end();
                             show.ended = true;
                         }
