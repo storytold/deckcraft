@@ -268,11 +268,17 @@ impl Dictionary {
         self.only_in_compound.is_some_and(|o| a.cont.contains(&o))
     }
 
+    /// An affix that needs a further affix (`NEEDAFFIX` among its continuation flags): it can't be
+    /// the last affix of a word or of a compound part.
+    fn needs_another_affix(&self, a: &Affix) -> bool {
+        self.need_affix.is_some_and(|n| a.cont.contains(&n))
+    }
+
     /// Strip suffixes from `w` (one, or two through continuation flags); `extra` flags must also be
     /// on the root, `cross` means the suffix must allow a prefix.
     fn suffixed(&self, w: &[char], extra: &[Flag], cross: bool) -> bool {
         for s in &self.sfx {
-            if (cross && !s.cross) || self.only_in_compound_affix(s) {
+            if (cross && !s.cross) || self.only_in_compound_affix(s) || self.needs_another_affix(s) {
                 continue;
             }
             let Some(stem) = strip_end(w, &s.add, &s.strip) else { continue };
@@ -317,15 +323,20 @@ impl Dictionary {
     /// `Vorschlag` (#2145).
     fn affixed_compound_part(&self, w: &[char], flag: Flag, pos: Pos) -> bool {
         let permit = |a: &Affix| self.compound_permit.is_some_and(|p| a.cont.contains(&p));
+        // An affix that itself needs another (`NEEDAFFIX` among its continuation flags) doesn't
+        // finish a part on its own.
         let fits = |a: &Affix, stem: &[char]| {
-            self.words.get(&stem.iter().collect::<String>()).is_some_and(|hs| {
-                hs.iter().any(|f| !self.has(f, self.forbidden) && f.contains(&a.flag) && (f.contains(&flag) || a.cont.contains(&flag)))
-            })
+            !self.needs_another_affix(a)
+                && self.words.get(&stem.iter().collect::<String>()).is_some_and(|hs| {
+                    hs.iter().any(|f| !self.has(f, self.forbidden) && f.contains(&a.flag) && (f.contains(&flag) || a.cont.contains(&flag)))
+                })
         };
         let suffixed = self
             .sfx
             .iter()
-            .filter(|s| pos == Pos::Last || permit(s))
+            // At the end of a compound, Hunspell refuses a suffix that adds letters and may only be
+            // used inside compounds; a zero-length one is accepted.
+            .filter(|s| if pos == Pos::Last { s.add.is_empty() || !self.only_in_compound_affix(s) } else { permit(s) })
             .any(|s| strip_end(w, &s.add, &s.strip).is_some_and(|stem| s.cond_ok(&stem, false) && fits(s, &stem)));
         suffixed
             || self
@@ -388,7 +399,7 @@ impl Dictionary {
             if !p.cond_ok(&stem, true) {
                 continue;
             }
-            if self.root(&stem.iter().collect::<String>(), &[p.flag], true) {
+            if !self.needs_another_affix(p) && self.root(&stem.iter().collect::<String>(), &[p.flag], true) {
                 return true;
             }
             if p.cross && self.suffixed(&stem, &[p.flag], true) {
@@ -1036,6 +1047,33 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
             "xvorschlag",
         ] {
             assert!(!d.check(w), "{w}");
+        }
+    }
+
+    #[test]
+    fn affixes_that_need_another_or_only_live_in_compounds_follow_hunspell() {
+        // Each row as Hunspell 1.7.6 reads the same dictionary: `sun/X` and `cat/S`, `SFX S` adding
+        // the compound flag X and NEEDAFFIX (N) or ONLYINCOMPOUND (O).
+        let dict = |sfx: &str| {
+            let aff = format!("COMPOUNDFLAG X\nCOMPOUNDMIN 3\nNEEDAFFIX N\nONLYINCOMPOUND O\nSFX S Y 1\nSFX S {sfx} .\n");
+            Dictionary::parse(aff.as_bytes(), b"2\nsun/X\ncat/S\n".as_slice())
+        };
+        let rows: [(&str, &[&str], &[&str]); 4] = [
+            // An affix that needs another finishes neither a word nor a compound part.
+            ("0 s/XN", &["sun", "cat"], &["cats", "suncats", "catssun"]),
+            ("0 0/XN", &["sun", "cat"], &["suncat"]),
+            // At the end of a compound a compound-only suffix may be empty, not add letters.
+            ("0 s/XO", &["sun", "cat"], &["cats", "suncats"]),
+            ("0 0/XO", &["sun", "cat", "suncat"], &["catsun", "suncatsun"]),
+        ];
+        for (sfx, good, bad) in rows {
+            let d = dict(sfx);
+            for w in good {
+                assert!(d.check(w), "{sfx}: {w}");
+            }
+            for w in bad {
+                assert!(!d.check(w), "{sfx}: {w}");
+            }
         }
     }
 
