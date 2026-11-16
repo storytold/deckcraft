@@ -1,59 +1,33 @@
-//! A minimal PNG encoder for the placeholder image written when a picture's media is missing.
+//! The placeholder image written when a picture's media is missing: a 1×1 fully transparent RGBA
+//! PNG, kept as its fixed bytes (signature, IHDR, one stored-deflate IDAT scanline, IEND) so the
+//! app carries no PNG encoder of its own.
 
-fn crc32(data: &[u8]) -> u32 {
-    let mut c = 0xFFFF_FFFFu32;
-    for b in data {
-        c ^= *b as u32;
-        for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
-        }
-    }
-    !c
-}
-
-fn adler32(data: &[u8]) -> u32 {
-    let (mut a, mut b) = (1u32, 0u32);
-    for x in data {
-        a = (a + *x as u32) % 65521;
-        b = (b + a) % 65521;
-    }
-    (b << 16) | a
-}
-
-fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
-    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    let mut c = Vec::with_capacity(data.len() + 4);
-    c.extend_from_slice(kind);
-    c.extend_from_slice(data);
-    out.extend_from_slice(&c);
-    out.extend_from_slice(&crc32(&c).to_be_bytes());
-}
+/// The PNG file, byte for byte what the former local encoder produced.
+const TRANSPARENT_1X1: [u8; 73] = [
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x10, 0x49, 0x44, 0x41, 0x54, 0x78, 0x01, 0x01, 0x05, 0x00, 0xFA, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x01, 0x64, 0x78, 0x95, 0x38, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+    0x82,
+];
 
 /// A 1×1 fully transparent RGBA PNG.
 pub fn transparent_1x1() -> Vec<u8> {
-    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
-    let mut ihdr = vec![];
-    ihdr.extend_from_slice(&1u32.to_be_bytes());
-    ihdr.extend_from_slice(&1u32.to_be_bytes());
-    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
-    chunk(&mut out, b"IHDR", &ihdr);
-    // One scanline: filter byte + RGBA, stored (uncompressed) deflate block.
-    let raw = [0u8, 0, 0, 0, 0];
-    let mut z = vec![0x78, 0x01, 0x01];
-    z.extend_from_slice(&(raw.len() as u16).to_le_bytes());
-    z.extend_from_slice(&(!(raw.len() as u16)).to_le_bytes());
-    z.extend_from_slice(&raw);
-    z.extend_from_slice(&adler32(&raw).to_be_bytes());
-    chunk(&mut out, b"IDAT", &z);
-    chunk(&mut out, b"IEND", &[]);
-    out
+    TRANSPARENT_1X1.to_vec()
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     #[test]
-    fn crc_known() {
-        assert_eq!(super::crc32(b"IEND"), 0xAE42_6082);
-        assert!(super::transparent_1x1().starts_with(b"\x89PNG"));
+    fn placeholder_is_a_transparent_1x1_png() {
+        let png = super::transparent_1x1();
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        // IHDR: 1×1, 8-bit RGBA, no interlace.
+        assert_eq!(&png[12..16], b"IHDR");
+        assert_eq!(&png[16..29], &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        assert!(png.ends_with(b"IEND\xAE\x42\x60\x82"));
+        // The stored scanline: filter byte 0, then one pixel with zero alpha.
+        assert_eq!(&png[49..54], &[0, 0, 0, 0, 0]);
     }
 }
