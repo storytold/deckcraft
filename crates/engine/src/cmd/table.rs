@@ -325,7 +325,8 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
             "colRight" => t.insert_col(c.saturating_add(1)),
             "delRow" => {
                 if r >= t.n_rows() {
-                    return Err(bad(name, format!("no row {r}: the table has {} rows", t.n_rows())));
+                    let suffix = if t.n_rows() == 1 { "" } else { "s" };
+                    return Err(bad(name, format!("no row {r}: the table has {} row{suffix}", t.n_rows())));
                 }
                 if !t.delete_row(r) {
                     return Err(bad(name, "can't delete the last row"));
@@ -333,7 +334,8 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
             }
             _ => {
                 if c >= t.n_cols() {
-                    return Err(bad(name, format!("no column {c}: the table has {} columns", t.n_cols())));
+                    let suffix = if t.n_cols() == 1 { "" } else { "s" };
+                    return Err(bad(name, format!("no column {c}: the table has {} column{suffix}", t.n_cols())));
                 }
                 if !t.delete_col(c) {
                     return Err(bad(name, "can't delete the last column"));
@@ -835,7 +837,8 @@ mod tests {
                 for index in [count, usize::MAX] {
                     let error = s.execute(cmd, &json!({"id": id.0, key: index})).unwrap_err().to_string();
                     assert!(error.contains(cmd), "{error}");
-                    assert!(error.contains(&format!("no {dimension} {index}: the table has {count} {dimension}s")), "{error}");
+                    let suffix = if count == 1 { "" } else { "s" };
+                    assert!(error.contains(&format!("no {dimension} {index}: the table has {count} {dimension}{suffix}")), "{error}");
                     assert_eq!(s.doc().unwrap().shape(id).unwrap(), &before, "{cmd} {key}={index} must leave the table unchanged");
                 }
             }
