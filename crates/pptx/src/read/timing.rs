@@ -218,6 +218,11 @@ fn behaviour_f64(c: &El, attr: &str) -> Option<f64> {
             return None;
         }
         for child in e.elements() {
+            // A nested effect's behaviours belong to that effect, which the animation reader
+            // does not emit separately; don't lend its easing to the enclosing effect.
+            if child.is("cTn") && child.has_attr("presetClass") {
+                continue;
+            }
             if *seen >= MAX_BEHAVIOURS {
                 return None;
             }
@@ -465,6 +470,17 @@ mod budget_tests {
         }
         effect.children.push(Node::El(behaviour(Some("50000"))));
         assert_eq!(behaviour_f64(&effect, "accel"), Some(50_000.0), "the 1,024th behaviour is still read");
+    }
+
+    #[test]
+    fn the_behaviour_walk_skips_a_nested_effect() {
+        let mut nested = el("p:cTn", vec![behaviour(Some("50000"))]);
+        nested.attrs.push(("presetClass".into(), "entr".into()));
+        let outer = el("p:cTn", vec![nested]);
+        assert_eq!(behaviour_f64(&outer, "accel"), None, "a nested effect's easing is not the outer effect's");
+        // A behaviour of the effect itself is still read.
+        let own = el("p:cTn", vec![behaviour(Some("50000"))]);
+        assert_eq!(behaviour_f64(&own, "accel"), Some(50_000.0));
     }
 
     #[test]
