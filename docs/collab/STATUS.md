@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-16T07:16Z. Branch: `collab/pr15`.
+Updated: 2026-11-16T08:38Z. Branch: `collab/pr15`.
 
 **This page does not state the delivered head, the CI verdict or what is unpushed.** Those move
 without anyone touching this file, and a header that writes them down is false after the next
@@ -67,6 +67,80 @@ names through `CRAFT_FONTS_DIR`, so the first `ui-egui` run failed
 `ime_tests::korean_composes_in_the_notes_pane` for want of a CJK face; the checkout was restored at
 that path and the suite passed. The head itself differs from the gated `d766e45b` by
 `docs/collab/STATUS.md` only.
+
+## Замер 2026-11-16 (сведение `origin/main` `9e975b00`, #1974)
+
+Measured at **2026-11-16T08:12Z** (base, conflict, merges) and gated at **08:19Z–08:44Z**; every
+value below is what the command printed at that time, not a carried-over claim.
+
+```bash
+git -C deckcraft/upstream fetch origin main
+git rev-parse --short origin/main                          # 9e975b00
+git rev-list --left-right --count origin/main...collab/pr15 # 25	154
+git rev-list --left-right --count origin/main...collab/pr11 # 25	105
+git merge-tree --write-tree origin/main collab/pr15         # rc 1: one conflicted file
+git merge-tree --write-tree origin/main collab/pr11         # rc 1: the same file
+```
+
+- **The conflict is one file on both branches.** `crates/engine/src/cmd/arrange.rs`: main's #1974
+  makes `arrange.align` refuse an `edge` it does not name (and a missing one) and any `to` but
+  `slide`/`selection`, and `arrange.distribute` refuse any `dir` but `horizontal`/`vertical` — a
+  non-string included — while this branch had turned both commands into a plan
+  (`align_plan`/`distribute_plan`) so a session sends their result as one `shapes_set_bounds`.
+  Resolved as a union with **one parser for both paths**: `align_params`/`distribute_params`
+  validate `edge`/`dir`/`to` with main's exact refusals and hand the validated values to the plan,
+  and each command runs that plan; the collaboration normaliser (`crates/collab/src/local.rs`)
+  takes the same parser, so a replica cannot build a plan from a value the command refuses.
+- **The merge exposed a divergence, now fixed.** `distribute_plan` read the `dir` field where the
+  command reads `to`, so a session distributed inside the selection when the user had asked for the
+  slide. The plan takes `to` now, and a missing `to` keeps each command's own default (two shapes
+  for `align`, three for `distribute`). Everything else auto-merged: `Cargo.toml`, `Cargo.lock`,
+  `crates/engine/src/cmd.rs`, `crates/engine/src/tests.rs`, `crates/pptx/src/opc.rs`,
+  `crates/pptx/src/read/shapes.rs`.
+- **Merged, not rebased.** `59d13d64` (`collab/pr15`, first parent `0fcb7d05`, second `9e975b00`)
+  and `6c4657ea` (`collab/pr11`, first parent `c8eb8935`, second `9e975b00`), so every slice hash
+  in this file still names its commit. After the merge `git rev-list --left-right --count
+  origin/main...HEAD` printed `0 156` on `collab/pr15` with `411f9eac` on top and `0 109` on
+  `collab/pr11` with `c548b8cb` on top.
+- **A regression test pins the shared path** (`411f9eac` on `collab/pr15`, cherry-picked to
+  `collab/pr11`): with three objects, `to: slide` puts the leading box at x = 0 while
+  `to: selection` leaves the selection's frame where its own objects do, and seven unnamed
+  `edge`/`dir`/`to` values are refused as `BadParams` before anything is queued.
+- **`collab/pr11` needed two fixes of its own**, both found by the gate rather than assumed: its
+  earlier merge of `bb2c2254` had left the display-name guard failing on eleven strings of the
+  branch's diagram slices (`83456fd0` — main's wording in the five labels, the generated object
+  name and the five refusals; identifiers, file names and the saved tab id untouched), and
+  `cargo metadata --locked` refused the lock because the four collaboration crates were still
+  `0.18.1` while main's workspace is `0.19.0` (`c548b8cb` — the four lines the build host
+  regenerated, the same fix `3095c6fe` made on the other branch).
+- **Gate — four steps, one `rc` each, `EXIT` last** (build host `agents`, 20 cores, Ubuntu 24.04,
+  rust 1.99.1, `CRAFT_FONTS_DIR=/home/markin/build/fonts-37827adc` — the `ci.yml` pin — `-j 4`).
+  Commands, verbatim as the log header prints them:
+
+```bash
+scripts/remote-build.sh cargo deckcraft metadata --locked
+scripts/remote-build.sh cargo deckcraft fmt --all -- --check
+scripts/remote-build.sh cargo deckcraft clippy --workspace --all-targets -j 4 -- -D warnings
+scripts/remote-build.sh sh deckcraft 'CRAFT_FONTS_DIR=/home/markin/build/fonts-37827adc cargo test --workspace --no-fail-fast -j 4'
+```
+
+| Branch | Head | Log (`.craft/logs/`) | `metadata --locked` | `fmt` | `clippy` | `test` | `EXIT` |
+|---|---|---|---|---|---|---|---|
+| `collab/pr15` | `59d13d64` | `gate-deckcraft-part15-59d13d64.log` | rc 0 | rc 0 | rc 0 | rc 0 — 2789 passed, 0 failed, 5 ignored | `EXIT rc=0`, 08:19:55Z |
+| `collab/pr15` | `411f9eac` | `gate-deckcraft-part15-411f9eac.log` | rc 0 | rc 0 | rc 0 | rc 0 — 2790 passed, 0 failed, 5 ignored | `EXIT rc=0`, 08:25:14Z |
+| `collab/pr11` | `18bb2157` | `gate-deckcraft-pr11-18bb2157.log` | rc 101 — the lock, see above | rc 0 | rc 0 | rc 101 — 2689 passed, 1 failed (`display_names`) | `EXIT rc=1` |
+| `collab/pr11` | `c548b8cb` | `gate-deckcraft-pr11-c548b8cb.log` | rc 0 | rc 0 | rc 0 | rc 0 — 2690 passed, 0 failed, 5 ignored | `EXIT rc=0`, 08:35:57Z |
+
+  Each log prints `tree before` and `tree after` — `0 changed paths` in every row, including right
+  after `metadata --locked`, so the check does not rewrite the lock and both worktrees stay clean.
+  The `rc 101` row is the red run that found the two pr11 defects; it is kept as history, not as
+  the verdict. The logs exist twice: in this repository (`deckcraft/.craft/logs/`) and in the
+  shared `cabinet-office/.craft/logs/`, byte for byte.
+- **What was not done.** Nothing was pushed: `collab/pr15` is ahead of `origin/main` by two local
+  commits the fork does not have, and both PR heads therefore still read `CONFLICTING` until a
+  person pushes. No review thread was resolved, no run was approved or re-run, no CI file was
+  touched, and #1975 (`collab/pr10`, 94 commits behind the new base) was left as it was — closing
+  it stays a maintainer's decision.
 
 ## The four unanswered review threads of #2012 (2026-11-16)
 
@@ -2097,6 +2171,12 @@ token from the cabinet.
    change of this project beyond resolving the two content conflicts, main's naming guard and the
    four lock lines; #2012 keeps reading `DIRTY` until the branch is pushed and the runs of the new
    head are approved.
+   **The base moved again at 08:12Z the same day**: `git rev-parse --short origin/main` printed
+   `9e975b00` (#1974), the merge is `59d13d64` on `collab/pr15` with `411f9eac` on top, and the
+   gate on `411f9eac` is green (`gate-deckcraft-part15-411f9eac.log`, `EXIT rc=0`, 2790 tests);
+   §Замер 2026-11-16 (сведение `origin/main` `9e975b00`) holds the commands, the `rc` of each step
+   and the one-file resolution. `collab/pr11` carries the same merge (`6c4657ea`) plus the two
+   defects the gate found there (`83456fd0`, `c548b8cb`), green at `c548b8cb`.
    #1998 and #1975 are superseded by #2012 and stay open until a person closes them — **do not
    close them from an agent session**. Their heads and verdicts move without this project's
    involvement; the readings at 23:38Z and 05:44Z are history in §PR publication and §Session log,
