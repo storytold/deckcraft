@@ -1,5 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **Last updated:** 2026-11-11 - SVG rendering and preservation; filters and embedded bitmaps remain partial.
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -20,7 +21,7 @@ revision history.
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
-| 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
+| 4 | SVG filters and embedded bitmaps remain unsupported | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
@@ -102,14 +103,16 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** a deck opened and saved silently loses show behaviour.
 - **Estimate:** 2–4 h. **Beta blocker.**
 
-### SVG pictures don't render
-- **Evidence:** `crates/render/src/images.rs` decodes through `image` 0.25 (PNG, JPEG, WebP, GIF,
-  TIFF, BMP), and EMF/WMF through `deckcraft-metafile` (ported from WordCraft: paths, fills, pens,
-  pattern and hatch brushes, bitmaps and text; rectangle clip regions are applied, EMF+ only
-  pictures play their EMF+ records).
-  Nothing reads SVG; PowerPoint's Insert Icons stores SVG with a PNG fallback.
-- **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
-- **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
+### SVG filters and embedded bitmaps remain unsupported
+- **Evidence:** `crates/render/src/images.rs` rasterizes SVG through `resvg`, with bounded input
+  bytes and output dimensions, bundled fonts and disabled resource resolvers. Gradients, transforms,
+  transparency and viewBox sizing render; filter, script and image elements are rejected.
+- **Impact:** SVG-only pictures using these elements remain blank. Pictures with a PNG fallback
+  render the fallback. SVG references survive PPTX round trips, copy/paste and picture insertion;
+  artistic effects keep the vector original separate from the processed raster.
+- **Remaining work:** Bound filter and embedded-bitmap processing costs before enabling them.
+  Panic guards can recover only on unwinding targets; WASM aborting panics cannot be caught.
+- **Estimate:** 4-8 h for bounded filter and embedded-bitmap support.
 
 ### Macro-enabled variants aren't recognized
 - **Evidence:** `.pptx`, `.potx` and `.ppsx` open and save with their own main content types
@@ -368,6 +371,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | SVG rendering and preservation; artistic originals stay separate, albums validate and size SVGs, SVG checklist now P |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

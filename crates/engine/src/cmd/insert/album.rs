@@ -295,7 +295,7 @@ fn album_items(p: &Value) -> Result<Vec<AlbumItem>> {
         if !ct.starts_with("image/") {
             return Err(bad("insert.photoAlbum", format!("{name} is not a picture")));
         }
-        if ct != "image/svg+xml" && deckcraft_render::decode_image(&bytes).is_none() {
+        if deckcraft_render::decode_image(&bytes).is_none() {
             return Err(bad("insert.photoAlbum", format!("{name}: the picture can't be read")));
         }
         let (px_w, px_h) = image_px(&bytes);
@@ -313,13 +313,7 @@ fn album_items(p: &Value) -> Result<Vec<AlbumItem>> {
 }
 
 fn image_px(bytes: &[u8]) -> (f64, f64) {
-    image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_dimensions().ok())
-        .map(|(w, h)| (w as f64, h as f64))
-        .filter(|(w, h)| *w > 0.0 && *h > 0.0)
-        .unwrap_or((4.0, 3.0))
+    deckcraft_render::natural_size(bytes).unwrap_or((4.0, 3.0))
 }
 
 fn file_stem(name: &str) -> String {

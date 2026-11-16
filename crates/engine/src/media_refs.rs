@@ -30,6 +30,12 @@ macro_rules! walkers {
             f(&$($m)? p.media);
             if let Some(a) = &$($m)? p.artistic {
                 f(&$($m)? a.original);
+                if let Some(s) = &$($m)? a.svg {
+                    f(s);
+                }
+            }
+            if let Some(s) = &$($m)? p.svg {
+                f(s);
             }
         }
 
@@ -337,7 +343,7 @@ mod tests {
         let mut s = (*p.slides.first().cloned().unwrap_or_default()).clone();
         let pic = Shape {
             kind: ShapeKind::Picture {
-                fill: PictureFill { artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002) }), ..pf(9001) },
+                fill: PictureFill { artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002), svg: None }), ..pf(9001) },
             },
             ..Default::default()
         };

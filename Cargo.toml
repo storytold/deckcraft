@@ -52,6 +52,7 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
+craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "5689c73d293db85aa47419356ff7470778448d12", version = "=0.1.0", default-features = false, features = ["tree-text", "tree-render"] }
 # Base64 for command payloads (engine); base64_compat keeps the legacy lenient decoder. Same rev as craft-deckcraft-format.
 craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "254e9a409b410dc93c0e06ff66cd1e767893ac32", version = "=0.1.0" }
 # craft-media, craft-audio and craft-video share types and stay on one rev.
