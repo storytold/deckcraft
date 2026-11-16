@@ -37,6 +37,39 @@ is either the identity of the commit being discussed or the value of an earlier 
 history; it is never a standing "the delivered head is `<hash>`" claim, which the next push turns
 into a false statement. In the same way, what a further push would carry is read rather than
 listed: `git log --oneline <headRefOid>..HEAD`.
+
+## Замер 2026-11-16
+
+Taken at **2026-11-16T04:19Z** on the three open pull requests of the fork. Commands: `gh pr list
+--repo storytold/deckcraft --author copoka --state open --json
+number,headRefName,headRefOid,mergeable,mergeStateStatus`, `git ls-remote fork refs/heads/collab/pr10
+refs/heads/collab/pr11 refs/heads/collab/pr15` and `gh run list --repo storytold/deckcraft --commit
+<forty-character sha>` (the whole SHA, see the paragraph above).
+
+| PR | Branch | Head (full SHA) | `mergeable` / `mergeStateStatus` | Workflow runs at that head | Host gate |
+|---|---|---|---|---|---|
+| #2012 | `collab/pr15` | `6eca185a5d287e1db69ee18d7972f59c64389a22` | `MERGEABLE` / `UNSTABLE` | four, created 2026-11-16T01:15Z — CI `43785157307`, Nix `43785156492`, SonarCloud `43785156563`, House rules `43785156849`; all `completed` / `action_required`, no job executed | green: `metadata --locked` rc 0 (worktree clean before and after), `fmt` rc 0, `clippy -D warnings` rc 0, engine 640 passed / 1 ignored, ui-egui 535 passed / 4 ignored, collab 318 + `collab-proto` 43; `.craft/logs/gate-deckcraft-2012-6eca185a.log`, `EXIT rc=0` |
+| #1998 | `collab/pr11` | `c8eb89357bc847f0c15e3b86dcbf93004bf86209` | `MERGEABLE` / `UNSTABLE` | four, created 2026-11-16T01:40:38Z — CI `43787638720`, Nix `43787638914`, SonarCloud `43787638915`, House rules `43787638695`; all `completed` / `action_required` | `xtask ci` at this head: 218 passed / 1 failed in `render` — `tests::east_asian_vertical_text_stands_ideographs_upright`, the host's missing CJK font, the same failure `main` shows; every other package green; `DECKCRAFT_CI_RC=1`, `.craft/logs/gate-deckcraft-1998-c8eb8935-retry.log` |
+| #1975 | `collab/pr10` | `930891505c074659b3c111759eb3b8ed34f8c6b8` | `MERGEABLE` / `UNSTABLE` | four, created 2026-11-13T09:41:23Z — CI `43403405429`, Nix `43403405427`, SonarCloud `43403405487`, House rules `43403405424`; all `completed` / `action_required` | not re-run in this pass: the branch is superseded by #2012, and closing it is a person's decision |
+
+`git ls-remote fork` printed the same three commits, so the fork and the three PR heads agree. The
+local branch `collab/pr11` held `c8eb8935` with a clean tree; `collab/pr15` held `6eca185a` plus the
+docs commit that adds this section. `UNSTABLE` at all three is the missing maintainer approval, not a
+red job: a run waiting for approval is `action_required` in the runs list and never becomes a check
+run, so each rollup carries only CodeRabbit `COMPLETED` / `SKIPPED`.
+
+The gate on `6eca185a` is `.craft/logs/gate-deckcraft-2012-6eca185a.log`: `cargo metadata --locked`,
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test -p
+deckcraft-engine`, `-p deckcraft-ui-egui` and `-p deckcraft-collab -p deckcraft-collab-proto`, ending
+`EXIT rc=0` with a step-by-step summary in the log. One environment defect was found on the way and is
+written down there: the build host had lost `deckcraft/craft-fonts`, the path `.cargo/config.toml`
+names through `CRAFT_FONTS_DIR`, so the first `ui-egui` run failed
+`ime_tests::korean_composes_in_the_notes_pane` for want of a CJK face; the checkout was restored at
+that path and the suite passed. The head itself differs from the gated `d766e45b` by
+`docs/collab/STATUS.md` only.
+
+### Earlier readings (history)
+
 **Reading at 2026-11-13T13:52Z** (history, not state). For #2012, `gh pr view 2012 --json
 headRefOid,mergeable,mergeStateStatus,state,updatedAt` printed
 `3095c6fedde3761fde48c3bb6ac46a8104ded0b8` / `MERGEABLE` / `UNSTABLE` / `OPEN` /
