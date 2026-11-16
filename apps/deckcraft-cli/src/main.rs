@@ -653,16 +653,46 @@ fn remark(args: &str) -> &str {
     after.strip_prefix('(').and_then(|n| n.strip_suffix(')')).unwrap_or(after)
 }
 
+/// `app --params-file` PARAMS read from `path` ("-" is stdin), so a payload too large for the
+/// command line (font.add's font data, insert.picture's picture, file.openBytes) still reaches the
+/// app (#2094). An optional UTF-8 BOM is accepted, as in a `run --cmd-file` file.
+fn read_params_source(path: &str) -> Result<String, String> {
+    let mut source: Box<dyn std::io::Read> = match path {
+        "-" => Box::new(std::io::stdin()),
+        _ => Box::new(std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?),
+    };
+    let name = if path == "-" { "stdin" } else { path };
+    let text = read_params_limited(&mut source).map_err(|e| format!("{name}: {e}"))?;
+    Ok(match text.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_owned(),
+        None => text,
+    })
+}
+
+/// UTF-8 text of at most `MAX_COMMAND_FILE_LINE_BYTES` bytes, the same budget a `run --cmd-file`
+/// line gets.
+fn read_params_limited(source: &mut impl std::io::Read) -> Result<String, String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    source.take(MAX_COMMAND_FILE_LINE_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_COMMAND_FILE_LINE_BYTES {
+        return Err(format!("parameters exceed the {MAX_COMMAND_FILE_LINE_BYTES} byte limit"));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("invalid UTF-8: {e}"))
+}
+
 fn app(args: &[String]) -> Result<(), String> {
     use deckcraft_mcp::{Backend, Remote, control_addr};
     let mut port = deckcraft_mcp::DEFAULT_PORT.to_string();
     let mut method: Option<String> = None;
+    let mut params_file: Option<String> = None;
     let mut rest = vec![];
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--port" => port = it.next().cloned().ok_or("--port needs a value")?,
             "--method" => method = Some(it.next().cloned().ok_or("--method needs a name")?),
+            "--params-file" => params_file = Some(it.next().cloned().ok_or("--params-file needs a file")?),
             "--help" | "-h" => {
                 outln!("{}", help_page("app"));
                 return Ok(());
@@ -670,16 +700,27 @@ fn app(args: &[String]) -> Result<(), String> {
             other => rest.push(other.to_string()),
         }
     }
-    let mut r = Remote::connect(&control_addr(&port))
-        .map_err(|e| format!("no DeckCraft app on port {port} ({e}); start it with `deckcraft --control {port}`"))?;
     let parse = |s: Option<&String>| -> Result<Value, String> {
         s.map(|j| serde_json::from_str(j).map_err(|e| format!("bad JSON: {e}"))).transpose().map(|v| v.unwrap_or(json!({})))
     };
+    // PARAMS is positional: after --method it is rest[0], after COMMAND it is rest[1]. Resolve it
+    // (inline or --params-file) before connecting, so input errors don't masquerade as app errors.
+    let inline = if method.is_some() { rest.first() } else { rest.get(1) };
+    let params = match (params_file.as_deref(), inline) {
+        (Some(_), Some(_)) => return Err("app takes PARAMS either inline or from --params-file, not both".into()),
+        (Some(path), None) => {
+            let text = read_params_source(path)?;
+            serde_json::from_str(&text).map_err(|e| format!("{}: bad JSON: {e}", if path == "-" { "stdin" } else { path }))?
+        }
+        (None, inline) => parse(inline)?,
+    };
+    let mut r = Remote::connect(&control_addr(&port))
+        .map_err(|e| format!("no DeckCraft app on port {port} ({e}); start it with `deckcraft --control {port}`"))?;
     let v = match method {
-        Some(m) => r.call(&m, parse(rest.first())?)?,
+        Some(m) => r.call(&m, params)?,
         None => {
             let id = rest.first().ok_or("app needs a COMMAND or --method")?;
-            r.call("engine.execute", json!({"command": id, "params": parse(rest.get(1))?}))?
+            r.call("engine.execute", json!({"command": id, "params": params}))?
         }
     };
     outln!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
@@ -836,6 +877,80 @@ mod tests {
         assert!(run(&args(&["--sample", "--export-params", "{}"])).is_ok());
         assert!(run(&args(&["--sample", "--export-params", r#"{"width": 64}"#])).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Answers the one request `app` makes, keeping the request's `params` for the caller.
+    fn app_peer(listener: std::net::TcpListener) -> std::thread::JoinHandle<Value> {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            writeln!(stream, "{}", json!({"id": request["id"], "ok": true, "result": "ok"})).unwrap();
+            request["params"].clone()
+        })
+    }
+
+    /// `app --params-file FILE` reads PARAMS from a UTF-8 file, so a payload too large for the
+    /// command line (font.add's font data) still reaches the app (#2094).
+    #[test]
+    fn app_sends_params_read_from_a_file() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-app-params-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("params.json");
+        std::fs::write(&file, "\u{feff}{\"data\":\"from file\"}\n").unwrap();
+        let f = file.to_string_lossy().to_string();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port().to_string();
+        let peer = app_peer(listener);
+        app(&args(&["--port", &port, "font.add", "--params-file", &f])).unwrap();
+        assert_eq!(peer.join().unwrap(), json!({"command": "font.add", "params": {"data": "from file"}}));
+
+        // --method takes PARAMS from the same place.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port().to_string();
+        let peer = app_peer(listener);
+        app(&args(&["--port", &port, "--method", "ui.screenshot", "--params-file", &f])).unwrap();
+        assert_eq!(peer.join().unwrap(), json!({"data": "from file"}));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Bad `--params-file` input is named before `app` even tries the app.
+    #[test]
+    fn app_params_file_errors_name_the_problem_before_connecting() {
+        assert_eq!(app(&args(&["font.add", "--params-file"])).unwrap_err(), "--params-file needs a file");
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-app-params-errors-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("params.json");
+        std::fs::write(&file, "{}").unwrap();
+        let f = file.to_string_lossy().to_string();
+        for extra in [vec!["font.add", "{}", "--params-file", f.as_str()], vec!["--method", "ui.screenshot", "{}", "--params-file", f.as_str()]] {
+            let err = app(&args(&extra)).unwrap_err();
+            assert!(err.contains("not both"), "{err}");
+        }
+        let missing = dir.join("missing.json");
+        let err = app(&args(&["font.add", "--params-file", &missing.to_string_lossy()])).unwrap_err();
+        assert!(err.contains(&missing.display().to_string()), "{err}");
+        std::fs::write(&file, "{").unwrap();
+        let err = app(&args(&["font.add", "--params-file", &f])).unwrap_err();
+        assert_eq!(err, format!("{f}: bad JSON: EOF while parsing an object at line 1 column 1"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `--params-file` input is bounded like a `run --cmd-file` line and must be UTF-8.
+    #[test]
+    fn params_file_is_bounded_and_utf8() {
+        use std::io::Read as _;
+        let mut at_limit = std::io::repeat(b'x').take(MAX_COMMAND_FILE_LINE_BYTES as u64);
+        assert_eq!(read_params_limited(&mut at_limit).unwrap().len(), MAX_COMMAND_FILE_LINE_BYTES);
+        let mut over_limit = std::io::repeat(b'x').take(MAX_COMMAND_FILE_LINE_BYTES as u64 + 1);
+        let err = read_params_limited(&mut over_limit).unwrap_err();
+        assert!(err.contains("byte limit"), "{err}");
+        let err = read_params_limited(&mut &b"\xff"[..]).unwrap_err();
+        assert!(err.contains("UTF-8"), "{err}");
     }
 }
 
