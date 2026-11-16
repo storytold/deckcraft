@@ -101,7 +101,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             model3d
         ),
-        cmd!("insert.wordArt", "WordArt", ["Insert", "Text"], None, "{text?, style?: 0..}", has_slide, word_art),
+        cmd!("insert.wordArt", "Decorative Text", ["Insert", "Text"], None, "{text?, style?: 0..}", has_slide, word_art),
         cmd!("insert.slideNumber", "Slide Number", ["Insert", "Text"], None, "{}", has_slide, slide_number),
         cmd!(
             "insert.dateTime",
@@ -161,7 +161,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "insert.smartArt",
-            "SmartArt",
+            "Diagram",
             ["Insert", "Illustrations"],
             None,
             "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}], diagram?: the whole Diagram value (a collaborative insertion: replaces the kind/nodes), rect?: [x,y,w,h]} → {id}",
