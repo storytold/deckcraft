@@ -276,7 +276,8 @@ pub struct SlideApp {
     ribbon_scroll: HashMap<String, u32>,
     /// Monotonic identity for a new slide show instance (`start_show`).
     show_instance: u64,
-    /// Monotonic identity for a new background-open attempt.
+    /// Monotonic identity for a new background-open attempt (the web build has no threads).
+    #[cfg(not(target_arch = "wasm32"))]
     opening_generation: u64,
     /// Canvas screen rect and points-per-slide-point scale (for control & tests).
     pub canvas_rect: Option<egui::Rect>,
