@@ -28,7 +28,7 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
     let mut t = Theme { name: root.attr("name").unwrap_or("Theme").to_string(), ..Default::default() };
     let Some(te) = root.child("themeElements") else { return t };
     if let Some(cs) = te.child("clrScheme") {
-        let mut scheme = ColorScheme { name: cs.attr("name").unwrap_or("").to_string(), colors: t.colors.colors };
+        let mut scheme = ColorScheme::new(cs.attr("name").unwrap_or("").to_string(), t.colors.colors);
         for slot in SchemeSlot::THEME {
             if let Some(c) = cs.child(slot.xml_name()).and_then(dml::color) {
                 let rgb = match c.base {

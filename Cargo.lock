@@ -854,6 +854,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-cfb"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10#ea24422ae9859dc5da398d0462bc87f8e02e0d10"
+
+[[package]]
 name = "craft-codepage"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06ff66cd1e767893ac32#254e9a409b410dc93c0e06ff66cd1e767893ac32"
@@ -873,6 +878,17 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "zip 9.1.0",
+]
+
+[[package]]
+name = "craft-drawingml"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=44d83fa8f635333dcb3c231f87381387a1f5631b#44d83fa8f635333dcb3c231f87381387a1f5631b"
+dependencies = [
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=44d83fa8f635333dcb3c231f87381387a1f5631b)",
+ "kurbo",
+ "log",
+ "serde",
 ]
 
 [[package]]
@@ -937,7 +953,7 @@ name = "craft-opc"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10#ea24422ae9859dc5da398d0462bc87f8e02e0d10"
 dependencies = [
- "craft-xml",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10)",
  "craft-zip 0.1.0 (git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10)",
  "log",
  "thiserror 2.0.21",
@@ -1036,6 +1052,16 @@ source = "git+https://github.com/storytold/craft-libs?rev=fd5e2feff6ea25bed371a9
 dependencies = [
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "craft-xml"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=44d83fa8f635333dcb3c231f87381387a1f5631b#44d83fa8f635333dcb3c231f87381387a1f5631b"
+dependencies = [
+ "quick-xml 0.41.0",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1183,7 +1209,7 @@ dependencies = [
 name = "deckcraft-color"
 version = "0.19.0"
 dependencies = [
- "serde",
+ "craft-drawingml",
 ]
 
 [[package]]
@@ -1240,6 +1266,7 @@ dependencies = [
 name = "deckcraft-geom"
 version = "0.19.0"
 dependencies = [
+ "craft-drawingml",
  "kurbo",
  "serde",
 ]
@@ -1301,8 +1328,9 @@ dependencies = [
 name = "deckcraft-pptx"
 version = "0.19.0"
 dependencies = [
+ "craft-cfb",
  "craft-opc",
- "craft-xml",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10)",
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-geom",
