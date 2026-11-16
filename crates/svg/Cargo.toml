@@ -12,4 +12,5 @@ workspace = true
 craft-svg = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-fonts = { workspace = true }
+image = { workspace = true }
 kurbo = { workspace = true }

@@ -158,10 +158,13 @@ fn the_vector_original_wins_over_the_raster_fallback() {
 }
 
 #[test]
-fn a_picture_that_uses_features_we_skip_keeps_its_raster_fallback() {
+fn a_picture_that_needs_svg_compositing_still_uses_its_vector() {
+    // Filters, masks, clip paths and patterns are rasterized by the shared renderer at display
+    // time, so the vector is the picture to keep even when the file also carries a raster copy.
     let p = deckcraft_pptx::import(&patched(Vector::Filtered)).expect("import");
-    let (ct, _) = picture_media(&p);
-    assert_eq!(ct, "image/png", "the raster copy stays visible");
+    let (ct, data) = picture_media(&p);
+    assert_eq!(ct, "image/svg+xml");
+    assert_eq!(data, FILTERED.as_bytes());
 }
 
 #[test]

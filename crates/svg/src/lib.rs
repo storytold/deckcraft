@@ -155,17 +155,55 @@ fn root_is_svg(bytes: &[u8]) -> bool {
     })
 }
 
-/// Read a picture. `None` when the bytes are not a readable SVG within the reader's limits.
-pub fn parse(bytes: &[u8]) -> Option<Svg> {
-    let limits = Limits { bytes: MAX_BYTES, depth: DEPTH, ..Limits::default() };
-    let options = usvg::Options {
+/// Memory the shared rasterizer may spend on one picture, including its intermediate layers.
+const DRAW_BUDGET: u64 = 512 << 20;
+
+fn limits() -> Limits {
+    Limits { bytes: MAX_BYTES, depth: DEPTH, ..Limits::default() }
+}
+
+fn options(limits: Limits) -> usvg::Options<'static> {
+    usvg::Options {
         font_family: deckcraft_fonts::FALLBACK_FAMILY.to_string(),
         fontdb: fonts().clone(),
         font_resolver: resolver(),
         image_href_resolver: tree::image_resolver(limits),
         ..Default::default()
-    };
-    let parsed = tree::parse(bytes, &limits, &options).ok()?;
+    }
+}
+
+/// The picture drawn by the shared, memory-checked resvg draw as straight RGBA, fitted into
+/// `width` × `height`. For pictures that need what the vector mapping does not apply — filters,
+/// masks, clip paths, patterns, embedded images: those are reported in [`Svg::skipped`], and this
+/// is the complete drawing. `None` when the bytes don't parse or the drawing would exceed the
+/// budget.
+pub fn rasterize(bytes: &[u8], width: u32, height: u32) -> Option<image::RgbaImage> {
+    let limits = limits();
+    let tree = tree::parse(bytes, &limits, &options(limits)).ok()?;
+    let size = tree.size();
+    let (w, h) = (f64::from(size.width()), f64::from(size.height()));
+    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) || width == 0 || height == 0 {
+        return None;
+    }
+    let k = (f64::from(width) / w).min(f64::from(height) / h);
+    let (tw, th) = ((w * k).round().clamp(1.0, f64::from(width.max(1))) as u32, (h * k).round().clamp(1.0, f64::from(height.max(1))) as u32);
+    let mut pixmap = tree::draw::render(&tree, usvg::Transform::from_scale(k as f32, k as f32), tw, th, 0, DRAW_BUDGET).ok()?;
+    // tiny-skia keeps premultiplied RGBA; every other layer of this app works in straight alpha.
+    for p in pixmap.data_mut().as_chunks_mut::<4>().0 {
+        let a = u32::from(p[3]);
+        if a != 0 && a != 255 {
+            for c in p.iter_mut().take(3) {
+                *c = ((u32::from(*c) * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    image::RgbaImage::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
+}
+
+/// Read a picture. `None` when the bytes are not a readable SVG within the reader's limits.
+pub fn parse(bytes: &[u8]) -> Option<Svg> {
+    let limits = limits();
+    let parsed = tree::parse(bytes, &limits, &options(limits)).ok()?;
     let size = parsed.size();
     let (w, h) = (f64::from(size.width()), f64::from(size.height()));
     if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 && w <= MAX_COORD * 100.0 && h <= MAX_COORD * 100.0) {
@@ -525,6 +563,17 @@ mod tests {
         assert!(s.skipped.clip_paths);
         let s = svg("<rect width='4' height='4' fill='url(#none)'/>");
         assert!(!s.skipped.any(), "a missing paint server is not a pattern");
+    }
+
+    #[test]
+    fn a_picture_the_mapping_skips_composes_through_the_shared_rasterizer() {
+        let filtered = b"<svg width='40' height='40' viewBox='0 0 40 40'><defs><filter id='f'><feGaussianBlur stdDeviation='3'/></filter></defs><rect x='10' y='10' width='20' height='20' fill='#ff0000' filter='url(#f)'/></svg>";
+        let s = parse(filtered).expect("reads");
+        assert!(s.skipped.filters, "the vector mapping cannot draw a filter");
+        let img = rasterize(filtered, 40, 40).expect("the rasterizer can");
+        assert_eq!(img.dimensions(), (40, 40));
+        assert!(img.get_pixel(20, 20)[3] > 0 && img.get_pixel(20, 20)[0] > 100, "{:?}", img.get_pixel(20, 20));
+        assert_eq!(rasterize(b"not xml", 10, 10), None);
     }
 
     #[test]

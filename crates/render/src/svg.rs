@@ -23,6 +23,15 @@ pub fn is_svg(bytes: &[u8]) -> bool {
 pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     let svg = deckcraft_svg::parse(bytes)?;
     let (w, h, m) = layout(&svg, side);
+    // A picture that uses a filter, mask, clip path, pattern or embedded image needs SVG's own
+    // compositing, which the vector mapping does not model. The shared rasterizer draws all of it
+    // within a memory budget; when that is refused, the mapped vectors are still better than
+    // nothing.
+    if svg.skipped.any()
+        && let Some(img) = deckcraft_svg::rasterize(bytes, u32::from(w), u32::from(h))
+    {
+        return Some(img);
+    }
     let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
     let r = Rect::new(0.0, 0.0, w as f64, h as f64);
     ctx.push_clip_layer(&r.to_path(0.1));
@@ -33,8 +42,6 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) || bb.width() > 1e6 || bb.height() > 1e6 {
             continue;
         }
-        let bbox_path = it.path.bounding_box();
-        let _ = bbox_path;
         if let Some(f) = &it.fill {
             set_paint(&mut ctx, f, m);
             ctx.set_fill_rule(if it.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
@@ -208,6 +215,34 @@ mod tests {
         )
         .expect("draws");
         assert!(img.pixels().any(|p| p[3] > 0), "the dashing line paints something");
+    }
+
+    #[test]
+    fn a_clip_path_clips_through_the_shared_rasterizer() {
+        // The vector mapping does not apply clip paths; the rasterizer must, or the red would
+        // cover the whole picture.
+        let img = rasterize(
+            b"<svg width='100' height='20' viewBox='0 0 100 20'><defs><clipPath id='c'><rect width='50' height='20'/></clipPath></defs><g clip-path='url(#c)'><rect width='100' height='20' fill='#ff0000'/></g></svg>",
+            100,
+        )
+        .expect("draws");
+        assert_eq!(img.get_pixel(10, 10)[0], 255, "inside the clip");
+        assert_eq!(img.get_pixel(90, 10)[3], 0, "outside the clip");
+    }
+
+    #[test]
+    fn a_filter_draws_through_the_shared_rasterizer() {
+        // A blur spreads the red past the rectangle's own edge.
+        let img = rasterize(
+            b"<svg width='60' height='60' viewBox='0 0 60 60'><defs><filter id='f'><feGaussianBlur stdDeviation='4'/></filter></defs><rect x='20' y='20' width='20' height='20' fill='#ff0000' filter='url(#f)'/></svg>",
+            60,
+        )
+        .expect("draws");
+        // SVG's default filter region is the bounding box grown by 10%, so the blur shows just
+        // inside x = 18 rather than across the whole canvas.
+        assert!(img.get_pixel(19, 30)[3] > 0, "the blur reaches left of the rectangle");
+        assert_eq!(img.get_pixel(2, 30)[3], 0, "and not past its region");
+        assert!(img.get_pixel(30, 30)[0] > 100, "the middle still paints");
     }
 
     #[test]
