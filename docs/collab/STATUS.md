@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-16T00:27Z. Branch: `collab/pr15`.
+Updated: 2026-11-16T07:16Z. Branch: `collab/pr15`.
 
 **This page does not state the delivered head, the CI verdict or what is unpushed.** Those move
 without anyone touching this file, and a header that writes them down is false after the next
@@ -2392,6 +2392,62 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-16 — the two `picture_styles` failures of the 05:18Z gate: not `56568f6c`, not reproducible
+
+- **What the archived log says.** `.craft/logs/gate-deckcraft-pr15-4c8ce5457-ci.log` (in the
+  cabinet-office root, not in this repo; written 2026-11-16T05:18:35Z) ends `FAIL test` and
+  `test result: FAILED. 527 passed; 2 failed; 4 ignored` with
+  `ribbon::picture_styles_tests::crop_and_size_stay_on_screen_beside_the_picture_styles`
+  (`Height value at [[1389.1 81.0] - [1413.1 103.0]] is past the ribbon's edge (1396) in a 1440 px
+  window`) and `…::the_styles_row_grows_with_the_window_and_keeps_two_when_it_is_narrow` (`Crop
+  hides behind the scroll arrow at 1280 px`), so its process ended `rc=1`. The gate on the same
+  code, `deckcraft/.craft/logs/gate-deckcraft-2012-56568f6c.log` (written 2026-11-16T04:41:36Z),
+  had ended `CI summary: all 8 steps passed` / `EXIT rc=0`. The head differs from `56568f6c` by
+  `docs/collab/STATUS.md` only (`git diff --stat 56568f6c 4c8ce545`), and the 05:18Z log is the
+  only record of the two failures.
+- **Reading.** `gh pr view 2012 --json headRefOid,mergeable,mergeStateStatus,state` at
+  2026-11-16T07:16:49Z printed `4c8ce5457ef80d0317861efe9a5c1c0a0f2a99e7`, `MERGEABLE`,
+  `UNSTABLE`, `OPEN`; `git ls-remote fork refs/heads/collab/pr15` at 07:16:50Z printed the same
+  commit. Nothing was pushed and no branch was moved by this work.
+- **Baseline on `main`, same environment.** A clean clone of the build host's checkout
+  (`git clone /home/markin/build/deckcraft/upstream /home/markin/build/deckcraft-baseline`) with
+  `CRAFT_FONTS_DIR=/home/markin/build/deckcraft/craft-fonts`,
+  `CRAFT_I18N_DIR=/home/markin/build/craft-i18n` and the host's
+  `CARGO_TARGET_DIR=/home/markin/build/deckcraft/upstream/target`, rustc 1.99.1, on `agents`:
+
+| Commit | What it is | Command (default test threads) | Result |
+|---|---|---|---|
+| `bb2c2254` | `main` at the head's merge `d766e45b` | `cargo test -p deckcraft-ui-egui --lib -j 6`, 25 runs | `ok. 502 passed; 0 failed; 4 ignored` — 25/25 |
+| `fb775571` | live `origin/main` at the reading | the same, 10 runs | `ok. 502 passed; 0 failed; 4 ignored` — 10/10 |
+| `4c8ce545` | delivered head | the same, 25 runs | `ok. 529 passed; 0 failed; 4 ignored` — 25/25 |
+| `fb775571` | the two tests alone | `… --lib ribbon::picture_styles_tests::`, 100 runs | `ok. 4 passed` — 100/100 |
+| `4c8ce545` | the two tests alone | the same, 100 runs | `ok. 4 passed` — 100/100 |
+
+  The per-run lines are in `deckcraft/.craft/logs/baseline-main-picture-styles-20261116.log`.
+- **Why `56568f6c` cannot move the ribbon.** It changes
+  `apps/deckcraft-collab-server/src/lib.rs` (the `413` answer and its two tests) and
+  `crates/pptx/src/read/shapes.rs` (a camera the engine refuses, with three tests) and nothing
+  else. `git diff --stat fb775571 4c8ce545` — the same from `bb2c2254` — has no entry for
+  `crates/ui-egui/src/ribbon/picture_format.rs`, `picture_styles_tests.rs`, `theme.rs`,
+  `widgets.rs`, `crates/fonts` or `crates/text`; the one `ribbon.rs` hunk is `enabled` →
+  `allowed` in `ribbon::enabled`, a button's state rather than a label's width. The embedded Inter
+  faces are the same bytes as the `ci.yml` pin (`Inter-Regular.ttf` sha256
+  `40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82`), so the measured widths are
+  the same too.
+- **Verdict.** The two failures are an outlier of the 05:18Z rebuild — between the green 04:41Z
+  gate and it every workspace crate was recompiled (the test profile went from a 5 m 34 s cold
+  build to 18.90 s), so that binary is not verifiably the content of the head — and they do not
+  reproduce on `main` or on the head in this environment. No code or test change was made: there
+  is nothing in `56568f6c` to fix and nothing on `main` to pin.
+- **Gate on `4c8ce545`** in a clean checkout of the head on `agents` (same environment, the steps
+  run one by one so each rc is recorded), `deckcraft/.craft/logs/gate-deckcraft-2012-4c8ce545.log`:
+  `STEP fmt rc=0`, `pdf-deps rc=0`, `clippy rc=0`, `test rc=0`, `doctest rc=0` (no doctests in
+  this profile), `assets rc=0` (49 files), `layers rc=0`, `wasm rc=0` (16 crates), `EXIT rc=0`.
+  The workspace test step is 2783 passed / 0 failed: `engine` 626 + 1 ignored, `ui-egui` 529 +
+  4 ignored (the two tests above among them), `collab` 308, `collab-proto` 43, `collab-server`
+  21 plus the commit, socket and gate binaries. The build host's checkout was returned to
+  `collab/pr11` (`c8eb8935`) with a clean tree after the run.
 
 ### 2026-11-16 — `origin/main` moved to `bb2c2254`: the merge `d766e45b` keeps both sides of two conflicts, and of main's naming guard
 
