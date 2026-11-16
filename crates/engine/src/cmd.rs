@@ -607,20 +607,7 @@ fn param_optional(alt: &str) -> Option<bool> {
 
 /// Base64 (standard alphabet) for binary payloads in JSON params and results.
 pub fn base64_encode(data: &[u8]) -> String {
-    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
-        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-        for (i, shift) in [18, 12, 6, 0].iter().enumerate() {
-            if i <= chunk.len() {
-                out.push(A.get(((n >> shift) & 63) as usize).copied().unwrap_or(b'A') as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
+    craft_mime::base64::STANDARD.encode(data)
 }
 
 pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
@@ -661,6 +648,24 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_encoder_preserves_rfc4648_and_all_byte_remainders() {
+        for (input, expected) in
+            [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")]
+        {
+            assert_eq!(base64_encode(input.as_bytes()), expected);
+        }
+        // The decoder accepts both alphabets, so pin the standard one explicitly.
+        assert_eq!(base64_encode(&[0xfb, 0xff]), "+/8=");
+        let all: Vec<u8> = (0..=255).cycle().take(513).collect();
+        for len in 0..=all.len() {
+            let encoded = base64_encode(&all[..len]);
+            assert_eq!(encoded.len(), len.div_ceil(3) * 4);
+            assert_eq!(encoded.bytes().rev().take_while(|b| *b == b'=').count(), (3 - len % 3) % 3);
+            assert_eq!(base64_decode(&encoded).as_deref(), Some(&all[..len]));
+        }
+    }
 
     #[test]
     fn base64_rejects_a_single_character_tail() {

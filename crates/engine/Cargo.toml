@@ -9,6 +9,7 @@ description = "DeckCraft engine: sessions, undo history, selection, the command 
 workspace = true
 
 [dependencies]
+craft-mime = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }
