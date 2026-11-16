@@ -339,3 +339,46 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
 }
+
+#[test]
+fn prompt_locale_tag_resolution() {
+    assert!(super::is_ru_tag("ru"));
+    assert!(super::is_ru_tag("ru-RU"));
+    assert!(super::is_ru_tag("ru_RU.UTF-8"));
+    assert!(super::is_ru_tag("RU-ru"));
+    assert!(!super::is_ru_tag("en"));
+    assert!(!super::is_ru_tag("en-US"));
+    assert!(!super::is_ru_tag("de"));
+    assert!(!super::is_ru_tag("auto"));
+
+    // Explicit language prompts
+    assert_eq!(crate::PhType::Title.prompt_for_lang(Some("ru")), "Заголовок слайда");
+    assert_eq!(crate::PhType::Title.prompt_for_lang(Some("ru-RU")), "Заголовок слайда");
+    assert_eq!(crate::PhType::Title.prompt_for_lang(Some("en")), "Click to add title");
+    assert_eq!(crate::PhType::Body.prompt_for_lang(Some("ru")), "Текст слайда");
+    assert_eq!(crate::PhType::Body.prompt_for_lang(Some("de")), "Click to add text");
+
+    // In-memory active language synchronization
+    crate::set_active_language(Some("ru"));
+    assert_eq!(crate::PhType::Title.prompt(), "Заголовок слайда");
+    assert_eq!(crate::PhType::Body.prompt(), "Текст слайда");
+
+    crate::set_active_language(Some("en"));
+    assert_eq!(crate::PhType::Title.prompt(), "Click to add title");
+    assert_eq!(crate::PhType::Body.prompt(), "Click to add text");
+
+    crate::set_active_language(None);
+
+    // Supported language resolution and first-supported ordering
+    assert_eq!(super::supported_lang_code("ru-RU"), Some("ru"));
+    assert_eq!(super::supported_lang_code("en_US.UTF-8"), Some("en"));
+    assert_eq!(super::supported_lang_code("POSIX"), Some("en"));
+    assert_eq!(super::supported_lang_code("de-DE"), Some("de"));
+    assert_eq!(super::supported_lang_code("fr-FR"), None);
+
+    assert_eq!(super::first_supported_locale(["en-US", "ru-RU"]), Some("en"));
+    assert_eq!(super::first_supported_locale(["ru-RU", "en-US"]), Some("ru"));
+    assert_eq!(super::first_supported_locale(["fr-FR", "ru-RU", "en-US"]), Some("ru"));
+    assert_eq!(super::first_supported_locale(["fr-FR", "de-DE", "ru-RU"]), Some("de"));
+    assert_eq!(super::first_supported_locale(["es-ES", "ja-JP"]), None);
+}

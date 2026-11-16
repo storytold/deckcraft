@@ -13,5 +13,6 @@ deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sys-locale = { workspace = true }
 thiserror = { workspace = true }
 unicode-segmentation = { workspace = true }

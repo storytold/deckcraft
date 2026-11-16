@@ -94,6 +94,119 @@ pub enum PhType {
     SlideImage,
 }
 
+/// The per-user settings directory: `ui.json`, `prefs.json` and `logs/` live here.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/DeckCraft"))
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("DeckCraft"))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+            .map(|c| c.join("deckcraft"))
+    }
+}
+
+thread_local! {
+    static ACTIVE_LANGUAGE_THREAD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+static ACTIVE_LANGUAGE_GLOBAL: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set the active interface language for placeholder prompts and model-level localized strings.
+/// When set to a language tag (e.g. `"ru"`, `"en"`), placeholder prompts immediately follow it without
+/// re-reading settings files from disk. Setting `None` or `"auto"` falls back to config/system detection.
+pub fn set_active_language(lang: Option<&str>) {
+    let s = lang.map(|s| s.trim().to_string());
+    ACTIVE_LANGUAGE_THREAD.with(|cell| {
+        *cell.borrow_mut() = s.clone();
+    });
+    if let Ok(mut lock) = ACTIVE_LANGUAGE_GLOBAL.write() {
+        *lock = s;
+    }
+}
+
+fn is_ru_tag(tag: &str) -> bool {
+    tag.trim().split(['-', '_', '.']).next().is_some_and(|s| s.eq_ignore_ascii_case("ru"))
+}
+
+pub(crate) fn supported_lang_code(tag: &str) -> Option<&'static str> {
+    let primary = tag.trim().split(['-', '_', '.']).next()?;
+    if primary.eq_ignore_ascii_case("ru") {
+        Some("ru")
+    } else if primary.eq_ignore_ascii_case("en")
+        || primary.eq_ignore_ascii_case("c")
+        || primary.eq_ignore_ascii_case("posix")
+    {
+        Some("en")
+    } else if primary.eq_ignore_ascii_case("de") {
+        Some("de")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn first_supported_locale<'a>(tags: impl IntoIterator<Item = &'a str>) -> Option<&'static str> {
+    tags.into_iter().find_map(supported_lang_code)
+}
+
+fn is_ru_prompt() -> bool {
+    let thread_val = ACTIVE_LANGUAGE_THREAD.with(|cell| cell.borrow().clone());
+    let active = thread_val.or_else(|| {
+        ACTIVE_LANGUAGE_GLOBAL.read().ok().and_then(|lock| lock.clone())
+    });
+
+    if let Some(ref active) = active {
+        if let Some(code) = supported_lang_code(active) {
+            return code == "ru";
+        }
+        if !active.eq_ignore_ascii_case("auto") {
+            return false;
+        }
+    }
+
+    let saved_lang = config_dir().and_then(|dir| {
+        let p = dir.join("ui.json");
+        let data = std::fs::read_to_string(p).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+        v.get("language").and_then(|l| l.as_str()).map(str::to_string)
+    });
+
+    if let Some(ref pref) = saved_lang {
+        if let Some(code) = supported_lang_code(pref) {
+            return code == "ru";
+        }
+        if !pref.eq_ignore_ascii_case("auto") {
+            return false;
+        }
+    }
+
+    if let Ok(env_lang) = std::env::var("DECKCRAFT_LANGUAGE") {
+        if let Some(code) = supported_lang_code(&env_lang) {
+            return code == "ru";
+        }
+        if !env_lang.eq_ignore_ascii_case("auto") {
+            return false;
+        }
+    }
+
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(val) = std::env::var(key)
+            && let Some(code) = supported_lang_code(&val)
+        {
+            return code == "ru";
+        }
+    }
+
+    let locales: Vec<String> = sys_locale::get_locales().take(16).collect();
+    if let Some(code) = first_supported_locale(locales.iter().map(String::as_str)) {
+        return code == "ru";
+    }
+
+    false
+}
+
 impl PhType {
     pub fn xml(self) -> &'static str {
         match self {
@@ -140,20 +253,49 @@ impl PhType {
     }
     /// The prompt shown in an empty placeholder in Normal view.
     pub fn prompt(self) -> &'static str {
-        match self {
-            PhType::Title | PhType::CtrTitle => "Click to add title",
-            PhType::SubTitle => "Click to add subtitle",
-            PhType::Body | PhType::Obj => "Click to add text",
-            PhType::Chart => "Click icon to add chart",
-            PhType::Table => "Click icon to add table",
-            PhType::Diagram => "Click icon to add SmartArt graphic",
-            PhType::Media => "Click icon to add media",
-            PhType::Picture | PhType::ClipArt => "Click icon to add picture",
-            PhType::Date => "Date",
-            PhType::Footer => "Footer",
-            PhType::SlideNum => "‹#›",
-            PhType::Header => "Header",
-            PhType::SlideImage => "",
+        self.prompt_for_lang(None)
+    }
+
+    /// The prompt shown in an empty placeholder in Normal view for an explicit language tag.
+    /// When `lang` is `None` or `"auto"`, follows the active interface language or system detection.
+    pub fn prompt_for_lang(self, lang: Option<&str>) -> &'static str {
+        let is_ru = match lang {
+            Some(l) if is_ru_tag(l) => true,
+            Some(l) if !l.eq_ignore_ascii_case("auto") => false,
+            _ => is_ru_prompt(),
+        };
+        if is_ru {
+            match self {
+                PhType::Title | PhType::CtrTitle => "Заголовок слайда",
+                PhType::SubTitle => "Подзаголовок слайда",
+                PhType::Body | PhType::Obj => "Текст слайда",
+                PhType::Chart => "Щелкните значок, чтобы добавить диаграмму",
+                PhType::Table => "Щелкните значок, чтобы добавить таблицу",
+                PhType::Diagram => "Щелкните значок, чтобы добавить рисунок SmartArt",
+                PhType::Media => "Щелкните значок, чтобы добавить медиаклип",
+                PhType::Picture | PhType::ClipArt => "Щелкните значок, чтобы добавить рисунок",
+                PhType::Date => "Дата",
+                PhType::Footer => "Нижний колонтитул",
+                PhType::SlideNum => "‹#›",
+                PhType::Header => "Верхний колонтитул",
+                PhType::SlideImage => "",
+            }
+        } else {
+            match self {
+                PhType::Title | PhType::CtrTitle => "Click to add title",
+                PhType::SubTitle => "Click to add subtitle",
+                PhType::Body | PhType::Obj => "Click to add text",
+                PhType::Chart => "Click icon to add chart",
+                PhType::Table => "Click icon to add table",
+                PhType::Diagram => "Click icon to add SmartArt graphic",
+                PhType::Media => "Click icon to add media",
+                PhType::Picture | PhType::ClipArt => "Click icon to add picture",
+                PhType::Date => "Date",
+                PhType::Footer => "Footer",
+                PhType::SlideNum => "‹#›",
+                PhType::Header => "Header",
+                PhType::SlideImage => "",
+            }
         }
     }
     /// Footer-row placeholders are not shown on slides unless the deck turns them on.
