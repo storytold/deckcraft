@@ -273,12 +273,12 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             .collect()
                     };
                     if let Some(from) = w.delete_from {
-                        if ui.button(egui::RichText::new("Delete Repeated Word").strong()).clicked() {
+                        if ui.button(egui::RichText::new(crate::i18n::tr("Delete Repeated Word")).strong()).clicked() {
                             changed = Some(splice(ls + from, ""));
                             ui.close();
                         }
                     } else if w.suggestions.is_empty() {
-                        ui.label(egui::RichText::new("(no spelling suggestions)").weak());
+                        ui.label(egui::RichText::new(crate::i18n::tr("(no spelling suggestions)")).weak());
                     }
                     for to in &w.suggestions {
                         if ui.button(egui::RichText::new(to).strong()).clicked() {
@@ -286,11 +286,11 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             ui.close();
                         }
                     }
-                    if ui.button("Ignore All").clicked() {
+                    if ui.button(crate::i18n::tr("Ignore All")).clicked() {
                         app.squiggles.ignore(&w.word);
                         ui.close();
                     }
-                    if w.delete_from.is_none() && ui.button("Add to Dictionary").clicked() {
+                    if w.delete_from.is_none() && ui.button(crate::i18n::tr("Add to Dictionary")).clicked() {
                         if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
                             app.set_status(e.to_string());
                         }

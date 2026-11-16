@@ -30,7 +30,7 @@ pub(super) fn date_rows(lang: &str) -> Vec<(&'static str, String)> {
 /// whether the dialog should close.
 pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.set_min_width(440.0);
-    ui.label("Available formats:");
+    ui.label(crate::i18n::tr("Available formats:"));
     let lang = d.get("language", "en-US");
     let rows = date_rows(&lang);
     if !rows.iter().any(|(k, _)| *k == d.get("format", "datetime1"))
@@ -48,23 +48,23 @@ pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     });
     let lang_label = DATE_LANGS.iter().find(|(k, _)| *k == lang).map(|(_, l)| *l).unwrap_or("English (United States)");
     ui.horizontal(|ui| {
-        ui.label("Language:");
-        let opened = craft_ui::ComboBox::from_id_salt("date-lang").selected_text(lang_label).width(240.0).show_ui(ui, |ui| {
+        ui.label(crate::i18n::tr("Language:"));
+        let opened = craft_ui::ComboBox::from_id_salt("date-lang").selected_text(crate::i18n::tr(lang_label)).width(240.0).show_ui(ui, |ui| {
             for (k, l) in DATE_LANGS {
-                if ui.selectable_label(lang == *k, *l).clicked() {
+                if ui.selectable_label(lang == *k, crate::i18n::tr(l)).clicked() {
                     d.fields.insert("language".into(), (*k).to_string());
                 }
             }
         });
-        let shown = lang_label.to_string();
+        let shown = crate::i18n::tr(lang_label).to_string();
         opened.response.widget_info(move || {
-            let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Language");
+            let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::tr("Language"));
             info.current_text_value = Some(shown.clone());
             info
         });
     });
     ui.label(
-        egui::RichText::new("Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time.")
+        egui::RichText::new(crate::i18n::tr("Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time."))
             .size(11.0)
             .color(Tokens::get(ui.ctx()).text_dim),
     );
