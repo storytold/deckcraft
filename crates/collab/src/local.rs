@@ -2334,6 +2334,39 @@ mod tests {
     }
 
     #[test]
+    fn distribute_honours_to_and_both_commands_refuse_values_they_do_not_name() {
+        let (mut s, doc, slide, _) = deck();
+        s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [700, 300, 100, 100]})).expect("third");
+        let shapes: Vec<ShapeId> = s.doc().expect("doc").doc.slides[0].shapes.iter().map(|x| x.id).collect();
+        s.execute("edit.select", &json!({"ids": shapes})).expect("select all three");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        // Three objects, so `to` decides the reference: the slide's width or the selection's frame.
+        let ops = normalize(&km, st, "arrange.distribute", &json!({"dir": "horizontal", "to": "slide"}), "op", &doc).expect("slide");
+        let Payload::ShapesSetBounds { items } = &ops[0].payload else { panic!() };
+        assert_eq!(items.first().map(|i| i.x), Some(0.0), "the leading object goes to the slide's edge");
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        let ops = normalize(&km, st, "arrange.distribute", &json!({"dir": "horizontal", "to": "selection"}), "op", &doc).expect("selection");
+        let Payload::ShapesSetBounds { items } = &ops[0].payload else { panic!() };
+        assert!(items.iter().all(|i| i.x != 0.0), "the selection's frame starts where its own objects do");
+
+        // An `edge`, `dir` or `to` neither command names is refused before anything is queued,
+        // exactly as the single-user command refuses it.
+        for (cmd, params) in [
+            ("arrange.align", json!({})),
+            ("arrange.align", json!({"edge": "centre"})),
+            ("arrange.align", json!({"edge": "left", "to": "page"})),
+            ("arrange.align", json!({"edge": "left", "to": false})),
+            ("arrange.distribute", json!({"dir": "columns"})),
+            ("arrange.distribute", json!({"dir": "vertical", "to": "page"})),
+            ("arrange.distribute", json!({"dir": 3})),
+        ] {
+            assert!(matches!(normalize(&km, st, cmd, &params, "op", &doc), Err(LocalError::BadParams(_))), "{cmd} {params}");
+        }
+    }
+
+    #[test]
     fn a_structural_command_is_marked_structural_and_ignores_extra_slide_text() {
         let (s, doc, _, _) = deck();
         let km = keys(s.doc().expect("doc").doc.as_ref());
