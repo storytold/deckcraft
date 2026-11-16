@@ -108,7 +108,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
 their stops and space, and text as outline glyphs laid out with the fonts this app ships.
 `crates/render/src/svg.rs` draws the result as vectors, including `clipPath` (as clip layers the
 shapes are drawn inside) and `pattern` (as the tile's own geometry, repeated over the shape and
-clipped to it). SVG's `filter` and `mask` need compositing the mapping does not model; a picture
+clipped to it). Commands that work on pixels draw the picture first at twice its own size, at least
+256 px and at most 2048 px, so `picture.artisticEffect` and `picture.removeBackground` take an SVG
+like any raster; `picture.compress` leaves an SVG's bytes alone and only sets its crop, so the
+vector is not traded for a smaller file. SVG's `filter` and `mask` need compositing the mapping does not model; a picture
 that uses one reports it in `Svg::skipped` and is drawn whole by `craft_svg::tree::draw` (the
 shared, memory-checked resvg path) at the size on screen instead, and the vector mapping stands in
 only if that draw is refused by its budget. An embedded `image` is reported the same way, and so is

@@ -56,6 +56,7 @@ pub use morph_text::TextMorph;
 pub use pattern::{is_fg as pattern_is_fg, presets as pattern_presets, tile as pattern_tile};
 pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts, place_slide, place_slide_with, text_outline};
 pub use svg::rasterize_png as svg_png;
+pub use svg::{is_svg, natural_size as svg_natural_size, rasterize as rasterize_svg};
 pub use table::cell_body as table_cell_body;
 pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;

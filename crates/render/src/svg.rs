@@ -20,6 +20,11 @@ pub fn is_svg(bytes: &[u8]) -> bool {
 
 /// Draw the picture into straight RGBA with its longer side `side` px (transparent where it draws
 /// nothing). `None` when the document doesn't parse.
+/// The picture's own size in user units, `None` when it does not read.
+pub fn natural_size(bytes: &[u8]) -> Option<(f64, f64)> {
+    deckcraft_svg::parse(bytes).map(|s| (s.size.0, s.size.1))
+}
+
 pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     let svg = deckcraft_svg::parse(bytes)?;
     let (w, h, m) = layout(&svg, side);

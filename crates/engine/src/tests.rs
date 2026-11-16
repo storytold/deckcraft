@@ -4680,6 +4680,34 @@ fn artistic_effects_apply_change_remove_and_round_trip() {
 }
 
 #[test]
+fn an_svg_picture_takes_the_same_effects_as_a_raster_one() {
+    use deckcraft_model::ShapeKind;
+    let svg = br#"<svg xmlns='http://www.w3.org/2000/svg' width='40' height='30'><rect width='40' height='30' fill='#3366cc'/></svg>"#;
+    let mut s = Session::with_new();
+    let r = s.execute("insert.picture", &json!({"name": "band.svg", "data": cmd::base64_encode(svg)})).unwrap();
+    let id = ShapeId(r["id"].as_u64().unwrap() as u32);
+    let fill = |s: &Session| match &s.doc().unwrap().shape(id).unwrap().kind {
+        ShapeKind::Picture { fill } => fill.clone(),
+        k => panic!("{k:?}"),
+    };
+    let original = fill(&s).media;
+    assert_eq!(s.doc().unwrap().doc.media(original).unwrap().content_type, "image/svg+xml");
+    // The effect works on pixels, so the vector is drawn first.
+    s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur", "ids": [id.0]})).unwrap();
+    let f = fill(&s);
+    assert_ne!(f.media, original);
+    assert_eq!(f.artistic.as_ref().map(|a| a.original), Some(original));
+    let data = s.doc().unwrap().doc.media(f.media).unwrap().data.clone();
+    let out = image::load_from_memory(&data).unwrap().to_rgba8();
+    assert_eq!(out.dimensions(), (256, 192), "drawn at twice its own size, at least 256 px");
+    // Reset puts the vector back, so the picture stays resolution-independent.
+    s.execute("picture.reset", &json!({"ids": [id.0]})).unwrap();
+    let f = fill(&s);
+    assert_eq!((f.media, f.artistic), (original, None));
+    assert_eq!(s.doc().unwrap().doc.media(f.media).unwrap().content_type, "image/svg+xml");
+}
+
+#[test]
 fn handout_master_view_edits_and_round_trips() {
     use deckcraft_model::PhType;
     let mut s = Session::with_new();
