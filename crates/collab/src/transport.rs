@@ -41,9 +41,8 @@ pub struct WsTransport {
     incoming: Receiver<ServerMsg>,
     open: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    /// The worker is inside `tungstenite::connect` (TCP and TLS handshake, no timeout of ours).
-    /// `Drop` skips the join then, so a firewall that drops packets cannot freeze the UI.
-    connecting: Arc<AtomicBool>,
+    /// Never joined by `Drop`: a connect attempt has no timeout of ours, so the handle is only
+    /// dropped and the worker exits at its next `stop` check.
     join: Option<thread::JoinHandle<()>>,
     /// The HTTP side of the same server, for media: plain for `ws://`, TLS for `wss://`.
     media: Option<Endpoint>,
@@ -57,7 +56,6 @@ impl WsTransport {
         let (in_tx, in_rx) = channel::<ServerMsg>();
         let open = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
-        let connecting = Arc::new(AtomicBool::new(false));
         let url = url.into();
         let jwt = match &hello {
             ClientMsg::Hello(hello) => hello.jwt.clone(),
@@ -67,9 +65,8 @@ impl WsTransport {
         let thread_url = url;
         let thread_open = open.clone();
         let thread_stop = stop.clone();
-        let thread_connecting = connecting.clone();
-        let join = thread::spawn(move || run(&thread_url, hello, out_rx, in_tx, thread_open, thread_stop, thread_connecting));
-        WsTransport { out: out_tx, incoming: in_rx, open, stop, connecting, join: Some(join), media }
+        let join = thread::spawn(move || run(&thread_url, hello, out_rx, in_tx, thread_open, thread_stop));
+        WsTransport { out: out_tx, incoming: in_rx, open, stop, join: Some(join), media }
     }
 
     /// A fetcher for media someone else inserted, for [`crate::CollabDoc::set_media_fetcher`].
@@ -127,15 +124,22 @@ impl Transport for WsTransport {
 
 impl Drop for WsTransport {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(join) = self.join.take() {
-            // The reader loop wakes on its 50 ms timeout. A connect attempt has no timeout of our
-            // own, so detach instead of freezing the UI: the thread sees `stop` when it returns.
-            if !self.connecting.load(Ordering::Relaxed) {
-                let _ = join.join();
-            }
-        }
+        stop_worker(&self.stop, self.join.take());
     }
+}
+
+/// Stop the worker and let it go without waiting for it.
+///
+/// The worker reads `stop` between connection attempts and every 50 ms while the socket is open, so
+/// it is gone soon after. It is **not** joined: `tungstenite::connect` has no timeout of ours, and a
+/// write can block on a full socket buffer, so a worker that is inside either would hold the UI
+/// thread for as long as the OS takes to give up. Checking a "connecting" flag on this side cannot
+/// close that window — the worker can pass its `stop` check and enter the connect between the flag
+/// store and the join. Detaching unconditionally leaves no such gap: the worker owns its `Arc`s and
+/// channels, so it may outlive the link safely and exits at its next `stop` check.
+fn stop_worker(stop: &AtomicBool, join: Option<thread::JoinHandle<()>>) {
+    stop.store(true, Ordering::Relaxed);
+    drop(join);
 }
 
 /// The HTTP side of one server: requests to the host the WebSocket URL names. `ws://` uses a
@@ -303,20 +307,10 @@ fn split_host_port(authority: &str) -> Option<(String, Option<u16>)> {
     }
 }
 
-fn run(
-    url: &str,
-    hello: ClientMsg,
-    out: Receiver<ClientMsg>,
-    incoming: Sender<ServerMsg>,
-    open: Arc<AtomicBool>,
-    stop: Arc<AtomicBool>,
-    connecting: Arc<AtomicBool>,
-) {
+fn run(url: &str, hello: ClientMsg, out: Receiver<ClientMsg>, incoming: Sender<ServerMsg>, open: Arc<AtomicBool>, stop: Arc<AtomicBool>) {
     let mut backoff = Duration::from_millis(200);
     while !stop.load(Ordering::Relaxed) {
-        connecting.store(true, Ordering::Relaxed);
         let attempt = tungstenite::connect(url);
-        connecting.store(false, Ordering::Relaxed);
         match attempt {
             Ok((mut ws, _)) => {
                 if set_timeout(&mut ws, Duration::from_millis(50)).is_err() {
@@ -406,6 +400,7 @@ fn offline(message: &str) -> ServerMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
 
     #[test]
     fn a_ws_url_names_the_session_and_the_plain_endpoint() {
@@ -449,5 +444,38 @@ mod tests {
         assert_eq!(e.host, "::1");
         assert_eq!(e.authority, "[::1]:9443");
         assert_eq!(e.host_header, "[::1]:9443");
+    }
+
+    #[test]
+    fn dropping_the_link_does_not_wait_for_a_worker_inside_a_connect() {
+        // The interleaving the finding names: the worker passes its `stop` check, `Drop` runs before
+        // the connect call, and the connect then blocks with no timeout of ours. The barriers put a
+        // worker exactly there, hold it, and let it go only after `stop_worker` is asked to return.
+        // A `Drop` that joins (or joins behind a "connecting" flag it can still miss) hangs here.
+        let stop = Arc::new(AtomicBool::new(false));
+        let at_connect = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let (seen_tx, seen_rx) = channel::<bool>();
+        let worker_stop = stop.clone();
+        let (worker_at, worker_release) = (at_connect.clone(), release.clone());
+        let worker = thread::spawn(move || {
+            worker_at.wait(); // past the `stop` check, about to enter `tungstenite::connect`
+            worker_release.wait(); // the connect that never returns
+            let _ = seen_tx.send(worker_stop.load(Ordering::Relaxed));
+        });
+        at_connect.wait();
+
+        let (returned_tx, returned_rx) = channel::<()>();
+        let caller_stop = stop.clone();
+        let caller = thread::spawn(move || {
+            stop_worker(&caller_stop, Some(worker));
+            let _ = returned_tx.send(());
+        });
+        let returned = returned_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        release.wait();
+        let saw_stop = seen_rx.recv_timeout(Duration::from_secs(2));
+        let _ = caller.join();
+        assert!(returned, "stopping the link waited for a connect that has no timeout of its own");
+        assert_eq!(saw_stop.ok(), Some(true), "the detached worker still sees `stop` and exits");
     }
 }
