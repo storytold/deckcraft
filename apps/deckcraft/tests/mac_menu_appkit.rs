@@ -16,6 +16,14 @@ fn main() {
     use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
     use objc2_foundation::NSString;
 
+    // nextest lists a test binary before running it: answer as libtest would.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--list") {
+        if !args.iter().any(|a| a == "--ignored") {
+            println!("mac_menu_appkit: test");
+        }
+        return;
+    }
     let mtm = MainThreadMarker::new().expect("harness = false runs on the main thread");
     let nsapp = NSApplication::sharedApplication(mtm);
     nsapp.finishLaunching();
