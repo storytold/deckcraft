@@ -166,7 +166,10 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
             });
         });
     if let Some(id) = run {
-        if !app.request_system_paste(&id, &json!({})) {
+        if app.request_system_paste(&id, &json!({})) {
+            // The answer arrives next frame: the search field must not keep the focus that would hold it back from the slide.
+            ctx.memory_mut(|m| m.stop_text_input());
+        } else {
             let _ = app.run(&id, json!({}));
         }
         close = true;
