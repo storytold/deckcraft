@@ -3,12 +3,13 @@ name = "deckcraft-svg"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "DeckCraft SVG reader: shapes, paths, fills and strokes into bezier geometry, for pictures the model stores as image/svg+xml"
+description = "DeckCraft SVG pictures: the shared craft-svg reader (usvg behind its bounded preflight) mapped to the bezier geometry, paints and text outlines the renderer draws"
 
 [lints]
 workspace = true
 
 [dependencies]
+craft-svg = { workspace = true }
 deckcraft-color = { workspace = true }
+deckcraft-fonts = { workspace = true }
 kurbo = { workspace = true }
-quick-xml = { workspace = true }

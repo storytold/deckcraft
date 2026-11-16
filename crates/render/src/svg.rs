@@ -1,15 +1,13 @@
-//! SVG pictures (`image/svg+xml`): parsed by `deckcraft-svg` and drawn as vectors into a bitmap of
+//! SVG pictures (`image/svg+xml`): read by `deckcraft-svg` and drawn as vectors into a bitmap of
 //! the size the slide needs, so they go through the same crop, tile and recolour path as any other
 //! picture.
 //!
-//! The `viewBox` is fitted into the picture's own size the way SVG's default `preserveAspectRatio`
-//! does (centred, both sides visible). Other `preserveAspectRatio` values, filters, masks and clip
-//! paths are not applied.
+//! The reader hands the geometry over in the picture's own space, with gradients in user units;
+//! text arrives as glyph outlines. Filters, masks and clip paths are not applied by the reader and
+//! are reported through its `Skipped` flags; `mask`s are not applied here either.
 
-use deckcraft_fonts::{FontDb, FontFace};
-use deckcraft_svg::{Anchor, Gradient, GradientKind, Paint, Spread, Svg, Text, TextRun, Units};
+use deckcraft_svg::{Gradient, GradientKind, Paint, Spread, Svg};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
-use std::sync::Arc;
 use vello_cpu::{RenderContext, Resources, peniko};
 
 /// Largest side drawn.
@@ -30,24 +28,21 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     ctx.push_clip_layer(&r.to_path(0.1));
     let k = m.determinant().abs().sqrt();
     for it in &svg.items {
-        if let Some(t) = &it.text {
-            draw_text(&mut ctx, t, m);
-            continue;
-        }
         let path: BezPath = m * it.path.clone();
         let bb = path.bounding_box();
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) || bb.width() > 1e6 || bb.height() > 1e6 {
             continue;
         }
-        let bbox = it.path.bounding_box();
+        let bbox_path = it.path.bounding_box();
+        let _ = bbox_path;
         if let Some(f) = &it.fill {
-            set_paint(&mut ctx, f, bbox, m);
+            set_paint(&mut ctx, f, m);
             ctx.set_fill_rule(if it.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
             ctx.fill_path(&path);
             ctx.reset_paint_transform();
         }
         if let Some((c, pen)) = &it.stroke {
-            set_paint(&mut ctx, c, bbox, m);
+            set_paint(&mut ctx, c, m);
             ctx.set_stroke(pen_at(pen, k, &path));
             ctx.stroke_path(&path);
             ctx.reset_paint_transform();
@@ -93,32 +88,23 @@ fn layout(svg: &Svg, side: u32) -> (u16, u16, Affine) {
     let k = f64::from(side.clamp(16, MAX_SIDE)) / pw.max(ph).max(1e-9);
     let w = (pw * k).round().clamp(1.0, f64::from(MAX_SIDE)) as u16;
     let h = (ph * k).round().clamp(1.0, f64::from(MAX_SIDE)) as u16;
-    let (x, y, uw, uh) = svg.view_box.map(|v| (v[0], v[1], v[2], v[3])).unwrap_or((0.0, 0.0, pw, ph));
-    let s = (f64::from(w) / uw).min(f64::from(h) / uh);
-    let tx = (f64::from(w) - uw * s) / 2.0 - x * s;
-    let ty = (f64::from(h) - uh * s) / 2.0 - y * s;
+    // The reader hands the geometry over in the picture's own space (usvg applied its viewBox),
+    // so it only has to fill the bitmap, both sides visible and centred.
+    let s = (f64::from(w) / pw).min(f64::from(h) / ph);
+    let tx = (f64::from(w) - pw * s) / 2.0;
+    let ty = (f64::from(h) - ph * s) / 2.0;
     (w, h, Affine::translate((tx, ty)) * Affine::scale(s))
 }
 
 /// Paint one shape's fill or stroke: a solid colour, or a gradient laid out the way the picture
-/// declared it. `m` maps user units to pixels and `bbox` is the shape's box in user units, which an
-/// `objectBoundingBox` gradient takes as its unit square.
-fn set_paint(ctx: &mut RenderContext, paint: &Paint, bbox: Rect, m: Affine) {
+/// declared it. The reader hands gradients over in user units, so `m` maps them to pixels.
+fn set_paint(ctx: &mut RenderContext, paint: &Paint, m: Affine) {
     match paint {
         Paint::Solid(c) => ctx.set_paint(peniko::Color::from_rgba8(c.r, c.g, c.b, c.a)),
         Paint::Gradient(g) => {
             let Some(grad) = peniko_gradient(g) else { return };
-            // The gradient's own coordinates → user units → pixels.
-            let to_user = match g.units {
-                Units::ObjectBoundingBox => {
-                    Affine::translate(bbox.origin().to_vec2())
-                        * Affine::scale_non_uniform(bbox.width().max(1e-9), bbox.height().max(1e-9))
-                        * g.transform
-                }
-                Units::UserSpace => g.transform,
-            };
             ctx.set_paint(grad);
-            ctx.set_paint_transform(m * to_user);
+            ctx.set_paint_transform(m * g.transform);
         }
     }
 }
@@ -152,212 +138,6 @@ fn peniko_gradient(g: &Gradient) -> Option<peniko::Gradient> {
         Spread::Repeat => peniko::Extend::Repeat,
     };
     Some(grad)
-}
-
-/// Draw a text element: place its runs along the baselines they set, then draw the glyph outlines.
-/// The reader has no fonts, so advances and anchors are resolved here.
-fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
-    let to_device = m * t.transform;
-    // A run that sets x or y opens a chunk. SVG anchors align each positioned chunk, so a chunk
-    // is measured as a whole, while the pen keeps the coordinate the chunk did not set.
-    ctx.set_fill_rule(peniko::Fill::NonZero);
-    let mut pen = (0.0, 0.0);
-    let mut i = 0;
-    while i < t.runs.len() {
-        let mut j = i + 1;
-        while j < t.runs.len() && t.runs[j].at_x.is_none() && t.runs[j].at_y.is_none() {
-            j += 1;
-        }
-        draw_chunk(ctx, &t.runs[i..j], to_device, &mut pen);
-        i = j;
-    }
-    ctx.set_transform(Affine::IDENTITY);
-    ctx.reset_paint_transform();
-}
-
-/// One placed glyph: its face, the size it is drawn at, and where on the baseline it sits.
-struct Placed {
-    face: Arc<FontFace>,
-    size: f64,
-    gid: u32,
-    x: f64,
-    y: f64,
-    run: usize,
-}
-
-/// Draw one chunk of runs, advancing the pen from run to run and aligning the chunk by its anchor.
-/// `pen` is the position the last chunk ended at, so a run that sets only `x` keeps the baseline.
-fn draw_chunk(ctx: &mut RenderContext, runs: &[TextRun], to_device: Affine, pen: &mut (f64, f64)) {
-    let (mut pen_x, mut pen_y) = *pen;
-    let mut origin = pen_x;
-    let mut placed: Vec<Placed> = Vec::new();
-    let mut widths: Vec<f64> = vec![0.0; runs.len()];
-    for (ri, r) in runs.iter().enumerate() {
-        if let Some(x) = r.at_x {
-            pen_x = x;
-            origin = x;
-        }
-        if let Some(y) = r.at_y {
-            pen_y = y;
-        }
-        pen_x += r.dx;
-        pen_y += r.dy;
-        let start = pen_x;
-        // Characters the run's face does not have are drawn by a fallback face, so a label keeps
-        // its whole text instead of losing the arrows and symbols in it.
-        let mut run_glyphs: Vec<(Placed, f64)> = Vec::new();
-        for (face, segment) in segments(r, &face_for(r)) {
-            let k = r.size / face.upem.max(1.0);
-            let shaped = deckcraft_fonts::shape(&face, segment, &[], |c| c);
-            for g in &shaped {
-                // Letter spacing is charged per glyph; a glyph of a multi-glyph cluster shares its
-                // cluster's box and is only a fraction of an em out.
-                run_glyphs.push((
-                    Placed {
-                        face: face.clone(),
-                        size: r.size,
-                        gid: g.gid,
-                        x: f64::from(g.x_offset) * k,
-                        y: pen_y - f64::from(g.y_offset) * k,
-                        run: ri,
-                    },
-                    f64::from(g.x_advance) * k + r.spacing,
-                ));
-            }
-        }
-        // `shape` hands back a run in text order; a right-to-left run is laid out the other way,
-        // so its glyphs are drawn from the last to the first.
-        if is_rtl_text(&r.text) {
-            run_glyphs.reverse();
-        }
-        for (mut p, advance) in run_glyphs {
-            p.x += pen_x;
-            placed.push(p);
-            pen_x += advance;
-        }
-        widths[ri] = pen_x - start;
-    }
-    *pen = (pen_x, pen_y);
-    // The space a run asks for after its last character is not part of the visible line, and the
-    // anchor measures the chunk including every `dx` it sets.
-    let trailing = runs.last().map(|r| r.spacing).unwrap_or(0.0);
-    let total = pen_x - origin - trailing;
-    let shift = match runs.first().map(|r| r.anchor).unwrap_or(Anchor::Start) {
-        Anchor::Start => 0.0,
-        Anchor::Middle => -total / 2.0,
-        Anchor::End => -total,
-    };
-    for p in &placed {
-        let run = &runs[p.run];
-        if run.fill.is_none() && run.stroke.is_none() {
-            continue;
-        }
-        let k = p.size / p.face.upem.max(1.0);
-        let at = to_device * Affine::translate((p.x + shift, p.y)) * Affine::scale(k);
-        // The same extent guard the shapes get: a glyph under an absurd transform is dropped
-        // rather than flattened into device coordinates nothing can draw.
-        let on_screen = at.determinant().abs().sqrt();
-        if !(on_screen.is_finite() && on_screen > 1e-9 && on_screen < 1e6) {
-            continue;
-        }
-        let Some(path) = glyph_path(&p.face, p.gid) else { continue };
-        ctx.set_transform(at);
-        if let Some(fill) = &run.fill {
-            // A gradient over glyphs has no box to measure here: its first stop stands in.
-            set_flat(ctx, fill);
-            ctx.fill_path(path.as_ref());
-        }
-        // A label can be stroked without a fill, and then it still draws.
-        if let Some((paint, stroke)) = &run.stroke {
-            set_flat(ctx, paint);
-            let k = k.max(1e-9);
-            let pen = kurbo::Stroke::new((stroke.width / k).max(1e-4)).with_caps(stroke.start_cap).with_join(stroke.join);
-            let pen =
-                if stroke.dash_pattern.is_empty() { pen } else { pen.with_dashes(stroke.dash_offset / k, stroke.dash_pattern.iter().map(|d| d / k)) };
-            ctx.set_stroke(pen);
-            ctx.stroke_path(path.as_ref());
-        }
-    }
-}
-
-/// Whether a run reads right to left: it has a right-to-left character and no strong
-/// left-to-right one. A mixed run keeps text order, which misplaces its right-to-left words.
-fn is_rtl_text(text: &str) -> bool {
-    let mut rtl = false;
-    for c in text.chars() {
-        if deckcraft_fonts::is_rtl(c) && c.is_alphabetic() {
-            rtl = true;
-        } else if c.is_alphabetic() && !deckcraft_fonts::is_rtl(c) {
-            return false;
-        }
-    }
-    rtl
-}
-
-/// Paint with a solid colour; a gradient falls back to its first stop.
-fn set_flat(ctx: &mut RenderContext, paint: &Paint) {
-    let c = match paint {
-        Paint::Solid(c) => *c,
-        Paint::Gradient(g) => g.stops.first().map(|(_, c)| *c).unwrap_or(deckcraft_color::Rgba::BLACK),
-    };
-    ctx.set_paint(peniko::Color::from_rgba8(c.r, c.g, c.b, c.a));
-}
-
-/// Split a run's text where its face does not cover the characters, so each stretch is shaped by
-/// one face: the run's own, or the database's fallback for the character.
-fn segments<'a>(r: &'a TextRun, face: &Arc<FontFace>) -> Vec<(Arc<FontFace>, &'a str)> {
-    let db = FontDb::global();
-    let mut out: Vec<(Arc<FontFace>, &'a str)> = Vec::new();
-    let (mut start, mut current) = (0usize, face.clone());
-    for (i, c) in r.text.char_indices() {
-        let want = if face.covers(c) { face.clone() } else { db.fallback_for(c, face.id()).unwrap_or_else(|| face.clone()) };
-        if !Arc::ptr_eq(&want, &current) {
-            if start < i {
-                out.push((current, &r.text[start..i]));
-            }
-            start = i;
-            current = want;
-        }
-    }
-    if start < r.text.len() {
-        out.push((current, &r.text[start..]));
-    }
-    out
-}
-
-/// The outline of one glyph, or `None` when the face has none (a space, a missing glyph). The
-/// outline is the shared, cached path, so a repeated glyph is not outlined again.
-fn glyph_path(face: &FontFace, gid: u32) -> Option<Arc<BezPath>> {
-    let p = crate::glyph(face, gid);
-    (!p.elements().is_empty()).then_some(p)
-}
-
-/// The face a run asks for: the first family it names that is installed, then the closest style.
-fn face_for(r: &TextRun) -> Arc<FontFace> {
-    let db = FontDb::global();
-    let style = match (r.bold, r.italic) {
-        (true, true) => "Bold Italic",
-        (true, false) => "Bold",
-        (false, true) => "Italic",
-        (false, false) => "Regular",
-    };
-    for family in &r.families {
-        let family = generic_family(family);
-        if db.has_family(family) {
-            return db.face(family, style);
-        }
-    }
-    db.face("", style)
-}
-
-/// CSS's generic families, named by the families the font database knows.
-fn generic_family(name: &str) -> &str {
-    match name.to_ascii_lowercase().as_str() {
-        "sans-serif" | "cursive" | "fantasy" | "system-ui" => "Helvetica Neue",
-        "serif" => "Times New Roman",
-        "monospace" => "Courier New",
-        _ => name,
-    }
 }
 
 /// The pen at the layout scale (the picture scatters its own transforms into the geometry).
