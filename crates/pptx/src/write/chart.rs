@@ -1,7 +1,7 @@
 //! Chart parts: a `c:chartSpace` with cached categories and values.
 //! An unchanged chart also keeps the embedded workbook and the other parts it points at.
 
-use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{AxisCrosses, Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::opc::{NS_A, NS_C, NS_R};
@@ -452,6 +452,16 @@ fn data_labels(w: &mut W, c: &Chart, show: bool) {
     w.close("c:dLbls");
 }
 
+/// Where the axis being written crosses the value axis: `c:crossesAt`, else `c:crosses`.
+fn crosses(w: &mut W, at: AxisCrosses) {
+    match at {
+        AxisCrosses::At(v) if v.is_finite() => w.val("c:crossesAt", fmt_num(v)),
+        AxisCrosses::Min => w.val("c:crosses", "min"),
+        AxisCrosses::Max => w.val("c:crosses", "max"),
+        AxisCrosses::AutoZero | AxisCrosses::At(_) => w.val("c:crosses", "autoZero"),
+    }
+}
+
 const AX_CAT: u32 = 50_001;
 const AX_VAL: u32 = 50_002;
 
@@ -475,7 +485,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:tickLblPos", "nextTo");
         tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
-        w.val("c:crosses", "autoZero");
+        crosses(w, c.y_crosses);
         w.val("c:crossBetween", "midCat");
         w.close("c:valAx");
     } else {
@@ -495,7 +505,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:tickLblPos", "nextTo");
         tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
-        w.val("c:crosses", "autoZero");
+        crosses(w, c.y_crosses);
         w.val("c:auto", 1);
         w.val("c:lblAlgn", "ctr");
         w.val("c:lblOffset", 100);
@@ -508,7 +518,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
     if let Some(b) = c.y_log_base {
         w.val("c:logBase", fmt_num(b));
     }
-    w.val("c:orientation", "minMax");
+    w.val("c:orientation", if c.y_reversed { "maxMin" } else { "minMax" });
     if let Some(m) = c.y_max.filter(|v| v.is_finite()) {
         w.val("c:max", fmt_num(m));
     }
@@ -1301,6 +1311,24 @@ mod tests {
         assert!(crate::read::chart::read_chart_xml(&xml).unwrap().cat_reversed);
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
+    }
+
+    #[test]
+    fn reversed_value_axis_and_its_crossing_round_trip() {
+        use deckcraft_model::chart::AxisCrosses;
+        for kind in [ChartType::StackedColumn, ChartType::Bar, ChartType::Scatter] {
+            let mut c = Chart::sample(kind);
+            c.y_reversed = true;
+            for at in [AxisCrosses::Max, AxisCrosses::Min, AxisCrosses::At(-2.5), AxisCrosses::AutoZero] {
+                c.y_crosses = at;
+                let back = crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap();
+                assert!(back.y_reversed, "{kind:?}");
+                assert!(!back.cat_reversed, "{kind:?}: only the value axis runs backwards");
+                assert_eq!(back.y_crosses, at, "{kind:?}");
+            }
+            c.y_reversed = false;
+            assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().y_reversed);
+        }
     }
 }
 
