@@ -3,16 +3,16 @@
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-28 · **Change:** major (interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
+DeckCraft's interface is shown in English, German, or Russian. Strings stay English literals in the code and
 are looked up in the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs when the
 UI is drawn (`tl!`, `crates/ui-egui/src/i18n.rs`); `build.rs` embeds them from `CRAFT_I18N_DIR` at
 the commit in `craft-i18n.rev`, and a build without it is English only. The interface follows the
 system language (#15), or Preferences › Interface language and `app.language` (`auto`, `en`,
-`de`). Command ids, engine labels returned to scripts, the control channel, the CLI and MCP stay
+`de`, `ru`). Command ids, engine labels returned to scripts, the control channel, the CLI and MCP stay
 English. Still English: slide placeholder prompts (drawn by the renderer), status messages from the
 engine, the native macOS menu bar and some dialog choice lists. Other requests: #30 and PR #34
-(Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which can now land as
-catalog-only PRs there. Dimension score: **~15% ready** (estimated: English complete, German
+(Ukrainian) and the language PRs listed in storytold/craft-i18n#48, which also require the DeckCraft code
+change described below (adding the code to `LANGUAGES`), not catalog-only. Dimension score: **~15% ready** (estimated: English complete, German
 mostly, slide-text script
 support partly there), **45–80 h** to parity plus native-speaker review.
 
@@ -46,7 +46,7 @@ support partly there), **45–80 h** to parity plus native-speaker review.
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
 
-Other languages shipped: **German** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
+Other languages shipped: **German** and **Russian** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
 than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
 Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
 

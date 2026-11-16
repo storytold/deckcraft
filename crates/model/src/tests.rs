@@ -339,3 +339,15 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
 }
+
+#[test]
+fn prompt_locale_tag_resolution() {
+    assert!(super::is_ru_tag("ru"));
+    assert!(super::is_ru_tag("ru-RU"));
+    assert!(super::is_ru_tag("ru_RU.UTF-8"));
+    assert!(super::is_ru_tag("RU-ru"));
+    assert!(!super::is_ru_tag("en"));
+    assert!(!super::is_ru_tag("en-US"));
+    assert!(!super::is_ru_tag("de"));
+    assert!(!super::is_ru_tag("auto"));
+}

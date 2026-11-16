@@ -24,7 +24,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     let mut mode = d.get("mode", "percent");
     let mut percent = d.get("percent", "100");
     ui.label(tl!("Zoom to"));
-    if ui.radio(mode == "fit", "Fit").clicked() {
+    if ui.radio(mode == "fit", tl!("Fit")).clicked() {
         mode = "fit".into();
     }
     for pct in ZOOM_PRESETS {

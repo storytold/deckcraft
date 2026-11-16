@@ -29,8 +29,8 @@ fn theme_font_choices(app: &SlideApp, selected: &str) -> Vec<String> {
 
 /// Draw an accessible font combo box and update the selected family; the caller supplies the
 /// visible label.
-fn font_combo(ui: &mut Ui, label: &str, choices: &[String], selected: &mut String) {
-    let resp = craft_ui::ComboBox::from_id_salt(label).selected_text(selected.as_str()).width(240.0).show_ui(ui, |ui| {
+fn font_combo(ui: &mut Ui, id: &str, access_label: &str, choices: &[String], selected: &mut String) {
+    let resp = craft_ui::ComboBox::from_id_salt(id).selected_text(selected.as_str()).width(240.0).show_ui(ui, |ui| {
         for face in choices {
             if ui.selectable_label(selected == face, face).clicked() {
                 *selected = face.clone();
@@ -38,7 +38,7 @@ fn font_combo(ui: &mut Ui, label: &str, choices: &[String], selected: &mut Strin
         }
     });
     let shown = selected.clone();
-    let access = label.to_string();
+    let access = tl!(access_label).to_string();
     resp.response.widget_info(move || {
         let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, access.clone());
         info.current_text_value = Some(shown.clone());
@@ -73,11 +73,11 @@ pub(super) fn theme_fonts_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
     let mut minor = minor;
     ui.horizontal(|ui| {
         ui.add_sized(vec2(110.0, 18.0), egui::Label::new(tl!("Heading:")));
-        font_combo(ui, "Heading font", &headings, &mut major);
+        font_combo(ui, "Heading font", "Heading font", &headings, &mut major);
     });
     ui.horizontal(|ui| {
         ui.add_sized(vec2(110.0, 18.0), egui::Label::new(tl!("Body:")));
-        font_combo(ui, "Body font", &bodies, &mut minor);
+        font_combo(ui, "Body font", "Body font", &bodies, &mut minor);
     });
     d.fields.insert("major".into(), major.clone());
     d.fields.insert("minor".into(), minor.clone());
@@ -93,7 +93,7 @@ pub(super) fn theme_fonts_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
         let resp = ui.add(egui::TextEdit::singleline(&mut name).desired_width(240.0).id_salt("schemeName"));
         let shown = name.clone();
         resp.widget_info(move || {
-            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Scheme name");
+            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, tl!("Scheme name"));
             info.current_text_value = Some(shown.clone());
             info
         });

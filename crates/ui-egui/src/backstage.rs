@@ -471,6 +471,11 @@ fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(8.0);
 }
 
+fn dim_raw(ui: &mut Ui, text: &str) {
+    let t = Tokens::get(ui.ctx());
+    ui.label(RichText::new(text).font(theme::font(12.5)).color(t.text_dim));
+}
+
 fn dim(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.label(RichText::new(tl!(text)).font(theme::font(12.5)).color(t.text_dim));

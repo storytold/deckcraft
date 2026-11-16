@@ -94,6 +94,61 @@ pub enum PhType {
     SlideImage,
 }
 
+/// The per-user settings directory: `ui.json`, `prefs.json` and `logs/` live here.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/DeckCraft"))
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("DeckCraft"))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+            .map(|c| c.join("deckcraft"))
+    }
+}
+
+fn is_ru_tag(tag: &str) -> bool {
+    tag.trim().split(['-', '_', '.']).next().is_some_and(|s| s.eq_ignore_ascii_case("ru"))
+}
+
+fn is_ru_prompt() -> bool {
+    let saved_lang = config_dir().and_then(|dir| {
+        let p = dir.join("ui.json");
+        let data = std::fs::read_to_string(p).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+        v.get("language").and_then(|l| l.as_str()).map(str::to_string)
+    });
+
+    if let Some(ref pref) = saved_lang {
+        if is_ru_tag(pref) {
+            return true;
+        }
+        if !pref.eq_ignore_ascii_case("auto") {
+            return false;
+        }
+    }
+
+    if let Ok(env_lang) = std::env::var("DECKCRAFT_LANGUAGE") {
+        if is_ru_tag(&env_lang) {
+            return true;
+        }
+        if !env_lang.eq_ignore_ascii_case("auto") {
+            return false;
+        }
+    }
+
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(val) = std::env::var(key)
+            && is_ru_tag(&val)
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 impl PhType {
     pub fn xml(self) -> &'static str {
         match self {
@@ -140,17 +195,7 @@ impl PhType {
     }
     /// The prompt shown in an empty placeholder in Normal view.
     pub fn prompt(self) -> &'static str {
-        let is_ru = std::env::var("DECKCRAFT_LANGUAGE").map(|l| l.eq_ignore_ascii_case("ru")).unwrap_or_else(|_| {
-            if let Ok(home) = std::env::var("HOME") {
-                let p = std::path::Path::new(&home).join(".config/deckcraft/ui.json");
-                if let Ok(data) = std::fs::read_to_string(p) {
-                    if data.contains("\"language\": \"ru\"") { return true; }
-                    if data.contains("\"language\": \"en\"") || data.contains("\"language\": \"de\"") { return false; }
-                }
-            }
-            std::env::var("LANG").map(|l| l.starts_with("ru")).unwrap_or(false)
-        });
-        if is_ru {
+        if is_ru_prompt() {
             match self {
                 PhType::Title | PhType::CtrTitle => "Заголовок слайда",
                 PhType::SubTitle => "Подзаголовок слайда",

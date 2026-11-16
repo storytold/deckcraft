@@ -77,22 +77,22 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         let mut picked = None;
         let combo = craft_ui::ComboBox::from_id_salt("font_dialog_spacing")
             .selected_text(match spacing.as_str() {
-                "-3" => "Very tight",
-                "-1.5" => "Tight",
-                "0" => "Normal",
-                "3" => "Loose",
-                "6" => "Very loose",
+                "-3" => tl!("Very tight"),
+                "-1.5" => tl!("Tight"),
+                "0" => tl!("Normal"),
+                "3" => tl!("Loose"),
+                "6" => tl!("Very loose"),
                 other => other,
             })
             .width(120.0)
             .show_ui(ui, |ui| {
                 for (v, l) in [("-3", "Very tight"), ("-1.5", "Tight"), ("0", "Normal"), ("3", "Loose"), ("6", "Very loose")] {
-                    if ui.selectable_label(spacing == v, l).clicked() {
+                    if ui.selectable_label(spacing == v, tl!(l)).clicked() {
                         picked = Some(v.to_string());
                     }
                 }
             });
-        combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Spacing"));
+        combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Spacing")));
         let _ = edited;
         if let Some(v) = picked {
             d.fields.insert("spacing".into(), v);

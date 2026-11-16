@@ -104,7 +104,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
         let kind = d.get("lineKind", "multiple");
         let value = d.get("lineValue", "1");
         let combo =
-            craft_ui::ComboBox::from_id_salt("paragraph_line").selected_text(line_preset_label(&kind, &value)).width(140.0).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("paragraph_line").selected_text(tl!(line_preset_label(&kind, &value))).width(140.0).show_ui(ui, |ui| {
                 for (label, k, v) in [
                     ("Single", "multiple", Some("1")),
                     ("1.5 lines", "multiple", Some("1.5")),
@@ -112,7 +112,7 @@ pub(super) fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
                     ("Multiple", "multiple", None),
                     ("Exactly", "exactly", None),
                 ] {
-                    if ui.selectable_label(line_preset_label(&kind, &value) == label, label).clicked() {
+                    if ui.selectable_label(line_preset_label(&kind, &value) == label, tl!(label)).clicked() {
                         picked = Some((k, v));
                     }
                 }

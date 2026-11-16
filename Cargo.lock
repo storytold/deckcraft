@@ -1067,6 +1067,7 @@ dependencies = [
  "craft-update",
  "deckcraft-engine",
  "deckcraft-media",
+ "deckcraft-model",
  "deckcraft-ui-egui",
  "eframe",
  "egui",

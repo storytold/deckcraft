@@ -311,7 +311,7 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         ("Copy", "edit.copy", json!({"scope": "slides"})),
         ("Paste", "edit.paste", json!({"scope": "slides"})),
     ] {
-        if ui.button(l).clicked() {
+        if ui.button(tl!(l)).clicked() {
             let _ = app.run(id, p);
             ui.close();
         }
@@ -334,7 +334,7 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         let _ = app.run("section.add", json!({"at": i}));
         ui.close();
     }
-    ui.menu_button("Layout", |ui| {
+    ui.menu_button(tl!("Layout"), |ui| {
         let layouts: Vec<(String, u32)> = app
             .session
             .active()
@@ -356,7 +356,7 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         ui.close();
     }
     let hidden = app.session.active().and_then(|d| d.doc.slides.get(i).map(|s| s.hidden)).unwrap_or(false);
-    if ui.button(if hidden { "Show Slide" } else { "Hide Slide" }).clicked() {
+    if ui.button(if hidden { tl!("Show Slide") } else { tl!("Hide Slide") }).clicked() {
         let _ = app.run("slide.hide", json!({"index": i}));
         ui.close();
     }

@@ -1,5 +1,5 @@
 use super::files::task;
-use super::{Backstage, Icon, Outcome, Page, RichText, Sense, SlideApp, Tokens, Ui, Value, dim, heading, json, theme, vec2};
+use super::{Backstage, Icon, Outcome, Page, RichText, Sense, SlideApp, Tokens, Ui, Value, dim, dim_raw, heading, json, theme, vec2};
 
 /// Save As and Change File Type: (id for [`SlideApp::export_as`], label, detail).
 pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
@@ -36,7 +36,7 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let dirty = v.get("dirty").and_then(Value::as_bool).unwrap_or(false);
     ui.label(RichText::new(&title).font(theme::font(24.0)).color(t.accent));
     match &path {
-        Some(p) => dim(ui, p),
+        Some(p) => dim_raw(ui, p),
         None => dim(ui, tl!("Not saved yet")),
     }
     if let Some(p) = &path {
@@ -150,7 +150,10 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();
     ui.label(RichText::new(&title).font(theme::font(15.0)).color(t.text));
-    dim(ui, path.as_deref().unwrap_or(tl!("Not saved yet")));
+    match path.as_deref() {
+        Some(p) => dim_raw(ui, p),
+        None => dim(ui, tl!("Not saved yet")),
+    }
     ui.add_space(14.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {

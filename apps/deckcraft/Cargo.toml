@@ -11,6 +11,7 @@ default-run = "deckcraft"
 workspace = true
 
 [dependencies]
+deckcraft-model = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 deckcraft-media = { workspace = true }

@@ -35,7 +35,7 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         }
         for (i, (pos, align)) in stops.iter().enumerate() {
             ui.label(format!("{pos:.2}\""));
-            ui.label(TAB_KINDS.iter().find(|k| k.0 == align).map(|k| k.1).unwrap_or("Left"));
+            ui.label(tl!(TAB_KINDS.iter().find(|k| k.0 == align).map(|k| k.1).unwrap_or("Left")));
             if ui.small_button(tl!("Clear")).on_hover_text(format!("Clear the tab at {pos:.2}\"")).clicked() {
                 remove = Some(i);
             }
@@ -56,7 +56,7 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     ui.horizontal(|ui| {
         ui.label(tl!("Alignment:"));
         for (k, label) in TAB_KINDS {
-            if ui.radio(cur == k, label).clicked() {
+            if ui.radio(cur == k, tl!(label)).clicked() {
                 d.fields.insert("newalign".into(), k.into());
             }
         }
