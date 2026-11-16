@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::icons::{self, Icon};
 use crate::ribbon::{cref_param, paint_anim_tile};
 use crate::theme::{self, Tokens};
-use crate::{SlideApp, widgets};
+use crate::{SlideApp, i18n, widgets};
 
 mod animation;
 mod background;
@@ -30,7 +30,9 @@ use format_shape::{fill_transparency_to_apply, solid_fill_transparency_percent};
 use smartart::smartart;
 use thesaurus::thesaurus;
 
+/// Draw the selected task pane with translated headings and stable pane identifiers.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
+    let lang = app.lang();
     let t = Tokens::get(ui.ctx());
     let Some(pane) = app.ui.pane.clone() else { return };
     egui::Panel::right("task_pane")
@@ -41,16 +43,16 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         .show(ui, |ui| {
             app.ui.pane_width = ui.available_width() + 20.0;
             let title = match pane.as_str() {
-                "format" => "Format Shape",
-                "background" => "Format Background",
-                "animation" => "Animation Pane",
-                "selection" => "Selection",
-                "comments" => "Comments",
-                "designer" => "Design Ideas",
+                "format" => i18n::text(lang, "pane.format.title"),
+                "background" => i18n::text(lang, "pane.background.title"),
+                "animation" => i18n::text(lang, "pane.animation.title"),
+                "selection" => i18n::text(lang, "pane.selection.title"),
+                "comments" => i18n::text(lang, "title.comments"),
+                "designer" => i18n::text(lang, "pane.designer.title"),
                 "smartart" => "Text Pane",
                 "thesaurus" => "Thesaurus",
                 "revisions" => "Revisions",
-                _ => "Pane",
+                _ => i18n::text(lang, "pane.title"),
             };
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(title).font(theme::bold(16.0)));
@@ -89,6 +91,7 @@ fn scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
     app.session.active().and_then(|d| d.doc.masters.first().map(|m| m.scheme())).unwrap_or_else(|| deckcraft_model::Theme::default().colors)
 }
 
+/// Choose a pane color without translating its stored color value.
 fn color_button(
     app: &mut SlideApp,
     ui: &mut Ui,
@@ -96,11 +99,12 @@ fn color_button(
     none_label: Option<&str>,
     on_pick: impl Fn(Option<deckcraft_model::ColorRef>) -> (String, Value),
 ) {
+    let lang = app.lang();
     let sc = scheme(app);
     ui.horizontal(|ui| {
         ui.label(label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let r = widgets::drop_button(ui, "Color", vec2(70.0, 22.0), true);
+            let r = widgets::drop_button(ui, i18n::text(lang, "pane.format.color"), vec2(70.0, 22.0), true);
             widgets::color_popup(&r).show(|ui| {
                 if let Some(c) = widgets::color_grid(ui, &sc, none_label) {
                     let (id, p) = on_pick(c);

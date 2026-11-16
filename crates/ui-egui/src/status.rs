@@ -1,6 +1,7 @@
 //! Status bar (slide counter, language, notes/comments toggles, view buttons, zoom slider) and the
 //! notes pane under the slide.
 
+use crate::i18n;
 use egui::{Align2, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
 
@@ -15,10 +16,15 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
     egui::Panel::bottom("status").exact_size(28.0).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         let Some(st) = app.session.active() else { return };
+        let ui_lang = app.lang();
         let n = st.doc.slides.len();
         let left = match st.selection.target {
-            deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
-            _ => "Slide Master".to_string(),
+            deckcraft_engine::Target::Slides => {
+                let current = ((st.selection.slide + 1).min(n.max(1))).to_string();
+                let total = n.to_string();
+                crate::i18n::fill(crate::i18n::text(ui_lang, "status.slide_of"), &[("n", &current), ("m", &total)])
+            }
+            _ => crate::i18n::text(ui_lang, "status.slide_master").to_string(),
         };
         let p = ui.painter();
         // Left to right: slide counter, language, status message. Each starts at its usual column, or
@@ -55,7 +61,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 4.0;
-        if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
+        if small_icon(&mut right, Icon::FitSmall, crate::i18n::text(ui_lang, "status.fit"), false).clicked() {
             app.ui.zoom = None;
         }
         let pct = (app.canvas_scale * 100.0).round();
@@ -64,7 +70,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         if lbl.clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
-        if small_icon(&mut right, Icon::ZoomIn, "Zoom In", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomIn, crate::i18n::text(ui_lang, "status.zoom_in"), false).clicked() {
             let _ = app.run("view.zoomIn", json!({}));
         }
         // Slider 10%–400% (log scale).
@@ -84,31 +90,31 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
             z = zp / 100.0;
             app.ui.zoom = Some(z);
         }
-        if small_icon(&mut right, Icon::ZoomOut, "Zoom Out", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomOut, crate::i18n::text(ui_lang, "status.zoom_out"), false).clicked() {
             let _ = app.run("view.zoomOut", json!({}));
         }
         right.add_space(8.0);
         let view = app.ui.view;
-        if view_icon(&mut right, Icon::ViewShowSmall, "Slide Show", false).clicked() {
+        if view_icon(&mut right, Icon::ViewShowSmall, i18n::text(ui_lang, "status.slideshow"), false).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             app.start_show(i, false);
         }
-        if view_icon(&mut right, Icon::ViewReadingSmall, "Reading View", view == ViewMode::Reading).clicked() {
+        if view_icon(&mut right, Icon::ViewReadingSmall, i18n::text(ui_lang, "status.reading"), view == ViewMode::Reading).clicked() {
             let _ = app.run("view.reading", json!({}));
         }
-        if view_icon(&mut right, Icon::ViewSorterSmall, "Slide Sorter", view == ViewMode::Sorter).clicked() {
+        if view_icon(&mut right, Icon::ViewSorterSmall, i18n::text(ui_lang, "status.sorter"), view == ViewMode::Sorter).clicked() {
             app.ui.view = ViewMode::Sorter;
         }
-        if view_icon(&mut right, Icon::ViewNormalSmall, "Normal", view == ViewMode::Normal).clicked() {
+        if view_icon(&mut right, Icon::ViewNormalSmall, i18n::text(ui_lang, "status.normal"), view == ViewMode::Normal).clicked() {
             app.ui.view = ViewMode::Normal;
         }
         right.add_space(8.0);
         let c_on = app.ui.pane.as_deref() == Some("comments");
-        if labeled(&mut right, Icon::CommentsSmall, "Comments", c_on).clicked() {
+        if labeled(&mut right, Icon::CommentsSmall, crate::i18n::text(ui_lang, "status.comments"), c_on).clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));
         }
         let n_on = app.ui.notes;
-        if labeled(&mut right, Icon::NotesSmall, "Notes", n_on).clicked() {
+        if labeled(&mut right, Icon::NotesSmall, crate::i18n::text(ui_lang, "status.notes"), n_on).clicked() {
             app.ui.notes = !n_on;
         }
         let _ = Stroke::NONE;
