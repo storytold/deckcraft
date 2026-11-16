@@ -7,17 +7,154 @@ use super::{
     stroke_only, vis,
 };
 
-/// Builds the presets this module knows; `None` for any other name.
-pub(super) fn build(name: &str, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Option<Geometry> {
+/// The preset outlines this module builds, named for their Office Open XML identifiers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Name {
+    LineInv,
+    NonIsoscelesTrapezoid,
+    PieWedge,
+    FlowChartOfflineStorage,
+    ChartX,
+    ChartStar,
+    ChartPlus,
+    CornerTabs,
+    SquareTabs,
+    PlaqueTabs,
+    Callout1,
+    Callout2,
+    Callout3,
+    AccentCallout1,
+    AccentCallout2,
+    AccentCallout3,
+    BorderCallout2,
+    BorderCallout3,
+    AccentBorderCallout1,
+    AccentBorderCallout2,
+    AccentBorderCallout3,
+    LeftRightArrowCallout,
+    UpDownArrowCallout,
+    QuadArrowCallout,
+    CurvedRightArrow,
+    CurvedLeftArrow,
+    CurvedUpArrow,
+    CurvedDownArrow,
+    SwooshArrow,
+    EllipseRibbon,
+    EllipseRibbon2,
+    LeftRightRibbon,
+    Gear6,
+    Gear9,
+    Funnel,
+    CircularArrow,
+    LeftCircularArrow,
+    LeftRightCircularArrow,
+}
+
+impl Name {
+    /// The Office Open XML identifier (as it appears in files and the catalog). Only the tests
+    /// need the reverse mapping; production code parses strings with [`Name::from_str`].
+    #[cfg(test)]
+    pub(super) fn ooxml(self) -> &'static str {
+        match self {
+            Name::LineInv => "lineInv",
+            Name::NonIsoscelesTrapezoid => "nonIsoscelesTrapezoid",
+            Name::PieWedge => "pieWedge",
+            Name::FlowChartOfflineStorage => "flowChartOfflineStorage",
+            Name::ChartX => "chartX",
+            Name::ChartStar => "chartStar",
+            Name::ChartPlus => "chartPlus",
+            Name::CornerTabs => "cornerTabs",
+            Name::SquareTabs => "squareTabs",
+            Name::PlaqueTabs => "plaqueTabs",
+            Name::Callout1 => "callout1",
+            Name::Callout2 => "callout2",
+            Name::Callout3 => "callout3",
+            Name::AccentCallout1 => "accentCallout1",
+            Name::AccentCallout2 => "accentCallout2",
+            Name::AccentCallout3 => "accentCallout3",
+            Name::BorderCallout2 => "borderCallout2",
+            Name::BorderCallout3 => "borderCallout3",
+            Name::AccentBorderCallout1 => "accentBorderCallout1",
+            Name::AccentBorderCallout2 => "accentBorderCallout2",
+            Name::AccentBorderCallout3 => "accentBorderCallout3",
+            Name::LeftRightArrowCallout => "leftRightArrowCallout",
+            Name::UpDownArrowCallout => "upDownArrowCallout",
+            Name::QuadArrowCallout => "quadArrowCallout",
+            Name::CurvedRightArrow => "curvedRightArrow",
+            Name::CurvedLeftArrow => "curvedLeftArrow",
+            Name::CurvedUpArrow => "curvedUpArrow",
+            Name::CurvedDownArrow => "curvedDownArrow",
+            Name::SwooshArrow => "swooshArrow",
+            Name::EllipseRibbon => "ellipseRibbon",
+            Name::EllipseRibbon2 => "ellipseRibbon2",
+            Name::LeftRightRibbon => "leftRightRibbon",
+            Name::Gear6 => "gear6",
+            Name::Gear9 => "gear9",
+            Name::Funnel => "funnel",
+            Name::CircularArrow => "circularArrow",
+            Name::LeftCircularArrow => "leftCircularArrow",
+            Name::LeftRightCircularArrow => "leftRightCircularArrow",
+        }
+    }
+
+    /// Parse an Office Open XML identifier into its variant; `None` if unknown.
+    pub(super) fn from_str(name: &str) -> Option<Self> {
+        let e = match name {
+            "lineInv" => Name::LineInv,
+            "nonIsoscelesTrapezoid" => Name::NonIsoscelesTrapezoid,
+            "pieWedge" => Name::PieWedge,
+            "flowChartOfflineStorage" => Name::FlowChartOfflineStorage,
+            "chartX" => Name::ChartX,
+            "chartStar" => Name::ChartStar,
+            "chartPlus" => Name::ChartPlus,
+            "cornerTabs" => Name::CornerTabs,
+            "squareTabs" => Name::SquareTabs,
+            "plaqueTabs" => Name::PlaqueTabs,
+            "callout1" => Name::Callout1,
+            "callout2" => Name::Callout2,
+            "callout3" => Name::Callout3,
+            "accentCallout1" => Name::AccentCallout1,
+            "accentCallout2" => Name::AccentCallout2,
+            "accentCallout3" => Name::AccentCallout3,
+            "borderCallout2" => Name::BorderCallout2,
+            "borderCallout3" => Name::BorderCallout3,
+            "accentBorderCallout1" => Name::AccentBorderCallout1,
+            "accentBorderCallout2" => Name::AccentBorderCallout2,
+            "accentBorderCallout3" => Name::AccentBorderCallout3,
+            "leftRightArrowCallout" => Name::LeftRightArrowCallout,
+            "upDownArrowCallout" => Name::UpDownArrowCallout,
+            "quadArrowCallout" => Name::QuadArrowCallout,
+            "curvedRightArrow" => Name::CurvedRightArrow,
+            "curvedLeftArrow" => Name::CurvedLeftArrow,
+            "curvedUpArrow" => Name::CurvedUpArrow,
+            "curvedDownArrow" => Name::CurvedDownArrow,
+            "swooshArrow" => Name::SwooshArrow,
+            "ellipseRibbon" => Name::EllipseRibbon,
+            "ellipseRibbon2" => Name::EllipseRibbon2,
+            "leftRightRibbon" => Name::LeftRightRibbon,
+            "gear6" => Name::Gear6,
+            "gear9" => Name::Gear9,
+            "funnel" => Name::Funnel,
+            "circularArrow" => Name::CircularArrow,
+            "leftCircularArrow" => Name::LeftCircularArrow,
+            "leftRightCircularArrow" => Name::LeftRightCircularArrow,
+            _ => return None,
+        };
+        Some(e)
+    }
+}
+
+/// Builds the geometry for a preset in this module.
+pub(super) fn build(name: Name, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Geometry {
     let ss = w.min(h);
     let full = Rect::new(0.0, 0.0, w, h);
     let mut b = Pb::new();
-    let g = match name {
-        "lineInv" => {
+    match name {
+        Name::LineInv => {
             let l = b.m(0.0, h).l(w, 0.0).take();
             Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::new(0.0, h), Point::new(w, 0.0)] }
         }
-        "nonIsoscelesTrapezoid" => {
+        Name::NonIsoscelesTrapezoid => {
             let max = 50000.0 * w / ss.max(1e-9);
             let (v1, v2) = (a(0).clamp(0.0, max), a(1).clamp(0.0, max));
             let (d1, d2) = (ss * v1 / 1e5, ss * v2 / 1e5);
@@ -26,11 +163,11 @@ pub(super) fn build(name: &str, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Opt
             g.handles.push(Handle::new(1, Point::new(w, 0.0), Vec2::new(-ss / 1e5, 0.0), v2, 0.0, max));
             g
         }
-        "pieWedge" => {
+        Name::PieWedge => {
             b.m(0.0, h).arc(w, h, 180.0, 90.0).l(w, h).z();
             simple(b.take(), Rect::new(w * 0.29289, h * 0.29289, w, h), w, h)
         }
-        "flowChartOfflineStorage" => {
+        Name::FlowChartOfflineStorage => {
             let tri = b.poly(&[(0.0, 0.0), (w, 0.0), (w / 2.0, h)]).take();
             let bar = Pb::new().m(w * 0.4, h * 0.8).l(w * 0.6, h * 0.8).take();
             Geometry {
@@ -40,37 +177,37 @@ pub(super) fn build(name: &str, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Opt
                 sites: vec![Point::new(w / 2.0, 0.0), Point::new(w / 4.0, h / 2.0), Point::new(w / 2.0, h), Point::new(w * 0.75, h / 2.0)],
             }
         }
-        "chartX" | "chartStar" | "chartPlus" => {
+        Name::ChartX | Name::ChartStar | Name::ChartPlus => {
             let body = corner_rect(w, h, [Corner::Square; 4]);
             let mut l = Pb::new();
-            if name != "chartPlus" {
+            if name != Name::ChartPlus {
                 l.m(0.0, 0.0).l(w, h).m(0.0, h).l(w, 0.0);
             }
-            if name != "chartX" {
+            if name != Name::ChartX {
                 l.m(w / 2.0, 0.0).l(w / 2.0, h);
             }
-            if name == "chartPlus" {
+            if name == Name::ChartPlus {
                 l.m(0.0, h / 2.0).l(w, h / 2.0);
             }
             Geometry { paths: vec![fill_only(body), stroke_only(l.take())], text_rect: full, handles: vec![], sites: mid_sites(w, h) }
         }
-        "cornerTabs" | "squareTabs" | "plaqueTabs" => {
+        Name::CornerTabs | Name::SquareTabs | Name::PlaqueTabs => {
             // Each tab's size is a twentieth of the diagonal.
             let d = (w.hypot(h) / 20.0).min(w / 2.0).min(h / 2.0);
             match name {
-                "cornerTabs" => {
+                Name::CornerTabs => {
                     b.poly(&[(0.0, 0.0), (d, 0.0), (0.0, d)]);
                     b.poly(&[(w - d, 0.0), (w, 0.0), (w, d)]);
                     b.poly(&[(w, h - d), (w, h), (w - d, h)]);
                     b.poly(&[(0.0, h - d), (d, h), (0.0, h)]);
                 }
-                "squareTabs" => {
+                Name::SquareTabs => {
                     b.poly(&[(0.0, 0.0), (d, 0.0), (d, d), (0.0, d)]);
                     b.poly(&[(w - d, 0.0), (w, 0.0), (w, d), (w - d, d)]);
                     b.poly(&[(w - d, h - d), (w, h - d), (w, h), (w - d, h)]);
                     b.poly(&[(0.0, h - d), (d, h - d), (d, h), (0.0, h)]);
                 }
-                _ => {
+                Name::PlaqueTabs => {
                     if d > 0.0 {
                         b.m(0.0, 0.0).l(d, 0.0).arc(d, d, 0.0, 90.0).z();
                         b.m(w, 0.0).l(w, d).arc(d, d, 90.0, 90.0).z();
@@ -80,29 +217,53 @@ pub(super) fn build(name: &str, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Opt
                         b.m(0.0, 0.0).z();
                     }
                 }
+                // The outer match only reaches this arm for the three tab names above.
+                _ => {}
             }
             Geometry { paths: vec![fill(b.take())], text_rect: full.inset(-d), handles: vec![], sites: mid_sites(w, h) }
         }
-        "callout1"
-        | "callout2"
-        | "callout3"
-        | "accentCallout1"
-        | "accentCallout2"
-        | "accentCallout3"
-        | "borderCallout2"
-        | "borderCallout3"
-        | "accentBorderCallout1"
-        | "accentBorderCallout2"
-        | "accentBorderCallout3" => {
-            let n = match name.chars().last() {
-                Some('2') => 2,
-                Some('3') => 3,
+        Name::Callout1
+        | Name::Callout2
+        | Name::Callout3
+        | Name::AccentCallout1
+        | Name::AccentCallout2
+        | Name::AccentCallout3
+        | Name::BorderCallout2
+        | Name::BorderCallout3
+        | Name::AccentBorderCallout1
+        | Name::AccentBorderCallout2
+        | Name::AccentBorderCallout3 => {
+            let n = match name {
+                Name::Callout2 | Name::AccentCallout2 | Name::BorderCallout2 | Name::AccentBorderCallout2 => 2,
+                Name::Callout3 | Name::AccentCallout3 | Name::BorderCallout3 | Name::AccentBorderCallout3 => 3,
                 _ => 1,
             };
-            line_callout(w, h, a, n + 1, name.starts_with("accent"), name.contains("order"))
+            line_callout(
+                w,
+                h,
+                a,
+                n + 1,
+                matches!(
+                    name,
+                    Name::AccentCallout1
+                        | Name::AccentCallout2
+                        | Name::AccentCallout3
+                        | Name::AccentBorderCallout1
+                        | Name::AccentBorderCallout2
+                        | Name::AccentBorderCallout3
+                ),
+                matches!(
+                    name,
+                    Name::BorderCallout2
+                        | Name::BorderCallout3
+                        | Name::AccentBorderCallout1
+                        | Name::AccentBorderCallout2
+                        | Name::AccentBorderCallout3
+                ),
+            )
         }
-        "leftRightArrowCallout" | "upDownArrowCallout" => {
-            let vertical = name == "upDownArrowCallout";
+        Name::LeftRightArrowCallout | Name::UpDownArrowCallout => {
+            let vertical = name == Name::UpDownArrowCallout;
             let (l, t) = if vertical { (h, w) } else { (w, h) };
             let ss = l.min(t);
             let head = (ss * a(1).max(0.0) / 1e5).min(t / 2.0);
@@ -135,7 +296,7 @@ pub(super) fn build(name: &str, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Opt
             let tr = orient(d, w, h, &[(b0, 0.0), (b1, t)]);
             simple(b.poly(&pts).take(), Rect::from_points(Point::new(tr[0].0, tr[0].1), Point::new(tr[1].0, tr[1].1)).abs(), w, h)
         }
-        "quadArrowCallout" => {
+        Name::QuadArrowCallout => {
             let head = (ss * a(1).max(0.0) / 1e5).min(ss / 2.0);
             let shaft = (ss * a(0).max(0.0) / 1e5).min(head * 2.0);
             let hl = (ss * a(2).max(0.0) / 1e5).min(ss / 2.0);
@@ -180,16 +341,14 @@ pub(super) fn build(name: &str, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Opt
             ];
             simple(b.poly(&pts).take(), Rect::new(bx0, by0, bx1, by1), w, h)
         }
-        "curvedRightArrow" | "curvedLeftArrow" | "curvedUpArrow" | "curvedDownArrow" => curved_arrow(name, w, h, a(0), a(1), a(2)),
-        "swooshArrow" => swoosh(w, h, a(0), a(1)),
-        "ellipseRibbon" | "ellipseRibbon2" => ellipse_ribbon(name == "ellipseRibbon2", w, h, a(0), a(1), a(2)),
-        "leftRightRibbon" => left_right_ribbon(w, h, a(0), a(1), a(2)),
-        "gear6" | "gear9" => gear(if name == "gear6" { 6 } else { 9 }, w, h, a(0), a(1)),
-        "funnel" => funnel(w, h),
-        "circularArrow" | "leftCircularArrow" | "leftRightCircularArrow" => circular_arrow(name, w, h, [a(0), a(1), a(2), a(3), a(4)]),
-        _ => return None,
-    };
-    Some(g)
+        Name::CurvedRightArrow | Name::CurvedLeftArrow | Name::CurvedUpArrow | Name::CurvedDownArrow => curved_arrow(name, w, h, a(0), a(1), a(2)),
+        Name::SwooshArrow => swoosh(w, h, a(0), a(1)),
+        Name::EllipseRibbon | Name::EllipseRibbon2 => ellipse_ribbon(name == Name::EllipseRibbon2, w, h, a(0), a(1), a(2)),
+        Name::LeftRightRibbon => left_right_ribbon(w, h, a(0), a(1), a(2)),
+        Name::Gear6 | Name::Gear9 => gear(if name == Name::Gear6 { 6 } else { 9 }, w, h, a(0), a(1)),
+        Name::Funnel => funnel(w, h),
+        Name::CircularArrow | Name::LeftCircularArrow | Name::LeftRightCircularArrow => circular_arrow(name, w, h, [a(0), a(1), a(2), a(3), a(4)]),
+    }
 }
 
 /// An ellipse-centred frame for the circular arrows: the band's middle runs on the ellipse
@@ -261,7 +420,7 @@ fn turn(a: f64, b: f64, dir: f64) -> f64 {
 /// The circular arrows: a band along an ellipse with one head (`circularArrow` clockwise,
 /// `leftCircularArrow` anticlockwise) or a head at each end (`leftRightCircularArrow`).
 /// Adjusts: band thickness, head sweep (degrees), end angle, start angle, head half-width.
-fn circular_arrow(name: &str, w: f64, h: f64, a: [f64; 5]) -> Geometry {
+fn circular_arrow(name: Name, w: f64, h: f64, a: [f64; 5]) -> Geometry {
     let ss = w.min(h);
     if ss <= 0.0 {
         return simple(corner_rect(w, h, [Corner::Square; 4]), Rect::new(0.0, 0.0, w, h), w, h);
@@ -283,7 +442,7 @@ fn circular_arrow(name: &str, w: f64, h: f64, a: [f64; 5]) -> Geometry {
     };
     let outer_arc = |b: &mut Pb, from: Point, to: Point, dir: f64| edge_arc(b, from, to, half, dir);
     let inner_arc = |b: &mut Pb, from: Point, to: Point, dir: f64| edge_arc(b, from, to, -half, dir);
-    if name == "leftRightCircularArrow" {
+    if name == Name::LeftRightCircularArrow {
         let hs = ring.head(start, -sweep);
         let he = ring.head(end, sweep);
         b.m(hs[0].x, hs[0].y);
@@ -292,7 +451,7 @@ fn circular_arrow(name: &str, w: f64, h: f64, a: [f64; 5]) -> Geometry {
         inner_arc(&mut b, he[4], hs[4], -1.0);
         b.l(hs[3].x, hs[3].y).l(hs[2].x, hs[2].y).l(hs[1].x, hs[1].y).z();
     } else {
-        let dir = if name == "circularArrow" { 1.0 } else { -1.0 };
+        let dir = if name == Name::CircularArrow { 1.0 } else { -1.0 };
         let he = ring.head(end, sweep);
         let (o0, i0) = (ring.at(start, half), ring.at(start, -half));
         b.m(o0.x, o0.y);
@@ -488,8 +647,8 @@ fn swoosh(w: f64, h: f64, a0: f64, a1: f64) -> Geometry {
 /// head side's edge, its horizontal radius is the full length, and the band has a constant
 /// vertical thickness. The back half (shaded) starts flat against the head side; the front half
 /// runs to the head, centred on the band where it ends.
-fn curved_arrow(name: &str, w: f64, h: f64, a0: f64, a1: f64, a2: f64) -> Geometry {
-    let along_x = matches!(name, "curvedRightArrow" | "curvedLeftArrow");
+fn curved_arrow(name: Name, w: f64, h: f64, a0: f64, a1: f64, a2: f64) -> Geometry {
+    let along_x = matches!(name, Name::CurvedRightArrow | Name::CurvedLeftArrow);
     let (cw, ch) = if along_x { (w, h) } else { (h, w) };
     let ss = cw.min(ch);
     let head = (ss * a1.max(0.0) / 1e5).min(ch / 2.0);
@@ -509,9 +668,11 @@ fn curved_arrow(name: &str, w: f64, h: f64, a0: f64, a1: f64, a2: f64) -> Geomet
     let yc = yb + th / 2.0;
     front.l(cw - hl, yc - hh).l(cw, 2.0 * r + th / 2.0).l(cw - hl, yc + hh).l(cw - hl, yb + th).arc(cw, r, te, 180.0 - te).z();
     let m = match name {
-        "curvedLeftArrow" => kurbo::Affine::new([-1.0, 0.0, 0.0, 1.0, w, 0.0]),
-        "curvedUpArrow" => kurbo::Affine::new([0.0, -1.0, 1.0, 0.0, 0.0, h]),
-        "curvedDownArrow" => kurbo::Affine::new([0.0, 1.0, 1.0, 0.0, 0.0, 0.0]),
+        Name::CurvedLeftArrow => kurbo::Affine::new([-1.0, 0.0, 0.0, 1.0, w, 0.0]),
+        Name::CurvedUpArrow => kurbo::Affine::new([0.0, -1.0, 1.0, 0.0, 0.0, h]),
+        Name::CurvedDownArrow => kurbo::Affine::new([0.0, 1.0, 1.0, 0.0, 0.0, 0.0]),
+        // `curved_arrow` is only ever called with the four curved-arrow names; anything else
+        // falls back to the unrotated (right-pointing) construction.
         _ => kurbo::Affine::IDENTITY,
     };
     let (mut back, mut front) = (back.take(), front.take());
@@ -549,6 +710,7 @@ fn line_callout(w: f64, h: f64, a: &dyn Fn(usize) -> f64, pts: usize, accent: bo
 #[cfg(test)]
 mod tests {
     use super::super::{CATALOG, FillMode, build, info};
+    use super::Name;
     use kurbo::{BezPath, PathEl, Point, Shape};
 
     const NEW: [&str; 38] = [
@@ -594,6 +756,101 @@ mod tests {
 
     fn outline(name: &str, w: f64, h: f64, adj: &[f64]) -> BezPath {
         build(name, w, h, adj).map(|g| g.outline()).unwrap_or_default()
+    }
+
+    /// Adjust sets the digests were taken at: the defaults (an empty slice) and explicit values,
+    /// so every adjust branch runs.
+    const GOLD_ADJ: [&[f64]; 2] = [&[], &[0.25, 0.1, 0.5, 0.3, 0.7, 0.2, 0.6, 0.4, 0.9, 0.15]];
+    /// Sizes the digests were taken at: wide, tall and square.
+    const GOLD_SIZES: [(f64, f64); 3] = [(120.0, 80.0), (300.0, 50.0), (64.0, 64.0)];
+
+    /// FNV-1a over each outline's path elements, for every adjust set and size. Coordinates are
+    /// rounded to whole thousandths as integers, so the sign of a zero residue (`-1e-17` prints as
+    /// `-0.000` but `+0.0` as `0.000`) and last-bit libm differences between platforms cannot change it.
+    fn outline_digest(name: &str) -> u64 {
+        use std::fmt::Write;
+        let q = |v: f64| (v * 1000.0).round() as i64;
+        let mut text = String::new();
+        for adj in GOLD_ADJ {
+            for (w, h) in GOLD_SIZES {
+                let g = build(name, w, h, adj).unwrap_or_else(|| panic!("{name} builds no outline"));
+                for el in g.outline().elements() {
+                    let _ = match *el {
+                        PathEl::MoveTo(p) => write!(text, "M{},{}", q(p.x), q(p.y)),
+                        PathEl::LineTo(p) => write!(text, "L{},{}", q(p.x), q(p.y)),
+                        PathEl::QuadTo(a, p) => write!(text, "Q{},{},{},{}", q(a.x), q(a.y), q(p.x), q(p.y)),
+                        PathEl::CurveTo(a, b, p) => write!(text, "C{},{},{},{},{},{}", q(a.x), q(a.y), q(b.x), q(b.y), q(p.x), q(p.y)),
+                        PathEl::ClosePath => write!(text, "Z"),
+                    };
+                }
+                text.push('|');
+            }
+        }
+        text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+    }
+
+    /// Digests of every name's outlines as the string dispatch on `main` (fc35ad67) built them, so
+    /// this refactor is proven output-identical: any changed outline fails here.
+    const GOLDEN: [(&str, u64); 38] = [
+        ("lineInv", 0xc104fef5bde7b6b5),
+        ("nonIsoscelesTrapezoid", 0x92d849856a8154df),
+        ("pieWedge", 0xebc029ec8eef2beb),
+        ("leftRightArrowCallout", 0x03a2c0141b9f97c3),
+        ("upDownArrowCallout", 0xa8100fae3a38ab87),
+        ("quadArrowCallout", 0x439586794d9d7fad),
+        ("circularArrow", 0x66cd981029bed7c9),
+        ("leftCircularArrow", 0x06b19f2dc84ec89e),
+        ("leftRightCircularArrow", 0x8e1aeb28f256cf67),
+        ("curvedRightArrow", 0xf96dcfbfb827600b),
+        ("curvedLeftArrow", 0xecfd4b21b75d4aa1),
+        ("curvedUpArrow", 0x10e380986ecbfe6d),
+        ("curvedDownArrow", 0x349f26ffe220cc3d),
+        ("swooshArrow", 0x8faba202ab8d4513),
+        ("callout1", 0x81e44333a7c03955),
+        ("callout2", 0x96bddbf7fc6406e4),
+        ("callout3", 0x0a47039d206d70ea),
+        ("accentCallout1", 0x0c0122a2c6df5231),
+        ("accentCallout2", 0xa6783a754025feba),
+        ("accentCallout3", 0x4dd20823a8e86da2),
+        ("borderCallout2", 0x96bddbf7fc6406e4),
+        ("borderCallout3", 0x0a47039d206d70ea),
+        ("accentBorderCallout1", 0x0c0122a2c6df5231),
+        ("accentBorderCallout2", 0xa6783a754025feba),
+        ("accentBorderCallout3", 0x4dd20823a8e86da2),
+        ("ellipseRibbon", 0x22a2dcac6760afbf),
+        ("ellipseRibbon2", 0x9a9c15405ce479dc),
+        ("leftRightRibbon", 0x92473c2bbafb0d2f),
+        ("flowChartOfflineStorage", 0xfa44d7fc31d792b3),
+        ("gear6", 0x0d48eab24b683929),
+        ("gear9", 0x2ed4774b9850db1f),
+        ("funnel", 0x44ac92e12138e18d),
+        ("cornerTabs", 0x00358f20c78dd8dd),
+        ("squareTabs", 0x57e3fb8fd4433bfd),
+        ("plaqueTabs", 0x9de9bb90f759b2b5),
+        ("chartX", 0x33c8e67d6b3b3fdd),
+        ("chartStar", 0x0f9a70cff79a5d6d),
+        ("chartPlus", 0x5204b81fd4727575),
+    ];
+
+    /// Every name builds the same outline as before the `Name` enum, and unknown names build nothing.
+    #[test]
+    fn outlines_match_the_string_dispatch() {
+        for (name, want) in GOLDEN {
+            assert_eq!(outline_digest(name), want, "{name} outline changed");
+        }
+        assert!(build("noSuchShape", 100.0, 100.0, &[]).is_none());
+    }
+
+    /// Every name this module builds round-trips through its OOXML identifier, and unknown
+    /// strings do not parse.
+    #[test]
+    fn name_round_trips_through_ooxml() {
+        for s in NEW {
+            let n = Name::from_str(s).unwrap_or_else(|| panic!("{s} missing from Name"));
+            assert_eq!(n.ooxml(), s, "{s} maps to a different OOXML id");
+        }
+        assert!(Name::from_str("noSuchShape").is_none());
+        assert!(Name::from_str("").is_none());
     }
 
     /// Distance from `p` to the nearest point of the (flattened) outline.
