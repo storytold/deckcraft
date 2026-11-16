@@ -764,6 +764,21 @@ fn show_skips_hidden_slides() {
 }
 
 #[test]
+fn a_wheel_step_from_a_hidden_slide_counts_its_first_visible_neighbour() {
+    // A hidden slide opened by number is not in the show order; the nearest visible slide in the
+    // direction is the first step, and the rest of the notches still apply.
+    let mut p = pres(5);
+    Arc::make_mut(&mut p.slides[1]).hidden = true;
+    let s = ShowState::new(&p);
+    assert_eq!(s.visible_step_clamped(&p, 1, true, 2), Some(3));
+    assert_eq!(s.visible_step_clamped(&p, 1, false, 2), Some(0));
+    assert_eq!(s.visible_step(&p, 1, true, 2), Some(3));
+    // Clamped steps stop at the ends of the visible order.
+    assert_eq!(s.visible_step_clamped(&p, 4, true, 3), Some(4));
+    assert_eq!(s.visible_step_clamped(&p, 0, false, 3), Some(0));
+}
+
+#[test]
 fn show_remembers_a_slide_was_reached_by_going_back() {
     // #1531: the UI plays the left slide's transition reversed only for Back.
     let p = pres(3);

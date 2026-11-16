@@ -45,17 +45,16 @@ pub(crate) fn page_flick(wheel: egui::Vec2) -> Option<bool> {
 }
 
 /// Discrete wheel input must not share the trackpad's gesture cooldown. Keep all the steps,
-/// including several notches delivered in one frame, and clamp at each end of the deck.
+/// including several notches delivered in one frame, in the order they arrived so movement at a
+/// boundary is not lost: a backward then forward notch at the first slide still moves forward.
 ///
 /// High-resolution and free-spin wheels send fractions of a line (0.125 per event on Windows), so
 /// the delta is accumulated in `carry` and each whole line is one slide; a change of direction
-/// drops what was left over. Returns the target and the whole lines completed this frame
-/// (positive turns forward to the next slide), `None` when no wheel event was read. A partial
-/// line still returns `Some` with zero steps so the trackpad path stays suppressed for the frame.
-pub(crate) fn wheel_slide_target(events: &[egui::Event], current: usize, slides: usize, carry: &mut f32) -> Option<(usize, i32)> {
-    let last = slides.checked_sub(1)?;
-    let mut target = current.min(last);
-    let mut net = 0_i32;
+/// drops what was left over. Returns the completed whole lines as signed step counts (positive
+/// turns forward to the next slide), `None` when no wheel event was read. A partial line still
+/// returns `Some` with no steps so the trackpad path stays suppressed for the frame.
+pub(crate) fn wheel_steps(events: &[egui::Event], slides: usize, carry: &mut f32) -> Option<Vec<i32>> {
+    let mut steps_done = Vec::new();
     let mut handled = false;
     for event in events {
         if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
@@ -75,17 +74,13 @@ pub(crate) fn wheel_slide_target(events: &[egui::Event], current: usize, slides:
             let whole = (carry.abs() + 1e-4).floor();
             *carry -= whole.copysign(*carry);
             let steps = whole.min(slides as f32) as usize;
-            if delta.y < 0.0 {
-                target = target.saturating_add(steps).min(last);
-                net += steps as i32;
-            } else {
-                target = target.saturating_sub(steps);
-                net -= steps as i32;
+            if steps > 0 {
+                steps_done.push(if delta.y < 0.0 { steps as i32 } else { -(steps as i32) });
             }
             handled = true;
         }
     }
-    handled.then_some((target, net))
+    handled.then_some(steps_done)
 }
 
 pub(crate) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {

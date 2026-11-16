@@ -259,21 +259,22 @@ impl ShowState {
             return None;
         }
         let order = self.visit(pres);
-        if let Some(p) = order.iter().position(|&i| i == from) {
-            if clamp {
-                let last = order.len().checked_sub(1)?;
-                let q = if forward { p.saturating_add(steps).min(last) } else { p.saturating_sub(steps) };
-                return order.get(q).copied();
-            }
-            let q = if forward { p.checked_add(steps)? } else { p.checked_sub(steps)? };
-            order.get(q).copied()
-        } else if forward {
-            // `from` is not in the order (a hidden slide opened by number): the nearest visible
-            // slide past it is the first step.
-            order.iter().copied().find(|&i| i > from)
+        // A `from` that is not in the order (a hidden slide opened by number) reaches the
+        // nearest visible slide in the direction, which counts as the first step.
+        let (start, used) = match order.iter().position(|&i| i == from) {
+            Some(p) => (p, 0),
+            None if forward => (order.iter().position(|&i| i > from)?, 1),
+            None => (order.iter().rposition(|&i| i < from)?, 1),
+        };
+        let rest = steps.saturating_sub(used);
+        let q = if forward {
+            if clamp { start.saturating_add(rest).min(order.len().checked_sub(1)?) } else { start.checked_add(rest)? }
+        } else if clamp {
+            start.saturating_sub(rest)
         } else {
-            order.iter().copied().rev().find(|&i| i < from)
-        }
+            start.checked_sub(rest)?
+        };
+        order.get(q).copied()
     }
 
     /// Click / → / Space: finish the playing step, else play the next step, else go to the next slide.

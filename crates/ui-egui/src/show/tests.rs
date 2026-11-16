@@ -944,6 +944,26 @@ fn a_wheel_notch_skips_a_hidden_slide() {
     assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 0, "back also skips it");
 }
 
+/// Two notches in one frame are applied in the order they arrived: a backward then a forward
+/// notch at the first slide still moves forward (a signed net would cancel them out).
+#[test]
+fn a_backward_then_forward_notch_in_one_frame_still_moves_forward() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    h.input_mut().events.push(egui::Event::PointerMoved(centre));
+    for y in [1.0_f32, -1.0] {
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(4);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the forward notch still moves one slide");
+}
+
 /// A completed forward wheel notch past the last slide reaches the end screen and then exits,
 /// the same way a trackpad flick does; a partial line still does nothing.
 #[test]

@@ -316,16 +316,15 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     // gesture cooldown. Point-based trackpad swipes keep their own cooldown below.
     if !show.pen {
         let len = doc.slides.len();
-        let current = show.state.slide;
-        let wheel = ctx.input(|i| crate::canvas::wheel_slide_target(&i.events, current, len, &mut show.wheel_carry));
+        let wheel = ctx.input(|i| crate::canvas::wheel_steps(&i.events, len, &mut show.wheel_carry));
         // On the end screen a whole-line notch keeps the old semantics: forward exits the
         // show, back resumes the last slide. A partial line does nothing either way.
         let wheel_handled = match wheel {
-            Some((_, net)) if show.ended && net > 0 => {
+            Some(steps) if show.ended && steps.last().is_some_and(|&by| by > 0) => {
                 out.keep = false;
                 true
             }
-            Some((_, net)) if show.ended && net < 0 => {
+            Some(steps) if show.ended && steps.last().is_some_and(|&by| by < 0) => {
                 show.ended = false;
                 out.actions.push(show.state.prev(doc));
                 true
@@ -333,18 +332,28 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
             // Whole-line notches move through the visible slide order, as ←/→ do: hidden slides
             // are skipped, and a completed forward notch past the last visible slide reaches the
             // end screen (a backward one at the first slide does nothing).
-            Some((_, net)) if !show.ended && net != 0 => {
-                let forward = net > 0;
-                let steps = net.unsigned_abs() as usize;
-                match show.state.visible_step_clamped(doc, show.state.slide, forward, steps) {
-                    Some(target) if target != show.state.slide => out.actions.push(show.state.goto(doc, target)),
+            Some(steps) if !show.ended && !steps.is_empty() => {
+                // Apply each completed notch in the order it arrived, so a backward then forward
+                // notch at the first slide still moves forward instead of cancelling out.
+                let mut at = show.state.slide;
+                let mut stuck_forward = false;
+                for by in steps {
+                    let forward = by > 0;
+                    match show.state.visible_step_clamped(doc, at, forward, by.unsigned_abs() as usize) {
+                        Some(next) => {
+                            stuck_forward = forward && next == at;
+                            at = next;
+                        }
+                        None => stuck_forward = forward,
+                    }
+                }
+                if at != show.state.slide {
+                    out.actions.push(show.state.goto(doc, at));
+                } else if stuck_forward {
                     // A notch that cannot move further forward (the last visible slide) shows
                     // the end screen instead of being swallowed.
-                    _ if forward => {
-                        show.state.end();
-                        show.ended = true;
-                    }
-                    _ => {}
+                    show.state.end();
+                    show.ended = true;
                 }
                 true
             }

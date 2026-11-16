@@ -31,7 +31,7 @@ use ime::ime_output;
 use input::pointer;
 #[cfg(test)]
 use input::resize_cursor;
-pub(crate) use input::{page_flick, trackpad_scroll, trackpad_twist, wheel_slide_target};
+pub(crate) use input::{page_flick, trackpad_scroll, trackpad_twist, wheel_steps};
 use media::{gif_buttons, media_bar, media_frames};
 use overlays::overlays;
 #[cfg(test)]
@@ -91,7 +91,13 @@ fn wheel_navigation(app: &mut SlideApp, ui: &mut Ui, carry_id: egui::Id, doc_uid
     let (_, mut carry): (u64, f32) = ui.data_mut(|d| d.get_temp(carry_id).unwrap_or_default());
     let wheel_step = app.session.active().and_then(|d| {
         let current = d.selection.slide;
-        ui.input(|i| wheel_slide_target(&i.events, current, d.doc.slides.len(), &mut carry)).map(|(target, _)| (current, target))
+        let last = d.doc.slides.len().saturating_sub(1);
+        ui.input(|i| wheel_steps(&i.events, d.doc.slides.len(), &mut carry)).map(|steps| {
+            let target = steps.iter().fold(current.min(last), |at, &by| {
+                if by > 0 { at.saturating_add(by as usize).min(last) } else { at.saturating_sub(by.unsigned_abs() as usize) }
+            });
+            (current, target)
+        })
     });
     ui.data_mut(|d| d.insert_temp(carry_id, (doc_uid, carry)));
     if let Some((current, index)) = wheel_step {
