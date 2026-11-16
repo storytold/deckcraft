@@ -189,7 +189,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | SmartArt | Insert SmartArt (lists, processes, cycles, hierarchy) | P1 | P |
 | SmartArt | Text pane and layout switching | P2 | P |
 | Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
-| Pictures | SVG pictures (read through the shared `craft-svg` crate, which runs usvg: paths, shapes, groups, `use`, nested `svg`, text as glyph outlines, markers, gradient ramps, a PNG fallback saved beside the vector; pictures that need filters, masks, clip paths or patterns are composed by the shared bounded resvg draw at display size) | P1 | P |
+| Pictures | SVG pictures (read through the shared `craft-svg` crate, which runs usvg: paths, shapes, groups, `use`, nested `svg`, text as glyph outlines, markers, gradient ramps, a PNG fallback saved beside the vector; clip paths and pattern fills stay vector, pictures that need filters or masks are composed by the shared bounded resvg draw at display size) | P1 | P |
 | Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
 | Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
 | Pictures | Artistic effects | P2 | P |

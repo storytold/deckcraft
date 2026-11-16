@@ -32,6 +32,8 @@ const MAX_SEGMENTS_TOTAL: usize = 2_000_000;
 const DEPTH: usize = 24;
 /// Largest coordinate taken from a shape; a bigger one would only tessellate absurdly.
 const MAX_COORD: f64 = 1e5;
+/// Most cells one pattern may cover; a finer repeat is left to the shared rasterizer.
+const MAX_PATTERN_CELLS: usize = 4096;
 
 /// An SVG document as the renderer draws it.
 #[derive(Clone, Debug, Default)]
@@ -46,19 +48,21 @@ pub struct Svg {
     pub items: Vec<Item>,
 }
 
-/// The features a picture uses that this renderer does not draw.
+/// The features a picture uses that the vector mapping does not draw, so a caller can fall back to
+/// the shared rasterizer for the whole picture. Clip paths and plain patterns are drawn here and
+/// are not listed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Skipped {
     pub filters: bool,
     pub masks: bool,
-    pub clip_paths: bool,
+    /// A pattern this mapping could not turn into tiles (nested, or too many cells).
     pub patterns: bool,
     pub images: bool,
 }
 
 impl Skipped {
     pub fn any(&self) -> bool {
-        self.filters || self.masks || self.clip_paths || self.patterns || self.images
+        self.filters || self.masks || self.patterns || self.images
     }
 }
 
@@ -69,6 +73,15 @@ pub struct Item {
     pub even_odd: bool,
     pub fill: Option<Paint>,
     pub stroke: Option<(Paint, kurbo::Stroke)>,
+    /// Clip paths the shape is drawn inside, in user units; they intersect.
+    pub clips: Vec<Clip>,
+}
+
+/// One clip path: geometry the picture is clipped to.
+#[derive(Clone, Debug)]
+pub struct Clip {
+    pub path: BezPath,
+    pub even_odd: bool,
 }
 
 /// What a fill or a stroke paints.
@@ -209,7 +222,7 @@ pub fn parse(bytes: &[u8]) -> Option<Svg> {
     if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 && w <= MAX_COORD * 100.0 && h <= MAX_COORD * 100.0) {
         return None;
     }
-    let mut build = Build { items: Vec::new(), segments: 0, skipped: Skipped::default() };
+    let mut build = Build { items: Vec::new(), segments: 0, skipped: Skipped::default(), clips: Vec::new(), pattern_depth: 0 };
     build.group(parsed.root(), 1.0);
     Some(Svg { size: (w, h), skipped: build.skipped, items: build.items })
 }
@@ -301,13 +314,14 @@ struct Build {
     /// Path elements kept, so a document cannot pile up behind [`MAX_ITEMS`].
     segments: usize,
     skipped: Skipped,
+    /// Clip paths in force, in user units.
+    clips: Vec<Clip>,
+    /// How deep inside a pattern tile the walk is; a pattern within a pattern is not tiled.
+    pattern_depth: u32,
 }
 
 impl Build {
     fn group(&mut self, group: &usvg::Group, parent_opacity: f64) {
-        if group.clip_path().is_some() {
-            self.skipped.clip_paths = true;
-        }
         if group.mask().is_some() {
             self.skipped.masks = true;
         }
@@ -315,6 +329,10 @@ impl Build {
             self.skipped.filters = true;
         }
         let opacity = parent_opacity * f64::from(group.opacity().get());
+        let saved = self.clips.len();
+        if let Some(clip) = group.clip_path() {
+            self.push_clip(clip);
+        }
         for node in group.children() {
             match node {
                 usvg::Node::Group(g) => self.group(g, opacity),
@@ -323,6 +341,40 @@ impl Build {
                 usvg::Node::Path(p) => self.path(p, opacity),
                 usvg::Node::Image(_) => self.skipped.images = true,
             }
+        }
+        self.clips.truncate(saved);
+    }
+
+    /// Add a clip path, with the clip it nests inside, to the clips in force.
+    fn push_clip(&mut self, clip: &usvg::ClipPath) {
+        if let Some(inner) = clip.clip_path() {
+            self.push_clip(inner);
+        }
+        for node in clip.root().children() {
+            self.clip_geometry(node);
+        }
+    }
+
+    fn clip_geometry(&mut self, node: &usvg::Node) {
+        match node {
+            usvg::Node::Group(g) => {
+                for child in g.children() {
+                    self.clip_geometry(child);
+                }
+            }
+            usvg::Node::Path(p) => {
+                if let Some(mut path) = to_bez(p.data()) {
+                    path.apply_affine(affine(p.abs_transform()));
+                    let even_odd = p.fill().is_some_and(|f| f.rule() == usvg::FillRule::EvenOdd);
+                    self.clips.push(Clip { path, even_odd });
+                }
+            }
+            usvg::Node::Text(t) => {
+                for child in t.flattened().children() {
+                    self.clip_geometry(child);
+                }
+            }
+            usvg::Node::Image(_) => {}
         }
     }
 
@@ -345,21 +397,139 @@ impl Build {
         // The pen is scaled with the shape; a non-uniform transform cannot scale it evenly, so the
         // mean of both axes stands in.
         let scale = m.determinant().abs().sqrt();
-        let fill = path.fill().map(|f| paint(f.paint(), opacity * f64::from(f.opacity().get())));
-        let stroke = path.stroke().filter(|s| s.width().get() > 0.0).map(|s| {
-            let color = paint(s.paint(), opacity * f64::from(s.opacity().get()));
-            let mut pen = kurbo::Stroke::new(f64::from(s.width().get()) * scale).with_caps(cap(s.linecap())).with_join(join(s.linejoin()));
-            if let Some(dash) = s.dasharray().filter(|d| d.len() >= 2 && d.iter().all(|v| *v > 0.0)) {
-                let pattern: Vec<f64> = dash.iter().map(|v| f64::from(*v) * scale).collect();
-                pen = pen.with_dashes(f64::from(s.dashoffset()), pattern);
+        let even_odd = path.fill().is_some_and(|f| f.rule() == usvg::FillRule::EvenOdd);
+        let fill = match path.fill().map(|f| f.paint()) {
+            Some(usvg::Paint::Pattern(p)) => {
+                let k = opacity * path.fill().map(|f| f64::from(f.opacity().get())).unwrap_or(1.0);
+                if self.tile_pattern(p, &bez, even_odd, k) {
+                    // The tiles are the fill; only the outline is left to draw.
+                    self.stroke(path, opacity, scale, &bez, segments);
+                    return;
+                }
+                // A pattern that cannot be tiled here is reported, so the picture can be composed
+                // by the shared rasterizer instead.
+                self.skipped.patterns = true;
+                Some(Paint::Solid(Rgba::BLACK.with_alpha(mul_alpha(255, k))))
             }
-            (color, pen)
-        });
+            Some(other) => Some(paint(other, opacity * path.fill().map(|f| f64::from(f.opacity().get())).unwrap_or(1.0))),
+            None => None,
+        };
+        let stroke = self.pen(path, opacity, scale);
         if fill.is_none() && stroke.is_none() {
             return;
         }
         self.segments += segments;
-        self.items.push(Item { path: bez, even_odd: path.fill().is_some_and(|f| f.rule() == usvg::FillRule::EvenOdd), fill, stroke });
+        self.items.push(Item { path: bez, even_odd, fill, stroke, clips: self.clips.clone() });
+    }
+
+    /// Emit `path`'s outline, if it has one, over a fill that was drawn some other way (a pattern).
+    fn stroke(&mut self, path: &usvg::Path, opacity: f64, scale: f64, bez: &BezPath, segments: usize) {
+        let Some(stroke) = self.pen(path, opacity, scale) else { return };
+        if self.items.len() >= MAX_ITEMS {
+            return;
+        }
+        self.segments += segments;
+        self.items.push(Item { path: bez.clone(), even_odd: false, fill: None, stroke: Some(stroke), clips: self.clips.clone() });
+    }
+
+    fn pen(&self, path: &usvg::Path, opacity: f64, scale: f64) -> Option<(Paint, kurbo::Stroke)> {
+        let s = path.stroke().filter(|s| s.width().get() > 0.0)?;
+        let color = match s.paint() {
+            usvg::Paint::Pattern(_) => {
+                // A patterned outline is rare enough to draw in its average colour rather than to
+                // tile a pen.
+                Paint::Solid(Rgba::BLACK.with_alpha(mul_alpha(255, opacity * f64::from(s.opacity().get()))))
+            }
+            other => paint(other, opacity * f64::from(s.opacity().get())),
+        };
+        let mut pen = kurbo::Stroke::new(f64::from(s.width().get()) * scale).with_caps(cap(s.linecap())).with_join(join(s.linejoin()));
+        if let Some(dash) = s.dasharray().filter(|d| d.len() >= 2 && d.iter().all(|v| *v > 0.0)) {
+            let pattern: Vec<f64> = dash.iter().map(|v| f64::from(*v) * scale).collect();
+            pen = pen.with_dashes(f64::from(s.dashoffset()), pattern);
+        }
+        Some((color, pen))
+    }
+
+    /// Draw a pattern fill as geometry: the tile's own items, repeated over the shape and clipped
+    /// to it. `false` when the pattern is nested or would need too many cells, which leaves the
+    /// caller to report it (and the rasterizer draws the picture whole).
+    fn tile_pattern(&mut self, pattern: &usvg::Pattern, shape: &BezPath, even_odd: bool, opacity: f64) -> bool {
+        if self.pattern_depth > 0 {
+            return false;
+        }
+        let to_user = affine(pattern.transform());
+        let from_user = to_user.inverse();
+        let rect = pattern.rect();
+        let (rx, ry, rw, rh) = (f64::from(rect.x()), f64::from(rect.y()), f64::from(rect.width()), f64::from(rect.height()));
+        if !(rw > 1e-9 && rh > 1e-9) {
+            return false;
+        }
+        // The cells that cover the shape, in the pattern's own space.
+        let bbox = shape.bounding_box();
+        let corners = [bbox.origin(), kurbo::Point::new(bbox.x1, bbox.y0), kurbo::Point::new(bbox.x0, bbox.y1), kurbo::Point::new(bbox.x1, bbox.y1)];
+        let mapped: Vec<kurbo::Point> = corners.iter().map(|p| from_user * *p).collect();
+        let rect_of = |a: kurbo::Point, b: kurbo::Point| kurbo::Rect::new(a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y));
+        let bb = rect_of(mapped[0], mapped[2]).union(rect_of(mapped[1], mapped[3]));
+        let bbp = bbox;
+        let (x0, y0) = (f64::min(bb.x0, bbp.x0), f64::min(bb.y0, bbp.y0));
+        let (x1, y1) = (f64::max(bb.x1, bbp.x1), f64::max(bb.y1, bbp.y1));
+        if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
+            return false;
+        }
+        let i0 = ((x0 - rx) / rw).floor() as i64;
+        let j0 = ((y0 - ry) / rh).floor() as i64;
+        let i1 = ((x1 - rx) / rw).ceil() as i64;
+        let j1 = ((y1 - ry) / rh).ceil() as i64;
+        let cells = (i1 - i0).max(0).saturating_mul((j1 - j0).max(0)) as usize;
+        if cells == 0 || cells > MAX_PATTERN_CELLS {
+            return false;
+        }
+        // The tile's contents, mapped once in the pattern's own space.
+        let items = {
+            let saved_items = std::mem::take(&mut self.items);
+            let saved_clips = std::mem::take(&mut self.clips);
+            let saved_segments = self.segments;
+            self.pattern_depth += 1;
+            for node in pattern.root().children() {
+                match node {
+                    usvg::Node::Group(g) => self.group(g, 1.0),
+                    usvg::Node::Path(p) => self.path(p, 1.0),
+                    usvg::Node::Text(t) => self.group(t.flattened(), 1.0),
+                    usvg::Node::Image(_) => self.skipped.images = true,
+                }
+            }
+            self.pattern_depth -= 1;
+            let items = std::mem::replace(&mut self.items, saved_items);
+            self.clips = saved_clips;
+            self.segments = saved_segments;
+            items
+        };
+        if items.is_empty() {
+            return false;
+        }
+        if items.len().saturating_mul(cells) > MAX_ITEMS {
+            return false;
+        }
+        let mut outer = self.clips.clone();
+        outer.push(Clip { path: shape.clone(), even_odd });
+        for i in i0..i1 {
+            for j in j0..j1 {
+                let offset = to_user * kurbo::Point::new(i as f64 * rw, j as f64 * rh) - to_user * kurbo::Point::ORIGIN;
+                let offset = kurbo::Vec2::new(offset.x, offset.y);
+                for item in &items {
+                    if self.items.len() >= MAX_ITEMS {
+                        return true;
+                    }
+                    let mut clone = item.clone();
+                    clone.path.apply_affine(Affine::translate(offset));
+                    clone.fill = clone.fill.map(|p| p.faded(opacity));
+                    clone.stroke = clone.stroke.map(|(p, pen)| (p.faded(opacity), pen));
+                    clone.clips = outer.clone();
+                    self.items.push(clone);
+                }
+            }
+        }
+        true
     }
 }
 
@@ -558,11 +728,25 @@ mod tests {
     }
 
     #[test]
-    fn features_nothing_draws_are_reported() {
-        let s = svg("<defs><clipPath id='c'><rect width='1' height='1'/></clipPath></defs><g clip-path='url(#c)'><rect width='4' height='4'/></g>");
-        assert!(s.skipped.clip_paths);
+    fn a_clip_path_travels_with_the_shapes_it_clips() {
+        let s = svg("<defs><clipPath id='c'><rect width='2' height='4'/></clipPath></defs><g clip-path='url(#c)'><rect width='4' height='4'/></g>");
+        assert!(!s.skipped.any(), "clips are geometry the renderer applies");
+        assert_eq!(s.items.len(), 1);
+        assert_eq!(s.items[0].clips.len(), 1);
+        assert!((s.items[0].clips[0].path.bounding_box().width() - 2.0).abs() < 1e-6);
         let s = svg("<rect width='4' height='4' fill='url(#none)'/>");
         assert!(!s.skipped.any(), "a missing paint server is not a pattern");
+    }
+
+    #[test]
+    fn a_pattern_fill_becomes_tiles_clipped_to_the_shape() {
+        // A 2 by 2 dotted tile over a 4 by 4 square: four cells, each clipped to the square.
+        let s = svg(
+            "<defs><pattern id='p' width='2' height='2' patternUnits='userSpaceOnUse'><circle cx='1' cy='1' r='0.5' fill='#000000'/></pattern></defs><rect width='4' height='4' fill='url(#p)'/>",
+        );
+        assert!(!s.skipped.any(), "a plain pattern is tiled here");
+        assert_eq!(s.items.len(), 4, "one tile per cell");
+        assert!(s.items.iter().all(|i| i.fill.is_some() && i.clips.len() == 1), "each tile is clipped to the square");
     }
 
     #[test]

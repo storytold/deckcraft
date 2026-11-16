@@ -106,15 +106,17 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Evidence:** the shared `craft-svg` reader parses SVG (usvg behind its bounded preflight), and
 `crates/svg` maps the tree onto DeckCraft geometry: paths, basic shapes, markers, gradients with
 their stops and space, and text as outline glyphs laid out with the fonts this app ships.
-`crates/render/src/svg.rs` draws the result as vectors. SVG's `filter`, `mask`, `clipPath`,
-`pattern` and embedded `image` need SVG's own compositing, which the mapping does not model; a
-picture that uses one reports it in `Svg::skipped` and is drawn whole by `craft_svg::tree::draw`
-(the shared, memory-checked resvg path) at the size on screen instead, and the vector mapping
-stands in only if that draw is refused by its budget.
-- **Impact:** a picture that needs compositing (glow, shadow, blur, a clip, a mask, a pattern) is a
-bitmap at the size on screen, so it is as sharp as the display and not resolution-independent like
-the vector pictures around it. An extreme filter region or a very large embedded image can exceed
-the draw budget, and that picture then falls back to the mapping, which draws it without them. A group's opacity
+`crates/render/src/svg.rs` draws the result as vectors, including `clipPath` (as clip layers the
+shapes are drawn inside) and `pattern` (as the tile's own geometry, repeated over the shape and
+clipped to it). SVG's `filter` and `mask` need compositing the mapping does not model; a picture
+that uses one reports it in `Svg::skipped` and is drawn whole by `craft_svg::tree::draw` (the
+shared, memory-checked resvg path) at the size on screen instead, and the vector mapping stands in
+only if that draw is refused by its budget. An embedded `image` is reported the same way, and so is
+a pattern that nests another or needs more than 4096 cells.
+- **Impact:** a picture that needs a filter or a mask is a bitmap at the size on screen, so it is as
+sharp as the display and not resolution-independent like the vector pictures around it. An extreme
+filter region, a very large embedded image or a very dense pattern can exceed what the mapping or
+the draw budget handles, and that picture then loses those effects. A group's opacity
 applies to each shape in it rather than to the composited group, and a `url(#…)` paint that resolves
 to nothing is drawn black where a browser draws nothing.
 - **Estimate:** 10–16 h (a bounded filter graph: `feGaussianBlur`, `feOffset`, `feFlood`,
@@ -378,6 +380,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | SVG clip paths are drawn as clip layers and pattern fills as repeated tile geometry clipped to the shape, so both stay vector; the shared rasterizer now covers only filters, masks, embedded images and patterns too dense to tile |
 | 2026-11-16 | minor | SVG pictures that need filters, masks, clip paths, patterns or embedded images are composed by the shared `craft_svg::tree::draw` within its memory budget, so nothing is left undrawn; those pictures are bitmaps at display size, everything else stays vector |
 | 2026-11-16 | minor | SVG pictures read through the shared `craft-svg` crate (usvg behind its bounded preflight); the app keeps only the mapping onto its geometry, paints and text outlines. A vector-only picture still shows when it would draw incomplete |
 | 2026-11-14 | minor | SVG pictures are saved with a PNG fallback in `a:blip/@r:embed` and the vector in `asvg:svgBlip`, so readers without SVG support draw them; the export shortfall is closed and the ranking row keeps only the filters, masks and clip paths |

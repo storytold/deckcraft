@@ -42,6 +42,12 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
         if !(bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite()) || bb.width() > 1e6 || bb.height() > 1e6 {
             continue;
         }
+        // A clipped shape is drawn inside its clip paths, intersected.
+        for clip in &it.clips {
+            let c: BezPath = m * clip.path.clone();
+            ctx.set_fill_rule(if clip.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+            ctx.push_clip_layer(&c);
+        }
         if let Some(f) = &it.fill {
             set_paint(&mut ctx, f, m);
             ctx.set_fill_rule(if it.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
@@ -54,8 +60,11 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
             ctx.stroke_path(&path);
             ctx.reset_paint_transform();
         }
+        for _ in 0..it.clips.len() {
+            ctx.pop_layer();
+        }
+        ctx.set_fill_rule(peniko::Fill::NonZero);
     }
-    ctx.set_fill_rule(peniko::Fill::NonZero);
     ctx.pop_layer();
     ctx.flush();
     let mut px = vec![0u8; w as usize * h as usize * 4];
@@ -218,9 +227,9 @@ mod tests {
     }
 
     #[test]
-    fn a_clip_path_clips_through_the_shared_rasterizer() {
-        // The vector mapping does not apply clip paths; the rasterizer must, or the red would
-        // cover the whole picture.
+    fn a_clip_path_clips_the_vector_shapes() {
+        // Clip paths are geometry the mapping carries, so the red stops at the clip edge without
+        // the picture being rasterized.
         let img = rasterize(
             b"<svg width='100' height='20' viewBox='0 0 100 20'><defs><clipPath id='c'><rect width='50' height='20'/></clipPath></defs><g clip-path='url(#c)'><rect width='100' height='20' fill='#ff0000'/></g></svg>",
             100,
@@ -228,6 +237,19 @@ mod tests {
         .expect("draws");
         assert_eq!(img.get_pixel(10, 10)[0], 255, "inside the clip");
         assert_eq!(img.get_pixel(90, 10)[3], 0, "outside the clip");
+    }
+
+    #[test]
+    fn a_pattern_fill_tiles_the_vector_shape() {
+        let img = rasterize(
+            b"<svg width='40' height='40' viewBox='0 0 40 40'><defs><pattern id='p' width='10' height='10' patternUnits='userSpaceOnUse'><circle cx='5' cy='5' r='3' fill='#000000'/></pattern></defs><rect width='40' height='40' fill='url(#p)'/></svg>",
+            40,
+        )
+        .expect("draws");
+        // A dot sits at the centre of each 10 px cell, and the gaps between them stay clear.
+        assert!(img.get_pixel(5, 5)[3] > 200, "the first dot paints");
+        assert_eq!(img.get_pixel(5 + 10, 5)[3], img.get_pixel(5, 5)[3], "cells repeat");
+        assert_eq!(img.get_pixel(10, 10)[3], 0, "the gap stays clear");
     }
 
     #[test]
