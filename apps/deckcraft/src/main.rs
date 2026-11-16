@@ -20,7 +20,6 @@ mod audio;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod display;
-#[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
@@ -276,9 +275,11 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
-    // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC (see graphics.rs).
+    // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC, and leave
+    // out the indirect-call validation pipelines Metal fails to compile on Intel Macs (see graphics.rs).
     #[cfg(target_os = "windows")]
     graphics::configure(&mut options, eframe::wgpu::Backends::from_env(), eframe::wgpu::Dx12Compiler::from_env());
+    graphics::configure_indirect_validation(&mut options);
     // Registered before the event loop starts, so it catches the Finder event that launched us as
     // well as later ones. Lives until the event loop returns; the app creator only borrows it.
     #[cfg(target_os = "macos")]
