@@ -52,6 +52,12 @@ fn behaviour_easing_is_read() {
 }
 
 #[test]
+fn behaviour_bounce_end_is_read() {
+    let a = roundtrip(grow_shrink(), |xml| patch_behaviour_ctn(xml, "<p:animScale>", "bounceEnd=\"50000\" "));
+    assert_eq!(a.bounce_end, 0.5);
+}
+
+#[test]
 fn no_easing_anywhere_stays_zero() {
     let a = roundtrip(grow_shrink(), |xml| xml);
     assert_eq!(a.smooth_start, 0.0);

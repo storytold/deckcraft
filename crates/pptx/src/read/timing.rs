@@ -205,12 +205,36 @@ fn behaviour_auto_reverses(c: &El) -> bool {
     !behaviours.is_empty() && behaviours.iter().all(|b| b.child("cTn").and_then(|t| t.bool("autoRev")).unwrap_or(false))
 }
 
-/// First finite `attr` on a behaviour's own `p:cTn` (`p:cBhvr/p:cTn`, document order, bounded).
+/// First finite `attr` on a behaviour's own `p:cTn` (`p:cBhvr/p:cTn`, document order).
 /// PowerPoint writes easing (`accel`/`decel`/`bounceEnd`) there instead of on the effect node.
+///
+/// The walk is bounded during traversal: it stops at the first finite value and inspects no more
+/// than 1,024 behaviours, so an effect with a huge behaviour list costs no more than that (and
+/// never allocates a list of every descendant).
 fn behaviour_f64(c: &El, attr: &str) -> Option<f64> {
-    let mut behaviours = vec![];
-    c.find_all("cBhvr", &mut behaviours);
-    behaviours.iter().take(1024).filter_map(|b| b.child("cTn")?.f64(attr)).next()
+    const MAX_BEHAVIOURS: usize = 1024;
+    fn rec(e: &El, attr: &str, depth: usize, seen: &mut usize) -> Option<f64> {
+        if depth > crate::xml::MAX_DEPTH {
+            return None;
+        }
+        for child in e.elements() {
+            if child.is("cBhvr") {
+                if *seen >= MAX_BEHAVIOURS {
+                    return None;
+                }
+                *seen += 1;
+                if let Some(v) = child.child("cTn").and_then(|t| t.f64(attr)) {
+                    return Some(v);
+                }
+            }
+            if let Some(v) = rec(child, attr, depth + 1, seen) {
+                return Some(v);
+            }
+        }
+        None
+    }
+    let mut seen = 0;
+    rec(c, attr, 0, &mut seen)
 }
 
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
