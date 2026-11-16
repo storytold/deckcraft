@@ -68,6 +68,39 @@ names through `CRAFT_FONTS_DIR`, so the first `ui-egui` run failed
 that path and the suite passed. The head itself differs from the gated `d766e45b` by
 `docs/collab/STATUS.md` only.
 
+## The four unanswered review threads of #2012 (2026-11-16)
+
+Read at **2026-11-16T04:25Z** on head `6eca185a`: `gh api graphql` over
+`pullRequest(number:2012).reviewThreads(first:100)` printed 32 threads, 4 unresolved, and each of the
+four carried exactly one comment — CodeRabbit's, with no answer from `copoka`. Each body was checked
+against the **head's code** (`git show collab/pr15:<file>`), never against the diff line it names.
+Three of the four had already been fixed by `5b6fcfcd` (the first review-findings commit); two of them
+still left half of what the comment asks for, so those are completed by `56568f6c` on this branch.
+The 16 MiB reader cap the first comment names did not need a contract decision: the head had already
+derived the cap from the media channel's own budgets (`MAX_AV_BYTES`/`MAX_MODEL_BYTES`, 32 MiB), so
+`56568f6c` changes no limit — it only answers `413` at the same threshold instead of closing the
+socket.
+
+| comment_id | file:line | severity | verdict | answer points at |
+|---|---|---|---|---|
+| 4527398322 | `apps/deckcraft-collab-server/src/lib.rs` (thread line null; body in `read_request`) | Major | fixed in `56568f6c`: the reader cap is the widest media kind, so a 32 MiB audio, video or 3-D upload is not refused by a 16 MiB reader; an over-limit body keeps the head, is read no further and is answered `413`, not a closed socket | cap `lib.rs:390`, refusal `lib.rs:429`, `413` `lib.rs:541`; tests `lib.rs:1515` (20 MiB accepted) and `lib.rs:1535` (one byte above the limit, status read off the wire); reply `r4582038716` |
+| 4528267680 | `crates/collab/src/client.rs:510` | Minor | already covered: one resync on the wire at a time, and a gap signalled while one is flying is answered by that snapshot instead of a second request, so a later snapshot cannot drop an edit the server never applied | `client.rs:361` (`resync_wanted && !resync_in_flight`; `client.rs:379` holds submission), tests `client.rs:979` and `client.rs:1004`; reply `r4582038936` |
+| 4527398423 | `crates/pptx/src/read/shapes.rs:333` | Major | fixed in `56568f6c`: non-finite and unbounded members were already dropped; a view the engine's `model3d.camera` refuses whole — no distance, an `up` without length, an `up` along the view — is now dropped too, so a restore never carries a camera that command cannot produce | `shapes.rs:330`, `shapes.rs:344`; tests `shapes.rs:959` and `shapes.rs:969`; reply `r4582039147` |
+| 4527398370 | `crates/collab/src/transport.rs:138` | Minor | already covered: `Drop` sets `stop`, and while the worker is inside `tungstenite::connect` the handle is detached rather than joined, so a firewall that swallows packets cannot freeze the UI | `transport.rs:134`; reply `r4582039325` |
+
+One comment was posted per thread, from `copoka`, with `addPullRequestReviewThreadReply`; the threads
+were **left unresolved** — resolving them is a person's decision, as is pushing `56568f6c`. The branch
+carries that code commit on top of the docs commit `6991544a` and nothing was pushed: the PR head stays
+`6eca185a` and the fork still holds `6eca185a`.
+
+The gate on `56568f6c` is `.craft/logs/gate-deckcraft-2012-56568f6c.log`: `cargo xtask ci` printed
+`CI summary: all 8 steps passed (fmt, pdf-deps, clippy, test, doctest, assets, layers, wasm)` and the
+process ended `EXIT rc=0`, with `STEP … rc=0` for each of the eight appended to the log. Test counts at
+that head: engine 626 lib + 6 + 8, `ui-egui` 529 lib + 5 + 1, `collab` 308 + 2 + 8, `collab-proto` 43,
+`collab-server` 21 lib + 5 commit + 6 gates + 23 socket; 49 asset files attributed; the wasm check
+covered 16 crates. The build host's `deckcraft/craft-fonts` was in place, so the `ui-egui` suite ran
+whole this time.
+
 ### Earlier readings (history)
 
 **Reading at 2026-11-13T13:52Z** (history, not state). For #2012, `gh pr view 2012 --json
