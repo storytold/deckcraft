@@ -140,20 +140,48 @@ impl PhType {
     }
     /// The prompt shown in an empty placeholder in Normal view.
     pub fn prompt(self) -> &'static str {
-        match self {
-            PhType::Title | PhType::CtrTitle => "Click to add title",
-            PhType::SubTitle => "Click to add subtitle",
-            PhType::Body | PhType::Obj => "Click to add text",
-            PhType::Chart => "Click icon to add chart",
-            PhType::Table => "Click icon to add table",
-            PhType::Diagram => "Click icon to add SmartArt graphic",
-            PhType::Media => "Click icon to add media",
-            PhType::Picture | PhType::ClipArt => "Click icon to add picture",
-            PhType::Date => "Date",
-            PhType::Footer => "Footer",
-            PhType::SlideNum => "‹#›",
-            PhType::Header => "Header",
-            PhType::SlideImage => "",
+        let is_ru = std::env::var("DECKCRAFT_LANGUAGE").map(|l| l.eq_ignore_ascii_case("ru")).unwrap_or_else(|_| {
+            if let Ok(home) = std::env::var("HOME") {
+                let p = std::path::Path::new(&home).join(".config/deckcraft/ui.json");
+                if let Ok(data) = std::fs::read_to_string(p) {
+                    if data.contains("\"language\": \"ru\"") { return true; }
+                    if data.contains("\"language\": \"en\"") || data.contains("\"language\": \"de\"") { return false; }
+                }
+            }
+            std::env::var("LANG").map(|l| l.starts_with("ru")).unwrap_or(false)
+        });
+        if is_ru {
+            match self {
+                PhType::Title | PhType::CtrTitle => "Заголовок слайда",
+                PhType::SubTitle => "Подзаголовок слайда",
+                PhType::Body | PhType::Obj => "Текст слайда",
+                PhType::Chart => "Щелкните значок, чтобы добавить диаграмму",
+                PhType::Table => "Щелкните значок, чтобы добавить таблицу",
+                PhType::Diagram => "Щелкните значок, чтобы добавить рисунок SmartArt",
+                PhType::Media => "Щелкните значок, чтобы добавить медиаклип",
+                PhType::Picture | PhType::ClipArt => "Щелкните значок, чтобы добавить рисунок",
+                PhType::Date => "Дата",
+                PhType::Footer => "Нижний колонтитул",
+                PhType::SlideNum => "‹#›",
+                PhType::Header => "Верхний колонтитул",
+                PhType::SlideImage => "",
+            }
+        } else {
+            match self {
+                PhType::Title | PhType::CtrTitle => "Click to add title",
+                PhType::SubTitle => "Click to add subtitle",
+                PhType::Body | PhType::Obj => "Click to add text",
+                PhType::Chart => "Click icon to add chart",
+                PhType::Table => "Click icon to add table",
+                PhType::Diagram => "Click icon to add SmartArt graphic",
+                PhType::Media => "Click icon to add media",
+                PhType::Picture | PhType::ClipArt => "Click icon to add picture",
+                PhType::Date => "Date",
+                PhType::Footer => "Footer",
+                PhType::SlideNum => "‹#›",
+                PhType::Header => "Header",
+                PhType::SlideImage => "",
+            }
         }
     }
     /// Footer-row placeholders are not shown on slides unless the deck turns them on.
