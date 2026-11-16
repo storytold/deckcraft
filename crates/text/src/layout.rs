@@ -388,7 +388,7 @@ fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64, avail: f64
         let a = if shy_end && k + 1 == n {
             p.faces.get(c.face).zip(p.styles.get(c.style)).map(|(f, st)| measure_str(f, st.size, "-").0).unwrap_or(0.0)
         } else if c.ch == '\t' {
-            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), avail)
+            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), x0 + avail)
         } else {
             c.adv
         };

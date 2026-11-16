@@ -1428,6 +1428,43 @@ fn a_right_tab_stop_past_the_margin_ends_the_text_at_the_margin() {
 }
 
 #[test]
+fn an_indented_paragraph_clamps_a_tab_stop_to_its_absolute_right_edge() {
+    // #1663: the stop and the edge are measured from the text area's left edge, so an indented
+    // first line does not pull the edge in by its margin. A stop inside it keeps its position;
+    // one past it ends the text at the margin.
+    let (p, mut sh) = setup("x\tCorrie Ten Boom", 600.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(100.0);
+    pp.indent = Some(0.0);
+    pp.default_tab = Some(72.0);
+    pp.tabs = Some(vec![deckcraft_model::text::TabStop { pos: 550.0, align: "r".to_string() }]);
+    let l = lay(&p, &sh, 600.0, 300.0);
+    assert_eq!(l.lines.len(), 1, "{:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
+    assert!((l.lines[0].extent.1 - l.inner.x0 - 550.0).abs() < 0.01, "inside stop at {:?}", l.lines[0].extent);
+
+    let (p, mut sh) = setup("x\tCorrie Ten Boom", 600.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    for r in &mut para.runs {
+        r.props.size = Some(18.0);
+    }
+    let pp = &mut para.props;
+    pp.bullet = Some(Bullet::None);
+    pp.margin_left = Some(100.0);
+    pp.indent = Some(0.0);
+    pp.default_tab = Some(72.0);
+    pp.tabs = Some(vec![deckcraft_model::text::TabStop { pos: 700.0, align: "r".to_string() }]);
+    let l = lay(&p, &sh, 600.0, 300.0);
+    assert_eq!(l.lines.len(), 1, "{:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
+    let right = l.inner.x0 + l.inner.width();
+    assert!((l.lines[0].extent.1 - right).abs() < 0.01, "ends at {:?}, margin {right}", l.lines[0].extent);
+}
+
+#[test]
 fn many_tabs_over_many_stops_lay_out_by_position() {
     // 20,000 stops given out of order, and 2,000 tabs: each tab finds the next stop by position.
     let mut stops: Vec<(f64, &str)> = (1..=20_000).rev().map(|k| (k as f64 * 0.05 + 30.0, "l")).collect();

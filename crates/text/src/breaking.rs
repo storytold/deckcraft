@@ -179,7 +179,7 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 break;
             }
             let adv = if c == '\t' {
-                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i), avail)
+                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i), x0 + avail)
             } else {
                 p.cells.get(i).map(|c| c.adv).unwrap_or(0.0)
             };
@@ -306,13 +306,14 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
 ///
-/// `avail` is the line's width from the start edge: a stop set past the right edge acts as one at
-/// the edge, as PowerPoint treats it (a right-aligned stop there ends the text at the margin).
-pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), avail: f64) -> f64 {
+/// `right` is the line's right edge in the same coordinate space as `x` (the text area's left
+/// edge plus the line's start offset and width): a stop set past that edge acts as one at the
+/// edge, as PowerPoint treats it (a right-aligned stop there ends the text at the margin).
+pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), right: f64) -> f64 {
     // `stops` is in position order (`tabs_of`): the next stop is the first past x.
     // A NaN `x` (a NaN spacing upstream) skips the lookup and takes the finite default-stop path.
     if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)).filter(|_| !x.is_nan()) {
-        let pos = if avail.is_finite() && avail > 0.0 { s.pos.min(avail) } else { s.pos };
+        let pos = if right.is_finite() && right > 0.0 { s.pos.min(right) } else { s.pos };
         let to = (pos - x).max(0.0);
         return match s.align {
             TabAlign::Left => to,
@@ -344,5 +345,15 @@ mod tab_tests {
         assert_eq!(tab_advance(0.0, &stops, 72.0, (100.0, 100.0), 600.0), 500.0);
         // A stop inside the line keeps its own position.
         assert_eq!(tab_advance(0.0, &stops, 72.0, (100.0, 100.0), 800.0), 600.0);
+    }
+
+    #[test]
+    fn an_offset_line_clamps_to_its_absolute_right_edge() {
+        // The stop and the edge are absolute coordinates: a 100 pt start offset does not move the
+        // edge in to 500 pt, so an inside stop at 550 stays there and one past 600 ends at 600.
+        let inside = [Tab { pos: 550.0, align: TabAlign::Right }];
+        assert_eq!(tab_advance(100.0, &inside, 72.0, (100.0, 100.0), 600.0), 350.0);
+        let past = [Tab { pos: 700.0, align: TabAlign::Right }];
+        assert_eq!(tab_advance(100.0, &past, 72.0, (100.0, 100.0), 600.0), 400.0);
     }
 }
