@@ -10,8 +10,8 @@
 /// Cyrillic, CJK…) give `false`. Neutral, weak, and whitespace characters are skipped.
 pub fn first_strong_is_rtl(text: &str) -> bool {
     for c in text.chars() {
-        if c == '\u{200F}' {
-            // Right-to-Left Mark (RLM)
+        if c == '\u{200F}' || c == '\u{061C}' {
+            // RLM and ALM are strong RTL controls, although neither is alphabetic.
             return true;
         }
         if c == '\u{200E}' {
@@ -76,6 +76,10 @@ mod tests {
     #[test]
     fn honours_directional_marks() {
         assert!(first_strong_is_rtl("\u{200F}Hello"));
+        assert!(first_strong_is_rtl("\u{061C}Hello"));
+        assert!(first_strong_is_rtl("\u{061C}"));
+        assert!(!first_strong_is_rtl("Hello\u{061C}"));
+        assert!(!first_strong_is_rtl("\u{200E}\u{061C}"));
         assert!(!first_strong_is_rtl("\u{200E}مرحبا"));
     }
 }
