@@ -2,6 +2,8 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (synced grouped-editing fixes with upstream; retained both progress histories; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-13 · **Change:** minor (collapsed-parent move and resize gestures preserve geometry; synced with current upstream; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -157,6 +159,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-16 | Synced grouped-editing fixes with upstream, retaining shared format helpers, display names, slide-show replay behavior and both documentation histories (#1095) |
+| 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-13 | Grouped box gestures: collapsed parents reject resize and whole-selection movement before invalid geometry or Alt-drag copies; nested/reflected, save/load and tiny-invertible regressions (#1095) |
 | 2026-11-13 | Synced grouped-editing fixes with upstream, retaining shared codecs/metafile rendering, text and group-operation fixes, and both documentation histories (#1095) |
 | 2026-11-11 | Synced grouped-editing fixes with upstream, retaining the shared media codecs/demuxers, import/render hardening and both documentation histories (#1095) |
@@ -167,7 +171,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-06 | Grouped shape adjustments: skip drags when the parent transform cannot be inverted, preserving callout geometry in native saves; regression coverage includes collapsed and tiny invertible groups (#1095) |
 | 2026-11-05 | Grouped editing: sync #1095 with upstream, retaining text, sibling-click and line-end regression coverage; parity scores unchanged |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
-| 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
+| 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
@@ -356,6 +360,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | trivial | Merged current upstream into #1095; retained grouped-editing fixes and upstream behavior. Parity scores unchanged |
+| 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-13 | minor | Move and resize guards reject singular parent mappings before geometry or duplication; small invertible parents remain supported (#1095) |
 | 2026-11-13 | trivial | Merged current upstream into #1095; retained grouped-editing fixes and upstream behavior. Parity scores unchanged |
 | 2026-11-11 | trivial | Merged current upstream into #1095; retained grouped-editing fixes, upstream behavior and both progress histories. Parity scores unchanged |

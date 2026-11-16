@@ -4,13 +4,19 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/deckcraft", "apps/deckcraft-cli"]
 
 [workspace.package]
-version = "0.18.1"
+version = "0.19.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
 repository = "https://github.com/storytold/deckcraft"
 
 [workspace.dependencies]
+# OPC part-name primitives; relationship admission stays app-local.
+craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
+# Compound File Binary directory reads (password-protected deck detection).
+craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
+# XML writer primitives; parser admission and OOXML policy stay app-local.
+craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
 # internal
 deckcraft-geom = { path = "crates/geom" }
 deckcraft-color = { path = "crates/color" }
@@ -48,7 +54,12 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
+# Base64 for command payloads (engine); base64_compat keeps the legacy lenient decoder. Same rev as craft-deckcraft-format.
+craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "254e9a409b410dc93c0e06ff66cd1e767893ac32", version = "=0.1.0" }
 # craft-media, craft-audio and craft-video share types and stay on one rev.
+# The .deckcraft package layer (identity, manifest, member names, bounded reads); crates/format maps the presentation onto it.
+craft-deckcraft-format = { git = "https://github.com/storytold/craft-libs", rev = "254e9a409b410dc93c0e06ff66cd1e767893ac32", version = "=0.1.0" }
+craft-rtf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false }
 craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
 # H.264, HEVC, VP9 and AV1 decoders.
