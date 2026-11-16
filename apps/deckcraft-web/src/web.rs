@@ -212,9 +212,14 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
                 log::error!("download of {name} failed: {e}");
             }
         })),
+        system_locale: browser_locale(),
         inbox: Some(inbox),
         ..Default::default()
     }
+}
+
+fn browser_locale() -> Option<String> {
+    web_sys::window().and_then(|w| w.navigator().language())
 }
 
 fn push_inbox(inbox: &Inbox, event: InboxEvent) {

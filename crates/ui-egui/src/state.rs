@@ -94,6 +94,7 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    pub interface_language: crate::i18n::Language,
 }
 
 impl Default for UiState {
@@ -127,6 +128,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            interface_language: crate::i18n::Language::default(),
         }
     }
 }
