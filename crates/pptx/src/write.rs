@@ -794,11 +794,11 @@ fn master_xml(x: &mut Exp, o: &mut Out, m: &Master, layouts: &[(u64, String)]) -
     }
     w.close("p:sldLayoutIdLst");
     w.open0("p:txStyles");
-    let (dt, db, dother) = defaults::master_styles();
-    let pick = |s: &deckcraft_model::text::ListStyle, d: deckcraft_model::text::ListStyle| if s.is_empty() { d } else { s.clone() };
-    dml::list_style(&mut w, x, o, "p:titleStyle", &pick(&m.title_style, dt));
-    dml::list_style(&mut w, x, o, "p:bodyStyle", &pick(&m.body_style, db));
-    dml::list_style(&mut w, x, o, "p:otherStyle", &pick(&m.other_style, dother));
+    // An imported empty body style has no bullets; saving must not author defaults into it.
+    // New decks already carry their populated master styles in the model.
+    dml::list_style(&mut w, x, o, "p:titleStyle", &m.title_style);
+    dml::list_style(&mut w, x, o, "p:bodyStyle", &m.body_style);
+    dml::list_style(&mut w, x, o, "p:otherStyle", &m.other_style);
     w.close("p:txStyles");
     ext_list(&mut w, ext_children(m.raw_ext.as_deref()).as_deref());
     w.close("p:sldMaster");
@@ -1206,6 +1206,14 @@ fn pres_props_xml(p: &Presentation) -> Vec<u8> {
     w.open0("p:penClr");
     w.val("a:srgbClr", s.pen_color.hex());
     w.close("p:penClr");
+    if !s.show_media_controls {
+        // "Show media controls" is PowerPoint's p14 extension; absent means shown.
+        w.open0("p:extLst");
+        w.open("p:ext", A::new().a("uri", "{2FDB2607-1784-4EEB-B798-7EB5836EED8A}"));
+        w.empty("p14:showMediaCtrls", A::new().a("xmlns:p14", NS_P14).a("val", 0));
+        w.close("p:ext");
+        w.close("p:extLst");
+    }
     w.close("p:showPr");
     w.close("p:presentationPr");
     w.finish()

@@ -166,15 +166,28 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
             })
             .response
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Save as type"));
-        let web = app.services.pick_save.is_none();
+        // A page that keeps the files (`host_save`) saves; plain web downloads.
+        let web = app.services.pick_save.is_none() && app.services.host_save.is_none();
         let label = if web { "Download" } else { "Save" };
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
-        if save.on_hover_text(if web { "Download the file" } else { "Choose where to save" }).clicked() {
+        if save
+            .on_hover_text(if web {
+                "Download the file"
+            } else if app.services.host_save.is_some() {
+                "Save to the page"
+            } else {
+                "Choose where to save"
+            })
+            .clicked()
+        {
             let fmt = bs.file_type;
             let done = if matches!(fmt, "pptx" | "deckcraft") {
-                let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
+                // A save bumps the revision, also one under the same name that leaves the path
+                // and the dirty flag as they were; a cancelled dialog or a failed save doesn't.
+                let snapshot = |app: &SlideApp| app.session.active().map(|d| (d.path.clone(), d.is_dirty(), d.revision));
+                let before = snapshot(app);
                 app.save_as_dialog(fmt);
-                web || app.session.active().map(|d| (d.path.clone(), d.is_dirty())) != before
+                web || snapshot(app) != before
             } else {
                 app.export_as(fmt, json!({}))
             };
