@@ -72,6 +72,8 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "63196e66f3033a6623eb629af95a104d26986725", features = ["egui"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
+# craft-window: one native window per presentation on the desktop (doc_windows.rs).
+craft-window = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["egui"] }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }

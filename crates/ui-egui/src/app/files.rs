@@ -306,9 +306,21 @@ impl SlideApp {
     }
 
     pub fn open_path(&mut self, path: &str) -> Result<(), String> {
+        if self.activate_open(path) {
+            return Ok(());
+        }
         self.session.execute("file.open", &json!({"path": path})).map_err(|e| e.to_string())?;
         self.note_recent(path);
         Ok(())
+    }
+
+    /// When `path` is already open, make that presentation active (its window comes forward)
+    /// instead of opening a second copy, as PowerPoint does. Returns whether it was open.
+    pub(crate) fn activate_open(&mut self, path: &str) -> bool {
+        let same = |p: &str| p == path || matches!((std::fs::canonicalize(p), std::fs::canonicalize(path)), (Ok(a), Ok(b)) if a == b);
+        let Some(i) = self.session.documents().iter().position(|d| d.path.as_deref().is_some_and(same)) else { return false };
+        self.session.set_active(i);
+        true
     }
 
     /// Files the system hands over (the command line, a double-click through the file

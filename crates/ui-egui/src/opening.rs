@@ -34,6 +34,9 @@ impl SlideApp {
     /// Open `path` without blocking the UI: the file is read on a thread and the progress window
     /// shows until it arrives. Without threads (the web build) it opens at once.
     pub fn open_path_in_background(&mut self, path: &str) {
+        if self.activate_open(path) {
+            return;
+        }
         if let Some(o) = &self.opening {
             let name = o.name();
             self.set_status(format!("Still opening {name}"));
@@ -252,7 +255,8 @@ mod tests {
         assert!(app.open_from_system(std::slice::from_ref(&pptx)).is_empty());
         assert!(app.show.is_none());
         assert!(app.open_from_system(&[ppsx.clone(), pptx.clone()]).is_empty());
-        assert_eq!(app.session.documents().len(), 3);
+        // edit.pptx is already open: it comes forward rather than opening twice.
+        assert_eq!(app.session.documents().len(), 2);
         assert!(app.show.is_none(), "the last file is a .pptx");
         std::fs::remove_file(&pptx).ok();
         std::fs::remove_file(&ppsx).ok();

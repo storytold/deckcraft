@@ -158,8 +158,10 @@ impl SlideApp {
     /// viewports and never call `logic`/`ui`; admitting such a callback would let a render-only
     /// viewport mutate root composition state while only the reset map is per-viewport. Reject it
     /// before any state changes instead of pretending to support multi-view editing.
-    pub(super) fn root_viewport_admitted(ctx: &egui::Context) -> bool {
-        ctx.viewport_id() == egui::ViewportId::ROOT
+    /// A presentation's own native window ([`crate::doc_windows`]) is a full editing view too:
+    /// it is drawn with its presentation active and its window state swapped in.
+    pub(super) fn root_viewport_admitted(&self, ctx: &egui::Context) -> bool {
+        ctx.viewport_id() == egui::ViewportId::ROOT || self.window_viewport == Some(ctx.viewport_id())
     }
 
     /// Report whether the current pass is a full UI pass for the IME-owning viewport rather than
