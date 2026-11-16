@@ -144,7 +144,10 @@ pub fn gradient(f: &El) -> Gradient {
 /// `blipFill` (either `a:` or `p:`) → picture fill, registering the image as media.
 pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let blip = bf.child("blip");
-    let media = blip.and_then(|b| media_ref(imp, part, b));
+    // A Cameo's placeholder is an SVG in `asvg:svgBlip` with no `r:embed` on the blip itself.
+    let media = blip.and_then(|b| {
+        media_ref(imp, part, b).or_else(|| b.child("extLst").and_then(|x| x.find("svgBlip")).and_then(|svg| media_ref(imp, part, svg)))
+    });
     let media = media?;
     let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
     if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))

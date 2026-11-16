@@ -169,7 +169,7 @@ fn point_in_tri(p: Pos2, a: Pos2, b: Pos2, c: Pos2) -> bool {
 }
 
 /// Ear-clipping triangulation of a simple polygon.
-pub(super) fn triangulate(pts: &[Pos2]) -> Vec<[u32; 3]> {
+pub(crate) fn triangulate(pts: &[Pos2]) -> Vec<[u32; 3]> {
     let n = pts.len();
     let mut tris = Vec::new();
     if n < 3 {

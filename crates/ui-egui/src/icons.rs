@@ -63,7 +63,8 @@ mod geometry;
 use draw::draw;
 use geometry::Pen;
 #[cfg(test)]
-use geometry::{star_pts, triangulate};
+use geometry::star_pts;
+pub(crate) use geometry::triangulate;
 
 icons! {
     // Clipboard & slides

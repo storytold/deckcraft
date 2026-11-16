@@ -300,10 +300,17 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             cnvpr(w, x, o, id, s);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
+            if let Some(c) = &s.cameo {
+                crate::cameo::write_live_feed(w, c.raw.as_deref());
+            }
             w.close("p:cNvPicPr");
             nv_pr(w, x, o, s);
             w.close("p:nvPicPr");
-            dml::blip_fill(w, x, o, "p:blipFill", fill);
+            if s.cameo.is_some() {
+                dml::cameo_blip_fill(w, x, o, "p:blipFill", fill);
+            } else {
+                dml::blip_fill(w, x, o, "p:blipFill", fill);
+            }
             let mut s2 = s.clone();
             // Group fill is a separate backing behind transparent image pixels.
             if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background)) {

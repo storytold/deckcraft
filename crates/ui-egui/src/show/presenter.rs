@@ -1,7 +1,7 @@
 use super::keys::keyboard;
-use super::render::{fit, next_rect};
-use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use super::render::{below_live, fit, hidden_on_entry, next_rect, render_overlay, render_threads};
+use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, unit_uv, zoom_frame};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, ShapeId, Show, Stroke, Ui, live_state, pos2, theme, vec2};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -82,10 +82,34 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
+/// `live` is the Cameo live frame plus the GIF clock: the current-slide preview shows the frame
+/// in every Cameo, as the audience screen does (the presentation's own texture predates the
+/// camera, which is a layer over it).
+pub(super) struct PresenterLive<'a> {
+    pub camera: &'a egui::TextureHandle,
+    pub gif_times: &'a [(ShapeId, f64)],
+    pub gif_key: u64,
+}
+
+pub(super) fn presenter_window(
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    now: f64,
+    keep: &mut bool,
+    live: Option<PresenterLive<'_>>,
+) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
+    // The current slide's animation state, as the audience screen draws it: a Cameo's live frame
+    // enters, leaves, moves and fades with the slide.
+    let step = show.state.step;
+    let t = if show.state.playing { now - show.step_start } else { 0.0 };
+    let plays = show.state.trigger_plays();
+    let stamps = show.state.trigger_stamps();
+    let tl = show.timeline(doc).clone();
+    let state = live_state(&tl, step, t, &plays, &stamps);
     // The preview wanted: slide `n` of this presentation (an edit replaces it).
     let is = |d: &std::sync::Arc<Presentation>, k: usize, n: usize| std::sync::Arc::ptr_eq(d, doc) && k == n;
     if let Some(n) = next
@@ -224,6 +248,13 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    if let Some(live_frame) = live.as_ref() {
+                        // Over the slide's texture, in the Cameo boxes the audience screen uses.
+                        let clipped = ui.painter().with_clip_rect(cr);
+                        let frame = crate::camera::ShowFrame { srect: cr, uv: unit_uv(), hidden: &[], state: &state };
+                        crate::camera::paint_show(&clipped, live_frame.camera, doc, cur, frame);
+                        paint_camera_overlay(ctx, ui, show, doc, cur, cr, &tl, step, &plays, &stamps, live_frame);
+                    }
                 }
                 if let Some(z) = show.zoom {
                     let mark = zoom_frame(cr, z.uv());
@@ -287,6 +318,61 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
         if !show.apply(a, doc, now) {
             *keep = false;
         }
+    }
+}
+
+/// Shapes stacked above a Cameo, repainted over its live frame in the presenter's current-slide
+/// preview (the audience screen's overlay, at this preview's pixel size). Cached on `Show` like
+/// the audience overlay and re-rendered only while the slide animates or the key changes; media
+/// hidden until it plays stays hidden, as `draw_overlay` does.
+#[allow(clippy::too_many_arguments)]
+fn paint_camera_overlay(
+    ctx: &egui::Context,
+    ui: &mut Ui,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    cur: usize,
+    cr: Rect,
+    tl: &deckcraft_anim::Timeline,
+    step: usize,
+    plays: &[deckcraft_anim::TriggerPlay],
+    stamps: &[deckcraft_anim::StepStamp],
+    live_frame: &PresenterLive<'_>,
+) {
+    let live = crate::camera::cameo_ids(doc, cur);
+    let skip = below_live(doc, cur, &live);
+    if skip.is_empty() {
+        show.presenter_over = None;
+        return;
+    }
+    let step_t = if show.state.playing { ctx.input(|i| i.time) - show.step_start } else { 0.0 };
+    let ppp = ctx.pixels_per_point();
+    let size = crate::textures::fit_size(
+        ((cr.width() * ppp).round().max(1.0) as u32, (cr.height() * ppp).round().max(1.0) as u32),
+        crate::textures::max_side(ctx),
+    );
+    let ptr = std::sync::Arc::as_ptr(doc) as usize;
+    let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
+    let moving = show.state.playing || show.state.trigger_playing();
+    let fresh = show
+        .presenter_over
+        .as_ref()
+        .is_some_and(|o| o.0 == ptr && o.1 == cur && o.2 == size && o.3 == skip && o.4 == step && o.5 == live_frame.gif_key && o.6 == done);
+    if !fresh || moving {
+        let hidden = hidden_on_entry(doc, cur);
+        let ci = render_overlay(doc, cur, tl.clone(), step, step_t, size, hidden, &skip, live_frame.gif_times, render_threads(), plays, stamps);
+        match show.presenter_over.as_mut() {
+            Some(o) if o.0 == ptr && o.1 == cur && o.2 == size && o.3 == skip && o.4 == step && o.5 == live_frame.gif_key && o.6 == done => {
+                crate::textures::replace(ctx, &mut o.7, ci);
+            }
+            _ => {
+                show.presenter_over =
+                    Some((ptr, cur, size, skip, step, live_frame.gif_key, done, crate::textures::upload(ctx, "presenter-camera-overlay", ci)));
+            }
+        }
+    }
+    if let Some(o) = &show.presenter_over {
+        ui.painter().image(o.7.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
 }
 

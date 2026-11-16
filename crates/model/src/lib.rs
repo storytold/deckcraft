@@ -254,6 +254,36 @@ pub struct MediaClip {
     pub height: u32,
 }
 
+/// A Cameo (Camera Format tab): PowerPoint's live camera feed on a picture shape. The shape stays
+/// a [`ShapeKind::Picture`] — its `PictureFill` is the placeholder art (an SVG, as PowerPoint
+/// writes) — so picture formatting, cropping and arrangement keep working. The marker in the file
+/// is `alf:liveFeedProps` inside `p:cNvPicPr/a:extLst`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Cameo {
+    /// Live feed (`true`) rather than a frozen still or a recorded clip. The PPTX Cameo marker
+    /// (`alf:liveFeedProps`) carries no recorded state: a `recorded` clip or `live == false`
+    /// still exports as a live feed, and imports as live. Recorded Cameo is #1839's scope.
+    pub live: bool,
+    /// The capture device the cameo shows, when one is named.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// A recording played by the cameo instead of the live feed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<MediaId>,
+    /// The feed's `alf:liveFeedProps` element kept verbatim (`backgroundProps`, `extLst`…), so a
+    /// camera background set in PowerPoint survives a save. `None` writes a plain live feed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+}
+
+impl Cameo {
+    /// A live feed from the default camera.
+    pub fn live() -> Self {
+        Cameo { live: true, ..Default::default() }
+    }
+}
+
 /// One ink stroke (Draw tab): points in slide coordinates with pressure (`0..=1`,
 /// where `1` is [`InkStroke::width`]).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -361,6 +391,10 @@ pub struct Shape {
     /// On a SmartArt group: the diagram's text outline, from which its shapes are regenerated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<Diagram>,
+    /// Set when this picture is a Cameo (Camera Format tab): a camera feed or recording shown in
+    /// the picture's frame. `None` for ordinary pictures.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cameo: Option<Cameo>,
 }
 
 /// A SmartArt diagram's data: its layout and its outline of nodes (the Text Pane).
@@ -436,6 +470,7 @@ impl Default for Shape {
             tags: vec![],
             raw_ext: None,
             diagram: None,
+            cameo: None,
         }
     }
 }
@@ -454,6 +489,10 @@ impl Shape {
     }
     pub fn is_group(&self) -> bool {
         matches!(self.kind, ShapeKind::Group { .. })
+    }
+    /// Is this picture a Cameo (Camera Format tab)?
+    pub fn is_cameo(&self) -> bool {
+        self.cameo.is_some() && matches!(self.kind, ShapeKind::Picture { .. })
     }
     pub fn children(&self) -> &[Shape] {
         match &self.kind {

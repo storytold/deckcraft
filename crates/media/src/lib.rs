@@ -10,6 +10,8 @@
 //! - [`player::Player`]: the playback mixer and clock the UI host drives, over an
 //!   [`player::AudioOut`] it injects (cpal on desktop; none on the web or in tests, where the clock
 //!   runs on wall time); [`feed::VideoFeed`] decodes video ahead of that clock.
+//! - [`camera`]: the platform-neutral camera interface ([`camera::CameraIn`], frames, events and
+//!   status) the host implements for the Cameo live preview; no OS crate is named here.
 //!
 //! Layer L2: depends only on the codec crates, never on the model or the UI. Builds for
 //! `wasm32-unknown-unknown` (no threads there: decoding runs inline).
@@ -17,6 +19,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audio;
+pub mod camera;
 pub mod clip;
 pub mod feed;
 mod mp4guard;

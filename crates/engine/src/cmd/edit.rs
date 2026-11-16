@@ -276,7 +276,7 @@ pub(crate) fn remap_animations(anims: &mut Vec<deckcraft_model::Animation>, map:
 }
 
 /// Visit every shape mutably, depth-first (groups included, depth-bounded like `walk`).
-fn walk_mut(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Shape)) {
+pub(crate) fn walk_mut(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Shape)) {
     fn rec(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Shape), depth: usize) {
         if depth > 64 {
             return;
