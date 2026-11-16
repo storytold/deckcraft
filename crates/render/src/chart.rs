@@ -554,7 +554,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
             slot: &slot,
             to_x: &to_x,
             to_axis: &to_axis,
-            zero,
+            zero: [zero, second.map_or(zero, |_| to_axis(true, 0.0))],
             base,
             error_marks: &mut err_marks,
         },
@@ -950,7 +950,7 @@ struct LineDrawing<'a, 'ctx> {
     slot: &'a dyn Fn(usize) -> f64,
     to_x: &'a dyn Fn(f64) -> Option<f64>,
     to_axis: &'a dyn Fn(bool, f64) -> f64,
-    zero: f64,
+    zero: [f64; 2],
     base: f64,
     error_marks: &'a mut Vec<(f64, f64, f64, f64, bool)>,
 }
@@ -965,7 +965,6 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
     let slot = draw.slot;
     let to_x = draw.to_x;
     let to_axis = draw.to_axis;
-    let zero = draw.zero;
     let base = draw.base;
     let err_marks = &mut draw.error_marks;
     let mut acc = vec![0.0; ncat];
@@ -1015,6 +1014,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let p = if s.smooth && !area_kind && pts.len() > 2 { smooth_path(&pts) } else { polyline(&pts) };
         ctx.set_transform(m);
         if area_kind {
+            let zero = draw.zero[usize::from(sec)];
             let mut a = p.clone();
             if let (Some(l), Some(f)) = (pts.last(), pts.first()) {
                 a.line_to((l.x, zero));
@@ -1093,24 +1093,23 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
             };
             for (bi, (si, s)) in bars.iter().enumerate() {
                 let sec = c.on_secondary(s);
-                let v = s.values.get(i).copied().flatten().unwrap_or(0.0) / total;
+                let v = match s.values.get(i).copied().flatten() {
+                    Some(value) => value / total,
+                    None if waterfall => 0.0, // Keep the running connector through an empty step.
+                    None => continue,
+                };
                 let start = band * slot(i) + (band - group) / 2.0 + if stacked { 0.0 } else { step * bi as f64 };
+                // Keep the ordered endpoints: the second is the data end, even for a bar
+                // below its axis crossing or a waterfall step that runs backwards.
                 let (a, b) = if waterfall {
                     waterfall_bars.get(i).copied().unwrap_or_default()
                 } else if stacked {
-                    if v >= 0.0 {
-                        let r = (pos_acc, pos_acc + v);
-                        pos_acc += v;
-                        r
-                    } else {
-                        let r = (neg_acc + v, neg_acc);
-                        neg_acc += v;
-                        r
-                    }
+                    let acc = if v >= 0.0 { &mut pos_acc } else { &mut neg_acc };
+                    let from = *acc;
+                    *acc += v;
+                    (from, *acc)
                 } else {
-                    // A bar runs from where the category axis crosses (zero unless set otherwise).
-                    let o = draw.origins[axis_of(sec)];
-                    (o.min(v), o.max(v))
+                    (draw.origins[axis_of(sec)], v)
                 };
                 let r = if horiz {
                     Rect::new(to_v(a), plot.y0 + start, to_v(b), plot.y0 + start + bar)
@@ -1149,16 +1148,16 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                     ctx.stroke_path(&j);
                 }
                 if let Some(e) = &s.error_bars {
-                    let (end, mid) = if horiz { (if v >= 0.0 { b } else { a }, r.center().y) } else { (if v >= 0.0 { b } else { a }, r.center().x) };
-                    if let Some((lo, hi)) = stats.get(bi).and_then(|st| e.range_in(st, i, end)) {
+                    let mid = if horiz { r.center().y } else { r.center().x };
+                    if let Some((lo, hi)) = stats.get(bi).and_then(|st| e.range_in(st, i, b)) {
                         let (p0, p1) = if horiz { (to_v(lo), to_v(hi)) } else { (to_axis(sec, lo), to_axis(sec, hi)) };
                         err_marks.push((mid, p0, p1, bar.min(base * 0.8) * 0.5, e.end_cap));
                     }
                 }
                 if let Some(t) = bar_data_label(c, s, i) {
-                    // Past the bar's end along its axis: above it (right of it), or below it (left
-                    // of it) on a reversed axis.
-                    let (lr, align, anchor) = match (horiz, draw.reversed[axis_of(sec)]) {
+                    // Place the label beyond the data end after accounting for axis direction.
+                    let toward_min = (b < a) ^ draw.reversed[axis_of(sec)];
+                    let (lr, align, anchor) = match (horiz, toward_min) {
                         (true, false) => (Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1), Align::Left, Anchor::Middle),
                         (true, true) => (Rect::new(r.x0 - 40.0, r.y0, r.x0 - 2.0, r.y1), Align::Right, Anchor::Middle),
                         (false, false) => (Rect::new(r.x0 - 10.0, r.y0 - base * 1.4, r.x1 + 10.0, r.y0), Align::Center, Anchor::Bottom),

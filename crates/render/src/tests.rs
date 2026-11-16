@@ -637,6 +637,93 @@ fn a_reversed_value_axis_grows_bars_leftwards_and_keeps_unfilled_points_empty() 
 }
 
 #[test]
+fn nonzero_crossing_does_not_draw_a_missing_bar() {
+    let mut c = Chart::sample(ChartType::Column);
+    (c.title, c.legend, c.data_labels, c.vary_colors) = (None, None, false, false);
+    c.categories = vec!["Missing".into(), "Zero".into()];
+    c.series.truncate(1);
+    c.series[0].values = vec![None, Some(0.0)];
+    c.series[0].point_fills = vec![(0, solid_rgb(RED)), (1, solid_rgb(BLUE))];
+    (c.y_min, c.y_max, c.y_crosses) = (Some(0.0), Some(100.0), deckcraft_model::chart::AxisCrosses::Max);
+    let img = chart_image(c);
+    assert!(painted_box(&img, RED, 0..960).is_none());
+    assert!(painted_box(&img, BLUE, 0..960).is_some(), "explicit zero draws from the maximum");
+}
+
+#[test]
+fn labels_and_error_bars_follow_the_data_end_of_a_bar_beyond_its_crossing() {
+    use deckcraft_model::chart::ErrorBars;
+
+    for reversed in [false, true] {
+        let mut c = Chart::sample(ChartType::Column);
+        (c.title, c.legend, c.data_labels, c.gridlines, c.vary_colors) = (None, None, false, false, false);
+        c.categories = vec!["A".into()];
+        c.series.truncate(1);
+        c.series[0].values = vec![Some(20.0)];
+        c.series[0].fill = Some(solid_rgb(BLUE));
+        (c.y_min, c.y_max, c.y_crosses, c.y_reversed) = (Some(0.0), Some(100.0), deckcraft_model::chart::AxisCrosses::Max, reversed);
+        let base = chart_image(c.clone());
+        let (x0, top, x1, bottom) = painted_box(&base, BLUE, 0..960).expect("bar");
+        let mid = (x0 + x1) / 2;
+        let endpoint = if reversed { top } else { bottom };
+        let changed_rows = |image: Image| -> Vec<u32> {
+            (0..base.height).filter(|&y| (mid - 30..=mid + 30).any(|x| image.pixel(x, y) != base.pixel(x, y))).collect()
+        };
+
+        c.series[0].data_labels = Some(true);
+        let label_rows = changed_rows(chart_image(c.clone()));
+        assert!(!label_rows.is_empty());
+        assert!(
+            label_rows.iter().all(|&y| y.abs_diff(endpoint) < 45 && if reversed { y < endpoint } else { y > endpoint }),
+            "label should be outside the data endpoint {endpoint}, got {label_rows:?}",
+        );
+
+        c.series[0].data_labels = Some(false);
+        c.series[0].error_bars = Some(ErrorBars { value: 4.0, ..Default::default() });
+        let error_rows = changed_rows(chart_image(c));
+        assert!(error_rows.iter().any(|&y| y < endpoint) && error_rows.iter().any(|&y| y > endpoint), "{error_rows:?}");
+        assert!(error_rows.iter().all(|&y| y.abs_diff(endpoint) < 35), "error bar centered at the crossing: {error_rows:?}");
+    }
+}
+
+#[test]
+fn a_reversed_secondary_area_fills_toward_its_own_zero() {
+    let draw = |reversed| {
+        use deckcraft_model::chart::Series;
+        let mut c = Chart::sample(ChartType::Combo);
+        (c.title, c.legend, c.data_labels, c.gridlines, c.vary_colors) = (None, None, false, false, false);
+        c.categories = vec!["A".into(), "B".into()];
+        c.series = vec![
+            Series { values: vec![Some(10.0); 2], kind: Some(ChartType::Column), fill: Some(solid_rgb(BLUE)), ..Default::default() },
+            Series {
+                values: vec![Some(20.0); 2],
+                kind: Some(ChartType::Area),
+                secondary_axis: true,
+                fill: Some(solid_rgb(RED)),
+                ..Default::default()
+            },
+        ];
+        (c.y_min, c.y_max, c.y2_min, c.y2_max, c.y2_reversed) = (Some(0.0), Some(100.0), Some(0.0), Some(100.0), reversed);
+        let img = chart_image(c);
+        // Sample between the two primary bars, where the fill blends with the white background.
+        let rows: Vec<_> = (0..img.height)
+            .filter(|&y| {
+                (400..560).any(|x| {
+                    let [r, g, b, _] = img.pixel(x, y);
+                    r > 210 && g < 100 && b < 100
+                })
+            })
+            .collect();
+        assert!(!rows.is_empty());
+        (rows[0], rows[rows.len() - 1])
+    };
+    let normal = draw(false);
+    let reversed = draw(true);
+    assert!(reversed.1 < normal.0, "the two fills should sit at opposite ends: {normal:?}, {reversed:?}");
+    assert!((normal.1 - normal.0).abs_diff(reversed.1 - reversed.0) <= 2, "{normal:?}, {reversed:?}");
+}
+
+#[test]
 fn a_combo_reverses_only_the_secondary_axis_its_line_is_drawn_on() {
     // Columns of 10 and 90 on the primary axis (0 to 100, the usual way up) and a line through 10
     // and 90 on a secondary axis (0 to 100) that runs backwards.
