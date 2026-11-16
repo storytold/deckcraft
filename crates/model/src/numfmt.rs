@@ -234,16 +234,18 @@ fn sci(toks: &[Tok], v: f64, sep: char, dec: char) -> Option<String> {
             m *= 10.0;
             exp -= 1;
         }
-        // Rounding the mantissa to its digits can reach 10 (9.999 as `0.00`).
-        if format!("{m:.mant_frac$}").starts_with("10") {
-            m /= 10.0;
-            exp += 1;
-        }
     }
     let step = mant.iter().take_while(|t| **t != Tok::Dot).filter(|t| matches!(t, Tok::Digit(_))).count().max(1) as i32;
     let shift = exp.rem_euclid(step);
     exp -= shift;
     m *= 10f64.powi(shift);
+    // Round after forming the engineering mantissa: 999.94 as `##0.0` stays 999.9.
+    // Carry only when rounding exceeds all of the format's integer placeholders.
+    let carry = 10f64.powi(step);
+    if format!("{m:.mant_frac$}").parse::<f64>().is_ok_and(|rounded| rounded >= carry) {
+        m /= carry;
+        exp += step;
+    }
     let mantissa = fixed(mant, mfirst, mlast, m, sep, dec);
     let sign = if exp < 0 {
         "-"
@@ -402,6 +404,21 @@ mod tests {
         assert_eq!(format("##0.0E+0", 12_345.0, None), "12.3E+3");
         assert_eq!(format("##0.0E+0", 0.012, None), "12.0E-3");
         assert_eq!(format("##0.0E+0", 999.96, None), "1.0E+3");
+    }
+
+    #[test]
+    fn engineering_formats_round_the_full_mantissa() {
+        for (code, value, expected) in [
+            ("##0.0E+00", 999.94, "999.9E+00"),
+            ("##0.0E+00", 0.99994, "999.9E-03"),
+            ("##0.0E+00", -999.94, "-999.9E+00"),
+            ("#0.0E+00", 99.94, "99.9E+00"),
+            ("##0.0E+00", 999.96, "1.0E+03"),
+            ("#0.0E+00", 99.96, "1.0E+02"),
+        ] {
+            assert_eq!(format(code, value, None), expected, "{code}, {value}");
+        }
+        assert_eq!(format("##0.0E+00", 999.94, Some("de-DE")), "999,9E+00");
     }
 
     #[test]
