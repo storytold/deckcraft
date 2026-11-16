@@ -9,6 +9,8 @@ description = "DeckCraft PPTX: Office Open XML (PresentationML/DrawingML) import
 workspace = true
 
 [dependencies]
+craft-opc.workspace = true
+craft-xml.workspace = true
 deckcraft-model = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
