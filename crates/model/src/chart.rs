@@ -314,6 +314,53 @@ impl ErrorBars {
     }
 }
 
+/// Where an axis crosses the value axis it is drawn against: `c:crosses` (`autoZero`, `min`,
+/// `max`) or `c:crossesAt`, written on the crossing axis (the category axis, for the value axis).
+/// Bars start at that value, as PowerPoint and Excel draw them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AxisCrosses {
+    /// At zero, or at the end of the axis nearest zero when zero is off it (the default).
+    #[default]
+    AutoZero,
+    /// At the axis minimum.
+    Min,
+    /// At the axis maximum.
+    Max,
+    /// At this value (`c:crossesAt`), or at the end of the axis nearest it when it is off the axis.
+    At(f64),
+}
+
+impl AxisCrosses {
+    pub fn is_auto_zero(&self) -> bool {
+        *self == AxisCrosses::AutoZero
+    }
+
+    /// The crossing as a value on an axis from `min` to `max`: always within the axis.
+    pub fn value(self, min: f64, max: f64) -> f64 {
+        let (lo, hi) = (min.min(max), min.max(max));
+        // `max`/`min` rather than `clamp`, which panics on NaN bounds.
+        let within = |v: f64| v.max(lo).min(hi);
+        match self {
+            AxisCrosses::Min => lo,
+            AxisCrosses::Max => hi,
+            AxisCrosses::At(v) if v.is_finite() => within(v),
+            AxisCrosses::AutoZero | AxisCrosses::At(_) => within(0.0),
+        }
+    }
+
+    /// Whether the crossing axis is set at the far (maximum) end of an axis from `min` to `max`:
+    /// `max`, or `crossesAt` at or past the maximum. Zero is never counted as the far end, so an
+    /// automatic crossing keeps the category axis at the minimum end.
+    pub fn at_max_end(self, min: f64, max: f64) -> bool {
+        match self {
+            AxisCrosses::Max => true,
+            AxisCrosses::At(v) => v.is_finite() && v >= min.max(max),
+            AxisCrosses::AutoZero | AxisCrosses::Min => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Chart {
@@ -363,12 +410,27 @@ pub struct Chart {
     /// The category axis runs backwards (`c:orientation val="maxMin"`): right to left, or on a
     /// horizontal bar chart top to bottom (the default puts the first category at the bottom).
     pub cat_reversed: bool,
+    /// The value axis runs backwards (`c:orientation val="maxMin"` on `c:valAx`): its minimum at
+    /// the top, so columns hang down from the category axis, or on a horizontal bar chart at the
+    /// right, so bars grow leftwards.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub y_reversed: bool,
+    /// Where the category axis crosses the value axis (`c:crosses` / `c:crossesAt` on the axis that
+    /// crosses it): bars start there and the category labels sit at that end.
+    #[serde(skip_serializing_if = "AxisCrosses::is_auto_zero")]
+    pub y_crosses: AxisCrosses,
     /// A combo chart's secondary value axis: bounds, major unit and number format.
     pub y2_min: Option<f64>,
     pub y2_max: Option<f64>,
     pub y2_major: Option<f64>,
     pub y2_format: Option<String>,
     pub y2_hidden: bool,
+    /// The secondary value axis runs backwards (`c:orientation val="maxMin"`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub y2_reversed: bool,
+    /// Where the secondary category axis crosses the secondary value axis.
+    #[serde(skip_serializing_if = "AxisCrosses::is_auto_zero")]
+    pub y2_crosses: AxisCrosses,
     /// The chart's language (`c:lang`, e.g. `ru-RU`): digit grouping and decimal mark.
     pub lang: Option<String>,
     /// A waterfall's total points (`cx:subtotals`): bars that stand on the axis and restart
@@ -495,11 +557,15 @@ impl Default for Chart {
             y_format: None,
             y_hidden: false,
             cat_reversed: false,
+            y_reversed: false,
+            y_crosses: AxisCrosses::AutoZero,
             y2_min: None,
             y2_max: None,
             y2_major: None,
             y2_format: None,
             y2_hidden: false,
+            y2_reversed: false,
+            y2_crosses: AxisCrosses::AutoZero,
             lang: None,
             subtotals: vec![],
             category_levels: vec![],
@@ -1121,6 +1187,35 @@ mod tests {
         let mut c = column(&[-50.0, -48.0]);
         c.y_min = Some(-10.0);
         assert_eq!(scale(&c), (-10.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn axis_crossings_stay_on_the_axis() {
+        use AxisCrosses::*;
+        assert_eq!((AutoZero.value(-5.0, 46.4), Min.value(-5.0, 46.4), Max.value(-5.0, 46.4)), (0.0, -5.0, 46.4));
+        // Zero off the axis: the nearest end, as `autoZero` is defined.
+        assert_eq!((AutoZero.value(10.0, 50.0), AutoZero.value(-50.0, -10.0)), (10.0, -10.0));
+        assert_eq!((At(12.5).value(-5.0, 46.4), At(99.0).value(-5.0, 46.4), At(-99.0).value(-5.0, 46.4)), (12.5, 46.4, -5.0));
+        assert_eq!(At(f64::NAN).value(-5.0, 46.4), 0.0, "a crossing that isn't a number is the automatic one");
+        // Bounds that are NaN or the wrong way round don't panic (as `f64::clamp` would): NaN bounds
+        // don't constrain, swapped ones are put the right way round.
+        assert_eq!(At(3.0).value(f64::NAN, f64::NAN), 3.0);
+        assert_eq!((Max.value(46.4, -5.0), At(99.0).value(46.4, -5.0)), (46.4, 46.4));
+        assert!(Max.at_max_end(-5.0, 46.4) && At(46.4).at_max_end(-5.0, 46.4) && At(60.0).at_max_end(-5.0, 46.4));
+        assert!(!AutoZero.at_max_end(-50.0, 0.0), "an automatic crossing keeps the minimum end, even at zero");
+        assert!(!Min.at_max_end(-5.0, 46.4) && !At(10.0).at_max_end(-5.0, 46.4) && !At(f64::NAN).at_max_end(-5.0, 46.4));
+    }
+
+    #[test]
+    fn value_axis_direction_is_saved_only_when_set() {
+        let mut c = column(&[1.0]);
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(!json.contains("yReversed") && !json.contains("yCrosses"), "defaults stay out of the file");
+        let back: Chart = serde_json::from_str(&json).unwrap();
+        assert!(!back.y_reversed && back.y_crosses == AxisCrosses::AutoZero);
+        (c.y_reversed, c.y_crosses, c.y2_reversed, c.y2_crosses) = (true, AxisCrosses::At(2.5), true, AxisCrosses::Max);
+        let back: Chart = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!((back.y_reversed, back.y_crosses, back.y2_reversed, back.y2_crosses), (true, AxisCrosses::At(2.5), true, AxisCrosses::Max));
     }
 
     #[test]

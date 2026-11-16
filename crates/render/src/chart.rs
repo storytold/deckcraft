@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::Shape;
-use deckcraft_model::chart::{Chart, ChartType, TrendlineType, axis_scale};
+use deckcraft_model::chart::{AxisCrosses, Chart, ChartType, TrendlineType, axis_scale};
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::style::{ColorRef, Fill};
 use deckcraft_model::text::{Align, Anchor, Bullet, TextBody};
@@ -244,6 +244,55 @@ pub(crate) fn positive_span(s: f64) -> f64 {
     if s > 0.0 && s.is_finite() { s } else { 1.0 }
 }
 
+/// Where a value axis puts the fraction `t` of its span (0 at its minimum, 1 at its maximum)
+/// within `plot`: up from the bottom, or right from the left on a horizontal (bar chart) value
+/// axis; from the top, or from the right, when the axis runs backwards (`c:orientation maxMin`).
+pub(crate) fn value_pos(plot: Rect, horiz: bool, reversed: bool, t: f64) -> f64 {
+    let t = if reversed { 1.0 - t } else { t };
+    if horiz { plot.x0 + t * plot.width() } else { plot.y1 - t * plot.height() }
+}
+
+/// Whether the category labels sit on the far side of the plot (the top, or the right of a bar
+/// chart) rather than the bottom (left). They stay with the category axis, which crosses the value
+/// axis at its minimum end unless set to cross at the maximum, and a reversed value axis puts its
+/// minimum end on the far side. `min`/`max` are the axis' bounds in its own units, `crosses` too.
+pub(crate) fn category_labels_far(reversed: bool, crosses: AxisCrosses, min: f64, max: f64) -> bool {
+    reversed != crosses.at_max_end(min, max)
+}
+
+/// Where the category axis crosses the primary value axis, whose bounds are `min`/`max` in its own
+/// units (exponents of `log_base` on a logarithmic axis; `to_e` converts a value to them): the
+/// value bars start from, and whether the category labels go on the far side.
+fn primary_crossing(c: &Chart, log_base: Option<f64>, (min, max): (f64, f64), to_e: &dyn Fn(f64) -> f64) -> (f64, bool) {
+    let crosses = match c.y_crosses {
+        AxisCrosses::At(v) if v.is_finite() => AxisCrosses::At(to_e(v)),
+        other => other,
+    };
+    let origin = match log_base {
+        // A logarithmic axis has no zero: bars start at its minimum unless set otherwise
+        // (`to_v` keeps a crossing value within the axis).
+        Some(b) => match c.y_crosses {
+            AxisCrosses::Max => b.powf(max),
+            AxisCrosses::At(v) if v.is_finite() => v,
+            AxisCrosses::AutoZero | AxisCrosses::Min | AxisCrosses::At(_) => b.powf(min),
+        },
+        None => c.y_crosses.value(min, max),
+    };
+    (origin, category_labels_far(c.y_reversed, crosses, min, max))
+}
+
+/// The plot within `area`, leaving the value labels' gutters (`gutters`: left, and right for a
+/// secondary axis; a bar chart's category labels take the first) and the category labels' band:
+/// below the plot (left of a bar chart's), or above it (right of it) when they go on the far side.
+fn plot_rect(area: Rect, horiz: bool, far: bool, (gutter, gutter_r): (f64, f64), base: f64) -> Rect {
+    match (horiz, far) {
+        (true, false) => Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - base * 1.6),
+        (true, true) => Rect::new(area.x0, area.y0, area.x1 - gutter, area.y1 - base * 1.6),
+        (false, false) => Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, area.y1 - base * 1.8),
+        (false, true) => Rect::new(area.x0 + gutter, area.y0 + base * 1.8, area.x1 - gutter_r, area.y1),
+    }
+}
+
 /// The tick values of an axis (min, max, major step), one per step (at most 51).
 fn axis_ticks((lo, hi, st): (f64, f64, f64)) -> impl Iterator<Item = f64> {
     let n = if st > 0.0 { (((hi - lo) / st).round() as i64).clamp(1, 50) } else { 1 };
@@ -385,26 +434,24 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         clamp_soft(label_w(false, (min, max, step)), base * 1.5, area.width() * 0.3)
     };
     let gutter_r = second.filter(|_| !c.y2_hidden).map(|sc| clamp_soft(label_w(true, sc), base * 1.5, area.width() * 0.3)).unwrap_or(0.0);
-    let plot = if horiz {
-        Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - base * 1.6)
-    } else {
-        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, area.y1 - base * 1.8)
-    };
+    let (origin, cat_far) = primary_crossing(c, log.map(|(b, _)| b), (min, max), &to_e);
+    let plot = plot_rect(area, horiz, cat_far, (gutter, gutter_r), base);
     if let Some(f) = &c.plot_fill {
         crate::paint::fill_path(ctx, rctx, f, None, &plot.to_path(0.1), plot, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
     }
     let span = positive_span(max - min);
     // Values past the axis limits (fixed ones, or zero on an axis that starts above it) stop at
-    // the plot's edge.
-    let to_v = |v: f64| {
-        let v = to_e(v).max(min).min(max);
-        if horiz { plot.x0 + (v - min) / span * plot.width() } else { plot.y1 - (v - min) / span * plot.height() }
-    };
+    // the plot's edge. A reversed axis runs from the top (or the right) instead.
+    let to_v = |v: f64| value_pos(plot, horiz, c.y_reversed, (to_e(v).max(min).min(max) - min) / span);
     // A series' value as a position on its own axis.
     let to_axis = |sec: bool, v: f64| match (sec, second) {
-        (true, Some((min2, max2, _))) => plot.y1 - (v.max(min2).min(max2) - min2) / positive_span(max2 - min2) * plot.height(),
+        (true, Some((min2, max2, _))) => value_pos(plot, false, c.y2_reversed, (v.max(min2).min(max2) - min2) / positive_span(max2 - min2)),
         _ => to_v(v),
     };
+    // Where each value axis' bars start, and whether it runs backwards: [primary, secondary]. A
+    // chart without a secondary scale draws its secondary series on the primary axis.
+    let origins = [origin, second.map_or(origin, |(lo, hi, _)| c.y2_crosses.value(lo, hi))];
+    let reversed = [c.y_reversed, if second.is_some() { c.y2_reversed } else { c.y_reversed }];
     draw_gridlines(
         ctx,
         &GridlineDrawing {
@@ -444,7 +491,20 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let to_x = |v: f64| xscale.map(|(lo, hi, _)| plot.x0 + (v - lo) / positive_span(hi - lo) * plot.width());
     draw_category_labels(
         ctx,
-        &CategoryLabelDrawing { rctx, chart: c, transform: m, area, plot, horiz, band, slot: &slot, xscale, base, text_color: text_col },
+        &CategoryLabelDrawing {
+            rctx,
+            chart: c,
+            transform: m,
+            area,
+            plot,
+            horiz,
+            far: cat_far,
+            band,
+            slot: &slot,
+            xscale,
+            base,
+            text_color: text_col,
+        },
     );
     if let Some(b) = boxes {
         crate::chartex::draw_boxes(ctx, rctx, c, b, m, plot, band, horiz, &to_v);
@@ -470,6 +530,8 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
             slot: &slot,
             to_v: &to_v,
             to_axis: &to_axis,
+            origins,
+            reversed,
             base,
             text_color: text_col,
         },
@@ -519,14 +581,15 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         ctx.set_stroke(kurbo::Stroke::new(0.75));
         ctx.stroke_path(&p);
     }
-    // Axis line.
+    // The category axis line, where it crosses the value axis.
+    let cross = to_v(origin);
     let mut ax = BezPath::new();
     if horiz {
-        ax.move_to((zero, plot.y0));
-        ax.line_to((zero, plot.y1));
+        ax.move_to((cross, plot.y0));
+        ax.line_to((cross, plot.y1));
     } else {
-        ax.move_to((plot.x0, zero));
-        ax.line_to((plot.x1, zero));
+        ax.move_to((plot.x0, cross));
+        ax.line_to((plot.x1, cross));
     }
     ctx.set_transform(m);
     ctx.set_paint(color(Rgba::rgb(0xBF, 0xBF, 0xBF), 1.0));
@@ -756,6 +819,8 @@ struct CategoryLabelDrawing<'a, 'ctx> {
     area: Rect,
     plot: Rect,
     horiz: bool,
+    /// The labels go above the plot (right of a bar chart's) instead of below it (left of it).
+    far: bool,
     band: f64,
     slot: &'a dyn Fn(usize) -> f64,
     xscale: Option<(f64, f64, f64)>,
@@ -770,23 +835,27 @@ fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_,
     let area = draw.area;
     let plot = draw.plot;
     let horiz = draw.horiz;
+    let far = draw.far;
     let band = draw.band;
     let slot = draw.slot;
     let xscale = draw.xscale;
     let base = draw.base;
     let text_col = draw.text_color;
     let ticks = axis_ticks;
+    // A band `depth` deep below the plot from `x0` to `x1`, or above it when the labels go on the
+    // far side, and the anchor that keeps the text against the plot.
+    let band_at = |x0: f64, x1: f64, depth: f64| {
+        if far {
+            (Rect::new(x0, plot.y0 - depth, x1, plot.y0 - 3.0), Anchor::Bottom)
+        } else {
+            (Rect::new(x0, plot.y1 + 3.0, x1, plot.y1 + depth), Anchor::Top)
+        }
+    };
     if let Some(sc) = xscale {
         for v in ticks(sc) {
             let pos = plot.x0 + (v - sc.0) / positive_span(sc.1 - sc.0) * plot.width();
-            label(
-                ctx,
-                rctx,
-                m,
-                &fmt_num(v),
-                Rect::new(pos - 30.0, plot.y1 + 3.0, pos + 30.0, plot.y1 + base * 1.6),
-                LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
-            );
+            let (r, anchor) = band_at(pos - 30.0, pos + 30.0, base * 1.6);
+            label(ctx, rctx, m, &fmt_num(v), r, LabelStyle { size: base, align: Align::Center, anchor, col: text_col, bold: false });
         }
     }
     // Category labels: wrapped onto two lines when they don't fit their band (long date ranges).
@@ -794,24 +863,16 @@ fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_,
     for (i, name) in c.categories.iter().enumerate().filter(|_| xscale.is_none()) {
         let mid = if horiz { plot.y0 + band * (slot(i) + 0.5) } else { plot.x0 + band * (slot(i) + 0.5) };
         if horiz {
-            label(
-                ctx,
-                rctx,
-                m,
-                name,
-                Rect::new(area.x0, mid - base, plot.x0 - base * 0.4, mid + base),
-                LabelStyle { size: base, align: Align::Right, anchor: Anchor::Middle, col: text_col, bold: false },
-            );
+            let (r, align) = if far {
+                (Rect::new(plot.x1 + base * 0.4, mid - base, area.x1, mid + base), Align::Left)
+            } else {
+                (Rect::new(area.x0, mid - base, plot.x0 - base * 0.4, mid + base), Align::Right)
+            };
+            label(ctx, rctx, m, name, r, LabelStyle { size: base, align, anchor: Anchor::Middle, col: text_col, bold: false });
         } else {
             let text = if wraps { split_label(name) } else { name.clone() };
-            label(
-                ctx,
-                rctx,
-                m,
-                &text,
-                Rect::new(mid - band / 2.0, plot.y1 + 3.0, mid + band / 2.0, plot.y1 + base * if wraps { 2.8 } else { 1.6 }),
-                LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
-            );
+            let (r, anchor) = band_at(mid - band / 2.0, mid + band / 2.0, base * if wraps { 2.8 } else { 1.6 });
+            label(ctx, rctx, m, &text, r, LabelStyle { size: base, align: Align::Center, anchor, col: text_col, bold: false });
         }
     }
 }
@@ -870,6 +931,11 @@ struct BarDrawing<'a, 'ctx> {
     slot: &'a dyn Fn(usize) -> f64,
     to_v: &'a dyn Fn(f64) -> f64,
     to_axis: &'a dyn Fn(bool, f64) -> f64,
+    /// Where bars start on the primary and the secondary value axis (where the category axis
+    /// crosses it), as values.
+    origins: [f64; 2],
+    /// Whether the primary and the secondary value axis run backwards.
+    reversed: [bool; 2],
     base: f64,
     text_color: Rgba,
 }
@@ -987,6 +1053,7 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
     let to_axis = draw.to_axis;
     let base = draw.base;
     let text_col = draw.text_color;
+    let axis_of = |sec: bool| usize::from(sec);
     let mut err_marks: Vec<(f64, f64, f64, f64, bool)> = vec![];
     if let Some(bk) = bar_kind {
         let bars: Vec<(usize, &deckcraft_model::chart::Series)> =
@@ -1041,7 +1108,9 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                         r
                     }
                 } else {
-                    (0.0f64.min(v), 0.0f64.max(v))
+                    // A bar runs from where the category axis crosses (zero unless set otherwise).
+                    let o = draw.origins[axis_of(sec)];
+                    (o.min(v), o.max(v))
                 };
                 let r = if horiz {
                     Rect::new(to_v(a), plot.y0 + start, to_v(b), plot.y0 + start + bar)
@@ -1087,25 +1156,15 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                     }
                 }
                 if let Some(t) = bar_data_label(c, s, i) {
-                    let lr = if horiz {
-                        Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1)
-                    } else {
-                        Rect::new(r.x0 - 10.0, r.y0 - base * 1.4, r.x1 + 10.0, r.y0)
+                    // Past the bar's end along its axis: above it (right of it), or below it (left
+                    // of it) on a reversed axis.
+                    let (lr, align, anchor) = match (horiz, draw.reversed[axis_of(sec)]) {
+                        (true, false) => (Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1), Align::Left, Anchor::Middle),
+                        (true, true) => (Rect::new(r.x0 - 40.0, r.y0, r.x0 - 2.0, r.y1), Align::Right, Anchor::Middle),
+                        (false, false) => (Rect::new(r.x0 - 10.0, r.y0 - base * 1.4, r.x1 + 10.0, r.y0), Align::Center, Anchor::Bottom),
+                        (false, true) => (Rect::new(r.x0 - 10.0, r.y1, r.x1 + 10.0, r.y1 + base * 1.4), Align::Center, Anchor::Top),
                     };
-                    label(
-                        ctx,
-                        rctx,
-                        m,
-                        &t,
-                        lr,
-                        LabelStyle {
-                            size: base * 0.9,
-                            align: if horiz { Align::Left } else { Align::Center },
-                            anchor: if horiz { Anchor::Middle } else { Anchor::Bottom },
-                            col: text_col,
-                            bold: false,
-                        },
-                    );
+                    label(ctx, rctx, m, &t, lr, LabelStyle { size: base * 0.9, align, anchor, col: text_col, bold: false });
                 }
             }
         }

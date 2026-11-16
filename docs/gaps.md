@@ -179,8 +179,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
   (`corpus_charts.rs`) and are drawn: linear, exponential, logarithmic, polynomial, power and
   moving average, with forecast and the equation and R² label. A moving average is drawn with
-  neither label. A combo chart's secondary value axis is read (`y2_*`,
-  `Series.secondary_axis`) and is not written back when the chart is rebuilt.
+  neither label. Reversed value axes and category-axis crossings are read and drawn.
+  The primary axis survives chart rebuilds. A combo chart's secondary value axis is read
+  (`y2_*`, `Series.secondary_axis`) but is not written back when the chart is rebuilt.
   An unchanged chart's embedded workbook now survives save (#335); editing the chart still
   drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
   also survive `.deckcraft` save/reopen (`crates/engine/tests/it/chart_native.rs`), with binary

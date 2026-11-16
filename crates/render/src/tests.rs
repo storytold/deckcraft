@@ -471,6 +471,229 @@ fn horizontal_bars_list_the_first_category_at_the_bottom_unless_reversed() {
     assert!(draw(true) < 180, "reversed: first category at the top: {}", draw(true));
 }
 
+/// A made-up chart drawn alone, filling a 960 × 540 slide.
+fn chart_image(c: Chart) -> Image {
+    let sh = Shape { id: ShapeId(624), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+}
+
+/// The box (x0, y0, x1, y1, inclusive) of the pixels painted exactly `rgb` with x in `xs`.
+fn painted_box(img: &Image, rgb: [u8; 3], xs: std::ops::Range<u32>) -> Option<(u32, u32, u32, u32)> {
+    let mut b: Option<(u32, u32, u32, u32)> = None;
+    for y in 0..img.height {
+        for x in xs.clone() {
+            if img.pixel(x, y)[..3] == rgb {
+                b = Some(b.map_or((x, y, x, y), |(x0, y0, x1, y1)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y))));
+            }
+        }
+    }
+    b
+}
+
+fn solid_rgb(rgb: [u8; 3]) -> deckcraft_model::style::Fill {
+    deckcraft_model::style::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(rgb[0], rgb[1], rgb[2])))
+}
+
+/// Dark grey text ink (the chart's default 595959 text) in the box, ends included.
+fn has_text(img: &Image, (x0, y0, x1, y1): (u32, u32, u32, u32)) -> bool {
+    (y0..=y1.min(img.height - 1)).any(|y| {
+        (x0..=x1.min(img.width - 1)).any(|x| {
+            let p = img.pixel(x, y);
+            p[0] < 0x90 && p[1] < 0x90 && p[2] < 0x90
+        })
+    })
+}
+
+const RED: [u8; 3] = [255, 0, 0];
+const GREEN: [u8; 3] = [0, 160, 0];
+const BLUE: [u8; 3] = [0, 0, 255];
+const MAGENTA: [u8; 3] = [255, 0, 255];
+
+#[test]
+fn value_positions_run_backwards_on_a_reversed_axis() {
+    use crate::chart::{category_labels_far, value_pos};
+    use deckcraft_model::chart::AxisCrosses;
+    let plot = kurbo::Rect::new(100.0, 50.0, 500.0, 450.0);
+    // A column chart's value axis: the minimum at the bottom, or at the top when reversed.
+    assert_eq!((value_pos(plot, false, false, 0.0), value_pos(plot, false, false, 1.0)), (450.0, 50.0));
+    assert_eq!((value_pos(plot, false, true, 0.0), value_pos(plot, false, true, 1.0)), (50.0, 450.0));
+    assert_eq!(value_pos(plot, false, true, 0.25), 150.0);
+    // A bar chart's: the minimum at the left, or at the right when reversed.
+    assert_eq!((value_pos(plot, true, false, 0.0), value_pos(plot, true, false, 1.0)), (100.0, 500.0));
+    assert_eq!((value_pos(plot, true, true, 0.0), value_pos(plot, true, true, 1.0)), (500.0, 100.0));
+    // The category labels follow the category axis: at the value axis' minimum end unless it
+    // crosses at the maximum; reversing the value axis moves that end to the far side.
+    let far = |reversed: bool, at: AxisCrosses| category_labels_far(reversed, at, -5.0, 46.4);
+    assert!(!far(false, AxisCrosses::AutoZero));
+    assert!(far(true, AxisCrosses::AutoZero), "hanging columns: labels on top");
+    assert!(far(false, AxisCrosses::Max));
+    assert!(!far(true, AxisCrosses::Max), "reversed, crossing at the maximum: labels back at the bottom");
+    assert!(far(true, AxisCrosses::Min) && !far(false, AxisCrosses::Min));
+    assert!(far(true, AxisCrosses::At(10.0)), "a crossing inside the axis keeps the minimum end");
+    assert!(!far(true, AxisCrosses::At(46.4)) && !far(true, AxisCrosses::At(100.0)));
+}
+
+#[test]
+fn a_reversed_value_axis_hangs_stacked_columns_from_the_top() {
+    // Made-up data: +5, −3, +4, −2 stacked in one category, on an axis fixed at −5 to 46.4.
+    let draw = |reversed: bool| {
+        let mut c = Chart::sample(ChartType::StackedColumn);
+        (c.title, c.legend, c.data_labels) = (None, None, false);
+        c.categories = vec!["A".into()];
+        let base = c.series[0].clone();
+        c.series = [(5.0, RED), (-3.0, GREEN), (4.0, BLUE), (-2.0, MAGENTA)]
+            .iter()
+            .map(|(v, rgb)| deckcraft_model::chart::Series { values: vec![Some(*v)], fill: Some(solid_rgb(*rgb)), ..base.clone() })
+            .collect();
+        (c.y_min, c.y_max) = (Some(-5.0), Some(46.4));
+        c.y_reversed = reversed;
+        let img = chart_image(c);
+        let b = |rgb| painted_box(&img, rgb, 0..960).expect("segment drawn");
+        let boxes = [b(MAGENTA), b(GREEN), b(RED), b(BLUE)];
+        (img, boxes)
+    };
+    // The plot runs from area.y0 + the category labels' band (21.6 + 1.8 × 18 px) to area.y1
+    // (0.96 × 540): the labels have moved above it.
+    let (top, bottom) = (54.0, 518.4);
+    let unit = (bottom - top) / 51.4;
+    let (img, [m, g, r, b]) = draw(true);
+    // Top to bottom: −2 and −3 above the zero line, then +5 and +4 hanging below it, each segment
+    // starting where the one before it ends.
+    let at = |v: f64| top + (v + 5.0) * unit;
+    for (seg, from, to) in [(m, -5.0, -3.0), (g, -3.0, 0.0), (r, 0.0, 5.0), (b, 5.0, 9.0)] {
+        assert!((seg.1 as f64 - at(from)).abs() <= 1.5, "segment {from}..{to} starts at {} not {}", seg.1, at(from));
+        assert!(((seg.3 + 1) as f64 - at(to)).abs() <= 1.5, "segment {from}..{to} ends at {} not {}", seg.3 + 1, at(to));
+    }
+    // The category label sits above the plot, over its column, and nothing is left below it.
+    assert!(has_text(&img, (r.0, (top - 30.0) as u32, r.2, (top - 3.0) as u32)), "category label above the plot");
+    assert!(!has_text(&img, (r.0, bottom as u32 + 2, r.2, 539)), "no label below the plot");
+    // The same chart the usual way up: +4 on top, −2 at the bottom of the plot.
+    let (img, [m, g, r, b]) = draw(false);
+    let tops = [b.1, r.1, g.1, m.1];
+    assert!(tops.windows(2).all(|w| w[0] < w[1]), "upright stack {tops:?}");
+    let bottom = 518.4 - 1.8 * 18.0;
+    assert!(((m.3 + 1) as f64 - bottom).abs() <= 1.5, "−5 at the bottom of the plot: {}", m.3 + 1);
+    assert!(has_text(&img, (r.0, bottom as u32 + 3, r.2, 539)), "category label below the plot");
+}
+
+#[test]
+fn a_reversed_value_axis_grows_bars_leftwards_and_keeps_unfilled_points_empty() {
+    // A floating stack: 7, then 4 drawn as a `noFill` point (the gap), then 3, on 0 to 20.
+    let stacked = |reversed: bool| {
+        let mut c = Chart::sample(ChartType::StackedBar);
+        (c.title, c.legend, c.data_labels) = (None, None, false);
+        c.categories = vec!["A".into()];
+        let base = c.series[0].clone();
+        c.series = [(7.0, RED), (4.0, GREEN), (3.0, BLUE)]
+            .iter()
+            .map(|(v, rgb)| deckcraft_model::chart::Series { values: vec![Some(*v)], fill: Some(solid_rgb(*rgb)), ..base.clone() })
+            .collect();
+        c.series[1].point_fills = vec![(0, deckcraft_model::style::Fill::None)];
+        (c.y_min, c.y_max) = (Some(0.0), Some(20.0));
+        c.y_reversed = reversed;
+        chart_image(c)
+    };
+    let img = stacked(true);
+    assert!(painted_box(&img, GREEN, 0..960).is_none(), "the noFill point stays empty");
+    let r = painted_box(&img, RED, 0..960).expect("first segment");
+    let b = painted_box(&img, BLUE, 0..960).expect("last segment");
+    // The plot runs from area.x0 (0.04 × 960) to area.x1 less the category labels' gutter
+    // (0.96 × 960 − 4.5 × 18), which has moved to the right; zero is at its right-hand end.
+    let (left, right) = (38.4, 921.6 - 81.0);
+    let at = |v: f64| right - v / 20.0 * (right - left);
+    assert!(((r.2 + 1) as f64 - at(0.0)).abs() <= 1.5, "the first segment starts at zero, on the right: {}", r.2 + 1);
+    assert!((r.0 as f64 - at(7.0)).abs() <= 1.5, "and ends at 7: {}", r.0);
+    assert!(((b.2 + 1) as f64 - at(11.0)).abs() <= 1.5, "the last floats past the gap, from 11: {}", b.2 + 1);
+    assert!((b.0 as f64 - at(14.0)).abs() <= 1.5, "to 14: {}", b.0);
+    let mid = (r.1 + r.3) / 2;
+    assert!(
+        (b.2 + 2..r.0 - 1).all(|x| ![RED, GREEN, BLUE].contains(&img.pixel(x, mid)[..3].try_into().unwrap_or([0; 3]))),
+        "nothing is painted in the gap"
+    );
+    assert!(has_text(&img, (right as u32 + 3, r.1, 921, r.3)), "category label right of the plot");
+    // The usual way round: zero on the left, the stack reading left to right.
+    let img = stacked(false);
+    let (r, b) = (painted_box(&img, RED, 0..960).unwrap(), painted_box(&img, BLUE, 0..960).unwrap());
+    assert!(r.2 < b.0, "red {r:?} left of blue {b:?}");
+    assert!((r.0 as f64 - (38.4 + 81.0)).abs() <= 1.5, "zero at the plot's left: {}", r.0);
+
+    // Clustered bars on a reversed axis all start at its right-hand end; an unfilled point leaves
+    // its slot empty.
+    let mut c = Chart::sample(ChartType::Bar);
+    (c.title, c.legend, c.data_labels, c.vary_colors) = (None, None, false, false);
+    c.series.truncate(1);
+    c.categories = vec!["A".into(), "B".into(), "C".into()];
+    c.series[0].values = vec![Some(7.0), Some(4.0), Some(3.0)];
+    c.series[0].fill = Some(solid_rgb(GREEN));
+    c.series[0].point_fills = vec![(0, solid_rgb(RED)), (1, deckcraft_model::style::Fill::None), (2, solid_rgb(BLUE))];
+    (c.y_min, c.y_max) = (Some(0.0), Some(20.0));
+    c.y_reversed = true;
+    let img = chart_image(c);
+    assert!(painted_box(&img, GREEN, 0..960).is_none());
+    let (r, b) = (painted_box(&img, RED, 0..960).unwrap(), painted_box(&img, BLUE, 0..960).unwrap());
+    assert!(r.2.abs_diff(b.2) <= 1, "both bars start at the right-hand end: {r:?} {b:?}");
+    assert!((r.0 as f64 - at(7.0)).abs() <= 1.5 && (b.0 as f64 - at(3.0)).abs() <= 1.5, "{r:?} {b:?}");
+    assert!(r.1 > b.3, "the first category stays at the bottom");
+}
+
+#[test]
+fn a_combo_reverses_only_the_secondary_axis_its_line_is_drawn_on() {
+    // Columns of 10 and 90 on the primary axis (0 to 100, the usual way up) and a line through 10
+    // and 90 on a secondary axis (0 to 100) that runs backwards.
+    let draw = |y2_reversed: bool| {
+        let mut c = Chart::sample(ChartType::Combo);
+        (c.title, c.legend, c.data_labels, c.gridlines) = (None, None, false, false);
+        c.categories = vec!["A".into(), "B".into()];
+        let values = vec![Some(10.0), Some(90.0)];
+        c.series = vec![
+            deckcraft_model::chart::Series {
+                name: "Columns".into(),
+                values: values.clone(),
+                kind: Some(ChartType::Column),
+                fill: Some(solid_rgb(RED)),
+                ..Default::default()
+            },
+            deckcraft_model::chart::Series {
+                name: "Line".into(),
+                values,
+                kind: Some(ChartType::Line),
+                secondary_axis: true,
+                line: Some(deckcraft_model::style::Line::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 255)), 3.0)),
+                ..Default::default()
+            },
+        ];
+        (c.y_min, c.y_max, c.y2_min, c.y2_max) = (Some(0.0), Some(100.0), Some(0.0), Some(100.0));
+        c.y2_reversed = y2_reversed;
+        let img = chart_image(c);
+        let a = painted_box(&img, RED, 0..480).expect("column A");
+        let b = painted_box(&img, RED, 480..960).expect("column B");
+        // The line's height over the middle of a column.
+        let line_y = |col: (u32, u32, u32, u32)| {
+            let x = (col.0 + col.2) / 2;
+            let rows: Vec<u32> = (0..img.height)
+                .filter(|y| {
+                    let p = img.pixel(x, *y);
+                    p[2] > 200 && p[0] < 80 && p[1] < 80
+                })
+                .collect();
+            assert!(!rows.is_empty(), "the line crosses x = {x}");
+            rows.iter().sum::<u32>() as f64 / rows.len() as f64
+        };
+        (a, b, line_y(a), line_y(b))
+    };
+    let (a, b, la, lb) = draw(true);
+    // The columns stand the usual way up.
+    assert!(b.1 < a.1 && a.3.abs_diff(b.3) <= 1, "{a:?} {b:?}");
+    // The line falls although its values rise: 10 on the reversed axis sits as far down as 90 on the
+    // primary one (the top of column B), and 90 as far down as 10 (the top of column A).
+    assert!(la < lb, "{la} {lb}");
+    assert!((la - b.1 as f64).abs() <= 3.0, "line at A ({la}) level with column B's top ({})", b.1);
+    assert!((lb - a.1 as f64).abs() <= 3.0, "line at B ({lb}) level with column A's top ({})", a.1);
+    // Not reversed, the line runs along the columns' tops.
+    let (a, b, la, lb) = draw(false);
+    assert!((la - a.1 as f64).abs() <= 3.0 && (lb - b.1 as f64).abs() <= 3.0, "{la} {lb} {a:?} {b:?}");
+}
+
 #[test]
 fn glow_of_an_unfilled_shape_follows_its_line() {
     // A frame (no fill, thin line) with a strong glow: the glow lines its edge, the inside stays

@@ -1,6 +1,6 @@
 //! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`.
 
-use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{AxisCrosses, Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::xml::El;
@@ -467,6 +467,8 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
             c.y2_major = num(a, "majorUnit");
             c.y2_format = format_code(a);
             c.y2_hidden = deleted(a);
+            c.y2_reversed = reversed(a);
+            c.y2_crosses = crossing(pa, a);
         }
     }
     let cat_ax = pa.child("catAx").or_else(|| pa.child("dateAx")).or_else(|| pa.children_named("valAx").find(|a| !vertical(a)));
@@ -481,12 +483,42 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
         c.y_log_base = sc.and_then(|s| s.child_val("logBase")).and_then(|v| v.parse().ok()).filter(|b: &f64| b.is_finite() && *b >= 2.0);
         c.y_format = format_code(v);
         c.y_hidden = deleted(v);
+        c.y_reversed = reversed(v);
+        c.y_crosses = crossing(pa, v);
     }
     if let Some(a) = cat_ax {
-        c.cat_reversed = a.child("scaling").and_then(|s| s.child_val("orientation")).is_some_and(|o| o == "maxMin");
+        c.cat_reversed = reversed(a);
         c.axis_titles.0 = a.child("title").map(|t| rich_text(t).unwrap_or_else(|| "Axis Title".into()));
     }
     (val_ax, cat_ax)
+}
+
+/// `c:scaling/c:orientation val="maxMin"`: the axis runs from its maximum to its minimum.
+fn reversed(a: &El) -> bool {
+    a.child("scaling").and_then(|s| s.child_val("orientation")).is_some_and(|o| o == "maxMin")
+}
+
+/// Where the axis that crosses value axis `val` (the one whose `c:crossAx` names it, normally the
+/// category axis) meets it: that axis' `c:crossesAt`, else its `c:crosses`. The setting belongs to
+/// the crossing axis, so a secondary value axis' own `crosses="max"` (which only puts it on the
+/// right) does not move its bars.
+fn crossing(pa: &El, val: &El) -> AxisCrosses {
+    let Some(id) = val.child_val("axId") else { return AxisCrosses::AutoZero };
+    let Some(a) = pa
+        .elements()
+        .filter(|a| matches!(a.local(), "catAx" | "dateAx" | "valAx" | "serAx"))
+        .find(|a| a.child_val("crossAx") == Some(id) && a.child_val("axId") != Some(id))
+    else {
+        return AxisCrosses::AutoZero;
+    };
+    if let Some(v) = a.child_val("crossesAt").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
+        return AxisCrosses::At(v.clamp(-1e100, 1e100));
+    }
+    match a.child_val("crosses") {
+        Some("min") => AxisCrosses::Min,
+        Some("max") => AxisCrosses::Max,
+        _ => AxisCrosses::AutoZero,
+    }
 }
 
 /// Text sizes and colours as the file sets them.
@@ -892,8 +924,75 @@ mod tests {
         )
         .unwrap();
         assert!(rev.cat_reversed, "maxMin reverses the category axis");
+        assert!(!rev.y_reversed, "a reversed category axis leaves the value axis alone");
         // No c:gapWidth / c:overlap: the schema's 150 % and 0 %.
         assert_eq!((c.gap_width, c.overlap), (1.5, 0.0));
+    }
+
+    /// A made-up stacked column (+5, −3, +4, −2 on an axis fixed at −5 to 46.4) whose value axis has
+    /// `orientation` (`maxMin` hangs it: maximum at the bottom, minimum at the top) and whose
+    /// category axis carries `cat_crossing` (a `c:crosses` or `c:crossesAt` element, or nothing).
+    fn hanging_column(orientation: &str, cat_crossing: &str) -> String {
+        let pt = |i: usize, v: f64| format!(r#"<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>"#);
+        let ser = |i: usize, v: f64| {
+            format!(r#"<c:ser><c:idx val="{i}"/><c:order val="{i}"/><c:val><c:numLit><c:ptCount val="1"/>{}</c:numLit></c:val></c:ser>"#, pt(0, v))
+        };
+        let sers: String = [5.0, -3.0, 4.0, -2.0].iter().enumerate().map(|(i, v)| ser(i, *v)).collect();
+        format!(
+            r#"<c:chartSpace xmlns:c="{NS_C}"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="stacked"/><c:overlap val="100"/>{sers}<c:axId val="11"/><c:axId val="12"/></c:barChart><c:catAx><c:axId val="11"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="1"/><c:axPos val="t"/><c:crossAx val="12"/>{cat_crossing}</c:catAx><c:valAx><c:axId val="12"/><c:scaling><c:orientation val="{orientation}"/><c:max val="46.4"/><c:min val="-5"/></c:scaling><c:delete val="1"/><c:axPos val="l"/><c:crossAx val="11"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx></c:plotArea></c:chart></c:chartSpace>"#
+        )
+    }
+
+    #[test]
+    fn value_axis_orientation_and_crossing_are_read() {
+        let c = read_chart_xml(hanging_column("maxMin", r#"<c:crosses val="autoZero"/>"#).as_bytes()).unwrap();
+        assert_eq!(c.kind, ChartType::StackedColumn);
+        assert!(c.y_reversed, "maxMin on c:valAx reverses the value axis");
+        assert!(!c.cat_reversed, "the category axis still runs forwards");
+        assert_eq!((c.y_min, c.y_max), (Some(-5.0), Some(46.4)));
+        assert_eq!(c.y_crosses, AxisCrosses::AutoZero);
+        assert!(!c.y2_reversed);
+        let c = read_chart_xml(hanging_column("minMax", r#"<c:crosses val="autoZero"/>"#).as_bytes()).unwrap();
+        assert!(!c.y_reversed);
+        // The crossing is the category axis' setting: where bars start on the value axis.
+        let crossing = |x: &str| read_chart_xml(hanging_column("maxMin", x).as_bytes()).unwrap().y_crosses;
+        assert_eq!(crossing(r#"<c:crosses val="max"/>"#), AxisCrosses::Max);
+        assert_eq!(crossing(r#"<c:crosses val="min"/>"#), AxisCrosses::Min);
+        assert_eq!(crossing(r#"<c:crossesAt val="12.5"/>"#), AxisCrosses::At(12.5));
+        assert_eq!(crossing(r#"<c:crossesAt val="NaN"/>"#), AxisCrosses::AutoZero, "a crossing that isn't a number is ignored");
+        assert_eq!(crossing(r#"<c:crossesAt val="1e300"/>"#), AxisCrosses::At(1e100), "a far-off crossing is bounded");
+        assert_eq!(crossing(""), AxisCrosses::AutoZero);
+    }
+
+    #[test]
+    fn a_reversed_secondary_value_axis_is_read_on_its_own() {
+        // Columns on axes 1/2 the usual way up; a line on axes 3/4 whose right-hand value axis
+        // runs backwards. The secondary value axis' own crosses="max" only puts it on the right.
+        let xml = format!(
+            r#"<c:chartSpace xmlns:c="{NS_C}"><c:chart><c:plotArea>
+<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>90</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart>
+<c:lineChart><c:grouping val="standard"/><c:ser><c:idx val="1"/><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>90</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="3"/><c:axId val="4"/></c:lineChart>
+<c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:axPos val="b"/><c:crossAx val="2"/><c:crosses val="autoZero"/></c:catAx>
+<c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:axPos val="l"/><c:crossAx val="1"/><c:crosses val="autoZero"/></c:valAx>
+<c:valAx><c:axId val="4"/><c:scaling><c:orientation val="maxMin"/><c:max val="100"/><c:min val="0"/></c:scaling><c:axPos val="r"/><c:crossAx val="3"/><c:crosses val="max"/></c:valAx>
+<c:catAx><c:axId val="3"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="1"/><c:axPos val="b"/><c:crossAx val="4"/><c:crosses val="autoZero"/></c:catAx>
+</c:plotArea></c:chart></c:chartSpace>"#
+        );
+        let c = read_chart_xml(xml.as_bytes()).unwrap();
+        assert_eq!(c.kind, ChartType::Combo);
+        assert!(c.series[1].secondary_axis);
+        assert!(!c.y_reversed, "the primary axis runs the usual way");
+        assert!(c.y2_reversed, "the secondary axis runs backwards");
+        assert_eq!((c.y2_min, c.y2_max), (Some(0.0), Some(100.0)));
+        assert_eq!((c.y_crosses, c.y2_crosses), (AxisCrosses::AutoZero, AxisCrosses::AutoZero));
+        // Swapped: the primary axis reversed, the secondary not.
+        let swapped = xml.replacen(r#"<c:orientation val="maxMin"/>"#, r#"<c:orientation val="minMax"/>"#, 1).replacen(
+            r#"<c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/>"#,
+            r#"<c:valAx><c:axId val="2"/><c:scaling><c:orientation val="maxMin"/>"#,
+            1,
+        );
+        let c = read_chart_xml(swapped.as_bytes()).unwrap();
+        assert!(c.y_reversed && !c.y2_reversed);
     }
 
     #[test]
