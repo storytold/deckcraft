@@ -317,8 +317,9 @@ impl Dictionary {
     }
 
     /// A compound part made of a root and one affix, as Hunspell reads them: a suffix ends the last
-    /// part and a prefix starts the first; anywhere else the affix needs `COMPOUNDPERMITFLAG`. The
-    /// compound `flag` may be on the root or among the affix's continuation flags. German frami
+    /// part and a prefix starts the first; anywhere else the affix needs `COMPOUNDPERMITFLAG`.
+    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. The compound `flag`
+    /// may be on the root or among the affix's continuation flags. German frami
     /// gives many first parts their flag that way: `Vor/hij` with `SFX j 0 0/xoc` begins
     /// `Vorschlag` (#2145).
     fn affixed_compound_part(&self, w: &[char], flag: Flag, pos: Pos) -> bool {
@@ -1023,8 +1024,8 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         // from zero affixes' continuation classes, not from the root, and those roots need an affix.
         let aff = "COMPOUNDBEGIN B\nCOMPOUNDMIDDLE M\nCOMPOUNDEND E\nCOMPOUNDPERMITFLAG P\nONLYINCOMPOUND O\nNEEDAFFIX N\n\
             COMPOUNDMIN 2\nSFX j Y 1\nSFX j 0 0/BOP .\nSFX m Y 1\nSFX m 0 0/MOP .\nPFX q Y 1\nPFX q 0 0/BO .\n\
-            SFX s Y 1\nSFX s 0 e .\nSFX u Y 1\nSFX u 0 s .\nPFX v Y 1\nPFX v 0 un .\n";
-        let dic = "6\nvor/Nj\nschlag/OEs\nwerk/Njm\nzeug/OEs\nding/Nq\nhaus/E\n";
+            SFX s Y 1\nSFX s 0 e .\nSFX u Y 1\nSFX u 0 s .\nPFX v Y 1\nPFX v 0 un .\nSFX t Y 1\nSFX t 0 0/BNP .\n";
+        let dic = "8\nvor/Nj\nschlag/OEs\nwerk/Njm\nzeug/OEs\nding/Nq\nhaus/Ev\ntag/Bs\ntor/t\n";
         let d = Dictionary::parse(aff.as_bytes(), dic.as_bytes());
         // First part through SFX j, middle part through SFX m (it carries the permit flag), last
         // part from its root, with or without a suffix there.
@@ -1042,6 +1043,9 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
             // without it (v).
             "vorschlageschlag",
             "werkunhaus",
+            // tag carries B but its suffix s has no permit flag; SFX t gives B but carries NEEDAFFIX.
+            "tageschlag",
+            "torhaus",
             // Not words.
             "vorschlagx",
             "xvorschlag",
