@@ -182,7 +182,8 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 break;
             }
             let adv = if c == '\t' {
-                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i), hang_stop)
+                // The implicit stop is for the first line only: later lines start at the margin.
+                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i), if lines.is_empty() { hang_stop } else { None })
             } else {
                 p.cells.get(i).map(|c| c.adv).unwrap_or(0.0)
             };

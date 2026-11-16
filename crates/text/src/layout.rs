@@ -316,7 +316,9 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     // A hanging first line (marL > 0, indent < 0) treats the indent position (marL) as an
     // implicit tab stop for its first tab; later lines already start there, so the stop
     // only ever applies ahead of the first line's start.
-    let hang = (margin - first_x > 0.5 && margin.is_finite()).then_some(margin);
+    // LTR only: the implicit stop is measured from the left margin, and RTL tab handling is
+    // out of this change's scope (its stops are not mirrored here yet).
+    let hang = (!p.rtl && margin - first_x > 0.5 && margin.is_finite()).then_some(margin);
     let first_w = (g.col_w - first_x - mr).max(1.0);
     let rest_w = (g.col_w - rest_x - mr).max(1.0);
     let raw = break_lines(
@@ -382,7 +384,10 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
 }
 
 /// Logical advance of each cell on the line (tabs measure from the start edge) and their sum.
-fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64) -> (Vec<f64>, f64) {
+/// `hang` is the implicit first-line stop, or `None` on later lines: they already start at the
+/// margin, and negative character spacing can dip `x` below it, which would wrongly re-trigger
+/// the stop.
+fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64, hang: Option<f64>) -> (Vec<f64>, f64) {
     let p = env.p;
     let line_cells = p.cells.get(rl.start..rl.end).unwrap_or(&[]);
     let n = rl.end.saturating_sub(rl.start);
@@ -394,7 +399,7 @@ fn line_advances(env: &ParaEnv, rl: &RawLine, is_last: bool, x0: f64) -> (Vec<f6
         let a = if shy_end && k + 1 == n {
             p.faces.get(c.face).zip(p.styles.get(c.style)).map(|(f, st)| measure_str(f, st.size, "-").0).unwrap_or(0.0)
         } else if c.ch == '\t' {
-            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), env.hang)
+            tab_advance(x0 + x, env.tabs, p.props.default_tab.unwrap_or(72.0), tab_segment(&p.cells, rl.start + k), hang)
         } else {
             c.adv
         };
@@ -526,7 +531,7 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
     let avail = (g.col_w - x0 - env.mr).max(0.0);
     let n = rl.end.saturating_sub(rl.start);
     let line_cells = p.cells.get(rl.start..rl.end).unwrap_or(&[]);
-    let (mut adv, width) = line_advances(env, rl, is_last, x0);
+    let (mut adv, width) = line_advances(env, rl, is_last, x0, if li == 0 { env.hang } else { None });
     let align = props.align.unwrap_or(Align::Left);
     let slack = (avail - width).max(0.0);
     let stretch = !is_last && g.wrap && slack > 0.0;
