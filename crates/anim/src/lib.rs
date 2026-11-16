@@ -18,6 +18,9 @@ mod effects;
 mod interact;
 mod mesh;
 mod morph;
+mod morph_dirty;
+#[cfg(test)]
+mod morph_dirty_tests;
 mod path;
 mod show;
 mod timeline;
@@ -39,6 +42,7 @@ pub use easing::ease;
 pub use interact::{Click, HitShape, Target};
 pub use mesh::{MeshVertex, layer_mesh};
 pub use morph::{MorphFrame, MorphPath, MorphText, morph_crop, morph_frame, morph_pairs, morph_xfrm};
+pub use morph_dirty::Change as MorphChange;
 pub use path::{MotionPath, default_path};
 pub use show::{LinkJump, ShowAction, ShowState, safe_url, show_order};
 pub use timeline::{EffectTiming, Sequence, StepStamp, Timeline, TriggerPlay};

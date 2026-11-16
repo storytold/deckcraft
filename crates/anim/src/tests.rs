@@ -668,6 +668,30 @@ fn morph_frame_moves_blends_and_fades() {
 }
 
 #[test]
+fn morph_frame_moves_a_group_whose_children_have_other_ids() {
+    // The same group on two slides: its children have ids of their own on each, yet it is one
+    // group that moves, not two copies cross-fading.
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let group = |id: u32, child_id: u32| Shape {
+        kind: deckcraft_model::ShapeKind::Group { children: vec![shape(child_id, "Dot")], child: Xfrm::new(0.0, 0.0, 200.0, 100.0) },
+        ..shape(id, "Ink")
+    };
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    a.shapes = vec![Shape { xfrm: Some(Xfrm::new(0.0, 100.0, 200.0, 100.0)), ..group(1, 10) }];
+    b.shapes = vec![Shape { xfrm: Some(Xfrm::new(400.0, 100.0, 200.0, 100.0)), ..group(2, 20) }];
+    let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+    assert_eq!(f.shapes.len(), 1);
+    assert!(f.opacity.is_empty());
+    assert!((f.shapes[0].0.xfrm.unwrap().x - 200.0).abs() < 1e-9);
+    // Children that differ in more than their ids do cross-fade.
+    if let deckcraft_model::ShapeKind::Group { children, .. } = &mut b.shapes[0].kind {
+        children[0].name = "Other".into();
+    }
+    assert_eq!(morph_frame(&p, &a, &b, 0.5, &|_| false).shapes.len(), 2);
+}
+
+#[test]
 fn morph_frame_cross_fades_changed_content() {
     let p = deckcraft_model::defaults::new_presentation(None);
     let mut a = Slide::default();
