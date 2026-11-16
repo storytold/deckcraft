@@ -1051,7 +1051,7 @@ fn followed_links_draw_in_the_followed_hyperlink_colour() {
         ..Default::default()
     };
     let plain = deck(link(), link(), link(), link());
-    let at = |p: &Presentation, followed: &[FollowedLink]| render_slide(p, 0, &RenderOpts { scale: 0.5, followed, ..Default::default() });
+    let at = |p: &Presentation, followed: &[FollowedLink]| render_slide(p, 0, &RenderOpts { scale: 1.0, followed, ..Default::default() });
     let diff = |a: &Image, b: &Image| a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 64).count();
     let slide = plain.slides[0].id;
     let key = |run| FollowedLink { slide, shape: ShapeId(1), cell: None, para: 0, run };
@@ -1110,7 +1110,7 @@ fn a_followed_link_does_not_recolour_the_same_link_on_another_slide() {
     second.id = SlideId(p.slides[0].id.0 + 1000);
     p.slides.push(std::sync::Arc::new(second));
     let (a, b) = (p.slides[0].id, p.slides[1].id);
-    let at = |i: usize, followed: &[FollowedLink]| render_slide(&p, i, &RenderOpts { scale: 0.5, followed, ..Default::default() });
+    let at = |i: usize, followed: &[FollowedLink]| render_slide(&p, i, &RenderOpts { scale: 1.0, followed, ..Default::default() });
     let key = |slide| FollowedLink { slide, shape: ShapeId(1), cell: None, para: 0, run: 0 };
     let _ = at(0, &[]); // faces load lazily
     let (base_a, base_b) = (at(0, &[]), at(1, &[]));
