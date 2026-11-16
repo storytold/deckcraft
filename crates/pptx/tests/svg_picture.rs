@@ -31,10 +31,15 @@ enum Vector {
     Broken,
     /// An SVG that parses but draws through a filter we do not draw.
     Filtered,
+    /// A picture PowerPoint saves with only a vector: no fallback in `a:blip`, only the extension.
+    SvgOnly,
 }
 
 /// Broken SVG bytes: an `svg` root that never closes.
 const BROKEN: &[u8] = b"<svg";
+
+/// An SVG that uses a clip path, which this renderer does not apply.
+const CLIPPED: &str = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><clipPath id='c'><rect width='24' height='24'/></clipPath></defs><g clip-path='url(#c)'><rect width='24' height='24' fill='red'/></g></svg>";
 
 /// An SVG that draws through a filter we do not draw, so it would show incomplete.
 const FILTERED: &str = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><filter id='f'><feGaussianBlur stdDeviation='2'/></filter></defs><rect width='24' height='24' fill='red' filter='url(#f)'/></svg>";
@@ -81,19 +86,19 @@ fn patched(vector: Vector) -> Vec<u8> {
                      </a:ext></a:extLst>",
                     if vector == Vector::Linked { "r:link" } else { "r:embed" }
                 );
-                data = into_blip(&xml, &ext).into_bytes();
+                data = if vector == Vector::SvgOnly { svg_only(&xml, &ext) } else { into_blip(&xml, &ext) }.into_bytes();
             }
             "ppt/slides/_rels/slide1.xml.rels" if vector != Vector::None => {
                 let xml = String::from_utf8(data).expect("rels");
                 let rel = match vector {
-                    Vector::Embedded | Vector::Broken | Vector::Filtered => {
+                    Vector::Embedded | Vector::Broken | Vector::Filtered | Vector::SvgOnly => {
                         format!("<Relationship Id=\"rIdSvg\" Type=\"{IMAGE}\" Target=\"../media/image2.svg\"/>")
                     }
                     _ => format!("<Relationship Id=\"rIdSvg\" Type=\"{IMAGE}\" Target=\"https://example.com/i.svg\" TargetMode=\"External\"/>"),
                 };
                 data = xml.replacen("</Relationships>", &format!("{rel}</Relationships>"), 1).into_bytes();
             }
-            "[Content_Types].xml" if matches!(vector, Vector::Embedded | Vector::Broken | Vector::Filtered) => {
+            "[Content_Types].xml" if matches!(vector, Vector::Embedded | Vector::Broken | Vector::Filtered | Vector::SvgOnly) => {
                 let xml = String::from_utf8(data).expect("types");
                 let ct = "<Default Extension=\"svg\" ContentType=\"image/svg+xml\"/>";
                 data = xml.replacen("</Types>", &format!("{ct}</Types>"), 1).into_bytes();
@@ -102,17 +107,25 @@ fn patched(vector: Vector) -> Vec<u8> {
         }
         out.start_file(&name, opts).expect("start");
         out.write_all(&data).expect("write");
-        if name == "ppt/slides/slide1.xml" && matches!(vector, Vector::Embedded | Vector::Broken | Vector::Filtered) {
+        if name == "ppt/slides/slide1.xml" && matches!(vector, Vector::Embedded | Vector::Broken | Vector::Filtered | Vector::SvgOnly) {
             out.start_file("ppt/media/image2.svg", opts).expect("start svg");
             let body = match vector {
                 Vector::Broken => BROKEN,
                 Vector::Filtered => FILTERED.as_bytes(),
+                Vector::SvgOnly => CLIPPED.as_bytes(),
                 _ => SVG,
             };
             out.write_all(body).expect("write svg");
         }
     }
     out.finish().expect("finish").into_inner()
+}
+
+/// A picture whose `a:blip` names only the extension, as PowerPoint writes an SVG-only picture.
+fn svg_only(xml: &str, ext: &str) -> String {
+    let Some(start) = xml.find("<a:blip") else { return xml.to_string() };
+    let Some(end) = xml.get(start..).and_then(|r| r.find("/>")).map(|i| start + i) else { return xml.to_string() };
+    format!("{}<a:blip>{ext}</a:blip>{}", xml.get(..start).unwrap_or_default(), xml.get(end + 2..).unwrap_or_default())
 }
 
 /// Put `ext` (the `a:extLst`) inside the picture's `a:blip`, which the writer leaves self-closing.
@@ -157,6 +170,14 @@ fn unreadable_svg_bytes_leave_the_raster_fallback_in_place() {
     let (ct, data) = picture_media(&p);
     assert_eq!(ct, "image/png");
     assert_eq!(data, PNG);
+}
+
+#[test]
+fn an_svg_only_picture_keeps_its_vector_even_when_it_draws_in_part() {
+    let p = deckcraft_pptx::import(&patched(Vector::SvgOnly)).expect("import");
+    let (ct, data) = picture_media(&p);
+    assert_eq!(ct, "image/svg+xml", "a picture with no fallback still shows its vector");
+    assert_eq!(data, CLIPPED.as_bytes());
 }
 
 #[test]

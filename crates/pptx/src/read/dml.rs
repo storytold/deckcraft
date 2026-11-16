@@ -144,9 +144,16 @@ pub fn gradient(f: &El) -> Gradient {
 /// `blipFill` (either `a:` or `p:`) → picture fill, registering the image as media.
 pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let blip = bf.child("blip");
-    // PowerPoint stores an icon's vector original in `a:extLst` next to a PNG fallback in
-    // `r:embed`; the vector is what we draw, so it wins when the part really is an SVG.
-    let media = blip.and_then(|b| svg_blip(imp, part, b).or_else(|| media_ref(imp, part, b)))?;
+    // PowerPoint stores a picture's vector original in `a:extLst` next to a PNG fallback in
+    // `r:embed`. A whole SVG wins; a picture this renderer would draw only in part keeps the
+    // fallback, and with no fallback at all (PowerPoint writes SVG-only pictures too) the vector
+    // is still better than an empty shape.
+    let media = blip.and_then(|b| match (svg_blip(imp, part, b), media_ref(imp, part, b)) {
+        (Some((svg, true)), _) => Some(svg),
+        (Some((svg, false)), None) => Some(svg),
+        (Some(_), Some(fallback)) => Some(fallback),
+        (None, fallback) => fallback,
+    })?;
     let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
     if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
         && let Some(effect) = layer
@@ -209,15 +216,15 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
 /// The SVG original of a picture (`a:extLst/a:ext/…/asvg:svgBlip`), when the file has one.
 /// The extension list may hold others first (`a14:useLocalDpi`), a linked SVG carries no bytes, and
 /// unreadable bytes would only lose the raster fallback, so all three keep the fallback.
-fn svg_blip(imp: &mut Imp, part: &Part, blip: &El) -> Option<deckcraft_model::MediaId> {
+fn svg_blip(imp: &mut Imp, part: &Part, blip: &El) -> Option<(deckcraft_model::MediaId, bool)> {
     let svg = blip.child("extLst")?.find("svgBlip")?;
     let id = media_ref(imp, part, svg)?;
-    // A picture that uses a filter, mask, clip path, pattern or embedded image would lose it, so
-    // the raster copy stays the visible one and the SVG is kept only when it draws whole.
+    // `true` when the picture draws whole; a picture that uses a filter, mask, clip path, pattern
+    // or embedded image would lose it, which only matters when a raster copy exists.
     imp.media
         .iter()
-        .any(|m| m.id == id && m.content_type == "image/svg+xml" && deckcraft_svg::parse(&m.data).is_some_and(|s| !s.skipped.any()))
-        .then_some(id)
+        .find(|m| m.id == id && m.content_type == "image/svg+xml")
+        .and_then(|m| deckcraft_svg::parse(&m.data).map(|s| (id, !s.skipped.any())))
 }
 
 /// Media for an element with `r:embed` (or `r:link`).
