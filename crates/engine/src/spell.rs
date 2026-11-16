@@ -275,10 +275,12 @@ impl Dictionary {
     }
 
     /// Strip suffixes from `w` (one, or two through continuation flags); `extra` flags must also be
-    /// on the root, `cross` means the suffix must allow a prefix.
-    fn suffixed(&self, w: &[char], extra: &[Flag], cross: bool) -> bool {
+    /// on the root, `cross` means the suffix must allow a prefix. `completed`: a prefix that needs
+    /// nothing more is already on the word, so a suffix that needs another affix has it
+    /// (`work/US` with `SFX S 0 s/N` makes `unworks`, not `works`).
+    fn suffixed(&self, w: &[char], extra: &[Flag], cross: bool, completed: bool) -> bool {
         for s in &self.sfx {
-            if (cross && !s.cross) || self.only_in_compound_affix(s) || self.needs_another_affix(s) {
+            if (cross && !s.cross) || self.only_in_compound_affix(s) || (self.needs_another_affix(s) && !completed) {
                 continue;
             }
             let Some(stem) = strip_end(w, &s.add, &s.strip) else { continue };
@@ -389,7 +391,7 @@ impl Dictionary {
             return true;
         }
         let w: Vec<char> = word.chars().collect();
-        if self.suffixed(&w, &[], false) {
+        if self.suffixed(&w, &[], false, false) {
             return true;
         }
         for p in &self.pfx {
@@ -403,7 +405,7 @@ impl Dictionary {
             if !self.needs_another_affix(p) && self.root(&stem.iter().collect::<String>(), &[p.flag], true) {
                 return true;
             }
-            if p.cross && self.suffixed(&stem, &[p.flag], true) {
+            if p.cross && self.suffixed(&stem, &[p.flag], true, !self.needs_another_affix(p)) {
                 return true;
             }
         }
@@ -1077,6 +1079,25 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
             }
             for w in bad {
                 assert!(!d.check(w), "{sfx}: {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_prefix_completes_a_suffix_that_needs_another_affix() {
+        // As Hunspell 1.7.6 reads it: `work/US`, a suffix needing another affix (N). The prefix
+        // completes it (`unworks`); alone it doesn't (`works`); when both need another, neither
+        // completes the other.
+        for (pfx, good, bad) in
+            [("0 un", &["work", "unwork", "unworks"][..], &["works"][..]), ("0 un/N", &["work"][..], &["works", "unwork", "unworks"][..])]
+        {
+            let aff = format!("NEEDAFFIX N\nPFX U Y 1\nPFX U {pfx} .\nSFX S Y 1\nSFX S 0 s/N .\n");
+            let d = Dictionary::parse(aff.as_bytes(), b"1\nwork/US\n".as_slice());
+            for w in good {
+                assert!(d.check(w), "{pfx}: {w}");
+            }
+            for w in bad {
+                assert!(!d.check(w), "{pfx}: {w}");
             }
         }
     }
