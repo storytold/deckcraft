@@ -97,6 +97,8 @@ pub struct Show {
     timer: PresenterTimer,
     /// Speaker-notes size in presenter view, in points.
     notes_px: f32,
+    /// The slide the presenter notes pane last drew; a different slide's notes open at the top (#2037).
+    notes_slide: Option<usize>,
     timings: Vec<(usize, f64)>,
     last_move: f64,
     /// The last trackpad flick or mouse-wheel notch, so one gesture turns one page.
@@ -260,6 +262,7 @@ impl Show {
             show_start: 0.0,
             timer: PresenterTimer::start(0.0),
             notes_px: NOTES_DEFAULT,
+            notes_slide: None,
             timings: vec![],
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,
