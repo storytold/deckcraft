@@ -325,6 +325,9 @@ struct Request {
     path: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    /// The announced body is larger than [`MAX_REQUEST_BODY`]: nothing of it was read, and the
+    /// routing answers `413` instead of the reader dropping the connection with no status.
+    too_large: bool,
 }
 
 impl Request {
@@ -424,7 +427,11 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
     // media channel accepts up to the largest kind's budget. A smaller cap here would refuse an
     // upload that the endpoint itself is ready to take (an audio or video clip, a 3-D model).
     if length > MAX_REQUEST_BODY {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "body too large"));
+        // The head is all there is to keep: the body is refused before a byte of it is read, so the
+        // connection stays free to carry the `413` the router writes. Dropping the connection here
+        // would leave the client with no status at all, which is what an over-limit upload used to
+        // get.
+        return Ok(Request { method, path, headers, body: Vec::new(), too_large: true });
     }
     let mut body = buf[header_end..].to_vec();
     while body.len() < length {
@@ -435,7 +442,7 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
         body.extend_from_slice(&tmp[..n]);
     }
     body.truncate(length);
-    Ok(Request { method, path, headers, body })
+    Ok(Request { method, path, headers, body, too_large: false })
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -531,6 +538,11 @@ fn preflight(request: &Request, shared: &Shared) -> Response {
 }
 
 fn route_inner(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
+    if request.too_large {
+        // The endpoint's own limit is the media channel's widest kind; a body above it is the
+        // client's error and it has to read that as a status, not as a closed socket.
+        return Ok(Response::json(413, json!({"error": "body too large"})));
+    }
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/healthz") | ("GET", "/readyz") => Ok(Response::json(200, json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}))),
         ("GET", "/metrics") => {
@@ -1378,6 +1390,7 @@ mod tests {
             path: "/v1/sessions/file-c".into(),
             headers: vec![("authorization".into(), "Bearer service-token".into())],
             body: Vec::new(),
+            too_large: false,
         };
 
         let response = close_session("file-c", &shared, &request).expect("a response");
@@ -1462,6 +1475,7 @@ mod tests {
             path: path.into(),
             headers: bearer.map(|token| ("authorization".into(), format!("Bearer {token}"))).into_iter().collect(),
             body: Vec::new(),
+            too_large: false,
         };
         let path = format!("/v1/sessions/file-b/base/{sha}");
 
@@ -1515,5 +1529,40 @@ mod tests {
         assert_eq!(request.body.len(), length);
         assert_eq!(request.method, "PUT");
         writer.join().expect("writer");
+    }
+
+    #[test]
+    fn a_body_above_the_widest_media_kind_is_answered_413() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        // One byte above the widest media kind: no endpoint can take it, so the answer is a status
+        // rather than a closed socket the client cannot tell from a network fault.
+        let length = MAX_REQUEST_BODY + 1;
+        let writer = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("connect");
+            write!(stream, "PUT /v1/sessions/x/media/00 HTTP/1.1\r\nContent-Length: {length}\r\n\r\n").expect("head");
+            let mut answer = String::new();
+            stream.read_to_string(&mut answer).expect("answer");
+            answer
+        });
+        let (mut stream, _) = listener.accept().expect("accept");
+        let request = read_request(&mut stream).expect("the head is read");
+        assert!(request.too_large, "the announced body is above the widest media kind");
+        assert!(request.body.is_empty(), "no byte of the refused body is read");
+        let shared = Arc::new(Shared {
+            config: Config::for_tests(b"secret", "service-token"),
+            hubs: Mutex::new(HashMap::new()),
+            names: Mutex::new(HashMap::new()),
+            metrics: Metrics::default(),
+            store: None,
+            cabinet: None,
+        });
+        let response = route(&request, &shared).expect("a response");
+        assert_eq!(response.status, 413, "an over-limit body is the client's error, with a status");
+        write_response(&mut stream, response).expect("answer");
+        drop(stream);
+        let answer = writer.join().expect("writer");
+        assert!(answer.starts_with("HTTP/1.1 413"), "{answer}");
     }
 }

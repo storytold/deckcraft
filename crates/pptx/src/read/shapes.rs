@@ -334,6 +334,20 @@ fn model_camera(e: &El) -> Option<deckcraft_model::ModelCamera> {
     let position = vec3("pos", ["x", "y", "z"])?;
     let target = vec3("lookAt", ["x", "y", "z"])?;
     let up = vec3("up", ["dx", "dy", "dz"])?;
+    // The engine's `model3d.camera` refuses a view it cannot project: no distance, an `up` with no
+    // length, or an `up` along the view direction. A reader that kept one would store a camera the
+    // command itself cannot produce, so it is dropped here like any other malformed member.
+    let across = [target[0] - position[0], target[1] - position[1], target[2] - position[2]];
+    let length = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let distance = length(across);
+    let up_length = length(up);
+    if distance <= 1.0e-6 || up_length <= 1.0e-6 {
+        return None;
+    }
+    let cross = [across[1] * up[2] - across[2] * up[1], across[2] * up[0] - across[0] * up[2], across[0] * up[1] - across[1] * up[0]];
+    if length(cross) / (distance * up_length) < 1.0e-6 {
+        return None;
+    }
     // Office writes the perspective's field of view in 1/60000 degree.
     let fov = cam.child("perspective")?.attr("fov")?.parse::<f64>().ok()? / 60_000.0;
     (fov.is_finite() && fov > 0.0).then_some(deckcraft_model::ModelCamera { position, target, up, fov })
@@ -948,6 +962,22 @@ mod camera_tests {
                 let hostile = GOOD.replace(key, &key.replacen("0\"", &format!("{bad}\""), 1));
                 assert_eq!(camera(&hostile), None, "{bad} in {key}");
             }
+        }
+    }
+
+    #[test]
+    fn a_camera_with_a_degenerate_view_is_dropped() {
+        // `up` without a length, `up` along the view and a `lookAt` on the `pos` are all views the
+        // engine's `model3d.camera` refuses; keeping one would store a value that command cannot
+        // produce, and a restore of it would be refused.
+        for (from, to) in [
+            ("<up dx=\"0\" dy=\"1\" dz=\"0\"/>", "<up dx=\"0\" dy=\"0\" dz=\"0\"/>"),
+            ("<up dx=\"0\" dy=\"1\" dz=\"0\"/>", "<up dx=\"0\" dy=\"0\" dz=\"1\"/>"),
+            ("<lookAt x=\"0\" y=\"0\" z=\"0\"/>", "<lookAt x=\"0\" y=\"0\" z=\"914400\"/>"),
+        ] {
+            let hostile = GOOD.replace(from, to);
+            assert_ne!(hostile, GOOD, "the case names a member the camera has");
+            assert_eq!(camera(&hostile), None, "{to}");
         }
     }
 }
