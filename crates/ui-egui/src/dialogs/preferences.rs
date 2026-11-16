@@ -25,6 +25,7 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     // setting keeps (`UiState::sanitized`).
     if let Some(language) = before.get("language").and_then(Value::as_str) {
         app.ui.language = language.to_string();
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&app.ui.language));
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;

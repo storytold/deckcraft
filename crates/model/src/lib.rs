@@ -108,11 +108,44 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
+thread_local! {
+    static ACTIVE_LANGUAGE_THREAD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+static ACTIVE_LANGUAGE_GLOBAL: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set the active interface language for placeholder prompts and model-level localized strings.
+/// When set to a language tag (e.g. `"ru"`, `"en"`), placeholder prompts immediately follow it without
+/// re-reading settings files from disk. Setting `None` or `"auto"` falls back to config/system detection.
+pub fn set_active_language(lang: Option<&str>) {
+    let s = lang.map(|s| s.trim().to_string());
+    ACTIVE_LANGUAGE_THREAD.with(|cell| {
+        *cell.borrow_mut() = s.clone();
+    });
+    if let Ok(mut lock) = ACTIVE_LANGUAGE_GLOBAL.write() {
+        *lock = s;
+    }
+}
+
 fn is_ru_tag(tag: &str) -> bool {
     tag.trim().split(['-', '_', '.']).next().is_some_and(|s| s.eq_ignore_ascii_case("ru"))
 }
 
 fn is_ru_prompt() -> bool {
+    let thread_val = ACTIVE_LANGUAGE_THREAD.with(|cell| cell.borrow().clone());
+    let active = thread_val.or_else(|| {
+        ACTIVE_LANGUAGE_GLOBAL.read().ok().and_then(|lock| lock.clone())
+    });
+
+    if let Some(ref active) = active {
+        if is_ru_tag(active) {
+            return true;
+        }
+        if !active.eq_ignore_ascii_case("auto") {
+            return false;
+        }
+    }
+
     let saved_lang = config_dir().and_then(|dir| {
         let p = dir.join("ui.json");
         let data = std::fs::read_to_string(p).ok()?;
@@ -144,6 +177,10 @@ fn is_ru_prompt() -> bool {
         {
             return true;
         }
+    }
+
+    if sys_locale::get_locales().take(16).any(|tag| is_ru_tag(&tag)) {
+        return true;
     }
 
     false
@@ -195,7 +232,18 @@ impl PhType {
     }
     /// The prompt shown in an empty placeholder in Normal view.
     pub fn prompt(self) -> &'static str {
-        if is_ru_prompt() {
+        self.prompt_for_lang(None)
+    }
+
+    /// The prompt shown in an empty placeholder in Normal view for an explicit language tag.
+    /// When `lang` is `None` or `"auto"`, follows the active interface language or system detection.
+    pub fn prompt_for_lang(self, lang: Option<&str>) -> &'static str {
+        let is_ru = match lang {
+            Some(l) if is_ru_tag(l) => true,
+            Some(l) if !l.eq_ignore_ascii_case("auto") => false,
+            _ => is_ru_prompt(),
+        };
+        if is_ru {
             match self {
                 PhType::Title | PhType::CtrTitle => "Заголовок слайда",
                 PhType::SubTitle => "Подзаголовок слайда",

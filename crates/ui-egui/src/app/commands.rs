@@ -249,6 +249,7 @@ impl SlideApp {
                         format!("`language` must be one of {}", offered.join(", "))
                     })?;
                     self.ui.language = code.to_string();
+                    crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
                 }
                 return Ok(self.language_state());
             }

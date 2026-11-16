@@ -170,6 +170,7 @@ thread_local! {
 /// Set the language the UI is drawn in (the app does this every frame from its setting).
 pub fn set_current(lang: Lang) {
     CURRENT.set(lang);
+    deckcraft_model::set_active_language(Some(lang.code()));
 }
 
 /// The language the UI is drawn in.

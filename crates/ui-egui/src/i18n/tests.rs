@@ -21,6 +21,9 @@ const DE: &str = "@id\tlanguage.name\tDeutsch
 \tSystem language\tSystemsprache
 ";
 
+/// A minimal Russian fixture for tests.
+const RU: &str = "@id\tlanguage.name\tРусский\n";
+
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
     Harness::builder().with_size(egui::vec2(1400.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
@@ -94,6 +97,19 @@ fn app_language_reports_and_changes_the_setting() {
     }
     app.run("app.language", json!({"language": "auto"})).unwrap();
     assert_eq!(app.ui.language, AUTO);
+}
+
+#[test]
+fn app_language_switches_placeholder_prompts_immediately() {
+    use_fixture("ru", RU);
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    assert_eq!(deckcraft_model::PhType::Title.prompt(), "Click to add title");
+
+    app.run("app.language", json!({"language": "ru"})).unwrap();
+    assert_eq!(deckcraft_model::PhType::Title.prompt(), "Заголовок слайда");
+
+    app.run("app.language", json!({"language": "en"})).unwrap();
+    assert_eq!(deckcraft_model::PhType::Title.prompt(), "Click to add title");
 }
 
 /// Switching the language redraws the ribbon, status bar and accessible names in German, while
