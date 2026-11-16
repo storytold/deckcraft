@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-16T08:38Z. Branch: `collab/pr15`.
+Updated: 2026-11-16T16:32Z. Branch: `collab/pr15`.
 
 **This page does not state the delivered head, the CI verdict or what is unpushed.** Those move
 without anyone touching this file, and a header that writes them down is false after the next
@@ -2472,6 +2472,37 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-16 — `Drop` no longer joins the link's worker: the connect that had no timeout
+
+- The finding on `crates/collab/src/transport.rs` (`PRRT_kwDOU_DdmM61yYZ2`): the `connecting` flag
+  could not close the window. The worker's `while !stop` check and its `connecting.store(true)`
+  were two steps, so `Drop` could set `stop`, read `connecting == false` and join, while the worker
+  then entered `tungstenite::connect` — a call with no timeout of ours. A firewall that drops
+  packets froze the UI in `join` for as long as the OS took to give up.
+- `Drop` now calls `stop_worker` (`transport.rs:140`, called at `:127`): it sets `stop` and drops
+  the handle. The worker is never joined, so neither a connect nor a write blocked on a full socket
+  buffer can hold the UI thread; it owns only `Arc`s and its channels and leaves at its next `stop`
+  check (between attempts, or within the 50 ms read timeout).
+- Regression test `dropping_the_link_does_not_wait_for_a_worker_inside_a_connect`
+  (`transport.rs:450`): a barrier puts a worker past its `stop` check and holds it inside the
+  would-be connect; `stop_worker` has to return within 2 s, and the detached worker still sees
+  `stop` and exits. Negative control run first: on the joining version the same test ends
+  `FAILED ... stopped the link waited for a connect that has no timeout of its own` (`0 passed;
+  1 failed; finished in 2.00s`), on the detaching one `1 passed ... finished in 0.00s`.
+- The second thread (`crates/pptx/src/read/shapes.rs`, `PRRT_kwDOU_DdmM61yYaZ`) needed no code:
+  `git merge-base --is-ancestor 56568f6c e1ae7d27` exits 0, the finiteness and bound filter is
+  `shapes.rs:330`, the three degenerate views `model3d.camera` refuses are `shapes.rs:344`, and the
+  tests are `shapes.rs:1030`/`:1040`. The reply carries the permalink and asks for a recheck at the
+  new head.
+- Gate: `cargo xtask ci` on `387cb6f2` — 8/8 steps (fmt, pdf-deps, clippy, test, doctest, assets,
+  layers, wasm), 2753 passed / 0 failed / 5 ignored, `EXIT=0` (log
+  `gate-deckcraft-2012-transport-detach.log` in the cabinet-office root).
+- Left alone: the third unresolved thread on #2012 (`apps/deckcraft-collab-server/src/lib.rs`, the
+  32 MiB reader and the `413`, marked outdated) is the same commit `56568f6c`; it was not touched.
+- Delivered: `387cb6f2` (with this docs commit on top) is pushed to the fork `collab/pr15`; the live
+  head stays a reading (`git ls-remote fork refs/heads/collab/pr15`), never a value carried from
+  here. No approve, no merge, CI untouched.
 
 ### 2026-11-16 — the two `picture_styles` failures of the 05:18Z gate: not `56568f6c`, not reproducible
 
