@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-16 | SVG pictures read through the shared `craft-svg` crate (usvg behind its bounded preflight): the app keeps only the mapping onto its geometry, paints and text outlines, and a vector-only picture still shows when it would draw incomplete |
 | 2026-11-14 | Saved packages carry a PNG fallback beside every SVG picture, the way PowerPoint writes it: `a:blip/@r:embed` is the raster, `asvg:svgBlip` the vector, so readers without SVG support draw the picture. The writer takes the rasterizer from above it (layering), the engine draws it at twice the picture size (512–2048 px) from `crates/render/src/svg.rs` |
 | 2026-11-13 | SVG review pass: gradients follow the element transform and resolve viewport percentages, markers cannot recurse and follow a curve's tangent, a stroked label without a fill draws, and text positions follow the nearest `tspan`. Limits unchanged (filters, masks, clip paths, export fallback) |
 | 2026-11-13 | SVG pictures draw their text (`text`/`tspan`, font family, size, weight, style, `text-anchor`, letter spacing, whitespace as SVG reads it), real gradient ramps (stops, `objectBoundingBox`/`userSpaceOnUse`, `gradientTransform`, `spreadMethod`) and markers (`marker-start`/`-mid`/`-end`, `orient`, `markerUnits`, view box). Filters, masks and clip paths are still not read. Checklist Pictures 64%, unchanged |
@@ -346,6 +347,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | SVG pictures are parsed by the shared `craft-svg` crate; parity scores unchanged |
 | 2026-11-14 | minor | SVG pictures save a PNG fallback beside the vector; the export shortfall is closed, Pictures 64% unchanged |
 | 2026-11-13 | minor | SVG pictures draw text, real gradient ramps and markers; Pictures 64%, unchanged |
 | 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from PowerPoint files; Pictures 60 → 64%, weighted breadth unchanged |

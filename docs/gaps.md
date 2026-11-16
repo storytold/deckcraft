@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-14 · **Change:** minor (SVG pictures are saved with a PNG fallback beside the vector, as PowerPoint writes them, so the export shortfall is closed; nested `svg` viewports, right-to-left runs, dash patterns, `lime`, CDATA and percentages follow the review, and a picture we would draw incomplete keeps its raster copy; previous: trivial (the SVG entry is split: rendering limits and the export fallback are separate shortfalls now; gradients follow their element's transform and resolve viewport percentages; a marker cannot recurse, the last vertex keeps its marker and curve markers follow the tangent; a `url(#…)` that names no paint draws black; previous: minor (SVG pictures draw their text, real gradient ramps and markers; filters, masks and clip paths still are not read, export still lacks the PNG fallback; previous: minor (SVG pictures render as vectors, insert from disk and import their vector original from PowerPoint files; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-16 · **Change:** minor (SVG pictures read through the shared `craft-svg` reader; the shortfall that remains is filters, masks and clip paths; previous: minor (SVG pictures are saved with a PNG fallback beside the vector, as PowerPoint writes them, so the export shortfall is closed; nested `svg` viewports, right-to-left runs, dash patterns, `lime`, CDATA and percentages follow the review, and a picture we would draw incomplete keeps its raster copy; previous: trivial (the SVG entry is split: rendering limits and the export fallback are separate shortfalls now; gradients follow their element's transform and resolve viewport percentages; a marker cannot recurse, the last vertex keeps its marker and curve markers follow the tangent; a `url(#…)` that names no paint draws black; previous: minor (SVG pictures draw their text, real gradient ramps and markers; filters, masks and clip paths still are not read, export still lacks the PNG fallback; previous: minor (SVG pictures render as vectors, insert from disk and import their vector original from PowerPoint files; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -103,13 +103,13 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 2–4 h. **Beta blocker.**
 
 ### SVG pictures lose their filters, masks and clip paths
-- **Evidence:** `crates/svg` reads paths, basic shapes, groups, transforms, `use`, `text` with
-`tspan` (family, size, weight, style, `text-anchor`, letter spacing), `marker-start`/`-mid`/`-end`,
-solid and gradient paints with their stops, units, `gradientTransform` and `spreadMethod`, and
-strokes; `crates/render/src/svg.rs` draws them as vectors. SVG's `filter`, `mask`, `clipPath` and
-`pattern` elements are skipped (`DEFINITIONS` in `crates/svg/src/lib.rs`), and a picture that uses
-one of them, or an embedded `image`, reports it in `Svg::skipped`, so import keeps that picture's
-raster copy as the visible one instead of drawing it incomplete.
+- **Evidence:** the shared `craft-svg` reader parses SVG (usvg behind its bounded preflight), and
+`crates/svg` maps the tree onto DeckCraft geometry: paths, basic shapes, markers, gradients with
+their stops and space, and text as outline glyphs laid out with the fonts this app ships.
+`crates/render/src/svg.rs` draws the result as vectors. SVG's `filter`, `mask`, `clipPath` and
+`pattern` elements are parsed but not applied, and a picture that uses one of them, or an embedded
+`image`, reports it in `Svg::skipped`, so import prefers that picture's raster copy where the file
+has one (and keeps the vector where it has none).
 - **Impact:** a picture that draws its glow, shadow or blur through `feGaussianBlur`/`feMerge` paints
 flat, and one that clips artwork gets the unclipped shapes: on PowerPoint-written SVG decks this is
 the visible remainder against a PowerPoint PDF render (measured 2026-11-13). A group's opacity
@@ -376,6 +376,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | SVG pictures read through the shared `craft-svg` crate (usvg behind its bounded preflight); the app keeps only the mapping onto its geometry, paints and text outlines. A vector-only picture still shows when it would draw incomplete |
 | 2026-11-14 | minor | SVG pictures are saved with a PNG fallback in `a:blip/@r:embed` and the vector in `asvg:svgBlip`, so readers without SVG support draw them; the export shortfall is closed and the ranking row keeps only the filters, masks and clip paths |
 | 2026-11-13 | trivial | The remaining SVG limits are two entries now: filters, masks, clip paths and patterns (10–16 h) and export without a PNG fallback (2–4 h) |
 | 2026-11-13 | trivial | SVG gradients now follow the element transform and resolve percentages in `userSpaceOnUse` against the viewport; markers cannot recurse, keep the last vertex and follow a curve's tangent; the gap that remains is filters, masks and clip paths, plus the missing export fallback |
