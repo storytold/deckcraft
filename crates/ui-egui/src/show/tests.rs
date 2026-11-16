@@ -770,9 +770,17 @@ fn wheel_zoom_reads_only_the_wheel_with_ctrl_or_cmd() {
 
 /// A running show on the first of three slides, with presenter view off.
 fn show_of_three() -> egui_kittest::Harness<'static, SlideApp> {
+    show_of_three_with_hidden(&[])
+}
+
+/// A running show on the first of three slides, with `hidden` slides hidden.
+fn show_of_three_with_hidden(hidden: &[usize]) -> egui_kittest::Harness<'static, SlideApp> {
     let mut session = deckcraft_engine::Session::with_new();
     session.execute("slide.new", &json!({})).unwrap();
     session.execute("slide.new", &json!({})).unwrap();
+    for &i in hidden {
+        session.execute("slide.hide", &json!({"index": i, "hidden": true})).unwrap();
+    }
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = false;
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
@@ -922,6 +930,36 @@ fn wheel_on_the_end_screen_exits_forward_and_resumes_back() {
     assert!(h.state().show.as_ref().expect("still showing").ended);
     line(&mut h, -1.0);
     assert!(h.state().show.is_none(), "a forward notch on the end screen exits the show");
+}
+
+/// The wheel turns slides through the show's visible order, so a hidden slide is skipped as
+/// ←/→ skip it instead of opening it through `ShowState::goto`.
+#[test]
+fn a_wheel_notch_skips_a_hidden_slide() {
+    let mut h = show_of_three_with_hidden(&[1]);
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 2, "the hidden middle slide is skipped");
+    show_wheel(&mut h, centre, 1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 0, "back also skips it");
+}
+
+/// A completed forward wheel notch past the last slide reaches the end screen and then exits,
+/// the same way a trackpad flick does; a partial line still does nothing.
+#[test]
+fn a_forward_wheel_notch_past_the_last_slide_reaches_the_end_screen() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 2);
+    // A partial line on the last slide does not end the show.
+    show_wheel(&mut h, centre, -0.4, egui::Modifiers::NONE);
+    assert!(!h.state().show.as_ref().expect("still showing").ended, "a partial notch does not reach the end screen");
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "a completed forward notch reaches the end screen");
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.is_none(), "forward on the end screen exits the show");
 }
 
 #[test]

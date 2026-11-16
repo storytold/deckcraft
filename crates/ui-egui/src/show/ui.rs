@@ -330,12 +330,26 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
                 out.actions.push(show.state.prev(doc));
                 true
             }
-            Some((target, _)) if !show.ended && target != show.state.slide => {
-                out.actions.push(show.state.goto(doc, target));
+            // Whole-line notches move through the visible slide order, as ←/→ do: hidden slides
+            // are skipped, and a completed forward notch past the last visible slide reaches the
+            // end screen (a backward one at the first slide does nothing).
+            Some((_, net)) if !show.ended && net != 0 => {
+                let forward = net > 0;
+                let steps = net.unsigned_abs() as usize;
+                match show.state.visible_step_clamped(doc, show.state.slide, forward, steps) {
+                    Some(target) if target != show.state.slide => out.actions.push(show.state.goto(doc, target)),
+                    // A notch that cannot move further forward (the last visible slide) shows
+                    // the end screen instead of being swallowed.
+                    _ if forward => {
+                        show.state.end();
+                        show.ended = true;
+                    }
+                    _ => {}
+                }
                 true
             }
-            // A partial line (or a target clamped to the current slide): no page turn, and
-            // the trackpad path stays suppressed for the frame.
+            // A partial line (no whole notch yet): no page turn, and the trackpad path stays
+            // suppressed for the frame.
             Some(_) => true,
             None => false,
         };
