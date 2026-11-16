@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **Last updated:** 2026-11-15 - Reset Picture preserves non-picture styling in mixed selections; parity scores unchanged.
+> **Last updated:** 2026-11-16 - SVG parsing/rendering use bounded craft-svg APIs; Reset Picture preserves non-picture styling in mixed selections; parity scores unchanged.
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -155,6 +155,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-16 | SVG parsing and rasterization use pinned craft-svg bounded tree/draw APIs; source/reference depth, attribute work and intermediate RGBA layers are checked. Existing picture/PPTX mapping and feature restrictions remain; no parity score change |
 | 2026-11-15 | Reset Picture clears effects and outlines only on pictures, preserving non-picture styling in mixed selections; regression coverage added. |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | Bounded SVG rendering and PPTX preservation; albums validate and size SVGs, shape/background fills retain vectors and artistic effects keep the original separate; filters and embedded bitmaps remain unsupported |
@@ -346,6 +347,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | Route SVG parse/render safety boundaries through craft-svg for craft-libs #778; retain app policy and SVG partial status |
 | 2026-11-15 | trivial | Reset Picture mixed-selection styling regression fixed; parity scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-11 | minor | SVG rendering and preservation; artistic originals stay separate, albums validate and size SVGs, SVG checklist now P |

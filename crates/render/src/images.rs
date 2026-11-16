@@ -145,32 +145,58 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
     contains_ascii_case_insensitive(head, b"<svg") || contains_ascii_case_insensitive(head, b"<?xml")
 }
 
-fn svg_options() -> resvg::usvg::Options<'static> {
-    static FONTDB: std::sync::OnceLock<Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+fn svg_options() -> craft_svg::tree::usvg::Options<'static> {
+    static FONTDB: std::sync::OnceLock<Arc<craft_svg::tree::usvg::fontdb::Database>> = std::sync::OnceLock::new();
     let fontdb = FONTDB.get_or_init(|| {
-        let mut db = resvg::usvg::fontdb::Database::new();
+        let mut db = craft_svg::tree::usvg::fontdb::Database::new();
         for bytes in deckcraft_fonts::bundled() {
-            db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(bytes)));
+            db.load_font_source(craft_svg::tree::usvg::fontdb::Source::Binary(Arc::new(bytes)));
         }
         db.set_serif_family(deckcraft_fonts::LAST_RESORT_FAMILY);
         db.set_sans_serif_family(deckcraft_fonts::LAST_RESORT_FAMILY);
         Arc::new(db)
     });
-    resvg::usvg::Options {
+    craft_svg::tree::usvg::Options {
         resources_dir: None,
-        image_href_resolver: resvg::usvg::ImageHrefResolver { resolve_data: Box::new(|_, _, _| None), resolve_string: Box::new(|_, _| None) },
+        image_href_resolver: craft_svg::tree::usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
         fontdb: fontdb.clone(),
         font_family: deckcraft_fonts::LAST_RESORT_FAMILY.to_string(),
-        ..resvg::usvg::Options::default()
+        ..craft_svg::tree::usvg::Options::default()
     }
 }
 
-fn svg_tree(bytes: &[u8]) -> Option<resvg::usvg::Tree> {
+fn svg_limits() -> craft_svg::tree::Limits {
+    // Parsing runs on the caller's stack, not a dedicated 16 MiB worker.
+    // Bound both source nesting and reference expansion before recursive usvg.
+    craft_svg::tree::Limits { bytes: SVG_MAX_BYTES, depth: 32, tree_depth: 32, refuse_entity_markup: true, ..Default::default() }
+}
+
+fn svg_tree(bytes: &[u8]) -> Option<craft_svg::tree::usvg::Tree> {
     if bytes.len() > SVG_MAX_BYTES {
         return None;
     }
     let text = std::str::from_utf8(bytes).ok()?;
-    let doc = resvg::usvg::roxmltree::Document::parse(text).ok()?;
+    // Preserve UTF-8/no-DTD policy rather than silently broadening supported inputs.
+    if contains_ascii_case_insensitive(bytes, b"<!DOCTYPE") {
+        return None;
+    }
+    let limits = svg_limits();
+    let doc = craft_svg::preflight::parse_text(
+        text,
+        &craft_svg::preflight::Limits {
+            bytes: limits.bytes,
+            depth: limits.depth,
+            entity_bytes: limits.entity_bytes,
+            refuse_entity_markup: limits.refuse_entity_markup,
+            attributes: limits.attributes,
+            attribute_work: limits.attribute_work,
+            xml_nodes: limits.xml_nodes,
+        },
+    )
+    .ok()?;
     // Validate expanded element names so namespace prefixes cannot bypass the policy.
     // Filters remain unsupported until their processing cost can be bounded.
     if doc.descendants().filter(|n| n.is_element()).any(|n| matches!(n.tag_name().name(), "filter" | "script" | "image" | "feImage")) {
@@ -181,7 +207,8 @@ fn svg_tree(bytes: &[u8]) -> Option<resvg::usvg::Tree> {
             return None;
         }
     }
-    resvg::usvg::Tree::from_data(bytes, &svg_options()).ok()
+    drop(doc);
+    craft_svg::tree::parse_text(text, &limits, &svg_options()).ok()
 }
 
 fn contains_ascii_case_insensitive(bytes: &[u8], needle: &[u8]) -> bool {
@@ -212,10 +239,9 @@ fn decode_svg_inner(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     if !fits(width, height, MAX_RGBA) {
         return None;
     }
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
-    let transform = resvg::tiny_skia::Transform::from_scale(width as f32 / w as f32, height as f32 / h as f32);
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-    let mut rgba = pixmap.data().to_vec();
+    let transform = craft_svg::tree::draw::tiny_skia::Transform::from_scale(width as f32 / w as f32, height as f32 / h as f32);
+    let pixmap = craft_svg::tree::draw::render(&tree, transform, width, height, 0, MAX_RGBA).ok()?;
+    let mut rgba = pixmap.take();
     for px in rgba.as_chunks_mut::<4>().0 {
         let a = px[3] as u16;
         if a == 0 {
@@ -781,6 +807,45 @@ mod tests {
         assert!(img.pixels().any(|p| p[3] > 0), "bundled font draws the label");
     }
 
+    #[test]
+    fn svg_shared_boundary_rejects_deep_xml_and_use_chains() {
+        let nested = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">{}<rect width="1" height="1"/>{}</svg>"#,
+            "<g>".repeat(40),
+            "</g>".repeat(40)
+        );
+        assert!(svg_tree(nested.as_bytes()).is_none());
+        let mut linked = String::from(r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><rect id="n0" width="1" height="1"/>"#);
+        for i in 1..40 {
+            linked.push_str(&format!(r##"<g id="n{i}"><use href="#n{}"/></g>"##, i - 1));
+        }
+        linked.push_str(r##"</defs><use href="#n39"/></svg>"##);
+        assert!(svg_tree(linked.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn svg_shared_boundary_rejects_wide_attributes_and_preserves_no_dtd_policy() {
+        let mut wide = String::from(r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect "#);
+        for i in 0..=svg_limits().attributes {
+            wide.push_str(&format!(r#"data-a{i}="x" "#));
+        }
+        wide.push_str("/></svg>");
+        assert!(svg_tree(wide.as_bytes()).is_none());
+        assert!(svg_tree(br#"<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#).is_none());
+    }
+
+    #[test]
+    fn svg_shared_draw_rejects_intermediate_layers_over_budget() {
+        // The target fits (64 MiB) but live isolated-group layers exceed 512 MiB.
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="4096">{}<rect width="4096" height="4096"/>{}</svg>"#,
+            r#"<g opacity="0.9">"#.repeat(12),
+            "</g>".repeat(12)
+        );
+        assert!(svg_tree(svg.as_bytes()).is_some());
+        assert!(decode_svg(svg.as_bytes(), 4096).is_none());
+        assert!(decode_svg(svg.as_bytes(), 32).is_some());
+    }
     #[test]
     fn svg_with_scripts_or_external_resources_is_rejected() {
         for svg in [
