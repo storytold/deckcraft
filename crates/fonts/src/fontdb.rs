@@ -184,6 +184,9 @@ pub struct FontFace {
     /// the typographic one: "Segoe UI Semibold" / "Regular" for Segoe UI Semibold. Documents name
     /// fonts this way.
     pub legacy: Option<(String, String)>,
+    // Shared with cached variable instances so later duplicate files enrich existing handles.
+    family_aliases: Arc<RwLock<Vec<String>>>,
+    legacy_aliases: RwLock<Vec<(String, String)>>,
     /// usWeightClass-style weight (400 = regular).
     pub weight: f32,
     pub italic: bool,
@@ -276,6 +279,56 @@ impl std::fmt::Debug for FontFace {
 }
 
 impl FontFace {
+    /// Whether a document family name identifies this face, including localized and Windows names.
+    pub fn has_family_name(&self, family: &str) -> bool {
+        self.matches_family(family) || self.matches_legacy(family)
+    }
+
+    fn matches_family(&self, family: &str) -> bool {
+        self.family.eq_ignore_ascii_case(family)
+            || self.family_aliases.read().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|a| a.eq_ignore_ascii_case(family))
+    }
+
+    fn matches_legacy(&self, family: &str) -> bool {
+        self.legacy.as_ref().is_some_and(|(name, _)| name.eq_ignore_ascii_case(family))
+            || self.legacy_aliases.read().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|(name, _)| name.eq_ignore_ascii_case(family))
+    }
+
+    /// Match the requested Windows family with its own GDI style, including merged duplicates.
+    fn matches_legacy_style(&self, family: &str, style: &str) -> bool {
+        let matches = |(name, legacy_style): &(String, String)| name.eq_ignore_ascii_case(family) && norm(legacy_style) == style;
+        self.legacy.as_ref().is_some_and(matches) || self.legacy_aliases.read().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(matches)
+    }
+
+    /// Enrich the retained face without replacing its bytes, metrics, ID or existing handles.
+    /// Counts remain bounded across repeated font additions, as well as within each name table.
+    fn merge_aliases(&self, other: &FontFace) {
+        let incoming = other.family_aliases.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        let mut aliases = self.family_aliases.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for name in incoming {
+            if aliases.len() >= MAX_FACE_ALIASES {
+                break;
+            }
+            if !aliases.iter().any(|a| a.eq_ignore_ascii_case(&name)) {
+                aliases.push(name);
+            }
+        }
+        drop(aliases);
+        let incoming = other.legacy_aliases.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        let mut aliases = self.legacy_aliases.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (name, style) in other.legacy.iter().chain(&incoming) {
+            if aliases.len() >= MAX_FACE_ALIASES {
+                break;
+            }
+            if name.chars().count() <= MAX_NAME_CHARS
+                && style.chars().count() <= MAX_NAME_CHARS
+                && !aliases.iter().any(|(n, s)| n.eq_ignore_ascii_case(name) && s.eq_ignore_ascii_case(style))
+            {
+                aliases.push((name.clone(), style.clone()));
+            }
+        }
+    }
+
     pub fn data(&self) -> &[u8] {
         match &self.bytes {
             FontBytes::Static(b) => b,
@@ -362,7 +415,15 @@ impl FontFace {
 struct CatalogEntry {
     family: String,
     style: String,
+    aliases: Vec<String>,
     path: std::path::PathBuf,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl CatalogEntry {
+    fn matches_family(&self, family: &str) -> bool {
+        self.family.eq_ignore_ascii_case(family) || self.aliases.iter().any(|a| a.eq_ignore_ascii_case(family))
+    }
 }
 
 /// Process-wide font database.
@@ -493,6 +554,34 @@ fn legacy_names(f: &skrifa::FontRef<'_>, family: &str) -> Option<(String, String
     Some((legacy, name(f, &[StringId::SUBFAMILY_NAME]).unwrap_or_else(|| "Regular".into())))
 }
 
+/// Limits per retained face, including names merged from duplicate files.
+const MAX_NAME_CHARS: usize = 1024;
+const MAX_FACE_ALIASES: usize = 128;
+
+/// Localized family names are lookup aliases, not additional faces or menu entries.
+fn localized_names(f: &skrifa::FontRef<'_>, id: StringId) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // A name table is untrusted: bound both record count and decoded string length.
+    for s in f.localized_strings(id).take(64) {
+        let s: String = s.chars().take(MAX_NAME_CHARS + 1).collect();
+        if !s.is_empty() && s.chars().count() <= MAX_NAME_CHARS && !out.iter().any(|n| n.eq_ignore_ascii_case(&s)) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+fn family_aliases(f: &skrifa::FontRef<'_>, family: &str) -> (Vec<String>, Vec<String>) {
+    let mut aliases = localized_names(f, StringId::TYPOGRAPHIC_FAMILY_NAME);
+    let windows = localized_names(f, StringId::FAMILY_NAME);
+    if legacy_names(f, family).is_some() {
+        (aliases, windows)
+    } else {
+        aliases.extend(windows);
+        (aliases, Vec::new())
+    }
+}
+
 /// The Windows family and style a variable font's named instance answers to. Windows lists each
 /// instance other than Regular, Italic, Bold and Bold Italic as a family of its own, as the
 /// family's static files name themselves: "Montserrat ExtraBold" / "Regular" for the ExtraBold
@@ -520,7 +609,7 @@ const OUTLINE_TABLES: [&[u8; 4]; 4] = [b"glyf", b"CFF ", b"CFF2", b"VARC"];
 /// variable font is cataloged under its default style; its named instances appear once it loads.
 /// Faces with none of the [`OUTLINE_TABLES`] are left out.
 #[cfg(not(target_arch = "wasm32"))]
-fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
+fn file_face_names(path: &std::path::Path) -> Vec<(String, String, Vec<String>)> {
     use std::io::{Read, Seek, SeekFrom};
     /// Caps on what a (possibly damaged) file can make the scan read.
     const MAX_FACES: u32 = 256;
@@ -567,9 +656,10 @@ fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
             font.extend_from_slice(&table);
             let f = skrifa::FontRef::new(&font).ok()?;
             let (family, style) = face_names(&f)?;
+            let (aliases, legacy_aliases) = family_aliases(&f, &family);
             // Cataloged under its Windows family too, so "Segoe UI Semibold" finds the file.
-            let legacy = legacy_names(&f, &family);
-            Some(std::iter::once((family, style)).chain(legacy))
+            let legacy = legacy_names(&f, &family).map(|(n, s)| (n, s, legacy_aliases));
+            Some(std::iter::once((family, style, aliases)).chain(legacy))
         })
         .flatten()
         .collect()
@@ -850,11 +940,20 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, coords
         .or(axis(b"slnt").map(|v| v.abs() > 0.1))
         .unwrap_or(!matches!(a.style, skrifa::attribute::Style::Normal) || style_italic(&style));
     let legacy = if coords.is_empty() { legacy_names(&f, &family) } else { instance_legacy_names(&family, &style) };
+    let (family_aliases, legacy_aliases) = family_aliases(&f, &family);
+    // Raw ID 1 aliases describe the file's default Windows family, not named instances.
+    let legacy_aliases = legacy
+        .as_ref()
+        .filter(|(_, style)| coords.is_empty() && style.chars().count() <= MAX_NAME_CHARS)
+        .map(|(_, style)| legacy_aliases.into_iter().map(|name| (name, style.clone())).collect())
+        .unwrap_or_default();
     Some(FontFace {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         family,
         style,
         legacy,
+        family_aliases: Arc::new(RwLock::new(family_aliases)),
+        legacy_aliases: RwLock::new(legacy_aliases),
         weight,
         italic,
         upem: m.units_per_em.max(1) as f64,
@@ -1018,16 +1117,29 @@ impl FontDb {
 
     /// Style names available for `family` (Regular first, then by weight).
     pub fn styles(&self, family: &str) -> Vec<String> {
-        let mut v: Vec<(bool, f32, String)> = self
-            .read_faces()
+        // Snapshot matching catalog names before taking the faces lock. A canonical family
+        // excludes alias styles even when its files have not been loaded yet.
+        #[cfg(not(target_arch = "wasm32"))]
+        let catalog: Vec<_> = self
+            .read_catalog()
             .iter()
-            .filter(|f| f.family.eq_ignore_ascii_case(family) && !f.style.contains('{'))
+            .filter(|c| c.matches_family(family))
+            .map(|c| (c.family.eq_ignore_ascii_case(family), c.style.clone()))
+            .collect();
+        let faces = self.read_faces();
+        let exact = faces.iter().any(|f| f.family.eq_ignore_ascii_case(family));
+        #[cfg(not(target_arch = "wasm32"))]
+        let exact = exact || catalog.iter().any(|(canonical, _)| *canonical);
+        let mut v: Vec<(bool, f32, String)> = faces
+            .iter()
+            .filter(|f| (if exact { f.family.eq_ignore_ascii_case(family) } else { f.matches_family(family) }) && !f.style.contains('{'))
             .map(|f| (f.italic, f.weight, f.style.clone()))
             .collect();
+        drop(faces);
         #[cfg(not(target_arch = "wasm32"))]
-        for c in self.read_catalog().iter() {
-            if c.family.eq_ignore_ascii_case(family) && !v.iter().any(|(_, _, s)| s.eq_ignore_ascii_case(&c.style)) {
-                v.push((style_italic(&c.style), style_weight(&c.style), c.style.clone()));
+        for (canonical, style) in catalog {
+            if (!exact || canonical) && !v.iter().any(|(_, _, s)| s.eq_ignore_ascii_case(&style)) {
+                v.push((style_italic(&style), style_weight(&style), style));
             }
         }
         v.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
@@ -1044,16 +1156,10 @@ impl FontDb {
     /// Add font files together: lookups see all of their faces or none, never part of a family.
     /// Returns the number of faces added.
     fn add_fonts(&self, files: Vec<Vec<u8>>) -> usize {
-        let present = |faces: &[Arc<FontFace>], family: &str, style: &str| {
-            faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && f.style.eq_ignore_ascii_case(style))
-        };
         let mut new = Vec::new();
         for bytes in files {
             let data = Arc::new(bytes);
             for (i, family, style, coords) in enumerate_faces(&data) {
-                if present(&self.read_faces(), &family, &style) {
-                    continue;
-                }
                 if let Some(f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
                     new.push(Arc::new(f));
                 }
@@ -1062,8 +1168,12 @@ impl FontDb {
         let mut faces = self.faces.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut added = 0;
         for f in new {
-            // Checked again under the lock: another thread may have added the same face.
-            if !present(&faces, &f.family, &f.style) {
+            // Merge even if the duplicate was loaded earlier or by another thread.
+            if let Some(retained) =
+                faces.iter().find(|existing| existing.family.eq_ignore_ascii_case(&f.family) && existing.style.eq_ignore_ascii_case(&f.style))
+            {
+                retained.merge_aliases(&f);
+            } else {
                 faces.push(f);
                 added += 1;
             }
@@ -1142,8 +1252,8 @@ impl FontDb {
                 if !font_file_ok(&meta) {
                     continue;
                 }
-                for (family, style) in file_face_names(&p) {
-                    found.push(CatalogEntry { family, style, path: p.clone() });
+                for (family, style, aliases) in file_face_names(&p) {
+                    found.push(CatalogEntry { family, style, aliases, path: p.clone() });
                 }
             }
         }
@@ -1168,7 +1278,7 @@ impl FontDb {
         // loads only that style's file, and the family's other files must still load later.
         let paths: Vec<std::path::PathBuf> = {
             let cat = self.read_catalog();
-            let mut p: Vec<_> = cat.iter().filter(|c| c.family.eq_ignore_ascii_case(family)).map(|c| c.path.clone()).collect();
+            let mut p: Vec<_> = cat.iter().filter(|c| c.matches_family(family)).map(|c| c.path.clone()).collect();
             p.sort();
             p.dedup();
             p
@@ -1241,16 +1351,14 @@ impl FontDb {
             return true;
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if self.read_catalog().iter().any(|c| c.family.eq_ignore_ascii_case(family)) {
+        if self.read_catalog().iter().any(|c| c.matches_family(family)) {
             return true;
         }
         false
     }
 
     pub(crate) fn is_loaded(&self, family: &str) -> bool {
-        self.read_faces()
-            .iter()
-            .any(|f| f.family.eq_ignore_ascii_case(family) || f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family)))
+        self.read_faces().iter().any(|f| f.matches_family(family) || f.matches_legacy(family))
     }
 
     /// A variable font's axes: (tag, name, min, default, max), empty for static fonts.
@@ -1292,38 +1400,40 @@ impl FontDb {
                 None => coords.push((tag, v)),
             }
         }
-        let f = make_face(base.bytes.clone(), base.index, base.family.clone(), style.to_string(), coords)?;
+        let mut f = make_face(base.bytes.clone(), base.index, base.family.clone(), style.to_string(), coords)?;
+        f.family_aliases = base.family_aliases.clone();
         let f = Arc::new(f);
         self.faces.write().unwrap_or_else(std::sync::PoisonError::into_inner).push(f.clone());
         Some(f)
     }
 
     pub(crate) fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+        let faces = self.read_faces();
+        // Choose the family before ranking styles or reusing variable instances: another
+        // family's localized name must never shadow an exact canonical family name.
+        let mut cands: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(family)).collect();
+        if cands.is_empty() {
+            cands = faces.iter().filter(|f| f.matches_family(family)).collect();
+        }
         if style.contains('{') {
-            {
-                let faces = self.read_faces();
-                if let Some(f) = faces.iter().find(|f| f.family.eq_ignore_ascii_case(family) && f.style == style) {
-                    return Some(f.clone());
-                }
+            if let Some(f) = cands.iter().find(|f| f.style == style) {
+                return Some((*f).clone());
             }
+            drop(cands);
+            drop(faces);
             return self.instance(family, style);
         }
-        let faces = self.read_faces();
-        let mut cands: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(family)).collect();
         let ns = norm(style);
         if cands.is_empty() {
             // A Windows family name ("Segoe UI Semibold", "Arial Black"): its faces, matched by
             // their Windows style ("Regular", "Bold"…).
-            cands = faces.iter().filter(|f| f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family))).collect();
-            if let Some(f) = cands.iter().find(|f| f.legacy.as_ref().is_some_and(|(_, ls)| norm(ls) == ns)) {
+            cands = faces.iter().filter(|f| f.matches_legacy(family)).collect();
+            if let Some(f) = cands.iter().find(|f| f.matches_legacy_style(family, &ns)) {
                 return Some((*f).clone());
             }
             // Bold of a family that is itself a weight (Semibold, Light): the face, made bolder
             // by the caller, as Windows does, rather than a face of another weight.
-            if let Some(f) = cands
-                .iter()
-                .find(|f| f.legacy.as_ref().is_some_and(|(_, ls)| norm(ls) == norm(if style_italic(style) { "Italic" } else { "Regular" })))
-            {
+            if let Some(f) = cands.iter().find(|f| f.matches_legacy_style(family, if style_italic(style) { "italic" } else { "regular" })) {
                 return Some((*f).clone());
             }
         }
@@ -1640,6 +1750,33 @@ impl OutlinePen for FlipPen {
         if self.room() {
             self.path.close_path();
         }
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_aliases_stay_bounded_and_case_insensitive() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        let font = |alias: &str| crate::test_font::font("DeckCraft Bounded", "Semibold", 600, &[alias], (900, 100), false);
+        assert_eq!(db.add_font(font("First Alias")), 1);
+        let face = db.face("DeckCraft Bounded", "Semibold");
+        let initial = face.family_aliases.read().unwrap().len();
+        assert_eq!(db.add_font(font("first alias")), 0);
+        assert_eq!(face.family_aliases.read().unwrap().len(), initial);
+        let oversized = "X".repeat(MAX_NAME_CHARS + 1);
+        assert_eq!(db.add_font(font(&oversized)), 0);
+        assert!(!face.has_family_name(&oversized));
+        for i in 0..MAX_FACE_ALIASES + 10 {
+            assert_eq!(db.add_font(font(&format!("Alias {i}"))), 0);
+        }
+        assert_eq!(face.family_aliases.read().unwrap().len(), MAX_FACE_ALIASES);
+        assert_eq!(face.legacy_aliases.read().unwrap().len(), MAX_FACE_ALIASES);
+        assert!(face.has_family_name("First Alias"));
+        assert!(face.has_family_name("First Alias Semibold"));
+        assert_eq!(db.read_faces().iter().filter(|f| f.family == "DeckCraft Bounded").count(), 1);
     }
 }
 
