@@ -168,6 +168,17 @@ impl Pkg {
         doc.root.find_all("oleObj", &mut found);
         found.into_iter().find(|o| o.attr("name") == Some(name)).and_then(|o| o.attr("r:id")).map(str::to_string)
     }
+
+    /// The bytes of the picture the slide's frame `name` is written as, if it is one.
+    fn picture_bytes(&self, name: &str) -> Option<Vec<u8>> {
+        let doc = self.xml(SLIDE);
+        let mut pics = vec![];
+        doc.root.find_all("pic", &mut pics);
+        let pic = pics.into_iter().find(|p| p.find("cNvPr").and_then(|c| c.attr("name")) == Some(name))?;
+        let rid = pic.find("blip")?.attr("r:embed")?;
+        let (_, part, external) = self.rel(SLIDE, rid);
+        (!external).then(|| self.get(&part).to_vec())
+    }
 }
 
 fn round(bytes: &[u8]) -> Vec<u8> {
@@ -211,6 +222,49 @@ fn objects_keep_their_parts_own_relationships_and_links() {
     let first = round(&src);
     check_objects(&first);
     check_objects(&round(&first));
+}
+
+/// #1993 review: two parts of one file with equal bytes and different relationships of their own
+/// stay two parts on save, each with its own relationships.
+#[test]
+fn equal_parts_with_different_relationships_stay_apart() {
+    let (first, second) = (png([10, 200, 30]), png([200, 10, 30]));
+    let parts = vec![
+        ("ppt/embeddings/oleObject1.bin".to_string(), OLE.to_vec()),
+        ("ppt/embeddings/_rels/oleObject1.bin.rels".to_string(), rels(&[rel("rId1", "image", "../media/icon.png")])),
+        ("ppt/embeddings/oleObject2.bin".to_string(), OLE.to_vec()),
+        ("ppt/embeddings/_rels/oleObject2.bin.rels".to_string(), rels(&[rel("rId1", "image", "../media/icon2.png")])),
+        ("ppt/media/icon.png".to_string(), first.clone()),
+        ("ppt/media/icon2.png".to_string(), second.clone()),
+    ];
+    let slide = format!("{}{}", ole_frame(3, "First", "rIdA", "p:embed"), ole_frame(4, "Second", "rIdB", "p:embed"));
+    let slide_rels = [
+        rel("rIdA", "oleObject", "../embeddings/oleObject1.bin"),
+        rel("rIdB", "oleObject", "../embeddings/oleObject2.bin"),
+        rel("rIdIcon", "image", "../media/icon.png"),
+    ]
+    .concat();
+    let types = [
+        ct("ppt/embeddings/oleObject1.bin", OLE_CT),
+        ct("ppt/embeddings/oleObject2.bin", OLE_CT),
+        ct("ppt/media/icon.png", "image/png"),
+        ct("ppt/media/icon2.png", "image/png"),
+    ]
+    .concat();
+    let first_save = round(&deck(&parts, &slide, &slide_rels, &types));
+    for bytes in [first_save.clone(), round(&first_save)] {
+        let pkg = Pkg::new(&bytes);
+        let mut written = vec![];
+        for (name, icon) in [("First", &first), ("Second", &second)] {
+            let rid = pkg.ole_rid(name).expect("kept, not written as its preview");
+            let (_, part, _) = pkg.rel(SLIDE, &rid);
+            assert_eq!(pkg.get(&part), OLE);
+            let (_, image, _) = pkg.rel(&part, "rId1");
+            assert_eq!(pkg.get(&image), icon.as_slice(), "{name} keeps its own picture");
+            written.push(part);
+        }
+        assert_ne!(written[0], written[1], "two parts, not one shared");
+    }
 }
 
 /// #1993: SmartArt without a drawing whose data part has pictures and links of its own.
@@ -292,6 +346,7 @@ fn unsafe_part_targets_still_fall_back_to_the_preview() {
         assert!(parts.is_empty(), "{why}: {parts:?}");
         let pkg = Pkg::new(&deckcraft_pptx::export(&p).expect("export"));
         assert!(pkg.ole_rid("Package").is_none(), "{why}: written as its preview");
+        assert_eq!(pkg.picture_bytes("Object 3"), Some(png([10, 200, 30])), "{why}: the preview picture is written");
         assert!(!pkg.0.values().any(|d| d == OLE), "{why}: the embedding isn't copied");
     }
 }

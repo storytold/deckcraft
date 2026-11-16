@@ -1,6 +1,6 @@
 //! Edit menu: undo/redo, clipboard, duplicate, delete, select all.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use deckcraft_model::text::TextBody;
@@ -301,8 +301,15 @@ fn remap_media(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_
 }
 
 /// Add the clipboard's media to `doc` and return the ids that changed: an id already used in
-/// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it.
-fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deckcraft_model::MediaItem]) -> Result<HashMap<MediaId, MediaId>> {
+/// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it. That
+/// fresh id is shared with equal bytes already in `doc`, except by a kept part with relationships
+/// of its own (`own`, #1993), which keeps them.
+fn bring_media(
+    cmd: &str,
+    doc: &mut deckcraft_model::Presentation,
+    media: &[deckcraft_model::MediaItem],
+    own: &HashSet<MediaId>,
+) -> Result<HashMap<MediaId, MediaId>> {
     let mut map = HashMap::new();
     for m in media {
         match doc.media(m.id) {
@@ -312,6 +319,12 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
                 doc.next_id = doc.next_id.max(m.id.0);
             }
             Some(x) if x.data == m.data => {}
+            Some(_) if own.contains(&m.id) => {
+                let mut item = m.clone();
+                item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+                map.insert(m.id, item.id);
+                doc.media.push(item);
+            }
             Some(_) => {
                 let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
@@ -347,7 +360,8 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     if !clip.slides.is_empty() {
         let at = s.doc()?.selection.slide + 1;
         return s.edit(|doc, sel| {
-            let media = bring_media("edit.paste", doc, &clip.media)?;
+            let own: HashSet<MediaId> = clip.slides.iter().flat_map(|sl| crate::media_refs::parts_with_rels(&sl.shapes)).collect();
+            let media = bring_media("edit.paste", doc, &clip.media, &own)?;
             let mut new_ids = vec![];
             for (k, sl) in clip.slides.iter().enumerate() {
                 let mut sl = sl.clone();
@@ -375,7 +389,9 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         let same_slide = s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()));
         let off = if same_slide { off } else { 0.0 };
         return s.edit(|doc, sel| {
-            let media = bring_media("edit.paste", doc, &clip.media)?;
+            let mut own = crate::media_refs::parts_with_rels(&clip.shapes);
+            own.extend(crate::media_refs::parts_with_rels(&clip.placeholders));
+            let media = bring_media("edit.paste", doc, &clip.media, &own)?;
             let mut shapes = clip.shapes.clone();
             if sel.target != crate::Target::Slides {
                 for sh in &mut shapes {
@@ -548,7 +564,8 @@ fn paste_picture(s: &mut Session) -> Result<Value> {
     }
     let st = s.doc()?;
     let mut doc = (*st.doc).clone();
-    let media = bring_media("edit.pasteSpecial", &mut doc, &clip.media)?;
+    let own = crate::media_refs::parts_with_rels(&clip.shapes);
+    let media = bring_media("edit.pasteSpecial", &mut doc, &clip.media, &own)?;
     crate::media_refs::visit_mut::shapes(&mut clip.shapes, &mut remap_media(&media));
     let mut slide = st.current_slide().cloned().ok_or_else(|| bad("edit.pasteSpecial", "no slide"))?;
     let xs: Vec<deckcraft_geom::Xfrm> = clip.shapes.iter().filter_map(|x| x.xfrm).collect();
@@ -841,4 +858,32 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
     })?;
     Ok(json!({"selected": s.doc()?.selection.shapes}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #1993 review: a pasted kept part with relationships of its own whose id is taken in the
+    /// destination keeps its own item instead of sharing one with equal bytes; plain media still do.
+    #[test]
+    fn pasted_kept_parts_with_relationships_keep_their_own_items() {
+        let item = |id: u32, data: &[u8]| deckcraft_model::MediaItem {
+            id: MediaId(id),
+            name: "part.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let mut doc = deckcraft_model::defaults::new_presentation(None);
+        // The clipboard's ids hold other bytes here, and its bytes are here under other ids.
+        doc.media.extend([item(10, b"other"), item(11, b"other too"), item(12, b"same"), item(13, b"plain")]);
+        doc.next_id = doc.next_id.max(20);
+        let own = HashSet::from([MediaId(10)]);
+        let map = bring_media("edit.paste", &mut doc, &[item(10, b"same"), item(11, b"plain")], &own).expect("media");
+        let kept = map.get(&MediaId(10)).copied().expect("remapped");
+        assert_ne!(kept, MediaId(12), "not shared with the equal bytes already here");
+        assert_eq!(doc.media(kept).map(|m| m.data.as_slice()), Some(&b"same"[..]));
+        assert_eq!(map.get(&MediaId(11)), Some(&MediaId(13)), "plain media still share equal bytes");
+    }
 }

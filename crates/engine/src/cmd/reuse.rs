@@ -438,7 +438,8 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         let mut slide_map: HashMap<SlideId, SlideId> = HashMap::new();
         for &i in &picked {
             let Some(from) = src.slides.get(i) else { continue };
-            copy_media("slide.reuse", doc, &src, &media_refs::slide_media(from), &mut media_map)?;
+            let own = media_refs::parts_with_rels(&from.shapes);
+            copy_media("slide.reuse", doc, &src, &media_refs::slide_media(from), &own, &mut media_map)?;
             let mut sl: Slide = from.as_ref().clone();
             remap_table_styles(&mut sl.shapes, &table_style_map, 0);
             scale_shapes(&mut sl.shapes, sx, sy, 0);
@@ -487,7 +488,11 @@ pub(crate) fn import_master(
 ) -> Result<Master> {
     let mut used = vec![];
     media_refs::visit::master(m, &mut |id: &MediaId| used.push(*id));
-    copy_media(cmd, doc, src, &used, media_map)?;
+    let mut own = media_refs::parts_with_rels(&m.shapes);
+    for l in &m.layouts {
+        own.extend(media_refs::parts_with_rels(&l.shapes));
+    }
+    copy_media(cmd, doc, src, &used, &own, media_map)?;
     let mut m = m.clone();
     media_refs::visit_mut::master(&mut m, &mut remap(media_map));
     m.id = MasterId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
@@ -501,15 +506,23 @@ pub(crate) fn import_master(
     Ok(m)
 }
 
-/// Copy the source media `used` into `doc` under fresh ids, once each (identical bytes already in
-/// `doc` are shared; a linked item keeps its link).
-fn copy_media(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[MediaId], map: &mut HashMap<MediaId, MediaId>) -> Result<()> {
+/// Copy the source media `used` into `doc` under fresh ids, once each. Identical bytes already in
+/// `doc` are shared, except by a linked item, which keeps its link, and by a kept part with
+/// relationships of its own (`own`, #1993), which keeps them.
+fn copy_media(
+    cmd: &str,
+    doc: &mut Presentation,
+    src: &Presentation,
+    used: &[MediaId],
+    own: &HashSet<MediaId>,
+    map: &mut HashMap<MediaId, MediaId>,
+) -> Result<()> {
     for &id in used {
         if map.contains_key(&id) {
             continue;
         }
         let Some(m) = src.media(id) else { continue };
-        let new = if m.link.is_some() {
+        let new = if m.link.is_some() || own.contains(&id) {
             let mut item = m.clone();
             item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
             let new = item.id;
@@ -790,6 +803,60 @@ mod tests {
         let mut want = blobs.clone();
         want.sort();
         assert_eq!(got, want, "every reference resolves to its own copied bytes");
+    }
+
+    /// #1993 review: two kept parts with equal bytes and different relationships of their own stay
+    /// two media items when their slide is reused, so a save doesn't give one the other's.
+    #[test]
+    fn reused_kept_parts_with_relationships_keep_their_own_items() {
+        use deckcraft_model::{MediaItem, PartRel, PartRelTarget};
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "oleObject1.bin".into(),
+            content_type: "application/vnd.openxmlformats-officedocument.oleObject".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let object = |id: u32, part: u32, icon: u32| Shape {
+            id: ShapeId(id),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(part))],
+                part_rels: vec![PartRel {
+                    from: MediaId(part),
+                    id: "rId1".into(),
+                    rel_type: "image".into(),
+                    target: PartRelTarget::Part(MediaId(icon)),
+                }],
+            },
+            ..Default::default()
+        };
+        let mut src = defaults::new_presentation(None);
+        src.media.extend([item(9001, b"same"), item(9002, b"same"), item(9003, b"first icon"), item(9004, b"second icon")]);
+        src.next_id = src.next_id.max(9200);
+        Arc::make_mut(src.slides.first_mut().expect("slide")).shapes = vec![object(9101, 9001, 9003), object(9102, 9002, 9004)];
+        let bytes = deckcraft_format::save(&src).expect("save");
+
+        let mut s = Session::with_new();
+        s.execute("slide.reuse", &json!({"data": super::super::base64_encode(&bytes), "name": "src.deckcraft", "slides": [0]})).expect("reuse");
+        let doc = &s.doc().expect("doc").doc;
+        let reused = doc.slides.get(1).expect("reused slide");
+        let kept: Vec<(MediaId, Vec<u8>)> = reused
+            .shapes
+            .iter()
+            .filter_map(|sh| match &sh.kind {
+                ShapeKind::Opaque { part_rels, .. } => part_rels.first().and_then(|r| match r.target {
+                    PartRelTarget::Part(icon) => Some((r.from, doc.media(icon)?.data.as_ref().clone())),
+                    PartRelTarget::External(_) => None,
+                }),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kept.len(), 2);
+        assert_ne!(kept[0].0, kept[1].0, "each object keeps its own part");
+        assert_eq!((kept[0].1.as_slice(), kept[1].1.as_slice()), (&b"first icon"[..], &b"second icon"[..]));
     }
 
     fn link_to(slide: SlideId) -> Hyperlink {

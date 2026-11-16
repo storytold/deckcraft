@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 
-use deckcraft_model::{MediaId, Presentation, Shape, Slide};
+use deckcraft_model::{MediaId, Presentation, Shape, ShapeKind, Slide};
 
 macro_rules! walkers {
     ($($m:tt)?) => {
@@ -311,6 +311,19 @@ pub fn slide_media(s: &Slide) -> Vec<MediaId> {
 /// The media ids shapes reference (groups included), each once.
 pub fn shapes_media(v: &[Shape]) -> Vec<MediaId> {
     collect(|f| visit::shapes(v, f))
+}
+
+/// The kept parts with relationships of their own (`PartRel::from`, #1993) that `shapes` (groups
+/// included) use. Such a part belongs to the objects it was read with: copied into another deck it
+/// gets its own media item rather than one with equal bytes, whose relationships may differ.
+pub fn parts_with_rels(v: &[Shape]) -> HashSet<MediaId> {
+    let mut out = HashSet::new();
+    deckcraft_model::walk(v, &mut |s, _| {
+        if let ShapeKind::Opaque { part_rels, .. } = &s.kind {
+            out.extend(part_rels.iter().map(|r| r.from));
+        }
+    });
+    out
 }
 
 fn collect(walk: impl FnOnce(&mut visit::F)) -> Vec<MediaId> {

@@ -390,6 +390,8 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
     for (i, m) in doc.media.iter().enumerate() {
         doc_at.entry(m.id).or_insert(i);
     }
+    // A kept part with relationships of its own keeps its own item rather than sharing equal bytes (#1993).
+    let own = crate::media_refs::parts_with_rels(&sl.shapes);
     for id in crate::media_refs::slide_media(&sl) {
         let Some(m) = rev_at.get(&id).and_then(|&i| rev.media.get(i)) else { continue };
         match doc_at.get(&id).and_then(|&i| doc.media.get(i)) {
@@ -399,6 +401,13 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
                 doc_at.insert(id, doc.media.len());
                 doc.media.push(m.clone());
                 doc.next_id = doc.next_id.max(id.0);
+            }
+            Some(_) if own.contains(&id) => {
+                let mut item = m.clone();
+                item.id = MediaId(doc.alloc_id().ok_or_else(|| crate::cmd::bad("review.accept", crate::cmd::NO_ID_SPACE))?);
+                doc_at.entry(item.id).or_insert(doc.media.len());
+                media_map.insert(id, item.id);
+                doc.media.push(item);
             }
             Some(_) => {
                 let before = doc.media.len();
@@ -657,6 +666,55 @@ mod tests {
         let own = &doc.slides[0];
         let Some(Background::Fill { fill: Fill::Picture(back) }) = &own.background else { panic!("no background picture") };
         assert_eq!(bytes(back.media), b"open background");
+    }
+
+    /// #1993 review: an accepted slide's kept parts with equal bytes and different relationships of
+    /// their own stay two media items, so a save doesn't give one the other's.
+    #[test]
+    fn accepted_kept_parts_with_relationships_keep_their_own_items() {
+        use std::sync::Arc;
+
+        use deckcraft_model::{MediaId, MediaItem, PartRel, PartRelTarget, Shape, ShapeId, ShapeKind, defaults};
+
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "oleObject1.bin".into(),
+            content_type: "application/vnd.openxmlformats-officedocument.oleObject".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let object = |id: u32, part: u32, icon: u32| Shape {
+            id: ShapeId(id),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(part))],
+                part_rels: vec![PartRel {
+                    from: MediaId(part),
+                    id: "rId1".into(),
+                    rel_type: "image".into(),
+                    target: PartRelTarget::Part(MediaId(icon)),
+                }],
+            },
+            ..Default::default()
+        };
+        // The open deck uses the parts' ids for other bytes.
+        let mut doc = defaults::new_presentation(None);
+        doc.media.extend([item(9001, b"open a"), item(9002, b"open b")]);
+        doc.next_id = doc.next_id.max(9200);
+        let mut rev = defaults::new_presentation(None);
+        rev.media.extend([item(9001, b"same"), item(9002, b"same"), item(9003, b"first icon"), item(9004, b"second icon")]);
+        Arc::make_mut(&mut rev.slides[0]).shapes = vec![object(9101, 9001, 9003), object(9102, 9002, 9004)];
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let froms: Vec<MediaId> = sl
+            .shapes
+            .iter()
+            .filter_map(|sh| if let ShapeKind::Opaque { part_rels, .. } = &sh.kind { part_rels.first().map(|r| r.from) } else { None })
+            .collect();
+        assert_eq!(froms.len(), 2);
+        assert_ne!(froms[0], froms[1], "each object keeps its own part");
+        assert!(froms.iter().all(|&m| doc.media(m).unwrap().data.as_slice() == b"same"));
     }
 
     /// NN6: a slide reset drops the placeholders' stored boxes; comparing it with the copy from

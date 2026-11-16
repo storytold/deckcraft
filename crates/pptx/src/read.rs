@@ -1609,6 +1609,36 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
     hf
 }
 
+/// An empty import over `pkg`, for tests of the readers.
+#[cfg(test)]
+pub(crate) fn test_imp(pkg: &Package) -> Imp<'_> {
+    Imp {
+        pkg,
+        media: vec![],
+        media_by_part: HashMap::new(),
+        media_keys: vec![],
+        next: 0,
+        slide_by_part: HashMap::new(),
+        custom_show_names: HashMap::new(),
+        table_style_ids: Vec::new(),
+        vml_previews: HashMap::new(),
+        kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
+        kept_charts: HashMap::new(),
+        kept_chart_keys: vec![],
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
+        theme_extra_bytes: 0,
+        smartart_shapes: 0,
+        diagram_xml_bytes: 0,
+        part_rels: HashMap::new(),
+    }
+}
+
 #[cfg(test)]
 mod rollback_tests {
     use super::*;
@@ -1618,31 +1648,7 @@ mod rollback_tests {
     fn rollback_restores_budgets_and_removes_only_what_was_added() {
         let bytes = crate::export(&deckcraft_model::Presentation::default()).expect("export");
         let pkg = Package::open(&bytes).expect("package");
-        let mut imp = Imp {
-            pkg: &pkg,
-            media: vec![],
-            media_by_part: HashMap::new(),
-            media_keys: vec![],
-            next: 0,
-            slide_by_part: HashMap::new(),
-            custom_show_names: HashMap::new(),
-            table_style_ids: Vec::new(),
-            vml_previews: HashMap::new(),
-            kept_sidecar_bytes: 0,
-            chart_points: 0,
-            chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
-            kept_charts: HashMap::new(),
-            kept_chart_keys: vec![],
-            rejected_kept: HashMap::new(),
-            chart_decode_bytes: 0,
-            tags_by_part: HashMap::new(),
-            tag_bytes: 0,
-            tags_capped: false,
-            theme_extra_bytes: 0,
-            smartart_shapes: 0,
-            diagram_xml_bytes: 0,
-            part_rels: HashMap::new(),
-        };
+        let mut imp = test_imp(&pkg);
         let kept_before = imp.media_for("ppt/presentation.xml").expect("media");
         let (m, items) = (imp.mark(), imp.media.len());
         assert!(imp.media_for("ppt/presProps.xml").is_some());

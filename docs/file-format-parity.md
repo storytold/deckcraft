@@ -62,7 +62,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Video: VP9, AV1 in WebM/MKV | partly (OS codecs) | yes | Ahead of PowerPoint for Mac |
 | WMV | yes (Windows) | embedded, not playable | |
 | Online video (YouTube embeds) | yes | no | Cloud feature |
-| Embedded OLE objects | yes | kept on round trip (opaque) with their embedding, the parts it uses and their links (#1993), not insertable or editable | `ShapeKind::Opaque` |
+| Embedded OLE objects | yes | kept on round trip (opaque) with their embedding, the parts it uses and their links (#1993), not insertable or editable; when one of those relationship targets is missing, unsafe (outside the package or the object folders) or over the depth, count or byte limits, a save writes the preview picture instead | `ShapeKind::Opaque` |
 | Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn |
 | 3-D models (`.glb`) | yes | kept | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Not drawn as a mesh and not inserted from the ribbon |
 
@@ -90,7 +90,7 @@ the round trip even though DeckCraft doesn't model it.
 | Tables with styles | yes | yes | Merges, both diagonal borders and optional RTL column direction round-trip; Reuse Slides transfers definitions referenced by source tables, including grouped tables, with conflicting ids remapped |
 | Charts (`c:chartSpace`) | yes | yes | Original XML kept in `Chart.raw`. Trendlines (type, order or period, forecast, intercept, equation and R²) are read, written and drawn. A combo chart's secondary value axis is read and is not written back when the chart is rebuilt. An unchanged chart also keeps its embedded workbook and the other parts its relationships point at, under fresh `keptN` names so they never replace a part DeckCraft writes (#335); editing the chart drops that workbook instead of writing a stale one |
 | Charts (`cx:` chartex: waterfall, funnel, treemap, sunburst, histogram, Pareto, box) | yes | yes | Unchanged parts kept, with their embedded workbook (#335); edited and new ones written from the model with a plain-chart fallback. Treemap and sunburst hierarchy levels kept; region maps kept, drawn as tiles (no map geometry) |
-| SmartArt (`dgm`) | the drawing part as a group (text laid out on its `dsp:txXfrm` rectangle), and the outline from the data model (Text Pane) | as a diagram: data model from the outline; layout, quick style and colour parts (the file's own kept until the layout is switched); the group as the cached drawing | DeckCraft's layout definitions are simple; a diagram without a cached drawing isn't drawn. SmartArt kept only as XML keeps its data and definition parts (#203) and the pictures, parts and external links those use (#1993); a relationship that can't be carried safely (outside the package or the object folders, too deep or too large) still saves the preview |
+| SmartArt (`dgm`) | the drawing part as a group (text laid out on its `dsp:txXfrm` rectangle), and the outline from the data model (Text Pane) | as a diagram: data model from the outline; layout, quick style and colour parts (the file's own kept until the layout is switched); the group as the cached drawing | DeckCraft's layout definitions are simple; a diagram without a cached drawing isn't drawn. SmartArt kept only as XML keeps its data and definition parts (#203) and the pictures, parts and external links those use (#1993); a relationship that can't be carried safely (missing, outside the package or the object folders, too deep or too large) still saves the preview |
 | Equations (OMML, `a14:m`) | no | no | PR #55 open |
 | Audio / video (`p14:media`, trim, fades, bookmarks) | yes | partly | Playback options lost on save (#74) |
 | Ink (`contentPart`) | yes | as a group of freeform lines | PowerPoint sees shapes, not ink |
@@ -119,7 +119,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-16 | trivial | SmartArt and OLE objects kept as XML keep the relationships of their kept parts (pictures, other parts, cycles) and external links on save, parts renamed and content types kept; unsafe targets still fall back to the preview (#1993) |
+| 2026-11-16 | trivial | SmartArt and OLE objects kept as XML keep the relationships of their kept parts (pictures, other parts, cycles) and external links on save, parts renamed and content types kept; missing, unsafe or over-limit targets still fall back to the preview, checked before any part is copied. Reuse Slides, paste and accepting a compared slide give such parts their own media items (#1993) |
 | 2026-11-07 | trivial | A slide-list entry whose relationship is missing is reported in `lostSlides` like an unreadable slide part, so the deck opens as a repaired copy; slide lists over 10,000 entries are refused with an import-limit error rather than silently truncated (#1910) |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
 | 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |
