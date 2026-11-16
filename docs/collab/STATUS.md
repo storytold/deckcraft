@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-13T15:12Z. Branch: `collab/pr15`.
+Updated: 2026-11-16T00:27Z. Branch: `collab/pr15`.
 
 **This page does not state the delivered head, the CI verdict or what is unpushed.** Those move
 without anyone touching this file, and a header that writes them down is false after the next
@@ -76,8 +76,56 @@ within seconds of each other: #2012 `e4ef9128` (workflow runs created 09:41:29Z)
 (09:41:25Z) and #1975 `93089150` (09:41:23Z). The merge introduced 13 commits into `collab/pr15`
 and into `collab/pr11`, and 24 into `collab/pr10`, which had not yet merged the two earlier
 `origin/main` batches; no commit of this project's work was in them, they only carry the upstream
-tree each branch now builds on, and `git merge-tree` against `origin/main` `ef9ac9ac` (the merge of
-#2062 at 09:41:19Z) is clean for all three.
+tree each branch now builds on. The base that measurement used, `origin/main` `ef9ac9ac` (the merge
+of #2062 at 09:41:19Z), is 22 commits behind the current one (`git rev-list --count
+ef9ac9ac..bb2c2254`) and is replaced by the reading below.
+**Reading at 2026-11-16T00:14Z** (history, not state) — the base, the two conflicts and the merge.
+`origin/main` is `bb2c2254ee60761b2b4dab2053fe33d7190b6804` (`Native format: take the .deckcraft
+package layer from craft-deckcraft-format (#2170)`, committed 2026-11-16T00:27:58+01:00, 69 commits
+above `18355eec`). `gh pr view 2012 --json headRefOid,mergeable,mergeStateStatus,state,updatedAt`
+printed `3095c6fedde3761fde48c3bb6ac46a8104ded0b8` / `CONFLICTING` / `DIRTY` / `OPEN` /
+`2026-11-13T13:20:06Z`, and `git merge-tree --write-tree origin/main 3095c6fe` exited **1** with
+exactly two content conflicts — `crates/engine/src/cmd/insert.rs` and
+`crates/engine/src/cmd/smartart/edit.rs`; every other file auto-merged. The merge commit
+**`d766e45bdfdaeafce7e07a37d8885b98917e02c3`** has `29a243ed` as its first parent and `bb2c2254` as
+its second — **merged, not rebased**, so every slice hash named in this file still names its commit —
+and it changes 68 files against its first parent (+1999/−707). On `d766e45b` `git
+merge-tree --write-tree origin/main d766e45b` printed `9c2adc4aeae175fb3a4bb4f09eab197cd443edf9` and
+exited **0**; `git rev-list --left-right --count origin/main...HEAD` printed `0 149` (nothing on
+`main` is missing from the branch) and `git rev-list --count HEAD^1..HEAD^2` printed `69`. At the
+docs-only STATUS head above it the same command against `HEAD` exited **0** again (measured
+2026-11-16T00:30Z).
+The two conflicts and their resolutions — a union in both, never a choice:
+
+| File | Conflict | Resolution |
+|---|---|---|
+| `crates/engine/src/cmd/insert.rs` | main's naming pass renamed the WordArt label; the branch inserts `insert.model3d` immediately above that line | both: the 3-D model command stays and `insert.wordArt` keeps main's "Decorative Text" label |
+| `crates/engine/src/cmd/smartart/edit.rs` | main reworded the errors of `to_text` to "Diagram"; the branch had already moved that body into `to_text_plan` and removed the helper main's block calls (`selected_for`) | the branch's `let plan = to_text_plan(…)` stands — main's block cannot compile against it — and the same wording goes to the three errors of `to_text_plan` |
+
+The merge also had to settle the **naming collision** that main's `69379cf6` ("Naming: use Diagram
+and Decorative Text for own features") exposes through `crates/ui-egui/tests/display_names.rs`: that
+test fails on the words "SmartArt" and "WordArt" in string literals under `crates/ui-egui/src` and
+`crates/engine/src/cmd` (the saved tab id "SmartArt Design" is allowed there; comments and
+identifiers are not read). The strings the branch had added with the retired names take main's
+wording, so the guard is green on the merged tree: the errors "select a Diagram graphic", "not a
+Diagram graphic", "the shape is not a Diagram graphic", "not a Diagram value command", "a Diagram
+group cannot be cleared" and "the value is not a Diagram group"; the generated object name
+`Diagram ({kind})` in `from_text_plan`; the labels "Restore Diagram", "Replace with Diagram",
+"Replace Diagram with Text", "Detach Diagram", "Restore Diagram Picture" and their ribbon/menu path
+`Diagram Design`, as main's own commands name it; and the node-picture test's expectation
+`Diagram picture`, which follows the paint code main had already renamed. Identifiers, file names,
+comments and the saved tab id are untouched.
+The lock needed four lines: the merge kept the collaboration crates at `0.18.1` (the sweep of
+`3095c6fe`) while main bumped the workspace to `0.19.0`, so `cargo metadata --locked` refused it; the
+build host's own resolution — exactly the four `version` lines of `deckcraft-collab`,
+`-collab-proto`, `-collab-server` and `-collab-web` — is the committed lock, and `cargo metadata
+--locked` then leaves the tree unchanged.
+**#1998 and #1975 at the same reading** (`gh pr view <N> --json
+headRefOid,mergeable,mergeStateStatus,state,updatedAt`) — neither was touched, and neither is this
+project's to close: #1998 is `5b67339e7b036b9cbda61d89d1582b31cf59026d` / `CONFLICTING` / `DIRTY` /
+`OPEN` (updated 2026-11-13T09:48:07Z) and #1975 is
+`930891505c074659b3c111759eb3b8ed34f8c6b8` / `MERGEABLE` / `UNSTABLE` / `OPEN` (updated
+2026-11-14T15:12:49Z); both are superseded by #2012.
 **Reading at 2026-11-13T10:25Z** (history, not state). For #2012, #1998 and #1975,
 `gh pr view <N> --json headRefOid`, `git ls-remote fork refs/heads/collab/<branch>` and
 `git rev-parse HEAD` each named one and the same commit — `e4ef9128`, `5b67339e`, `93089150` —
@@ -1975,6 +2023,14 @@ token from the cabinet.
    (§Session log, 2026-11-13 — the lock fix is the head and its gate is green; log
    `gate-deckcraft-2012-3095c6fe.log`). For any later head the same read decides: `git log --oneline
    3095c6fe..<headRefOid> -- crates apps`.
+   **A push is what the branch now waits for, and it is a person's step: the 2026-11-16 merge of
+   `origin/main` is committed locally and not delivered.** `d766e45b` merges `bb2c2254` onto
+   `29a243ed`, `git merge-tree --write-tree origin/main HEAD` exits 0, and the gate on it is green
+   (§Session log, 2026-11-16: `metadata --locked`, fmt, clippy, `deckcraft-engine` 626,
+   `deckcraft-ui-egui` 529, log `gate-deckcraft-2012-d766e45b.log`). The commit carries no code
+   change of this project beyond resolving the two content conflicts, main's naming guard and the
+   four lock lines; #2012 keeps reading `DIRTY` until the branch is pushed and the runs of the new
+   head are approved.
    #1998 and #1975 are superseded by #2012 and stay open until a person closes them — **do not
    close them from an agent session**. Their heads and verdicts move without this project's
    involvement; the readings at 23:38Z and 05:44Z are history in §PR publication and §Session log,
@@ -2270,6 +2326,62 @@ command end up in the queue — and the hub test fails because the commit is que
 compose command, so the room never receives `한`.
 
 ## Session log
+
+### 2026-11-16 — `origin/main` moved to `bb2c2254`: the merge `d766e45b` keeps both sides of two conflicts, and of main's naming guard
+
+- **Measured at 2026-11-16T00:14Z.** `gh pr view 2012 --json
+  headRefOid,mergeable,mergeStateStatus,state,updatedAt` printed
+  `3095c6fedde3761fde48c3bb6ac46a8104ded0b8`, `CONFLICTING`, `DIRTY`, `OPEN`,
+  `2026-11-13T13:20:06Z`. `origin/main` was
+  `bb2c2254ee60761b2b4dab2053fe33d7190b6804` (`Native format: take the .deckcraft package layer
+  from craft-deckcraft-format (#2170)`, committed 2026-11-16T00:27:58+01:00), 69 commits above
+  `18355eec` — the snapshot this branch had already merged. `git merge-tree --write-tree origin/main
+  3095c6fe` exited **1** with exactly two content conflicts, `crates/engine/src/cmd/insert.rs` and
+  `crates/engine/src/cmd/smartart/edit.rs`; every other file auto-merged.
+- **Merged, not rebased.** The merge commit `d766e45b…` has `29a243ed` as its first parent and
+  `bb2c2254` as its second, so every slice hash this file names still names its commit, and it
+  changes 68 files against its first parent (+1999/−707). On `d766e45b` `git merge-tree --write-tree
+  origin/main d766e45b` printed `9c2adc4a…` and exited **0**; `git rev-list --left-right --count
+  origin/main...HEAD` printed `0 149` and `git rev-list --count HEAD^1..HEAD^2` printed `69`; the
+  tree is clean, and the same merge-tree command at the docs-only head above exits **0** again.
+- **The two conflicts, resolved as unions** — the table in the header. In `insert.rs` main's rename
+  of the WordArt label and the branch's `insert.model3d` both stay. In `smartart/edit.rs` main's
+  reworded block for `to_text` is the pre-refactor body the branch had already moved into
+  `to_text_plan`, and it calls `selected_for`, which the branch removed: taking it would not compile,
+  so the branch's `let plan = to_text_plan(…)` stands and main's "Diagram" wording goes to the three
+  errors of `to_text_plan` that carry the same messages.
+- **The third conflict is semantic, and main made it a test.** `69379cf6` ("Naming: use Diagram and
+  Decorative Text for own features") added `crates/ui-egui/tests/display_names.rs`, which reads
+  string literals under `crates/ui-egui/src` and `crates/engine/src/cmd` and fails on the words
+  "SmartArt" and "WordArt" (the saved tab id "SmartArt Design" is allowed; comments and identifiers
+  are not read). The strings the branch had added with the retired names are renamed to main's
+  wording — six error messages, the generated object name `Diagram ({kind})` in `from_text_plan`,
+  five command labels and the `Diagram Design` ribbon/menu path of those commands — and the
+  node-picture test in `crates/engine/src/tests.rs` now looks for the child `Diagram picture`, which
+  is what main's paint code has named it since its rename. Identifiers, file names, comments and the
+  saved tab id are untouched. The first gate run on the untested intermediate tree caught exactly
+  that test (`a_smartart_node_picture_is_one_final_value_with_a_checked_place`, "the placeholder"),
+  which is how the semantic conflict was found rather than assumed.
+- **The lock needed four lines.** The merge kept the collaboration crates at `0.18.1` (the sweep of
+  `3095c6fe`) while main bumped the workspace to `0.19.0`, so `cargo metadata --locked` refused the
+  lock; the build host's own resolution — the four `version` lines of `deckcraft-collab`,
+  `-collab-proto`, `-collab-server` and `-collab-web` — is the committed lock, and `cargo metadata
+  --locked` then leaves the tree unchanged (`git status --porcelain` empty at the end of the run).
+- **Gate on `d766e45b`** (build host, rust stable, `CRAFT_FONTS_DIR=/home/markin/build/fonts-37827adc`
+  as `ci.yml` pins it; log `.craft/logs/gate-deckcraft-2012-d766e45b.log`): `cargo metadata --locked`
+  ok; `cargo fmt --all -- --check` clean; `cargo clippy -p deckcraft-engine -p deckcraft-ui-egui
+  --all-targets -- -D warnings` clean; `cargo test -p deckcraft-engine` **626 passed, 0 failed, 1
+  ignored** plus 6 and 8 integration tests; `cargo test -p deckcraft-ui-egui` **529 passed, 0 failed,
+  4 ignored** plus 5 and 1 — the `display_names` guard among them, and no host-font failure with the
+  pin. Extra, because the merge also moves `pptx`/`model`/`format` under the collaboration crate:
+  `cargo clippy -p deckcraft-collab --all-targets -- -D warnings` clean and `cargo test -p
+  deckcraft-collab` **308 + 2 + 8 passed**.
+- **What is left.** Nothing was pushed, no run was approved or re-run and no CI file was touched:
+  #2012 keeps reading `DIRTY` until a person pushes the branch and approves the runs of the new head.
+  #1998 (`5b67339e`, `DIRTY`) and #1975 (`93089150`, `UNSTABLE`) were read at the same time and left
+  alone; closing them stays a maintainer's decision. This STATUS commit sits above the merge and
+  touches `docs/` only (`git log --oneline d766e45b..HEAD -- crates apps` is empty), so the gate
+  above is the gate of the delivered code.
 
 ### 2026-11-13 — the `--commit` prefix defect: `3095c6fe` has had four runs since 13:21Z
 
