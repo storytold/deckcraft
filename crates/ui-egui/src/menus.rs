@@ -71,7 +71,7 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (F, true, false, false) => "app.find",
-        // Ctrl+H is PowerPoint's; macOS keeps Cmd+H for Hide and uses Option+Cmd+F.
+        // Ctrl+H is PowerPoint's (Cmd+H is macOS's Hide, see `keys.rs`); Option+Cmd+F is the Mac's.
         (H, true, false, false) | (F, true, false, true) => "app.replace",
         (Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9, false, false, true) => {
             if app.session.mac_keys || app.backstage.is_some() || app.session.active().is_some_and(|d| d.selection.text.is_some()) {
