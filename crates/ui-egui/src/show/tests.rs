@@ -1369,3 +1369,60 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
 }
+
+/// #2085: starting the show on a slide with a transition plays it, from black, instead of
+/// showing the slide at once.
+#[test]
+fn the_show_opens_on_the_first_slides_transition() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("transition.set", &json!({"kind": "fade", "index": 0, "duration": 2000})).unwrap();
+    let app = SlideApp::new(session, crate::Services::default());
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(1);
+    let tr = harness.state().show.as_ref().and_then(|s| s.trans.as_ref()).expect("the opening transition is playing");
+    assert_eq!(tr.kind, "fade");
+    assert_eq!(tr.from, None, "no slide came before: the transition goes from black");
+    assert_eq!(tr.dur, 2.0);
+}
+
+/// #2085: a transition preview keeps the transition it set (from the previous slide, #1654);
+/// every other show start plays the starting slide's own transition from black.
+#[test]
+fn opening_transition_leaves_a_transition_preview_alone() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "push", "index": 1, "duration": 1000})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 1, true, false);
+    show.start_transition_preview(&doc, 10.0);
+    show.opening_transition(&doc, 11.0);
+    let tr = show.trans.as_ref().expect("the preview's transition is still there");
+    assert_eq!(tr.from, Some(0), "the preview still enters from slide 0");
+    assert_eq!(tr.start, 10.0);
+}
+
+/// #2085: the opening transition is skipped with no transition on the slide or when the show
+/// runs without animation.
+#[test]
+fn opening_transition_is_none_without_a_transition_or_when_animation_is_off() {
+    let mut session = deckcraft_engine::Session::with_new();
+    let mut doc = (*session.active().unwrap().doc).clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.opening_transition(&doc, 10.0);
+    assert!(show.trans.is_none(), "no transition on the slide: nothing plays");
+
+    session.execute("transition.set", &json!({"kind": "fade", "index": 0, "duration": 1000})).unwrap();
+    doc = (*session.active().unwrap().doc).clone();
+    doc.show.without_animation = true;
+    let mut show = Show::new(&doc, 0, false, false);
+    show.opening_transition(&doc, 10.0);
+    assert!(show.trans.is_none(), "Show without animation opens on the slide directly");
+}

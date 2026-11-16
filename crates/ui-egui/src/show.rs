@@ -294,6 +294,26 @@ impl Show {
         self.step_end = now;
     }
 
+    /// Play the starting slide's transition into the show, from black (#2085): there is no old
+    /// slide yet, so `from`/`old` stay `None` and the transition's old-slide layers draw black.
+    /// A transition preview set `trans` itself (from the previous slide, #1654) and is left alone.
+    pub(crate) fn opening_transition(&mut self, doc: &Presentation, now: f64) {
+        if self.preview_only {
+            return;
+        }
+        let (kind, option, dur) = doc
+            .slides
+            .get(self.state.slide)
+            .and_then(|s| s.transition.as_ref())
+            .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
+            .unwrap_or(("none".into(), String::new(), 0.0));
+        self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
+            Some(Transition { old: None, from: None, morph: None, parts: None, start: now, kind, option, dur, reverse: false })
+        } else {
+            None
+        };
+    }
+
     /// Identity of the show state a queued window-point event belongs to.
     pub(crate) fn input_state(&self) -> ShowInputState {
         let bits = |v: f32| if v.is_finite() { v.to_bits() } else { 0 };

@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (animation Effect Options translate stored codes into readable labels; previous: minor, going back in the show reverses the left slide's transition, #1531; previous: minor, Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (the show opens on the starting slide's transition, from black, #2085; previous: trivial, animation Effect Options translate stored codes into readable labels; previous: minor, going back in the show reverses the left slide's transition, #1531; previous: minor, Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -42,6 +42,7 @@ perspective-correct subdivided meshes.
 | Transition sounds | yes | yes: Transitions › Sound offers six built-in sounds (synthesised, no sound files shipped), Other Sound…, [Stop Previous Sound] and Loop Until Next Sound; they play in the show and round-trip |
 | Preview in the editor | yes | yes |
 | Going back in the show plays the left slide's transition in reverse | yes | yes (#1531); a jump (Go to Slide, links) plays the target slide's own transition |
+| The show opens playing the starting slide's transition, from black | yes | yes (#2085) |
 | Morph: objects move, resize, recolour; unmatched text boxes fade in place; a picture's crop morphs | yes | yes (#119, #118) |
 | Morph: Words and Characters | yes | yes (#5) |
 | Morph: geometry (circle to star) | yes | yes (#27) |
@@ -94,6 +95,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | The slide show opens on the starting slide's transition, from black, instead of showing the slide at once (#2085); new row in the transition features. Scores unchanged |
 | 2026-10-30 | trivial | Animation Effect Options show readable, effect-aware labels for all gallery option codes; stored values and command parameters stay unchanged |
 | 2026-10-29 | minor | Going back in the show plays the transition of the slide being left, reversed, instead of the previous slide's entrance transition (#1531); new row in the transition features. Scores unchanged |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |
