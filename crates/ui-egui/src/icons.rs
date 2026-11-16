@@ -140,6 +140,10 @@ icons! {
     Object => "object",
     Equation => "equation",
     Symbol => "symbol",
+    /// Insert ▸ Harvey Ball: a ring three quarters filled from 12 o'clock.
+    HarveyBall => "harvey-ball",
+    /// Insert ▸ Checkbox: a ticked box.
+    Checkbox => "checkbox",
     Video => "video",
     Audio => "audio",
     ScreenRecording => "screen-recording",

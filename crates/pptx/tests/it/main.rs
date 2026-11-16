@@ -11,6 +11,7 @@ mod corpus_style;
 mod corpus_themes;
 mod export_scale;
 mod fills;
+mod generated;
 mod kept_parts;
 mod locks;
 mod malformed;

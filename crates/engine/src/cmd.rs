@@ -29,6 +29,7 @@ pub mod table;
 pub mod text;
 pub mod three_d;
 pub mod transition;
+pub mod visuals;
 pub mod zoom;
 
 use deckcraft_geom::Xfrm;
@@ -168,6 +169,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(reuse::specs());
         v.extend(insert::specs());
         v.extend(smartart::specs());
+        v.extend(visuals::specs());
         v.extend(shape::specs());
         v.extend(background::specs());
         v.extend(picture_style::specs());

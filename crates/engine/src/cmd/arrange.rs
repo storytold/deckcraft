@@ -293,11 +293,12 @@ fn refit_list(old: Option<&Vec<Shape>>, list: &mut [Shape], depth: usize) {
                 },
             )
         });
-        let smart = sh.diagram.is_some();
+        let smart = sh.diagram.is_some() || sh.generated.is_some();
         let ShapeKind::Group { children, child } = &mut sh.kind else { continue };
         refit_list(old_children, children, depth + 1);
         if smart {
-            // A SmartArt graphic's box is its own; its shapes are regenerated inside it.
+            // A SmartArt graphic's, Harvey ball's or checkbox's box is its own; its shapes are
+            // regenerated inside it.
             continue;
         }
         let (Some(old_children), Some((old_x, old_child))) = (old_children, own_before) else { continue };

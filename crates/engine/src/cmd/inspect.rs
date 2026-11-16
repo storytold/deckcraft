@@ -88,6 +88,9 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
         if !sh.descr.is_empty() {
             o.insert("altText".into(), json!(sh.descr));
         }
+        if let Some(g) = &sh.generated {
+            o.insert("generated".into(), serde_json::to_value(g).unwrap_or_default());
+        }
         match &sh.kind {
             ShapeKind::Table(t) => {
                 o.insert("table".into(), json!({"rows": t.n_rows(), "cols": t.n_cols(), "style": t.style, "cells": t.rows.iter().map(|r| r.cells.iter().map(|c| c.text.text()).collect::<Vec<_>>()).collect::<Vec<_>>()}));

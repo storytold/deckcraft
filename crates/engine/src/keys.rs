@@ -138,6 +138,13 @@ impl Session {
                     self.cycle_selection(!mods.shift)?;
                     return Ok(json!({"handled": true}));
                 }
+                // Not a registered shortcut: a registry Space would answer every other Space with
+                // "not available" (typing a space in text included).
+                // `key_token` keeps a literal " " as it is (the registry maps both to Space).
+                "space" | " " if crate::cmd::visuals::checkbox_in_selection(self) => {
+                    let r = self.execute("checkbox.toggle", &json!({}))?;
+                    return Ok(json!({"handled": true, "command": "checkbox.toggle", "result": r}));
+                }
                 _ => {}
             }
         }
@@ -236,6 +243,10 @@ impl Session {
             let Some(id) = st.selection.shapes.first().copied() else { return Ok(json!({"handled": false})) };
             if st.selection.shapes.len() != 1 {
                 return Ok(json!({"handled": false}));
+            }
+            // The space a Space key types after toggling a selected checkbox (`Session::key`).
+            if text == " " && crate::cmd::visuals::checkbox_in_selection(self) {
+                return Ok(json!({"handled": true}));
             }
             // Typing on a selected shape replaces its text (PowerPoint behaviour).
             self.execute("text.edit", &json!({"id": id}))?;

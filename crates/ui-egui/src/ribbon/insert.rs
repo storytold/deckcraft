@@ -2,8 +2,8 @@ use super::galleries::{Fl, kurbo_flatten, shapes_gallery};
 use super::home::layout_menu;
 use super::view::zoom_menu;
 use super::{
-    Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, big_button_ex, enabled, group, json, menu_item, pos2,
-    run, tip, vec2,
+    Align2, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, big_button_ex, enabled, group, json, menu_item,
+    pos2, rows, run, small_button_ex, theme, tip, vec2,
 };
 
 /// Photo Album is a split button: the main click starts a new album, the arrow edits one.
@@ -125,11 +125,114 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::Equation, "Equation", "app.dialog", json!({"id": "equation"}));
         big(app, ui, Icon::Symbol, "Symbol", "app.dialog", json!({"id": "symbol"}));
+        rows(ui, |ui| {
+            harvey_ball_button(app, ui);
+            checkbox_button(app, ui);
+        });
     });
     group(ui, |ui| {
         big(app, ui, Icon::Video, "Video", "app.insertVideoDialog", json!({}));
         big(app, ui, Icon::Audio, "Audio", "app.insertAudioDialog", json!({}));
     });
+}
+
+/// The states Insert ▸ Checkbox and Shape Format ▸ Checkbox offer, with their menu labels.
+pub(super) const CHECK_STATES: [(&str, &str); 3] = [("checked", "Checked"), ("unchecked", "Unchecked"), ("crossed", "Crossed")];
+
+/// Insert ▸ Symbols ▸ Harvey Ball: the button inserts a quarter-filled ball; its menu offers 0/4 to 4/4.
+fn harvey_ball_button(app: &mut SlideApp, ui: &mut Ui) {
+    let en = enabled(app, "insert.harveyBall");
+    let (main, arrow) = small_button_ex(ui, Icon::HarveyBall, "Harvey Ball", en, false, true);
+    if main.on_hover_text("Insert a Harvey ball").clicked() {
+        run(app, "insert.harveyBall", json!({}));
+    }
+    if let Some(arrow) = arrow {
+        egui::Popup::menu(&arrow).show(|ui| {
+            for v in 0..=4u16 {
+                if picture_row(ui, &format!("{v}/4"), false, |p, r, ink| paint_harvey_ball(p, r, v, 4, ink)) {
+                    run(app, "insert.harveyBall", json!({"value": v, "of": 4}));
+                    ui.close();
+                }
+            }
+        });
+    }
+}
+
+/// Insert ▸ Symbols ▸ Checkbox: the button inserts a ticked box; its menu offers each state.
+fn checkbox_button(app: &mut SlideApp, ui: &mut Ui) {
+    let en = enabled(app, "insert.checkbox");
+    let (main, arrow) = small_button_ex(ui, Icon::Checkbox, "Checkbox", en, false, true);
+    if main.on_hover_text("Insert a checkbox").clicked() {
+        run(app, "insert.checkbox", json!({}));
+    }
+    if let Some(arrow) = arrow {
+        egui::Popup::menu(&arrow).show(|ui| {
+            for (state, label) in CHECK_STATES {
+                if picture_row(ui, label, false, |p, r, ink| paint_checkbox(p, r, state, ink)) {
+                    run(app, "insert.checkbox", json!({"state": state}));
+                    ui.close();
+                }
+            }
+        });
+    }
+}
+
+/// A menu row: a 16-point picture drawn by `paint`, then `label`. True when clicked.
+pub(super) fn picture_row(ui: &mut Ui, label: &str, selected: bool, paint: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(120.0), 24.0), Sense::click());
+    if selected {
+        ui.painter().rect_filled(rect, CornerRadius::same(3), t.selected);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(3), t.hover);
+    }
+    let pic = Rect::from_min_size(rect.min + vec2(6.0, 4.0), vec2(16.0, 16.0));
+    paint(ui.painter(), pic, t.text);
+    ui.painter().text(pos2(pic.max.x + 8.0, rect.center().y), Align2::LEFT_CENTER, label, theme::font(12.0), t.text);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
+    resp.clicked()
+}
+
+/// A Harvey ball `value` of `of` filled from 12 o'clock, drawn in `r` (menu pictures only; the
+/// slide's ball is the group of shapes the engine draws).
+pub(super) fn paint_harvey_ball(p: &egui::Painter, r: Rect, value: u16, of: u16, ink: Color32) {
+    let c = r.center();
+    let radius = (r.width().min(r.height()) / 2.0 - 1.0).max(1.0);
+    if of > 0 && value > 0 {
+        let sweep = std::f32::consts::TAU * f32::from(value.min(of)) / f32::from(of);
+        let n = 48u32;
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(c, ink);
+        for i in 0..=n {
+            let a = -std::f32::consts::FRAC_PI_2 + sweep * i as f32 / n as f32;
+            mesh.colored_vertex(c + vec2(a.cos(), a.sin()) * radius, ink);
+            if i > 0 {
+                mesh.add_triangle(0, i, i + 1);
+            }
+        }
+        p.add(egui::Shape::mesh(mesh));
+    }
+    p.circle_stroke(c, radius, Stroke::new(1.0, ink));
+}
+
+/// A checkbox in `state` (`checked`, `unchecked`, `crossed`), drawn in `r` (menu pictures only).
+pub(super) fn paint_checkbox(p: &egui::Painter, r: Rect, state: &str, ink: Color32) {
+    let s = (r.width().min(r.height()) - 2.0).max(2.0);
+    let sq = Rect::from_center_size(r.center(), vec2(s, s));
+    p.rect_stroke(sq, CornerRadius::ZERO, Stroke::new(1.0, ink), egui::StrokeKind::Inside);
+    let at = |x: f32, y: f32| sq.min + vec2(sq.width() * x, sq.height() * y);
+    let mark = Stroke::new(1.6, ink);
+    match state {
+        "checked" => {
+            p.line_segment([at(0.20, 0.55), at(0.42, 0.75)], mark);
+            p.line_segment([at(0.42, 0.75), at(0.80, 0.28)], mark);
+        }
+        "crossed" => {
+            p.line_segment([at(0.25, 0.25), at(0.75, 0.75)], mark);
+            p.line_segment([at(0.75, 0.25), at(0.25, 0.75)], mark);
+        }
+        _ => {}
+    }
 }
 
 /// Hover-to-size table grid. Returns (rows, cols) when clicked.

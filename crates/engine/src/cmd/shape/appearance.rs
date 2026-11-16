@@ -122,7 +122,9 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
 /// (notably geometry) still target only the selected shape. The whole traversal stays in one edit.
 fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
     fn apply(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
-        if depth > 64 {
+        // A Harvey ball or checkbox in the group took the colours its description holds
+        // (`visuals::route_format`); its parts are drawn from that, not formatted by hand.
+        if depth > 64 || sh.generated.is_some() {
             return Ok(());
         }
         f(sh)?;
@@ -137,6 +139,16 @@ fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut 
 }
 
 pub(super) fn fill(s: &mut Session, p: &Value) -> Result<Value> {
+    // A Harvey ball's or checkbox's colour lives in its description, which redraws replay.
+    let rest;
+    let p = match crate::cmd::visuals::route_format(s, p, "shape.fill")? {
+        crate::cmd::visuals::Format::Unchanged => p,
+        crate::cmd::visuals::Format::Done(v) => return Ok(v),
+        crate::cmd::visuals::Format::Rest(q) => {
+            rest = q;
+            &rest
+        }
+    };
     let new_fill = requested_fill(s, p)?;
     let transparency = f64_param(p, "transparency");
     let pic_props = p.get("pictureProps").filter(|v| v.is_object());
@@ -237,6 +249,16 @@ fn line_end(v: &str) -> Option<LineEnd> {
 }
 
 pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
+    // A Harvey ball's outline and a checkbox's colour live in its description (see `fill`).
+    let rest;
+    let p = match crate::cmd::visuals::route_format(s, p, "shape.line")? {
+        crate::cmd::visuals::Format::Unchanged => p,
+        crate::cmd::visuals::Format::Done(v) => return Ok(v),
+        crate::cmd::visuals::Format::Rest(q) => {
+            rest = q;
+            &rest
+        }
+    };
     let reset = bool_or(p, "reset", false);
     let none = bool_or(p, "none", false);
     let color = color_param(p, "color");
