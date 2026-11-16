@@ -389,8 +389,11 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
         secondary_axis: secondary,
         ..Default::default()
     };
+    // `<c:dLbls><c:delete val="1"/>` hides every label of the series, whatever the group says.
+    if s.path(&["dLbls", "delete"]).map(|v| v.bool("val").unwrap_or(true)) == Some(true) {
+        ser.data_labels = Some(false);
     // `<c:showVal/>` without a val attribute means true, as in the schema's default.
-    if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
+    } else if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
         ser.data_labels = Some(d);
     } else if let Some(false) = group_labels {
         // The group asks for no labels and the series does not say otherwise.

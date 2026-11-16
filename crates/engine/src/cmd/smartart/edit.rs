@@ -39,7 +39,7 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     let st = s.doc()?;
     let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(cmd, "no slide"))?;
     let ids = targets(s, p)?;
-    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a SmartArt graphic"))
+    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a Diagram graphic"))
 }
 
 /// Children with fresh ids for diagram `d` inside a group whose child space is `area`.
@@ -56,7 +56,7 @@ fn edit_diagram<T>(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Di
     let gid = target_group(s, p, cmd)?;
     s.edit(|doc, sel| {
         let g = current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, gid)).cloned().ok_or_else(|| bad(cmd, "no such shape"))?;
-        let (ShapeKind::Group { children, child }, Some(mut d)) = (g.kind, g.diagram) else { return Err(bad(cmd, "not a SmartArt graphic")) };
+        let (ShapeKind::Group { children, child }, Some(mut d)) = (g.kind, g.diagram) else { return Err(bad(cmd, "not a Diagram graphic")) };
         sync_text(&mut d, &children);
         let out = f(&mut d)?;
         normalize(&mut d.nodes);
@@ -108,7 +108,7 @@ pub fn insert_value(s: &mut Session, d: Diagram, rect: Option<Xfrm>) -> Result<V
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
         let g = Shape {
             id,
-            name: format!("SmartArt ({kind})"),
+            name: format!("Diagram ({kind})"),
             xfrm: Some(area),
             kind: ShapeKind::Group { children, child: area },
             diagram: Some(d),
@@ -201,7 +201,7 @@ pub fn plan(cmd: &str, p: &Value, d: &mut Diagram) -> Result<Value> {
             d.colors = v;
             Ok(Value::Null)
         }
-        other => Err(bad(other, "not a SmartArt value command")),
+        other => Err(bad(other, "not a Diagram value command")),
     }
 }
 
@@ -336,7 +336,7 @@ pub(super) fn replace_with_diagram(s: &mut Session, p: &Value) -> Result<Value> 
         let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let g = Shape {
             id: gid,
-            name: format!("SmartArt ({kind})"),
+            name: format!("Diagram ({kind})"),
             xfrm: Some(area),
             kind: ShapeKind::Group { children, child: area },
             diagram: Some(d.clone()),
@@ -366,11 +366,11 @@ pub(super) fn replace_with_text(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(CMD, "the text body has too many paragraphs or runs"));
     }
     let area = conversion_rect(p, CMD)?;
-    let gid = *planned_ids(p, &s.doc()?.selection, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let gid = *planned_ids(p, &s.doc()?.selection, CMD)?.first().ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
     let new = s.edit(|doc, sel| {
         let at = {
             let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
-            let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "the shape is not a SmartArt graphic"))?;
+            let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "the shape is not a Diagram graphic"))?;
             shapes.iter().position(|x| x.id == g.id).ok_or_else(|| bad(CMD, "the graphic isn't at the top of the slide"))?
         };
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
@@ -397,10 +397,10 @@ pub(super) fn replace_with_text(s: &mut Session, p: &Value) -> Result<Value> {
 /// and carries no value. The target is checked before the first write.
 pub(super) fn detach(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.detach";
-    let gid = *planned_ids(p, &s.doc()?.selection, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let gid = *planned_ids(p, &s.doc()?.selection, CMD)?.first().ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
     s.edit(|doc, sel| {
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
-        let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "the shape is not a SmartArt graphic"))?;
+        let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "the shape is not a Diagram graphic"))?;
         let gid = g.id;
         let g = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(CMD, "no such shape"))?;
         g.diagram = None;
@@ -538,7 +538,7 @@ pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
         let kind = d.kind.clone();
         let g = Shape {
             id: gid,
-            name: format!("SmartArt ({kind})"),
+            name: format!("Diagram ({kind})"),
             xfrm: Some(area),
             kind: ShapeKind::Group { children, child: area },
             diagram: Some(d),
@@ -567,10 +567,10 @@ pub struct ToTextPlan {
 
 pub fn to_text_plan(doc: &Presentation, sel: &crate::Selection, p: &Value) -> Result<ToTextPlan> {
     const CMD: &str = "smartArt.toText";
-    let id = *planned_ids(p, sel, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let id = *planned_ids(p, sel, CMD)?.first().ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
     let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
-    let g = diagram_group(shapes, id).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
-    let d = synced(g).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let g = diagram_group(shapes, id).ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
+    let d = synced(g).ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
     // The sizes the graphic's text shows at: its titles' and its bullets' (shrunk to fit included).
     let (title_pt, bullet_pt) = text_sizes(g.children());
     let mut body = TextBody::default();
@@ -632,9 +632,9 @@ pub(super) fn to_text(s: &mut Session, p: &Value) -> Result<Value> {
 /// collaboration normaliser can refuse a shape that is not a SmartArt graphic here.
 pub fn to_shapes_plan(doc: &Presentation, sel: &crate::Selection, p: &Value) -> Result<ShapeId> {
     const CMD: &str = "smartArt.toShapes";
-    let id = *planned_ids(p, sel, CMD)?.first().ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let id = *planned_ids(p, sel, CMD)?.first().ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
     let shapes = current_shapes(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
-    diagram_group(shapes, id).map(|g| g.id).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))
+    diagram_group(shapes, id).map(|g| g.id).ok_or_else(|| bad(CMD, "select a Diagram graphic"))
 }
 
 /// Convert to Shapes: keep the drawing as an ordinary group.
@@ -723,7 +723,7 @@ pub fn set_picture_value(s: &mut Session, p: &Value) -> Result<Value> {
         if !shapes.iter().any(|x| x.id == gid) {
             return Err(bad(CMD, "the graphic is not at the top of the slide"));
         }
-        let d = synced(&shape_of(s, gid)?).ok_or_else(|| bad(CMD, "not a SmartArt graphic"))?;
+        let d = synced(&shape_of(s, gid)?).ok_or_else(|| bad(CMD, "not a Diagram graphic"))?;
         top_node(&d, i).ok_or_else(|| bad(CMD, "no such node"))?
     };
     let media = if reset {

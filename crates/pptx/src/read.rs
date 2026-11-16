@@ -554,11 +554,14 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     import_checked(bytes).map(|(p, _)| p)
 }
 
-/// [`import`], plus the parts of the slide list the file names but that couldn't be read (a
-/// missing or truncated slide): those slides are left out, so a caller can say so (#203).
+/// [`import`], plus the slides the file's slide list names but that couldn't be read (a missing
+/// or truncated slide part, or an entry whose relationship is missing): those slides are left
+/// out, so a caller can say so (#203).
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
     import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
 }
+
+const MAX_SLIDE_ENTRIES: usize = 10_000;
 
 /// [`import_checked`] with the presentation's chart point budget set (tests lower it).
 pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>), PptxError> {
@@ -571,9 +574,15 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
     if !pres_el.is("presentation") {
         return Err(PptxError::NotPptx(format!("{pres_path} is not a presentation part")));
     }
+    // Refuse an oversized list before reading slide parts: truncating it would look like a
+    // complete import and allow a later save to overwrite the omitted slides (#1910).
+    // Looking only for the first entry past the cap keeps this check bounded.
+    if pres_el.child("sldIdLst").is_some_and(|list| list.children_named("sldId").nth(MAX_SLIDE_ENTRIES).is_some()) {
+        return Err(PptxError::Unsupported(format!("PPTX slide list exceeds the {MAX_SLIDE_ENTRIES}-entry import limit")));
+    }
     let pres_part = Part::new(&pkg, &pres_path, &pres_doc);
 
-    let (master_paths, slide_entries) = master_and_slide_paths(pres_el, &pres_part);
+    let (master_paths, slide_entries) = master_and_slide_paths(pres_el, &pres_part, &mut lost_slides);
     let (docs, max_id) = load_part_docs(&pkg, &master_paths, &slide_entries);
 
     let mut imp = Imp {
@@ -630,7 +639,7 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
 
 /// Masters, layouts and slides to read, in file order and without duplicates: (master paths,
 /// (file slide id, slide path)).
-fn master_and_slide_paths(pres_el: &El, pres_part: &Part) -> (Vec<String>, Vec<(u32, String)>) {
+fn master_and_slide_paths(pres_el: &El, pres_part: &Part, lost_slides: &mut Vec<String>) -> (Vec<String>, Vec<(u32, String)>) {
     let master_paths: Vec<String> = pres_el
         .child("sldMasterIdLst")
         .map(|l| l.children_named("sldMasterId").filter_map(|m| pres_part.rels.target(m.attr("r:id").unwrap_or(""))).map(String::from).collect())
@@ -641,8 +650,17 @@ fn master_and_slide_paths(pres_el: &El, pres_part: &Part) -> (Vec<String>, Vec<(
         .child("sldIdLst")
         .map(|l| {
             l.children_named("sldId")
-                .take(10_000)
-                .filter_map(|s| Some((s.u32("id").unwrap_or(0), pres_part.rels.target(s.attr("r:id").unwrap_or(""))?.to_string())))
+                .take(MAX_SLIDE_ENTRIES)
+                .filter_map(|s| {
+                    let rid = s.attr("r:id").unwrap_or("");
+                    let Some(path) = pres_part.rels.target(rid) else {
+                        // A missing relationship still represents a lost slide. Report it so
+                        // the engine opens a repaired copy instead of overwriting the original.
+                        lost_slides.push(format!("slide {} (missing relationship {rid})", s.u32("id").unwrap_or(0)));
+                        return None;
+                    };
+                    Some((s.u32("id").unwrap_or(0), path.to_string()))
+                })
                 .collect()
         })
         .unwrap_or_default();

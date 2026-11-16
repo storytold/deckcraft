@@ -365,6 +365,38 @@ fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
             out.push(sh);
         }
         *list = out;
+        // A group inside a group: its children take its place in the outer group, mapped into the
+        // outer group's child space, where the inner group's own box is.
+        for id in &ids {
+            let Some(siblings) = deckcraft_model::sibling_list_mut(list, *id) else { continue };
+            let Some(at) = siblings.iter().position(|x| x.id == *id) else { continue };
+            let freed: Vec<Shape> = match siblings.get(at) {
+                Some(Shape { kind: ShapeKind::Group { children, child }, xfrm: Some(gx), .. }) => children
+                    .iter()
+                    .map(|c| {
+                        let mut c = c.clone();
+                        if let Some(cx) = c.xfrm {
+                            c.xfrm = Some(child_to_parent(gx, child, &cx));
+                        }
+                        c
+                    })
+                    .collect(),
+                _ => continue,
+            };
+            let freed_ids: Vec<ShapeId> = freed.iter().map(|c| c.id).collect();
+            siblings.splice(at..=at, freed);
+            // Ungrouped along with an outer group, it was listed among that group's children (once per expanded ancestor).
+            match new_sel.iter().position(|x| x == id) {
+                Some(i) => {
+                    new_sel.splice(i..=i, freed_ids);
+                    new_sel.retain(|x| x != id);
+                }
+                None => new_sel.extend(freed_ids),
+            }
+        }
+        // A shape freed from a named group and then from a named group around it is listed once.
+        let mut listed = std::collections::HashSet::new();
+        new_sel.retain(|x| listed.insert(*x));
         sel.shapes = new_sel.clone();
         Ok(json!({"ids": new_sel}))
     })

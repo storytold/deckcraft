@@ -545,9 +545,9 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
         // another shape.
         "smartArt" => {
             let shape = decode_field::<deckcraft_model::Shape>(&value, "smartArt")?
-                .ok_or_else(|| bad("shape.setField", "a SmartArt group cannot be cleared"))?;
+                .ok_or_else(|| bad("shape.setField", "a Diagram group cannot be cleared"))?;
             if shape.diagram.is_none() {
-                return Err(bad("shape.setField", "the value is not a SmartArt group"));
+                return Err(bad("shape.setField", "the value is not a Diagram group"));
             }
             edit_shapes(s, p, "shape.setField", |sh| {
                 if shape.id != sh.id {

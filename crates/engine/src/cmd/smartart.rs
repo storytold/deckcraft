@@ -166,7 +166,7 @@ pub fn preview(kind: &str, style: &str, colors: &str, nodes: Option<&[DiagramNod
     }
     Shape {
         id: ShapeId(9_999),
-        name: "SmartArt preview".into(),
+        name: "Diagram preview".into(),
         xfrm: Some(area),
         kind: ShapeKind::Group { children, child: area },
         ..Default::default()
@@ -191,16 +191,16 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             query "smartArt.nodes",
             "Text Pane",
-            ["SmartArt Design", "Create Graphic"],
+            ["Diagram Design", "Create Graphic"],
             None,
-            "{id?} → {id, kind, nodes: [{text, level}]} (id: the SmartArt group or one of its shapes; default the selection)",
+            "{id?} → {id, kind, nodes: [{text, level}]} (id: the Diagram group or one of its shapes; default the selection)",
             has_selection,
             nodes
         ),
         cmd!(
             "smartArt.setNodes",
-            "Edit SmartArt Text",
-            ["SmartArt Design", "Create Graphic"],
+            "Edit Diagram Text",
+            ["Diagram Design", "Create Graphic"],
             None,
             "{id?, nodes?: [{text, level}], lines?: [string] (leading tabs set the level), index?, text?, title?} (index + text edits one node; title: its Name and Title box)",
             has_selection,
@@ -208,8 +208,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.setDiagram",
-            "Restore SmartArt",
-            ["SmartArt Design", "Reset"],
+            "Restore Diagram",
+            ["Diagram Design", "Reset"],
             None,
             "{id?, diagram: the whole Diagram value} (the confirmed command of every outline, layout, style and colour edit, and the exact restore of such a step; the group's shapes are regenerated from the value)",
             has_selection,
@@ -218,7 +218,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "smartArt.addNode",
             "Add Shape",
-            ["SmartArt Design", "Create Graphic"],
+            ["Diagram Design", "Create Graphic"],
             None,
             "{id?, index?, position?: after|before|below|above|assistant, text?} → {index} (default: after the last node)",
             has_selection,
@@ -227,18 +227,18 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "smartArt.removeNode",
             "Remove Shape",
-            ["SmartArt Design", "Create Graphic"],
+            ["Diagram Design", "Create Graphic"],
             None,
             "{id?, index} (its sub-points move up one level)",
             has_selection,
             remove_node
         ),
-        cmd!("smartArt.promote", "Promote", ["SmartArt Design", "Create Graphic"], None, "{id?, index}", has_selection, promote),
-        cmd!("smartArt.demote", "Demote", ["SmartArt Design", "Create Graphic"], None, "{id?, index}", has_selection, demote),
+        cmd!("smartArt.promote", "Promote", ["Diagram Design", "Create Graphic"], None, "{id?, index}", has_selection, promote),
+        cmd!("smartArt.demote", "Demote", ["Diagram Design", "Create Graphic"], None, "{id?, index}", has_selection, demote),
         cmd!(
             "smartArt.layout",
             "Change Layout",
-            ["SmartArt Design", "Layouts"],
+            ["Diagram Design", "Layouts"],
             None,
             "{id?, kind: list|blockList|hBulletList|process|chevron|verticalProcess|stepUp|cycle|blockCycle|radial|hierarchy|pyramid|invertedPyramid|matrix|titledMatrix|pictureList|pictureCaption|pictureProcess|pictureHList|timeline|venn|target|textCycle|continuousCycle|horizontalHierarchy|gridMatrix|gear|funnel|segmentedCycle|multidirectionalCycle|orgChart|halfCircleOrgChart|cycleMatrix|segmentedPyramid|pie|nameTitleOrgChart|verticalBoxList|trapezoidList|tableList|accentProcess|continuousBlockProcess|bendingProcess|linearVenn|stackedVenn|nestedTarget}",
             has_selection,
@@ -246,17 +246,17 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.fromText",
-            "Convert to SmartArt",
+            "Convert to Diagram",
             ["Home", "Paragraph"],
             None,
-            "{id?, kind?} → {id} (a text box or placeholder becomes a SmartArt graphic in its place: one node per paragraph, indent levels kept)",
+            "{id?, kind?} → {id} (a text box or placeholder becomes a Diagram graphic in its place: one node per paragraph, indent levels kept)",
             has_selection,
             from_text
         ),
         cmd!(
             "smartArt.toText",
             "Convert to Text",
-            ["SmartArt Design", "Reset"],
+            ["Diagram Design", "Reset"],
             None,
             "{id?} → {id} (the graphic becomes a text box of its outline, bulleted by level)",
             has_selection,
@@ -265,7 +265,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "smartArt.toShapes",
             "Convert to Shapes",
-            ["SmartArt Design", "Reset"],
+            ["Diagram Design", "Reset"],
             None,
             "{id?} (the graphic becomes a plain group of its shapes; the outline is dropped)",
             has_selection,
@@ -273,8 +273,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.replaceWithDiagram",
-            "Replace with SmartArt",
-            ["SmartArt Design", "Reset"],
+            "Replace with Diagram",
+            ["Diagram Design", "Reset"],
             None,
             "{id?, diagram: the whole Diagram value, rect: [x,y,w,h]} (the confirmed command of smartArt.fromText: the source shape is replaced by the graphic the author's plan produced)",
             has_selection,
@@ -282,8 +282,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.replaceWithText",
-            "Replace SmartArt with Text",
-            ["SmartArt Design", "Reset"],
+            "Replace Diagram with Text",
+            ["Diagram Design", "Reset"],
             None,
             "{id?, body: the whole TextBody value, rect: [x,y,w,h]} (the confirmed command of smartArt.toText: the graphic is replaced by the text box the author's plan produced)",
             has_selection,
@@ -291,8 +291,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.detach",
-            "Detach SmartArt",
-            ["SmartArt Design", "Reset"],
+            "Detach Diagram",
+            ["Diagram Design", "Reset"],
             None,
             "{id?} (the confirmed command of smartArt.toShapes: the graphic's diagram is dropped and its drawing becomes a plain group)",
             has_selection,
@@ -300,8 +300,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.picture",
-            "Insert Picture in SmartArt",
-            ["SmartArt Design", "Create Graphic"],
+            "Insert Picture in Diagram",
+            ["Diagram Design", "Create Graphic"],
             None,
             "{id?, index, data?: base64 | path?: string | place?: {crop?: [l,t,r,b], alpha?} | reset?: bool} (the node's picture placeholder in picture layouts)",
             has_selection,
@@ -309,8 +309,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.setPicture",
-            "Restore SmartArt Picture",
-            ["SmartArt Design", "Create Graphic"],
+            "Restore Diagram Picture",
+            ["Diagram Design", "Create Graphic"],
             None,
             "{id?, index, data: base64, name?, place?, reset?: bool} (the confirmed command of smartArt.picture: the picture from the media channel and its final place)",
             has_selection,
@@ -318,8 +318,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.style",
-            "SmartArt Styles",
-            ["SmartArt Design", "SmartArt Styles"],
+            "Diagram Styles",
+            ["Diagram Design", "Diagram Styles"],
             None,
             "{id?, style: flat|subtle|intense|outline|polished|inset|cartoon|powder|brick}",
             has_selection,
@@ -328,7 +328,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "smartArt.colors",
             "Change Colors",
-            ["SmartArt Design", "SmartArt Styles"],
+            ["Diagram Design", "Diagram Styles"],
             None,
             "{id?, colors: colorful|range23|range34|range45|range56|accent1|…|accent6|accent1Grad|…|accent6Grad}",
             has_selection,

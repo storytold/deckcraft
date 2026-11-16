@@ -667,6 +667,7 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut acc = 0u32;
     let mut bits = 0;
+    let mut padded = false;
     for c in s.bytes() {
         let v = match c {
             b'A'..=b'Z' => c - b'A',
@@ -674,9 +675,17 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             b'0'..=b'9' => c - b'0' + 52,
             b'+' | b'-' => 62,
             b'/' | b'_' => 63,
-            b'=' | b'\n' | b'\r' | b' ' => continue,
+            b'=' => {
+                padded = true;
+                continue;
+            }
+            b'\n' | b'\r' | b' ' => continue,
             _ => return None,
         } as u32;
+        // Padding ends the payload; no further data may be decoded.
+        if padded {
+            return None;
+        }
         acc = (acc << 6) | v;
         bits += 6;
         if bits >= 8 {
@@ -684,12 +693,41 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             out.push(((acc >> bits) & 0xff) as u8);
         }
     }
-    Some(out)
+    // A trailing lone Base64 character cannot encode another byte.
+    (bits != 6).then_some(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_rejects_a_single_character_tail() {
+        for (encoded, decoded) in [
+            ("", b"".as_slice()),
+            ("Zg==", b"f"),
+            ("Zg", b"f"),
+            ("Zm8=", b"fo"),
+            ("Zm8", b"fo"),
+            (" Zm9v \r\n", b"foo"),
+            ("data:text/plain;base64,Zm9v", b"foo"),
+            ("+/8=", &[0xfb, 0xff]),
+            ("-_8=", &[0xfb, 0xff]),
+        ] {
+            assert_eq!(base64_decode(encoded).as_deref(), Some(decoded), "{encoded:?}");
+        }
+        for encoded in ["A", "AAAAA", "Zm9vZ", " Zm9vZ \r\n", "data:text/plain;base64,Z"] {
+            assert!(base64_decode(encoded).is_none(), "{encoded:?}");
+        }
+    }
+
+    #[test]
+    fn base64_rejects_data_after_padding() {
+        assert_eq!(base64_decode("Zg== \r\n=="), Some(b"f".to_vec()));
+        for encoded in ["Zg==A", "Zg== Zm8=", "Zm8=A", "=Zg", "Zg==\r\nA", "data:text/plain;base64,Zg==A"] {
+            assert!(base64_decode(encoded).is_none(), "{encoded:?}");
+        }
+    }
 
     #[test]
     fn the_palette_skips_a_command_that_needs_a_value() {
