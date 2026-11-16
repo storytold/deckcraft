@@ -1,6 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-16 · **Change:** minor (clicked text hyperlinks draw in the Followed Hyperlink colour during a show, #1937; previous: minor, deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
@@ -25,7 +25,7 @@ ready** (estimated), **10–16 h** to parity.
 | A shape with a triggered animation plays it when clicked; shapes an animation has hidden cannot be clicked; a shape without an action on top of one with an action blocks it; the pointer is a hand over what can be clicked | yes | yes | Click boxes are bounding boxes; "play sound" actions (`ppaction://media`) do nothing yet |
 | A slide the show returns to (link, arrow keys) looks as it was left; a triggered animation goes on where it stopped | yes | yes | A main-sequence step still playing when the show leaves is finished |
 | "Advance on click" off: a click never leaves the slide (animation steps still play, keys still move on) | yes | yes | |
-| Hyperlinks and action settings followed (slides, web, mail, End Show, Last Viewed, Custom Show) | yes | yes | Only `http(s)` and `mailto` open outside the show, by design (`safe_url`). A Custom Show action plays that show |
+| Hyperlinks and action settings followed (slides, web, mail, End Show, Last Viewed, Custom Show) | yes | yes | Only `http(s)` and `mailto` open outside the show, by design (`safe_url`). A Custom Show action plays that show. A clicked text hyperlink is drawn in the theme's Followed Hyperlink colour until the show ends; links in master and layout graphics are not marked (issue 1937). |
 | Media playback with controls, play across slides, full-screen video, Play/Pause/Stop in the click sequence | yes | yes | WMA/WMV not decodable. Click sequence since #116. Slide Show ▸ Show Media Controls (on by default) hides the playback bar. Seeks and loops preserve new-generation video frames and end-of-stream; queue regression and repeated seeks across H.264/HEVC/VP9/AV1 in `crates/media` |
 | Animated GIFs play; pause from their corner button | yes | yes (#39) | The corner button hides with Show Media Controls |
 | See All Slides grid during the show | yes | yes: G, or All on the show bar; click a thumbnail, Esc closes the grid | Hidden slides are labelled; the first 48 slides are shown |
@@ -79,6 +79,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | A clicked text hyperlink is drawn in the theme's Followed Hyperlink colour until the show ends; links in master and layout graphics are not marked (#1937) |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
