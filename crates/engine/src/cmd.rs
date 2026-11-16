@@ -656,6 +656,8 @@ mod tests {
         {
             assert_eq!(base64_encode(input.as_bytes()), expected);
         }
+        // The decoder accepts both alphabets, so pin the standard one explicitly.
+        assert_eq!(base64_encode(&[0xfb, 0xff]), "+/8=");
         let all: Vec<u8> = (0..=255).cycle().take(513).collect();
         for len in 0..=all.len() {
             let encoded = base64_encode(&all[..len]);
