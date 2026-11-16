@@ -964,6 +964,30 @@ fn a_backward_then_forward_notch_in_one_frame_still_moves_forward() {
     assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the forward notch still moves one slide");
 }
 
+/// On the end screen, notches are processed in arrival order too: a forward notch exits even
+/// when a backward notch follows it in the same frame (in separate frames it would exit first).
+#[test]
+fn a_forward_then_backward_notch_on_the_end_screen_still_exits() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.as_ref().expect("still showing").ended, "at the end screen");
+    h.input_mut().events.push(egui::Event::PointerMoved(centre));
+    for y in [-1.0_f32, 1.0] {
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(4);
+    assert!(h.state().show.is_none(), "the first (forward) notch exits instead of the last one resuming");
+}
+
 /// A completed forward wheel notch past the last slide reaches the end screen and then exits,
 /// the same way a trackpad flick does; a partial line still does nothing.
 #[test]
