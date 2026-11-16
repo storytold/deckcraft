@@ -320,7 +320,7 @@ impl Dictionary {
 
     /// A compound part made of a root and one affix, as Hunspell reads them: a suffix ends the last
     /// part and a prefix starts the first; anywhere else the affix needs `COMPOUNDPERMITFLAG`.
-    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. The compound `flag`
+    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. One whose continuation flags carry `COMPOUNDEND` may only be on the last part. The compound `flag`
     /// may be on the root or among the affix's continuation flags. German frami
     /// gives many first parts their flag that way: `Vor/hij` with `SFX j 0 0/xoc` begins
     /// `Vorschlag` (#2145).
@@ -330,6 +330,8 @@ impl Dictionary {
         // finish a part on its own.
         let fits = |a: &Affix, stem: &[char]| {
             !self.needs_another_affix(a)
+                // Only the last part may take an affix whose continuation flags carry the compound end flag.
+                && (pos == Pos::Last || !self.compound_end.is_some_and(|e| a.cont.contains(&e)))
                 && self.words.get(&stem.iter().collect::<String>()).is_some_and(|hs| {
                     hs.iter().any(|f| !self.has(f, self.forbidden) && f.contains(&a.flag) && (f.contains(&flag) || a.cont.contains(&flag)))
                 })
@@ -1100,6 +1102,15 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
                 assert!(!d.check(w), "{pfx}: {w}");
             }
         }
+    }
+
+    #[test]
+    fn an_affix_carrying_the_compound_end_flag_only_ends_a_compound() {
+        let aff = "COMPOUNDFLAG X\nCOMPOUNDEND E\nCOMPOUNDPERMITFLAG P\nCOMPOUNDMIN 3\nSFX S Y 1\nSFX S 0 s/XEP .\n";
+        let d = Dictionary::parse(aff.as_bytes(), b"2\nsun/X\ncat/S\n".as_slice());
+        assert!(d.check("suncats"));
+        assert!(d.check("cats"));
+        assert!(!d.check("catssun"));
     }
 
     #[test]
