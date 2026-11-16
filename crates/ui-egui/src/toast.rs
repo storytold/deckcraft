@@ -1,4 +1,4 @@
-//! Brief notices over the window's bottom edge: shown once, gone after a few seconds or when
+//! Brief notices over the window's bottom edge: shown once, gone a few seconds after the pointer and keyboard focus leave it, or when
 //! closed. Used to say a presentation's fonts aren't installed when it is first opened.
 
 use egui::{Align2, CornerRadius, Margin, Stroke, vec2};
@@ -7,7 +7,7 @@ use crate::SlideApp;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
-/// How long a toast stays, in milliseconds.
+/// How long a toast stays once the pointer and keyboard focus are off it, in milliseconds.
 const SHOW_MS: f64 = 8000.0;
 
 pub struct Toast {
@@ -53,58 +53,66 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let text = toast.text.clone();
     let mut close = false;
+    let mut keep = false;
     let viewport = ctx.content_rect();
     // Include the frame margins/stroke and leave room above the bottom-edge anchor.
     let width = (viewport.width() - 46.0).clamp(0.0, 520.0);
     let message_height = (viewport.height() - 110.0).clamp(0.0, 280.0);
-    egui::Area::new(egui::Id::unique("toast")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -44.0)).order(egui::Order::Foreground).show(ctx, |ui| {
-        egui::Frame::NONE
-            .fill(t.card)
-            .stroke(Stroke::new(1.0, t.card_border))
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(Margin::symmetric(14, 10))
-            .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: t.shadow })
-            .show(ui, |ui| {
-                ui.set_width(width);
-                egui::ScrollArea::vertical().max_height(message_height).min_scrolled_height(0.0).auto_shrink([false, true]).show(ui, |ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
+    let area =
+        egui::Area::new(egui::Id::unique("toast")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -44.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(t.card)
+                .stroke(Stroke::new(1.0, t.card_border))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(Margin::symmetric(14, 10))
+                .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: t.shadow })
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    egui::ScrollArea::vertical().max_height(message_height).min_scrolled_height(0.0).auto_shrink([false, true]).show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
+                    });
+                    // Controls get their own row, outside the scroll area: the label cannot
+                    // consume their width or scroll them out of view on a small viewport.
+                    ui.horizontal(|ui| {
+                        // Copy button
+                        let (copy_r, copy_resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
+                        copy_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Copy"));
+                        if copy_resp.hovered() {
+                            ui.painter().rect_filled(copy_r, CornerRadius::same(4), t.hover);
+                        }
+                        if copy_resp.has_focus() {
+                            keep = true;
+                            ui.painter().rect_stroke(copy_r, CornerRadius::same(4), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+                        }
+                        icons::paint(ui.painter(), copy_r.shrink(3.0), Icon::Copy, t.text_dim, false);
+                        if copy_resp.on_hover_text("Copy warning to clipboard").clicked() {
+                            ui.ctx().copy_text(text.clone());
+                        }
+                        ui.add_space(4.0);
+                        // Close button
+                        let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
+                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
+                        if resp.hovered() {
+                            ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
+                        }
+                        if resp.has_focus() {
+                            keep = true;
+                            ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+                        }
+                        icons::paint(ui.painter(), r.shrink(3.0), Icon::Close, t.text_dim, false);
+                        if resp.on_hover_text("Close").clicked() {
+                            close = true;
+                        }
+                    });
                 });
-                // Controls get their own row, outside the scroll area: the label cannot
-                // consume their width or scroll them out of view on a small viewport.
-                ui.horizontal(|ui| {
-                    // Copy button
-                    let (copy_r, copy_resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
-                    copy_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Copy"));
-                    if copy_resp.hovered() {
-                        ui.painter().rect_filled(copy_r, CornerRadius::same(4), t.hover);
-                    }
-                    if copy_resp.has_focus() {
-                        ui.painter().rect_stroke(copy_r, CornerRadius::same(4), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
-                    }
-                    icons::paint(ui.painter(), copy_r.shrink(3.0), Icon::Copy, t.text_dim, false);
-                    if copy_resp.on_hover_text("Copy warning to clipboard").clicked() {
-                        ui.ctx().copy_text(text.clone());
-                    }
-                    ui.add_space(4.0);
-                    // Close button
-                    let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
-                    if resp.hovered() {
-                        ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
-                    }
-                    if resp.has_focus() {
-                        ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
-                    }
-                    icons::paint(ui.painter(), r.shrink(3.0), Icon::Close, t.text_dim, false);
-                    if resp.on_hover_text("Close").clicked() {
-                        close = true;
-                    }
-                });
-            });
-    });
+        });
+    keep |= area.response.contains_pointer();
     if close {
         app.toast = None;
     } else {
+        if keep && let Some(t) = app.toast.as_mut() {
+            t.at = crate::now_ms();
+        }
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 }
