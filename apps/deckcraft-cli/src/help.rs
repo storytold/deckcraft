@@ -26,7 +26,7 @@ OUT is the image to write. With --all, OUT is a folder that gets one slide-01.pn
 slide. Prints each image's path and size.
 
   --slide N        the slide at index N; indices start at 0, and 0 is the default
-  --scale S        pixels per point, 2 by default: a 960×540 slide becomes 1920×1080
+  --scale S        finite positive pixels per point, 2 by default: a 960×540 slide becomes 1920×1080
   --edit           draw what the editor shows: placeholder prompts and their dashed outlines
   --transparent    leave the slide background out, so only what is on the slide is drawn
 
