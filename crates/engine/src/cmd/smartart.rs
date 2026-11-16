@@ -208,7 +208,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.setDiagram",
-            "Restore SmartArt",
+            "Restore Diagram",
             ["SmartArt Design", "Reset"],
             None,
             "{id?, diagram: the whole Diagram value} (the confirmed command of every outline, layout, style and colour edit, and the exact restore of such a step; the group's shapes are regenerated from the value)",
@@ -273,7 +273,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.replaceWithDiagram",
-            "Replace with SmartArt",
+            "Replace with Diagram",
             ["SmartArt Design", "Reset"],
             None,
             "{id?, diagram: the whole Diagram value, rect: [x,y,w,h]} (the confirmed command of smartArt.fromText: the source shape is replaced by the graphic the author's plan produced)",
@@ -282,7 +282,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.replaceWithText",
-            "Replace SmartArt with Text",
+            "Replace Diagram with Text",
             ["SmartArt Design", "Reset"],
             None,
             "{id?, body: the whole TextBody value, rect: [x,y,w,h]} (the confirmed command of smartArt.toText: the graphic is replaced by the text box the author's plan produced)",
@@ -291,7 +291,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.detach",
-            "Detach SmartArt",
+            "Detach Diagram",
             ["SmartArt Design", "Reset"],
             None,
             "{id?} (the confirmed command of smartArt.toShapes: the graphic's diagram is dropped and its drawing becomes a plain group)",
@@ -309,7 +309,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "smartArt.setPicture",
-            "Restore SmartArt Picture",
+            "Restore Diagram Picture",
             ["SmartArt Design", "Create Graphic"],
             None,
             "{id?, index, data: base64, name?, place?, reset?: bool} (the confirmed command of smartArt.picture: the picture from the media channel and its final place)",
