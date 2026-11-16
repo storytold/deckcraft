@@ -20,11 +20,15 @@ fn font_set(e: Option<&El>) -> FontSet {
     FontSet { latin: tf("latin"), ea: tf("ea"), cs: tf("cs"), scripts }
 }
 
+/// Bytes of preserved theme XML (object defaults and extra colour schemes) all masters of one
+/// presentation may keep.
+const MAX_THEME_EXTRA_BYTES: usize = 16 << 20;
+
 pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
     let mut t = Theme { name: root.attr("name").unwrap_or("Theme").to_string(), ..Default::default() };
     let Some(te) = root.child("themeElements") else { return t };
     if let Some(cs) = te.child("clrScheme") {
-        let mut scheme = ColorScheme { name: cs.attr("name").unwrap_or("").to_string(), colors: t.colors.colors };
+        let mut scheme = ColorScheme::new(cs.attr("name").unwrap_or("").to_string(), t.colors.colors);
         for slot in SchemeSlot::THEME {
             if let Some(c) = cs.child(slot.xml_name()).and_then(dml::color) {
                 let rgb = match c.base {
@@ -89,8 +93,13 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
         .filter(|e| !super::has_rel_refs(e))
         .map(|e| part.keep(e))
         .collect();
-    if !extra.is_empty() {
+    // Every master that references this theme keeps its own copy of the preserved XML, so the
+    // copies share one budget for the presentation.
+    if !extra.is_empty() && imp.theme_extra_bytes.saturating_add(extra.len()) <= MAX_THEME_EXTRA_BYTES {
+        imp.theme_extra_bytes += extra.len();
         t.raw_extra = Some(extra);
+    } else if !extra.is_empty() {
+        log::warn!("pptx: theme object defaults not kept; the preserved-XML budget is spent");
     }
     t
 }
