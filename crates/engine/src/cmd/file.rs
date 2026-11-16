@@ -253,8 +253,15 @@ pub struct LoadedFile {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
     let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
-    let (doc, damaged) = open_checked(path, &bytes)?;
-    let native = deckcraft_format::sniff(&bytes) || deckcraft_pptx::sniff(&bytes);
+    loaded_file(path, &bytes)
+}
+
+/// Parse `bytes` as the presentation file `path`, as [`read_presentation_file`] does after
+/// reading it. The web host bridge uses it for a file its page sent, which then saves back to
+/// that name like a file opened on the desktop.
+pub fn loaded_file(path: &str, bytes: &[u8]) -> Result<LoadedFile> {
+    let (doc, damaged) = open_checked(path, bytes)?;
+    let native = deckcraft_format::sniff(bytes) || deckcraft_pptx::sniff(bytes);
     Ok(LoadedFile { path: path.to_string(), doc, native, damaged })
 }
 
@@ -470,7 +477,10 @@ pub fn format_for_path(path: &str) -> &'static str {
     }
 }
 
-fn mark_saved(s: &mut Session, path: Option<String>) -> Result<()> {
+/// The active presentation is saved as it is now: no unsaved changes, and `path` (when given)
+/// becomes its file. `file.save` calls it after writing; the web host bridge calls it once the
+/// page has the bytes.
+pub fn mark_saved(s: &mut Session, path: Option<String>) -> Result<()> {
     let st = s.doc_mut()?;
     st.saved_doc = st.doc.clone();
     if path.is_some() {

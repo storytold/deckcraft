@@ -219,7 +219,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         // Only rows in view (plus a little margin) ask for a thumbnail: with every row asking, a
         // deck bigger than the thumbnail cache evicts its own thumbnails and never settles (#969).
         let near = ui.clip_rect().expand2(vec2(0.0, 2.0 * row.height())).intersects(row);
-        let tex = if near { app.textures.thumb(ui.ctx(), &doc, i, wpx, &mut budget) } else { None };
+        let tex = if near { app.textures.thumb(ui.ctx(), &doc, i, wpx, app.ui.grayscale, &mut budget) } else { None };
         match tex {
             Some(tex) => {
                 p.image(
