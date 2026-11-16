@@ -221,6 +221,8 @@ fn behaviour_f64(c: &El, attr: &str) -> Option<f64> {
             if *seen >= MAX_BEHAVIOURS {
                 return None;
             }
+            #[cfg(test)]
+            visits::bump();
             if child.is("cBhvr") {
                 *seen += 1;
                 if let Some(v) = child.child("cTn").and_then(|t| t.f64(attr)) {
@@ -417,4 +419,66 @@ fn plays_as_build(effects: &[&Animation], offsets: &[u32], text: &TextBody, expl
         matched = k + 1;
     }
     matched == effects.len()
+}
+
+/// Counts children inspected by [`behaviour_f64`]'s walk in unit tests, so the budget test can
+/// show the traversal stops instead of only observing the same return value.
+#[cfg(test)]
+mod visits {
+    use std::cell::Cell;
+    thread_local! {
+        static COUNT: Cell<usize> = const { Cell::new(0) };
+    }
+    pub(super) fn reset() {
+        COUNT.with(|c| c.set(0));
+    }
+    pub(super) fn bump() {
+        COUNT.with(|c| c.set(c.get() + 1));
+    }
+    pub(super) fn count() -> usize {
+        COUNT.with(|c| c.get())
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::xml::Node;
+
+    fn el(name: &str, children: Vec<El>) -> El {
+        El { name: name.into(), attrs: vec![], children: children.into_iter().map(Node::El).collect() }
+    }
+
+    fn behaviour(accel: Option<&str>) -> El {
+        let mut ctn = el("p:cTn", vec![]);
+        if let Some(v) = accel {
+            ctn.attrs.push(("accel".into(), v.into()));
+        }
+        el("p:cBhvr", vec![ctn])
+    }
+
+    #[test]
+    fn a_behaviour_inside_the_budget_is_read() {
+        let mut effect = el("p:cTn", vec![]);
+        for _ in 0..1023 {
+            effect.children.push(Node::El(behaviour(None)));
+        }
+        effect.children.push(Node::El(behaviour(Some("50000"))));
+        assert_eq!(behaviour_f64(&effect, "accel"), Some(50_000.0), "the 1,024th behaviour is still read");
+    }
+
+    #[test]
+    fn the_behaviour_walk_stops_after_its_budget() {
+        let mut effect = el("p:cTn", vec![]);
+        for _ in 0..1024 {
+            effect.children.push(Node::El(behaviour(None)));
+        }
+        // A wide wrapper with no behaviours: a walk that only stopped at the next `cBhvr` would
+        // visit all of it before giving up.
+        effect.children.push(Node::El(el("p:seq", (0..5_000).map(|_| el("p:child", vec![])).collect())));
+        effect.children.push(Node::El(behaviour(Some("50000"))));
+        visits::reset();
+        assert_eq!(behaviour_f64(&effect, "accel"), None, "a behaviour past the budget is not read");
+        assert!(visits::count() < 3_000, "the walk stopped at the budget, visited {}", visits::count());
+    }
 }
