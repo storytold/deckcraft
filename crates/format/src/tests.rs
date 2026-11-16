@@ -1,4 +1,6 @@
 use super::*;
+use craft_deckcraft_format::{Manifest, parse_manifest};
+use std::io::{Cursor, Read, Write};
 
 #[test]
 fn chart_sidecars_are_optional_for_older_native_files() {
@@ -364,7 +366,7 @@ fn reflection_transform_survives_two_native_saves_and_absent_fields_stay_absent(
     assert_eq!(reopened.slides[0].shapes.last().and_then(|s| s.effects.as_ref()).and_then(|e| e.reflection.as_ref()), Some(&absent));
 }
 
-/// Files written before [`finite::Finite`] (plain serde_json: NaN as `null`) open too,
+/// Files written before [`craft_deckcraft_format::Finite`] (plain serde_json: NaN as `null`) open too,
 /// including a `null` inside a tagged enum, where serde reports only the enclosing object.
 #[test]
 fn older_files_with_null_numbers_open() {
@@ -387,7 +389,7 @@ fn older_files_with_null_numbers_open() {
         let m = Manifest { format: "deckcraft".into(), version: VERSION, generator: "old".into(), presentation: p };
         let json = serde_json::to_vec(&m).unwrap();
         assert!(json.windows(4).any(|w| w == b"null"));
-        let back = parse_manifest(&json).unwrap_or_else(|e| panic!("case {case}: {e}"));
+        let back = parse_manifest::<Presentation>(&json).unwrap_or_else(|e| panic!("case {case}: {e}"));
         assert_eq!(back.presentation.slides[0].shapes.len(), m.presentation.slides[0].shapes.len(), "case {case}");
     }
 }
@@ -419,14 +421,14 @@ fn a_bare_normautofit_body_round_trips() {
 #[test]
 fn other_damage_is_still_reported() {
     let ok = serde_json::to_vec(&serde_json::json!({"format": "deckcraft", "version": 1, "generator": "t", "presentation": {}})).unwrap();
-    assert!(parse_manifest(&ok).is_ok());
+    assert!(parse_manifest::<Presentation>(&ok).is_ok());
     let bad = br#"{"format": null, "version": 1, "generator": "t", "presentation": {}}"#;
-    assert!(parse_manifest(bad).is_err());
+    assert!(parse_manifest::<Presentation>(bad).is_err());
     let truncated = &ok[..ok.len() - 3];
-    assert!(parse_manifest(truncated).is_err());
+    assert!(parse_manifest::<Presentation>(truncated).is_err());
     // A null number on a later line (pretty-printed by another tool) is found too.
     let pretty = b"{\n  \"format\": \"deckcraft\",\n  \"version\": 1,\n  \"generator\": \"t\",\n  \"presentation\": {\"slides\": [{\"shapes\": [{\"xfrm\": {\"x\": null, \"y\": 1, \"w\": 2, \"h\": 3}}]}]}\n}";
-    let m = parse_manifest(pretty).unwrap_or_else(|e| panic!("{e}"));
+    let m = parse_manifest::<Presentation>(pretty).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(m.presentation.slides[0].shapes[0].xfrm.unwrap().x, 0.0);
 }
 
