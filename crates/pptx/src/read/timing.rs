@@ -218,10 +218,10 @@ fn behaviour_f64(c: &El, attr: &str) -> Option<f64> {
             return None;
         }
         for child in e.elements() {
+            if *seen >= MAX_BEHAVIOURS {
+                return None;
+            }
             if child.is("cBhvr") {
-                if *seen >= MAX_BEHAVIOURS {
-                    return None;
-                }
                 *seen += 1;
                 if let Some(v) = child.child("cTn").and_then(|t| t.f64(attr)) {
                     return Some(v);
