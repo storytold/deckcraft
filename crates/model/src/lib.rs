@@ -131,6 +131,26 @@ fn is_ru_tag(tag: &str) -> bool {
     tag.trim().split(['-', '_', '.']).next().is_some_and(|s| s.eq_ignore_ascii_case("ru"))
 }
 
+pub(crate) fn supported_lang_code(tag: &str) -> Option<&'static str> {
+    let primary = tag.trim().split(['-', '_', '.']).next()?;
+    if primary.eq_ignore_ascii_case("ru") {
+        Some("ru")
+    } else if primary.eq_ignore_ascii_case("en")
+        || primary.eq_ignore_ascii_case("c")
+        || primary.eq_ignore_ascii_case("posix")
+    {
+        Some("en")
+    } else if primary.eq_ignore_ascii_case("de") {
+        Some("de")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn first_supported_locale<'a>(tags: impl IntoIterator<Item = &'a str>) -> Option<&'static str> {
+    tags.into_iter().find_map(supported_lang_code)
+}
+
 fn is_ru_prompt() -> bool {
     let thread_val = ACTIVE_LANGUAGE_THREAD.with(|cell| cell.borrow().clone());
     let active = thread_val.or_else(|| {
@@ -138,8 +158,8 @@ fn is_ru_prompt() -> bool {
     });
 
     if let Some(ref active) = active {
-        if is_ru_tag(active) {
-            return true;
+        if let Some(code) = supported_lang_code(active) {
+            return code == "ru";
         }
         if !active.eq_ignore_ascii_case("auto") {
             return false;
@@ -154,8 +174,8 @@ fn is_ru_prompt() -> bool {
     });
 
     if let Some(ref pref) = saved_lang {
-        if is_ru_tag(pref) {
-            return true;
+        if let Some(code) = supported_lang_code(pref) {
+            return code == "ru";
         }
         if !pref.eq_ignore_ascii_case("auto") {
             return false;
@@ -163,8 +183,8 @@ fn is_ru_prompt() -> bool {
     }
 
     if let Ok(env_lang) = std::env::var("DECKCRAFT_LANGUAGE") {
-        if is_ru_tag(&env_lang) {
-            return true;
+        if let Some(code) = supported_lang_code(&env_lang) {
+            return code == "ru";
         }
         if !env_lang.eq_ignore_ascii_case("auto") {
             return false;
@@ -173,14 +193,15 @@ fn is_ru_prompt() -> bool {
 
     for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
         if let Ok(val) = std::env::var(key)
-            && is_ru_tag(&val)
+            && let Some(code) = supported_lang_code(&val)
         {
-            return true;
+            return code == "ru";
         }
     }
 
-    if sys_locale::get_locales().take(16).any(|tag| is_ru_tag(&tag)) {
-        return true;
+    let locales: Vec<String> = sys_locale::get_locales().take(16).collect();
+    if let Some(code) = first_supported_locale(locales.iter().map(String::as_str)) {
+        return code == "ru";
     }
 
     false

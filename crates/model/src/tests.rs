@@ -368,4 +368,17 @@ fn prompt_locale_tag_resolution() {
     assert_eq!(crate::PhType::Body.prompt(), "Click to add text");
 
     crate::set_active_language(None);
+
+    // Supported language resolution and first-supported ordering
+    assert_eq!(super::supported_lang_code("ru-RU"), Some("ru"));
+    assert_eq!(super::supported_lang_code("en_US.UTF-8"), Some("en"));
+    assert_eq!(super::supported_lang_code("POSIX"), Some("en"));
+    assert_eq!(super::supported_lang_code("de-DE"), Some("de"));
+    assert_eq!(super::supported_lang_code("fr-FR"), None);
+
+    assert_eq!(super::first_supported_locale(["en-US", "ru-RU"]), Some("en"));
+    assert_eq!(super::first_supported_locale(["ru-RU", "en-US"]), Some("ru"));
+    assert_eq!(super::first_supported_locale(["fr-FR", "ru-RU", "en-US"]), Some("ru"));
+    assert_eq!(super::first_supported_locale(["fr-FR", "de-DE", "ru-RU"]), Some("de"));
+    assert_eq!(super::first_supported_locale(["es-ES", "ja-JP"]), None);
 }

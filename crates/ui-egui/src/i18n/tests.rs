@@ -103,6 +103,7 @@ fn app_language_reports_and_changes_the_setting() {
 fn app_language_switches_placeholder_prompts_immediately() {
     use_fixture("ru", RU);
     let mut app = SlideApp::new(Session::with_new(), Services::default());
+    set_current(Lang::EN);
     assert_eq!(deckcraft_model::PhType::Title.prompt(), "Click to add title");
 
     app.run("app.language", json!({"language": "ru"})).unwrap();
@@ -110,6 +111,7 @@ fn app_language_switches_placeholder_prompts_immediately() {
 
     app.run("app.language", json!({"language": "en"})).unwrap();
     assert_eq!(deckcraft_model::PhType::Title.prompt(), "Click to add title");
+    set_current(Lang::EN);
 }
 
 /// Switching the language redraws the ribbon, status bar and accessible names in German, while
