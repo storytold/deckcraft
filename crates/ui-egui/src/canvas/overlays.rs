@@ -77,15 +77,15 @@ fn selection_handles(app: &SlideApp, st: &DocState, painter: &egui::Painter, xf:
             continue;
         }
         if st.selection.shapes.len() == 1 || !editing_this {
-            let (hs, rot) = box_handles(&x);
-            let rot_s = xf.to_screen(parent * rot);
+            let (hs, rot) = deckcraft_engine::tools::transformed_box_handles(&x, parent);
+            let rot_s = xf.to_screen(rot);
             if !editing_this && sh.ph.as_ref().is_none_or(|_| true) {
-                let top_mid = xf.to_screen(parent * hs[1]);
+                let top_mid = xf.to_screen(hs[1]);
                 painter.line_segment([top_mid, rot_s], sel_stroke);
                 rotate_handle(painter, rot_s, t);
             }
             for h in hs {
-                painter.circle(xf.to_screen(parent * h), 4.5, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
+                painter.circle(xf.to_screen(h), 4.5, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
             }
             let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
             for hd in &geo.handles {

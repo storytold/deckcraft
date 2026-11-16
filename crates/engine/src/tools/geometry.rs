@@ -101,17 +101,29 @@ impl Session {
     pub(super) fn execute_dup_in_place(&mut self, ids: &[ShapeId]) -> Result<()> {
         self.edit(|doc, sel| {
             let list = cmd::current_shapes(doc, sel).cloned().unwrap_or_default();
-            let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
+            // Insert in sibling draw order even when the selection was made in reverse.
+            let mut originals = Vec::new();
+            deckcraft_model::walk(&list, &mut |sh, _| {
+                if ids.contains(&sh.id) {
+                    originals.push(sh.clone());
+                }
+            });
+            let mut copies = originals.clone();
             let boxes: Vec<Xfrm> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
             cmd::edit::detach_on_slide(doc, sel, &mut copies);
-            cmd::edit::reid("edit.duplicate", doc, &mut copies)?;
+            let remap = cmd::edit::reid("edit.duplicate", doc, &mut copies)?;
             for (c, b) in copies.iter_mut().zip(boxes) {
                 c.xfrm = Some(b);
                 c.ph = None;
             }
-            let new_ids: Vec<ShapeId> = copies.iter().map(|c| c.id).collect();
+            // Return ids in selection order: drag_move pairs these with the original boxes.
+            let new_ids: Vec<ShapeId> = ids.iter().filter_map(|id| remap.get(id).copied()).collect();
             let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("duplicate", "no slide"))?;
-            shapes.extend(copies);
+            for (original, copy) in originals.iter().zip(copies) {
+                if let Some(siblings) = deckcraft_model::sibling_list_mut(shapes, original.id) {
+                    siblings.push(copy);
+                }
+            }
             sel.shapes = new_ids;
             Ok(())
         })

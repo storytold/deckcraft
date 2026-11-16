@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (synced grouped-editing fixes with upstream; retained both progress histories; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-13 · **Change:** minor (collapsed-parent move and resize gestures preserve geometry; synced with current upstream; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -159,6 +159,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-16 | Grouped editing: collapsed parents preserve line ends and Decorative Text adjustments; nested/uneven scales retain slide-space click bands, rotation stays separate from resize, and Alt-drag copies members into their own group (#1095) |
 | 2026-11-16 | Synced grouped-editing fixes with upstream, retaining shared format helpers, display names, slide-show replay behavior and both documentation histories (#1095) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-13 | Grouped box gestures: collapsed parents reject resize and whole-selection movement before invalid geometry or Alt-drag copies; nested/reflected, save/load and tiny-invertible regressions (#1095) |
@@ -360,6 +361,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | Grouped handle, click-tolerance and Alt-drag regressions fixed; parity scores unchanged (#1095) |
 | 2026-11-16 | trivial | Merged current upstream into #1095; retained grouped-editing fixes and upstream behavior. Parity scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-13 | minor | Move and resize guards reject singular parent mappings before geometry or duplication; small invertible parents remain supported (#1095) |

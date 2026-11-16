@@ -1,7 +1,7 @@
 use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
 use super::{
     Affine, Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind,
-    TABLE_ERASER, TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
+    TABLE_ERASER, TextTarget, ToolKind, Value, Xfrm, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
 };
 
 impl Session {
@@ -62,12 +62,12 @@ impl Session {
                         return Some(Hit::Warp { id: *id, index: hd.index });
                     }
                 }
-                let (pts, rot) = box_handles(&x);
-                if (parent * rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
+                let (pts, rot) = super::transformed_box_handles(&x, parent);
+                if (rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
                     return Some(Hit::Rotate { id: *id });
                 }
                 for (i, q) in pts.iter().enumerate() {
-                    if (parent * *q - p).hypot() <= tol * 1.6 {
+                    if (*q - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Resize { id: *id, handle: i as u8 });
                     }
                 }
@@ -323,6 +323,12 @@ impl Session {
                 self.tool.drag = Some(Drag::Resize { id, orig, ids, handle, origs, start });
             }
             Some(Hit::LineEnd { id, end }) => {
+                let parent = cmd::parent_transform(st, id);
+                let determinant = parent.determinant();
+                // A collapsed parent cannot map a dragged endpoint back into child space.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Size");
                 self.tool.drag = Some(Drag::LineEnd { id, end, orig });
@@ -375,6 +381,12 @@ impl Session {
                 self.tool.drag = Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt, enter_text: None });
             }
             Some(Hit::Warp { id, index }) => {
+                let parent = cmd::parent_transform(st, id);
+                let determinant = parent.determinant();
+                // An invalid pointer mapping would replace the adjustment with a fallback value.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 let found = st.shape(id).and_then(|sh| {
                     let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;

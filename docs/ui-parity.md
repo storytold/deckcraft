@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-13 · **Change:** minor (collapsed-parent move and resize gestures preserve geometry, including mixed selections and Alt-drag; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -38,7 +38,13 @@ the raw pointer turn, so reversing selection order gives the same result.
 
 A child of a collapsed group cannot be resized because its parent has no unique inverse.
 Moving a selection containing such a child is also ignored, including Alt-drag, so the entire
-selection stays unchanged. Small invertible parents still support movement, resizing and undo.
+selection stays unchanged. Line-end and Decorative Text handle drags also preserve geometry and
+adjustments when the parent is collapsed, including if it collapses during the gesture. Small
+invertible parents still support handle editing and undo.
+
+Click tolerances and the edited text frame band stay in slide units through uneven and nested
+group scales. Rotation handles stay 20 slide points beyond the transformed top edge. Alt-dragging
+an edited group member inserts its copy alongside the original, in the same group coordinate space.
 
 ## Empty list paragraphs
 
@@ -202,6 +208,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | Grouped line-end/Decorative Text guards, slide-space click bands, separated rotation handles and member Alt-drag duplication; parity scores unchanged (#1095) |
 | 2026-11-13 | minor | Collapsed-parent resize and move gestures leave the whole selection unchanged before duplication or geometry writes; native save/load and tiny-invertible controls covered (#1095) |
 | 2026-11-11 | minor | Grouped table-cell frames, caret/underline geometry and pointer cell selection use the renderer’s slide-space mapping, including growing rows; context clicks respect covering siblings (#1095) |
 | 2026-11-11 | minor | Axis-aligned grouped resizing snaps dragged edges in slide space, including scale/reflection; moving members exclude their ancestors from smart-guide targets; pointer and undo regressions (#1095) |

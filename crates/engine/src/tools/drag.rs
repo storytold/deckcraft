@@ -86,6 +86,11 @@ impl Session {
             }
             Drag::LineEnd { id, end, orig } => {
                 let parent = cmd::parent_transform(self.doc()?, id);
+                let determinant = parent.determinant();
+                // The parent may collapse between pointer samples; preserve the line and glue.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
                 let a = orig.affine();
                 let (p0, p1) = (a * Point::new(0.0, 0.0), a * Point::new(orig.w, orig.h));
                 let mut q = p;
@@ -136,7 +141,13 @@ impl Session {
                 return Ok(Value::Null);
             }
             Drag::Warp { id, index, name, base, orig } => {
-                let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
+                let parent = cmd::parent_transform(self.doc()?, id);
+                let determinant = parent.determinant();
+                // Preserve the adjustment if a later sample no longer has a unique mapping.
+                if determinant == 0.0 || !determinant.is_finite() || !parent.inverse().is_finite() {
+                    return Ok(Value::Null);
+                }
+                let p = parent.inverse() * p;
                 let v = {
                     let st = self.doc()?;
                     let Some(sh) = st.shape(id) else { return Ok(Value::Null) };

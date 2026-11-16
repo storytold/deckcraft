@@ -335,6 +335,17 @@ pub fn box_handles(x: &Xfrm) -> ([Point; 8], Point) {
     (pts, rot)
 }
 
+/// Box handles after the containing groups are applied. The rotation stem remains 20 slide
+/// points long, so shrinking a group cannot merge it with the north resize handle.
+pub fn transformed_box_handles(x: &Xfrm, parent: Affine) -> ([Point; 8], Point) {
+    let (pts, rot) = box_handles(x);
+    let top = parent * pts[1];
+    let direction = parent * rot - top;
+    let length = direction.hypot();
+    let rot = if length > 0.0 && length.is_finite() { top + direction * (20.0 / length) } else { top };
+    (pts.map(|q| parent * q), rot)
+}
+
 /// WordArt adjust handles for `sh`, in shape-local points (the text rectangle). Empty when the
 /// resolved body has no warp DeckCraft draws, or the shape has no text to store one on.
 pub fn wordart_handles(
