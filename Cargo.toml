@@ -13,6 +13,8 @@ repository = "https://github.com/storytold/deckcraft"
 [workspace.dependencies]
 # OPC part-name primitives; relationship admission stays app-local.
 craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
+# Compound File Binary directory reads (password-protected deck detection).
+craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
 # XML writer primitives; parser admission and OOXML policy stay app-local.
 craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
 # internal
