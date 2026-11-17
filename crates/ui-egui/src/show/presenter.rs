@@ -19,7 +19,7 @@ pub(super) const STRIP_LABEL_H: f32 = 18.0;
 const STRIP_BAR_H: f32 = 12.0;
 const STRIP_THUMB_W: u32 = 240;
 /// Strip thumbnails kept as textures; the ones farthest from where the strip is go first.
-const STRIP_CACHE: usize = 64;
+pub(super) const STRIP_CACHE: usize = 64;
 /// Strip thumbnails rendered on other threads at once.
 pub(super) const STRIP_JOBS: usize = 2;
 /// Strip thumbnails rendered on the UI thread per frame where there are no threads (the web), so a
@@ -470,6 +470,9 @@ fn presenter_strip(ui: &mut Ui, show: &mut Show, doc: &std::sync::Arc<Presentati
 fn strip_fetch(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, want: std::ops::Range<usize>, cur: usize) {
     let current = |d: &std::sync::Arc<Presentation>| std::sync::Arc::ptr_eq(d, doc);
     show.strip_thumbs.retain(|(d, _, _)| current(d));
+    // The cache drops the thumbnail farthest from the middle of the strip, not from the current
+    // slide: the strip may be scrolled far from it.
+    let centre = want.start + want.len() / 2;
     let size = crate::textures::fit_size(
         (STRIP_THUMB_W, (STRIP_THUMB_W as f64 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32),
         crate::textures::max_side(ctx),
@@ -500,7 +503,7 @@ fn strip_fetch(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presen
             }
             render_preview(doc, s, size, 0)
         });
-        strip_keep(ctx, show, doc, s, img, cur);
+        strip_keep(ctx, show, doc, s, img, centre);
     }
     let mut missing: Vec<usize> =
         want.filter(|i| !show.strip_thumbs.iter().any(|(_, s, _)| s == i) && !show.strip_jobs.iter().any(|(_, s, _)| s == i)).collect();
@@ -532,7 +535,7 @@ fn strip_fetch(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presen
                 show.strip_inline += 1;
             }
             let img = render_preview(doc, i, size, 0);
-            strip_keep(ctx, show, doc, i, img, cur);
+            strip_keep(ctx, show, doc, i, img, centre);
         }
     }
     if !show.strip_jobs.is_empty() || made >= STRIP_RENDERS {
@@ -541,10 +544,11 @@ fn strip_fetch(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presen
 }
 
 /// Keep slide `s`'s thumbnail. The cache holds more than the strip shows, so the one dropped to
-/// make room (the farthest from the current slide `cur`) is never on screen.
-fn strip_keep(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, s: usize, img: egui::ColorImage, cur: usize) {
+/// make room (the farthest from the middle of the strip, `centre`) is never on screen, even with
+/// the strip scrolled away from the current slide.
+fn strip_keep(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, s: usize, img: egui::ColorImage, centre: usize) {
     if show.strip_thumbs.len() >= STRIP_CACHE
-        && let Some(far) = show.strip_thumbs.iter().enumerate().max_by_key(|(_, (_, k, _))| k.abs_diff(cur)).map(|(j, _)| j)
+        && let Some(far) = show.strip_thumbs.iter().enumerate().max_by_key(|(_, (_, k, _))| k.abs_diff(centre)).map(|(j, _)| j)
     {
         drop(show.strip_thumbs.swap_remove(far));
     }

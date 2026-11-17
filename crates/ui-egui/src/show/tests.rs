@@ -1679,3 +1679,30 @@ fn an_edit_during_the_show_refreshes_the_strip_thumbnails() {
     assert!(show.strip_thumbs.iter().all(|(d, _, _)| std::sync::Arc::ptr_eq(d, &edited)), "no thumbnail of the old version is kept");
     assert_eq!(show.strip_spawns - before, show.strip_cells.len(), "every slide on screen is rendered again");
 }
+
+/// PR review: a full thumbnail cache dropped the thumbnail farthest from the current slide, so with
+/// the strip scrolled far from it the thumbnails on screen were the ones dropped, and the strip
+/// rendered them again and again. The cache now drops the one farthest from the strip's middle.
+#[test]
+fn a_strip_scrolled_far_from_the_current_slide_keeps_its_thumbnails() {
+    let mut h = presenter_harness(100);
+    wait_for_strip_thumbnails(&mut h);
+    let visible = h.state().1.strip_cells.len();
+    // Scroll through the deck while the show stays on the first slide, filling the cache.
+    let mut first = 0;
+    while first + visible < 100 {
+        first = (first + visible).min(100 - visible);
+        h.state_mut().1.strip_first = first;
+        wait_for_strip_thumbnails(&mut h);
+    }
+    assert_eq!(h.state().1.state.slide, 0);
+    assert_eq!(h.state().1.strip_thumbs.len(), STRIP_CACHE, "the cache is full");
+    let spawns = h.state().1.strip_spawns;
+    for _ in 0..20 {
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let show = &h.state().1;
+    assert_eq!(show.strip_spawns, spawns, "the thumbnails on screen are kept, not rendered again");
+    assert!(show.strip_cells.iter().all(|(i, _)| show.strip_thumbs.iter().any(|(_, s, _)| s == i)));
+}

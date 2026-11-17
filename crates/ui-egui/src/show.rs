@@ -27,8 +27,8 @@ use presenter::{NOTES_DEFAULT, PresenterTimer};
 use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_notes, presenter_window, wall_clock};
 #[cfg(test)]
 use presenter::{
-    STRIP_AHEAD, STRIP_GAP, STRIP_JOBS, STRIP_LABEL_H, STRIP_MAX_CELLS, strip_band_height, strip_drag_first, strip_first_at, strip_first_for,
-    strip_layout, strip_thumb_rect,
+    STRIP_AHEAD, STRIP_CACHE, STRIP_GAP, STRIP_JOBS, STRIP_LABEL_H, STRIP_MAX_CELLS, strip_band_height, strip_drag_first, strip_first_at,
+    strip_first_for, strip_layout, strip_thumb_rect,
 };
 #[cfg(test)]
 use render::{below_playing_video, current_rect, next_rect, render_frame, start_prefetch};
