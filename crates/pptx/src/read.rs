@@ -80,7 +80,7 @@ pub struct Imp<'a> {
     pub diagram_xml_bytes: usize,
     /// The relationships of the parts unmodelled objects keep, by normalized part name: parsed
     /// once however many embedded objects point at the part. `None` for a relationships part that
-    /// is there but can't be read.
+    /// is there but can't be read, or that lists more relationships than an object may keep.
     pub part_rels: HashMap<String, Option<Arc<Rels>>>,
 }
 

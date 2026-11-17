@@ -302,9 +302,9 @@ fn remap_media(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_
 
 /// Add the clipboard's media to `doc` and return the ids that changed: an id already used in
 /// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it. That
-/// fresh id is shared with equal bytes already in `doc`. A kept part with relationships of its own
-/// (`own`, #1993) whose id is taken gets an item of its own instead, even over equal bytes, since
-/// its relationships may differ.
+/// fresh id is shared with equal ordinary bytes already in `doc`. A kept part with relationships
+/// of its own (`own`, #1993) whose id is taken gets an item of its own instead, even over equal
+/// bytes, since its relationships may differ; and ordinary media never share such a part's item.
 fn bring_media(
     cmd: &str,
     doc: &mut deckcraft_model::Presentation,
@@ -312,12 +312,16 @@ fn bring_media(
     own: &HashSet<MediaId>,
 ) -> Result<HashMap<MediaId, MediaId>> {
     let mut map = HashMap::new();
+    let mut apart = crate::media_refs::presentation_parts_with_rels(doc);
     for m in media {
         match doc.media(m.id) {
             None => {
                 // Keeps the foreign id, so later ids must start past it.
                 doc.media.push(m.clone());
                 doc.next_id = doc.next_id.max(m.id.0);
+                if own.contains(&m.id) {
+                    apart.insert(m.id);
+                }
             }
             // Checked before the equal-bytes match: the same id and bytes from another deck can
             // still carry other relationships.
@@ -325,11 +329,12 @@ fn bring_media(
                 let mut item = m.clone();
                 item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
                 map.insert(m.id, item.id);
+                apart.insert(item.id);
                 doc.media.push(item);
             }
             Some(x) if x.data == m.data => {}
             Some(_) => {
-                let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
+                let id = crate::media_refs::add_ordinary(doc, m, &apart).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
             }
         }
@@ -911,5 +916,27 @@ mod tests {
         assert_ne!(kept, MediaId(10), "not the destination's own part");
         assert_eq!(doc.media(kept).map(|m| m.data.as_slice()), Some(&b"same"[..]));
         assert_eq!(map.get(&MediaId(11)), None, "plain media with an equal id and bytes are still shared");
+    }
+
+    /// #1993 review: a pasted ordinary item with the bytes of a part that has relationships of its
+    /// own isn't shared with that part's new item.
+    #[test]
+    fn a_pasted_ordinary_item_is_not_shared_with_an_owned_part() {
+        let item = |id: u32, data: &[u8]| deckcraft_model::MediaItem {
+            id: MediaId(id),
+            name: "part.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let mut doc = deckcraft_model::defaults::new_presentation(None);
+        // Both clipboard ids hold other bytes here.
+        doc.media.extend([item(10, b"other"), item(11, b"other too")]);
+        doc.next_id = doc.next_id.max(20);
+        let own = HashSet::from([MediaId(10)]);
+        let map = bring_media("edit.paste", &mut doc, &[item(10, b"same"), item(11, b"same")], &own).expect("media");
+        let (part, target) = (map.get(&MediaId(10)).copied().expect("part"), map.get(&MediaId(11)).copied().expect("target"));
+        assert_ne!(part, target, "the ordinary item isn't the owned part");
+        assert_eq!(doc.media(target).map(|m| m.data.as_slice()), Some(&b"same"[..]));
     }
 }

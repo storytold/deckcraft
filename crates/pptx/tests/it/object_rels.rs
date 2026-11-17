@@ -350,3 +350,23 @@ fn unsafe_part_targets_still_fall_back_to_the_preview() {
         assert!(!pkg.0.values().any(|d| d == OLE), "{why}: the embedding isn't copied");
     }
 }
+
+/// #1993 review: an object's own (direct) relationship target is checked as the parts it reaches
+/// are: one `kept_target` refuses keeps the fallback even though it resolves to a part.
+#[test]
+fn unsafe_direct_targets_fall_back_to_the_preview() {
+    for target in ["/ppt/embeddings/oleObject1.bin", "../../../../ppt/embeddings/oleObject1.bin", r"..\embeddings\oleObject1.bin"] {
+        let parts = vec![("ppt/embeddings/oleObject1.bin".to_string(), OLE.to_vec()), ("ppt/media/icon.png".to_string(), png([10, 200, 30]))];
+        let slide_rels = [rel("rIdOle", "oleObject", target), rel("rIdIcon", "image", "../media/icon.png")].concat();
+        let types = [ct("ppt/embeddings/oleObject1.bin", OLE_CT), ct("ppt/media/icon.png", "image/png")].concat();
+        let src = deck(&parts, &ole_frame(3, "Package", "rIdOle", "p:embed"), &slide_rels, &types);
+        let p = deckcraft_pptx::import(&src).expect("import");
+        let s = p.slides[0].shapes.iter().find(|s| s.name == "Object 3").expect("object");
+        let ShapeKind::Opaque { parts, .. } = &s.kind else { panic!("{target}: {:?}", s.kind) };
+        assert!(parts.is_empty(), "{target}: {parts:?}");
+        let pkg = Pkg::new(&deckcraft_pptx::export(&p).expect("export"));
+        assert!(pkg.ole_rid("Package").is_none(), "{target}: written as its preview");
+        assert_eq!(pkg.picture_bytes("Object 3"), Some(png([10, 200, 30])), "{target}: the preview picture is written");
+        assert!(!pkg.0.values().any(|d| d == OLE), "{target}: the embedding isn't copied");
+    }
+}

@@ -417,7 +417,7 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         let sx = scale(source_size.width, doc.slide_size.width);
         let sy = scale(source_size.height, doc.slide_size.height);
         // Media: what the slides use is copied under fresh ids.
-        let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
+        let mut media_map = MediaCopies::default();
         // Keep Source Formatting: bring each source master used, once, with fresh ids.
         let mut layout_map: HashMap<LayoutId, LayoutId> = HashMap::new();
         if keep {
@@ -443,7 +443,7 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
             let mut sl: Slide = from.as_ref().clone();
             remap_table_styles(&mut sl.shapes, &table_style_map, 0);
             scale_shapes(&mut sl.shapes, sx, sy, 0);
-            media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map));
+            media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map.map));
             sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
             let map = renumber("slide.reuse", doc, &mut sl.shapes)?;
             for a in &mut sl.animations {
@@ -476,6 +476,17 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Media one command copies into a destination (#1993).
+#[derive(Default)]
+pub(crate) struct MediaCopies {
+    /// Source id → destination id.
+    map: HashMap<MediaId, MediaId>,
+    /// Destination items ordinary media must not share, though their bytes may be equal: kept
+    /// parts with relationships of their own (the destination's, and the copies made for the
+    /// source's) and linked items. Filled from the destination on first use.
+    apart: Option<HashSet<MediaId>>,
+}
+
 /// A copy of `src`'s master `m` ready to join `doc`: its media copied in, fresh master, layout and
 /// shape ids. `layouts` gains each source layout id → its copy's.
 pub(crate) fn import_master(
@@ -483,7 +494,7 @@ pub(crate) fn import_master(
     doc: &mut Presentation,
     src: &Presentation,
     m: &Master,
-    media_map: &mut HashMap<MediaId, MediaId>,
+    media_map: &mut MediaCopies,
     layouts: &mut HashMap<LayoutId, LayoutId>,
 ) -> Result<Master> {
     let mut used = vec![];
@@ -494,7 +505,7 @@ pub(crate) fn import_master(
     }
     copy_media(cmd, doc, src, &used, &own, media_map)?;
     let mut m = m.clone();
-    media_refs::visit_mut::master(&mut m, &mut remap(media_map));
+    media_refs::visit_mut::master(&mut m, &mut remap(&media_map.map));
     m.id = MasterId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
     renumber(cmd, doc, &mut m.shapes)?;
     for l in &mut m.layouts {
@@ -509,30 +520,34 @@ pub(crate) fn import_master(
 /// Copy the source media `used` into `doc` under fresh ids, once each. Identical bytes already in
 /// `doc` are shared, except by a linked item, which keeps its link, and by a kept part with
 /// relationships of its own (`own`, #1993), which keeps them: such a part gets its own item even
-/// when an earlier step (a master, another slide) already mapped its id as plain media.
+/// when an earlier step (a master, another slide) already mapped its id as plain media. Ordinary
+/// media share only ordinary items, never such a part's (or a link's) item: an ordinary target
+/// with the bytes of the part that points at it would become that part.
 fn copy_media(
     cmd: &str,
     doc: &mut Presentation,
     src: &Presentation,
     used: &[MediaId],
     own: &HashSet<MediaId>,
-    map: &mut HashMap<MediaId, MediaId>,
+    copies: &mut MediaCopies,
 ) -> Result<()> {
+    let apart = copies.apart.get_or_insert_with(|| media_refs::presentation_parts_with_rels(doc));
     for &id in used {
-        if map.contains_key(&id) && !own.contains(&id) {
+        if copies.map.contains_key(&id) && !own.contains(&id) {
             continue;
         }
         let Some(m) = src.media(id) else { continue };
         let new = if m.link.is_some() || own.contains(&id) {
             let mut item = m.clone();
             item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+            apart.insert(item.id);
             let new = item.id;
             doc.media.push(item);
             new
         } else {
-            doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?
+            media_refs::add_ordinary(doc, m, apart).ok_or_else(|| bad(cmd, NO_ID_SPACE))?
         };
-        map.insert(id, new);
+        copies.map.insert(id, new);
     }
     Ok(())
 }
@@ -925,6 +940,49 @@ mod tests {
         assert_ne!(rel.from, MediaId(9501), "not the destination object's part");
         let PartRelTarget::Part(icon) = rel.target else { panic!("internal target") };
         assert_eq!(doc.media(icon).map(|m| m.data.as_slice()), Some(&b"source icon"[..]));
+    }
+
+    /// #1993 review: an ordinary item with the bytes of the part that points at it isn't shared
+    /// with that part's copy, which would make the relationship point at the part itself.
+    #[test]
+    fn an_ordinary_target_with_its_owners_bytes_is_not_its_owner() {
+        use deckcraft_model::{MediaItem, PartRel, PartRelTarget};
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "part.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let mut src = defaults::new_presentation(None);
+        src.media.extend([item(9001, b"same"), item(9002, b"same")]);
+        src.next_id = src.next_id.max(9200);
+        Arc::make_mut(src.slides.first_mut().expect("slide")).shapes = vec![Shape {
+            id: ShapeId(9101),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(9001))],
+                part_rels: vec![PartRel {
+                    from: MediaId(9001),
+                    id: "rId1".into(),
+                    rel_type: "package".into(),
+                    target: PartRelTarget::Part(MediaId(9002)),
+                }],
+            },
+            ..Default::default()
+        }];
+        let bytes = deckcraft_format::save(&src).expect("save");
+        let mut s = Session::with_new();
+        s.execute("slide.reuse", &json!({"data": super::super::base64_encode(&bytes), "name": "src.deckcraft", "slides": [0]})).expect("reuse");
+        let doc = &s.doc().expect("doc").doc;
+        let reused = doc.slides.get(1).expect("reused slide");
+        let Some(ShapeKind::Opaque { part_rels, .. }) = reused.shapes.first().map(|sh| &sh.kind) else { panic!("the reused object") };
+        let rel = part_rels.first().expect("relationship");
+        assert_ne!(rel.target, PartRelTarget::Part(rel.from), "the relationship doesn't point at its own part");
+        let PartRelTarget::Part(to) = rel.target else { panic!("internal target") };
+        assert_eq!(doc.media(to).map(|m| m.data.as_slice()), Some(&b"same"[..]));
     }
 
     fn link_to(slide: SlideId) -> Hyperlink {

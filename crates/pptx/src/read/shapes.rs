@@ -496,22 +496,29 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             planned.push((id, rel.ty.clone(), rel.target_raw.clone(), Keep::Link));
             continue;
         }
+        // Checked as the parts those reach are (see `walk`): a direct target that couldn't be
+        // carried along safely keeps the fallback too.
+        let Some(target) = crate::opc::kept_target(&part.name, &rel.target_raw) else {
+            log::warn!("pptx: relationship {} of {} points outside what an object may keep", rel.id, part.name);
+            ok = false;
+            break;
+        };
         let pkg = imp.pkg;
         // A diagram's definition parts copied here count against the same presentation-wide budget.
-        if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&rel.target)) {
-            let len = pkg.get(&rel.target).map_or(0, |b| b.len());
+        if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&target)) {
+            let len = pkg.get(&target).map_or(0, |b| b.len());
             if len > MAX_DIAGRAM_PART_BYTES || spent.saturating_add(len) > MAX_DIAGRAM_XML_BYTES {
                 ok = false;
                 break;
             }
             spent += len;
         }
-        if pkg.get(&rel.target).is_none() {
+        if pkg.get(&target).is_none() {
             ok = false;
             break;
         }
         let keep = if rel.kind == "diagramData" { Keep::Data } else { Keep::Part };
-        planned.push((id, rel.ty.clone(), rel.target.clone(), keep));
+        planned.push((id, rel.ty.clone(), target, keep));
     }
     let kept = if ok {
         imp.diagram_xml_bytes = spent;
@@ -578,7 +585,7 @@ fn keep_parts(imp: &mut Imp, planned: Vec<(String, String, String, Keep)>) -> Op
         }
     }
     // An object with relationships beyond its own parts (#1993) is charged whole: its own
-    // relationships and the parts they reach that aren't diagram definitions (those have their own
+    // relationships and its own parts not read yet, except a diagram's data part (it has its own
     // budget). One without them is kept as #203 kept it.
     let mut cost = g.cost;
     if !g.rels.is_empty() || planned.iter().any(|(.., keep)| matches!(keep, Keep::Link)) {
@@ -648,8 +655,10 @@ fn walk(imp: &mut Imp, part: &str, g: &mut Graph, depth: usize) -> Option<usize>
     g.seen.insert(key.clone(), i);
     g.parts.push(part.to_string());
     let pkg = imp.pkg;
-    let Some(rels) = imp.part_rels.entry(key).or_insert_with(|| pkg.rels_checked(part).map(Arc::new)).clone() else {
-        log::warn!("pptx: the relationships of {part} can't be read");
+    let Some(rels) =
+        imp.part_rels.entry(key).or_insert_with(|| pkg.rels_checked(part).filter(|r| r.items.len() <= MAX_OBJECT_RELS).map(Arc::new)).clone()
+    else {
+        log::warn!("pptx: the relationships of {part} can't be read or are too many to keep");
         return None;
     };
     if rels.items.is_empty() {
@@ -1168,6 +1177,19 @@ mod tests {
         let pkg = package(&[("ppt/embeddings/a.bin", b"a".to_vec())]);
         let mut imp = crate::read::test_imp(&pkg);
         assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_some());
+    }
+
+    /// #1993 review: a relationships part listing more relationships than an object may keep
+    /// refuses the object, and the import keeps only that refusal, not the parsed list.
+    #[test]
+    fn too_many_relationships_are_refused_and_not_kept() {
+        let links: Vec<(String, &str, String, bool)> =
+            (0..=MAX_OBJECT_RELS).map(|i| (format!("rId{i}"), "hyperlink", format!("https://example.com/{i}"), true)).collect();
+        let items: Vec<(&str, &str, &str, bool)> = links.iter().map(|(id, ty, t, e)| (id.as_str(), *ty, t.as_str(), *e)).collect();
+        let pkg = package(&[("ppt/embeddings/a.bin", b"a".to_vec()), ("ppt/embeddings/_rels/a.bin.rels", rels(&items))]);
+        let mut imp = crate::read::test_imp(&pkg);
+        assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_none());
+        assert!(matches!(imp.part_rels.get("ppt/embeddings/a.bin"), Some(None)), "only the refusal is cached");
     }
 }
 

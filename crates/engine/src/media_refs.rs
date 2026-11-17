@@ -326,6 +326,36 @@ pub fn parts_with_rels(v: &[Shape]) -> HashSet<MediaId> {
     out
 }
 
+/// [`parts_with_rels`] over a whole presentation: slides, masters and their layouts, the notes
+/// and handout masters.
+pub fn presentation_parts_with_rels(p: &Presentation) -> HashSet<MediaId> {
+    let mut out = HashSet::new();
+    for s in &p.slides {
+        out.extend(parts_with_rels(&s.shapes));
+    }
+    for m in p.masters.iter().chain(p.notes_master.iter()).chain(p.handout_master.iter()) {
+        out.extend(parts_with_rels(&m.shapes));
+        for l in &m.layouts {
+            out.extend(parts_with_rels(&l.shapes));
+        }
+    }
+    out
+}
+
+/// `doc.add_media` for an ordinary item copied in from another deck: it shares an item with equal
+/// bytes only if that item is ordinary too, never one in `apart` (kept parts with relationships of
+/// their own and the copies made for them, #1993) or a linked item. An ordinary target with the
+/// bytes of the part pointing at it would otherwise become that part. `None` when `doc` has no ids
+/// left.
+pub fn add_ordinary(doc: &mut Presentation, m: &deckcraft_model::MediaItem, apart: &HashSet<MediaId>) -> Option<MediaId> {
+    if let Some(x) = doc.media.iter().find(|x| x.link.is_none() && !apart.contains(&x.id) && x.data == m.data) {
+        return Some(x.id);
+    }
+    let id = MediaId(doc.alloc_id()?);
+    doc.media.push(deckcraft_model::MediaItem { id, link: None, ..m.clone() });
+    Some(id)
+}
+
 fn collect(walk: impl FnOnce(&mut visit::F)) -> Vec<MediaId> {
     let mut seen = HashSet::new();
     let mut out = vec![];
