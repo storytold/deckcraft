@@ -108,3 +108,50 @@ fn a_picture_placeholder_without_geometry_takes_its_layouts() {
     let photo = q.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Picture { .. })).expect("picture");
     assert!(matches!(&photo.geom, Geom::Preset { name, .. } if name == "ellipse"), "{:?}", photo.geom);
 }
+
+/// A placeholder whose custom geometry has connection sites but no path (pins only) is its own
+/// geometry, not the "inherit the layout's" marker: it keeps its sites. A slide placeholder
+/// without geometry that inherits such a geometry from its layout takes the sites with it.
+#[test]
+fn a_placeholder_with_only_connection_sites_keeps_them() {
+    use deckcraft_model::ConnectionSite;
+    let pins = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)];
+    let close =
+        |s: &Shape| s.sites.len() == pins.len() && s.sites.iter().zip(&pins).all(|(a, b)| (a.x - b.x).abs() < 1e-4 && (a.y - b.y).abs() < 1e-4);
+    let pinned = |s: &Shape| matches!(&s.geom, Geom::Custom { paths } if paths.is_empty()) && close(s);
+    let mut p = defaults::new_presentation(None);
+    let first = p.slides[0].id;
+    for s in &mut p.slide_mut(first).expect("slide").shapes {
+        if s.ph.is_some() {
+            s.geom = Geom::Custom { paths: vec![] };
+            s.sites = pins.clone();
+        }
+    }
+    let q = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("import");
+    let phs: Vec<_> = q.slides[0].shapes.iter().filter(|s| s.ph.is_some()).collect();
+    assert!(!phs.is_empty());
+    assert!(phs.iter().all(|s| pinned(s)), "{:?}", phs.iter().map(|s| (&s.geom, &s.sites)).collect::<Vec<_>>());
+    // Inherited from the layout.
+    let mut p = defaults::new_presentation(None);
+    let layout = p.slides[0].layout;
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    let l = m.layouts.iter_mut().find(|l| l.id == layout).expect("layout");
+    for s in &mut l.shapes {
+        if s.ph.is_some() {
+            s.geom = Geom::Custom { paths: vec![] };
+            s.sites = pins.clone();
+        }
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let bare = edit_slides(&bytes, |mut s| {
+        while let Some(i) = s.find("<a:prstGeom") {
+            let Some(j) = s[i..].find("</a:prstGeom>").map(|j| j + i + "</a:prstGeom>".len()) else { break };
+            s.replace_range(i..j, "");
+        }
+        s
+    });
+    let q = deckcraft_pptx::import(&bare).expect("import");
+    let phs: Vec<_> = q.slides[0].shapes.iter().filter(|s| s.ph.is_some()).collect();
+    assert!(!phs.is_empty());
+    assert!(phs.iter().all(|s| pinned(s)), "{:?}", phs.iter().map(|s| (&s.geom, &s.sites)).collect::<Vec<_>>());
+}

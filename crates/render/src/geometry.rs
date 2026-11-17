@@ -34,7 +34,10 @@ pub fn shape_geometry(shape: &Shape, w: f64, h: f64) -> Geometry {
                 // inside another cuts a hole whichever way it winds, as in icons and outlined text.
                 out.push(SubPath { path: bp, fill: p.fill, stroke: p.stroke, even_odd: true });
             }
-            Geometry { paths: out, text_rect: Rect::new(0.0, 0.0, w, h), handles: vec![], sites: vec![] }
+            // The file's connection sites (`a:cxnLst`), fractions of the box; none means the
+            // box midpoints, which the caller supplies.
+            let sites = shape.sites.iter().map(|s| Point::new(s.x * w, s.y * h)).collect();
+            Geometry { paths: out, text_rect: Rect::new(0.0, 0.0, w, h), handles: vec![], sites }
         }
     }
 }
