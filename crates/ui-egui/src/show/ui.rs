@@ -874,7 +874,8 @@ pub(crate) fn end(app: &mut SlideApp, ctx: &egui::Context, mut show: Show, now: 
     if !show.reading {
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
     }
-    if show.rehearse {
+    // A native close may arrive before begin_show initializes the rehearsal clock.
+    if show.rehearse && show.started {
         if let Some((_, tl)) = &show.timeline {
             let _ = tl;
         }

@@ -1516,3 +1516,45 @@ fn windowed_show_title_bar_tracks_fullscreen_and_reading() {
     app.integrated_titlebar = false;
     assert!(!needs_title_bar(&app, &ctx));
 }
+
+/// #2205: a native close can arrive before the first rehearsal frame initializes its clock.
+/// Preserve existing timings in that case; a rehearsal that did start still records its duration.
+#[test]
+fn closing_rehearsal_records_only_after_its_first_frame() {
+    for started in [false, true] {
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.session.execute("transition.timing", &json!({"index": 0, "after": 7000})).unwrap();
+        app.ui.presenter_view = false;
+        app.start_show(0, false);
+        app.show.as_mut().unwrap().rehearse = true;
+        let before = app.session.active().unwrap().doc.clone();
+        let ctx = egui::Context::default();
+        if started {
+            // Use the real first-frame path (including font setup), not a manually seeded clock.
+            for _ in 0..3 {
+                let input = egui::RawInput { time: Some(115.0), ..Default::default() };
+                let mut output = ctx.run_ui(input, |ui| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                });
+                output.textures_delta.clear();
+            }
+        }
+        assert_eq!(app.show.as_ref().unwrap().started, started);
+        let mut input = egui::RawInput { time: Some(120.0), ..Default::default() };
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.logic(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(app.show.is_none());
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.contains(&egui::ViewportCommand::CancelClose));
+        assert!(commands.contains(&egui::ViewportCommand::Fullscreen(false)), "cleanup runs even before the first frame");
+        let doc = &app.session.active().unwrap().doc;
+        let timing = doc.slides[0].transition.as_ref().unwrap().advance_after_ms;
+        assert_eq!(timing, Some(if started { 5000 } else { 7000 }));
+        if !started {
+            assert!(std::sync::Arc::ptr_eq(&before, doc), "an unstarted rehearsal makes no document edit");
+            assert!(app.status.is_none(), "do not claim to have recorded timings");
+        }
+    }
+}
