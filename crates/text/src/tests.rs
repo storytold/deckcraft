@@ -1436,6 +1436,77 @@ fn a_tab_past_the_end_moves_to_the_next_line() {
     assert!((l.lines[1].edges[1].0 - l.inner.x0 - 72.0).abs() < 0.01);
 }
 
+/// #1683: in a paragraph with a hanging indent (marL > 0, negative indent), the indent position
+/// acts as an implicit tab stop, so the first tab lands at marL rather than the default 1-inch stop.
+#[test]
+fn hanging_indent_acts_as_implicit_tab_stop() {
+    let (p, mut sh) = setup("\tcode", 500.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.props.bullet = Some(Bullet::None);
+    // marL = 27.0 pt (0.375 in), indent = -27.0 pt (-0.375 in).
+    para.props.margin_left = Some(27.0);
+    para.props.indent = Some(-27.0);
+    para.props.default_tab = Some(72.0);
+    para.props.tabs = None;
+
+    let l = lay(&p, &sh, 500.0, 300.0);
+    assert_eq!(l.lines.len(), 1);
+    // The tab must advance to 27.0 pt (marL), not to the 72.0 pt default stop.
+    let code_x = l.lines[0].edges[1].0;
+    assert!((code_x - l.inner.x0 - 27.0).abs() < 1.0, "code text must start at marL (27.0 pt), got {}", code_x - l.inner.x0);
+
+    // Two tabs: first goes to 27.0 pt, second goes to the next default stop (72.0 pt).
+    let (p2, mut sh2) = setup("\t\tcode", 500.0, 300.0);
+    let para2 = &mut sh2.text.as_mut().unwrap().paragraphs[0];
+    para2.props.bullet = Some(Bullet::None);
+    para2.props.margin_left = Some(27.0);
+    para2.props.indent = Some(-27.0);
+    para2.props.default_tab = Some(72.0);
+    para2.props.tabs = None;
+
+    let l2 = lay(&p2, &sh2, 500.0, 300.0);
+    assert_eq!(l2.lines.len(), 1);
+    let code2_x = l2.lines[0].edges[2].0;
+    assert!((code2_x - l2.inner.x0 - 72.0).abs() < 1.0, "second tab must advance to next default tab (72.0 pt), got {}", code2_x - l2.inner.x0);
+
+    // Small negative indent (margin 27, indent -0.25): line starts at 26.75 pt, first tab advances to 27.0 pt.
+    let (p3, mut sh3) = setup("\tcode", 500.0, 300.0);
+    let para3 = &mut sh3.text.as_mut().unwrap().paragraphs[0];
+    para3.props.bullet = Some(Bullet::None);
+    para3.props.margin_left = Some(27.0);
+    para3.props.indent = Some(-0.25);
+    para3.props.default_tab = Some(72.0);
+    let l3 = lay(&p3, &sh3, 500.0, 300.0);
+    assert_eq!(l3.lines.len(), 1);
+    let code3_x = l3.lines[0].edges[1].0;
+    assert!((code3_x - l3.inner.x0 - 27.0).abs() < 1.0, "tab with small indent must advance to 27.0 pt, got {}", code3_x - l3.inner.x0);
+
+    // Indent larger than margin (margin 27, indent -54): implicit stop remains at marL (27.0 pt).
+    let (p4, mut sh4) = setup("\tcode", 500.0, 300.0);
+    let para4 = &mut sh4.text.as_mut().unwrap().paragraphs[0];
+    para4.props.bullet = Some(Bullet::None);
+    para4.props.margin_left = Some(27.0);
+    para4.props.indent = Some(-54.0);
+    para4.props.default_tab = Some(72.0);
+    let l4 = lay(&p4, &sh4, 500.0, 300.0);
+    assert_eq!(l4.lines.len(), 1);
+    let code4_x = l4.lines[0].edges[1].0;
+    assert!((code4_x - l4.inner.x0 - 27.0).abs() < 1.0, "implicit stop remains at marL (27.0 pt), got {}", code4_x - l4.inner.x0);
+}
+
+#[test]
+fn hanging_indent_coincident_explicit_stop_is_used_by_layout() {
+    let (p, mut sh) = setup("\tcode", 500.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.props.bullet = Some(Bullet::None);
+    para.props.margin_left = Some(27.0);
+    para.props.indent = Some(-0.25);
+    para.props.tabs = Some(vec![deckcraft_model::text::TabStop { pos: 27.0, align: "l".into() }]);
+    let l = lay(&p, &sh, 500.0, 300.0);
+    assert_eq!(l.lines.len(), 1);
+    assert!((l.lines[0].edges[1].0 - l.inner.x0 - 27.0).abs() < 0.01);
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);
