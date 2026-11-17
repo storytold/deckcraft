@@ -284,21 +284,26 @@ pub fn safe_rel(id: &str, ty: &str, target: &str) -> bool {
 }
 
 /// The part an internal relationship of `part` reaches, when an unmodelled object may carry it
-/// along (#1993): a plain relative path that stays inside the package and lands in one of the
-/// folders embedded objects keep their parts in. `None` for an absolute or empty target, one with
-/// a scheme, query, fragment or backslash (before or after percent-decoding), one climbing above
-/// the package root, a relationships part, and anything else: the object then falls back to its
-/// preview.
+/// along (#1993): a path that stays inside the package and lands in one of the folders embedded
+/// objects keep their parts in. It is relative to `part`'s folder, or to the package root after
+/// one leading `/` (a package-absolute target, as ECMA-376 Part 2 allows). `None` for an empty
+/// target, one with a scheme, query, fragment, backslash or empty segment such as `//` (before or
+/// after percent-decoding), one climbing above the package root, a relationships part, and
+/// anything else: the object then falls back to its preview.
 pub fn kept_target(part: &str, raw: &str) -> Option<String> {
     let plain = |s: &str| !s.is_empty() && !s.starts_with('/') && !s.chars().any(|c| c.is_control() || matches!(c, ':' | '\\' | '#' | '?'));
-    if !plain(raw) {
+    let (absolute, rest) = match raw.strip_prefix('/') {
+        Some(rest) => (true, rest),
+        None => (false, raw),
+    };
+    if !plain(rest) {
         return None;
     }
-    let decoded = percent_decode(raw);
+    let decoded = percent_decode(rest);
     if !plain(&decoded) {
         return None;
     }
-    let base = dir_of(part);
+    let base = if absolute { String::new() } else { dir_of(part) };
     let mut segs: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
     for s in decoded.split('/') {
         match s {

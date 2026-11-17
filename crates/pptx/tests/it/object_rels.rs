@@ -330,7 +330,10 @@ fn unsafe_part_targets_still_fall_back_to_the_preview() {
     let cases: Vec<(&str, Vec<String>, Vec<(String, Vec<u8>)>)> = vec![
         ("climbs above the package root", vec![rel("rId1", "image", "../../../../ppt/media/icon2.png")], vec![]),
         ("climbs above the root, percent-encoded", vec![rel("rId1", "image", "%2e%2e/%2e%2e/%2e%2e/ppt/media/icon2.png")], vec![]),
-        ("absolute", vec![rel("rId1", "image", "/ppt/media/icon2.png")], vec![]),
+        ("an absolute target with an empty segment", vec![rel("rId1", "image", "//host/icon2.png")], vec![]),
+        ("an absolute target climbing above the root", vec![rel("rId1", "image", "/../ppt/media/icon2.png")], vec![]),
+        ("an absolute target outside the folders objects keep parts in", vec![rel("rId1", "slide", "/ppt/slides/slide1.xml")], vec![]),
+        ("an absolute relationships part", vec![rel("rId1", "package", "/ppt/embeddings/_rels/package2.bin.rels")], vec![]),
         ("backslashes", vec![rel("rId1", "image", r"..\media\icon2.png")], vec![]),
         ("a scheme on an internal target", vec![rel("rId1", "image", "http://example.com/icon2.png")], vec![]),
         ("outside the folders objects keep parts in", vec![rel("rId1", "slide", "../slides/slide1.xml")], vec![]),
@@ -355,7 +358,14 @@ fn unsafe_part_targets_still_fall_back_to_the_preview() {
 /// are: one `kept_target` refuses keeps the fallback even though it resolves to a part.
 #[test]
 fn unsafe_direct_targets_fall_back_to_the_preview() {
-    for target in ["/ppt/embeddings/oleObject1.bin", "../../../../ppt/embeddings/oleObject1.bin", r"..\embeddings\oleObject1.bin"] {
+    for target in [
+        "../../../../ppt/embeddings/oleObject1.bin",
+        r"..\embeddings\oleObject1.bin",
+        "//host/ppt/embeddings/oleObject1.bin",
+        "/../ppt/embeddings/oleObject1.bin",
+        "/ppt/slides/slide1.xml",
+        "/ppt/_rels/presentation.xml.rels",
+    ] {
         let parts = vec![("ppt/embeddings/oleObject1.bin".to_string(), OLE.to_vec()), ("ppt/media/icon.png".to_string(), png([10, 200, 30]))];
         let slide_rels = [rel("rIdOle", "oleObject", target), rel("rIdIcon", "image", "../media/icon.png")].concat();
         let types = [ct("ppt/embeddings/oleObject1.bin", OLE_CT), ct("ppt/media/icon.png", "image/png")].concat();
@@ -368,5 +378,31 @@ fn unsafe_direct_targets_fall_back_to_the_preview() {
         assert!(pkg.ole_rid("Package").is_none(), "{target}: written as its preview");
         assert_eq!(pkg.picture_bytes("Object 3"), Some(png([10, 200, 30])), "{target}: the preview picture is written");
         assert!(!pkg.0.values().any(|d| d == OLE), "{target}: the embedding isn't copied");
+    }
+}
+
+/// #1993 review: a package-absolute target (`/ppt/…`, resolved from the package root as ECMA-376
+/// Part 2 allows, and written by some generators) is kept, for the object's own part and for the
+/// parts that part reaches, as #203 kept it.
+#[test]
+fn absolute_package_targets_are_kept() {
+    let parts = vec![
+        ("ppt/embeddings/oleObject1.bin".to_string(), OLE.to_vec()),
+        ("ppt/embeddings/_rels/oleObject1.bin.rels".to_string(), rels(&[rel("rId1", "image", "/ppt/media/icon2.png")])),
+        ("ppt/media/icon.png".to_string(), png([10, 200, 30])),
+        ("ppt/media/icon2.png".to_string(), png([200, 10, 30])),
+    ];
+    let slide_rels = [rel("rIdOle", "oleObject", "/ppt/embeddings/oleObject1.bin"), rel("rIdIcon", "image", "../media/icon.png")].concat();
+    let types = [ct("ppt/embeddings/oleObject1.bin", OLE_CT), ct("ppt/media/icon.png", "image/png"), ct("ppt/media/icon2.png", "image/png")].concat();
+    let first = round(&deck(&parts, &ole_frame(3, "Package", "rIdOle", "p:embed"), &slide_rels, &types));
+    for bytes in [first.clone(), round(&first)] {
+        let pkg = Pkg::new(&bytes);
+        let rid = pkg.ole_rid("Package").expect("the embedded object is kept, not written as its preview");
+        let (_, ole, external) = pkg.rel(SLIDE, &rid);
+        assert!(!external);
+        assert_eq!(pkg.get(&ole), OLE);
+        let (ty, icon, external) = pkg.rel(&ole, "rId1");
+        assert_eq!((ty.as_str(), external), (format!("{RT}/image").as_str(), false));
+        assert_eq!(pkg.get(&icon), png([200, 10, 30]).as_slice());
     }
 }
