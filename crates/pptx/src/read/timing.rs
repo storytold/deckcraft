@@ -65,9 +65,36 @@ struct Found<'a> {
 #[derive(Clone, Copy)]
 struct At {
     trigger: Option<u32>,
+    main_seq_id: Option<u32>,
     group: usize,
     offset: u32,
     deferred: bool,
+}
+
+/// Returns whether `st` (`p:stCondLst`) is PowerPoint's automatic main-sequence step wrapper:
+/// `<p:cond delay="indefinite"/>` paired only with `<p:cond evt="onBegin" delay="0"><p:tn val="{main_seq_id}"/></p:cond>`
+/// referencing the immediate enclosing `mainSeq` `<p:cTn>`.
+fn is_main_seq_auto(st: &El, main_seq_id: Option<u32>) -> bool {
+    let Some(ms_id) = main_seq_id else {
+        return false;
+    };
+    let is_indefinite = |d: &El| {
+        d.attr("evt").is_none()
+            && d.attr("delay").map(str::trim) == Some("indefinite")
+            && d.child("tgtEl").is_none()
+            && d.child("tn").is_none()
+            && d.child("rtn").is_none()
+    };
+    let is_main_seq_on_begin = |d: &El| {
+        d.attr("evt") == Some("onBegin")
+            && d.attr("delay").map(str::trim) == Some("0")
+            && d.child("tgtEl").is_none()
+            && d.child("rtn").is_none()
+            && d.child("tn").and_then(|tn| tn.u32("val")) == Some(ms_id)
+    };
+    st.children_named("cond").any(is_indefinite)
+        && st.children_named("cond").any(is_main_seq_on_begin)
+        && st.children_named("cond").all(|d| is_indefinite(d) || is_main_seq_on_begin(d))
 }
 
 fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, depth: usize) {
@@ -86,29 +113,25 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
             && ctn.attr("nodeType") == Some("interactiveSeq")
         {
             at.trigger = ctn.path(&["stCondLst", "cond", "tgtEl", "spTgt"]).and_then(|s| s.u32("spid"));
+            at.main_seq_id = None;
         }
-        if c.is("cTn")
-            && let Some(st) = c.child("stCondLst")
-        {
-            let is_main_seq_auto = st.children_named("cond").any(|d| d.attr("delay").map(str::trim) == Some("indefinite"))
-                && st.children_named("cond").any(|d| {
-                    d.attr("evt") == Some("onBegin")
-                        && d.attr("delay").map(str::trim) == Some("0")
-                        && d.child("tgtEl").is_none()
-                        && d.child("rtn").is_none()
-                });
-            if !is_main_seq_auto && defers_start(st) {
-                at.deferred = true;
-            }
-            if let Some(cond) = st.child("cond") {
-                if cond.attr("delay").map(str::trim) == Some("indefinite") {
-                    *groups += 1;
-                    at.group = *groups;
-                    at.offset = 0;
-                } else {
-                    at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
+        if c.is("cTn") {
+            let is_main_seq = c.attr("nodeType") == Some("mainSeq");
+            if let Some(st) = c.child("stCondLst") {
+                if !(!is_main_seq && !at.deferred && is_main_seq_auto(st, at.main_seq_id)) && defers_start(st) {
+                    at.deferred = true;
+                }
+                if let Some(cond) = st.child("cond") {
+                    if cond.attr("delay").map(str::trim) == Some("indefinite") {
+                        *groups += 1;
+                        at.group = *groups;
+                        at.offset = 0;
+                    } else {
+                        at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
+                    }
                 }
             }
+            at.main_seq_id = if is_main_seq && !at.deferred { c.u32("id") } else { None };
         }
         collect(c, at, groups, out, depth + 1);
     }
@@ -293,7 +316,7 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     let root_deferred = timing.path(&["tnLst", "par", "cTn", "stCondLst"]).is_some_and(defers_start);
     if !root_deferred && let Some(tn) = timing.child("tnLst") {
         let mut found = vec![];
-        collect(tn, At { trigger: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
+        collect(tn, At { trigger: None, main_seq_id: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
         for f in found.into_iter().filter(|f| f.trigger.is_none()) {
             let c = f.ctn;
             if c.attr("nodeType") == Some("clickEffect") || f.deferred {
@@ -321,7 +344,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
-    collect(tn, At { trigger: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
+    collect(tn, At { trigger: None, main_seq_id: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
     // Paragraph builds (`bldP`) by (spid, grpId) -> whether `build="p"`.
     let bld_p: std::collections::HashMap<(u32, String), bool> = timing
         .child("bldLst")

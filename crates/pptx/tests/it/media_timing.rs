@@ -182,6 +182,15 @@ fn media_only_slide_exports_and_round_trips_video_and_audio_timing_nodes() {
     });
     assert!(main_seq_play[0].autoplay, "main-sequence automatic Play effect sets autoplay");
 
+    // An `indefinite` + `onBegin delay="0"` condition whose `<p:tn>` references a different
+    // click-dependent time node rather than the enclosing `mainSeq` must stay deferred.
+    let non_main_seq_tn_play = self::clips(|v, _| {
+        format!(
+            r#"<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst><p:par><p:cTn id="99" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="100" fill="hold"><p:stCondLst><p:cond evt="onClick" delay="0"/></p:stCondLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par><p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="99"/></p:cond></p:stCondLst><p:childTnLst><p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="5" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="withEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="6" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="{v}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:seq><p:video><p:cMediaNode><p:cTn id="7" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{v}"/></p:tgtEl></p:cMediaNode></p:video>"#
+        )
+    });
+    assert!(!non_main_seq_tn_play[0].autoplay, "onBegin referencing non-mainSeq click-dependent node is not autoplay");
+
     // Command-based Play beneath an onClick or onEnd ancestor must not set autoplay.
     let deferred_cmd_play = self::clips(|v, a| {
         format!(
