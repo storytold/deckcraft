@@ -170,16 +170,20 @@ fn embedded_catalogs_parse_cleanly() {
 
 /// The Russian catalogs reached the strings the UI draws, including the shared `common.tsv`
 /// rows, a two-line ribbon label and a named-placeholder status line. Skipped without
-/// `CRAFT_I18N_DIR`.
+/// `CRAFT_I18N_DIR`; with catalogs embedded but no Russian among them, it fails.
 #[test]
 fn the_russian_catalog_translates_core_labels() {
-    let Some(russian) = Lang::from_code("ru") else {
-        eprintln!("skipped: the ru catalogs are not embedded");
+    if CRAFT_I18N.is_empty() {
+        eprintln!("skipped: built without craft-i18n (CRAFT_I18N_DIR); the interface is English only");
         return;
-    };
+    }
+    // With catalogs embedded, Russian must be among them: `LANGUAGES` offers it, so a missing
+    // `locales/ru/deckcraft.tsv` at the pinned craft-i18n commit fails here instead of passing.
+    let russian = Lang::from_code("ru").expect("craft-i18n.rev must pin a commit that has locales/ru/deckcraft.tsv");
     assert_eq!(tr(russian, "Insert"), "Вставка");
     assert_eq!(tr(russian, "Cancel"), "Отмена");
     assert_eq!(tr(russian, "Slide Show"), "Слайд-шоу");
+    assert_eq!(tr(russian, "Diagram Design"), "Конструктор схем");
     assert_eq!(tr(russian, "New\nSlide"), "Создать\nслайд");
     assert_eq!(fmt(tr(russian, "Slide {n} of {total}"), &[("n", "1"), ("total", "8")]), "Слайд 1 из 8");
     assert_eq!(lang_from_tag("ru-SK"), Some(russian));
