@@ -179,7 +179,7 @@ fn base(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, nv: Option<&El>) -> Shape {
 
 fn preset_geom(pg: &El) -> Geom {
     let name = pg.attr("prst").unwrap_or("rect").to_string();
-    let defaults: Vec<f64> = preset::info(&name).map(|i| i.defaults.to_vec()).unwrap_or_default();
+    let defaults: Vec<f64> = preset::adjust_defaults(&name).to_vec();
     let mut adj = defaults;
     let mut any = false;
     if let Some(av) = pg.child("avLst") {
@@ -1149,5 +1149,27 @@ mod tests {
         imp.kept_sidecar_bytes = MAX_KEPT_TOTAL_BYTES;
         let (parts, part_rels) = keep_parts(&mut imp, ole("ppt/embeddings/plain.bin")).expect("kept");
         assert_eq!((parts.len(), part_rels.len()), (1, 0));
+    }
+}
+
+#[cfg(test)]
+mod preset_geom_tests {
+    use super::*;
+
+    fn geom(xml: &str) -> Geom {
+        let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+        preset_geom(&doc.root)
+    }
+
+    // A file may give some adjust values and rely on the defaults for the rest. A preset outside the
+    // gallery had no defaults, so a missing value read as 0: a bentConnector4 with only adj2 lost
+    // its middle leg.
+    #[test]
+    fn a_missing_adjust_value_takes_the_spec_default() {
+        let a = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#;
+        let g = geom(&format!(r#"<a:prstGeom {a} prst="bentConnector4"><a:avLst><a:gd name="adj2" fmla="val 25000"/></a:avLst></a:prstGeom>"#));
+        assert!(matches!(&g, Geom::Preset { name, adj } if name == "bentConnector4" && adj == &[50000.0, 25000.0]), "{g:?}");
+        let g = geom(&format!(r#"<a:prstGeom {a} prst="bentConnector5"><a:avLst><a:gd name="adj3" fmla="val 10000"/></a:avLst></a:prstGeom>"#));
+        assert!(matches!(&g, Geom::Preset { adj, .. } if adj == &[50000.0, 50000.0, 10000.0]), "{g:?}");
     }
 }
