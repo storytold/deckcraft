@@ -79,6 +79,11 @@ pub fn start() {
                     {
                         crate::host::Bridge::set_author(&mut app, &author);
                     }
+                    // A host that only lets the user view the deck (#1898): nothing changes it, and
+                    // no `deckcraft:save` is ever sent. Only meaningful with a host; harmless without.
+                    if query_has("readonly") {
+                        app.session.read_only = true;
+                    }
                     crate::api::install(&mut app, cc.egui_ctx.clone());
                     Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
                 }),

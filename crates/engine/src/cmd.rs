@@ -70,6 +70,19 @@ pub struct CommandInfo {
 }
 
 impl CommandSpec {
+    /// Read-only policy shared by execution and command availability.
+    pub fn blocked_by_read_only(&self, s: &Session) -> bool {
+        s.read_only && (self.undoable || crate::READ_ONLY_EXTRA.contains(&self.id))
+    }
+
+    /// Availability for viewers, including the session's read-only policy.
+    pub fn check_enabled(&self, s: &Session) -> std::result::Result<(), String> {
+        if self.blocked_by_read_only(s) {
+            return Err(crate::READ_ONLY_REFUSED.into());
+        }
+        (self.enabled)(s)
+    }
+
     /// Holds because `Session::execute` skips the selection check when `id` or `ids` is given.
     pub fn acts_on(&self) -> Option<String> {
         let keys = param_keys(self.params).unwrap_or_default();
@@ -93,7 +106,7 @@ impl CommandSpec {
     }
 
     pub fn info(&self, s: &Session) -> CommandInfo {
-        let e = (self.enabled)(s);
+        let e = self.check_enabled(s);
         CommandInfo {
             id: self.id,
             label: self.label,

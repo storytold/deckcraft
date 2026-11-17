@@ -10,6 +10,90 @@ fn session() -> Session {
     Session::with_new()
 }
 
+/// #1898: a host opened the presentation to be viewed. Every command that would change it is
+/// refused at the command layer (Undo and Redo too), the tools can't reach it through
+/// `Session::edit`, it never becomes dirty; navigation, selection, Copy, Find and the show work.
+#[test]
+fn a_read_only_session_refuses_changes_and_keeps_viewing() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Keep"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let path = std::env::temp_dir().join(format!("deckcraft-ro-{}.deckcraft", std::process::id()));
+    s.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    assert!(!s.doc().unwrap().is_dirty());
+    let before = s.doc().unwrap().doc.clone();
+    s.read_only = true;
+
+    let refused = |s: &mut Session, cmd: &str, p: Value| {
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains(crate::READ_ONLY_REFUSED), "{cmd}: {e}");
+    };
+    refused(&mut s, "shape.insert", json!({"preset": "ellipse", "rect": [10, 10, 50, 50]}));
+    refused(&mut s, "slide.new", json!({}));
+    refused(&mut s, "slide.delete", json!({}));
+    refused(&mut s, "slide.notes", json!({"text": "note", "index": 0}));
+    refused(&mut s, "edit.undo", json!({}));
+    refused(&mut s, "edit.redo", json!({}));
+    refused(&mut s, "file.save", json!({}));
+    refused(&mut s, "file.revert", json!({}));
+    // Typing and the tools' drags only reach the document through `edit`.
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    assert!(s.key("Delete", Mods::default()).is_err(), "Delete is an edit");
+    assert!(s.edit(|_, _| Ok(())).is_err());
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+    assert!(!s.doc().unwrap().is_dirty(), "never dirty, so nothing would be saved");
+
+    // What a viewer still does.
+    assert_eq!(s.execute("edit.copy", &json!({})).unwrap()["text"], "Keep");
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    s.execute("slide.next", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.execute("slide.selectSlides", &json!({"indices": [0, 1]})).unwrap();
+    assert_eq!(s.execute("text.find", &json!({"text": "Keep"})).unwrap().as_array().map(Vec::len), Some(1));
+    s.execute("show.fromStart", &json!({})).unwrap();
+    s.execute("slide.inspect", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+    assert!(!s.doc().unwrap().is_dirty());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn read_only_command_availability_matches_execution() {
+    let mut s = session();
+    let before = s.doc().unwrap().doc.clone();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+    let edited = s.doc().unwrap().doc.clone();
+    assert_ne!(edited, before);
+    s.read_only = true;
+    let commands = s.commands();
+    for id in ["shape.insert", "slide.new", "slide.delete", "edit.undo", "edit.redo", "file.save", "file.saveAs", "file.revert"] {
+        let info = commands.iter().find(|c| c.id == id).unwrap();
+        assert!(!info.enabled, "{id}");
+        assert_eq!(info.disabled_reason.as_deref(), Some(crate::READ_ONLY_REFUSED), "{id}");
+        assert!(find_command(id).unwrap().check_enabled(&s).is_err(), "{id}");
+    }
+    for id in ["edit.copy", "edit.selectAll", "slide.next", "slide.inspect"] {
+        let info = commands.iter().find(|c| c.id == id).unwrap();
+        assert!(info.enabled, "{id}: {:?}", info.disabled_reason);
+    }
+    let e = s.execute("file.revert", &json!({})).unwrap_err().to_string();
+    assert!(e.contains(crate::READ_ONLY_REFUSED), "{e}");
+    assert_eq!(s.doc().unwrap().doc, edited, "Revert must keep edits made before read-only was enabled");
+    let mut empty = Session::new();
+    empty.read_only = true;
+    let inspect = find_command("slide.inspect").unwrap();
+    assert!(!inspect.info(&empty).enabled);
+    assert_eq!(inspect.info(&empty).disabled_reason, (inspect.enabled)(&empty).err(), "normal eligibility is preserved");
+    s.read_only = false;
+    assert!(find_command("slide.new").unwrap().info(&s).enabled, "writable commands remain available");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before, "refusing Revert must preserve usable undo history");
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, edited);
+}
+
 #[test]
 fn new_presentation_and_slides() {
     let mut s = session();

@@ -187,6 +187,9 @@ impl SlideApp {
     /// on the web. `extra` adds `file.export` params (the PDF's layout, slides…). The
     /// presentation keeps its own file. Returns whether a file was written or handed over.
     pub fn export_as(&mut self, fmt: &str, extra: Value) -> bool {
+        if self.refuse_hosted_read_only_copy() {
+            return false;
+        }
         let Some(slide) = self.session.active().map(|d| d.selection.slide) else { return false };
         let (ext, format, all) = match fmt {
             "pdf" => ("pdf", "pdf", false),
@@ -237,6 +240,18 @@ impl SlideApp {
         self.download(&suggested, bytes)
     }
 
+    /// Refuse before rendering/serializing: the host stores downloads as saves of copies.
+    fn refuse_hosted_read_only_copy(&mut self) -> bool {
+        // Hosted read-only (#1898): the host's `download` is a `deckcraft:save` of a copy (PDF,
+        // picture, outline…), and a read-only session sends the host nothing. A plain browser
+        // download, with no host, is still a copy for the user.
+        if self.session.read_only && self.services.host_save.is_some() {
+            self.set_status(deckcraft_engine::READ_ONLY_REFUSED);
+            return true;
+        }
+        false
+    }
+
     /// Hands `bytes` to the browser as a download (web); false (with the reason in the status
     /// bar) when there are no bytes or no way to download.
     fn download(&mut self, name: &str, bytes: deckcraft_engine::Result<Vec<u8>>) -> bool {
@@ -260,6 +275,9 @@ impl SlideApp {
     /// layout, slides and options) is written to the temporary folder and opened in the system's
     /// PDF viewer, which has the printers; on the web it downloads.
     pub fn print_pdf(&mut self, params: Value) -> bool {
+        if self.refuse_hosted_read_only_copy() {
+            return false;
+        }
         let Some((title, doc)) = self.session.active().map(|d| (d.title(), d.doc.clone())) else { return false };
         let mut params = if params.is_object() { params } else { json!({}) };
         if self.services.pick_save.is_none() {
@@ -512,6 +530,12 @@ impl SlideApp {
     /// wasn't saved (also shown in the status bar).
     pub(super) fn save_to_host(&mut self, ext: Option<&str>) -> Result<String, String> {
         use deckcraft_engine::cmd::file::{format_for_path, mark_saved, save_bytes};
+        // A read-only session (#1898) hands the page nothing to store: Save and Save As alike.
+        if self.session.read_only {
+            let e = deckcraft_engine::READ_ONLY_REFUSED.to_string();
+            self.set_status(e.clone());
+            return Err(e);
+        }
         let Some(d) = self.session.active() else { return Err("no presentation is open".into()) };
         let own = d.path.as_deref().and_then(|p| std::path::Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string());
         let (name, save_as) = match (ext, own) {

@@ -16,10 +16,14 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let rect = ui.max_rect();
         let Some(st) = app.session.active() else { return };
         let n = st.doc.slides.len();
-        let left = match st.selection.target {
+        let mut left = match st.selection.target {
             deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
             _ => "Slide Master".to_string(),
         };
+        // A host opened the presentation to be viewed (#1898): say so where the counter always is.
+        if app.session.read_only {
+            left.push_str(" · Read-only");
+        }
         let p = ui.painter();
         // Left to right: slide counter, language, status message. Each starts at its usual column, or
         // after the one before it when that runs long ("Slide 100 of 120", "… (not checked)").
