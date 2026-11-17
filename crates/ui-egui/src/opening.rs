@@ -30,10 +30,23 @@ impl Opening {
     }
 }
 
+/// A path as compared for "the same file": resolved on disk where it exists (so `a/../deck.pptx`
+/// and a different case on Windows match), else as given.
+fn same_file_key(path: &str) -> std::path::PathBuf {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(p) = std::fs::canonicalize(path) {
+        return p;
+    }
+    std::path::PathBuf::from(path)
+}
+
 impl SlideApp {
     /// Open `path` without blocking the UI: the file is read on a thread and the progress window
     /// shows until it arrives. Without threads (the web build) it opens at once.
     pub fn open_path_in_background(&mut self, path: &str) {
+        if self.show_if_open(path) {
+            return;
+        }
         if let Some(o) = &self.opening {
             let name = o.name();
             self.set_status(format!("Still opening {name}"));
@@ -65,6 +78,21 @@ impl SlideApp {
                 }
             }
         }
+    }
+
+    /// When the presentation at `path` is already open, bring it forward instead of reading the
+    /// file again, as PowerPoint does: a second copy from disk would show none of the unsaved
+    /// edits, which look lost (#2191). Returns whether it was open.
+    pub(crate) fn show_if_open(&mut self, path: &str) -> bool {
+        let wanted = same_file_key(path);
+        let Some(i) = self.session.documents().iter().position(|d| d.path.as_deref().is_some_and(|p| same_file_key(p) == wanted)) else {
+            return false;
+        };
+        self.session.set_active(i);
+        let title = self.session.active().map(|d| d.title.clone()).unwrap_or_default();
+        self.note_recent(path);
+        self.set_status(format!("{title} is already open"));
+        true
     }
 
     /// Stop waiting for the file being opened; the presentation stays as it is.
@@ -167,6 +195,32 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// #2191: opening the file that is already open shows it, unsaved edits and all, instead of
+    /// a fresh copy from disk.
+    #[test]
+    fn opening_an_open_file_shows_it_with_its_edits() {
+        let path = saved_deck("reopen", 2);
+        let mut app = SlideApp::new(Session::new(), crate::Services::default());
+        app.open_path_in_background(&path);
+        wait(&mut app);
+        app.run("slide.new", serde_json::json!({})).unwrap();
+        app.run("file.new", serde_json::json!({})).unwrap();
+        assert_eq!(app.session.active_index(), Some(1));
+        app.open_path_in_background(&path);
+        assert!(app.opening.is_none(), "nothing is read from disk");
+        assert_eq!(app.session.documents().len(), 2, "no second copy");
+        assert_eq!(app.session.active_index(), Some(0), "the open copy comes forward");
+        let st = app.session.active().unwrap();
+        assert!(st.is_dirty());
+        assert_eq!(st.doc.slides.len(), 3, "with its unsaved slide");
+        assert!(app.status.as_ref().is_some_and(|(m, _)| m.ends_with("is already open")));
+        // The synchronous path does the same.
+        app.session.set_active(1);
+        app.open_path(&path).unwrap();
+        assert_eq!((app.session.documents().len(), app.session.active_index()), (2, Some(0)));
+        std::fs::remove_file(&path).ok();
+    }
+
     #[test]
     fn cancel_drops_the_result() {
         let path = saved_deck("cancel", 2);
@@ -252,7 +306,9 @@ mod tests {
         assert!(app.open_from_system(std::slice::from_ref(&pptx)).is_empty());
         assert!(app.show.is_none());
         assert!(app.open_from_system(&[ppsx.clone(), pptx.clone()]).is_empty());
-        assert_eq!(app.session.documents().len(), 3);
+        // The .pptx is already open, so it comes forward instead of opening twice (#2191).
+        assert_eq!(app.session.documents().len(), 2);
+        assert!(app.session.active().is_some_and(|d| d.path.as_deref() == Some(pptx.as_str())));
         assert!(app.show.is_none(), "the last file is a .pptx");
         std::fs::remove_file(&pptx).ok();
         std::fs::remove_file(&ppsx).ok();

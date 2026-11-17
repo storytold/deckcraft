@@ -306,6 +306,9 @@ impl SlideApp {
     }
 
     pub fn open_path(&mut self, path: &str) -> Result<(), String> {
+        if self.show_if_open(path) {
+            return Ok(());
+        }
         self.session.execute("file.open", &json!({"path": path})).map_err(|e| e.to_string())?;
         self.note_recent(path);
         Ok(())
