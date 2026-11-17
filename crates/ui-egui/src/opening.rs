@@ -89,7 +89,7 @@ impl SlideApp {
             return false;
         };
         self.session.set_active(i);
-        let title = self.session.active().map(|d| d.title.clone()).unwrap_or_default();
+        let title = self.session.active().map(|d| d.title()).unwrap_or_default();
         self.note_recent(path);
         self.set_status(format!("{title} is already open"));
         true
