@@ -300,11 +300,10 @@ fn remap_media(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_
     }
 }
 
-/// Add the clipboard's media to `doc` and return the ids that changed: an id already used in
-/// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it. That
-/// fresh id is shared with equal ordinary bytes already in `doc`. A kept part with relationships
-/// of its own (`own`, #1993) whose id is taken gets an item of its own instead, even over equal
-/// bytes, since its relationships may differ; and ordinary media never share such a part's item.
+/// Add the clipboard's media to `doc` and return the ids that changed: an id `doc` doesn't use is
+/// kept; one it uses for another item gets a fresh id (or an equal item's), and the pasted shapes
+/// must use it. Kept parts with relationships of its own (`own`) and linked items follow the rules
+/// of [`crate::media_refs::MediaInto`] (#1993).
 fn bring_media(
     cmd: &str,
     doc: &mut deckcraft_model::Presentation,
@@ -312,31 +311,11 @@ fn bring_media(
     own: &HashSet<MediaId>,
 ) -> Result<HashMap<MediaId, MediaId>> {
     let mut map = HashMap::new();
-    let mut apart = crate::media_refs::presentation_parts_with_rels(doc);
+    let mut into = crate::media_refs::MediaInto::new(doc);
     for m in media {
-        match doc.media(m.id) {
-            None => {
-                // Keeps the foreign id, so later ids must start past it.
-                doc.media.push(m.clone());
-                doc.next_id = doc.next_id.max(m.id.0);
-                if own.contains(&m.id) {
-                    apart.insert(m.id);
-                }
-            }
-            // Checked before the equal-bytes match: the same id and bytes from another deck can
-            // still carry other relationships.
-            Some(_) if own.contains(&m.id) => {
-                let mut item = m.clone();
-                item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
-                map.insert(m.id, item.id);
-                apart.insert(item.id);
-                doc.media.push(item);
-            }
-            Some(x) if x.data == m.data => {}
-            Some(_) => {
-                let id = crate::media_refs::add_ordinary(doc, m, &apart).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
-                map.insert(m.id, id);
-            }
+        let id = into.bring(doc, m, own.contains(&m.id), true).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
+        if id != m.id {
+            map.insert(m.id, id);
         }
     }
     Ok(map)
@@ -938,5 +917,52 @@ mod tests {
         let (part, target) = (map.get(&MediaId(10)).copied().expect("part"), map.get(&MediaId(11)).copied().expect("target"));
         assert_ne!(part, target, "the ordinary item isn't the owned part");
         assert_eq!(doc.media(target).map(|m| m.data.as_slice()), Some(&b"same"[..]));
+    }
+
+    /// #1993 review: a pasted ordinary item whose id is the one just given to an owned part's copy
+    /// (with equal bytes) isn't taken for that copy.
+    #[test]
+    fn a_pasted_item_with_the_id_just_given_to_an_owned_part_is_not_that_part() {
+        let item = |id: u32, data: &[u8]| deckcraft_model::MediaItem {
+            id: MediaId(id),
+            name: "part.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let mut doc = deckcraft_model::defaults::new_presentation(None);
+        doc.media.push(item(10, b"other"));
+        // The id the owned part's copy will get.
+        let fresh = MediaId(doc.next_id.max(1) + 1);
+        let own = HashSet::from([MediaId(10)]);
+        let map = bring_media("edit.paste", &mut doc, &[item(10, b"same"), item(fresh.0, b"same")], &own).expect("media");
+        assert_eq!(map.get(&MediaId(10)), Some(&fresh), "the owned part's copy takes the next id");
+        let target = map.get(&fresh).copied().unwrap_or(fresh);
+        assert_ne!(target, fresh, "the ordinary item isn't the owned part's copy");
+    }
+
+    /// #1993 review: a pasted linked item whose id the destination uses keeps its link.
+    #[test]
+    fn a_pasted_linked_item_whose_id_is_taken_keeps_its_link() {
+        let mut doc = deckcraft_model::defaults::new_presentation(None);
+        doc.media.push(deckcraft_model::MediaItem {
+            id: MediaId(10),
+            name: "a.png".into(),
+            content_type: "image/png".into(),
+            data: Arc::new(b"bytes".to_vec()),
+            link: None,
+        });
+        doc.next_id = doc.next_id.max(20);
+        let url = "https://example.com/linked.png";
+        let linked = deckcraft_model::MediaItem {
+            id: MediaId(10),
+            name: "linked.png".into(),
+            content_type: "image/png".into(),
+            data: Arc::new(vec![]),
+            link: Some(url.into()),
+        };
+        let map = bring_media("edit.paste", &mut doc, &[linked], &HashSet::new()).expect("media");
+        let id = map.get(&MediaId(10)).copied().expect("remapped");
+        assert_eq!(doc.media(id).and_then(|m| m.link.as_deref()), Some(url));
     }
 }

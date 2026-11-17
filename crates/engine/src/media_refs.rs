@@ -342,18 +342,70 @@ pub fn presentation_parts_with_rels(p: &Presentation) -> HashSet<MediaId> {
     out
 }
 
-/// `doc.add_media` for an ordinary item copied in from another deck: it shares an item with equal
-/// bytes only if that item is ordinary too, never one in `apart` (kept parts with relationships of
-/// their own and the copies made for them, #1993) or a linked item. An ordinary target with the
-/// bytes of the part pointing at it would otherwise become that part. `None` when `doc` has no ids
-/// left.
-pub fn add_ordinary(doc: &mut Presentation, m: &deckcraft_model::MediaItem, apart: &HashSet<MediaId>) -> Option<MediaId> {
-    if let Some(x) = doc.media.iter().find(|x| x.link.is_none() && !apart.contains(&x.id) && x.data == m.data) {
-        return Some(x.id);
+/// Media brought into a destination deck from another (paste, Reuse Slides, accepting a compared
+/// slide), one item at a time, with the one rule all of them follow (#1993). A kept part with
+/// relationships of its own belongs to the objects it was read with, so:
+/// - an incoming such part (`own`) always gets an item of its own;
+/// - such a part already in the destination, or a copy made for an incoming one, is never shared
+///   by another incoming item, by id or by bytes;
+/// - any other item is shared only when it matches exactly: bytes and link alike. A linked item
+///   keeps its link; an ordinary one never becomes a linked item or the part pointing at it.
+pub struct MediaInto {
+    /// Destination items nothing incoming may share: kept parts with relationships of their own,
+    /// the destination's and the copies made for incoming ones.
+    apart: HashSet<MediaId>,
+    /// Each destination id's item (the first with the id, as `Presentation::media`), so a lookup
+    /// by id isn't a search of every item; built on the first lookup.
+    at: Option<std::collections::HashMap<MediaId, usize>>,
+}
+
+impl MediaInto {
+    pub fn new(doc: &Presentation) -> Self {
+        MediaInto { apart: presentation_parts_with_rels(doc), at: None }
     }
-    let id = MediaId(doc.alloc_id()?);
-    doc.media.push(deckcraft_model::MediaItem { id, link: None, ..m.clone() });
-    Some(id)
+
+    /// Bring `m` into `doc` (which only this brings items into while it is in use) and return the
+    /// id to use for it there. `own`: `m` is a kept part with relationships of its own. `keep_id`:
+    /// `m` keeps its own id when `doc` doesn't use it (paste, compare), rather than always taking a
+    /// fresh one (reuse). `None` when `doc` has no ids left.
+    pub fn bring(&mut self, doc: &mut Presentation, m: &deckcraft_model::MediaItem, own: bool, keep_id: bool) -> Option<MediaId> {
+        let same = |x: &deckcraft_model::MediaItem| x.link == m.link && x.data == m.data;
+        if keep_id {
+            let at = self.at.get_or_insert_with(|| {
+                let mut at = std::collections::HashMap::new();
+                for (i, x) in doc.media.iter().enumerate() {
+                    at.entry(x.id).or_insert(i);
+                }
+                at
+            });
+            match at.get(&m.id).and_then(|&i| doc.media.get(i)) {
+                None => {
+                    // Keeps the foreign id, so later ids must start past it.
+                    doc.next_id = doc.next_id.max(m.id.0);
+                    self.push(doc, m.clone(), own);
+                    return Some(m.id);
+                }
+                Some(x) if !own && !self.apart.contains(&m.id) && same(x) => return Some(m.id),
+                Some(_) => {}
+            }
+        }
+        if !own && let Some(x) = doc.media.iter().find(|x| !self.apart.contains(&x.id) && same(x)) {
+            return Some(x.id);
+        }
+        let id = MediaId(doc.alloc_id()?);
+        self.push(doc, deckcraft_model::MediaItem { id, ..m.clone() }, own);
+        Some(id)
+    }
+
+    fn push(&mut self, doc: &mut Presentation, item: deckcraft_model::MediaItem, own: bool) {
+        if own {
+            self.apart.insert(item.id);
+        }
+        if let Some(at) = &mut self.at {
+            at.entry(item.id).or_insert(doc.media.len());
+        }
+        doc.media.push(item);
+    }
 }
 
 fn collect(walk: impl FnOnce(&mut visit::F)) -> Vec<MediaId> {
@@ -464,5 +516,32 @@ mod tests {
         got.sort();
         got.dedup();
         assert_eq!(got, vec![MediaId(9101), MediaId(9102), MediaId(9103)]);
+    }
+
+    /// #1993: what `MediaInto` shares and what it keeps apart, by id and by bytes.
+    #[test]
+    fn media_into_shares_only_exact_matches_and_never_an_owned_part() {
+        let item = |id: u32, data: &[u8], link: Option<&str>| deckcraft_model::MediaItem {
+            id: MediaId(id),
+            name: "m.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: link.map(Into::into),
+        };
+        let mut doc = defaults::new_presentation(None);
+        doc.media.extend([item(10, b"other", None), item(11, b"plain", None), item(12, b"bytes", None)]);
+        let fresh = doc.next_id.max(1) + 1;
+        let mut into = MediaInto::new(&doc);
+        // An owned part whose id is taken gets the next id; an item arriving with that id and the
+        // same bytes isn't that part.
+        assert_eq!(into.bring(&mut doc, &item(10, b"same", None), true, true), Some(MediaId(fresh)));
+        let target = into.bring(&mut doc, &item(fresh, b"same", None), false, true).expect("id");
+        assert_ne!(target, MediaId(fresh));
+        // A linked item whose id is taken keeps its link.
+        let linked = into.bring(&mut doc, &item(12, b"", Some("https://example.com/a.png")), false, true).expect("id");
+        assert_eq!(doc.media(linked).and_then(|m| m.link.as_deref()), Some("https://example.com/a.png"));
+        // Exact matches are still shared, by id or by bytes.
+        assert_eq!(into.bring(&mut doc, &item(11, b"plain", None), false, true), Some(MediaId(11)));
+        assert_eq!(into.bring(&mut doc, &item(500, b"plain", None), false, false), Some(MediaId(11)));
     }
 }

@@ -481,10 +481,8 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) struct MediaCopies {
     /// Source id → destination id.
     map: HashMap<MediaId, MediaId>,
-    /// Destination items ordinary media must not share, though their bytes may be equal: kept
-    /// parts with relationships of their own (the destination's, and the copies made for the
-    /// source's) and linked items. Filled from the destination on first use.
-    apart: Option<HashSet<MediaId>>,
+    /// How items come in, set up from the destination on first use.
+    into: Option<media_refs::MediaInto>,
 }
 
 /// A copy of `src`'s master `m` ready to join `doc`: its media copied in, fresh master, layout and
@@ -517,12 +515,10 @@ pub(crate) fn import_master(
     Ok(m)
 }
 
-/// Copy the source media `used` into `doc` under fresh ids, once each. Identical bytes already in
-/// `doc` are shared, except by a linked item, which keeps its link, and by a kept part with
-/// relationships of its own (`own`, #1993), which keeps them: such a part gets its own item even
-/// when an earlier step (a master, another slide) already mapped its id as plain media. Ordinary
-/// media share only ordinary items, never such a part's (or a link's) item: an ordinary target
-/// with the bytes of the part that points at it would become that part.
+/// Copy the source media `used` into `doc` under fresh ids, once each, sharing only what
+/// [`media_refs::MediaInto`] allows. A kept part with relationships of its own (`own`, #1993) gets
+/// its own item even when an earlier step (a master, another slide) already mapped its id as plain
+/// media.
 fn copy_media(
     cmd: &str,
     doc: &mut Presentation,
@@ -531,22 +527,13 @@ fn copy_media(
     own: &HashSet<MediaId>,
     copies: &mut MediaCopies,
 ) -> Result<()> {
-    let apart = copies.apart.get_or_insert_with(|| media_refs::presentation_parts_with_rels(doc));
+    let into = copies.into.get_or_insert_with(|| media_refs::MediaInto::new(doc));
     for &id in used {
         if copies.map.contains_key(&id) && !own.contains(&id) {
             continue;
         }
         let Some(m) = src.media(id) else { continue };
-        let new = if m.link.is_some() || own.contains(&id) {
-            let mut item = m.clone();
-            item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
-            apart.insert(item.id);
-            let new = item.id;
-            doc.media.push(item);
-            new
-        } else {
-            media_refs::add_ordinary(doc, m, apart).ok_or_else(|| bad(cmd, NO_ID_SPACE))?
-        };
+        let new = into.bring(doc, m, own.contains(&id), false).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
         copies.map.insert(id, new);
     }
     Ok(())
