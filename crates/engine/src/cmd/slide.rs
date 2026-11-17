@@ -303,7 +303,7 @@ fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
         let tail = rest.split_off(to);
         // `doc` is a copy (Session::edit), so an error here leaves the deck as it was.
         if let Some(si) = section
-            && !gap_sections(doc, rest.last().map(|x| x.id), tail.first().map(|x| x.id)).contains(&si)
+            && (si >= doc.sections.len() || !gap_sections(doc, rest.last().map(|x| x.id), tail.first().map(|x| x.id)).contains(&si))
         {
             return Err(bad("slide.move", format!("section {si} does not meet the gap at {to}")));
         }
@@ -931,6 +931,7 @@ mod tests {
     #[test]
     fn a_moved_slide_can_join_the_section_after_the_gap() {
         let (mut s, ids) = deck(5);
+        assert!(s.execute("slide.move", &json!({"ids": [ids[0]], "to": 2, "section": 0})).is_err(), "a deck without sections has no section to join");
         s.execute("section.add", &json!({"name": "A", "at": 0})).expect("A");
         s.execute("section.add", &json!({"name": "B", "at": 3})).expect("B");
         let sections =

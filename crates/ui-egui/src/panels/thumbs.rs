@@ -214,7 +214,7 @@ fn drop_target(rects: &[(usize, Rect)], bars: &[(usize, usize, Rect)], len: usiz
             rects.iter().find(|(i, _)| *i == to).map(|(_, r)| r.min.y + 2.0).or_else(|| rects.last().map(|(_, r)| r.max.y)).unwrap_or(0.0)
         }
     };
-    (to, under.map(|(_, si, _)| *si), line)
+    (to, under.map(|(_, si, _)| *si).or_else(|| above.and_then(|(_, si, _)| si.checked_sub(1))), line)
 }
 
 /// Render the scrollable thumbnail list, scrolling the current slide into view when it changes.
@@ -565,6 +565,10 @@ mod tests {
         let (b, a_last) = (h.get_by_label("B").rect(), h.get_by_label("Slide 4").rect());
         crate::sorter::ui_tests::drag(&mut h, a_last.center(), egui::pos2(b.center().x, b.bottom() + 3.0));
         assert_eq!(sections(&h), [("A".into(), ids[..3].to_vec()), ("B".into(), vec![ids[3], ids[4]])]);
+        // Above its own header, B's first slide ends A.
+        let (b, b_first) = (h.get_by_label("B").rect(), h.get_by_label("Slide 4").rect());
+        crate::sorter::ui_tests::drag(&mut h, b_first.center(), egui::pos2(b.center().x, b.top() - 2.0));
+        assert_eq!(sections(&h), [("A".into(), vec![ids[0], ids[1], ids[2], ids[3]]), ("B".into(), vec![ids[4]])]);
     }
 
     /// #2188: double-clicking a section's header in the pane renames it in place.
