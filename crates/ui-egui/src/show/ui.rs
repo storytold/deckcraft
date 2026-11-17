@@ -299,10 +299,49 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
     pointing
 }
 
+/// Visit whole discrete wheel steps in event order, retaining fractions in `carry`.
+/// Returns whether a discrete wheel event was handled; `visit` can stop the batch. The wheel's
+/// main axis counts: a tilt wheel or Shift+wheel (sent sideways) turns the page as a vertical
+/// wheel does, as the gesture path did before; Ctrl/Cmd+wheel is left to zoom.
+fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32, mut visit: impl FnMut(i32) -> bool) -> bool {
+    let mut has_wheel = false;
+    for event in events {
+        if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
+            && matches!(unit, egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page)
+            && !modifiers.ctrl
+            && !modifiers.command
+        {
+            let along = if delta.x.abs() > delta.y.abs() { delta.x } else { delta.y };
+            if !along.is_finite() || along == 0.0 {
+                continue;
+            }
+            has_wheel = true;
+            // Saturates for a hostile delta; the caller bounds how many steps it takes.
+            let whole = crate::canvas::whole_notches(carry, along) as i32;
+            if whole >= 1 && !visit(if along < 0.0 { whole } else { -whole }) {
+                break;
+            }
+        }
+    }
+    has_wheel
+}
+
+/// The most steps one wheel batch takes: enough to go through every place in the show (each
+/// slide and each of its animation steps, which can take two actions: play, then finish) and the
+/// end screen. Past that a show has ended or, looping, gone all the way round, so a hostile delta
+/// (`i32::MAX` lines) can't keep one frame turning pages.
+fn wheel_step_limit(doc: &Presentation, steps: u32) -> u32 {
+    if steps as usize <= doc.slides.len() {
+        return steps; // below the limit whatever the slides hold
+    }
+    let places = (0..doc.slides.len()).fold(1usize, |n, i| n.saturating_add(2).saturating_add(ShowState::steps(doc, i).saturating_mul(2)));
+    steps.min(u32::try_from(places).unwrap_or(u32::MAX))
+}
+
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     let Fr { ctx, doc, now, srect, pointer, .. } = *f;
-    // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
-    // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
+    // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286).
+    // Both navigation paths below ignore these modified wheel events.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
     if !show.grid
         && !show.ended
@@ -312,10 +351,53 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     {
         show.wheel_zoom(srect, p, lines);
     }
-    // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
+    // Discrete mouse-wheel notches turn the page one step per notch without gesture cooldown (#1724).
+    if !show.pen {
+        let mut carry = show.wheel_carry;
+        let has_wheel = ctx.input(|i| {
+            mouse_wheel_steps(&i.events, &mut carry, |steps| {
+                show.last_swipe = now;
+                // A click in this frame changed the show and queued its action: apply it before a
+                // notch moves on, so its media cues and clock use the slide it was made on.
+                for a in out.actions.drain(..) {
+                    if !show.apply(a, doc, now) {
+                        out.keep = false;
+                        return false;
+                    }
+                }
+                for _ in 0..wheel_step_limit(doc, steps.unsigned_abs()) {
+                    let action = if steps > 0 {
+                        if show.ended {
+                            out.keep = false;
+                            return false;
+                        }
+                        show.state.next(doc)
+                    } else {
+                        show.ended = false;
+                        show.state.prev(doc)
+                    };
+                    // Back on the first slide: nothing more to do for this batch.
+                    if action == ShowAction::None {
+                        break;
+                    }
+                    // Apply before the next notch can change the slide used by media cues.
+                    if !show.apply(action, doc, now) {
+                        out.keep = false;
+                        return false;
+                    }
+                }
+                true
+            })
+        });
+        show.wheel_carry = carry;
+        if has_wheel {
+            return;
+        }
+    }
+    // Read only raw Point events: egui can emit a Line-wheel smoothing tail even after
+    // the cooldown, especially on a stalled frame. The pen ignores swipes while drawing.
     if !show.pen
-        && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
+        && let Some(next) = crate::canvas::page_flick(ctx.input(|i| crate::canvas::trackpad_scroll(&i.events)))
         && now - show.last_swipe > 0.35
     {
         show.last_swipe = now;
@@ -872,5 +954,214 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         }
         let last = show.state.slide;
         let _ = app.run("slide.go", json!({"index": last}));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod wheel_tests {
+    use super::*;
+
+    /// A vertical wheel event of `y` in `unit`s with `modifiers`.
+    fn wheel_event(unit: egui::MouseWheelUnit, y: f32, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::MouseWheel { unit, delta: vec2(0.0, y), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Unknown, modifiers }
+    }
+
+    /// Runs one show frame's wheel and swipe handling on `events` at `now`, applying the actions
+    /// as the show does; returns whether the show keeps running.
+    fn wheel_frame(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, events: Vec<egui::Event>) -> bool {
+        wheel_frame_after(ctx, show, doc, now, vec![], events)
+    }
+
+    /// [`wheel_frame`] with `queued`, the actions earlier input (a click) left for this frame.
+    fn wheel_frame_after(
+        ctx: &egui::Context,
+        show: &mut Show,
+        doc: &std::sync::Arc<Presentation>,
+        now: f64,
+        queued: Vec<ShowAction>,
+        events: Vec<egui::Event>,
+    ) -> bool {
+        let input = egui::RawInput { time: Some(now), events, ..Default::default() };
+        let mut out = Out { keep: true, actions: queued };
+        ctx.run_ui(input, |ui| {
+            let full = ui.max_rect();
+            let f = Fr { ctx: ui.ctx(), doc, doc_uid: 0, now, full, srect: full, clicked: false, secondary: false, pointer: Some(full.center()) };
+            handle_wheel_and_swipe(show, &f, &mut out);
+            for action in out.actions.drain(..) {
+                out.keep &= show.apply(action, doc, now);
+            }
+        })
+        .textures_delta
+        .clear();
+        out.keep
+    }
+
+    /// One frame of plain vertical Line notches, one event per delta.
+    fn wheel(show: &mut Show, doc: &std::sync::Arc<Presentation>, deltas: &[f32]) -> bool {
+        let events = deltas.iter().map(|&y| wheel_event(egui::MouseWheelUnit::Line, y, egui::Modifiers::NONE)).collect();
+        wheel_frame(&egui::Context::default(), show, doc, 1.0, events)
+    }
+
+    #[test]
+    fn opposite_wheel_steps_preserve_boundary_order() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let doc = session.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, false);
+        assert!(wheel(&mut show, &doc, &[1.0, -1.0]));
+        assert_eq!(show.state.slide, 1, "Back at the first slide then Next advances");
+        assert!(wheel(&mut show, &doc, &[-1.0, 1.0]));
+        assert!(!show.ended, "Next at the last slide then Back leaves the end screen");
+        assert_eq!(show.state.slide, 1);
+        assert!(!wheel(&mut show, &doc, &[-3.0]), "stop after exiting the end screen");
+    }
+
+    #[test]
+    fn wheel_applies_media_step_before_entering_the_next_slide() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let mut doc = session.active().unwrap().doc.clone();
+        let id = doc.slides[0].shapes[0].id;
+        std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut doc).slides[0]).animations = vec![deckcraft_model::Animation {
+            shape: id,
+            class: deckcraft_model::AnimClass::Media,
+            effect: "play".into(),
+            delay_ms: 2000,
+            duration_ms: 5000,
+            ..Default::default()
+        }];
+        let mut show = Show::new(&doc, 0, false, false);
+        let action = show.state.next(&doc);
+        assert!(matches!(action, ShowAction::PlayStep(0)));
+        assert!(show.apply(action, &doc, 0.0));
+        assert!(wheel(&mut show, &doc, &[-2.0]));
+        assert_eq!(show.state.slide, 1);
+        assert_eq!(show.media_cues, [(id, "play".to_string())], "the interrupted step cues the original slide's media");
+    }
+
+    /// A click and a wheel notch in one frame: the click's queued `FinishStep` is applied before
+    /// the notch enters the next slide, so the interrupted step still cues its own slide's media.
+    #[test]
+    fn a_click_queued_in_the_same_frame_applies_before_the_wheel() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let mut doc = session.active().unwrap().doc.clone();
+        let id = doc.slides[0].shapes[0].id;
+        std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut doc).slides[0]).animations = vec![deckcraft_model::Animation {
+            shape: id,
+            class: deckcraft_model::AnimClass::Media,
+            effect: "play".into(),
+            delay_ms: 2000,
+            duration_ms: 5000,
+            ..Default::default()
+        }];
+        let mut show = Show::new(&doc, 0, false, false);
+        let play = show.state.next(&doc);
+        assert!(show.apply(play, &doc, 0.0));
+        // The click finishes the playing step (its state change happens now, its action is queued).
+        let click = show.state.next(&doc);
+        assert!(matches!(click, ShowAction::FinishStep(0)), "{click:?}");
+        let notch = wheel_event(egui::MouseWheelUnit::Line, -1.0, egui::Modifiers::NONE);
+        assert!(wheel_frame_after(&egui::Context::default(), &mut show, &doc, 1.0, vec![click], vec![notch]));
+        assert_eq!(show.state.slide, 1);
+        assert_eq!(show.media_cues, [(id, "play".to_string())], "the clicked step cues its own slide's media");
+    }
+
+    #[test]
+    fn stalled_line_wheel_residual_does_not_swipe_but_later_point_input_does() {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..4 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        let doc = session.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, false);
+        let ctx = egui::Context::default();
+        ctx.options_mut(|o| o.input_options.line_scroll_speed = 40.0);
+        assert!(wheel_frame(&ctx, &mut show, &doc, 0.99, vec![]));
+        let line = wheel_event(egui::MouseWheelUnit::Line, -2.0, egui::Modifiers::NONE);
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.0, vec![line]));
+        assert_eq!(show.state.slide, 2, "both wheel steps apply immediately");
+
+        // No intermediate frames drain egui's smoothing before the swipe cooldown expires.
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.5, vec![]));
+        assert_eq!(show.state.slide, 2, "a smoothed wheel tail is not another physical gesture");
+
+        let point = || wheel_event(egui::MouseWheelUnit::Point, -24.0, egui::Modifiers::NONE);
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.6, vec![point()]));
+        assert_eq!(show.state.slide, 3, "real Point input still swipes after the wheel");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.7, vec![point()]));
+        assert_eq!(show.state.slide, 3, "the Point gesture retains its cooldown");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 2.1, vec![point()]));
+        assert_eq!(show.state.slide, 4, "a later Point gesture advances again");
+    }
+
+    #[test]
+    fn point_zoom_modifiers_do_not_swipe_and_pen_ignores_point_input() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let doc = session.active().unwrap().doc.clone();
+        for modifiers in [egui::Modifiers::CTRL, egui::Modifiers::COMMAND] {
+            let mut show = Show::new(&doc, 1, false, false);
+            let ctx = egui::Context::default();
+            let point = wheel_event(egui::MouseWheelUnit::Point, 80.0, modifiers);
+            assert!(wheel_frame(&ctx, &mut show, &doc, 1.0, vec![point]));
+            assert!(show.zoom_view().is_some(), "{modifiers:?}: Point input still zooms");
+            assert!(wheel_frame(&ctx, &mut show, &doc, 1.5, vec![]));
+            assert_eq!(show.state.slide, 1, "{modifiers:?}: zoom and its tail do not navigate");
+
+            show.set_pen(true);
+            let point = wheel_event(egui::MouseWheelUnit::Point, -24.0, egui::Modifiers::NONE);
+            assert!(wheel_frame(&ctx, &mut show, &doc, 2.0, vec![point]));
+            assert_eq!(show.state.slide, 1, "drawing ignores Point swipes");
+            assert!(!show.ended, "drawing cannot enter the end screen");
+        }
+    }
+
+    /// #1733 review: a tilt wheel (sideways Line notches) and Shift+wheel turn the page, as they
+    /// did through the gesture path before discrete notches got their own.
+    #[test]
+    fn tilt_and_shift_wheel_notches_turn_the_page() {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..3 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        let doc = session.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, false);
+        let ctx = egui::Context::default();
+        let tilt = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(-1.0, 0.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        };
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.0, vec![tilt]));
+        assert_eq!(show.state.slide, 1, "a tilt notch is a step");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.1, vec![wheel_event(egui::MouseWheelUnit::Line, -1.0, egui::Modifiers::SHIFT)]));
+        assert_eq!(show.state.slide, 2, "Shift+wheel is a step");
+        assert!(wheel_frame(&ctx, &mut show, &doc, 1.2, vec![wheel_event(egui::MouseWheelUnit::Line, 1.0, egui::Modifiers::SHIFT)]));
+        assert_eq!(show.state.slide, 1, "Shift+wheel back");
+    }
+
+    /// #1733 review: one wheel event claiming billions of lines takes a bounded number of steps:
+    /// rewinding on the first slide stops at once, and a looping show goes round at most once,
+    /// instead of spinning `i32::MAX` times in one frame.
+    #[test]
+    fn a_huge_wheel_delta_takes_a_bounded_number_of_steps() {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut session = deckcraft_engine::Session::with_new();
+            session.execute("slide.new", &json!({})).unwrap();
+            let mut doc = session.active().unwrap().doc.clone();
+            let mut show = Show::new(&doc, 0, false, false);
+            assert!(wheel(&mut show, &doc, &[1.0e12]));
+            assert_eq!(show.state.slide, 0, "back from the first slide stays there");
+            std::sync::Arc::make_mut(&mut doc).show.loop_until_esc = true;
+            let mut show = Show::new(&doc, 0, false, false);
+            assert!(wheel(&mut show, &doc, &[-1.0e12]), "a looping show keeps running");
+            let _ = done.send(());
+        });
+        assert!(finished.recv_timeout(std::time::Duration::from_secs(30)).is_ok(), "the wheel steps never finished");
     }
 }

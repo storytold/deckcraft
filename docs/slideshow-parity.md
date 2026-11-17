@@ -1,5 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-15 · **Change:** minor (tilt and Shift+wheel notches turn the page; one wheel event takes a bounded number of steps, #1724; previous: minor, discrete wheel smoothing tails cannot trigger another swipe, #1724; previous: minor, ordered discrete wheel steps and immediate media cue application, #1724; previous: minor, deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; previous: minor, deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
@@ -15,7 +16,7 @@ ready** (estimated), **10–16 h** to parity.
 | Play from Start / from Current Slide (F5, Shift+F5, Cmd+Enter) | yes | yes | |
 | Next/previous by click, arrows, Space, Page Up/Down, Enter, Backspace | yes | yes | #17 reported arrows not working in v0.3.0 AppImage; recheck |
 | Go to slide (number + Enter), first/last | yes | yes: the digits show as "Go to slide …" until Enter, Backspace, Esc, or 3 seconds | Slide numbers are 1-based; 0 and a number past the end do not move |
-| Next/previous by trackpad swipe or mouse wheel | yes | yes | One flick turns one page. The pen ignores the flick |
+| Next/previous by trackpad swipe or mouse wheel | yes | partial | Line/Page wheel input applies each whole notch in event order without cooldown; fractions accumulate. A tilt wheel or Shift+wheel counts its sideways notches the same way. Smoothing tails do not turn another page, even after a stalled frame. Raw Point input retains the trackpad flick threshold and cooldown: pinned backends do not distinguish pixel-only wheels from trackpads. The pen ignores both |
 | Go to slide (number + Enter), first/last | yes | yes | |
 | Black / white screen (B / W) | yes | yes | |
 | End screen, Esc to leave | yes | yes | |
@@ -80,6 +81,9 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | minor | Tilt-wheel and Shift+wheel Line notches turn the page again; one wheel event is capped at a full pass through the show, and rewinding on the first slide stops at once (#1724 review) |
+| 2026-11-10 | minor | Swipe navigation reads raw Point events, so a discrete wheel's smoothing tail cannot turn another page after a stalled frame; real Point swipes and Ctrl/Cmd wheel zoom remain available (#1724 review) |
+| 2026-11-09 | minor | Discrete wheel steps preserve opposite-direction order at slide boundaries and apply media cues before the next step changes slides (#1724). Pixel-only wheel source metadata remains an upstream prerequisite |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
