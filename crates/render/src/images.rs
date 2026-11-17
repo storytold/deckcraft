@@ -384,6 +384,45 @@ fn pixmap(img: &image::RgbaImage) -> Option<Arc<Pixmap>> {
     Some(Arc::new(Pixmap::from_parts(data, w as u16, h as u16)))
 }
 
+/// The number of frames (image descriptors) in a GIF, read from its block structure without
+/// decoding any pixels; it stops counting at `cap`. A truncated file counts the frames it has.
+fn gif_frame_count(b: &[u8], cap: usize) -> usize {
+    // Skip a run of data sub-blocks (length byte, data) up to the zero-length terminator.
+    let sub_blocks = |mut i: usize| -> Option<usize> {
+        loop {
+            let n = *b.get(i)? as usize;
+            i += 1 + n;
+            if n == 0 {
+                return Some(i);
+            }
+        }
+    };
+    let table = |packed: u8| if packed & 0x80 != 0 { 3usize << ((packed & 7) + 1) } else { 0 };
+    let Some(&screen) = b.get(10) else { return 0 };
+    let mut i = 13 + table(screen);
+    let mut count = 0;
+    while count < cap {
+        match b.get(i) {
+            // Extension: label, then its sub-blocks.
+            Some(0x21) => match sub_blocks(i + 2) {
+                Some(next) => i = next,
+                None => break,
+            },
+            // Image descriptor: 9 bytes, local colour table, LZW code size, image data.
+            Some(0x2C) => {
+                let Some(&packed) = b.get(i + 9) else { break };
+                count += 1;
+                match sub_blocks(i + 10 + table(packed) + 1) {
+                    Some(next) => i = next,
+                    None => break,
+                }
+            }
+            _ => break,
+        }
+    }
+    count
+}
+
 /// Decode every frame of an animated GIF (`None` for a still or broken one).
 fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     use image::{AnimationDecoder, ImageDecoder};
@@ -393,10 +432,15 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     if w == 0 || h == 0 || (w as u64) * (h as u64) > GIF_MAX_CANVAS {
         return None;
     }
-    let k = (GIF_SIDE as f64 / w.max(h) as f64).min(1.0);
-    let (nw, nh) = (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1));
-    let size = nw as usize * nh as usize * 4;
+    // Scale the frames down so all of them fit the budget, rather than keeping only the first
+    // ones: a 1000×560 GIF of 120 frames played its first 29 and looped them (#873).
     let canvas_pixels = (w as u64) * (h as u64);
+    let max_frames = usize::try_from(GIF_MAX_TOTAL_CANVAS_PIXELS / canvas_pixels).unwrap_or(GIF_MAX_FRAMES).min(GIF_MAX_FRAMES);
+    let count = gif_frame_count(bytes, max_frames).max(1);
+    let fit = ((GIF_BUDGET / count / 4) as f64 / (w as f64 * h as f64)).sqrt();
+    let k = (GIF_SIDE as f64 / w.max(h) as f64).min(fit).min(1.0);
+    let (nw, nh) = (((w as f64 * k).floor() as u32).max(1), ((h as f64 * k).floor() as u32).max(1));
+    let size = nw as usize * nh as usize * 4;
     let mut total_canvas_pixels: u64 = 0;
     let (mut frames, mut ends, mut t) = (Vec::new(), Vec::new(), 0.0);
     let mut iter = dec.into_frames();
@@ -709,5 +753,39 @@ mod tests {
         let a = decode_anim(&out, &PictureAdjust::default()).expect("animated");
         assert_eq!(a.frames.len(), GIF_MAX_FRAMES);
         assert_eq!(a.ends.len(), GIF_MAX_FRAMES);
+    }
+
+    /// #873: a GIF whose full-size frames don't all fit the budget plays every frame, smaller,
+    /// instead of looping its first few. 80 frames of 512×512 are 80 MiB at full size.
+    #[test]
+    fn a_long_gif_keeps_every_frame_within_the_budget() {
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        const N: usize = 80;
+        let frames = (0..N).map(|i| {
+            let c = if i == N - 1 { [0, 255, 0, 255] } else { [255, 0, 0, 255] };
+            Frame::from_parts(RgbaImage::from_pixel(512, 512, Rgba(c)), 0, 0, Delay::from_numer_denom_ms(50, 1))
+        });
+        let mut out = Vec::new();
+        image::codecs::gif::GifEncoder::new_with_speed(&mut out, 30).encode_frames(frames).expect("gif");
+        assert_eq!(gif_frame_count(&out, usize::MAX), N);
+        let a = decode_anim(&out, &PictureAdjust::default()).expect("animated");
+        assert_eq!(a.frames.len(), N, "every frame is kept");
+        assert!((a.ends[N - 1] - N as f64 * 0.05).abs() < 1e-9, "the loop lasts the whole GIF");
+        let last = &a.frames[N - 1];
+        assert!(last.width() < 512 && a.frames.iter().map(|f| f.width() as usize * f.height() as usize * 4).sum::<usize>() <= GIF_BUDGET);
+        let px = last.data()[0];
+        assert_eq!((px.r, px.g, px.b), (0, 255, 0), "the last frame is the GIF's own last frame");
+    }
+
+    #[test]
+    fn gif_frame_count_stops_at_the_cap_and_at_a_truncated_frame() {
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        let frames = (0..5).map(|_| Frame::from_parts(RgbaImage::from_pixel(4, 4, Rgba([1, 2, 3, 255])), 0, 0, Delay::from_numer_denom_ms(20, 1)));
+        let mut out = Vec::new();
+        image::codecs::gif::GifEncoder::new(&mut out).encode_frames(frames).expect("gif");
+        assert_eq!(gif_frame_count(&out, usize::MAX), 5);
+        assert_eq!(gif_frame_count(&out, 3), 3);
+        assert!(gif_frame_count(&out[..out.len() / 2], usize::MAX) < 5);
+        assert_eq!(gif_frame_count(b"GIF89a", usize::MAX), 0);
     }
 }
