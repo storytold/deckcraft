@@ -379,6 +379,89 @@ fn svg_only_blip_without_primary_embed_falls_back_to_svg_blip() {
 }
 
 #[test]
+fn linked_svg_companion_and_hyperlink_use_text_color_round_trip() {
+    use deckcraft_model::MediaItem;
+    use deckcraft_model::text::{Action, Hyperlink, Run, RunKind};
+
+    let mut pres = defaults::new_presentation(None);
+    let png = pres.add_media("img.png", "image/png", vec![137, 80, 78, 71, 13, 10, 26, 10]).unwrap();
+    let svg_id = deckcraft_model::MediaId(pres.alloc_id().unwrap());
+    pres.media.push(MediaItem {
+        id: svg_id,
+        name: "linked.svg".into(),
+        content_type: "image/svg+xml".into(),
+        data: Arc::new(Vec::new()),
+        link: Some("https://example.com/linked.svg".into()),
+    });
+
+    let mut pic = shape(&mut pres, "LinkedSvgPic", 50.0, 50.0, 100.0, 100.0);
+    pic.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: png, svg_media: Some(svg_id), ..Default::default() } };
+    pic.click = Some(Hyperlink {
+        action: Action::Url { url: "https://example.com/shape".into() },
+        tooltip: String::new(),
+        highlight_click: false,
+        use_text_color: true,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
+
+    let mut txt = shape(&mut pres, "LinkedText", 50.0, 180.0, 200.0, 60.0);
+    txt.text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            runs: vec![Run {
+                text: "Click".into(),
+                props: RunProps {
+                    link: Some(Hyperlink {
+                        action: Action::Url { url: "https://example.com/run".into() },
+                        tooltip: String::new(),
+                        highlight_click: false,
+                        use_text_color: true,
+                        sound: None,
+                        stop_sound: false,
+                        zoom_return: None,
+                    }),
+                    ..Default::default()
+                },
+                kind: RunKind::Text,
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+
+    let s0 = Arc::make_mut(&mut pres.slides[0]);
+    s0.shapes.push(pic);
+    s0.shapes.push(txt);
+
+    let out = deckcraft_pptx::export(&pres).unwrap();
+    let slide_xml = {
+        use std::io::Read;
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&out)).expect("zip");
+        let mut s = String::new();
+        z.by_name("ppt/slides/slide1.xml").expect("slide1").read_to_string(&mut s).expect("utf8");
+        s
+    };
+    assert!(
+        slide_xml.contains(r#"<ahyp:hlinkClr xmlns:ahyp="http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor" val="tx"/>"#),
+        "{slide_xml}"
+    );
+    assert!(slide_xml.contains(r#"<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:link="#), "{slide_xml}");
+
+    let back = deckcraft_pptx::import(&out).unwrap();
+    let back_pic = by_name(&back, "LinkedSvgPic");
+    let ShapeKind::Picture { fill } = &back_pic.kind else { panic!("expected Picture") };
+    assert_ne!(Some(fill.media), fill.svg_media, "raster and linked SVG must keep distinct MediaIds");
+    let svg_item = back.media.iter().find(|m| Some(m.id) == fill.svg_media).expect("linked svg media item");
+    assert_eq!(svg_item.link.as_deref(), Some("https://example.com/linked.svg"));
+    assert!(back_pic.click.as_ref().expect("shape click").use_text_color);
+
+    let back_txt = by_name(&back, "LinkedText");
+    let run_link = back_txt.text.as_ref().unwrap().paragraphs[0].runs[0].props.link.as_ref().expect("run link");
+    assert!(run_link.use_text_color);
+}
+
+#[test]
 fn paragraph_build_without_bld_lst_still_folds_into_by_paragraph() {
     use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild};
     let mut pres = defaults::new_presentation(None);

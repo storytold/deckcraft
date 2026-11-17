@@ -134,3 +134,41 @@ pub(super) fn action_button(s: &mut Session, p: &Value) -> Result<Value> {
     let id = add_shape(s, "insert.actionButton", shape, true)?;
     Ok(json!({"id": id}))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn hyperlink_use_text_color_preserves_when_omitted_and_clears_when_false() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 50], "text": "LinkWord"})).unwrap();
+        s.execute("text.edit", &json!({})).unwrap();
+        s.execute("text.selectAll", &json!({})).unwrap();
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/a", "useTextColor": true})).unwrap();
+        let run_link = |s: &Session| {
+            s.doc().unwrap().doc.slides[0].shapes.last().unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.link.clone().unwrap()
+        };
+        assert!(run_link(&s).use_text_color);
+
+        // Editing URL without `useTextColor` preserves the existing true flag.
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/b"})).unwrap();
+        assert!(run_link(&s).use_text_color);
+
+        // Explicit `useTextColor: false` clears it.
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/c", "useTextColor": false})).unwrap();
+        assert!(!run_link(&s).use_text_color);
+
+        // Same preserve/clear contract on a shape-level hyperlink.
+        s.execute("text.exit", &json!({})).unwrap();
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/shape1", "useTextColor": true})).unwrap();
+        let shape_link = |s: &Session| s.doc().unwrap().doc.slides[0].shapes.last().unwrap().click.clone().unwrap();
+        assert!(shape_link(&s).use_text_color);
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/shape2"})).unwrap();
+        assert!(shape_link(&s).use_text_color);
+        s.execute("insert.hyperlink", &json!({"url": "https://example.com/shape3", "useTextColor": false})).unwrap();
+        assert!(!shape_link(&s).use_text_color);
+    }
+}
