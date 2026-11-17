@@ -147,7 +147,9 @@ once and tell the user.
 
 People trust DeckCraft with their talks; a crash loses work. **This outranks feature work.**
 - No `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!` in non-test
-  code; no `unsafe` (`unsafe_code = "forbid"`). Every production crate root carries
+  code; no `unsafe` (`unsafe_code = "deny"`). The one exception: the macOS-only
+  `apps/deckcraft/src/font_panel.rs`, which receives the system font panel's picks; each `unsafe`
+  there has a `SAFETY:` comment and a local `#[allow(unsafe_code)]`. Every production crate root carries
   `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 - Errors are `Result<T, E>` + `?`. Input-derived numbers (files, commands, MCP/control params) are
   hostile: `get()` not `[i]`, checked arithmetic, no NaN casts, capped allocations, bounded

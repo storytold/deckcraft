@@ -87,6 +87,7 @@ impl SlideApp {
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_copy: None,
+            builtin_font_dialog: false,
             capture: capture::Capture::default(),
             styled: false,
             restyle: true,

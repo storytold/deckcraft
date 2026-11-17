@@ -12,7 +12,7 @@
 //! levels); see [`logging`].
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 #[cfg(target_os = "macos")]
 mod apple_events;
@@ -20,6 +20,8 @@ mod audio;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod display;
+#[cfg(target_os = "macos")]
+mod font_panel;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
@@ -34,13 +36,26 @@ struct App(
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
     fmv_macos_events::Inbox,
+    /// Format › Font…'s system font panel (see `font_panel`); `None` off the main thread.
+    #[cfg(target_os = "macos")]
+    Option<std::rc::Rc<font_panel::FontPanel>>,
 );
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
+        #[cfg(target_os = "macos")]
+        if let Some(panel) = &self.2 {
+            for pick in panel.picks() {
+                apply_font_pick(&mut self.0, &pick);
+            }
+        }
         self.0.logic(ctx);
+        #[cfg(target_os = "macos")]
+        if let Some(panel) = &self.2 {
+            panel.follow(|| selection_face(&mut self.0));
+        }
     }
     /// Forward native raw input to the wrapped application once per pass.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -143,6 +158,47 @@ fn services(native_wayland: bool) -> Services {
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
         ..Default::default()
+    }
+}
+
+/// The font panel's pick, as one `format.fontDialog` with only what changed.
+#[cfg(target_os = "macos")]
+fn apply_font_pick(app: &mut SlideApp, pick: &font_panel::Pick) {
+    use font_panel::Line;
+    use serde_json::Value;
+    let line = |l: Line| {
+        Value::from(match l {
+            Line::None => "none",
+            Line::Single => "sng",
+            Line::Double => "dbl",
+        })
+    };
+    let mut p = serde_json::Map::new();
+    let mut set = |k: &str, v: Option<Value>| {
+        if let Some(v) = v {
+            p.insert(k.into(), v);
+        }
+    };
+    set("family", pick.family.as_deref().map(Value::from));
+    set("size", pick.size.map(Value::from));
+    set("bold", pick.bold.map(Value::from));
+    set("italic", pick.italic.map(Value::from));
+    set("color", pick.color.map(|[r, g, b]| format!("#{r:02X}{g:02X}{b:02X}").into()));
+    set("underline", pick.underline.map(line));
+    set("strike", pick.strike.map(line));
+    // Errors (nothing selected) go to the status bar.
+    let _ = app.run("format.fontDialog", Value::Object(p));
+}
+
+/// The selection's font, for the font panel to show.
+#[cfg(target_os = "macos")]
+fn selection_face(app: &mut SlideApp) -> font_panel::Face {
+    let st = app.session.execute("format.state", &serde_json::json!({})).unwrap_or_default();
+    font_panel::Face {
+        family: st["font"].as_str().unwrap_or_default().into(),
+        size: st["size"].as_f64().unwrap_or(18.0),
+        bold: st["bold"] == true,
+        italic: st["italic"] == true,
     }
 }
 
@@ -291,6 +347,16 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services(native_wayland));
+            #[cfg(target_os = "macos")]
+            let font_panel = objc2::MainThreadMarker::new().map(|mtm| {
+                let ctx = cc.egui_ctx.clone();
+                std::rc::Rc::new(font_panel::FontPanel::new(mtm, move || ctx.request_repaint()))
+            });
+            #[cfg(target_os = "macos")]
+            if let Some(panel) = font_panel.clone() {
+                app.services.show_fonts =
+                    Some(Box::new(move |family, size, bold, italic| panel.show(font_panel::Face { family: family.into(), size, bold, italic })));
+            }
             // Presenter View asks winit how many displays there are when a show starts.
             #[cfg(all(unix, not(target_os = "macos")))]
             if let Some(window) = cc.winit_window().cloned() {
@@ -326,6 +392,8 @@ fn main() -> eframe::Result {
                 app,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
+                #[cfg(target_os = "macos")]
+                font_panel,
             )))
         }),
     )
@@ -344,6 +412,8 @@ mod tests {
                 SlideApp::new(Session::new(), Services::default()),
                 #[cfg(target_os = "macos")]
                 fmv_macos_events::Inbox::default(),
+                #[cfg(target_os = "macos")]
+                None,
             );
             println!("calling on_exit");
             eframe::App::on_exit(&mut app);
