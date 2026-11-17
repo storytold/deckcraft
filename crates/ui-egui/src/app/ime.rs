@@ -602,7 +602,13 @@ impl SlideApp {
         self.note_settled_composition(ctx);
         // The editing window going away really ends the viewport's context; a merely hidden
         // owner (modal, palette, unfocused field) stays observed as unfocused instead.
-        if self.session.active().is_none() || ctx.input(|i| i.viewport().close_requested()) {
+        let closing = ctx.input(|i| i.viewport().close_requested());
+        if closing && self.session.active().is_some() && self.ime_viewport.is_some_and(|v| v != viewport) {
+            // Another window closing leaves the editing window's composition and guard alone.
+            let _ = self.ime_reset.remove(&viewport);
+            return None;
+        }
+        if self.session.active().is_none() || closing {
             self.ime_interrupt_pending = false;
             if let Some(old) = self.ime_viewport.take() {
                 self.ime_tracker.end_viewport(old);

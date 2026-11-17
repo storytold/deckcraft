@@ -1992,3 +1992,17 @@ fn switching_the_editing_viewport_keeps_the_old_viewports_guard() {
     assert_eq!(h.state().ime_viewport, Some(egui::ViewportId::ROOT), "editing moved to the root window");
     assert!(matches!(h.state().ime_reset_for(other), crate::ImeResetPhase::Suspended { viewport, .. } if viewport == other));
 }
+
+/// Another window closing leaves the editing window's IME state and reset guard alone.
+#[test]
+fn closing_another_window_keeps_the_editing_windows_ime_state() {
+    let mut h = harness(Session::with_new());
+    let other = egui::ViewportId::from_hash_of("deckcraft editing document window");
+    let guard = crate::ImeResetPhase::Suspended { viewport: other, needs_rearm: true, request: None };
+    h.state_mut().ime_viewport = Some(other);
+    h.state_mut().set_ime_reset(other, guard);
+    h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+    h.run_steps(1);
+    assert_eq!(h.state().ime_viewport, Some(other), "the editing window keeps its input method");
+    assert!(matches!(h.state().ime_reset_for(other), crate::ImeResetPhase::Suspended { viewport, .. } if viewport == other));
+}
