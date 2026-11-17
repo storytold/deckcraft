@@ -320,10 +320,10 @@ impl Dictionary {
 
     /// A compound part made of a root and one affix, as Hunspell reads them: a suffix ends the last
     /// part and a prefix starts the first; anywhere else the affix needs `COMPOUNDPERMITFLAG`.
-    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. One whose continuation flags carry `COMPOUNDEND` may only be on the last part. The compound `flag`
-    /// may be on the root or among the affix's continuation flags. German frami
-    /// gives many first parts their flag that way: `Vor/hij` with `SFX j 0 0/xoc` begins
-    /// `Vorschlag` (#2145).
+    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. One whose
+    /// continuation flags carry `COMPOUNDEND` may only be on the last part. The compound `flag`
+    /// may be on the root or among the affix's continuation flags. German frami gives many first
+    /// parts their flag that way: `Vor/hij` with `SFX j 0 0/xoc` begins `Vorschlag` (#2145).
     fn affixed_compound_part(&self, w: &[char], flag: Flag, pos: Pos) -> bool {
         let permit = |a: &Affix| self.compound_permit.is_some_and(|p| a.cont.contains(&p));
         // An affix that itself needs another (`NEEDAFFIX` among its continuation flags) doesn't
