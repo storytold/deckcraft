@@ -774,7 +774,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         if child.button("Close").clicked() {
             out.keep = false;
         }
-        if child.button("▶").clicked() {
+        if child.button("▶").clicked() && !show.finish_transition(now) {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;
@@ -794,7 +794,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
             let a = show.state.prev(doc);
             show.apply(a, doc, now);
         }
-        if b(&mut child, "▶").clicked() {
+        if b(&mut child, "▶").clicked() && !show.finish_transition(now) {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;

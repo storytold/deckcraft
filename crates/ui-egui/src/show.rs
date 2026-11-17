@@ -294,7 +294,7 @@ impl Show {
         self.step_end = now;
     }
 
-    /// A click or a forward key while the slide's transition is still playing finishes the
+    /// A click, a forward key or a Next button while the slide's transition is still playing finishes the
     /// transition instead of going on, as PowerPoint does (#2084): the slide shows in full and the
     /// next animation waits for another click. Returns whether a transition was cut short.
     pub(crate) fn finish_transition(&mut self, now: f64) -> bool {
