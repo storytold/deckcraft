@@ -894,9 +894,9 @@ dependencies = [
 [[package]]
 name = "craft-drawingml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=852d37fcff3d2c09bc7aee57e637d71a9725b04c#852d37fcff3d2c09bc7aee57e637d71a9725b04c"
+source = "git+https://github.com/storytold/craft-libs?rev=cff5af869dbf6926801c9ac63a927d155202ba3b#cff5af869dbf6926801c9ac63a927d155202ba3b"
 dependencies = [
- "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=852d37fcff3d2c09bc7aee57e637d71a9725b04c)",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=cff5af869dbf6926801c9ac63a927d155202ba3b)",
  "kurbo",
  "log",
  "serde",
@@ -1078,7 +1078,7 @@ dependencies = [
 [[package]]
 name = "craft-xml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=852d37fcff3d2c09bc7aee57e637d71a9725b04c#852d37fcff3d2c09bc7aee57e637d71a9725b04c"
+source = "git+https://github.com/storytold/craft-libs?rev=cff5af869dbf6926801c9ac63a927d155202ba3b#cff5af869dbf6926801c9ac63a927d155202ba3b"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",
@@ -1351,7 +1351,7 @@ version = "0.19.0"
 dependencies = [
  "craft-cfb",
  "craft-drawingml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=44d83fa8f635333dcb3c231f87381387a1f5631b)",
- "craft-drawingml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=852d37fcff3d2c09bc7aee57e637d71a9725b04c)",
+ "craft-drawingml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=cff5af869dbf6926801c9ac63a927d155202ba3b)",
  "craft-opc",
  "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=ea24422ae9859dc5da398d0462bc87f8e02e0d10)",
  "deckcraft-color",

@@ -19,7 +19,7 @@ craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9
 craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
 # DrawingML colours, themes and text (craft-libs#778, #792): the model DeckCraft reads and writes.
 # Isolated table XML writer; existing DrawingML model/readers keep their revision.
-craft-drawingml-table = { package = "craft-drawingml", git = "https://github.com/storytold/craft-libs", rev = "852d37fcff3d2c09bc7aee57e637d71a9725b04c" }
+craft-drawingml-table = { package = "craft-drawingml", git = "https://github.com/storytold/craft-libs", rev = "cff5af869dbf6926801c9ac63a927d155202ba3b" }
 craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "44d83fa8f635333dcb3c231f87381387a1f5631b", version = "0.1.0" }
 # internal
 deckcraft-geom = { path = "crates/geom" }
