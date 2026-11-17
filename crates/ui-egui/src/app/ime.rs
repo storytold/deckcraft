@@ -340,14 +340,18 @@ impl SlideApp {
         // still deliver its suffix. Keep the guard bound to its retired owner and treat the new
         // destination as a fresh interruption; only exact reset completion or an observed
         // teardown may clear the terminal metadata.
-        let pending_interrupted = self.ime_terminal_pending.as_ref().is_some_and(|p| {
-            let reference = if p.interrupted {
-                p.interrupted_at
-            } else {
-                Some(ImeTerminalStamp { owner: Some(p.owner), revision: p.revision, anchor: Some(p.anchor), caret: Some(p.caret) })
-            };
-            reference != current_stamp
-        });
+        // Another window's pass compares against that window's selection, not the editing one's.
+        let viewport = self.ime_frame_viewport.unwrap_or_else(|| ctx.viewport_id());
+        let other_window = self.ime_viewport.is_some_and(|v| v != viewport);
+        let pending_interrupted = !other_window
+            && self.ime_terminal_pending.as_ref().is_some_and(|p| {
+                let reference = if p.interrupted {
+                    p.interrupted_at
+                } else {
+                    Some(ImeTerminalStamp { owner: Some(p.owner), revision: p.revision, anchor: Some(p.anchor), caret: Some(p.caret) })
+                };
+                reference != current_stamp
+            });
         if settles == self.ime_settles_seen && !pending_interrupted {
             return;
         }

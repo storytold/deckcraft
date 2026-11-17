@@ -2001,8 +2001,38 @@ fn closing_another_window_keeps_the_editing_windows_ime_state() {
     let guard = crate::ImeResetPhase::Suspended { viewport: other, needs_rearm: true, request: None };
     h.state_mut().ime_viewport = Some(other);
     h.state_mut().set_ime_reset(other, guard);
+    let owner = egui::Id::unique("deckcraft editing window owner");
+    h.state_mut().ime_terminal_pending = Some(crate::ImeTerminalPending {
+        owner,
+        revision: 0,
+        anchor: (0, 0),
+        caret: (0, 0),
+        cancelled: false,
+        interrupted: false,
+        interrupted_at: None,
+    });
     h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
     h.run_steps(1);
     assert_eq!(h.state().ime_viewport, Some(other), "the editing window keeps its input method");
+    assert!(h.state().ime_terminal_pending.as_ref().is_some_and(|p| !p.interrupted), "its pending terminal isn't interrupted");
     assert!(matches!(h.state().ime_reset_for(other), crate::ImeResetPhase::Suspended { viewport, .. } if viewport == other));
+}
+
+/// A pass in another window doesn't interrupt the editing window's pending terminal.
+#[test]
+fn another_windows_pass_keeps_the_editing_windows_pending_terminal() {
+    let mut h = harness(Session::with_new());
+    let other = egui::ViewportId::from_hash_of("deckcraft editing document window");
+    h.state_mut().ime_viewport = Some(other);
+    h.state_mut().ime_terminal_pending = Some(crate::ImeTerminalPending {
+        owner: egui::Id::unique("deckcraft editing window owner"),
+        revision: 0,
+        anchor: (0, 0),
+        caret: (0, 0),
+        cancelled: false,
+        interrupted: false,
+        interrupted_at: None,
+    });
+    h.run_steps(1);
+    assert!(h.state().ime_terminal_pending.as_ref().is_some_and(|p| !p.interrupted && !p.cancelled));
 }
