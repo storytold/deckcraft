@@ -87,11 +87,16 @@ impl SlideApp {
         };
         let Some(o) = self.opening.take() else { return };
         match r {
+            // Opened meanwhile by another route (the system handing over the same file).
+            Ok(_) if self.activate_open(&o.path) => {}
             Ok(f) => {
                 // Into the session through the command path, like file.open: journaled and guarded.
                 let token = self.session.stage_loaded(f);
                 match self.session.execute("file.adopt", &serde_json::json!({"path": o.path, "token": token})) {
-                    Ok(_) => self.note_recent(&o.path),
+                    Ok(_) => {
+                        self.follow_active_deck();
+                        self.note_recent(&o.path);
+                    }
                     Err(e) => self.notify(e.to_string()),
                 }
             }
@@ -167,6 +172,17 @@ mod tests {
         assert_eq!(app.ui.recent.first(), Some(&path));
         // It went in through the command path (journaled like file.open).
         assert_eq!(app.session.journal.last().map(|(id, _)| id.as_str()), Some("file.adopt"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_file_opened_meanwhile_is_not_added_twice() {
+        let path = saved_deck("twice", 2);
+        let mut app = SlideApp::new(Session::new(), crate::Services::default());
+        app.open_path_in_background(&path);
+        app.open_path(&path).unwrap();
+        wait(&mut app);
+        assert_eq!(app.session.documents().len(), 1, "the finished read brings the open copy forward");
         std::fs::remove_file(&path).ok();
     }
 

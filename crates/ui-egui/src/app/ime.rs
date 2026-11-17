@@ -662,8 +662,8 @@ impl SlideApp {
         if self.ime_viewport != Some(viewport)
             && let Some(old) = self.ime_viewport.replace(viewport)
         {
+            // The old window keeps its own reset guard until its reset completes or it closes.
             self.ime_tracker.end_viewport(old);
-            let _ = self.ime_reset.remove(&old);
         }
         let committed = st.selection.text.as_ref().and_then(|t| deckcraft_engine::cmd::text::ime_surrounding(st, t));
         let mut observation =

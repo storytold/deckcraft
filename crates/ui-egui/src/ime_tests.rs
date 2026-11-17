@@ -1977,3 +1977,18 @@ fn close_new_then_edit_before_a_pass_keeps_the_old_terminal_fence_until_exact_re
     assert_eq!(title_text(h.state()), format!("{before}F"));
     assert_eq!(undo_len(h.state()), undo + 1, "only the latest new composition is one undo step");
 }
+
+/// Editing moving to another window leaves the previous window's reset guard in place.
+#[test]
+fn switching_the_editing_viewport_keeps_the_old_viewports_guard() {
+    let mut h = harness(Session::with_new());
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+    h.state_mut().run("text.edit", json!({"id": title})).unwrap();
+    let other = egui::ViewportId::from_hash_of("deckcraft other document window");
+    let guard = crate::ImeResetPhase::Suspended { viewport: other, needs_rearm: true, request: None };
+    h.state_mut().ime_viewport = Some(other);
+    h.state_mut().set_ime_reset(other, guard);
+    h.run_steps(2);
+    assert_eq!(h.state().ime_viewport, Some(egui::ViewportId::ROOT), "editing moved to the root window");
+    assert!(matches!(h.state().ime_reset_for(other), crate::ImeResetPhase::Suspended { viewport, .. } if viewport == other));
+}

@@ -38,6 +38,7 @@ pub struct WindowUi {
     slide_rect: Option<egui::Rect>,
     canvas_region: Option<egui::Rect>,
     ribbon_scroll: HashMap<String, u32>,
+    reuse_target: Option<crate::FileTarget>,
 }
 
 impl Default for WindowUi {
@@ -69,6 +70,7 @@ impl Default for WindowUi {
             slide_rect: None,
             canvas_region: None,
             ribbon_scroll: HashMap::new(),
+            reuse_target: None,
         }
     }
 }
@@ -104,6 +106,7 @@ impl WindowUi {
             slide_rect,
             canvas_region,
             ribbon_scroll,
+            reuse_target,
         } = self;
         swap(dialog, &mut app.dialog);
         swap(backstage, &mut app.backstage);
@@ -130,6 +133,7 @@ impl WindowUi {
         swap(slide_rect, &mut app.slide_rect);
         swap(canvas_region, &mut app.canvas_region);
         swap(ribbon_scroll, &mut app.ribbon_scroll);
+        swap(reuse_target, &mut app.reuse_target);
     }
 }
 
@@ -204,7 +208,7 @@ mod tests {
     use deckcraft_engine::Session;
     use serde_json::json;
 
-    use crate::{Services, SlideApp, dialogs};
+    use crate::{FilePlace, FileTarget, Services, SlideApp, ViewMode, dialogs};
 
     #[test]
     fn each_presentation_keeps_its_own_dialog() {
@@ -258,6 +262,44 @@ mod tests {
         assert_eq!(app.session.active().map(|d| d.uid), Some(saved));
         assert!(app.opening.is_none());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn opening_a_file_leaves_the_other_window_in_its_view() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-open-view-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.pptx").to_string_lossy().to_string();
+        let mut app = SlideApp::new(Session::new(), Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("file.saveAs", json!({"path": path})).unwrap();
+        app.run("file.close", json!({})).unwrap();
+        app.native_windows = true;
+        app.run("file.new", json!({})).unwrap();
+        app.follow_active_deck();
+        let sorter = app.session.active().unwrap().uid;
+        app.ui.view = ViewMode::Sorter;
+        app.open_path(&path).unwrap();
+        assert_eq!(app.ui.view, ViewMode::Normal, "the opened presentation shows in Normal view");
+        app.enter_deck(sorter);
+        assert_eq!(app.ui.view, ViewMode::Sorter, "the other window stays in Slide Sorter");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn each_window_keeps_its_own_reuse_slides_target() {
+        let mut app = SlideApp::new(Session::new(), Services::default());
+        app.native_windows = true;
+        app.run("file.new", json!({})).unwrap();
+        app.follow_active_deck();
+        let first = app.session.active().unwrap().uid;
+        let target = Some(FileTarget::Document { doc: first, place: FilePlace::Unspecified });
+        app.reuse_target = target;
+        app.run("file.new", json!({})).unwrap();
+        app.follow_active_deck();
+        assert_eq!(app.reuse_target, None, "the new window has no Reuse Slides picker open");
+        app.reuse_target = Some(FileTarget::Absent);
+        app.enter_deck(first);
+        assert_eq!(app.reuse_target, target, "the first window's picker still inserts into it");
     }
 
     #[test]

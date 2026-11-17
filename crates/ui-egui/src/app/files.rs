@@ -310,6 +310,7 @@ impl SlideApp {
             return Ok(());
         }
         self.session.execute("file.open", &json!({"path": path})).map_err(|e| e.to_string())?;
+        self.follow_active_deck();
         self.note_recent(path);
         Ok(())
     }
@@ -320,6 +321,7 @@ impl SlideApp {
         let same = |p: &str| p == path || matches!((std::fs::canonicalize(p), std::fs::canonicalize(path)), (Ok(a), Ok(b)) if a == b);
         let Some(i) = self.session.documents().iter().position(|d| d.path.as_deref().is_some_and(same)) else { return false };
         self.session.set_active(i);
+        self.follow_active_deck();
         true
     }
 
