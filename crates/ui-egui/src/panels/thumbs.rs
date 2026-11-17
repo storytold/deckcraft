@@ -20,6 +20,9 @@ pub(crate) struct SlideDrag {
     pub ids: Vec<SlideId>,
     /// The gap under the pointer: 0 is before the first slide, the slide count after the last.
     pub slot: usize,
+    /// The section the slides join, when the pointer picks one at that gap (under a section's
+    /// header); `None` joins the section of the slide before the gap.
+    pub section: Option<usize>,
 }
 
 /// Starts dragging slide `i`: the whole slide selection when `i` is part of it, else `i` alone,
@@ -34,7 +37,7 @@ pub(crate) fn start_slide_drag(app: &mut SlideApp, i: usize) {
     if !selected.contains(&id) {
         let _ = app.run("slide.go", json!({"index": i}));
     }
-    app.thumb_drag = Some(SlideDrag { uid, ids, slot: i });
+    app.thumb_drag = Some(SlideDrag { uid, ids, slot: i, section: None });
 }
 
 /// Whether a slide drag is under way in the active presentation. `button` is whether the
@@ -73,9 +76,15 @@ pub(crate) fn drop_slide_drag(app: &mut SlideApp) {
     if moving.len() != dragged.len() {
         return;
     }
-    if let Some(to) = slides_move_dest(&moving, drag.slot) {
+    // A drop that leaves the slides in place still moves them into another section it picks
+    // (the last slide of one section dropped under the next one's header).
+    let to = slides_move_dest(&moving, drag.slot).or_else(|| {
+        let si = drag.section?;
+        drag.ids.iter().any(|id| st.doc.section_of(*id) != Some(si)).then_some(*moving.first()?)
+    });
+    if let Some(to) = to {
         let ids: Vec<u32> = drag.ids.iter().map(|id| id.0).collect();
-        let _ = app.run("slide.move", json!({"ids": ids, "to": to}));
+        let _ = app.run("slide.move", json!({"ids": ids, "to": to, "section": drag.section}));
     }
 }
 
@@ -112,19 +121,100 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
-/// Slide index -> the first section starting there, built once instead of searched per slide.
-fn section_starts(doc: &deckcraft_model::Presentation) -> std::collections::HashMap<usize, usize> {
+/// Slide index -> the sections whose header bar sits just above that slide, in order: any empty
+/// sections before it, then the section starting there (the first one, when several claim the
+/// slide). Empty sections after the last slide are keyed by the slide count, so every section has
+/// a bar, and a section emptied by Add Section stays visible (#2187).
+fn section_bars(doc: &deckcraft_model::Presentation) -> std::collections::HashMap<usize, Vec<usize>> {
     let mut index_of = std::collections::HashMap::new();
     for (i, s) in doc.slides.iter().enumerate() {
         index_of.entry(s.id).or_insert(i);
     }
-    let mut starts = std::collections::HashMap::new();
+    let mut bars: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    let mut started = HashSet::new();
+    let mut empty = Vec::new();
     for (si, s) in doc.sections.iter().enumerate() {
-        if let Some(&i) = s.slides.first().and_then(|id| index_of.get(id)) {
-            starts.entry(i).or_insert(si);
+        match s.slides.first().and_then(|id| index_of.get(id)) {
+            Some(&i) if started.insert(i) => {
+                let at = bars.entry(i).or_default();
+                at.append(&mut empty);
+                at.push(si);
+            }
+            Some(_) => {}
+            None => empty.push(si),
         }
     }
-    starts
+    if !empty.is_empty() {
+        bars.entry(doc.slides.len()).or_default().append(&mut empty);
+    }
+    bars
+}
+
+/// One section's header bar in the pane: its name and slide count, a context menu, and a
+/// double-click that renames it in place, as in PowerPoint (#2188). Returns its rectangle.
+fn section_bar(app: &mut SlideApp, ui: &mut Ui, uid: u64, si: usize, sec: &deckcraft_model::Section) -> Rect {
+    let t = Tokens::get(ui.ctx());
+    ui.add_space(4.0);
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+    resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &sec.name));
+    crate::widgets::chevron(ui.painter(), pos2(r.min.x + 14.0, r.center().y), 3.0, t.text_dim);
+    let h = crate::sorter::Header { uid, index: si, name: &sec.name, count: sec.slides.len(), first: None };
+    let name_rect = Rect::from_min_max(pos2(r.min.x + 20.0, r.min.y + 1.0), pos2(r.max.x - 8.0, r.max.y - 1.0));
+    if !crate::sorter::rename_field(app, ui, name_rect, &h, theme::font(12.0)) {
+        ui.painter().text(
+            pos2(r.min.x + 24.0, r.center().y),
+            Align2::LEFT_CENTER,
+            format!("{}  ({})", sec.name, sec.slides.len()),
+            theme::font(12.0),
+            t.text_dim,
+        );
+    }
+    if resp.double_clicked() && app.sorter.renaming.is_none() {
+        crate::sorter::start_rename(app, uid, si, &sec.name);
+    }
+    resp.context_menu(|ui| {
+        if ui.button("Rename Section…").clicked() {
+            let mut d = crate::dialogs::Dialog::new("renameSection");
+            d.params = json!({"index": si, "name": sec.name});
+            app.dialog = Some(d);
+            ui.close();
+        }
+        if ui.button("Remove Section").clicked() {
+            let _ = app.run("section.remove", json!({"index": si}));
+            ui.close();
+        }
+        if ui.button("Remove Section & Slides").clicked() {
+            let _ = app.run("section.remove", json!({"index": si, "slides": true}));
+            ui.close();
+        }
+        if ui.button("Move Section Up").clicked() {
+            let _ = app.run("section.move", json!({"index": si, "to": si.saturating_sub(1)}));
+            ui.close();
+        }
+        if ui.button("Move Section Down").clicked() {
+            let _ = app.run("section.move", json!({"index": si, "to": si + 1}));
+            ui.close();
+        }
+    });
+    r
+}
+
+/// Where a slide drag at height `y` drops in the pane: the gap (as `SlideDrag::slot`), the section
+/// the slides join, and the height of the insertion line. `rects` are the thumbnails and `bars`
+/// the section header bars with their gaps. Under a bar, the slides join that section at its
+/// start; above the bars of a gap, the section before it (#2185).
+fn drop_target(rects: &[(usize, Rect)], bars: &[(usize, usize, Rect)], len: usize, y: f32) -> (usize, Option<usize>, f32) {
+    let to = rects.iter().find(|(_, r)| y < r.center().y).map_or(len, |(i, _)| *i);
+    let under = bars.iter().rfind(|(slot, _, r)| *slot == to && r.center().y < y);
+    let above = bars.iter().find(|(slot, _, _)| *slot == to);
+    let line = match (under, above) {
+        (Some((_, _, r)), _) => r.max.y + 2.0,
+        (None, Some((_, _, r))) => r.min.y - 2.0,
+        (None, None) => {
+            rects.iter().find(|(i, _)| *i == to).map(|(_, r)| r.min.y + 2.0).or_else(|| rects.last().map(|(_, r)| r.max.y)).unwrap_or(0.0)
+        }
+    };
+    (to, under.map(|(_, si, _)| *si), line)
 }
 
 /// Render the scrollable thumbnail list, scrolling the current slide into view when it changes.
@@ -150,47 +240,17 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     let ppp = ui.ctx().pixels_per_point();
     let mut budget = 3u32;
     let mut rects = vec![];
-    let section_starts = section_starts(&doc);
+    let section_bars = section_bars(&doc);
+    let uid = st.uid;
+    crate::sorter::drop_stale_rename(app, uid, doc.sections.len());
+    // Each header bar drawn, with the gap it sits in, for dropping slides under it (#2185).
+    let mut bars: Vec<(usize, usize, Rect)> = Vec::new();
     let mut need_more = false;
     for i in 0..doc.slides.len() {
-        if let Some(si) = section_starts.get(&i)
-            && let Some(sec) = doc.sections.get(*si)
-        {
-            ui.add_space(4.0);
-            let (r, resp) = ui.allocate_exact_size(vec2(width, 22.0), Sense::click());
-            let p = ui.painter();
-            crate::widgets::chevron(p, pos2(r.min.x + 14.0, r.center().y), 3.0, t.text_dim);
-            p.text(
-                pos2(r.min.x + 24.0, r.center().y),
-                Align2::LEFT_CENTER,
-                format!("{}  ({})", sec.name, sec.slides.len()),
-                theme::font(12.0),
-                t.text_dim,
-            );
-            resp.context_menu(|ui| {
-                if ui.button("Rename Section…").clicked() {
-                    let mut d = crate::dialogs::Dialog::new("renameSection");
-                    d.params = json!({"index": si, "name": sec.name});
-                    app.dialog = Some(d);
-                    ui.close();
-                }
-                if ui.button("Remove Section").clicked() {
-                    let _ = app.run("section.remove", json!({"index": si}));
-                    ui.close();
-                }
-                if ui.button("Remove Section & Slides").clicked() {
-                    let _ = app.run("section.remove", json!({"index": si, "slides": true}));
-                    ui.close();
-                }
-                if ui.button("Move Section Up").clicked() {
-                    let _ = app.run("section.move", json!({"index": si, "to": si.saturating_sub(1)}));
-                    ui.close();
-                }
-                if ui.button("Move Section Down").clicked() {
-                    let _ = app.run("section.move", json!({"index": si, "to": si + 1}));
-                    ui.close();
-                }
-            });
+        for &si in section_bars.get(&i).into_iter().flatten() {
+            if let Some(sec) = doc.sections.get(si) {
+                bars.push((i, si, section_bar(app, ui, uid, si, sec)));
+            }
         }
         let (row, resp) = ui.allocate_exact_size(vec2(width, th + 16.0), Sense::click_and_drag());
         let label = format!("Slide {}", i + 1);
@@ -265,6 +325,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         }
         resp.context_menu(|ui| slide_menu(app, ui, i));
     }
+    for &si in section_bars.get(&doc.slides.len()).into_iter().flatten() {
+        if let Some(sec) = doc.sections.get(si) {
+            bars.push((doc.slides.len(), si, section_bar(app, ui, uid, si, sec)));
+        }
+    }
     if need_more {
         ui.ctx().request_repaint();
     }
@@ -275,17 +340,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     // Drag reorder: insertion line.
     if slide_drag_live(app, drag_button(ui)) {
         if let Some(pp) = ui.input(|i| i.pointer.interact_pos()) {
-            let mut to = doc.slides.len();
-            for (i, r) in &rects {
-                if pp.y < r.center().y {
-                    to = *i;
-                    break;
-                }
-            }
+            let (to, section, y) = drop_target(&rects, &bars, doc.slides.len(), pp.y);
             if let Some(d) = app.thumb_drag.as_mut() {
                 d.slot = to;
+                d.section = section;
             }
-            let y = rects.iter().find(|(i, _)| *i == to).map(|(_, r)| r.min.y + 2.0).or_else(|| rects.last().map(|(_, r)| r.max.y)).unwrap_or(0.0);
             ui.painter().line_segment([pos2(26.0, y), pos2(width, y)], Stroke::new(2.0, t.accent));
         }
         if ui.input(|i| i.pointer.any_released()) {
@@ -449,23 +508,81 @@ mod tests {
     }
 
     #[test]
-    fn section_starts_map_each_first_slide_to_its_first_section() {
+    fn section_bars_give_every_section_a_bar() {
         let mut s = Session::with_new();
         for _ in 0..3 {
             s.execute("slide.new", &json!({})).unwrap();
         }
         let mut doc = (*s.active().unwrap().doc).clone();
         let ids: Vec<_> = doc.slides.iter().map(|sl| sl.id).collect();
+        let n = doc.slides.len();
         doc.sections = vec![
             deckcraft_model::Section { name: "a".into(), slides: vec![ids[0], ids[1]] },
             deckcraft_model::Section { name: "dup".into(), slides: vec![ids[0]] },
-            deckcraft_model::Section { name: "c".into(), slides: vec![ids[2]] },
+            deckcraft_model::Section { name: "emptied".into(), slides: vec![] },
+            deckcraft_model::Section { name: "c".into(), slides: ids[2..].to_vec() },
             deckcraft_model::Section { name: "empty".into(), slides: vec![] },
         ];
-        let starts = section_starts(&doc);
-        assert_eq!(starts.get(&0), Some(&0), "the first section starting at a slide wins");
-        assert_eq!(starts.get(&2), Some(&2));
-        assert_eq!(starts.len(), 2);
+        let bars = section_bars(&doc);
+        assert_eq!(bars.get(&0), Some(&vec![0]), "the first section starting at a slide wins");
+        assert_eq!(bars.get(&2), Some(&vec![2, 3]), "an empty section sits just above the next one (#2187)");
+        assert_eq!(bars.get(&n), Some(&vec![4]), "a trailing empty section sits after the last slide");
+        assert_eq!(bars.len(), 3);
+    }
+
+    fn sections(h: &Harness<'_, SlideApp>) -> Vec<(String, Vec<u32>)> {
+        h.state().session.active().unwrap().doc.sections.iter().map(|s| (s.name.clone(), s.slides.iter().map(|id| id.0).collect())).collect()
+    }
+
+    /// #2187: adding a section at a section's first slide leaves the old one in the pane, empty.
+    #[test]
+    fn an_emptied_section_keeps_its_bar() {
+        let (mut h, _) = tall_harness(4);
+        h.state_mut().run("section.add", json!({"name": "Intro", "at": 0})).unwrap();
+        h.state_mut().run("section.add", json!({"name": "Body", "at": 0})).unwrap();
+        h.run_steps(3);
+        assert!(h.query_by_label("Intro").is_some(), "the emptied section still has its bar");
+        assert!(h.query_by_label("Body").is_some());
+    }
+
+    /// #2185: a slide dropped just under a section's header joins that section at its start;
+    /// dropped just above the header, it ends the section before.
+    #[test]
+    fn dropping_under_a_section_header_moves_the_slide_to_its_start() {
+        let (mut h, ids) = tall_harness(5);
+        h.state_mut().run("section.add", json!({"name": "A", "at": 0})).unwrap();
+        h.state_mut().run("section.add", json!({"name": "B", "at": 3})).unwrap();
+        h.run_steps(3);
+        let (b, last) = (h.get_by_label("B").rect(), h.get_by_label("Slide 5").rect());
+        crate::sorter::ui_tests::drag(&mut h, last.center(), egui::pos2(b.center().x, b.bottom() + 3.0));
+        assert_eq!(order(&h), [ids[0], ids[1], ids[2], ids[4], ids[3]]);
+        assert_eq!(sections(&h), [("A".into(), ids[..3].to_vec()), ("B".into(), vec![ids[4], ids[3]])]);
+        // Above B's header: the end of A.
+        let (b, last) = (h.get_by_label("B").rect(), h.get_by_label("Slide 5").rect());
+        crate::sorter::ui_tests::drag(&mut h, last.center(), egui::pos2(b.center().x, b.top() - 2.0));
+        assert_eq!(sections(&h), [("A".into(), vec![ids[0], ids[1], ids[2], ids[3]]), ("B".into(), vec![ids[4]])]);
+        // And back under B's header from the end of A: the slide stays put but changes section.
+        let (b, a_last) = (h.get_by_label("B").rect(), h.get_by_label("Slide 4").rect());
+        crate::sorter::ui_tests::drag(&mut h, a_last.center(), egui::pos2(b.center().x, b.bottom() + 3.0));
+        assert_eq!(sections(&h), [("A".into(), ids[..3].to_vec()), ("B".into(), vec![ids[3], ids[4]])]);
+    }
+
+    /// #2188: double-clicking a section's header in the pane renames it in place.
+    #[test]
+    fn double_clicking_a_section_header_renames_it() {
+        let (mut h, _) = tall_harness(3);
+        h.state_mut().run("section.add", json!({"name": "Alpha", "at": 1})).unwrap();
+        h.run_steps(3);
+        let alpha = h.get_by_label("Alpha").rect().center();
+        crate::sorter::ui_tests::double_click(&mut h, alpha);
+        assert!(h.state().sorter.renaming.is_some(), "a double-click starts an inline rename");
+        h.event(egui::Event::Text("Chapter".into()));
+        h.run_steps(1);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        let names: Vec<String> = sections(&h).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["Default Section", "Chapter"], "the typed text replaces the selected name");
+        assert!(h.state().sorter.renaming.is_none());
     }
 
     /// Vertical scroll offset of the thumbnail pane, as recorded each frame by `show`.
