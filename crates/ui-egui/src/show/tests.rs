@@ -1665,7 +1665,7 @@ mod grid_regressions {
 
     #[test]
     fn every_visible_thumbnail_eventually_renders_above_128_cells() {
-        let doc = empty_deck(200);
+        let doc = std::sync::Arc::new(empty_deck(200));
         let full = Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 2560.0));
         let frame = grid_frame(full, &doc);
         let slides: Vec<usize> = (0..doc.slides.len()).collect();
@@ -1726,7 +1726,7 @@ mod grid_regressions {
     }
     #[test]
     fn grid_cache_releases_offscreen_previews_and_finishes_repainting() {
-        let doc = empty_deck(200);
+        let doc = std::sync::Arc::new(empty_deck(200));
         let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
         let ctx = egui::Context::default();
         theme::install_fonts(&ctx);
@@ -1747,6 +1747,37 @@ mod grid_regressions {
             assert!(!ctx.has_requested_repaint(), "a fully loaded grid must stop requesting immediate repaints");
         }
         assert!(show.thumbs.iter().any(|(i, _)| *i == 199), "the last slide loads after scrolling");
+    }
+
+    #[test]
+    fn grid_previews_are_rendered_again_after_the_document_changes() {
+        let doc = std::sync::Arc::new(empty_deck(3));
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut show = Show::new(&doc, 0, false, false);
+        show.open_grid(false, &doc);
+        let paint = |show: &mut Show, doc: &std::sync::Arc<Presentation>| {
+            ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+                zoom::paint_grid(ui.painter(), ui.ctx(), show, doc, full);
+            })
+            .textures_delta
+            .clear();
+        };
+        let preview = |show: &Show, i: usize| show.thumbs.iter().find(|(k, _)| *k == i).map(|(_, t)| t.id());
+        paint(&mut show, &doc);
+        let before = preview(&show, 0);
+        assert!(before.is_some(), "the first slide's preview is rendered");
+        paint(&mut show, &doc);
+        assert_eq!(preview(&show, 0), before, "an unchanged document keeps its previews");
+        // Moving a slide keeps the indices and the preview size, but not what is at index 0.
+        let mut moved = (*doc).clone();
+        moved.slides.swap(0, 1);
+        let moved = std::sync::Arc::new(moved);
+        paint(&mut show, &moved);
+        let after = preview(&show, 0);
+        assert!(after.is_some(), "the moved slide's preview is rendered");
+        assert_ne!(after, before, "index 0 must not keep the preview of the slide that moved away");
     }
 
     #[test]
@@ -1787,8 +1818,9 @@ mod review_round_two {
         doc.sections.clear();
         let ctx = egui::Context::default();
         let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let shared = std::sync::Arc::new(doc.clone());
         ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
-            super::super::zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &doc, full);
+            super::super::zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &shared, full);
         })
         .textures_delta
         .clear();

@@ -94,6 +94,9 @@ pub struct Show {
     pub zoom_arm: bool,
     zoom: Option<Zoom>,
     thumbs: Vec<(usize, TextureHandle)>,
+    /// The presentation `thumbs` were rendered from. An edit makes a new one, so a moved slide
+    /// cannot keep the preview of the slide that was at its index before.
+    thumbs_doc: Option<std::sync::Arc<Presentation>>,
     pen: bool,
     /// A dot that follows the pointer and leaves no ink (`Cmd/Ctrl+L`).
     laser: bool,
@@ -270,6 +273,7 @@ impl Show {
             zoom_arm: false,
             zoom: None,
             thumbs: vec![],
+            thumbs_doc: None,
             pen: false,
             laser: false,
             strokes: vec![],

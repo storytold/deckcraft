@@ -545,7 +545,7 @@ pub(super) fn slide_box(srect: Rect, uv: Rect, (slide_w, slide_h): (f32, f32), (
 }
 
 /// Paint bounded section tabs and the visible slide previews with shared hit-test geometry.
-pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mut Show, doc: &Presentation, full: Rect) {
+pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, full: Rect) {
     show.normalize_grid_filter(doc);
     let t = theme::Tokens::get(ctx);
     painter.rect_filled(full, CornerRadius::ZERO, Color32::from_gray(16));
@@ -603,6 +603,11 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
 
     // Keep only the thumbnails the grid is showing: a 300-slide deck must not keep 300 textures.
     let visible: Vec<usize> = layout.cells.iter().map(|c| c.slide).collect();
+    // Previews of an earlier document may show other slides at the same indices: drop them all.
+    if show.thumbs_doc.as_ref().is_none_or(|d| !std::sync::Arc::ptr_eq(d, doc)) {
+        show.thumbs.clear();
+        show.thumbs_doc = Some(doc.clone());
+    }
     let thumb_size = grid_thumb_size(ctx, doc, visible.len());
     show.thumbs.retain(|(i, texture)| visible.contains(i) && texture.size() == [thumb_size.0 as usize, thumb_size.1 as usize]);
     // A scrolled row can start above the grid; clip it so it never paints over the title or tabs.
