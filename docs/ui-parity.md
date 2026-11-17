@@ -1,5 +1,6 @@
 # UI parity with PowerPoint
 
+> **Last reviewed:** 2026-11-09 · **Last updated:** 2026-11-09 · **Change:** trivial (explicit clipboard/Delete slide scope and master-thumbnail safety, #1845; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -116,6 +117,13 @@ group/ungroup, bold/italic/underline, alignment, font size, list levels, Format 
 dialog (Cmd+T), show from start/current, view switching. Not yet: Cmd+F Find opening a find bar on the slide, Option+drag
 precision without snapping, F6 pane cycling, ribbon KeyTips (Windows).
 
+Cut/Copy shortcuts scope slides only when the slide list has the keyboard and the editing target
+is presentation slides, never a master or layout. Ribbon Cut/Copy keep a slide-only selection's
+explicit scope after clicking the ribbon. Plain Delete removes selected slides when the slide
+list is focused and no text or shapes are selected; Backspace is unchanged. Engine callers must
+pass `{"scope":"slides"}` explicitly for slide Cut/Copy/Delete: an unscoped call never falls back
+from an empty shape selection to deleting presentation slides (#1845).
+
 ### Text editing keys
 
 Observed black-box in PowerPoint for Windows (Microsoft 365, October 2026) on synthetic text, and
@@ -227,3 +235,4 @@ consistency is open (#73, #56).
 | 2026-10-12 | minor | Text editing keys: Ctrl+arrows, Ctrl+Backspace/Delete, Ctrl+Up/Down, Home/End on wrapped lines, Shift+F3, font size keys, as observed in PowerPoint for Windows (#268) |
 | 2026-10-11 | minor | Tab in text boxes keeps editing (#78) |
 | 2026-10-10 | major | Created: shell, panes and dialogs, direct manipulation, shortcuts and visual fidelity against PowerPoint 16.113 |
+| 2026-11-09 | trivial | Ribbon slide Cut/Copy and focused plain Delete use explicit slide scope; master/layout clipboard shortcuts never target presentation slides (#1845) |
