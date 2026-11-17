@@ -264,6 +264,9 @@ pub fn slice(body: &TextBody, a: Pos, b: Pos) -> TextBody {
 
 /// Insert a formatted body at `pos` (paste): first paragraph merges into the current one.
 pub fn insert_body(body: &mut TextBody, pos: Pos, src: &TextBody) -> Pos {
+    if body.paragraphs.is_empty() {
+        body.paragraphs.push(Paragraph::default());
+    }
     let mut caret = clamp(body, pos);
     // Plain text runs go straight in at the run index after the previous one and the paragraph is
     // normalized once, not rescanned and merged for every source run.
@@ -420,10 +423,22 @@ fn smart_space(body: &mut TextBody, at: Pos) -> Pos {
     at
 }
 
-/// The position after the grapheme cluster at `pos`, or the next paragraph's start at a paragraph end.
+/// The position after the grapheme cluster at `pos` (or the end of an atomic run), or the next paragraph's start at a paragraph end.
 pub fn cluster_end(body: &TextBody, pos: Pos) -> Pos {
     let (pi, ch) = clamp(body, pos);
-    let text = body.paragraphs.get(pi).map(Paragraph::text).unwrap_or_default();
+    let Some(p) = body.paragraphs.get(pi) else { return (0, 0) };
+    let mut acc = 0;
+    for r in &p.runs {
+        let len = r.char_len();
+        if ch < acc + len {
+            if r.kind != RunKind::Text {
+                return (pi, acc + len);
+            }
+            break;
+        }
+        acc += len;
+    }
+    let text = p.text();
     // Boundaries come from the whole paragraph, so a caret inside a cluster deletes only to its end.
     let mut end = 0;
     for g in text.graphemes(true) {
@@ -435,12 +450,21 @@ pub fn cluster_end(body: &TextBody, pos: Pos) -> Pos {
     char_move(body, pos, true)
 }
 
-/// One character left/right across paragraph boundaries.
+/// One character left/right across paragraph boundaries (atomic runs like equations and fields step as one).
 pub fn char_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     let (pi, ch) = clamp(body, pos);
-    let n = body.paragraphs.get(pi).map(Paragraph::char_len).unwrap_or(0);
+    let Some(p) = body.paragraphs.get(pi) else { return (0, 0) };
+    let n = p.char_len();
     if forward {
         if ch < n {
+            let mut acc = 0;
+            for r in &p.runs {
+                let len = r.char_len();
+                if ch < acc + len {
+                    return if r.kind != RunKind::Text { (pi, acc + len) } else { (pi, ch + 1) };
+                }
+                acc += len;
+            }
             (pi, ch + 1)
         } else if pi + 1 < body.paragraphs.len() {
             (pi + 1, 0)
@@ -448,6 +472,14 @@ pub fn char_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
             (pi, ch)
         }
     } else if ch > 0 {
+        let mut acc = 0;
+        for r in &p.runs {
+            let len = r.char_len();
+            if ch <= acc + len {
+                return if r.kind != RunKind::Text { (pi, acc) } else { (pi, ch - 1) };
+            }
+            acc += len;
+        }
         (pi, ch - 1)
     } else if pi > 0 {
         (pi - 1, body.paragraphs.get(pi - 1).map(Paragraph::char_len).unwrap_or(0))

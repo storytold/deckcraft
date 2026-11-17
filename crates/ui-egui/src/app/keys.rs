@@ -48,6 +48,7 @@ impl SlideApp {
     }
 
     /// Keyboard and clipboard for the slide (when no text field has focus).
+    #[allow(clippy::cognitive_complexity)]
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
         // Ctrl+V with only an image on the clipboard: egui-winit sends no Paste event and swallows the
@@ -132,6 +133,9 @@ impl SlideApp {
                     Err(e) => self.set_status(e),
                 },
                 egui::Event::Text(t) => {
+                    if std::mem::take(&mut self.swallow_text) || ctx.input(|i| i.modifiers.command || i.modifiers.ctrl) {
+                        continue;
+                    }
                     let revision = self.session.active().map(|d| d.revision);
                     if self.session.active().is_some_and(|d| d.selection.text.is_some() || d.selection.shapes.len() == 1)
                         && let Err(e) = self.session.type_text(&t)
@@ -148,6 +152,17 @@ impl SlideApp {
                 egui::Event::Paste(text) => {
                     // Our own marker for objects without text: paste what the session copied.
                     let text = if text == OBJECTS_MARKER { String::new() } else { text };
+                    if self.session.active().is_some_and(|d| d.selection.math.is_some()) {
+                        let revision = self.session.active().map(|d| d.revision);
+                        let params = if text.is_empty() { json!({}) } else { json!({"text": text}) };
+                        if let Err(e) = self.session.execute("edit.paste", &params) {
+                            self.set_status(e.to_string());
+                        }
+                        if self.session.active().map(|d| d.revision) != revision {
+                            self.note_application_edit(ctx);
+                        }
+                        continue;
+                    }
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
                     // Text keeps its HTML (bold, italic, underline) when the host can read it.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
@@ -177,6 +192,7 @@ impl SlideApp {
                     }
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                    self.swallow_text = false;
                     if key == egui::Key::Tab {
                         // The slide has the keyboard, so Tab is ours (indent, tab character, next
                         // shape). Left to egui it would also focus the first ribbon widget, and
@@ -189,12 +205,16 @@ impl SlideApp {
                     }
                     let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
                     if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
+                        self.swallow_text = modifiers.alt;
                         continue;
                     }
                     let name = key_name(key);
                     let revision = self.session.active().map(|d| d.revision);
                     match self.session.key(name, mods) {
-                        Ok(_) => {}
+                        Ok(v) => {
+                            let handled = v.get("handled").and_then(Value::as_bool).unwrap_or(false);
+                            self.swallow_text = handled && modifiers.alt;
+                        }
                         Err(e) => self.set_status(e.to_string()),
                     }
                     if self.session.active().map(|d| d.revision) != revision {

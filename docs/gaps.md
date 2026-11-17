@@ -277,10 +277,6 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   cells.
 - **Estimate:** 2–4 h.
 
-### Equations
-- **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
-- **Estimate:** 3–6 h to review, land and round-trip.
-
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
 `insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
@@ -368,6 +364,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Equations gap closed (`insert.equation`, Equation tab, OMML round trip, PDF text layer) |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

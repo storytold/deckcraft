@@ -3,6 +3,7 @@
 pub(crate) mod chart;
 mod chartex;
 pub(crate) mod dml;
+pub(crate) mod math;
 mod shapes;
 mod theme;
 mod timing;

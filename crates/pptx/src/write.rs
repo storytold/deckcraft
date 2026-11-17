@@ -2,6 +2,7 @@
 
 pub(crate) mod chart;
 pub(crate) mod dml;
+pub(crate) mod math;
 mod shapes;
 mod theme;
 mod timing;

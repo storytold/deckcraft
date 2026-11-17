@@ -66,6 +66,22 @@ impl Session {
             self.tool.edit_segment = None;
             return Ok(json!({"handled": true, "command": "shape.editPoints"}));
         }
+        let in_math = self.active().is_some_and(|d| d.selection.math.is_some());
+        if in_math && !mods.cmd && !mods.alt {
+            let r = match k {
+                "left" | "right" | "up" | "down" | "home" | "end" if !mods.shift => Some(self.execute("equation.move", &json!({"dir": k}))),
+                "tab" => Some(self.execute("equation.move", &json!({"dir": if mods.shift { "prev" } else { "next" }}))),
+                "backspace" => Some(self.execute("equation.backspace", &json!({}))),
+                "delete" => Some(self.execute("equation.delete", &json!({}))),
+                "enter" | "return" => Some(self.execute("equation.enter", &json!({}))),
+                "escape" | "esc" => Some(self.execute("equation.exit", &json!({}))),
+                _ => None,
+            };
+            if let Some(r) = r {
+                let r = r?;
+                return Ok(json!({"handled": true, "result": r}));
+            }
+        }
         if editing && let Some((id, params)) = self.text_key(k, mods) {
             let r = self.execute(id, &params)?;
             return Ok(json!({"handled": true, "command": id, "result": r}));
@@ -232,6 +248,9 @@ impl Session {
     /// Type text: into the text being edited, or (a shape selected) start editing it.
     pub fn type_text(&mut self, text: &str) -> Result<Value> {
         let st = self.doc()?;
+        if st.selection.math.is_some() {
+            return self.execute("equation.type", &json!({"text": text}));
+        }
         if st.selection.text.is_none() {
             let Some(id) = st.selection.shapes.first().copied() else { return Ok(json!({"handled": false})) };
             if st.selection.shapes.len() != 1 {
@@ -251,6 +270,9 @@ impl Session {
         if !self.start_typing(text)? {
             return Ok(json!({"handled": false}));
         }
+        if self.active().is_some_and(|d| d.selection.math.is_some()) {
+            return Ok(json!({"handled": true}));
+        }
         let mut p = json!({"text": text});
         if let Some((a, b)) = active {
             p["active"] = json!([a, b]);
@@ -263,6 +285,9 @@ impl Session {
         if !self.start_typing(text)? {
             return Ok(json!({"handled": false}));
         }
+        if self.active().is_some_and(|d| d.selection.math.is_some()) {
+            return self.execute("equation.type", &json!({"text": text}));
+        }
         self.execute("text.commit", &json!({"text": text}))
     }
 
@@ -273,6 +298,12 @@ impl Session {
     /// counts are clamped. A deletion while composing stays inside the composition's single undo
     /// step.
     pub fn delete_surrounding(&mut self, before: usize, after: usize, bytes: bool) -> Result<Value> {
+        if self.active().is_some_and(|d| d.selection.math.is_some()) {
+            if bytes {
+                return Ok(json!({"deleted": 0}));
+            }
+            return self.execute("equation.deleteSurrounding", &json!({"before": before, "after": after}));
+        }
         self.execute("text.deleteSurrounding", &json!({"before": before, "after": after, "bytes": bytes}))
     }
 
@@ -370,5 +401,21 @@ mod tests {
         s.key("Right", Mods::default()).unwrap();
         s.key("Delete", Mods::default()).unwrap();
         assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes.len(), 1);
+    }
+
+    #[test]
+    fn alt_equals_inserts_and_edits_equation() {
+        let mut s = Session::with_new();
+        let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+        s.execute("edit.select", &json!({"ids": [title]})).unwrap();
+        let r = s.key("=", Mods { alt: true, ..Default::default() }).unwrap();
+        assert_eq!(r["command"], "insert.equation");
+        assert!(s.doc().unwrap().selection.math.is_some());
+        s.type_text("a/b ").unwrap();
+        let g = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(g["latex"], "\\frac{a}{b}");
+        assert_eq!(g["editing"], true);
+        s.key("Escape", Mods::default()).unwrap();
+        assert!(s.doc().unwrap().selection.math.is_none());
     }
 }

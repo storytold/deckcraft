@@ -71,6 +71,7 @@ pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody
 
 /// Add transient list markers to an editor layout, using the document's own bullet glyphs.
 pub(crate) fn preview_empty_bullets(l: &mut deckcraft_text::TextLayout) {
+    l.show_math_placeholders = true;
     for mut run in l.empty_bullets.drain(..) {
         run.color = Rgba::rgb(0xB3, 0xB3, 0xB3);
         run.alpha = 1.0;
@@ -164,9 +165,107 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             draw_glyph_with(ctx, run, *gid, at, ps.opacity, fill);
         }
     }
+    for eq in &l.equations {
+        let ps = para(eq.para);
+        if ps.visible && ps.opacity > 0.001 {
+            draw_math_items(ctx, &eq.math.items, eq.x, eq.base, m * Affine::translate(ps.offset), ps.opacity, l.show_math_placeholders);
+        }
+    }
     for d in l.decos.iter().filter(|d| !d.behind) {
         deco(ctx, d);
     }
+}
+
+/// Renders equation layout items (glyphs, fraction bars, rad lines) onto the canvas.
+fn draw_math_items(ctx: &mut RenderContext, items: &[deckcraft_text::math::MItem], x: f64, base: f64, m: Affine, opacity: f64, screen: bool) {
+    use deckcraft_text::math::MItem;
+    if opacity <= 0.0 {
+        return;
+    }
+    for it in items {
+        match it {
+            MItem::Glyphs { face, size, color: c, synth_bold, synth_italic, glyphs, .. } => {
+                let rgba = c.to_rgba();
+                if rgba.a == 0 {
+                    continue;
+                }
+                let f = face.get();
+                let k = f64::from(*size) / f.upem.max(1.0);
+                let skew = if *synth_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
+                for &(gid, gx, gy) in glyphs {
+                    let at = m * Affine::translate((x + f64::from(gx), base - f64::from(gy)));
+                    if f.is_color() && colr::paint(ctx, f, gid, at, k, rgba, opacity) {
+                        continue;
+                    }
+                    let path = glyph(f, gid);
+                    if path.elements().is_empty() {
+                        continue;
+                    }
+                    ctx.set_transform(at * skew * Affine::scale(k));
+                    ctx.set_paint(color(rgba, opacity));
+                    ctx.fill_path(&path);
+                    if *synth_bold {
+                        ctx.set_stroke(kurbo::Stroke::new(f.upem * 0.025).with_join(kurbo::Join::Round));
+                        ctx.stroke_path(&path);
+                    }
+                }
+            }
+            MItem::Rect { x: rx, y, w, h, color: c } => {
+                ctx.set_transform(m);
+                ctx.set_paint(color(c.to_rgba(), opacity));
+                let r = Rect::new(x + f64::from(*rx), base - f64::from(*y + *h), x + f64::from(*rx + *w), base - f64::from(*y));
+                ctx.fill_rect(&r);
+            }
+            MItem::Line { x0, y0, x1, y1, width, color: c, dotted } => {
+                ctx.set_transform(m);
+                ctx.set_paint(color(c.to_rgba(), opacity));
+                let mut path = BezPath::new();
+                path.move_to((x + f64::from(*x0), base - f64::from(*y0)));
+                path.line_to((x + f64::from(*x1), base - f64::from(*y1)));
+                let w = f64::from(*width).max(0.2);
+                let mut stroke = kurbo::Stroke::new(w);
+                if *dotted {
+                    stroke = stroke.with_dashes(0.0, [w * 1.5, w * 1.5]);
+                }
+                ctx.set_stroke(stroke);
+                ctx.stroke_path(&path);
+            }
+            MItem::ScreenOnly(inner) => {
+                if screen {
+                    draw_math_items(ctx, std::slice::from_ref(inner), x, base, m, opacity, screen);
+                }
+            }
+        }
+    }
+}
+
+/// Rasterise a standalone equation preview (for ribbon galleries and buttons) at `ppp` pixels per
+/// point into a `w`×`h` pt box, returning white-on-black coverage suitable for an ink mask.
+pub fn render_math_preview(nodes: &[deckcraft_model::math::MNode], display: bool, pt: f32, w: f32, h: f32, ppp: f32) -> crate::Image {
+    let math = deckcraft_model::math::Math { nodes: nodes.to_vec(), ..Default::default() };
+    let mut counter = 0u32;
+    let ml = deckcraft_text::math::layout_equation(
+        &math,
+        "",
+        pt,
+        deckcraft_model::math::Rgb::BLACK,
+        "Calibri",
+        display,
+        w.max(1.0),
+        &deckcraft_model::math::MathProps::default(),
+        &mut counter,
+    );
+    let pw = ((w * ppp).round().max(1.0) as u32).min(2048) as u16;
+    let ph = ((h * ppp).round().max(1.0) as u32).min(2048) as u16;
+    let mut ctx = RenderContext::new_with(pw, ph, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+    ctx.set_paint(peniko::Color::WHITE);
+    ctx.fill_rect(&Rect::new(0.0, 0.0, f64::from(pw), f64::from(ph)));
+    let x = f64::from((w - ml.width) * 0.5).max(1.0);
+    let total_h = ml.ascent + ml.descent;
+    let base = f64::from((h - total_h) * 0.5 + ml.ascent);
+    let m = Affine::scale(f64::from(ppp));
+    draw_math_items(&mut ctx, &ml.items, x, base, m, 1.0, true);
+    crate::RENDERER.with(|r| r.borrow_mut().finish(ctx, pw, ph))
 }
 
 /// Where glyph `gid` of `run` with its pen at (`x`, `y`) is drawn, in text space: there, turned a

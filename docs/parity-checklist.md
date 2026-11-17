@@ -15,7 +15,7 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 24 | 12 | 56% |
+| P2 | 54 | 19 | 24 | 11 | 57% |
 
 | Area | Parity |
 |---|---|
@@ -27,7 +27,7 @@ The summary between `<!-- SUMMARY -->
 | Shapes | 91% |
 | Format | 83% |
 | Arrange | 100% |
-| Text | 83% |
+| Text | 85% |
 | Tables | 97% |
 | Charts | 65% |
 | SmartArt | 50% |
@@ -164,7 +164,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Text | AutoCorrect and smart quotes | P2 | P |
 | Text | Thesaurus | P2 | P |
 | Text | Symbols and emoji | P1 | D |
-| Text | Equations | P2 | M |
+| Text | Equations | P2 | D |
 | Text | Hyperlinks (URL, slide, email) | P1 | D |
 | Text | Date/time and slide number fields | P1 | D |
 | Text | Right-to-left and complex scripts | P1 | P |

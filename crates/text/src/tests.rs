@@ -152,7 +152,7 @@ fn ligatures_stay_for_scripts_that_need_them() {
     let has = |f: &[deckcraft_fonts::Feature], tag: &str| f.iter().any(|x| Some(*x) == deckcraft_fonts::feature(tag));
     let cells = |s: &str| {
         s.chars()
-            .map(|ch| Cell { ch, style: 0, face: 0, level: 0, glyphs: vec![], adv: 0.0, head: 0, boundary: true, upright: false })
+            .map(|ch| Cell { ch, style: 0, face: 0, level: 0, glyphs: vec![], adv: 0.0, head: 0, boundary: true, upright: false, math: None })
             .collect::<Vec<_>>()
     };
     let latin = shaping_features(&cells("office"), &[], Some(*b"Latn"));
