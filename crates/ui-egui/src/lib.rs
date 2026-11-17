@@ -300,9 +300,6 @@ pub struct SlideApp {
     updates_rt: updates_ui::Runtime,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
-    /// The ribbon's Font… opens the Font dialog even where the system font panel replaces it, for
-    /// what only the dialog sets (caps, spacing, offset).
-    builtin_font_dialog: bool,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
     capture: capture::Capture,
     styled: bool,

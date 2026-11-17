@@ -587,7 +587,7 @@ impl SlideApp {
         for r in std::mem::take(&mut self.session.ui_requests) {
             match r {
                 UiRequest::Dialog { id, params } => {
-                    if let Some(show) = self.services.show_fonts.as_ref().filter(|_| id == "font" && !self.builtin_font_dialog) {
+                    if let Some(show) = self.services.show_fonts.as_ref().filter(|_| id == "font") {
                         let size = params["size"].as_f64().unwrap_or(18.0);
                         show(params["family"].as_str().unwrap_or_default(), size, params["bold"] == true, params["italic"] == true);
                         continue;
@@ -613,7 +613,6 @@ impl SlideApp {
                 }
             }
         }
-        self.builtin_font_dialog = false;
     }
 
     pub(crate) fn drain_inbox(&mut self) {
