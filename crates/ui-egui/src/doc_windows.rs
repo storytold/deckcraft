@@ -85,7 +85,7 @@ impl DocWindows {
             return;
         }
         let titles: std::collections::HashMap<u64, String> =
-            app.session.documents().iter().map(|d| (d.uid, if d.is_dirty() { format!("{} — Edited", d.title()) } else { d.title() })).collect();
+            app.session.documents().iter().map(|d| (d.uid, crate::window_ui::window_title(d))).collect();
         let base = &self.base;
         let events = self.viewports.show(
             ui,

@@ -203,6 +203,11 @@ impl SlideApp {
     }
 }
 
+/// A presentation's window title: its name, marked while it has unsaved changes.
+pub(crate) fn window_title(doc: &deckcraft_engine::DocState) -> String {
+    if doc.is_dirty() { format!("{} — Edited", doc.title()) } else { doc.title() }
+}
+
 #[cfg(test)]
 mod tests {
     use deckcraft_engine::Session;

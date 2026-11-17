@@ -332,19 +332,13 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
         if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
-            run(app, "file.close", json!({}));
+            answer_close(app, "dontSave");
             done = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                app.save();
-                // In the browser a save is a download: the presentation stays "unsaved". A page
-                // that keeps the files saves it for real, so a failed save keeps it open.
-                let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
-                if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
-                    run(app, "file.close", json!({}));
-                }
+                answer_close(app, "save");
                 done = true;
             }
             if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
@@ -353,6 +347,24 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         });
     });
     done
+}
+
+/// The Close dialog's answer, from its buttons or the host's sheet: "save", "dontSave", or
+/// anything else for Cancel.
+pub(super) fn answer_close(app: &mut SlideApp, answer: &str) {
+    match answer {
+        "dontSave" => run(app, "file.close", json!({})),
+        "save" => {
+            app.save();
+            // In the browser a save is a download: the presentation stays "unsaved". A page
+            // that keeps the files saves it for real, so a failed save keeps it open.
+            let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
+            if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
+                run(app, "file.close", json!({}));
+            }
+        }
+        _ => {}
+    }
 }
 
 fn dlg_comment(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {

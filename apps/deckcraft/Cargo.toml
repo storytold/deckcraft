@@ -39,6 +39,12 @@ cpal = "0.16"
 # GridCraft, PdfCraft and PhotoCraft) registers the handler (Objective-C interop needs unsafe, which
 # our workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
+# save_sheet.rs asks Save Changes as a sheet on the presentation's window, as GridCraft does.
+# Already in Cargo.lock (winit); pinned exactly to the same versions.
+block2 = "=0.6.2"
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }

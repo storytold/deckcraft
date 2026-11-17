@@ -25,6 +25,8 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+#[cfg(target_os = "macos")]
+mod save_sheet;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::doc_windows::DocWindows;
@@ -290,6 +292,10 @@ fn main() -> eframe::Result {
             #[cfg(all(unix, not(target_os = "macos")))]
             if let Some(window) = cc.winit_window().cloned() {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
+            }
+            #[cfg(target_os = "macos")]
+            {
+                app.services.save_prompt = Some(save_sheet::hook(&cc.egui_ctx));
             }
             load_prefs(&mut app);
             app.enable_update_checks();

@@ -221,3 +221,61 @@ fn cancel_stops_the_quit() {
     assert_eq!(desk.app.session.documents().len(), 2);
     assert_eq!(desk.dialog_in(first), None, "Cancel isn't asked again");
 }
+
+/// The host's sheets (`Services::save_prompt`): the window titles asked about, and the answers to give.
+type Sheets = std::rc::Rc<RefCell<Vec<(String, std::sync::mpsc::Sender<String>)>>>;
+
+fn with_sheets(desk: &mut Desk) -> Sheets {
+    let sheets = Sheets::default();
+    let asked = sheets.clone();
+    desk.app.services.save_prompt = Some(Box::new(move |window, _question, _detail| {
+        let (answer, rx) = std::sync::mpsc::channel();
+        asked.borrow_mut().push((window.to_string(), answer));
+        Some(rx)
+    }));
+    sheets
+}
+
+#[test]
+fn quitting_asks_on_each_presentations_own_sheet() {
+    let mut desk = Desk::new(2);
+    let (first, second) = (desk.uid(0), desk.uid(1));
+    desk.edit(first);
+    desk.edit(second);
+    let sheets = with_sheets(&mut desk);
+    desk.frame_with(|app, ctx| app.request_quit(ctx));
+    desk.frames(3);
+    let title = |desk: &Desk, uid| desk.app.session.documents().iter().find(|d| d.uid == uid).map(|d| format!("{} — Edited", d.title()));
+    let asked = sheets.borrow().iter().map(|(w, _)| w.clone()).collect::<Vec<_>>();
+    assert_eq!(asked, [title(&desk, first).unwrap()], "one sheet, on the first window, asked once");
+    assert_eq!(desk.dialog_in(first).as_deref(), Some("close"), "the quit waits on the sheet");
+    sheets.borrow()[0].1.send("dontSave".into()).unwrap();
+    desk.frames(3);
+    assert_eq!(desk.app.session.documents().iter().map(|d| d.uid).collect::<Vec<_>>(), [second]);
+    assert_eq!(sheets.borrow().get(1).map(|(w, _)| w.clone()), title(&desk, second), "then the next window's sheet");
+    sheets.borrow()[1].1.send("cancel".into()).unwrap();
+    let sent = desk.frames(3);
+    assert!(!desk.app.quit_confirmed && !sent_to(&sent, ViewportId::ROOT, &ViewportCommand::Close), "{sent:?}");
+    assert_eq!(desk.dialog_in(second), None);
+    assert_eq!(sheets.borrow().len(), 2, "Cancel isn't asked again");
+}
+
+#[test]
+fn without_a_sheet_the_built_in_dialog_asks() {
+    let mut desk = Desk::new(1);
+    let first = desk.uid(0);
+    desk.edit(first);
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = calls.clone();
+    desk.app.services.save_prompt = Some(Box::new(move |_, _, _| {
+        counted.set(counted.get() + 1);
+        None
+    }));
+    desk.frame_with(|app, _| {
+        app.enter_deck(first);
+        app.close_presentation();
+    });
+    desk.frames(3);
+    assert_eq!(desk.dialog_in(first).as_deref(), Some("close"));
+    assert_eq!(calls.get(), 1, "asked the host once, then the built-in dialog");
+}
