@@ -5290,6 +5290,16 @@ fn undo_takes_back_only_the_autocorrect() {
     // Typing that AutoCorrect leaves alone is still one step per character.
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(text(&s), "hell");
+    // A typed comma sets AutoCorrect off too; the space after it leaves the undone word alone.
+    s.execute("text.selectAll", &json!({})).ok();
+    s.execute("text.delete", &json!({"dir": "backward"})).ok();
+    for c in "hello,".chars() {
+        s.execute("text.insert", &json!({"text": c.to_string()})).unwrap();
+    }
+    assert_eq!(text(&s), "Hello,");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": " "})).unwrap();
+    assert_eq!(text(&s), "hello, ", "the space after the comma leaves the undone word alone");
 }
 
 #[test]
