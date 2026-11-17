@@ -320,18 +320,21 @@ impl Dictionary {
 
     /// A compound part made of a root and one affix, as Hunspell reads them: a suffix ends the last
     /// part and a prefix starts the first; anywhere else the affix needs `COMPOUNDPERMITFLAG`.
-    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. One whose
-    /// continuation flags carry `COMPOUNDEND` may only be on the last part. The compound `flag`
+    /// An affix that carries `NEEDAFFIX` needs a second one and doesn't count. A suffix found
+    /// through the plain compound flag whose continuation flags carry `COMPOUNDEND` may only be on
+    /// the last part. The compound `flag`
     /// may be on the root or among the affix's continuation flags. German frami gives many first
     /// parts their flag that way: `Vor/hij` with `SFX j 0 0/xoc` begins `Vorschlag` (#2145).
     fn affixed_compound_part(&self, w: &[char], flag: Flag, pos: Pos) -> bool {
         let permit = |a: &Affix| self.compound_permit.is_some_and(|p| a.cont.contains(&p));
         // An affix that itself needs another (`NEEDAFFIX` among its continuation flags) doesn't
         // finish a part on its own.
-        let fits = |a: &Affix, stem: &[char]| {
+        let fits = |a: &Affix, stem: &[char], suffix: bool| {
             !self.needs_another_affix(a)
-                // Only the last part may take an affix whose continuation flags carry the compound end flag.
-                && (pos == Pos::Last || !self.compound_end.is_some_and(|e| a.cont.contains(&e)))
+                // Only the last part may take a suffix found through the plain compound flag whose
+                // continuation flags carry the compound end flag; the begin, middle and prefix
+                // lookups don't check it, as in Hunspell.
+                && (pos == Pos::Last || !suffix || Some(flag) != self.compound || !self.compound_end.is_some_and(|e| a.cont.contains(&e)))
                 && self.words.get(&stem.iter().collect::<String>()).is_some_and(|hs| {
                     hs.iter().any(|f| !self.has(f, self.forbidden) && f.contains(&a.flag) && (f.contains(&flag) || a.cont.contains(&flag)))
                 })
@@ -342,13 +345,13 @@ impl Dictionary {
             // At the end of a compound, Hunspell refuses a suffix that adds letters and may only be
             // used inside compounds; a zero-length one is accepted.
             .filter(|s| if pos == Pos::Last { s.add.is_empty() || !self.only_in_compound_affix(s) } else { permit(s) })
-            .any(|s| strip_end(w, &s.add, &s.strip).is_some_and(|stem| s.cond_ok(&stem, false) && fits(s, &stem)));
+            .any(|s| strip_end(w, &s.add, &s.strip).is_some_and(|stem| s.cond_ok(&stem, false) && fits(s, &stem, true)));
         suffixed
             || self
                 .pfx
                 .iter()
                 .filter(|p| pos == Pos::First || permit(p))
-                .any(|p| strip_start(w, &p.add, &p.strip).is_some_and(|stem| p.cond_ok(&stem, true) && fits(p, &stem)))
+                .any(|p| strip_start(w, &p.add, &p.strip).is_some_and(|stem| p.cond_ok(&stem, true) && fits(p, &stem, false)))
     }
 
     /// `w` made of dictionary parts allowed in compounds (`COMPOUNDFLAG`, or the begin, middle and
@@ -1111,6 +1114,15 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(d.check("suncats"));
         assert!(d.check("cats"));
         assert!(!d.check("catssun"));
+        // Through the begin flag, the end flag on the suffix doesn't matter: Hunspell 1.7.6
+        // accepts `catssun` here (and `cats`), and rejects `catsun`, `suncats` and `suncat`.
+        let aff = "COMPOUNDBEGIN B\nCOMPOUNDEND E\nCOMPOUNDPERMITFLAG P\nCOMPOUNDMIN 3\nSFX S Y 1\nSFX S 0 s/BEP .\n";
+        let d = Dictionary::parse(aff.as_bytes(), b"2\nsun/E\ncat/S\n".as_slice());
+        assert!(d.check("catssun"));
+        assert!(d.check("cats"));
+        for w in ["catsun", "suncats", "suncat"] {
+            assert!(!d.check(w), "{w}");
+        }
     }
 
     #[test]
