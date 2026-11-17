@@ -73,4 +73,20 @@ pub struct Services {
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
     pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
+    /// Ask the window to paste the system clipboard (desktop: egui's `RequestPaste`). The text
+    /// arrives as egui's `Paste` event, as with Ctrl+V, so Paste on the ribbon and in the menus
+    /// pastes what the keyboard would (#2128). Returns when that event can come. Without it they
+    /// paste the session's own clipboard.
+    pub request_paste: Option<Box<dyn FnMut() -> PasteAnswer>>,
+}
+
+/// When the window answers [`Services::request_paste`]. An empty clipboard sends nothing, so a
+/// request is only matched to a `Paste` event that can still be its answer: a later Ctrl+V is the
+/// user's own paste.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PasteAnswer {
+    /// With the next frame's input, or not at all (egui-winit's synchronous read: Windows, macOS, X11).
+    NextFrame,
+    /// From a background read within this many seconds (egui-winit on Wayland).
+    WithinSecs(f64),
 }

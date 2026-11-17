@@ -10,7 +10,7 @@ use super::{
     eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
 };
 
-mod clipboard;
+pub(crate) mod clipboard;
 mod commands;
 mod control;
 pub(crate) mod files;
@@ -87,6 +87,8 @@ impl SlideApp {
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_copy: None,
+            paste_request: None,
+            keyboard_frame: 0,
             capture: capture::Capture::default(),
             styled: false,
             restyle: true,

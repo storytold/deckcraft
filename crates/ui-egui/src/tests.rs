@@ -1248,6 +1248,152 @@ fn paste_reaches_the_focused_notes_field() {
     assert_eq!(h.state().session.active().unwrap().doc.slides[0].notes_text(), "abPASTEDTWO");
 }
 
+/// #2128: Paste on the ribbon pastes what Ctrl+V would, the system clipboard. It used to run
+/// `edit.paste` with no text, which pasted the session's own (empty) clipboard and only deleted
+/// the selected text. Paste and Match Formatting from the menu drops the clipboard's HTML.
+#[test]
+fn ribbon_paste_pastes_the_system_clipboard_over_the_selection() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let requests = Rc::new(Cell::new(0));
+    let count = requests.clone();
+    let services = Services {
+        request_paste: Some(Box::new(move || {
+            count.set(count.get() + 1);
+            PasteAnswer::NextFrame
+        })),
+        clipboard_html: Some(Box::new(|| Some("<p><b>Plain words</b></p>".into()))),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id;
+    let text = |h: &egui_kittest::Harness<'static, SlideApp>| {
+        h.state().session.active().unwrap().doc.slides[0].shape(title).and_then(|s| s.text.as_ref()).map(|t| t.text()).unwrap_or_default()
+    };
+    h.state_mut().session.execute("text.edit", &json!({"id": title.0})).unwrap();
+    h.event(egui::Event::Text("Hello".into()));
+    h.run_steps(1);
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    h.run_steps(1);
+
+    h.get_by_label("Paste").click();
+    h.run_steps(2);
+    assert_eq!(requests.get(), 1, "the window is asked for the clipboard");
+    assert_eq!(text(&h), "Hello", "nothing is replaced before the clipboard arrives");
+    h.event(egui::Event::Paste("From WhatsApp".into()));
+    h.run_steps(2);
+    assert_eq!(text(&h), "From WhatsApp");
+
+    // Paste and Match Formatting: the same text, without the HTML's bold.
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::Paste("Plain words".into()));
+    h.run_steps(2);
+    assert_eq!(text(&h), "Plain words");
+    let st = h.state().session.active().unwrap();
+    let body = st.doc.slides[0].shape(title).and_then(|s| s.text.clone()).unwrap();
+    assert!(body.paragraphs[0].runs.iter().all(|r| r.props.bold != Some(true)), "{body:?}");
+    assert_eq!(requests.get(), 2);
+}
+
+/// #2139 review: Paste and Match Formatting is text only. A picture-only clipboard inserts no
+/// picture and ends the request, so the next Ctrl+V is an ordinary paste again; objects copied
+/// here (the marker) paste their copied text instead of deleting the selection.
+#[test]
+fn requested_paste_and_match_formatting_takes_no_picture_and_keeps_copied_text() {
+    let services = Services {
+        request_paste: Some(Box::new(|| PasteAnswer::NextFrame)),
+        clipboard_html: Some(Box::new(|| Some("<p><b>Bold</b></p>".into()))),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id;
+    let shapes = |h: &egui_kittest::Harness<'static, SlideApp>| h.state().session.active().unwrap().doc.slides[0].shapes.len();
+    let body = |h: &egui_kittest::Harness<'static, SlideApp>| {
+        h.state().session.active().unwrap().doc.slides[0].shape(title).and_then(|s| s.text.clone()).unwrap_or_default()
+    };
+    h.state_mut().session.execute("text.edit", &json!({"id": title.0})).unwrap();
+    h.event(egui::Event::Text("Copied".into()));
+    h.run_steps(1);
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+
+    let before = shapes(&h);
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::RED))));
+    h.run_steps(2);
+    assert_eq!(shapes(&h), before, "no picture for Paste and Match Formatting");
+    assert_eq!(body(&h).text(), "Copied");
+
+    // The request is over: this Paste keeps its HTML formatting, as Ctrl+V does.
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    h.event(egui::Event::Paste("Bold".into()));
+    h.run_steps(2);
+    assert_eq!(body(&h).paragraphs[0].runs[0].props.bold, Some(true), "{:?}", body(&h));
+
+    // Copied objects leave the marker on the system clipboard: the copied text is pasted.
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::Paste(crate::OBJECTS_MARKER.to_string()));
+    h.run_steps(2);
+    assert_eq!(body(&h).text(), "Copied", "the selection is not just deleted");
+}
+
+/// #2139 review: a Paste and Match Formatting request the window never answers (an empty
+/// clipboard sends no `Paste` event) is not applied to a later paste. Answered with the next
+/// frame's input, it ends with that frame; answered by a background read, it waits for its time.
+/// And the menu command with only a textless shape copied here leaves the selected text alone.
+#[test]
+fn an_unanswered_text_only_request_does_not_drop_a_later_picture_and_textless_copies_delete_nothing() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let answer = Rc::new(Cell::new(PasteAnswer::NextFrame));
+    let reply = answer.clone();
+    let services = Services { request_paste: Some(Box::new(move || reply.get())), ..Default::default() };
+    let mut h = step_app(services);
+    let shapes = |h: &egui_kittest::Harness<'static, SlideApp>| h.state().session.active().unwrap().doc.slides[0].shapes.len();
+    let picture = || egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::RED)));
+    let before = shapes(&h);
+
+    // The next frame brought nothing: the user's Ctrl+V of a picture a frame later pastes it.
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.run_steps(1);
+    h.event(picture());
+    h.run_steps(1);
+    assert_eq!(shapes(&h), before + 1, "a picture pasted after the unanswered request");
+
+    // A background read may answer frames later, so its request still holds then...
+    answer.set(PasteAnswer::WithinSecs(60.0));
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.run_steps(1);
+    h.event(picture());
+    h.run_steps(1);
+    assert_eq!(shapes(&h), before + 1, "the late answer of a text-only request inserts no picture");
+    // ...until its time is up.
+    answer.set(PasteAnswer::WithinSecs(0.0));
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(picture());
+    h.run_steps(1);
+    assert_eq!(shapes(&h), before + 2, "a picture pasted after the request's time");
+    answer.set(PasteAnswer::NextFrame);
+
+    // A shape with no text is copied: the system clipboard gets the marker, the session no text.
+    let rect = h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [300.0, 300.0, 50.0, 50.0]})).unwrap()["id"].clone();
+    h.state_mut().run("edit.select", json!({"ids": [rect]})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+    assert!(h.state().session.clipboard.plain.is_empty());
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id;
+    h.state_mut().session.execute("text.edit", &json!({"id": title.0})).unwrap();
+    h.event(egui::Event::Text("Keep me".into()));
+    h.run_steps(1);
+    h.state_mut().session.execute("text.selectAll", &json!({})).unwrap();
+    assert!(h.state_mut().request_system_paste("edit.pasteText", &json!({})));
+    h.event(egui::Event::Paste(crate::OBJECTS_MARKER.to_string()));
+    h.run_steps(2);
+    let text = h.state().session.active().unwrap().doc.slides[0].shape(title).and_then(|s| s.text.as_ref()).map(|t| t.text()).unwrap_or_default();
+    assert_eq!(text, "Keep me");
+}
+
 /// #1956: the ribbon's drop-downs are announced by their purpose, not by their value or an
 /// internal key. Animations › Start with a shape that has no animation was "astart"; Home's Font
 /// and Font size boxes were "font" and "size" while nothing told them a font or size.

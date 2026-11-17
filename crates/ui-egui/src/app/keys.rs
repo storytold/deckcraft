@@ -47,14 +47,24 @@ impl SlideApp {
         }
     }
 
-    /// Keyboard and clipboard for the slide (when no text field has focus).
+    /// Keyboard and clipboard for the slide (when no text field has focus). A menu-requested
+    /// paste answered with the next frame's input ends with that frame's batch, answered or not.
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
+        let frame = ctx.cumulative_frame_nr();
+        self.keyboard_frame = frame;
+        self.keyboard_batch(ctx);
+        self.end_unanswered_paste_request(frame);
+    }
+
+    fn keyboard_batch(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
         // Ctrl+V with only an image on the clipboard: egui-winit sends no Paste event and swallows the
         // key press, so the release of a V press never seen is the paste. Tracked even while a text
         // field has focus, so that a V typed there is not taken for one.
         let mut image_paste = false;
         let mut pasted_image_event = false;
+        // A text `Paste` in this batch: a requested paste is consumed by it, not by a `PasteImage`.
+        let events_have_text = events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
         for e in &events {
             match e {
                 egui::Event::PasteImage(_) => {
@@ -122,15 +132,7 @@ impl SlideApp {
             self.note_settled_composition(ctx);
             match e {
                 egui::Event::ImeResetCompleted { request_id } => self.ime_reset_completed(request_id, ctx),
-                egui::Event::PasteImage(image) => match color_image_png(&image) {
-                    Ok(png) => {
-                        let params = json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
-                        if let Err(e) = self.session.execute("insert.picture", &params) {
-                            self.set_status(e.to_string());
-                        }
-                    }
-                    Err(e) => self.set_status(e),
-                },
+                egui::Event::PasteImage(image) => self.paste_image(&image, events_have_text),
                 egui::Event::Text(t) => {
                     let revision = self.session.active().map(|d| d.revision);
                     if self.session.active().is_some_and(|d| d.selection.text.is_some() || d.selection.shapes.len() == 1)
@@ -146,27 +148,35 @@ impl SlideApp {
                 egui::Event::Copy => self.publish_clipboard(ctx, false),
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
+                    // Paste and Match Formatting from a menu asked for this text (#2128).
+                    let cmd = self.requested_paste_command();
+                    let rich = cmd == "edit.paste";
                     // Our own marker for objects without text: paste what the session copied.
                     let text = if text == OBJECTS_MARKER { String::new() } else { text };
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
                     // Text keeps its HTML (bold, italic, underline) when the host can read it.
-                    let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
+                    let html = if rich { self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty()) } else { None };
                     // egui 0.37 sends `PasteImage` directly; the services fallback stays for
                     // integrations that still send an empty `Paste`, and for a browser's Copy
                     // Image, whose text is only the picture's link. Never insert twice.
-                    let wants_picture = text.is_empty() || super::clipboard::names_a_picture(&text, html.as_deref());
+                    let wants_picture = rich && (text.is_empty() || super::clipboard::names_a_picture(&text, html.as_deref()));
                     let img = if wants_picture && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
                     let revision = self.session.active().map(|d| d.revision);
                     let r = match img {
                         Some(png) => self
                             .session
                             .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
+                        // Paste and Match Formatting of textless objects copied here (the marker,
+                        // and nothing copied as text) has no text: leave the selection alone.
+                        None if !rich && text.is_empty() && self.session.clipboard.plain.is_empty() => Ok(Value::Null),
                         None => {
-                            let mut params = json!({"text": text});
+                            // Paste and Match Formatting of copied objects (the marker): the text
+                            // DeckCraft copied, not an empty string that would only delete the selection.
+                            let mut params = if text.is_empty() && !rich { json!({}) } else { json!({"text": text}) };
                             if let Some(h) = html {
                                 params["html"] = Value::String(h);
                             }
-                            self.session.execute("edit.paste", &params)
+                            self.session.execute(cmd, &params)
                         }
                     };
                     if let Err(e) = r {
@@ -205,6 +215,29 @@ impl SlideApp {
             }
         }
         self.drain_requests();
+    }
+
+    /// A picture from the system clipboard. Paste and Match Formatting takes text only: a
+    /// picture-only clipboard ends its request here, so a later Ctrl+V isn't taken for it; with
+    /// text in the same batch (`events_have_text`), the `Paste` that follows consumes it.
+    fn paste_image(&mut self, image: &egui::ColorImage, events_have_text: bool) {
+        // An expired request is no longer Paste and Match Formatting: the picture pastes.
+        let text_only = self.pending_paste_request() == Some("edit.pasteText");
+        if !events_have_text {
+            self.requested_paste_command();
+        }
+        if text_only {
+            return;
+        }
+        match color_image_png(image) {
+            Ok(png) => {
+                let params = json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
+                if let Err(e) = self.session.execute("insert.picture", &params) {
+                    self.set_status(e.to_string());
+                }
+            }
+            Err(e) => self.set_status(e),
+        }
     }
 }
 
