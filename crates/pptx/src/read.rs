@@ -79,8 +79,9 @@ pub struct Imp<'a> {
     /// Bytes of SmartArt layout, style and colour definitions copied into diagrams so far.
     pub diagram_xml_bytes: usize,
     /// The relationships of the parts unmodelled objects keep, by normalized part name: parsed
-    /// once however many embedded objects point at the part.
-    pub part_rels: HashMap<String, Arc<Rels>>,
+    /// once however many embedded objects point at the part. `None` for a relationships part that
+    /// is there but can't be read.
+    pub part_rels: HashMap<String, Option<Arc<Rels>>>,
 }
 
 impl Imp<'_> {

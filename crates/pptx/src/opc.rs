@@ -131,6 +131,17 @@ impl Package {
         let Some(doc) = self.xml(&rp) else { return Rels::default() };
         rels_of(&doc, part)
     }
+    /// [`Package::rels`], told apart from a relationships part that is there but can't be read
+    /// (over the XML size limit, not XML, or not a `Relationships` list): `None` then. A part
+    /// without a relationships part has none.
+    pub fn rels_checked(&self, part: &str) -> Option<Rels> {
+        let rp = rels_path(part);
+        if self.get(&rp).is_none() {
+            return Some(Rels::default());
+        }
+        let doc = self.xml(&rp)?;
+        doc.root.is("Relationships").then(|| rels_of(&doc, part))
+    }
     /// Content types: (extension defaults, part overrides).
     pub fn content_type(&self, part: &str) -> Option<String> {
         let (overrides, defaults) = self.ct_cache.get_or_init(|| {

@@ -302,8 +302,9 @@ fn remap_media(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_
 
 /// Add the clipboard's media to `doc` and return the ids that changed: an id already used in
 /// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it. That
-/// fresh id is shared with equal bytes already in `doc`, except by a kept part with relationships
-/// of its own (`own`, #1993), which keeps them.
+/// fresh id is shared with equal bytes already in `doc`. A kept part with relationships of its own
+/// (`own`, #1993) whose id is taken gets an item of its own instead, even over equal bytes, since
+/// its relationships may differ.
 fn bring_media(
     cmd: &str,
     doc: &mut deckcraft_model::Presentation,
@@ -318,13 +319,15 @@ fn bring_media(
                 doc.media.push(m.clone());
                 doc.next_id = doc.next_id.max(m.id.0);
             }
-            Some(x) if x.data == m.data => {}
+            // Checked before the equal-bytes match: the same id and bytes from another deck can
+            // still carry other relationships.
             Some(_) if own.contains(&m.id) => {
                 let mut item = m.clone();
                 item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
                 map.insert(m.id, item.id);
                 doc.media.push(item);
             }
+            Some(x) if x.data == m.data => {}
             Some(_) => {
                 let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
@@ -885,5 +888,28 @@ mod tests {
         assert_ne!(kept, MediaId(12), "not shared with the equal bytes already here");
         assert_eq!(doc.media(kept).map(|m| m.data.as_slice()), Some(&b"same"[..]));
         assert_eq!(map.get(&MediaId(11)), Some(&MediaId(13)), "plain media still share equal bytes");
+    }
+
+    /// #1993 review: a pasted kept part with relationships of its own whose id and bytes are both
+    /// already in the destination (another deck's object, with other relationships) gets its own
+    /// item rather than the destination's.
+    #[test]
+    fn a_pasted_part_with_an_equal_id_and_bytes_keeps_its_own_item() {
+        let item = |id: u32, data: &[u8]| deckcraft_model::MediaItem {
+            id: MediaId(id),
+            name: "part.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let mut doc = deckcraft_model::defaults::new_presentation(None);
+        doc.media.extend([item(10, b"same"), item(11, b"plain")]);
+        doc.next_id = doc.next_id.max(20);
+        let own = HashSet::from([MediaId(10)]);
+        let map = bring_media("edit.paste", &mut doc, &[item(10, b"same"), item(11, b"plain")], &own).expect("media");
+        let kept = map.get(&MediaId(10)).copied().expect("remapped");
+        assert_ne!(kept, MediaId(10), "not the destination's own part");
+        assert_eq!(doc.media(kept).map(|m| m.data.as_slice()), Some(&b"same"[..]));
+        assert_eq!(map.get(&MediaId(11)), None, "plain media with an equal id and bytes are still shared");
     }
 }

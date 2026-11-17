@@ -508,7 +508,8 @@ pub(crate) fn import_master(
 
 /// Copy the source media `used` into `doc` under fresh ids, once each. Identical bytes already in
 /// `doc` are shared, except by a linked item, which keeps its link, and by a kept part with
-/// relationships of its own (`own`, #1993), which keeps them.
+/// relationships of its own (`own`, #1993), which keeps them: such a part gets its own item even
+/// when an earlier step (a master, another slide) already mapped its id as plain media.
 fn copy_media(
     cmd: &str,
     doc: &mut Presentation,
@@ -518,7 +519,7 @@ fn copy_media(
     map: &mut HashMap<MediaId, MediaId>,
 ) -> Result<()> {
     for &id in used {
-        if map.contains_key(&id) {
+        if map.contains_key(&id) && !own.contains(&id) {
             continue;
         }
         let Some(m) = src.media(id) else { continue };
@@ -857,6 +858,73 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert_ne!(kept[0].0, kept[1].0, "each object keeps its own part");
         assert_eq!((kept[0].1.as_slice(), kept[1].1.as_slice()), (&b"first icon"[..], &b"second icon"[..]));
+    }
+
+    /// #1993 review: an id an earlier slide of the same reuse mapped as plain media (sharing equal
+    /// bytes the destination already holds) still gets an item of its own where a later slide keeps
+    /// it as a part with relationships of its own.
+    #[test]
+    fn a_part_mapped_earlier_as_plain_media_still_gets_its_own_item() {
+        use deckcraft_model::{MediaItem, PartRel, PartRelTarget};
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "oleObject1.bin".into(),
+            content_type: "application/vnd.openxmlformats-officedocument.oleObject".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let object = |id: u32, part: u32, icon: u32| Shape {
+            id: ShapeId(id),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(part))],
+                part_rels: vec![PartRel {
+                    from: MediaId(part),
+                    id: "rId1".into(),
+                    rel_type: "image".into(),
+                    target: PartRelTarget::Part(MediaId(icon)),
+                }],
+            },
+            ..Default::default()
+        };
+        // Source: slide 0 shows the bytes as a picture, slide 1 keeps them as an object's part.
+        let mut src = defaults::new_presentation(None);
+        src.media.extend([item(9001, b"same"), item(9003, b"source icon")]);
+        src.next_id = src.next_id.max(9200);
+        let layout = src.slides[0].layout;
+        let mut second = defaults::new_slide(&mut src, layout).expect("slide");
+        second.shapes = vec![object(9102, 9001, 9003)];
+        Arc::make_mut(src.slides.first_mut().expect("slide")).shapes = vec![Shape {
+            id: ShapeId(9101),
+            kind: ShapeKind::Picture { fill: PictureFill { media: MediaId(9001), ..Default::default() } },
+            ..Default::default()
+        }];
+        src.slides.push(Arc::new(second));
+        let bytes = deckcraft_format::save(&src).expect("save");
+
+        // Destination: an object of its own whose part has the same bytes.
+        let mut s = Session::with_new();
+        s.edit(|doc, _| {
+            doc.media.extend([item(9501, b"same"), item(9502, b"destination icon")]);
+            doc.next_id = doc.next_id.max(9600);
+            Arc::make_mut(doc.slides.first_mut().expect("slide")).shapes.push(object(9503, 9501, 9502));
+            Ok(())
+        })
+        .expect("destination object");
+        s.execute("slide.reuse", &json!({"data": super::super::base64_encode(&bytes), "name": "src.deckcraft", "slides": [0, 1]})).expect("reuse");
+        let doc = &s.doc().expect("doc").doc;
+        let reused = doc.slides.iter().find(|sl| sl.shapes.iter().any(|sh| matches!(sh.kind, ShapeKind::Opaque { .. }) && sh.id != ShapeId(9503)));
+        let Some(ShapeKind::Opaque { part_rels, .. }) =
+            reused.and_then(|sl| sl.shapes.iter().find(|sh| matches!(sh.kind, ShapeKind::Opaque { .. }))).map(|sh| &sh.kind)
+        else {
+            panic!("the reused object")
+        };
+        let rel = part_rels.first().expect("relationship");
+        assert_ne!(rel.from, MediaId(9501), "not the destination object's part");
+        let PartRelTarget::Part(icon) = rel.target else { panic!("internal target") };
+        assert_eq!(doc.media(icon).map(|m| m.data.as_slice()), Some(&b"source icon"[..]));
     }
 
     fn link_to(slide: SlideId) -> Hyperlink {

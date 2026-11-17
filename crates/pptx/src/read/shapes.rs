@@ -632,8 +632,9 @@ fn keep_parts(imp: &mut Imp, planned: Vec<(String, String, String, Keep)>) -> Op
 /// them under new names); external ones stay links that are never fetched. `None`, so the object
 /// falls back to its preview, when any of it can't be kept safely: a target
 /// [`crate::opc::kept_target`] refuses, a relationship that can't be written back as it was, a
-/// missing part, or a graph past the depth, part, relationship or retained-byte limits the chart
-/// sidecars use too.
+/// missing part, a relationships part that is there but can't be read (its relationships would be
+/// lost and the part's ids left dangling), or a graph past the depth, part, relationship or
+/// retained-byte limits the chart sidecars use too.
 fn walk(imp: &mut Imp, part: &str, g: &mut Graph, depth: usize) -> Option<usize> {
     let key = crate::opc::norm(part);
     if let Some(&i) = g.seen.get(&key) {
@@ -647,7 +648,10 @@ fn walk(imp: &mut Imp, part: &str, g: &mut Graph, depth: usize) -> Option<usize>
     g.seen.insert(key.clone(), i);
     g.parts.push(part.to_string());
     let pkg = imp.pkg;
-    let rels = Arc::clone(imp.part_rels.entry(key).or_insert_with(|| Arc::new(pkg.rels(part))));
+    let Some(rels) = imp.part_rels.entry(key).or_insert_with(|| pkg.rels_checked(part).map(Arc::new)).clone() else {
+        log::warn!("pptx: the relationships of {part} can't be read");
+        return None;
+    };
     if rels.items.is_empty() {
         return Some(i);
     }
@@ -1149,6 +1153,21 @@ mod tests {
         imp.kept_sidecar_bytes = MAX_KEPT_TOTAL_BYTES;
         let (parts, part_rels) = keep_parts(&mut imp, ole("ppt/embeddings/plain.bin")).expect("kept");
         assert_eq!((parts.len(), part_rels.len()), (1, 0));
+    }
+
+    /// #1993 review: a part whose relationships part is there but can't be read isn't kept as if
+    /// it had none (its ids would dangle after a save): the object falls back to its preview.
+    #[test]
+    fn an_unreadable_relationships_part_refuses_the_object() {
+        for bad in [&b"<Relationships xmlns=\"x\"><Relationship"[..], b"<Other/>"] {
+            let pkg = package(&[("ppt/embeddings/a.bin", b"a".to_vec()), ("ppt/embeddings/_rels/a.bin.rels", bad.to_vec())]);
+            let mut imp = crate::read::test_imp(&pkg);
+            assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_none(), "{}", String::from_utf8_lossy(bad));
+        }
+        // With no relationships part at all, the part simply has none.
+        let pkg = package(&[("ppt/embeddings/a.bin", b"a".to_vec())]);
+        let mut imp = crate::read::test_imp(&pkg);
+        assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_some());
     }
 }
 
