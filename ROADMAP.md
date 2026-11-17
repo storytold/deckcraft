@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-17 · **Change:** minor (Russian interface, #2186, stacked on #1488; Localization ~15% → ~21%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -74,7 +75,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | UI/UX fidelity | ~60% | 30–50 | [docs/ui-parity.md](docs/ui-parity.md) |
 | File formats (PPTX, PDF, legacy, export) | ~58% | 60–110 | [docs/file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (GPU raster, video decode, displays, pens) | ~40% | 25–45 | [docs/hardware-parity.md](docs/hardware-parity.md) |
-| Localization | ~15% | 45–80 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
+| Localization | ~21% | 40–75 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
 | Performance (unmeasured) | ~55% | 10–20 | [docs/hardware-parity.md](docs/hardware-parity.md#performance) |
 | Stability | ~60% | 10–20 | [docs/gaps.md](docs/gaps.md#stability) |
 | Platforms | ~80% | 5–10 | [Downloads in README](README.md#downloads) |
@@ -109,7 +110,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English and German. Interface text comes from the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs (`locales/<lang>/deckcraft.tsv`); the interface follows the system language, or Preferences › Interface language (#15). Detail:
+English, German and Russian. Interface text comes from the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs (`locales/<lang>/deckcraft.tsv`); the interface follows the system language, or Preferences › Interface language (#15). German and Russian need a build with the catalogs embedded (`CRAFT_I18N_DIR`); without it the interface is English only. Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
@@ -124,6 +125,7 @@ English and German. Interface text comes from the shared [craft-i18n](https://gi
 | Indonesian | id | 0% | none | 3–5 |
 | Japanese | ja | 0% | none | 4–7 |
 | German | de | ~80% | partial | 1–3 |
+| Russian | ru | ~75% | partial | 1–3 |
 | Korean | ko | 0% | none | 4–7 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
@@ -345,6 +347,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-17 | minor | Russian interface from craft-i18n (#2186, stacked on #1488): Localization ~15% → ~21%, Russian row partial |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |

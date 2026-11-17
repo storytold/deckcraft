@@ -69,7 +69,7 @@ fn the_language_setting_is_auto_or_an_offered_code() {
     assert_eq!(UiState { language: "EN".into(), ..Default::default() }.sanitized().language, "en");
     // A code this build doesn't offer (German saved by a release, read by a build without the
     // catalogs) is kept, and the interface follows the system meanwhile.
-    for kept in ["fr", "PT-br", "zh_Hans"] {
+    for kept in ["it", "PT-br", "zh_Hans"] {
         let ui = UiState { language: kept.into(), ..Default::default() }.sanitized();
         assert_eq!(ui.language, kept.to_ascii_lowercase());
         assert_eq!(Lang::from_pref(&ui.language), Lang::EN);
@@ -83,7 +83,12 @@ fn app_language_reports_and_changes_the_setting() {
     let v = app.run("app.language", json!({})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some(AUTO), Some("en")));
     let codes: Vec<&str> = v["available"].as_array().unwrap().iter().filter_map(|l| l["code"].as_str()).collect();
-    assert_eq!(codes, ["en", "de"]);
+    // Russian is offered when its catalogs are embedded (a build with `CRAFT_I18N_DIR`).
+    let mut expected = vec!["en", "de"];
+    if CRAFT_I18N.iter().any(|(code, ..)| *code == "ru") {
+        expected.push("ru");
+    }
+    assert_eq!(codes, expected);
     let v = app.run("app.language", json!({"language": "DE"})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some("de"), Some("de")));
     assert_eq!(app.ui.language, "de");
@@ -162,4 +167,28 @@ fn embedded_catalogs_parse_cleanly() {
             assert!(Lang::all().all(|l| l.code() != *code), "{code} is not in the language list");
         }
     }
+}
+
+/// The Russian catalogs reach the strings the UI draws: shared `common.tsv` rows, a two-line
+/// ribbon label, a placeholder status line and a regional system tag. Skipped without `CRAFT_I18N_DIR`.
+#[test]
+fn the_russian_catalog_translates_core_labels() {
+    let Some(russian) = Lang::from_code("ru") else {
+        eprintln!("skipped: the ru catalogs are not embedded");
+        return;
+    };
+    assert_eq!(russian.name(), "Русский");
+    assert_eq!(tr(russian, "Insert"), "Вставка");
+    assert_eq!(tr(russian, "Cancel"), "Отмена");
+    assert_eq!(tr(russian, "New\nSlide"), "Создать\nслайд");
+    assert_eq!(fmt(tr(russian, "Slide {n} of {total}"), &[("n", "1"), ("total", "8")]), "Слайд 1 из 8");
+    for tag in ["ru-RU", "ru-BY", "ru_KZ.UTF-8"] {
+        assert_eq!(lang_from_tag(tag), Some(russian), "{tag}");
+    }
+    // Russian has three plural forms: 1 элемент, 2 элемента, 5 элементов (and 0 элементов).
+    let count = |n| russian.i18n().trn(russian.lang, n, "{n} item", "{n} items");
+    assert_eq!(count(0), "0 элементов");
+    assert_eq!(count(1), "1 элемент");
+    assert_eq!(count(2), "2 элемента");
+    assert_eq!(count(5), "5 элементов");
 }
