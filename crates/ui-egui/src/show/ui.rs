@@ -282,6 +282,8 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             out.keep = false;
         } else if show.blank.is_some() {
             show.blank = None;
+        } else if show.finish_transition(now) {
+            // The click only finishes the slide's transition (#2084).
         } else {
             // A shape with an action or a triggered animation, or the background.
             let none = Under::default();
@@ -322,7 +324,7 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
         if next {
             if show.ended {
                 out.keep = false;
-            } else {
+            } else if !show.finish_transition(now) {
                 out.actions.push(show.state.next(doc));
             }
         } else {

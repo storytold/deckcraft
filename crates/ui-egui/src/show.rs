@@ -294,6 +294,17 @@ impl Show {
         self.step_end = now;
     }
 
+    /// A click or a forward key while the slide's transition is still playing finishes the
+    /// transition instead of going on, as PowerPoint does (#2084): the slide shows in full and the
+    /// next animation waits for another click. Returns whether a transition was cut short.
+    pub(crate) fn finish_transition(&mut self, now: f64) -> bool {
+        let playing = self.trans.as_ref().is_some_and(|t| now - t.start < t.dur.max(0.01));
+        if playing {
+            self.trans = None;
+        }
+        playing
+    }
+
     /// Identity of the show state a queued window-point event belongs to.
     pub(crate) fn input_state(&self) -> ShowInputState {
         let bits = |v: f32| if v.is_finite() { v.to_bits() } else { 0 };
