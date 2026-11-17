@@ -278,6 +278,14 @@ pub fn default_path(effect: &str, option: &str) -> String {
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
+    if str_param(p, "effect").is_some_and(|e| e == "none") {
+        return s.edit(|doc, sel| {
+            let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.set", "no slide"))?;
+            let sl = Arc::make_mut(sl);
+            sl.animations.retain(|x| !ids.contains(&x.shape));
+            Ok(json!({"count": sl.animations.len()}))
+        });
+    }
     let a = build(p, slide_extent(s)?)?;
     s.edit(|doc, sel| {
         let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.set", "no slide"))?;
@@ -299,9 +307,6 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
             if !placed.contains(id) {
                 out.push(Animation { shape: *id, ..a.clone() });
             }
-        }
-        if a.effect == "none" {
-            out.retain(|x| !ids.contains(&x.shape));
         }
         sl.animations = out;
         Ok(json!({"count": sl.animations.len()}))

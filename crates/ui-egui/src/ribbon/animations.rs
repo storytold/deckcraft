@@ -21,9 +21,9 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         }
     });
     group(ui, |ui| {
-        let quick: Vec<_> = deckcraft_model::anim::ANIMATIONS
-            .iter()
-            .filter(|a| {
+        static NONE_ANIM: (&str, &str, AnimClass, u32, u32, &[&str]) = ("none", "None", AnimClass::Entrance, 0, 0, &[]);
+        let quick: Vec<_> = std::iter::once(&NONE_ANIM)
+            .chain(deckcraft_model::anim::ANIMATIONS.iter().filter(|a| {
                 matches!(
                     a.0,
                     "appear"
@@ -40,9 +40,16 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                         | "flyOut"
                         | "lines"
                 )
-            })
+            }))
             .collect();
-        let sel = cur.as_ref().and_then(|c| quick.iter().position(|a| a.0 == c.effect));
+        let sel = if has_sel {
+            match &cur {
+                Some(c) => quick.iter().position(|a| a.0 == c.effect),
+                None => Some(0),
+            }
+        } else {
+            None
+        };
         if let Some(i) = widgets::gallery(
             ui,
             quick.len(),
@@ -56,10 +63,24 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             |i| quick.get(i).map(|a| a.1.to_string()).unwrap_or_default(),
         ) && let Some(a) = quick.get(i)
         {
-            run(app, "animation.set", json!({"effect": a.0, "class": a.2.xml()}));
+            if a.0 == "none" {
+                run(app, "animation.set", json!({"effect": "none"}));
+            } else {
+                run(app, "animation.set", json!({"effect": a.0, "class": a.2.xml()}));
+            }
         }
         let more = widgets::drop_button(ui, "", vec2(14.0, 52.0), has_sel);
         egui::Popup::menu(&more).width(420.0).show(|ui| {
+            let (r, resp) = ui.allocate_exact_size(vec2(56.0, 54.0), Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(r, CornerRadius::same(4), Tokens::get(ui.ctx()).hover);
+            }
+            paint_anim_tile(ui.painter(), r.shrink(2.0), "None", AnimClass::Entrance, true);
+            if resp.clicked() {
+                run(app, "animation.set", json!({"effect": "none"}));
+                ui.close();
+            }
+            ui.separator();
             for (cls, label) in
                 [(AnimClass::Entrance, "Entrance"), (AnimClass::Emphasis, "Emphasis"), (AnimClass::Exit, "Exit"), (AnimClass::Path, "Motion Paths")]
             {
@@ -195,11 +216,15 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
 
 pub fn paint_anim_tile(p: &egui::Painter, r: Rect, label: &str, class: AnimClass, enabled: bool) {
     let t = Tokens::get(p.ctx());
-    let icon = match class {
-        AnimClass::Entrance => Icon::AnimEntrance,
-        AnimClass::Emphasis => Icon::AnimEmphasis,
-        AnimClass::Exit => Icon::AnimExit,
-        _ => Icon::AnimPath,
+    let icon = if label == "None" {
+        Icon::Close
+    } else {
+        match class {
+            AnimClass::Entrance => Icon::AnimEntrance,
+            AnimClass::Emphasis => Icon::AnimEmphasis,
+            AnimClass::Exit => Icon::AnimExit,
+            _ => Icon::AnimPath,
+        }
     };
     icons::paint(p, Rect::from_center_size(pos2(r.center().x, r.min.y + 18.0), vec2(28.0, 28.0)), icon, t.text, !enabled);
     p.text(pos2(r.center().x, r.max.y - 8.0), Align2::CENTER_CENTER, label, theme::font(10.0), if enabled { t.text } else { t.text_faint });

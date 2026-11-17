@@ -189,6 +189,235 @@ fn preview_rejects_a_from_that_is_not_an_effect_index() {
     assert_eq!(h.state_mut().run("animation.preview", json!({"from": 1})).unwrap()["from"], 1.0);
 }
 
+/// #1725: deleting an animation in the Animation Pane removes the animation effect,
+/// never deleting the underlying shape on the slide.
+#[test]
+fn deleting_an_animation_in_the_pane_removes_animation_and_keeps_shape() {
+    let mut h = harness();
+    let shape_count_before = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    let anim_count_before = h.state().session.active().unwrap().current_slide().unwrap().animations.len();
+    assert_eq!(anim_count_before, 2);
+
+    // Click effect 1 in the Animation Pane to select it.
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+
+    // Press Delete on the keyboard.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+
+    let slide = h.state().session.active().unwrap().current_slide().unwrap();
+    // The animation is removed.
+    assert_eq!(slide.animations.len(), 1);
+    // The shape itself is NOT deleted!
+    assert_eq!(slide.shapes.len(), shape_count_before);
+}
+
+/// #1725: consecutive Delete keypresses in the Animation Pane remove remaining animations
+/// sequentially and keep the shape intact.
+#[test]
+fn consecutive_delete_in_the_pane_removes_all_animations_and_keeps_shape() {
+    let mut h = harness();
+    let shape_count_before = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 2);
+
+    // Select the first animation.
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+
+    // First delete removes effect 1.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 1);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shape_count_before);
+
+    // Second delete removes the second effect.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 0);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shape_count_before);
+}
+
+/// #1725 review: a held Delete keeps repeating after the last effect is removed. Those repeats
+/// stay with the pane until the key is released; they never reach the slide and delete the shape.
+#[test]
+fn held_delete_repeats_after_the_last_animation_do_not_delete_the_shape() {
+    let mut h = harness();
+    let shapes = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+    let key = |pressed, repeat| egui::Event::Key { key: egui::Key::Delete, physical_key: None, pressed, repeat, modifiers: egui::Modifiers::NONE };
+    // Press, then repeats while held: two effects go, the rest of the repeats are swallowed.
+    h.event(key(true, false));
+    h.run_steps(1);
+    for _ in 0..4 {
+        h.event(key(true, true));
+        h.run_steps(1);
+    }
+    let slide = h.state().session.active().unwrap().current_slide().unwrap();
+    assert_eq!(slide.animations.len(), 0, "both effects removed");
+    assert_eq!(slide.shapes.len(), shapes, "the shape survived the repeats");
+    assert!(!h.state().session.active().unwrap().selection.shapes.is_empty(), "and stays selected");
+    // Release, then a fresh press: the pane has no pick, so Delete is the slide's again.
+    h.event(key(false, false));
+    h.run_steps(1);
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shapes - 1, "a new press deletes the shape");
+}
+
+/// Raw presses let regressions keep a key held across input-route changes.
+fn delete_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
+    egui::Event::Key { key, physical_key: None, pressed, repeat, modifiers: egui::Modifiers::NONE }
+}
+
+/// A release belongs to the held key even when a different UI surface owns input.
+#[test]
+fn routed_away_releases_allow_fresh_delete_presses() {
+    #[derive(Debug)]
+    enum Route {
+        Field,
+        Modal,
+        Palette,
+        File,
+    }
+    for key in [egui::Key::Delete, egui::Key::Backspace] {
+        for route in [Route::Field, Route::Modal, Route::Palette, Route::File] {
+            let mut h = harness();
+            click_row(&mut h, 1, egui::PointerButton::Primary);
+            h.event(delete_event(key, true, false));
+            h.run_steps(1);
+            h.event(delete_event(key, true, true));
+            h.run_steps(1);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 0);
+            match route {
+                Route::Field => {
+                    h.state_mut().ui.pane = None;
+                    h.run_steps(2);
+                    let id = egui::Id::unique("notes_edit");
+                    h.ctx.memory_mut(|m| m.request_focus(id));
+                    h.run_steps(2);
+                    assert!(h.ctx.memory(|m| m.has_focus(id)));
+                }
+                Route::Modal => h.state_mut().dialog = Some(crate::dialogs::Dialog::new("about")),
+                Route::Palette => h.state_mut().palette = Some((String::new(), 0)),
+                Route::File => h.state_mut().open_backstage(crate::backstage::Page::Home),
+            }
+            h.event(delete_event(key, false, false));
+            h.run_steps(1);
+            h.state_mut().dialog = None;
+            h.state_mut().palette = None;
+            h.state_mut().backstage = None;
+            h.state_mut().ui.pane = None;
+            if let Some(id) = h.ctx.memory(|m| m.focused()) {
+                h.ctx.memory_mut(|m| m.surrender_focus(id));
+            }
+            h.key_press(key);
+            h.run_steps(2);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1, "{route:?}: {key:?}");
+        }
+    }
+}
+
+/// Releasing Delete must not relinquish a Backspace that is still held (and vice versa).
+#[test]
+fn releasing_one_delete_key_keeps_the_other_keys_repeats_in_the_pane() {
+    for routed_away in [false, true] {
+        for (released, held) in [(egui::Key::Delete, egui::Key::Backspace), (egui::Key::Backspace, egui::Key::Delete)] {
+            let mut h = harness();
+            click_row(&mut h, 1, egui::PointerButton::Primary);
+            for key in [released, held] {
+                h.event(delete_event(key, true, false));
+                h.run_steps(1);
+            }
+            if routed_away {
+                h.state_mut().palette = Some((String::new(), 0));
+            }
+            h.event(delete_event(released, false, false));
+            h.run_steps(1);
+            h.state_mut().palette = None;
+            h.state_mut().ui.pane = None;
+            if let Some(id) = h.ctx.memory(|m| m.focused()) {
+                h.ctx.memory_mut(|m| m.surrender_focus(id));
+            }
+            h.event(delete_event(held, true, true));
+            h.run_steps(1);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 2);
+            h.event(delete_event(held, false, false));
+            h.run_steps(1);
+            h.key_press(held);
+            h.run_steps(2);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1);
+        }
+    }
+}
+
+/// A stale pane pick consumes the entire held press, not just its first event.
+#[test]
+fn held_delete_with_a_stale_pick_keeps_the_selected_shape() {
+    for key in [egui::Key::Delete, egui::Key::Backspace] {
+        let mut h = harness();
+        click_row(&mut h, 1, egui::PointerButton::Primary);
+        let other = h.state().session.active().unwrap().current_slide().unwrap().animations[1].shape;
+        h.state_mut().session.execute("edit.select", &json!({"ids": [other.0]})).unwrap();
+        h.event(delete_event(key, true, false));
+        h.run_steps(1);
+        for _ in 0..4 {
+            h.event(delete_event(key, true, true));
+            h.run_steps(1);
+        }
+        let st = h.state().session.active().unwrap();
+        assert_eq!(st.selection.shapes, vec![other]);
+        assert_eq!(st.current_slide().unwrap().shapes.len(), 2);
+        assert_eq!(st.current_slide().unwrap().animations.len(), 2);
+        h.event(delete_event(key, false, false));
+        h.run_steps(1);
+        h.key_press(key);
+        h.run_steps(2);
+        assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1);
+    }
+}
+
+/// #1725 review: while slide text is being edited, Delete and Backspace edit the text even with
+/// an effect picked in the pane.
+#[test]
+fn delete_while_editing_text_edits_the_text_not_the_animation() {
+    let mut h = harness();
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+    let id = h.state().session.active().unwrap().selection.shapes[0];
+    h.state_mut().run("text.edit", json!({"id": id.0})).unwrap();
+    h.state_mut().run("text.insert", json!({"text": "ab"})).unwrap();
+    h.run_steps(1);
+    h.key_press(egui::Key::Backspace);
+    h.run_steps(2);
+    let st = h.state().session.active().unwrap();
+    assert_eq!(st.current_slide().unwrap().animations.len(), 2, "the animation stays");
+    assert!(st.shape(id).and_then(|s| s.text.as_ref()).is_some_and(|t| t.text().ends_with('a')), "Backspace edited the text");
+}
+
+/// #1725: selecting "None" in the animations gallery removes the shape's animations and keeps the shape.
+#[test]
+fn selecting_none_in_animations_gallery_removes_animation_and_keeps_shape() {
+    let mut h = harness();
+    let shape_count_before = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+
+    // Select the first shape which has an animation.
+    let first = h.state().session.active().unwrap().current_slide().unwrap().animations[0].shape.0;
+    h.state_mut().session.execute("edit.select", &json!({"ids": [first]})).unwrap();
+    h.run_steps(2);
+
+    // Switch to Animations tab ribbon.
+    h.state_mut().ui.tab = "Animations".into();
+    h.run_steps(2);
+
+    // Click the "None" tile in the animations gallery.
+    h.get_by_label("None").click();
+    h.run_steps(2);
+
+    let slide = h.state().session.active().unwrap().current_slide().unwrap();
+    // Shape still exists on the slide.
+    assert_eq!(slide.shapes.len(), shape_count_before);
+    // Shape's animation is removed.
+    assert!(!slide.animations.iter().any(|a| a.shape.0 == first));
+}
+
 #[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {

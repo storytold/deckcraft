@@ -53,11 +53,13 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
         }
         let name = names.iter().find(|(id, _)| *id == a.shape.0).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("Shape {}", a.shape));
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+        let item_selected = pick == Some(i);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, item_selected, &name));
         let sel = selected.contains(&a.shape.0);
         if sel || resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(4), if sel { t.selected } else { t.hover });
         }
-        if from == Some(i) {
+        if item_selected {
             ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
         }
         let p = ui.painter();

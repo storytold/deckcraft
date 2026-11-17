@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (animation Effect Options translate stored codes into readable labels; previous: minor, going back in the show reverses the left slide's transition, #1531; previous: minor, Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-09 · **Change:** minor (Animation Pane Delete/Backspace retains held-key ownership across stale picks and input-route changes, #1725; previous: trivial, animation Effect Options translate stored codes into readable labels) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -71,7 +71,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 | Triggers (on click of a shape) | yes | yes; played in the show: a step per click, the sequence starts over after its last step, a click completes a playing step. Separate click steps, mixed starts and paragraph builds survive PPTX save (`trigger_steps.rs`) |
 | Triggers on a media bookmark | yes | no |
 | Animation Painter | yes | yes (#54) |
-| Animation Pane: list, reorder, remove | yes | yes |
+| Animation Pane: list, reorder, remove | yes | yes; Delete/Backspace removes the picked effect, not its shape. A stale pick and held-key repeats stay in the pane until that key's release, including releases routed to a text field, modal, palette or File tab |
 | Animation Pane: advanced timeline (bars you drag) | yes | yes: bars from the show schedule, drag the body for delay, the right edge for duration, seconds ruler (`animpane_tests`) |
 | Preview on the editor canvas (the current slide) | yes | yes |
 | Preview from the selected effect | yes | yes: with an effect selected the pane's button reads Play From and starts at that effect, earlier effects already played (`animpane_tests`) |
@@ -94,6 +94,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-09 | minor | Animation Pane deletion arms its held-key latch even for a stale pick; Delete and Backspace release independently across input routes so fresh presses regain normal slide behavior (#1725). Scores unchanged |
 | 2026-10-30 | trivial | Animation Effect Options show readable, effect-aware labels for all gallery option codes; stored values and command parameters stay unchanged |
 | 2026-10-29 | minor | Going back in the show plays the transition of the slide being left, reversed, instead of the previous slide's entrance transition (#1531); new row in the transition features. Scores unchanged |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |
