@@ -242,7 +242,13 @@ impl SlideApp {
                 }
                 self.pick_and_run("picture", "smartArt.picture", p);
             }
-            "app.changePictureDialog" => self.pick_and_insert("picture", "picture.change"),
+            "app.changePictureDialog" => {
+                // The picture selected now is replaced, even if the selection changes while the
+                // dialog is open.
+                let ids: Vec<_> = self.session.active().map(|d| d.selection.shapes.iter().map(|id| id.0).collect()).unwrap_or_default();
+                let extra = if ids.is_empty() { json!({}) } else { json!({"ids": ids}) };
+                self.pick_and_run("picture", "picture.change", &extra);
+            }
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),

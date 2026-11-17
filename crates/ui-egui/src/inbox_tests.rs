@@ -186,3 +186,176 @@ fn a_dropped_file_stays_on_the_slide_it_was_dropped_on() {
     assert_eq!(pictures(&app, uid, slide0), 1, "{status}");
     assert_eq!(pictures(&app, uid, slide1), 0);
 }
+
+/// #2040: on the desktop, Insert Picture opens a dialog that answers later instead of blocking
+/// the window. Nothing changes while it is open, a second dialog waits its turn, and the picture
+/// lands on the slide the dialog was opened from.
+#[test]
+fn a_picture_from_a_nonblocking_dialog_lands_on_the_slide_that_asked() {
+    type Answer = std::sync::mpsc::Sender<Option<String>>;
+    let dialogs: Arc<Mutex<Vec<(String, Answer)>>> = Arc::default();
+    let blocking = Arc::new(Mutex::new(0));
+    let (record, blocked) = (dialogs.clone(), blocking.clone());
+    let services = Services {
+        pick_open: Some(Box::new(move |_: &str| {
+            *blocked.lock().unwrap() += 1;
+            None
+        })),
+        open_dialog: Some(Box::new(move |purpose: &str| {
+            let (answer, rx) = std::sync::mpsc::channel();
+            record.lock().unwrap().push((purpose.to_string(), answer));
+            rx
+        })),
+        read: Some(Box::new(|_: &str| Ok(png()))),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    let uid = app.session.active().unwrap().uid;
+    let slide0 = app.session.active().unwrap().current_slide().unwrap().id;
+    app.session.execute("slide.new", &json!({})).unwrap();
+    let slide1 = app.session.active().unwrap().current_slide().unwrap().id;
+    app.session.execute("slide.go", &json!({"id": slide0.0})).unwrap();
+
+    app.run("app.insertPictureDialog", json!({})).unwrap();
+    app.poll_pick();
+    assert_eq!(pictures(&app, uid, slide0), 0, "nothing is inserted before the dialog answers");
+    app.run("app.insertAudioDialog", json!({})).unwrap();
+    assert_eq!(dialogs.lock().unwrap().len(), 1, "one dialog at a time");
+    assert!(app.status.as_ref().is_some_and(|(t, _)| t.contains("already open")));
+
+    // The user moves on before choosing the file.
+    app.session.execute("slide.go", &json!({"id": slide1.0})).unwrap();
+    let (purpose, answer) = dialogs.lock().unwrap().remove(0);
+    assert_eq!(purpose, "picture");
+    answer.send(Some("/photos/shot.png".into())).unwrap();
+    app.poll_pick();
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(pictures(&app, uid, slide0), 1, "{status}");
+    assert_eq!(pictures(&app, uid, slide1), 0);
+    assert_eq!(app.session.active().unwrap().current_slide().unwrap().id, slide1, "the view stays where the user went");
+
+    // A dialog closed without a file inserts nothing, and the next one may open.
+    app.run("app.insertPictureDialog", json!({})).unwrap();
+    drop(dialogs.lock().unwrap().remove(0));
+    app.poll_pick();
+    assert_eq!(pictures(&app, uid, slide1), 0);
+    app.run("app.insertPictureDialog", json!({})).unwrap();
+    assert_eq!(dialogs.lock().unwrap().len(), 1);
+    assert_eq!(*blocking.lock().unwrap(), 0, "the blocking picker is never used");
+}
+
+type Dialogs = Arc<Mutex<Vec<(String, std::sync::mpsc::Sender<Option<String>>)>>>;
+
+/// A desktop app whose open dialogs wait in `Dialogs` until the test answers them; `file` is
+/// what reading the picked path gives.
+fn nonblocking_app(file: Vec<u8>) -> (SlideApp, Dialogs) {
+    let dialogs: Dialogs = Arc::default();
+    let record = dialogs.clone();
+    let services = Services {
+        pick_open: Some(Box::new(|_: &str| panic!("the blocking picker is never used"))),
+        open_dialog: Some(Box::new(move |purpose: &str| {
+            let (answer, rx) = std::sync::mpsc::channel();
+            record.lock().unwrap().push((purpose.to_string(), answer));
+            rx
+        })),
+        read: Some(Box::new(move |_: &str| Ok(file.clone()))),
+        ..Default::default()
+    };
+    (SlideApp::new(Session::with_new(), services), dialogs)
+}
+
+fn answer(app: &mut SlideApp, dialogs: &Dialogs, path: &str) {
+    let (_, answer) = dialogs.lock().unwrap().remove(0);
+    answer.send(Some(path.into())).unwrap();
+    app.poll_pick();
+}
+
+/// #2040: Change Picture replaces the picture selected when the dialog opened, even if another
+/// picture is selected, or another slide shown, before the file is chosen.
+#[test]
+fn change_picture_replaces_the_picture_selected_when_the_dialog_opened() {
+    let svg = b"<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='4'/></svg>".to_vec();
+    let media_of = |app: &SlideApp, id: u64| {
+        let d = app.session.active().unwrap();
+        d.doc.slides[0]
+            .shapes
+            .iter()
+            .find_map(|s| match &s.kind {
+                ShapeKind::Picture { fill } if u64::from(s.id.0) == id => Some(fill.media),
+                _ => None,
+            })
+            .expect("picture")
+    };
+    for move_to_another_slide in [false, true] {
+        let (mut app, dialogs) = nonblocking_app(svg.clone());
+        let data = deckcraft_engine::cmd::base64_encode(&png());
+        let a = app.session.execute("insert.picture", &json!({"name": "a.png", "data": data})).unwrap()["id"].as_u64().unwrap();
+        let b = app.session.execute("insert.picture", &json!({"name": "b.png", "data": data})).unwrap()["id"].as_u64().unwrap();
+        let (a_before, b_before) = (media_of(&app, a), media_of(&app, b));
+        app.session.execute("edit.select", &json!({"ids": [a]})).unwrap();
+        app.run("app.changePictureDialog", json!({})).unwrap();
+        app.session.execute("edit.select", &json!({"ids": [b]})).unwrap();
+        if move_to_another_slide {
+            app.session.execute("slide.new", &json!({})).unwrap();
+        }
+        answer(&mut app, &dialogs, "/photos/new.svg");
+        if move_to_another_slide {
+            app.session.execute("slide.go", &json!({"index": 0})).unwrap();
+        }
+        let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+        assert_ne!(media_of(&app, a), a_before, "the picture selected when the dialog opened is replaced: {status}");
+        assert_eq!(media_of(&app, b), b_before, "the picture selected later is left alone");
+    }
+}
+
+/// #2040: a transition sound goes to the slides selected when the dialog opened, even if the
+/// slide selection changes (on the same current slide, or to another slide) before it is chosen.
+#[test]
+fn a_transition_sound_goes_to_the_slides_selected_when_the_dialog_opened() {
+    let sounds = |app: &SlideApp| -> Vec<bool> {
+        app.session.active().unwrap().doc.slides.iter().map(|s| s.transition.as_ref().is_some_and(|t| t.sound.is_some())).collect()
+    };
+    for later in [&[0usize][..], &[2]] {
+        let (mut app, dialogs) = nonblocking_app(wav());
+        app.session.execute("slide.new", &json!({})).unwrap();
+        app.session.execute("slide.new", &json!({})).unwrap();
+        let ids: Vec<_> = app.session.active().unwrap().doc.slides.iter().map(|s| s.id).collect();
+        app.session.execute("slide.go", &json!({"index": 0})).unwrap();
+        app.session.active_mut().unwrap().selection.slides = vec![ids[0], ids[1]];
+        app.pick_transition_sound();
+        // The user selects other slides before choosing the sound.
+        app.session.execute("slide.go", &json!({"index": later[0]})).unwrap();
+        app.session.active_mut().unwrap().selection.slides = later.iter().map(|&i| ids[i]).collect();
+        answer(&mut app, &dialogs, "/sounds/chime.wav");
+        let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+        assert_eq!(sounds(&app), [true, true, false], "selected later: {later:?}; {status}");
+        let st = app.session.active().unwrap();
+        assert_eq!(st.selection.slide, later[0], "the view stays where the user went");
+        assert_eq!(st.selection.slides, later.iter().map(|&i| ids[i]).collect::<Vec<_>>(), "and so does the selection");
+    }
+}
+
+/// #2040: Reuse Slides uses the non-blocking dialog too; the slides go after the slide that
+/// was current when it opened.
+#[test]
+fn reuse_slides_uses_the_nonblocking_dialog() {
+    let mut src = Session::with_new();
+    src.execute("slide.new", &json!({"layout": "titleAndContent", "title": "From elsewhere"})).unwrap();
+    let bytes = deckcraft_engine::cmd::file::save_bytes(&src.doc().unwrap().doc, "deckcraft").unwrap();
+    let (mut app, dialogs) = nonblocking_app(bytes);
+    let first = app.session.active().unwrap().current_slide().unwrap().id;
+    app.session.execute("slide.new", &json!({})).unwrap();
+    app.session.execute("slide.go", &json!({"index": 0})).unwrap();
+    let second = app.session.active().unwrap().doc.slides[1].id;
+    app.run("app.reuseSlidesDialog", json!({})).unwrap();
+    assert!(app.dialog.is_none(), "nothing is listed before the dialog answers");
+    app.session.execute("slide.go", &json!({"index": 1})).unwrap();
+    answer(&mut app, &dialogs, "/decks/src.deckcraft");
+    assert_eq!(app.dialog.as_ref().map(|d| d.id.as_str()), Some("reuseSlides"));
+    assert!(app.reuse_slides(&app.dialog.as_ref().unwrap().params["source"].clone(), false, &[1]));
+    let st = app.session.active().unwrap();
+    assert_eq!(st.doc.slides.len(), 3);
+    assert_eq!(st.doc.slides[0].id, first);
+    assert_eq!(st.doc.slides[1].title(), "From elsewhere", "inserted after the slide current when the dialog opened");
+    assert_eq!(st.doc.slides[st.selection.slide].id, second, "the slide in view stays in view");
+}
