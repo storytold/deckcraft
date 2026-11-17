@@ -93,3 +93,17 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         }
     });
 }
+
+/// Windowed playback still needs a drag surface when macOS hides the native title bar.
+/// Keep this outside the slide's input/rendering rectangle so a drag never advances the show.
+pub(crate) fn show_title_bar(app: &SlideApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let title = app.session.active().map(|d| d.title()).unwrap_or_else(|| "DeckCraft".into());
+    egui::Panel::top("show_title_bar").exact_size(MAC_TITLE_BAR).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
+        let rect = ui.max_rect();
+        let drag = craft_window::title_bar::empty_area(ui, rect);
+        drag.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Window, true, "Slide show title bar"));
+        let text_rect = Rect::from_min_max(pos2(rect.min.x + MAC_CONTENT_LEFT, rect.min.y), rect.max);
+        ui.painter().with_clip_rect(text_rect).text(text_rect.center(), Align2::CENTER_CENTER, title, theme::font(13.0), t.text);
+    });
+}

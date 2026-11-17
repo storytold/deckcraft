@@ -55,6 +55,7 @@ use slide_show::{record, slide_show};
 use smartart::smartart_design;
 pub use table::paint_table_style;
 use table::{table_design, table_layout};
+pub(crate) use title_bar::show_title_bar;
 pub use title_bar::{MAC_CONTENT_LEFT, MAC_TITLE_BAR, TITLE_H, title_bar};
 #[cfg(test)]
 use title_bar::{MAC_LIGHT, MAC_LIGHT_PITCH, MAC_LIGHTS_LEFT, title_geometry};

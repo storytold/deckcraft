@@ -1404,3 +1404,115 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
 }
+
+/// #2202: closing the audience window ends playback, even with a saved deck. It must not
+/// start quitting, discard edits, or leave a grid/zoom mode to intercept the close request.
+#[test]
+fn windowed_show_close_keeps_clean_and_dirty_documents() {
+    for dirty in [false, true] {
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        if dirty {
+            app.session.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).unwrap();
+        }
+        app.ui.presenter_view = false;
+        app.start_show(0, false);
+        app.show.as_mut().unwrap().grid = true;
+        let before = app.session.active().unwrap().doc.clone();
+        assert_eq!(app.session.active().unwrap().is_dirty(), dirty);
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| {
+            app.logic(ui.ctx());
+            // A repeated logic pass must not reinterpret this same close as an editor close.
+            app.logic(ui.ctx());
+        });
+        output.textures_delta.clear();
+        assert!(app.show.is_none(), "close ends playback");
+        assert!(app.dialog.is_none(), "close must not open the quit/save dialog");
+        assert!(output.viewport_output[&egui::ViewportId::ROOT].commands.contains(&egui::ViewportCommand::CancelClose));
+        assert!(std::sync::Arc::ptr_eq(&before, &app.session.active().unwrap().doc));
+        assert_eq!(app.session.active().unwrap().is_dirty(), dirty);
+        assert!(!app.quit_confirmed);
+
+        // A new close request, now in the editor, still protects unsaved changes.
+        let mut input = egui::RawInput::default();
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().events.push(egui::ViewportEvent::Close);
+        let mut output = ctx.run_ui(input, |ui| app.logic(ui.ctx()));
+        output.textures_delta.clear();
+        assert_eq!(app.dialog.as_ref().map(|d| d.id.as_str()), dirty.then_some("quit"));
+    }
+}
+
+/// #2202: the custom macOS drag strip belongs outside the slide. Clicking or dragging it
+/// must not advance playback, while clicks in the slide still do.
+#[test]
+fn windowed_show_title_bar_moves_window_without_advancing() {
+    use egui_kittest::kittest::Queryable;
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("show.setup", &json!({"type": "browsed"})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.integrated_titlebar = true;
+    app.ui.presenter_view = false;
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    h.state_mut().start_show(0, false);
+    h.run_steps(2);
+    assert!(h.query_by_label("Slide show title bar").is_some());
+    let p = pos2(500.0, 16.0);
+    h.hover_at(p);
+    h.run_steps(2);
+    click_at(&mut h, p);
+    assert_eq!(h.state().show.as_ref().unwrap().state.slide, 0);
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.step();
+    h.event(egui::Event::PointerMoved(p + vec2(60.0, 10.0)));
+    h.step();
+    assert!(h.output().viewport_output[&egui::ViewportId::ROOT].commands.contains(&egui::ViewportCommand::StartDrag));
+    h.event(egui::Event::PointerButton {
+        pos: p + vec2(60.0, 10.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    assert_eq!(h.state().show.as_ref().unwrap().state.slide, 0);
+    h.hover_at(pos2(500.0, 350.0));
+    h.run_steps(2);
+    click_at(&mut h, pos2(500.0, 350.0));
+    assert_eq!(h.state().show.as_ref().unwrap().state.slide, 1);
+}
+
+/// #2202: show chrome follows the actual native fullscreen state, with the show setting
+/// as fallback before the platform supplies it. Native title bars need no extra strip.
+#[test]
+fn windowed_show_title_bar_tracks_fullscreen_and_reading() {
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.integrated_titlebar = true;
+    app.ui.presenter_view = false;
+    let ctx = egui::Context::default();
+    for (kind, reading, actual, expected) in [
+        ("browsed", false, None, true),
+        ("speaker", true, None, true),
+        ("speaker", false, None, false),
+        ("kiosk", false, None, false),
+        ("browsed", false, Some(true), false),
+        ("speaker", false, Some(false), true),
+    ] {
+        app.session.execute("show.setup", &json!({"type": kind})).unwrap();
+        app.start_show(0, reading);
+        let mut input = egui::RawInput::default();
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().fullscreen = actual;
+        let mut output = ctx.run_ui(input, |ui| assert_eq!(needs_title_bar(&app, ui.ctx()), expected, "{kind}, {reading}, {actual:?}"));
+        output.textures_delta.clear();
+    }
+    app.integrated_titlebar = false;
+    assert!(!needs_title_bar(&app, &ctx));
+}

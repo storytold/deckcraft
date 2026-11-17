@@ -247,7 +247,21 @@ impl SlideApp {
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
-        // Closing the window with unsaved changes asks first.
+        // The root window is also the audience window. Its close button ends playback,
+        // not the application; consume this event so a repeated pass cannot quit the editor.
+        if !self.quit_confirmed
+            && ctx.input(|i| i.viewport().close_requested())
+            && let Some(show) = self.show.take()
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.input_mut(|i| {
+                if let Some(viewport) = i.raw.viewports.get_mut(&i.raw.viewport_id) {
+                    viewport.events.retain(|e| *e != egui::ViewportEvent::Close);
+                }
+            });
+            show::end(self, ctx, show, ctx.input(|i| i.time));
+        }
+        // Closing the editor with unsaved changes still asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.show = None;
@@ -308,7 +322,12 @@ impl SlideApp {
         self.opening_ui(&ctx);
         if self.show.is_some() {
             self.anim_preview = None;
-            show::ui(self, ui);
+            if show::needs_title_bar(self, &ctx) {
+                ribbon::show_title_bar(self, ui);
+                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| show::ui(self, ui));
+            } else {
+                show::ui(self, ui);
+            }
             doc_window::show(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
             self.ui_end(&ctx);
