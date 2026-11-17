@@ -6,7 +6,7 @@ use crate::xml::{A, W};
 
 // Keep file-format identifiers in the shared DrawingML implementation. The local
 // writer below still owns DeckCraft's table style definitions and XML policy.
-pub use craft_drawingml::table::styles::{guid, guid_for_style, is_own_guid, style_from_guid};
+pub use craft_drawingml::table::styles::{guid, guid_for_style};
 
 fn own_guid(style: &str) -> String {
     guid(&format!("deckcraft-table-style:{style}"))
