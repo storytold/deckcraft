@@ -136,6 +136,18 @@ beside it. The page guards leaving itself (DeckCraft adds no guard of its own), 
 
 The messages and both transports are the shared contract of [`craft-web-host`](https://github.com/storytold/craft-libs/tree/main/crates/web-host) (storytold/craft-libs#420), the same for every Craft app: its README lists every message, including `saved`, with the compatibility notes. In `deckcraft:ready`, `version` is the contract's (`"1"`) and `appVersion` is this app's release. DeckCraft reads bytes, so a host sends `bytes`, not a `File`.
 
+### Driving it from the page (`window.deckcraft`)
+
+Every DeckCraft web build puts `window.deckcraft` on the page, from [`craft-web-api`](https://github.com/storytold/craft-libs/tree/main/crates/web-api) (storytold/craft-libs#413), the same shape in every Craft app. `deckcraft.request(method, params)` calls any method of the control channel the desktop app serves (`docs/control-protocol.md`), and `execute(command, params)`, `commands()`, `docInspect(params)`, `uiInspect(params)` and `screenshot(params)` are shortcuts for the common ones. Each returns a Promise that resolves with the method's result and rejects with an `Error`; a call the app does not answer within 30 seconds rejects.
+
+```js
+const deck = await deckcraft.docInspect();                 // a summary of the open presentation
+await deckcraft.execute("shape.insert", { preset: "roundRect", rect: [100, 100, 240, 120], text: "Hello" });
+const { data } = await deckcraft.screenshot();            // the canvas as PNG (base64)
+```
+
+The API is there in every mode, with or without a host. Opening a file, handing a saved or exported file to the page, the file name and the unsaved flag stay with the host messages above.
+
 ## Renderer selection and fallback flags
 
 DeckCraft renders with wgpu. It uses **WebGPU** when the browser has it and falls back to

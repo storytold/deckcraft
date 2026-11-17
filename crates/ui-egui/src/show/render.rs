@@ -200,14 +200,20 @@ const GRID_CACHE_PIXELS: usize = 16 * 1024 * 1024;
 
 /// Keep extreme slide shapes, GPU limits and a large visible grid within the preview budget.
 pub(super) fn grid_thumb_size(ctx: &egui::Context, doc: &Presentation, visible: usize) -> (u32, u32) {
-    let aspect = doc.slide_size.width / doc.slide_size.height;
+    crate::textures::fit_size(grid_thumb_box(doc.slide_size.width, doc.slide_size.height, visible), crate::textures::max_side(ctx))
+}
+
+/// A grid thumbnail's pixel size before GPU limits: the longer side is at most 320, so an extreme
+/// portrait slide cannot ask for a huge raster, and all `visible` previews share the pixel budget.
+fn grid_thumb_box(width: f64, height: f64, visible: usize) -> (u32, u32) {
+    let aspect = width / height;
     let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { 16.0 / 9.0 };
     let (w, h) = if aspect >= 1.0 { (320.0, (320.0 / aspect).max(1.0)) } else { ((320.0 * aspect).max(1.0), 320.0) };
     let pixels = (GRID_CACHE_PIXELS / visible.max(1)).max(1) as u32;
     let scale = (pixels as f64 / (w * h)).sqrt().min(1.0);
     let w = ((w * scale).floor() as u32).clamp(1, pixels);
     let h = ((h * scale).floor() as u32).clamp(1, (pixels / w).max(1));
-    crate::textures::fit_size((w, h), crate::textures::max_side(ctx))
+    (w, h)
 }
 
 pub(super) fn render_thumb(
@@ -230,4 +236,18 @@ pub(super) fn render_thumb(
     let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), crate::textures::to_color_image(&img, false));
     show.thumbs.push((i, tex.clone()));
     Some(tex)
+}
+
+#[cfg(test)]
+mod thumb_size_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_slides_are_320_wide_and_extreme_ones_stay_in_the_height_limit() {
+        assert_eq!(grid_thumb_box(960.0, 540.0, 1), (320, 180));
+        let (w, h) = grid_thumb_box(1.0, 1.0e9, 1);
+        assert!(h <= 320 && w >= 1);
+        let (w, h) = grid_thumb_box(960.0, 540.0, 10_000);
+        assert!((w as usize) * (h as usize) * 10_000 <= GRID_CACHE_PIXELS);
+    }
 }
