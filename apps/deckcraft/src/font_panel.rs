@@ -1,5 +1,5 @@
 //! The macOS system font panel (Format › Font…), with its text colour, underline and strikethrough,
-//! and the system colour picker. The same file serves GridCraft and WordCraft: the app shows it on a
+//! and the system colour picker. The same file serves DeckCraft, GridCraft and WordCraft: the app shows it on a
 //! [`Face`] and formats the selection with each [`Pick`].
 //!
 //! The panel sends `changeFont:` (family, size, bold, italic) and `changeAttributes:` (text colour,
