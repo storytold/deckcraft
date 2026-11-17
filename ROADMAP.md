@@ -109,7 +109,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English, German and Russian. Interface text comes from the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs (`locales/<lang>/deckcraft.tsv`); the interface follows the system language, or Preferences › Interface language (#15). Detail:
+English, German and Russian. Interface text comes from the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs (`locales/<lang>/deckcraft.tsv`); the interface follows the system language, or Preferences › Interface language (#15). German and Russian need a build with the catalogs embedded (`CRAFT_I18N_DIR`); without it the interface is English only. Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
