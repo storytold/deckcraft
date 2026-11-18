@@ -12,6 +12,13 @@ pub(super) const SHOW_MIN_INNER_SIZE: Vec2 = Vec2::new(320.0, 180.0);
 /// a drag would fight the user's hand.
 pub(super) const SETTLE_SECS: f64 = 0.3;
 
+/// How long after the mouse button is let go a resize is snapped, in seconds, when the host can
+/// tell whether a button is held.
+pub(super) const RELEASED_SECS: f64 = 0.15;
+
+/// How often to look again while a mouse button is held during a resize, in seconds.
+const HELD_POLL_SECS: f64 = 0.1;
+
 /// Room left around the window on the monitor (menu bar, Dock, task bar), in points.
 pub(super) const SCREEN_MARGIN: Vec2 = Vec2::new(64.0, 96.0);
 
@@ -99,9 +106,13 @@ impl WindowFit {
 
     /// One frame of a browsed show: the window's inner size, the part of it the slide area takes,
     /// the slide's shape and the largest allowed inner size. The first frame sizes the window;
-    /// after that a resize is snapped once the size has stayed the same for [`SETTLE_SECS`],
-    /// keeping the side the user changed more. A window already larger than `max` may stay that large.
-    pub(super) fn frame(&mut self, inner: Vec2, slide_area: Vec2, aspect: f32, max: Option<Vec2>, now: f64) -> Step {
+    /// after that a resize is snapped, keeping the side the user changed more. `held` says
+    /// whether a mouse button is held anywhere, when the host can tell: during a drag of the
+    /// window's edge egui sees no pointer events, so this is how a pause in the drag is told
+    /// from its end. While it is held nothing is snapped; once it is let go the snap follows
+    /// after [`RELEASED_SECS`]. When the host can't tell, the size must stay the same for
+    /// [`SETTLE_SECS`]. A window already larger than `max` may stay that large.
+    pub(super) fn frame(&mut self, inner: Vec2, slide_area: Vec2, aspect: f32, max: Option<Vec2>, held: Option<bool>, now: f64) -> Step {
         let max = max.map(|m| m.max(inner));
         if !self.sized {
             self.sized = true;
@@ -121,7 +132,12 @@ impl WindowFit {
         if !self.pending {
             return Step::Idle;
         }
-        let left = self.changed_at + SETTLE_SECS - now;
+        if held == Some(true) {
+            self.changed_at = now;
+            return Step::Wait(HELD_POLL_SECS);
+        }
+        let settle = if held.is_some() { RELEASED_SECS } else { SETTLE_SECS };
+        let left = self.changed_at + settle - now;
         if left > 0.0 {
             return Step::Wait(left);
         }

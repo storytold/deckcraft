@@ -154,7 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-11-18 | Slide show: Browsed by an individual (window) plays in a window of the slide's shape. The window shrinks to fit the slide when the show starts, snaps back to that shape 0.3 s after a resize, and the editor's size, minimum size and maximized state return when the show ends. Before, the show kept the editor's 1440×900 window, so a 16:9 deck had black bars |
+| 2026-11-18 | Slide show: Browsed by an individual (window) plays in a window of the slide's shape. The window shrinks to fit the slide when the show starts, snaps back to that shape after a resize (on macOS once the mouse button is let go, elsewhere after 0.3 s without change), and the editor's size, minimum size and maximized state return when the show ends. Before, the show kept the editor's 1440×900 window, so a 16:9 deck had black bars |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |

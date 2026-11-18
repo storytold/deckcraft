@@ -251,7 +251,9 @@ fn start_window_fit(app: &mut SlideApp, ctx: &egui::Context) {
 /// Keep a browsed show's window in the slide's shape: size it once, then snap it after a resize.
 /// Left alone while full screen or maximized.
 fn fit_window(app: &mut SlideApp, ctx: &egui::Context, doc: &Presentation, full: Rect, now: f64) {
-    let Some(fit) = app.show_window.as_mut() else { return };
+    if app.show_window.is_none() {
+        return;
+    }
     let (inner, whole, monitor) = ctx.input(|i| {
         let v = i.viewport();
         (v.inner_rect.map(|r| r.size()), v.fullscreen == Some(true) || v.maximized == Some(true), v.monitor_size)
@@ -260,7 +262,9 @@ fn fit_window(app: &mut SlideApp, ctx: &egui::Context, doc: &Presentation, full:
     if whole {
         return;
     }
-    match fit.frame(inner, full.size(), slide_aspect(doc), monitor.map(|m| m - SCREEN_MARGIN), now) {
+    let held = app.services.mouse_held.as_mut().map(|held| held());
+    let Some(fit) = app.show_window.as_mut() else { return };
+    match fit.frame(inner, full.size(), slide_aspect(doc), monitor.map(|m| m - SCREEN_MARGIN), held, now) {
         Step::Resize(size) => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size)),
         Step::Wait(secs) => {
             ctx.request_repaint_after(std::time::Duration::try_from_secs_f64(secs).unwrap_or(std::time::Duration::from_millis(300)));

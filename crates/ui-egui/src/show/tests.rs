@@ -1098,31 +1098,40 @@ fn a_browsed_show_window_takes_the_slide_shape() {
 /// settled, keeping the side the user changed more.
 #[test]
 fn a_resized_browsed_show_window_snaps_back_after_it_settles() {
-    use super::window_fit::{SETTLE_SECS, Step, WindowFit};
+    use super::window_fit::{RELEASED_SECS, SETTLE_SECS, Step, WindowFit};
     let wide = 16.0 / 9.0;
     let mut fit = WindowFit::new(Some(vec2(1440.0, 900.0)), false);
-    assert_eq!(fit.frame(vec2(1440.0, 900.0), vec2(1440.0, 900.0), wide, None, 0.0), Step::Resize(vec2(1440.0, 810.0)));
+    assert_eq!(fit.frame(vec2(1440.0, 900.0), vec2(1440.0, 900.0), wide, None, None, 0.0), Step::Resize(vec2(1440.0, 810.0)));
     // The window takes the size asked for: nothing more to do once it settles.
     let slide = vec2(1440.0, 810.0);
-    assert!(matches!(fit.frame(slide, slide, wide, None, 0.1), Step::Wait(_)));
-    assert_eq!(fit.frame(slide, slide, wide, None, 0.1 + SETTLE_SECS), Step::Idle);
+    assert!(matches!(fit.frame(slide, slide, wide, None, None, 0.1), Step::Wait(_)));
+    assert_eq!(fit.frame(slide, slide, wide, None, None, 0.1 + SETTLE_SECS), Step::Idle);
     // The user drags the right edge in: wait while it moves, then keep the new width.
     let dragged = vec2(1000.0, 810.0);
-    assert!(matches!(fit.frame(dragged, dragged, wide, None, 1.0), Step::Wait(_)));
-    assert!(matches!(fit.frame(dragged, dragged, wide, None, 1.1), Step::Wait(_)));
-    assert_eq!(fit.frame(dragged, dragged, wide, None, 1.0 + SETTLE_SECS), Step::Resize(vec2(1000.0, 563.0)));
+    assert!(matches!(fit.frame(dragged, dragged, wide, None, None, 1.0), Step::Wait(_)));
+    assert!(matches!(fit.frame(dragged, dragged, wide, None, None, 1.1), Step::Wait(_)));
+    assert_eq!(fit.frame(dragged, dragged, wide, None, None, 1.0 + SETTLE_SECS), Step::Resize(vec2(1000.0, 563.0)));
     // Then the bottom edge down: the height is kept.
     let taller = vec2(1000.0, 700.0);
-    assert!(matches!(fit.frame(taller, taller, wide, None, 2.0), Step::Wait(_)));
-    assert_eq!(fit.frame(taller, taller, wide, None, 2.0 + SETTLE_SECS), Step::Resize(vec2(1244.0, 700.0)));
+    assert!(matches!(fit.frame(taller, taller, wide, None, None, 2.0), Step::Wait(_)));
+    assert_eq!(fit.frame(taller, taller, wide, None, None, 2.0 + SETTLE_SECS), Step::Resize(vec2(1244.0, 700.0)));
     // The monitor's margin does not shrink a window that is already on screen.
     let mut editor = WindowFit::new(Some(vec2(1440.0, 805.0)), false);
-    let start = editor.frame(vec2(1440.0, 805.0), vec2(1440.0, 805.0), wide, Some(vec2(1376.0, 804.0)), 0.0);
+    let start = editor.frame(vec2(1440.0, 805.0), vec2(1440.0, 805.0), wide, Some(vec2(1376.0, 804.0)), None, 0.0);
     assert_eq!(start, Step::Resize(vec2(1431.0, 805.0)));
+    // A drag of the window's edge with the button still held: no snap, however long the pause.
+    let mut drag = WindowFit::new(None, false);
+    assert_eq!(drag.frame(slide, slide, wide, None, Some(false), 0.0), Step::Idle);
+    let held = vec2(900.0, 700.0);
+    assert!(matches!(drag.frame(held, held, wide, None, Some(true), 1.0), Step::Wait(_)));
+    assert!(matches!(drag.frame(held, held, wide, None, Some(true), 3.0), Step::Wait(_)), "held: wait");
+    // Let go: the snap follows shortly, keeping the side changed more.
+    assert!(matches!(drag.frame(held, held, wide, None, Some(false), 3.1), Step::Wait(_)));
+    assert_eq!(drag.frame(held, held, wide, None, Some(false), 3.1 + RELEASED_SECS), Step::Resize(vec2(900.0, 506.0)), "released: snap");
     // Without a resize nothing is asked for.
     let mut still = WindowFit::new(None, false);
-    assert_eq!(still.frame(slide, slide, wide, None, 0.0), Step::Idle);
-    assert_eq!(still.frame(slide, slide, wide, None, 5.0), Step::Idle);
+    assert_eq!(still.frame(slide, slide, wide, None, None, 0.0), Step::Idle);
+    assert_eq!(still.frame(slide, slide, wide, None, None, 5.0), Step::Idle);
 }
 
 #[test]

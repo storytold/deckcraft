@@ -1201,6 +1201,7 @@ dependencies = [
  "fmv-macos-events",
  "image",
  "log",
+ "objc2-app-kit 0.3.2",
  "rfd",
  "serde_json",
  "winit",

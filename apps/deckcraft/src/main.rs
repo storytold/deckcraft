@@ -296,6 +296,11 @@ fn main() -> eframe::Result {
             if let Some(window) = cc.winit_window().cloned() {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
+            // A browsed show's window waits for the end of an edge drag before it snaps (macOS).
+            #[cfg(target_os = "macos")]
+            {
+                app.services.mouse_held = Some(Box::new(|| objc2_app_kit::NSEvent::pressedMouseButtons() != 0));
+            }
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
