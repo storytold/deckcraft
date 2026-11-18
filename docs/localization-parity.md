@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (placeholder prompts on slides follow the interface language, #2107; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-13 · **Change:** minor (placeholder prompts on slides follow the interface language, #2107; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, Review › Language offers Serbian in Cyrillic and Latin, each with its own dictionary; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
 are looked up in the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs when the
@@ -63,16 +63,24 @@ the next re-measure.
 ## Proofing languages
 
 PowerPoint checks spelling in dozens of languages and lets each run carry a proofing language.
-DeckCraft keeps `a:rPr/@lang` on round trip but its spelling check is a small English list of
-common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
+DeckCraft keeps `a:rPr/@lang` on round trip and checks each run in its own language against the
+Hunspell dictionaries installed on the system (`crates/engine/src/spell.rs`), falling back to a
+built-in list of common English misspellings when there is none (`review.spelling`); see
+[gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
 Review › Language sets the proofing language of the selected text or, with *Whole presentation*,
-of every text in the file and the default for new text (`format.languageAll`).
+of every text in the file and the default for new text (`format.languageAll`). Each run is shaped
+in its language, so fonts draw their forms for it (OpenType `locl`: the Serbian б, г, д, п, т).
+Serbian is offered in both scripts (`sr-Cyrl-RS`, `sr-Latn-RS`). The run's language tag picks the
+dictionary, and only one in the script the tag names: LibreOffice's `sr` and `sr-Latn`, Hunspell's
+`sr_RS` and `sr_Latn_RS`, Fedora's `sr_RS@latin`, and the Serbo-Croatian `sh_RS`/`sh_YU` for Latin.
+A dictionary of the other script would flag every word, so it is never used.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
 | 2026-11-13 | minor | Placeholder prompts on slides follow the interface language (#2107); score unchanged until the catalogs have the rows |
+| 2026-10-31 | minor | Review › Language offers Serbian (Cyrillic and Latin); each run's language tag picks a dictionary in the script it names |
 | 2026-10-28 | major | Interface catalogs from craft-i18n, system language and Preferences › Interface language (#15); German partial (~840 rows) |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
