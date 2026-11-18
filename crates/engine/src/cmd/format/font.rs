@@ -461,9 +461,15 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             o.insert("preset".into(), json!(name));
             Value::Object(o)
         }
-        ColorBase::System { name, last } => {
+        ColorBase::System { name, last } if deckcraft_color::is_system_name(name) => {
             o.insert("system".into(), json!(name));
             o.insert("last".into(), json!(hex(last)));
+            Value::Object(o)
+        }
+        // A system name the color parser does not know goes as the RGB color it draws with, so OK still accepts it.
+        ColorBase::System { last, .. } if o.is_empty() => json!(hex(last)),
+        ColorBase::System { last, .. } => {
+            o.insert("rgb".into(), json!(hex(last)));
             Value::Object(o)
         }
     }
