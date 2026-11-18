@@ -48,6 +48,8 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
         // A short fixed-size name: appending to the target's name could exceed the file name limit.
         let tmp_name = format!(".deckcraft.{}.{}.saving", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
         let tmp = target_path.with_file_name(tmp_name);
+        // The sibling must pass the same check: when `path` is the write root itself it lands outside.
+        crate::file_access::check_write(&tmp.to_string_lossy())?;
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
             Ok(f) => break (tmp, f),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 16 => attempts += 1,
@@ -134,5 +136,17 @@ mod tests {
         assert_eq!(read_file(path_str).unwrap(), b"new");
 
         let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn write_file_to_the_write_root_itself_creates_no_sibling_outside_it() {
+        let base = std::env::temp_dir().join(format!("deckcraft_io_root_test_{}", std::process::id()));
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let roots = crate::file_access::AutomationRoots::new(&[], std::slice::from_ref(&root)).unwrap().unwrap();
+        let res = crate::file_access::confine(Some(&roots), || write_file(root.to_str().unwrap(), b"x"));
+        assert!(res.unwrap_err().contains("outside the write root"));
+        assert_eq!(std::fs::read_dir(&base).unwrap().count(), 1, "only the root is there");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

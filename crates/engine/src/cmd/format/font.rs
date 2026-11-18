@@ -45,9 +45,41 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.baseline = Some(if v { -0.25 } else { 0.0 }))
 }
 
+/// A typeface name from `key`: trimmed, and the length `format.fontDialog` allows.
+///
+/// Absent, as `opt_usize_param` and `id_param` read an absent key, so a call that leaves a script
+/// out keeps that typeface. Present but not a string is refused: `str_param` answers `None` to
+/// both, so `{"family": "Lato", "eastAsia": 42}` used to set the Latin typeface, leave the East
+/// Asian one alone and report success -- the one thing the caller asked for silently not done.
+fn typeface_param(p: &Value, key: &str) -> Result<Option<String>> {
+    let v = match p.get(key) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(v) => v.as_str().ok_or_else(|| bad("format.font", format!("`{key}` is not a typeface name: {v}")))?,
+    };
+    let t = v.trim();
+    if t.is_empty() || t.chars().count() > 200 {
+        return Err(bad("format.font", format!("`{key}` must be 1-200 characters")));
+    }
+    Ok(Some(t.to_string()))
+}
+
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
-    let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    let f = typeface_param(p, "family")?.ok_or_else(|| bad("format.font", "missing `family`"))?;
+    // A run carries a typeface per script (ECMA-376 §21.1.2.3): `a:latin`, `a:ea` and `a:cs`.
+    // Setting only the Latin one leaves a CJK run drawing -- and saving -- in whatever `a:ea`
+    // named before, so the two are settable (#786). Left out, they keep their value, which is
+    // what `format.font` has always done.
+    let ea = typeface_param(p, "eastAsia")?;
+    let cs = typeface_param(p, "complexScript")?;
+    format_run(s, &move |r| {
+        r.font = Some(f.clone());
+        if let Some(v) = &ea {
+            r.font_ea = Some(v.clone());
+        }
+        if let Some(v) = &cs {
+            r.font_cs = Some(v.clone());
+        }
+    })
 }
 
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
@@ -55,12 +87,18 @@ pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.size = Some(v))
 }
 
-/// PowerPoint's font size list (grow/shrink steps through it).
-pub const SIZES: [f64; 20] = [8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 54.0, 60.0, 66.0];
+/// PowerPoint's font size list, as the Font Size box lists it (grow/shrink steps through it).
+pub const SIZES: [f64; 24] =
+    [8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 54.0, 60.0, 66.0, 72.0, 80.0, 88.0, 96.0];
 
+/// Grow steps up the list, then 8 points at a time past its top; shrink steps back down the same
+/// way. A size past the top used to shrink straight to 66 (#2059).
 fn step(cur: f64, up: bool) -> f64 {
+    let top = SIZES[SIZES.len() - 1];
     if up {
         SIZES.iter().copied().find(|v| *v > cur + 0.01).unwrap_or((cur + 8.0).min(4000.0))
+    } else if cur - 0.01 > top {
+        (cur - 8.0).max(top)
     } else {
         SIZES.iter().rev().copied().find(|v| *v < cur - 0.01).unwrap_or((cur - 1.0).max(1.0))
     }
@@ -108,6 +146,7 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
             edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
                 if let ShapeKind::Chart(ch) = &mut sh.kind {
                     ch.text_color = Some(tc.clone());
+                    ch.legend_entries.iter_mut().for_each(|e| e.color = None);
                     ch.raw = None;
                 }
                 Ok(())

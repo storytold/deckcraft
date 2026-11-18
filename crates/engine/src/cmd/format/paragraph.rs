@@ -120,13 +120,7 @@ pub(super) fn line_spacing(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
-    let a = str_param(p, "align").map(|a| match a {
-        "center" => Align::Center,
-        "right" => Align::Right,
-        "justify" => Align::Justify,
-        "distributed" => Align::Distributed,
-        _ => Align::Left,
-    });
+    let a = str_param(p, "align").map(|a| parse_align("format.paragraph", a)).transpose()?;
     let ml = f64_param(p, "indentLeft");
     let ind = f64_param(p, "indentFirst");
     let sb = f64_param(p, "spaceBefore");
@@ -182,10 +176,10 @@ pub(super) fn clamp_pt(v: f64) -> f64 {
 fn parse_align(cmd: &str, s: &str) -> Result<Align> {
     Ok(match s {
         "left" | "l" => Align::Left,
-        "center" | "ctr" => Align::Center,
+        "center" | "centre" | "ctr" => Align::Center,
         "right" | "r" => Align::Right,
         "justify" | "just" => Align::Justify,
-        "justLow" => Align::JustLow,
+        "justLow" | "justifyLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
         "thaiDist" => Align::ThaiDistributed,
         _ => return Err(bad(cmd, "`align` must be left, center, right, justify, justLow, distributed or thaiDist")),

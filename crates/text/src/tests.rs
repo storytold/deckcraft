@@ -1417,6 +1417,16 @@ fn tab_stops_align_the_text_after_them() {
 }
 
 #[test]
+fn many_tabs_over_many_stops_lay_out_by_position() {
+    // 20,000 stops given out of order, and 2,000 tabs: each tab finds the next stop by position.
+    let mut stops: Vec<(f64, &str)> = (1..=20_000).rev().map(|k| (k as f64 * 0.05 + 30.0, "l")).collect();
+    stops.push((f64::NAN, "l"));
+    let text = "a\t".repeat(2_000);
+    let l = tabbed(&text, &stops, 1.0e6);
+    assert!((l.lines[0].edges[2].0 - l.inner.x0 - 30.05).abs() < 0.01, "{:?}", &l.lines[0].edges[..3]);
+}
+
+#[test]
 fn a_tab_past_the_end_moves_to_the_next_line() {
     // PowerPoint: "abcdefghij\tk\tl\tm…" in a narrow box puts the tab that doesn't fit on the next
     // line, so the text after it lands on that line's first stop.
@@ -2010,4 +2020,35 @@ fn signed_insets_are_preserved_when_they_fit() {
     let l = lay(&p, &sh, 100.0, 50.0);
     assert_eq!(l.lines.len(), 1);
     assert_eq!(l.inner.x0, -10.0);
+}
+
+/// Each run is shaped in its own language (Review › Language), so a font's forms for that language
+/// (OpenType `locl`) are drawn: the Serbian б, not the Russian one, in a Serbian run beside a
+/// Russian run of the same word.
+#[test]
+fn serbian_runs_draw_the_fonts_serbian_forms() {
+    let b = |f: &FontFace, lang: &str| {
+        let params = deckcraft_fonts::ShapeParams { language: Some(lang), ..Default::default() };
+        deckcraft_fonts::shape_range(f, "б", 0.."б".len(), &params, |c| c).first().map(|g| g.gid)
+    };
+    let serbian_form = |f: &FontFace| b(f, "sr-Cyrl-RS") != b(f, "ru-RU");
+    let Some(family) = first_family(&["DejaVu Sans", "DejaVu Serif", "Source Sans 3", "Source Serif 4", "Noto Sans", "Noto Serif"], serbian_form)
+    else {
+        eprintln!("skipped: no font with a Serbian б");
+        return;
+    };
+    let run = |text: &str, lang: &str| {
+        let mut r = Run::new(text);
+        r.props.lang = Some(lang.into());
+        r.props.font = Some(family.clone());
+        r
+    };
+    let (p, sh) = bidi_setup(vec![run("грб ", "sr-Cyrl-RS"), run("грб", "ru-RU")], 2000.0, false, Align::Left);
+    let l = lay(&p, &sh, 2000.0, 300.0);
+    // Glyph of each paragraph character.
+    let at = |i: usize| l.runs.iter().find_map(|r| r.cells.iter().position(|&(k, _)| k == i).and_then(|g| r.glyphs.get(g)).map(|g| g.0));
+    // г р б, space, г р б: each б is the one its language gives.
+    let face = FontDb::global().face(&family, "Regular");
+    assert_eq!(at(2), b(&face, "sr-Cyrl-RS"), "{family}: the Serbian б");
+    assert_eq!(at(6), b(&face, "ru-RU"), "{family}: the Russian б");
 }

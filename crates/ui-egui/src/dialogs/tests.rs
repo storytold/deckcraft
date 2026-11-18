@@ -28,7 +28,7 @@ fn header_footer_apply_keeps_an_existing_date_format() {
     use crate::SlideApp;
     let mut session = deckcraft_engine::Session::with_new();
     session.execute("design.headerFooter", &json!({"date": true, "dateText": "", "dateFormat": "datetime4", "all": true})).unwrap();
-    // A file whose document-level format is unset, as an imported deck's is.
+    // A file whose document-level format is unset, as an imported deck's is when its date field is not one of the thirteen kinds.
     Arc::make_mut(&mut session.doc_mut().unwrap().doc).header_footer.date_format = String::new();
     let date_fields = |app: &SlideApp| -> Vec<String> {
         app.session

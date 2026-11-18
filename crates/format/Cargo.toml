@@ -9,8 +9,10 @@ description = "DeckCraft native file format (.deckcraft: zip of a JSON manifest 
 workspace = true
 
 [dependencies]
+craft-deckcraft-format = { workspace = true }
+craft-rtf = { workspace = true }
 deckcraft-model = { workspace = true }
-serde = { workspace = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }
 zip = { workspace = true }
-thiserror = { workspace = true }
