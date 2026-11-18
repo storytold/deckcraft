@@ -16,7 +16,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Find",
             ["Home", "Editing"],
             None,
-            "{text, matchCase?: bool, wholeWords?: bool} → [{slide, shape (null = notes), cell?: [row, col], para, start, end}] (char offsets in the paragraph)",
+            "{text, matchCase?: bool, wholeWords?: bool, includeHidden?: bool (default false: hidden slides and shapes are skipped)} → [{slide, shape (null = notes), cell?: [row, col], para, start, end}] (char offsets in the paragraph)",
             has_doc,
             find
         ),
@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Replace",
             ["Home", "Editing"],
             None,
-            "{text, with, matchCase?, wholeWords?, at?: a text.find match (replace just that one; default: replace all)} → {replaced}",
+            "{text, with, matchCase?, wholeWords?, includeHidden?: bool (default false: hidden slides and shapes are skipped), at?: a text.find match (replace just that one; default: replace all)} → {replaced}",
             has_doc,
             replace
         ),
@@ -39,13 +39,17 @@ struct Loc {
     cell: Option<(usize, usize)>,
 }
 
-/// Visit every text body on a slide: shapes depth-first (groups, table cells), then the notes.
-fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody)) {
-    fn rec(shapes: &mut [Shape], depth: usize, f: &mut dyn FnMut(Loc, &mut TextBody)) {
+/// Visit the visible text bodies on a slide: shapes depth-first (groups, table cells), then the
+/// notes. Hidden shapes are skipped unless `include_hidden`, as `pptx` and the outline export do.
+fn bodies(slide: &mut Slide, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut TextBody)) {
+    fn rec(shapes: &mut [Shape], depth: usize, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut TextBody)) {
         if depth > 64 {
             return;
         }
         for sh in shapes {
+            if sh.hidden && !include_hidden {
+                continue;
+            }
             let id = Some(u64::from(sh.id.0));
             if let Some(t) = &mut sh.text {
                 f(Loc { shape: id, cell: None }, t);
@@ -58,12 +62,12 @@ fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody)) {
                         }
                     }
                 }
-                ShapeKind::Group { children, .. } => rec(children, depth + 1, f),
+                ShapeKind::Group { children, .. } => rec(children, depth + 1, include_hidden, f),
                 _ => {}
             }
         }
     }
-    rec(&mut slide.shapes, 0, f);
+    rec(&mut slide.shapes, 0, include_hidden, f);
     f(Loc { shape: None, cell: None }, &mut slide.notes);
 }
 
@@ -71,6 +75,7 @@ struct Opts {
     pat: Vec<char>,
     case: bool,
     whole: bool,
+    include_hidden: bool,
 }
 
 impl Opts {
@@ -79,7 +84,15 @@ impl Opts {
         if pat.is_empty() {
             return Err(bad(cmd, "missing `text`"));
         }
-        Ok(Opts { pat, case: bool_or(p, "matchCase", false), whole: bool_or(p, "wholeWords", false) })
+        Ok(Opts {
+            pat,
+            case: bool_or(p, "matchCase", false),
+            whole: bool_or(p, "wholeWords", false),
+            // Hidden slides and shapes are outside the show, so find and replace skip them
+            // unless `includeHidden` — as the outline export does. The editor's dialog passes
+            // `includeHidden: true`, where PowerPoint does search hidden slides.
+            include_hidden: bool_or(p, "includeHidden", false),
+        })
     }
     fn eq(&self, a: char, b: char) -> bool {
         a == b || (!self.case && a.to_lowercase().eq(b.to_lowercase()))
@@ -146,8 +159,12 @@ fn find(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let mut out = vec![];
     for (i, sl) in st.doc.slides.iter().enumerate() {
+        // A hidden slide is outside the show: skipped unless `includeHidden`.
+        if sl.hidden && !o.include_hidden {
+            continue;
+        }
         let mut sl = (**sl).clone();
-        bodies(&mut sl, &mut |loc, t| {
+        bodies(&mut sl, o.include_hidden, &mut |loc, t| {
             for (pi, para) in t.paragraphs.iter().enumerate() {
                 for (a, b) in para_matches(para, &o) {
                     out.push(json!({"slide": i, "shape": loc.shape, "cell": loc.cell.map(|(r, c)| [r, c]), "para": pi, "start": a, "end": b}));
@@ -173,9 +190,13 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
             if at.is_some_and(|a| a.0 != i) {
                 continue;
             }
+            // A hidden slide is outside the show: skipped unless `includeHidden`.
+            if slp.hidden && !o.include_hidden {
+                continue;
+            }
             let mut sl = (**slp).clone();
             let mut changed = 0;
-            bodies(&mut sl, &mut |loc, t| {
+            bodies(&mut sl, o.include_hidden, &mut |loc, t| {
                 if at.is_some_and(|a| a.1 != loc) {
                     return;
                 }
@@ -211,7 +232,7 @@ mod tests {
     use deckcraft_model::{Run, RunProps};
 
     fn opts(t: &str, case: bool, whole: bool) -> Opts {
-        Opts { pat: t.chars().collect(), case, whole }
+        Opts { pat: t.chars().collect(), case, whole, include_hidden: false }
     }
 
     #[test]
@@ -264,5 +285,44 @@ mod tests {
         assert_eq!(para_chars(&p).iter().collect::<String>(), "Hola world");
         assert_eq!(p.runs[0].text, "Hola");
         assert_eq!(p.runs[0].props, bold);
+    }
+
+    /// Hidden slides and shapes are outside the show: find and replace skip them unless
+    /// `includeHidden` — on the engine command and the editor dialog alike.
+    #[test]
+    fn find_and_replace_skip_hidden_content_unless_included() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"title": "Shown"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 100, 40], "text": "Secret"})).unwrap();
+        let shape_id = s.doc().unwrap().selection.shapes[0].0;
+        s.execute("slide.new", &json!({"title": "Hidden deck"})).unwrap();
+        let last = s.doc().unwrap().doc.slides.len().saturating_sub(1);
+        s.execute("slide.hide", &json!({"index": last})).unwrap();
+        // Hide the text box through the model (the engine hides shapes through the selection).
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        for sl in doc.slides.iter_mut() {
+            if let Some(sh) = Arc::make_mut(sl).shapes.iter_mut().find(|sh| sh.id.0 == shape_id) {
+                sh.hidden = true;
+            }
+        }
+
+        // Default scope: hidden slides and shapes are outside the find.
+        let hits = s.execute("text.find", &json!({"text": "ecret"})).unwrap();
+        assert!(hits.as_array().is_some_and(Vec::is_empty), "{hits}");
+        let hits = s.execute("text.find", &json!({"text": "idden deck"})).unwrap();
+        assert!(hits.as_array().is_some_and(Vec::is_empty), "{hits}");
+        // `includeHidden: true` finds the hidden shape text and the hidden slide title.
+        let hits = s.execute("text.find", &json!({"text": "ecret", "includeHidden": true})).unwrap();
+        assert_eq!(hits.as_array().map(Vec::len), Some(1), "{hits}");
+        let hits = s.execute("text.find", &json!({"text": "idden deck", "includeHidden": true})).unwrap();
+        assert_eq!(hits.as_array().map(Vec::len), Some(1), "{hits}");
+
+        // Replace follows the same scope: nothing replaced by default, replaced with the flag.
+        assert!(s.execute("text.replace", &json!({"text": "ecret", "with": "X"})).is_err());
+        let out = s.execute("text.replace", &json!({"text": "ecret", "with": "X", "includeHidden": true})).unwrap();
+        assert_eq!(out.get("replaced").and_then(Value::as_u64), Some(1), "{out}");
+        let hits = s.execute("text.find", &json!({"text": "X", "includeHidden": true})).unwrap();
+        assert_eq!(hits.as_array().map(Vec::len), Some(1), "{hits}");
     }
 }

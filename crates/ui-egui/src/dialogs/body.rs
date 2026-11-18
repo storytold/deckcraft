@@ -763,6 +763,14 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             d.fields.insert("pdfHidden".into(), hidden.to_string());
         }
     }
+    let outline = matches!(fmt.as_str(), "outline" | "txt" | "rtf");
+    if outline {
+        ui.add_space(4.0);
+        let mut hidden = d.get("outlineHidden", "false") == "true";
+        if ui.checkbox(&mut hidden, "Include hidden slides").changed() {
+            d.fields.insert("outlineHidden".into(), hidden.to_string());
+        }
+    }
     let png = matches!(fmt.as_str(), "png" | "pngAll");
     if png {
         ui.add_space(4.0);
@@ -800,6 +808,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         let extra = match fmt.as_str() {
             "pdf" => pdf_params,
             "gif" => gif_params,
+            _ if outline && d.get("outlineHidden", "false") == "true" => json!({"includeHidden": true}),
             _ if png && d.get("pngTransparent", "false") == "true" => json!({"transparentBackground": true}),
             _ => json!({}),
         };
