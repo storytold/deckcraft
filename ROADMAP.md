@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (moved groups detach nested connectors from stationary external targets while preserving glue inside moved trees; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (group-move connector cleanup uses bounded tree passes and hash-set membership; attachment behavior and parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-13 · **Change:** minor (collapsed-parent move and resize gestures preserve geometry; synced with current upstream; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -163,6 +163,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-18 | Group-move connector cleanup avoids a tree search for each descendant and uses hash-set endpoint membership; stationary and moving attachments retain their behavior (#1095) |
 | 2026-11-18 | Connector cleanup follows moved shape trees: nested connector ends detach from stationary external targets, while targets inside the moved group or selected with it stay glued (#1095) |
 | 2026-11-18 | Grouped line-end attachments persist in the shape tree and follow target sites in connector parent space. Rotation and text-selection drags skip collapsed live mappings; normal and tiny finite frames stay valid (#1095) |
 | 2026-11-18 | Grouped text editing shares the renderer’s point-sized layout; caret, selection, spelling and composition underlines agree with scaled-group text placement (#1095) |
@@ -373,6 +374,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | Group-move connector cleanup uses bounded tree passes and hash-set membership; large-group pointer coverage preserves stationary connector attachments. Scores unchanged |
 | 2026-11-18 | minor | Moving a group detaches nested connectors from stationary external targets while keeping connections to targets that move with them; pointer, undo and native-save regressions added. Scores unchanged |
 | 2026-11-18 | minor | Grouped connector endpoint glue persists through target movement and native saves; live collapsed-parent rotation/text-selection samples preserve the whole selection; scale-tolerance regression strengthened. Scores unchanged |
 | 2026-11-18 | minor | Grouped text carets, selection, spelling and IME underlines share the renderer’s slide-point layout, preserving font sizes, insets and wrapping (#1095) |

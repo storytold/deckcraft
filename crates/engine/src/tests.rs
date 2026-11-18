@@ -9268,3 +9268,59 @@ fn grouped_connector_move_keeps_internal_target_glue() {
         assert_eq!(s.doc().unwrap().doc, before);
     }
 }
+
+/// A page-wide cleanup pass must not detach stationary connectors outside a large moved tree.
+#[test]
+fn grouped_bulk_move_preserves_stationary_connector_attachments() {
+    use deckcraft_geom::{Point, Vec2, Xfrm};
+    let mut s = session();
+    s.prefs.smart_guides = false;
+    s.prefs.snap_to_grid = false;
+    let a = ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[100,100,100,50]})).unwrap()["id"].as_u64().unwrap() as u32);
+    let b = ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[600,300,100,50]})).unwrap()["id"].as_u64().unwrap() as u32);
+    let moving = ShapeId(s.execute("shape.connect", &json!({"from":a,"to":b,"preset":"straightConnector1"})).unwrap()["id"].as_u64().unwrap() as u32);
+    let stationary =
+        ShapeId(s.execute("shape.connect", &json!({"from":a,"to":b,"preset":"straightConnector1"})).unwrap()["id"].as_u64().unwrap() as u32);
+    let group = ShapeId(s.execute("arrange.group", &json!({"ids":[a,moving]})).unwrap()["id"].as_u64().unwrap() as u32);
+    s.edit(|doc, sel| {
+        let base = model::find_shape(crate::shapes_mut(doc, sel).unwrap(), a).unwrap().xfrm.unwrap();
+        let mut extra = vec![];
+        for _ in 0..2048 {
+            extra.push(Shape { id: ShapeId(doc.alloc_id().unwrap()), xfrm: Some(Xfrm::new(base.x, base.y, 1.0, 1.0)), ..Default::default() });
+        }
+        let model::ShapeKind::Group { children, .. } = &mut model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), group).unwrap().kind else {
+            panic!("group")
+        };
+        children.extend(extra);
+        Ok(())
+    })
+    .unwrap();
+    s.execute("edit.select", &json!({"ids":[group]})).unwrap();
+    let (p0, p1) = line_ends(&s, moving.0 as u64);
+    let parent = cmd::parent_transform(s.doc().unwrap(), moving);
+    let (p0, p1) = (parent * p0, parent * p1);
+    // Both connectors share the same segment. Grab the grouped target's interior so the
+    // stationary root connector does not correctly intercept the press above the group.
+    let st = s.doc().unwrap();
+    let target = st.shape(a).unwrap();
+    let x = target.xfrm.unwrap();
+    let at = cmd::shape_to_slide(st, target) * Point::new(x.w / 2.0, x.h / 2.0);
+    assert!(matches!(s.hit_test(at,1.0),Some(tools::Hit::Shape{id,..}) if id==group), "{:?}", s.hit_test(at, 1.0));
+    let before = s.doc().unwrap().doc.clone();
+    let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() };
+    s.pointer(ev(PointerKind::Down, at)).unwrap();
+    for d in [Vec2::new(35.0, 45.0), Vec2::new(70.0, 90.0)] {
+        s.pointer(ev(PointerKind::Drag, at + d)).unwrap();
+        let st = s.doc().unwrap();
+        let parent = cmd::parent_transform(st, moving);
+        let (q0, q1) = line_ends(&s, moving.0 as u64);
+        assert!((parent * q0 - (p0 + d)).hypot() < 1e-8 && (parent * q1 - (p1 + d)).hypot() < 1e-8);
+        let (q0, q1) = line_ends(&s, stationary.0 as u64);
+        assert!((q0 - (p0 + d)).hypot() < 1e-8 && (q1 - p1).hypot() < 1e-8);
+        assert!(matches!(st.shape(stationary).unwrap().kind,model::ShapeKind::Connector{start:Some((id,_)),end:Some((to,_))} if id==a && to==b));
+        assert!(matches!(st.shape(moving).unwrap().kind,model::ShapeKind::Connector{start:Some((id,_)),end:None} if id==a));
+    }
+    s.pointer(ev(PointerKind::Up, at + Vec2::new(70.0, 90.0))).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+}

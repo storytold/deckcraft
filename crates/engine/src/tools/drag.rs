@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use super::hit::{constrain_45, line_xfrm, resize_box};
 use super::{
-    Affine, DRAW_TABLE, Drag, Mods, Point, Rect, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, Vec2, Xfrm, cmd, json, set_warp_adj,
+    Affine, DRAW_TABLE, Drag, Mods, Point, Rect, Result, Session, Shape, ShapeId, ShapeKind, TextSel, ToolKind, Value, Vec2, Xfrm, cmd, json,
+    set_warp_adj,
 };
 
 struct MoveDrag {
@@ -14,6 +17,42 @@ struct MoveDrag {
 
 /// Samples one ink or freeform gesture keeps; later pointer moves extend it no further.
 pub(crate) const MAX_GESTURE_POINTS: usize = 100_000;
+
+/// Collect a moved group's descendants in one pass, including overlapping selected trees.
+fn collect_moved_ids(shapes: &[Shape], selected: &HashSet<ShapeId>, moving: bool, moved: &mut HashSet<ShapeId>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for sh in shapes {
+        let moving = moving || selected.contains(&sh.id);
+        if moving {
+            moved.insert(sh.id);
+        }
+        collect_moved_ids(sh.children(), selected, moving, moved, depth + 1);
+    }
+}
+
+/// Visit each connector once; stationary connectors retain their own attachments. Keep the
+/// model's nesting bound so hostile shape trees cannot cause unbounded recursion.
+fn detach_stationary_targets(shapes: &mut [Shape], moved: &HashSet<ShapeId>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for sh in shapes {
+        if moved.contains(&sh.id)
+            && let ShapeKind::Connector { start, end } = &mut sh.kind
+        {
+            for c in [start, end] {
+                if c.is_some_and(|(to, _)| !moved.contains(&to)) {
+                    *c = None;
+                }
+            }
+        }
+        if let ShapeKind::Group { children, .. } = &mut sh.kind {
+            detach_stationary_targets(children, moved, depth + 1);
+        }
+    }
+}
 
 impl Session {
     /// Apply a slide-space pointer movement to the active gesture, mapping group members locally.
@@ -335,24 +374,10 @@ impl Session {
                 }
             }
             // A connector dragged away from shapes that stay put comes unglued at those ends.
-            let mut moved: Vec<ShapeId> = vec![];
-            for (id, _) in &origs2 {
-                if let Some(sh) = deckcraft_model::find_shape(list, *id) {
-                    deckcraft_model::walk(std::slice::from_ref(sh), &mut |s, _| moved.push(s.id));
-                }
-            }
-            for id in &moved {
-                // Moved groups can contain connectors at any depth in their shape trees.
-                if let Some(sh) = deckcraft_model::find_shape_mut(list, *id)
-                    && let ShapeKind::Connector { start, end } = &mut sh.kind
-                {
-                    for c in [start, end] {
-                        if c.is_some_and(|(to, _)| !moved.contains(&to)) {
-                            *c = None;
-                        }
-                    }
-                }
-            }
+            let selected: HashSet<_> = origs2.iter().map(|(id, _)| *id).collect();
+            let mut moved = HashSet::new();
+            collect_moved_ids(list, &selected, false, &mut moved, 0);
+            detach_stationary_targets(list, &moved, 0);
             Ok(())
         })?;
         self.tool.drag =
