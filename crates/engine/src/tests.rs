@@ -7297,8 +7297,8 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
 
-/// A `keepWidth` that is not a bool is refused, naming it, and the table is left alone; it used
-/// to be read as absent and the columns shrunk as if `true` had been asked.
+/// A `keepWidth` that is not a bool is refused, naming it, and the table is left alone, not read
+/// as the default (the table growing by the new column).
 #[test]
 fn table_insert_column_refuses_a_keep_width_that_is_not_a_bool() {
     let mut s = session();

@@ -390,7 +390,12 @@ fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool)
                     break;
                 }
             }
-            t.rows[r].cells.get(n).cloned()
+            // Only the formatting is kept: the anchor's text is not copied once per covered row.
+            t.rows[r].cells.get(n).map(|src| {
+                let mut tpl = Cell::new("");
+                copy_cell_format(&mut tpl, src);
+                tpl
+            })
         })
         .collect();
     if !t.insert_col(at) {
