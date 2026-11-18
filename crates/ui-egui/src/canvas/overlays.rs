@@ -102,8 +102,13 @@ fn text_overlays(st: &DocState, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
     let editing = st.selection.text.clone();
     // Caret / text selection, in a shape or a table cell.
     if let Some(ts) = &editing {
-        for quad in text_marks(st, ts).iter().flat_map(|m| &m.selection) {
-            painter.add(egui::Shape::convex_polygon(quad.iter().map(|q| xf.to_screen(*q)).collect(), t.text_selection, Stroke::NONE));
+        // The renderer shades the selection behind the glyphs; what it doesn't draw (WordArt) is veiled here.
+        if text_highlight(st, t).is_none()
+            && let Some(marks) = text_marks(st, ts)
+        {
+            for quad in &marks.selection {
+                painter.add(egui::Shape::convex_polygon(quad.iter().map(|q| xf.to_screen(*q)).collect(), t.text_selection, Stroke::NONE));
+            }
         }
         // An input method's composition: underlined in place, thicker under the part being converted.
         for (a, b, thick) in deckcraft_engine::cmd::text::composition_underlines(st) {
@@ -236,6 +241,14 @@ pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf:
 /// cell, wherever its text is drawn. The caret is `cmd::text::caret_line`.
 pub(crate) struct TextMarks {
     pub selection: Vec<[Point; 4]>,
+}
+
+/// The selection the renderer shades behind the text being edited, in the theme's highlight colour
+/// (see `cmd::text::selection_highlight`).
+pub(crate) fn text_highlight(st: &DocState, t: &Tokens) -> Option<deckcraft_render::TextHighlight> {
+    let ts = st.selection.text.as_ref()?;
+    let c = t.text_highlight;
+    deckcraft_engine::cmd::text::selection_highlight(st, ts, deckcraft_color::Rgba::rgb(c.r(), c.g(), c.b()))
 }
 
 pub(crate) fn text_marks(st: &deckcraft_engine::DocState, ts: &deckcraft_engine::TextSel) -> Option<TextMarks> {
