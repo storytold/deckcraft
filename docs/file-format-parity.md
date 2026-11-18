@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-07 · **Change:** trivial (a slide whose relationship is missing is reported in `lostSlides`; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-09 · **Last updated:** 2026-11-09 · **Change:** minor (Save As and Export append the chosen extension to bare names and atomically refuse replacement of extension-adjusted destinations; parity scores unchanged; previous: trivial, a slide whose relationship is missing is reported in `lostSlides`; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -31,6 +31,17 @@ PowerPoint opens and saves; Viewer = opens only).
 | Animated GIF of the deck | export | n/a | yes (`file.export` format `gif`, Export…, `deckcraft-cli`, MCP `export`) | One frame per slide from the slide renderer; size small/medium/large/extra large or 16–3840 px wide, 0.1–600 s per slide, loop forever or play once, slide range, hidden slides skipped; a 256-colour palette per frame (exact, or NeuQuant above 256 colours). Transitions and build animations are not animated | `crates/engine/src/gif_export.rs` tests (decoded frames, size, delay, loop, hidden slides, hostile params), MCP, CLI and export dialog tests |
 | MP4 / MOV video of the deck | export | n/a | no | Needs timeline render + H.264 encode | none |
 | Print | yes | n/a | no | PR #66 (browser) open | none |
+
+Desktop Save As and Export append the chosen extension when the picked name has no writable
+extension (#1929). A fully typed writable extension stays unchanged. If appending the extension
+finds an existing file, the status bar asks for the full name. For single-file outputs, the picker
+can then confirm replacement.
+Adjusted destinations use an atomic no-replace commit, including each numbered image output:
+another save creating the file after selection causes an error, not replacement. Filesystems
+without hard-link support refuse these adjusted saves safely. For numbered image exports, a
+fully typed name can replace numbered files without confirmation; use an empty directory for
+these exports. Engine path writes expose the same opt-in policy as `createNew: true`
+on `file.save`, `file.saveAs`, `file.saveTemplate` and `file.export`.
 
 ## Pictures and media inside decks
 
@@ -154,3 +165,4 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-11 | minor | Animated GIF of the deck: export yes (#171) |
 | 2026-10-10 | major | Created from PowerPoint 16.113.4's `CFBundleDocumentTypes`, `crates/pptx` reader/writer and tests, and the open round-trip issues |
 | 2026-10-13 | minor | Comments: the writer emits the modern threaded part (`p188`) next to the flattened legacy one; the reader prefers the modern part and scales its EMU positions (#70) |
+| 2026-11-09 | minor | Save As / Export protect extension-adjusted destinations with atomic no-replace commits; concurrent-writer, command-policy and UI selection regression tests added (#1929) |
