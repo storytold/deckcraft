@@ -45,13 +45,14 @@ fn boxes_fit(b: &[u8], file_len: u64, depth: u32) -> bool {
     if depth > 16 {
         return false;
     }
-    let iter = if depth == 0 { BoxIter::new(b).allow_truncated() } else { BoxIter::new(b) };
-    for item in iter {
-        let Ok(bx) = item else { return false };
+    let mut iter = if depth == 0 { BoxIter::new(b).allow_truncated() } else { BoxIter::new(b) };
+    while let Some(item) = iter.next() {
+        // Fewer than 8 trailing bytes are not a box header; symphonia stops there.
+        let Ok(bx) = item else { return b.len().saturating_sub(iter.offset()) < 8 };
         let kind = &bx.kind.0;
         if bx.truncated {
             // A box that runs past the end of the file is fine at the top level (the file was cut
-            // short; symphonia stops there), but never for `moov` / `moof`.
+            // short; symphonia stops there), but never inside a parent (the iterator rejects it there) or for `moov` / `moof`.
             return !matches!(kind, b"moov" | b"moof");
         }
         let ok = if CONTAINERS.iter().any(|c| *c == kind) {
@@ -113,5 +114,13 @@ mod tests {
         assert!(!probe_fits(&prefixed));
         let far = [&vec![0u8; PROBE_SEARCH_LIMIT + 16][..], &mp4].concat();
         assert!(probe_fits(&far), "past the probe window symphonia never reads it as an MP4");
+    }
+
+    #[test]
+    fn short_tails_and_cut_top_level_boxes() {
+        let ftyp = [&16u32.to_be_bytes()[..], b"ftyp", b"isom", &[0; 4]].concat();
+        assert!(tables_fit(&[&ftyp[..], &[0, 0, 1]].concat()));
+        assert!(tables_fit(&[&ftyp[..], &100u32.to_be_bytes(), b"mdat"].concat()));
+        assert!(!tables_fit(&[&ftyp[..], &100u32.to_be_bytes(), b"moov"].concat()));
     }
 }
