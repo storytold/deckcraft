@@ -305,7 +305,11 @@ impl SlideApp {
         }
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
-        self.note_ui_text(&ctx);
+        if self.note_ui_text(&ctx) {
+            self.requeue_injected_synthetic();
+            ctx.request_discard("install borrowed interface fonts before layout");
+            return;
+        }
         self.media.sync_video_textures(&ctx);
         canvas::trackpad_twist(self, &ctx);
         eyedropper::tick(self, &ctx);

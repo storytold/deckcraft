@@ -5,8 +5,10 @@ use super::{
 
 impl SlideApp {
     /// Borrow faces for interface text in scripts the interface fonts lack (#101): the open
-    /// presentations' names and text, recent files, and what is typed or composed this frame.
-    pub(super) fn note_ui_text(&mut self, ctx: &egui::Context) {
+    /// presentations' names and text, recent files, active notices, and what is typed or composed
+    /// this frame. Returns `true` when an active toast or status notice required installing a new
+    /// font, so the current pass should be discarded before drawing that notice.
+    pub(super) fn note_ui_text(&mut self, ctx: &egui::Context) -> bool {
         let typed: String = ctx.input(|i| {
             i.events
                 .iter()
@@ -38,6 +40,13 @@ impl SlideApp {
             self.ui_fonts.note_doc(ctx, st);
         }
         self.ui_fonts.apply(ctx);
+        if let Some(toast) = &self.toast {
+            self.ui_fonts.note(ctx, &toast.text);
+        }
+        if let Some((status, _)) = &self.status {
+            self.ui_fonts.note(ctx, status);
+        }
+        self.ui_fonts.apply(ctx)
     }
 
     /// Stable IME owner for the canvas text target: document, view, shape and table cell.

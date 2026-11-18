@@ -18,9 +18,10 @@ use deckcraft_fonts::{FontDb, FontFace};
 /// for the stock macOS CJK collections the font database picks: `AppleSDGothicNeo.ttc` (about
 /// 55 MB, the only Hangul face) and `PingFang.ttc` (about 78 MB, Simplified Chinese).
 const MAX_FACE_BYTES: usize = 128 << 20;
-/// Aggregate bytes of every borrowed UI face. `MAX_FACE_BYTES` alone bounded one face but left
-/// `faces` unbounded; three full-size CJK collections are enough for the supported scripts.
-const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
+/// Aggregate bytes of every borrowed UI face (including any cached system CJK interface face).
+/// `MAX_FACE_BYTES` alone bounded one face but left `faces` unbounded; three full-size CJK
+/// collections are enough for the supported scripts.
+pub(crate) const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
 
 fn accepts_face(byte_len: usize, color: bool) -> bool {
     !color && byte_len <= MAX_FACE_BYTES
@@ -90,7 +91,7 @@ impl UiFonts {
                 |c| FontDb::global().fallback_for_filtered(c, u32::MAX, |face| accepts_face(face.data().len(), face.is_color())),
             )
         });
-        let mut total: usize = self.faces.iter().map(|f| f.data().len()).sum();
+        let mut total: usize = crate::theme::system_cjk_cache_bytes().saturating_add(self.faces.iter().map(|f| f.data().len()).sum());
         let accepted: Vec<_> = new
             .into_iter()
             .filter(|f| {
