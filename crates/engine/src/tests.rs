@@ -9155,3 +9155,116 @@ fn grouped_text_hit_accepts_tiny_finite_frames() {
         assert_eq!(cmd::text::text_pos_at(st, t, Point::new(f64::INFINITY, 0.0)), None);
     }
 }
+
+/// Moving a connector or its containing group detaches only targets outside the moved trees.
+#[test]
+fn grouped_connector_moves_detach_stationary_external_targets() {
+    use deckcraft_geom::{Point, Vec2, Xfrm};
+    for nesting in [None, Some(false), Some(true)] {
+        for move_group in [false, true] {
+            // A line body inside a group selects the group; member endpoint drags are
+            // separate gestures. Exercise whole-group moves and the root-line control.
+            if nesting.is_some() != move_group {
+                continue;
+            }
+            for together in [false, true] {
+                let mut s = session();
+                s.prefs.smart_guides = false;
+                s.prefs.snap_to_grid = false;
+                let a = ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[100,100,100,50]})).unwrap()["id"].as_u64().unwrap() as u32);
+                let b = ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[600,300,100,50]})).unwrap()["id"].as_u64().unwrap() as u32);
+                let line = ShapeId(
+                    s.execute("shape.connect", &json!({"from":a,"to":b,"preset":"straightConnector1"})).unwrap()["id"].as_u64().unwrap() as u32,
+                );
+                if let Some(nested) = nesting {
+                    wrap_test_member_in_group(&mut s, line, Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(300.0, 100.0, 300.0, 120.0) }, nested);
+                }
+                let moved = if move_group { s.doc().unwrap().shapes().last().unwrap().id } else { line };
+                s.execute("edit.select", &json!({"ids":if together {vec![moved,b]} else {vec![moved]}})).unwrap();
+                let ends = |s: &Session| {
+                    let st = s.doc().unwrap();
+                    let parent = cmd::parent_transform(st, line);
+                    let (a, b) = connect::endpoints(&st.shape(line).unwrap().xfrm.unwrap());
+                    (parent * a, parent * b)
+                };
+                let (p0, p1) = ends(&s);
+                let at = Point::new((p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0);
+                assert!(
+                    matches!(s.hit_test(at,1.0),Some(tools::Hit::Shape{id,..}) if id==moved),
+                    "{nesting:?}/{move_group}: {:?}",
+                    s.hit_test(at, 1.0)
+                );
+                let before = s.doc().unwrap().doc.clone();
+                let d = Vec2::new(35.0, 45.0);
+                let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() };
+                s.pointer(ev(PointerKind::Down, at)).unwrap();
+                for delta in [d, d * 2.0] {
+                    s.pointer(ev(PointerKind::Drag, at + delta)).unwrap();
+                    let (q0, q1) = ends(&s);
+                    assert!(
+                        (q0 - (p0 + delta)).hypot() < 1e-8 && (q1 - (p1 + delta)).hypot() < 1e-8,
+                        "connector snapped back: {nesting:?}/{move_group}/{together}"
+                    );
+                    let model::ShapeKind::Connector { start, end } = s.doc().unwrap().shape(line).unwrap().kind else { panic!("connector") };
+                    assert_eq!(start, None);
+                    assert_eq!(end.map(|g| g.0), together.then_some(b));
+                }
+                s.pointer(ev(PointerKind::Up, at + d * 2.0)).unwrap();
+                let st = s.doc().unwrap();
+                let bytes = cmd::file::save_bytes(&st.doc, "deckcraft").unwrap();
+                let back = deckcraft_format::load(&bytes).unwrap();
+                // Native loading normalizes angles (for example -12 to 348 degrees).
+                // Check the persisted attachment and rendered ends rather than angle spelling.
+                let (loaded, parent) = connect::locate(&back, &st.selection, &back.slides[st.selection.slide].shapes, line).unwrap();
+                assert_eq!(loaded.kind, st.shape(line).unwrap().kind);
+                let (a, b) = connect::endpoints(&loaded.xfrm.unwrap());
+                assert!((parent * a - (p0 + d * 2.0)).hypot() < 1e-8);
+                assert!((parent * b - (p1 + d * 2.0)).hypot() < 1e-8);
+                s.execute("edit.undo", &json!({})).unwrap();
+                assert_eq!(s.doc().unwrap().doc, before);
+            }
+        }
+    }
+}
+
+/// A group's internal glue survives a move while its connection to an external target detaches.
+#[test]
+fn grouped_connector_move_keeps_internal_target_glue() {
+    use deckcraft_geom::{Point, Vec2, Xfrm};
+    for nested in [false, true] {
+        let mut s = session();
+        s.prefs.smart_guides = false;
+        s.prefs.snap_to_grid = false;
+        let a = ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[100,100,100,50]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let b = ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[600,300,100,50]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let line =
+            ShapeId(s.execute("shape.connect", &json!({"from":a,"to":b,"preset":"straightConnector1"})).unwrap()["id"].as_u64().unwrap() as u32);
+        let group = ShapeId(s.execute("arrange.group", &json!({"ids":[line,a]})).unwrap()["id"].as_u64().unwrap() as u32);
+        if nested {
+            wrap_test_member_in_group(&mut s, group, Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(300.0, 100.0, 450.0, 200.0) }, true);
+        }
+        let moved = s.doc().unwrap().shapes().last().unwrap().id;
+        s.execute("edit.select", &json!({"ids":[moved]})).unwrap();
+        let ends = |s: &Session| {
+            let st = s.doc().unwrap();
+            let parent = cmd::parent_transform(st, line);
+            let (a, b) = connect::endpoints(&st.shape(line).unwrap().xfrm.unwrap());
+            (parent * a, parent * b)
+        };
+        let (p0, p1) = ends(&s);
+        let at = Point::new((p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0);
+        let d = Vec2::new(35.0, 45.0);
+        assert!(matches!(s.hit_test(at,1.0),Some(tools::Hit::Shape{id,..}) if id==moved));
+        let before = s.doc().unwrap().doc.clone();
+        for (kind, p) in [(PointerKind::Down, at), (PointerKind::Drag, at + d), (PointerKind::Up, at + d)] {
+            s.pointer(PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() }).unwrap();
+        }
+        let (q0, q1) = ends(&s);
+        assert!((q0 - (p0 + d)).hypot() < 1e-8 && (q1 - (p1 + d)).hypot() < 1e-8);
+        let model::ShapeKind::Connector { start, end } = s.doc().unwrap().shape(line).unwrap().kind else { panic!("connector") };
+        assert_eq!(start.map(|g| g.0), Some(a));
+        assert_eq!(end, None);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before);
+    }
+}

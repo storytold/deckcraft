@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (grouped connector attachments persist and follow targets; live collapsed-parent rotation and text selection are preserved; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (moved groups detach nested connectors from stationary external targets while preserving glue inside moved trees; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -213,6 +213,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | Moving a group detaches nested connectors from stationary external targets while keeping connections to targets that move with them; pointer, undo and native-save regressions added. Scores unchanged |
 | 2026-11-18 | minor | Grouped connector endpoint glue persists through target movement and native saves; live collapsed-parent rotation/text-selection samples preserve the whole selection; scale-tolerance regression strengthened. Scores unchanged |
 | 2026-11-18 | minor | Grouped text carets, selection, spelling and IME underlines share the renderer’s slide-point layout, preserving font sizes, insets and wrapping (#1095) |
 | 2026-11-18 | trivial | Synced grouped-editing fixes with upstream export, canvas and text-placement changes; retained both documentation histories and unchanged parity scores (#1095) |

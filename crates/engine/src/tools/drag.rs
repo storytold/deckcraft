@@ -341,8 +341,11 @@ impl Session {
                     deckcraft_model::walk(std::slice::from_ref(sh), &mut |s, _| moved.push(s.id));
                 }
             }
-            for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
-                if let ShapeKind::Connector { start, end } = &mut sh.kind {
+            for id in &moved {
+                // Moved groups can contain connectors at any depth in their shape trees.
+                if let Some(sh) = deckcraft_model::find_shape_mut(list, *id)
+                    && let ShapeKind::Connector { start, end } = &mut sh.kind
+                {
                     for c in [start, end] {
                         if c.is_some_and(|(to, _)| !moved.contains(&to)) {
                             *c = None;
