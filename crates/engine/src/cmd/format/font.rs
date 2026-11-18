@@ -1,6 +1,7 @@
 use super::{
     Arc, Caps, ColorRef, ColorTransform, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or,
-    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_param, resolve, str_param,
+    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_levels, json, ok, on_named, on_param, resolve,
+    str_param,
 };
 
 pub(super) fn bold(s: &mut Session, p: &Value) -> Result<Value> {
@@ -46,6 +47,9 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, "format.font", |s| font_selected(s, p))
+}
+fn font_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
     format_run(s, &move |r| r.font = Some(f.clone()))
 }
@@ -101,6 +105,9 @@ pub(super) fn shrink(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, "format.color", |s| color_selected(s, p))
+}
+fn color_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
     // A selected chart has no runs: Font Color colours its text (title, axes, legend, labels),
     // which used to answer and change nothing.
@@ -139,6 +146,9 @@ fn with_transparency(c: &mut ColorRef, transparency: f64) {
 /// fill takes the colour it shows now (from the placeholder, master or theme) so only its
 /// opacity changes.
 pub(super) fn text_transparency(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, "format.textTransparency", |s| text_transparency_selected(s, p))
+}
+fn text_transparency_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "value").ok_or_else(|| bad("format.textTransparency", "missing `value` (0–1)"))?;
     if !v.is_finite() {
         return Err(bad("format.textTransparency", "`value` must be a number from 0 to 1"));
@@ -241,6 +251,9 @@ pub(super) fn language_all(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn highlight(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, "format.highlight", |s| highlight_selected(s, p))
+}
+fn highlight_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color");
     if c.is_none() && p.get("color").is_some_and(|v| !v.is_null()) {
         return Err(bad("format.highlight", "`color` is not a valid colour"));
@@ -464,6 +477,10 @@ fn font_dialog_params(s: &Session) -> Value {
 pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
     let edits = font_edits(p)?;
     if edits.is_empty() {
+        // The dialog opens on the selection, so named shapes with nothing to set would be ignored.
+        if super::names_targets(p) {
+            return Err(bad("format.fontDialog", "`ids` needs a setting to apply (family, size, bold…)"));
+        }
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }
