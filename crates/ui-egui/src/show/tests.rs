@@ -516,6 +516,41 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
 }
 
+/// #2089: a slide's With Previous entrance waits for the slide's transition to finish, as in
+/// PowerPoint, instead of playing under it.
+#[test]
+fn animations_start_after_the_slides_transition() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "fade", "index": 1, "duration": 400})).unwrap();
+    let id = s.active().unwrap().doc.slides[1].shapes[0].id;
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "withPrevious", "duration": 500})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    let a = show.state.next(&doc);
+    assert_eq!(a, ShowAction::Slide(1));
+    assert!(show.apply(a, &doc, 10.0));
+    assert!(show.trans.is_some(), "the fade plays");
+    assert!(show.state.playing, "the With Previous step is under way");
+    assert!((show.clock_snapshot().step_start - 10.4).abs() < 1e-9, "its clock starts when the 0.4 s fade ends");
+    let tl = ShowState::timeline(&doc, 1);
+    let at = |now: f64| state_for(&tl, id, show.state.step, now - show.clock_snapshot().step_start, &[], &[]);
+    assert!(!at(10.3).visible, "hidden while the transition plays");
+    assert!(at(10.6).visible && at(10.6).opacity < 1.0, "fading in after it");
+    // The step is not cut short by the time the transition took.
+    let mut actions = Vec::new();
+    assert!(show.queue_clock_actions(&doc, 10.8, &mut actions));
+    assert!(actions.is_empty(), "0.4 s into a 0.5 s step: still playing");
+
+    // Without a transition the step starts at once, as before.
+    s.execute("transition.set", &json!({"kind": "none", "index": 1})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    let a = show.state.next(&doc);
+    assert!(show.apply(a, &doc, 10.0));
+    assert_eq!(show.clock_snapshot().step_start, 10.0);
+}
+
 #[test]
 fn going_back_plays_the_left_slides_transition_reversed() {
     // #1531: Back from B to A played A's own entrance transition. PowerPoint plays the one B came
@@ -1123,6 +1158,103 @@ fn input_state_tracks_the_modes_that_move_show_click_targets() {
     assert_ne!(show.input_state(), base, "a blank screen has no slide click targets");
 }
 
+#[test]
+fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
+    use crate::presenter::{Command, Host, Snapshot};
+    use std::{cell::RefCell, rc::Rc};
+    #[derive(Default)]
+    struct Bridge {
+        opens: usize,
+        closes: usize,
+        commands: Vec<Command>,
+        last: Option<Snapshot>,
+        gone: bool,
+    }
+    struct Mock(Rc<RefCell<Bridge>>);
+    impl Host for Mock {
+        fn open(&mut self) -> Result<(), String> {
+            self.0.borrow_mut().opens += 1;
+            Ok(())
+        }
+        fn is_open(&self) -> bool {
+            !self.0.borrow().gone
+        }
+        fn commands(&mut self) -> Vec<Command> {
+            std::mem::take(&mut self.0.borrow_mut().commands)
+        }
+        fn update(&mut self, snapshot: Snapshot) {
+            self.0.borrow_mut().last = Some(snapshot);
+        }
+        fn close(&mut self) {
+            self.0.borrow_mut().closes += 1;
+        }
+    }
+    let bridge = Rc::new(RefCell::new(Bridge::default()));
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("slide.new", &json!({})).unwrap();
+    let services = crate::Services { presenter: Some(Box::new(Mock(bridge.clone()))), ..Default::default() };
+    let mut app = SlideApp::new(session, services);
+    app.ui.presenter_view = true;
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    h.state_mut().start_show(0, false);
+    h.run_steps(2);
+    assert_eq!(bridge.borrow().opens, 1);
+    for (key, slide) in [(egui::Key::ArrowRight, 1), (egui::Key::ArrowLeft, 0), (egui::Key::End, 2), (egui::Key::Home, 0)] {
+        bridge.borrow_mut().commands.push(Command::Key { name: key.name().into(), command: false, shift: false, alt: false, ctrl: false });
+        h.run_steps(2);
+        assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide);
+    }
+    // #1864: the web popup's Previous/Next buttons send the DOM key names.
+    for (name, slide) in [("ArrowRight", 1), ("ArrowLeft", 0)] {
+        bridge.borrow_mut().commands.push(Command::Key { name: name.into(), command: false, shift: false, alt: false, ctrl: false });
+        h.run_steps(2);
+        assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide, "{name}");
+    }
+    // #1866: All slides opens in the web Presenter View, as on desktop; the audience keeps its slide.
+    bridge.borrow_mut().commands.push(Command::Key { name: "G".into(), command: false, shift: false, alt: false, ctrl: false });
+    h.run_steps(2);
+    let show = h.state().show.as_ref().unwrap();
+    assert!(show.presenter_grid && !show.grid, "G from the popup opens its own grid, not the audience's");
+    for _ in 0..20 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+    let last = bridge.borrow().last.clone().unwrap();
+    assert!(last.grid);
+    assert_eq!(last.slides.as_ref().map(Vec::len), Some(3), "the popup gets a thumbnail per slide");
+    assert!(last.slides.iter().flatten().all(|p| p.width.max(p.height) <= 96), "thumbnails stay small enough for one message");
+    assert!(last.current.is_none() && last.next.is_none(), "the grid replaces both previews");
+    bridge.borrow_mut().commands.push(Command::Goto { slide: 2 });
+    h.run_steps(2);
+    let show = h.state().show.as_ref().unwrap();
+    assert!(!show.presenter_grid && !show.grid);
+    assert_eq!(show.state.slide, 2);
+    // Closing the popup with its grid open must not hold auto-advance for the rest of the show.
+    bridge.borrow_mut().commands.push(Command::Key { name: "G".into(), command: false, shift: false, alt: false, ctrl: false });
+    h.run_steps(2);
+    assert!(h.state().show.as_ref().unwrap().presenter_grid);
+    bridge.borrow_mut().gone = true;
+    h.run_steps(2);
+    assert!(!h.state().show.as_ref().unwrap().presenter_grid);
+    bridge.borrow_mut().gone = false;
+    bridge.borrow_mut().commands.push(Command::End);
+    h.run_steps(2);
+    assert!(h.state().show.is_none());
+    assert_eq!(bridge.borrow().closes, 1);
+    h.state_mut().start_show(1, false);
+    h.run_steps(2);
+    assert_eq!(bridge.borrow().opens, 2);
+    assert_eq!(h.state().show.as_ref().unwrap().state.slide, 1);
+}
+
 /// #964: the next-slide preview renders on another thread; the presenter frame that asks for
 /// it doesn't wait, and the preview arrives on a later frame.
 #[test]
@@ -1237,4 +1369,38 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     }
     let tex = harness.state().1.next_tex.as_ref().map(|(d, k, _)| (std::sync::Arc::ptr_eq(d, &edited), *k));
     assert_eq!(tex, Some((true, 1)), "the preview comes from the edited presentation");
+}
+
+/// #1654: Preview on the Transitions ribbon plays the current slide's transition from the
+/// previous slide into the current slide, and exits when finished.
+#[test]
+fn transition_preview_plays_from_the_previous_slide() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "push", "index": 1, "duration": 1000})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 1, true, false);
+    show.start_transition_preview(&doc, 10.0);
+    assert!(show.preview_only);
+    let tr = show.trans.as_ref().expect("transition preview is playing");
+    assert_eq!(tr.kind, "push");
+    assert_eq!(tr.from, Some(0), "enters from slide 0 into slide 1");
+    assert_eq!(tr.dur, 1.0);
+    assert!(!tr.reverse);
+    assert_eq!(tr.start, 10.0);
+}
+
+/// #1654: Transition preview for slide 0 plays with from = None (transitioning from black).
+#[test]
+fn transition_preview_for_first_slide_transitions_from_black() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("transition.set", &json!({"kind": "fade", "index": 0, "duration": 500})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, true, false);
+    show.start_transition_preview(&doc, 5.0);
+    assert!(show.preview_only);
+    let tr = show.trans.as_ref().expect("fade transition preview is playing");
+    assert_eq!(tr.kind, "fade");
+    assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
+    assert_eq!(tr.dur, 0.5);
 }

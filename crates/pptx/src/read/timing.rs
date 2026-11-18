@@ -53,25 +53,168 @@ pub fn transition(imp: &mut Imp, part: &Part, t: &El) -> Option<Transition> {
 struct Found<'a> {
     ctn: &'a El,
     trigger: Option<u32>,
+    /// Click group the effect sits in: a new one starts at every time node whose start is `indefinite`.
+    group: usize,
+    /// Sum of the start delays of the time nodes between the click group and the effect, in ms.
+    offset: u32,
+    /// Whether any ancestor time node defers start until an event (`onClick`, `onEnd`, targeted `onBegin`) or nonzero delay.
+    deferred: bool,
 }
 
-fn collect<'a>(e: &'a El, trigger: Option<u32>, out: &mut Vec<Found<'a>>, depth: usize) {
+/// Where `collect` is in the time tree: the click group and the delay accumulated inside it.
+#[derive(Clone, Copy)]
+struct At {
+    trigger: Option<u32>,
+    main_seq_id: Option<u32>,
+    group: usize,
+    offset: u32,
+    deferred: bool,
+}
+
+/// Returns whether `st` (`p:stCondLst`) is PowerPoint's automatic main-sequence step wrapper:
+/// `<p:cond delay="indefinite"/>` paired only with `<p:cond evt="onBegin" delay="0"><p:tn val="{main_seq_id}"/></p:cond>`
+/// referencing the immediate enclosing `mainSeq` `<p:cTn>`.
+fn is_main_seq_auto(st: &El, main_seq_id: Option<u32>) -> bool {
+    let Some(ms_id) = main_seq_id else {
+        return false;
+    };
+    let is_indefinite = |d: &El| {
+        d.attr("evt").is_none()
+            && d.attr("delay").map(str::trim) == Some("indefinite")
+            && d.child("tgtEl").is_none()
+            && d.child("tn").is_none()
+            && d.child("rtn").is_none()
+    };
+    let is_main_seq_on_begin = |d: &El| {
+        d.attr("evt") == Some("onBegin")
+            && d.attr("delay").map(str::trim) == Some("0")
+            && d.child("tgtEl").is_none()
+            && d.child("rtn").is_none()
+            && d.child("tn").and_then(|tn| tn.u32("val")) == Some(ms_id)
+    };
+    st.children_named("cond").any(is_indefinite)
+        && st.children_named("cond").any(is_main_seq_on_begin)
+        && st.children_named("cond").all(|d| is_indefinite(d) || is_main_seq_on_begin(d))
+}
+
+fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, depth: usize) {
     if depth > 64 || out.len() > 10_000 {
         return;
     }
     for c in e.elements() {
         if c.is("cTn") && c.has_attr("presetClass") {
-            out.push(Found { ctn: c, trigger });
+            let deferred = at.deferred || c.child("stCondLst").is_some_and(defers_start);
+            out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset, deferred });
             continue;
         }
-        let mut trig = trigger;
+        let mut at = at;
         if c.is("seq")
             && let Some(ctn) = c.child("cTn")
             && ctn.attr("nodeType") == Some("interactiveSeq")
         {
-            trig = ctn.path(&["stCondLst", "cond", "tgtEl", "spTgt"]).and_then(|s| s.u32("spid"));
+            at.trigger = ctn.path(&["stCondLst", "cond", "tgtEl", "spTgt"]).and_then(|s| s.u32("spid"));
+            at.main_seq_id = None;
         }
-        collect(c, trig, out, depth + 1);
+        if c.is("cTn") {
+            let is_main_seq = c.attr("nodeType") == Some("mainSeq");
+            if let Some(st) = c.child("stCondLst") {
+                if !(!is_main_seq && !at.deferred && is_main_seq_auto(st, at.main_seq_id)) && defers_start(st) {
+                    at.deferred = true;
+                }
+                if let Some(cond) = st.child("cond") {
+                    if cond.attr("delay").map(str::trim) == Some("indefinite") {
+                        *groups += 1;
+                        at.group = *groups;
+                        at.offset = 0;
+                    } else {
+                        at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
+                    }
+                }
+            }
+            at.main_seq_id = if is_main_seq && !at.deferred { c.u32("id") } else { None };
+        }
+        collect(c, at, groups, out, depth + 1);
+    }
+}
+
+/// How long an effect holds back an After Previous one, as the show timeline counts it.
+fn span_ms(a: &Animation) -> u32 {
+    let iterations = if a.repeat == u32::MAX || a.repeat <= 1 { 1 } else { a.repeat.min(1_000) };
+    a.duration_ms.saturating_mul(if a.auto_reverse { 2 } else { 1 }).saturating_mul(iterations)
+}
+
+/// Start times (ms after the click) that the flat effect list plays at, effect after effect.
+fn flat_starts(anims: &[&Animation]) -> Vec<u32> {
+    let (mut begin, mut end) = (0u32, 0u32);
+    anims
+        .iter()
+        .map(|a| {
+            if a.start == AnimStart::AfterPrevious {
+                begin = end;
+            }
+            let start = begin.saturating_add(a.delay_ms);
+            end = end.max(start.saturating_add(span_ms(a)));
+            start
+        })
+        .collect()
+}
+
+/// PowerPoint places each effect at the delays of all its enclosing time nodes, so a file may list
+/// effects out of time order (a countdown written first, then effects at 5 s placed only by their
+/// parent's delay). The flat list only knows "after/with previous" plus the effect's own delay, so
+/// a click group listed out of time order, whose flat reading disagrees with the file, is sorted by
+/// start time and its starts and delays rewritten to land every effect where PowerPoint plays it.
+/// Every other group is left untouched.
+fn place_by_parent_delays(out: &mut [(Animation, u32, String, bool, usize, u32)], at: &[(Option<u32>, usize, u32)]) {
+    let mut groups: Vec<Vec<usize>> = vec![];
+    let mut slot: std::collections::HashMap<(Option<u32>, usize), usize> = std::collections::HashMap::new();
+    for (i, &(t, g, _)) in at.iter().enumerate() {
+        let n = *slot.entry((t, g)).or_insert_with(|| {
+            groups.push(vec![]);
+            groups.len() - 1
+        });
+        groups[n].push(i);
+    }
+    for idx in groups {
+        // More than one click in a group means the tree isn't one click per group: leave it.
+        if idx.iter().skip(1).any(|&i| out[i].0.start == AnimStart::OnClick) {
+            continue;
+        }
+        let abs: Vec<u32> = idx.iter().map(|&i| at[i].2.saturating_add(out[i].0.delay_ms)).collect();
+        // Only a file that lists effects out of time order needs this: files PowerPoint or DeckCraft
+        // save are in order, and their reading stays exactly as before.
+        if abs.is_sorted() {
+            continue;
+        }
+        let flat = flat_starts(&idx.iter().map(|&i| &out[i].0).collect::<Vec<_>>());
+        if flat == abs {
+            continue;
+        }
+        // The group's click stays on whichever effect now plays first.
+        let had_click = out[idx[0]].0.start == AnimStart::OnClick;
+        let mut order: Vec<usize> = (0..idx.len()).collect();
+        order.sort_by_key(|&k| abs[k]);
+        let mut sorted: Vec<(Animation, u32, String, bool, usize, u32)> = order.iter().map(|&k| out[idx[k]].clone()).collect();
+        let (mut begin, mut end) = (0u32, 0u32);
+        for (n, (&k, item)) in order.iter().zip(sorted.iter_mut()).enumerate() {
+            let a = &mut item.0;
+            let t = abs[k];
+            if n == 0 && had_click {
+                a.start = AnimStart::OnClick;
+                a.delay_ms = t;
+            } else if a.start == AnimStart::AfterPrevious && t >= end {
+                begin = end;
+                a.delay_ms = t - end;
+            } else {
+                a.start = AnimStart::WithPrevious;
+                a.delay_ms = t.saturating_sub(begin);
+            }
+            item.5 = 0;
+            end = end.max(t.saturating_add(span_ms(a)));
+        }
+        for (&i, item) in idx.iter().zip(sorted) {
+            out[i] = item;
+        }
     }
 }
 
@@ -103,12 +246,44 @@ fn behaviour_auto_reverses(c: &El) -> bool {
 
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
+/// Returns whether `st` (`p:stCondLst`) defers playback instead of starting immediately on slide entry.
+fn defers_start(st: &El) -> bool {
+    let is_auto_begin = |c: &El| {
+        c.attr("evt") == Some("onBegin")
+            && c.attr("delay").map(str::trim) == Some("0")
+            && c.child("tgtEl").is_none()
+            && c.child("tn").is_none()
+            && c.child("rtn").is_none()
+    };
+    let has_on_begin = st.children_named("cond").any(is_auto_begin);
+    st.children_named("cond")
+        .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
+}
+
+/// Applies `p:video`/`p:audio` timing node settings and main-sequence autoplay triggers to media shapes.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
-    let mut nodes = vec![];
-    for tag in ["video", "audio"] {
-        timing.find_all(tag, &mut nodes);
+    fn collect_media<'a>(e: &'a El, deferred: bool, out: &mut Vec<(&'a El, bool)>, depth: usize) {
+        if depth > 64 || out.len() >= 10_000 {
+            return;
+        }
+        let mut deferred = deferred;
+        if e.is("cTn")
+            && let Some(st) = e.child("stCondLst")
+            && defers_start(st)
+        {
+            deferred = true;
+        }
+        if e.is("video") || e.is("audio") {
+            out.push((e, deferred));
+            return;
+        }
+        for c in e.elements() {
+            collect_media(c, deferred, out, depth + 1);
+        }
     }
-    for node in nodes.into_iter().take(10_000) {
+    let mut nodes = vec![];
+    collect_media(timing, false, &mut nodes, 0);
+    for (node, deferred) in nodes {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
         let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
@@ -124,8 +299,42 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if cm.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite") {
             clip.loop_play = true;
         }
+        if cm.child("cTn").and_then(|c| c.attr("fill")) == Some("remove") {
+            clip.rewind = true;
+        }
+        if cm.u32("numSld").is_some_and(|n| n > 1) {
+            clip.play_across_slides = true;
+        }
+        if !deferred && cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("evt").is_none() && c.attr("delay").map(str::trim) == Some("0"))
+        {
+            clip.autoplay = true;
+        }
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
+        }
+    }
+    let root_deferred = timing.path(&["tnLst", "par", "cTn", "stCondLst"]).is_some_and(defers_start);
+    if !root_deferred && let Some(tn) = timing.child("tnLst") {
+        let mut found = vec![];
+        collect(tn, At { trigger: None, main_seq_id: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
+        for f in found.into_iter().filter(|f| f.trigger.is_none()) {
+            let c = f.ctn;
+            if c.attr("nodeType") == Some("clickEffect") || f.deferred {
+                break;
+            }
+            let class = AnimClass::from_xml(c.attr("presetClass").unwrap_or("entr"));
+            let preset = c.u32("presetID").unwrap_or(0);
+            let effect = maps::effect_for_preset(class, preset).unwrap_or_else(|| maps::fallback_effect(class));
+            let delay = c.path(&["stCondLst", "cond"]).and_then(|d| ms_attr(d, "delay")).unwrap_or(0);
+            if class == AnimClass::Media
+                && effect == "play"
+                && f.offset == 0
+                && delay == 0
+                && let Some(id) = c.find("spTgt").and_then(|t| t.u32("spid")).and_then(|s| ctx.lookup(s))
+                && let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind)
+            {
+                clip.autoplay = true;
+            }
         }
     }
 }
@@ -135,18 +344,21 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
-    collect(tn, None, &mut found, 0);
-    // Paragraph builds (`bldP build="p"`) by (spid, grpId).
-    let by_para: Vec<(u32, String)> = timing
+    collect(tn, At { trigger: None, main_seq_id: None, group: 0, offset: 0, deferred: false }, &mut 0, &mut found, 0);
+    // Paragraph builds (`bldP`) by (spid, grpId) -> whether `build="p"`.
+    let bld_p: std::collections::HashMap<(u32, String), bool> = timing
         .child("bldLst")
         .map(|b| {
             b.children_named("bldP")
-                .filter(|p| p.attr("build") == Some("p"))
-                .filter_map(|p| Some((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string())))
-                .collect()
+                .filter_map(|p| Some(((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string()), p.attr("build") == Some("p"))))
+                .fold(std::collections::HashMap::new(), |mut m, (k, v)| {
+                    m.entry(k).and_modify(|e| *e |= v).or_insert(v);
+                    m
+                })
         })
         .unwrap_or_default();
-    let mut out: Vec<(Animation, u32, String, bool)> = vec![];
+    let mut out: Vec<(Animation, u32, String, bool, usize, u32)> = vec![];
+    let mut at: Vec<(Option<u32>, usize, u32)> = vec![];
     for f in found {
         let c = f.ctn;
         let class = AnimClass::from_xml(c.attr("presetClass").unwrap_or("entr"));
@@ -210,21 +422,27 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             a.color = dml::color(clr);
         }
         let grp = c.attr("grpId").unwrap_or("0").to_string();
-        let build = paragraph.is_some() && by_para.iter().any(|(s, g)| *s == file_id && *g == grp);
-        out.push((a, file_id, grp, build));
+        let build = paragraph.is_some() && bld_p.get(&(file_id, grp.clone())) != Some(&false);
+        out.push((a, file_id, grp, build, f.group, f.offset));
+        at.push((f.trigger, f.group, f.offset));
     }
+    place_by_parent_delays(&mut out, &at);
     // A paragraph build's effects, one per paragraph, become one by-paragraph animation only when
     // the timeline plays that back exactly: PowerPoint lets each paragraph keep its own start and
     // effect, and other shapes' effects can sit between them (#844).
-    let same_build =
-        |x: &(Animation, u32, String, bool), y: &(Animation, u32, String, bool)| x.3 && y.3 && x.1 == y.1 && x.2 == y.2 && x.0.trigger == y.0.trigger;
+    let same_build = |x: &(Animation, u32, String, bool, usize, u32), y: &(Animation, u32, String, bool, usize, u32)| {
+        x.3 && y.3 && x.1 == y.1 && x.2 == y.2 && x.0.trigger == y.0.trigger
+    };
     let mut anims = Vec::with_capacity(out.len());
     for run in out.chunk_by(same_build) {
         let effects: Vec<&Animation> = run.iter().map(|(a, ..)| a).collect();
+        let offsets: Vec<u32> = run.iter().map(|r| r.5).collect();
         let build = run.first().is_some_and(|r| r.3);
+        let explicit_bld = run.first().is_some_and(|r| bld_p.get(&(r.1, r.2.clone())) == Some(&true));
+        let same_click_group = run.first().is_some_and(|first| first.0.start == AnimStart::OnClick || run.iter().all(|r| r.4 == first.4));
         let text = effects.first().and_then(|a| find_shape(shapes, a.shape)).and_then(|s| s.text.as_ref());
         match (effects.first(), text) {
-            (Some(first), Some(text)) if build && plays_as_build(&effects, text) => {
+            (Some(first), Some(text)) if build && (explicit_bld || same_click_group) && plays_as_build(&effects, &offsets, text, explicit_bld) => {
                 anims.push(Animation { text_build: TextBuild::ByParagraph, paragraph: None, ..(*first).clone() });
             }
             _ => anims.extend(effects.into_iter().cloned()),
@@ -237,7 +455,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
 /// first one plays: one effect per paragraph the build animates, in paragraph order, later top
 /// paragraphs on click (after previous when the build doesn't start on click), deeper ones with
 /// their parent, all with the same settings?
-fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
+fn plays_as_build(effects: &[&Animation], offsets: &[u32], text: &TextBody, explicit_bld: bool) -> bool {
     let roles = paragraph_build_roles(text);
     let expected = roles.iter().enumerate().filter(|(i, r)| match r {
         BuildRole::Top => true,
@@ -245,6 +463,16 @@ fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
         BuildRole::Unowned => false,
     });
     let Some(first) = effects.first() else { return false };
+    let off0 = offsets.first().copied().unwrap_or(0);
+    let flat = flat_starts(effects);
+    let parent_starts_match = offsets
+        .iter()
+        .zip(effects.iter())
+        .zip(flat.iter())
+        .all(|((&off, a), &ft)| off == off0 || off.saturating_add(a.delay_ms) == off0.saturating_add(ft));
+    if !explicit_bld && (!parent_starts_match || (first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0 || off0 != 0))) {
+        return false;
+    }
     let settings = |a: &Animation| Animation { start: AnimStart::OnClick, paragraph: None, ..a.clone() };
     let base = settings(first);
     let mut matched = 0;

@@ -1,251 +1,71 @@
-//! Table styles: our style ids ↔ table style GUIDs, and `tableStyles.xml` definitions for the
-//! styles we write (generated from theme accents, matching how DeckCraft draws them).
+//! Table style XML uses the shared writer; app XML admission remains unchanged.
+pub use craft_drawingml::table::styles::{guid, guid_for_style, is_own_guid, style_from_guid};
 
-use crate::opc::NS_A;
-use crate::xml::{A, W};
-
-/// Well-known built-in table style GUIDs (format identifiers) and our equivalent ids.
-const KNOWN: &[(&str, &str)] = &[
-    ("{2D5ABB26-0587-4C30-8999-92F81FD0307C}", "none"),
-    ("{5940675A-B579-460E-94D1-54222C63F5DA}", "grid"),
-    ("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}", "medium2-accent1"),
-    ("{073A0DAA-6AF3-43AB-8588-CEC1D06C72B9}", "medium2-tx1"),
-    ("{21E4AEA4-8DFA-4A89-87EB-49C32662AFE8}", "medium2-accent2"),
-    ("{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}", "medium2-accent3"),
-    ("{00A15C55-8517-42AA-B614-E9B94910E393}", "medium2-accent4"),
-    ("{7DF18680-E054-41AD-8BC1-D1AEF772440D}", "medium2-accent5"),
-    ("{93296810-A885-4BE3-A3E7-6D5BEEA58F35}", "medium2-accent6"),
-];
-
-/// GUIDs we write as built-in references (no definition needed).
-const BUILTIN_WRITE: [&str; 3] = ["none", "grid", "medium2-accent1"];
-
-fn fnv(s: &str, seed: u64) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64 ^ seed;
-    for b in s.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    h
+pub fn table_styles_xml(used: &[String], defs: &[deckcraft_model::table::TableStyleDef]) -> Vec<u8> {
+    craft_drawingml_table::table::styles::table_styles_xml_with(used, defs.iter().map(|d| (d.id.as_str(), d.raw.as_str())), "DeckCraft", |raw| {
+        crate::xml::parse(raw.as_bytes()).is_ok_and(|x| x.root.is("tblStyle"))
+    })
 }
 
-/// A stable GUID derived from text (version-4 layout).
-pub fn guid(text: &str) -> String {
-    let a = fnv(text, 0x5163_7261_6674);
-    let b = fnv(text, 0x7461_626c_6573);
-    format!(
-        "{{{:08X}-{:04X}-4{:03X}-8{:03X}-{:012X}}}",
-        (a >> 32) as u32,
-        (a >> 16) as u16,
-        (a & 0x0fff) as u16,
-        (b >> 48) as u16 & 0x0fff,
-        b & 0xffff_ffff_ffff
-    )
-}
+#[cfg(test)]
+#[path = "tables_legacy.rs"]
+mod legacy;
 
+#[cfg(test)]
 fn own_guid(style: &str) -> String {
     guid(&format!("deckcraft-table-style:{style}"))
-}
-
-/// Is `g` the GUID DeckCraft writes for one of its own styles?
-pub fn is_own_guid(g: &str) -> bool {
-    let up = g.to_ascii_uppercase();
-    deckcraft_model::table::table_styles().iter().any(|(id, _)| own_guid(id) == up)
-}
-
-/// Table style GUID → our style id (or the GUID itself when unknown).
-pub fn style_from_guid(g: &str) -> String {
-    let up = g.to_ascii_uppercase();
-    if let Some((_, s)) = KNOWN.iter().find(|(k, _)| *k == up) {
-        return s.to_string();
-    }
-    for (id, _) in deckcraft_model::table::table_styles() {
-        if own_guid(&id) == up {
-            return id;
-        }
-    }
-    if g.is_empty() { "none".into() } else { g.to_string() }
-}
-
-/// GUID to write for our style id, and whether a definition must be written.
-pub fn guid_for_style(style: &str) -> (String, bool) {
-    if style.starts_with('{') {
-        return (style.to_string(), false);
-    }
-    if BUILTIN_WRITE.contains(&style)
-        && let Some((g, _)) = KNOWN.iter().find(|(_, s)| *s == style)
-    {
-        return (g.to_string(), false);
-    }
-    let known = deckcraft_model::table::table_styles().iter().any(|(id, _)| id == style);
-    if known { (own_guid(style), true) } else { ("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}".into(), false) }
-}
-
-fn clr(w: &mut W, slot: &str, mods: &[(&str, i32)]) {
-    if mods.is_empty() {
-        w.val("a:schemeClr", slot);
-        return;
-    }
-    w.open("a:schemeClr", A::new().a("val", slot));
-    for (n, v) in mods {
-        w.val(n, v);
-    }
-    w.close("a:schemeClr");
-}
-
-fn solid(w: &mut W, slot: &str, mods: &[(&str, i32)]) {
-    w.open0("a:fill");
-    w.open0("a:solidFill");
-    clr(w, slot, mods);
-    w.close("a:solidFill");
-    w.close("a:fill");
-}
-
-fn borders(w: &mut W, b: Option<(&str, &[(&str, i32)], i32)>) {
-    w.open0("a:tcBdr");
-    if let Some((slot, mods, width)) = b {
-        for side in ["a:left", "a:right", "a:top", "a:bottom", "a:insideH", "a:insideV"] {
-            w.open0(side);
-            w.open("a:ln", A::new().a("w", width).a("cmpd", "sng"));
-            w.open0("a:solidFill");
-            clr(w, slot, mods);
-            w.close("a:solidFill");
-            w.close("a:ln");
-            w.close(side);
-        }
-    }
-    w.close("a:tcBdr");
-}
-
-fn txt(w: &mut W, bold: bool, color: Option<&str>) {
-    w.open("a:tcTxStyle", A::new().o("b", bold.then_some("on")));
-    w.open("a:fontRef", A::new().a("idx", "minor"));
-    w.val("a:prstClr", "black");
-    w.close("a:fontRef");
-    match color {
-        Some(c) => w.val("a:schemeClr", c),
-        None => w.val("a:schemeClr", "dk1"),
-    }
-    w.close("a:tcTxStyle");
-}
-
-/// Write one `a:tblStyle` for our style id.
-fn style_def(w: &mut W, id: &str, name: &str) {
-    let kind = id.split('-').next().unwrap_or("medium2");
-    let acc = match id.rsplit('-').next().unwrap_or("accent1") {
-        "tx1" => "dk1",
-        a if a.starts_with("accent") => a,
-        _ => "accent1",
-    };
-    let acc: &str = acc;
-    w.open("a:tblStyle", A::new().a("styleId", own_guid(id)).a("styleName", name));
-    let part =
-        |w: &mut W, tag: &str, bold: bool, text: Option<&str>, fill: Option<(&str, &[(&str, i32)])>, bdr: Option<(&str, &[(&str, i32)], i32)>| {
-            w.open0(tag);
-            if bold || text.is_some() {
-                txt(w, bold, text);
-            }
-            w.open0("a:tcStyle");
-            borders(w, bdr);
-            if let Some((s, m)) = fill {
-                solid(w, s, m);
-            }
-            w.close("a:tcStyle");
-            w.close(tag);
-        };
-    match kind {
-        "grid" => {
-            part(w, "a:wholeTbl", false, Some("dk1"), None, Some(("dk1", &[], 9525)));
-        }
-        "light1" => {
-            part(w, "a:wholeTbl", false, Some("dk1"), None, None);
-            part(w, "a:band1H", false, None, Some((acc, &[("a:tint", 20000)])), None);
-            part(w, "a:band1V", false, None, Some((acc, &[("a:tint", 20000)])), None);
-            part(w, "a:lastCol", true, None, None, None);
-            part(w, "a:firstCol", true, None, None, None);
-            part(w, "a:lastRow", true, None, None, None);
-            part(w, "a:firstRow", true, None, None, Some((acc, &[], 12700)));
-        }
-        "light2" => {
-            part(w, "a:wholeTbl", false, Some("dk1"), None, Some((acc, &[], 12700)));
-            // Schema order: … lastCol, firstCol, lastRow, …, firstRow.
-            part(w, "a:firstCol", true, None, None, None);
-            part(w, "a:lastRow", true, None, None, None);
-            part(w, "a:firstRow", true, Some("lt1"), Some((acc, &[])), Some((acc, &[], 12700)));
-        }
-        "dark1" => {
-            part(w, "a:wholeTbl", false, Some("lt1"), Some((acc, &[("a:shade", 75000)])), Some(("lt1", &[], 12700)));
-            part(w, "a:band1H", false, None, Some((acc, &[("a:shade", 60000)])), None);
-            part(w, "a:band1V", false, None, Some((acc, &[("a:shade", 60000)])), None);
-            part(w, "a:firstCol", true, None, None, None);
-            part(w, "a:lastRow", true, None, None, None);
-            part(w, "a:firstRow", true, Some("lt1"), Some(("dk1", &[])), None);
-        }
-        "medium4" => {
-            part(w, "a:wholeTbl", false, Some("dk1"), Some((acc, &[("a:tint", 20000)])), Some((acc, &[], 9525)));
-            part(w, "a:band1H", false, None, Some((acc, &[("a:tint", 40000)])), None);
-            part(w, "a:band1V", false, None, Some((acc, &[("a:tint", 40000)])), None);
-            part(w, "a:lastCol", true, None, None, None);
-            part(w, "a:firstCol", true, None, None, None);
-            part(w, "a:lastRow", true, None, None, None);
-            part(w, "a:firstRow", true, None, Some((acc, &[("a:tint", 40000)])), None);
-        }
-        _ => {
-            // medium2
-            part(w, "a:wholeTbl", false, Some("dk1"), Some((acc, &[("a:tint", 20000)])), Some(("lt1", &[], 12700)));
-            part(w, "a:band1H", false, None, Some((acc, &[("a:tint", 40000)])), None);
-            part(w, "a:band1V", false, None, Some((acc, &[("a:tint", 40000)])), None);
-            part(w, "a:lastCol", true, Some("lt1"), Some((acc, &[])), None);
-            part(w, "a:firstCol", true, Some("lt1"), Some((acc, &[])), None);
-            part(w, "a:lastRow", true, Some("lt1"), Some((acc, &[])), None);
-            part(w, "a:firstRow", true, Some("lt1"), Some((acc, &[])), None);
-        }
-    }
-    w.close("a:tblStyle");
-}
-
-/// `ppt/tableStyles.xml` with definitions for the styles in `used`: ours, generated, and those the
-/// opened file defined (`defs`), written back as they were read.
-pub fn table_styles_xml(used: &[String], defs: &[deckcraft_model::table::TableStyleDef]) -> Vec<u8> {
-    let mut w = W::new();
-    w.open("a:tblStyleLst", A::new().a("xmlns:a", NS_A).a("def", "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"));
-    let names = deckcraft_model::table::table_styles();
-    let mut done: Vec<&str> = vec![];
-    for s in used {
-        if done.contains(&s.as_str()) {
-            continue;
-        }
-        done.push(s);
-        if let Some(d) = defs.iter().find(|d| d.id.eq_ignore_ascii_case(s))
-            && crate::xml::parse(d.raw.as_bytes()).is_ok_and(|x| x.root.is("tblStyle"))
-        {
-            w.raw(&d.raw);
-            continue;
-        }
-        let (_, define) = guid_for_style(s);
-        if !define {
-            continue;
-        }
-        let name = names.iter().find(|(id, _)| id == s).map(|(_, n)| format!("DeckCraft {n}")).unwrap_or_else(|| s.clone());
-        style_def(&mut w, s, &name);
-    }
-    // Styles the file defined but no table uses still belong to the deck.
-    for d in defs {
-        if done.iter().any(|s| s.eq_ignore_ascii_case(&d.id)) {
-            continue;
-        }
-        if crate::xml::parse(d.raw.as_bytes()).is_ok_and(|x| x.root.is("tblStyle")) {
-            done.push(&d.id);
-            w.raw(&d.raw);
-        }
-    }
-    w.close("a:tblStyleLst");
-    w.finish()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_writer_matches_legacy_bytes_and_admission() {
+        use deckcraft_model::table::TableStyleDef;
+        let mut used: Vec<String> = deckcraft_model::table::table_styles().into_iter().map(|(id, _)| id).collect();
+        used.extend(["unknown<&\"".into(), "Custom".into(), "Custom".into(), "CUSTOM".into()]);
+        for raw in [
+            "<a:tblStyle xmlns:a=\"urn:test\"/>",
+            "<tblStyle>", // Existing lenient partial-root policy.
+            "<tblStyle></other><trailing/>",
+            "<!--prefix--><tblStyle name=\"&amp;\"/>",
+            "<notAStyle/>",
+            "",
+            "<tblStyle><child/></tblStyle>",
+        ] {
+            let defs = vec![
+                TableStyleDef { id: "custom".into(), raw: raw.into(), ..Default::default() },
+                TableStyleDef { id: "CUSTOM".into(), raw: "<tblStyle second=\"1\"/>".into(), ..Default::default() },
+                TableStyleDef { id: "unused".into(), raw: "<tblStyle unused=\"1\"/>".into(), ..Default::default() },
+            ];
+            for selection in [&used[..], &[][..]] {
+                assert_eq!(table_styles_xml(selection, &defs), legacy::table_styles_xml(selection, &defs), "{raw:?}");
+            }
+        }
+        for depth in [255, 256, 257] {
+            let raw = format!("{}{}", "<tblStyle>".repeat(depth), "</tblStyle>".repeat(depth));
+            let defs = [TableStyleDef { id: "custom".into(), raw, ..Default::default() }];
+            assert_eq!(table_styles_xml(&used, &defs), legacy::table_styles_xml(&used, &defs));
+        }
+    }
+
+    #[test]
+    fn shared_style_catalog_matches_deckcraft() {
+        assert_eq!(deckcraft_model::table::table_styles(), craft_drawingml::table::table_styles());
+        assert_eq!(style_from_guid(""), "none");
+        let custom = "{abcdef00-0000-0000-0000-000000000000}";
+        assert_eq!(style_from_guid(custom), custom);
+        assert_eq!(guid_for_style(custom), (custom.to_string(), false));
+        assert_eq!(guid_for_style("unknown"), guid_for_style("medium2-accent1"));
+        for (id, _) in deckcraft_model::table::table_styles() {
+            let generated = own_guid(&id);
+            assert!(is_own_guid(&generated.to_ascii_lowercase()));
+            if guid_for_style(&id).1 {
+                assert_eq!(guid_for_style(&id).0, generated);
+            }
+        }
+    }
 
     #[test]
     fn style_parts_follow_schema_order() {

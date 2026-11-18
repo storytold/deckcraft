@@ -171,6 +171,7 @@ fn rels_of(doc: &xml::Doc, part: &str) -> Rels {
         let external = r.attr("TargetMode").is_some_and(|m| m.eq_ignore_ascii_case("external"));
         let target_raw = target.to_string();
         let target = if external { target_raw.clone() } else { resolve(&base, target) };
+        out.by_id.entry(id.to_string()).or_insert(out.items.len());
         out.items.push(Rel {
             id: id.to_string(),
             kind: ty.rsplit('/').next().unwrap_or(ty).to_string(),
@@ -211,11 +212,13 @@ pub struct Rel {
 #[derive(Clone, Debug, Default)]
 pub struct Rels {
     pub items: Vec<Rel>,
+    /// Id → index of its first relationship in `items`.
+    by_id: HashMap<String, usize>,
 }
 
 impl Rels {
     pub fn get(&self, id: &str) -> Option<&Rel> {
-        self.items.iter().find(|r| r.id == id)
+        self.by_id.get(id).and_then(|&i| self.items.get(i))
     }
     pub fn target(&self, id: &str) -> Option<&str> {
         self.get(id).map(|r| r.target.as_str())
@@ -248,53 +251,15 @@ pub fn sidecar_part(name: &str) -> bool {
     let file = segs.last().copied().unwrap_or("");
     let stem = file.strip_prefix("chart").unwrap_or("");
     let num = stem.strip_suffix(".xml.rels").or_else(|| stem.strip_suffix(".xml")).unwrap_or("");
-    if stem != file && !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-    true
+    !(stem != file && !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub fn dir_of(part: &str) -> String {
-    let p = part.trim_start_matches('/');
-    match p.rfind('/') {
-        Some(i) => p.get(..i).unwrap_or("").to_string(),
-        None => String::new(),
-    }
+    craft_opc::dir_of(part).to_owned()
 }
 
-pub fn file_of(part: &str) -> &str {
-    part.rsplit('/').next().unwrap_or(part)
-}
-
-pub fn rels_path(part: &str) -> String {
-    let p = part.trim_start_matches('/');
-    let dir = dir_of(p);
-    let file = file_of(p);
-    if dir.is_empty() { format!("_rels/{file}.rels") } else { format!("{dir}/_rels/{file}.rels") }
-}
-
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let c = b.get(i).copied().unwrap_or(0);
-        if c == b'%'
-            && let Some(h) = b
-                .get(i + 1..i + 3)
-                .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
-                .and_then(|h| std::str::from_utf8(h).ok())
-                .and_then(|h| u8::from_str_radix(h, 16).ok())
-        {
-            out.push(h);
-            i += 3;
-            continue;
-        }
-        out.push(c);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+use craft_opc::percent_decode;
+pub use craft_opc::{file_of, rels_path};
 
 /// Resolve a relative target against a base directory into a part name.
 pub fn resolve(base: &str, target: &str) -> String {
@@ -339,23 +304,29 @@ pub fn relative(from: &str, to: &str) -> String {
 #[derive(Default)]
 pub struct RelsOut {
     pub items: Vec<(String, String, String, bool)>,
+    /// (type, target, external) → id of the relationship [`RelsOut::add`] made for it.
+    added: HashMap<(String, String, bool), String>,
 }
 
 impl RelsOut {
     /// Add (or reuse) a relationship; `kind` is a full type URI or a suffix of the standard base.
     pub fn add(&mut self, kind: &str, target: &str, external: bool) -> String {
         let ty = if kind.starts_with("http") { kind.to_string() } else { format!("{RT_BASE}{kind}") };
-        if let Some((id, ..)) = self.items.iter().find(|(_, t, tg, e)| *t == ty && tg == target && *e == external) {
+        let key = (ty, target.to_string(), external);
+        if let Some(id) = self.added.get(&key) {
             return id.clone();
         }
         let id = format!("rId{}", self.items.len() + 1);
-        self.items.push((id.clone(), ty, target.to_string(), external));
+        self.items.push((id.clone(), key.0.clone(), key.1.clone(), external));
+        self.added.insert(key, id.clone());
         id
     }
     /// Always add a new relationship even if an identical one exists.
     pub fn add_new(&mut self, kind: &str, target: &str, external: bool) -> String {
         let ty = if kind.starts_with("http") { kind.to_string() } else { format!("{RT_BASE}{kind}") };
         let id = format!("rId{}", self.items.len() + 1);
+        // `add` reuses the first relationship for a target, whichever call made it.
+        self.added.entry((ty.clone(), target.to_string(), external)).or_insert_with(|| id.clone());
         self.items.push((id.clone(), ty, target.to_string(), external));
         id
     }
@@ -464,6 +435,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shared_names_preserve_relationship_wire_policy() {
+        for (part, dir, file, rels) in [
+            ("", "", "", "_rels/.rels"),
+            ("/", "", "", "_rels/.rels"),
+            ("///ppt/slides/slide1.xml", "ppt/slides", "slide1.xml", "ppt/slides/_rels/slide1.xml.rels"),
+            ("ppt/", "ppt", "", "ppt/_rels/.rels"),
+            ("é/😀.xml", "é", "😀.xml", "é/_rels/😀.xml.rels"),
+        ] {
+            assert_eq!(dir_of(part), dir);
+            assert_eq!(file_of(part), file);
+            assert_eq!(rels_path(part), rels);
+        }
+        assert_eq!(percent_decode("a+b%20c%2Fd%23e"), "a+b c/d#e");
+        assert_eq!(percent_decode("% %1 %zz %+1 %ff"), "% %1 %zz %+1 �");
+        // Keep Deck's policy: strip the raw fragment first, then decode percent escapes once.
+        assert_eq!(resolve("ppt/slides", "../media/a%23b.png#ignored"), "ppt/media/a#b.png");
+        assert_eq!(resolve("ppt/slides", "%252e%252e/a"), "ppt/slides/%2e%2e/a");
+        assert_eq!(resolve("ppt/slides", "%2e%2e/%2e%2e/%2e%2e/a"), "a");
+    }
+
+    #[test]
     fn resolve_keeps_encoded_hash_and_strips_fragment() {
         assert_eq!(resolve("ppt/slides", "../media/a%23b.png"), "ppt/media/a#b.png");
         assert_eq!(resolve("ppt/slides", "../media/a.png#frag"), "ppt/media/a.png");
@@ -498,6 +490,27 @@ mod tests {
         // With room to spare the same small part is kept.
         let p = Package::open_within(&z, 1000, 100, 10_000).unwrap();
         assert!(p.get("e").is_some());
+    }
+
+    #[test]
+    fn many_relationships_are_found_by_index_and_first_id_wins() {
+        let n = 50_000;
+        let mut x = String::from(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
+        for i in 0..n {
+            x.push_str(&format!(r#"<Relationship Id="rId{i}" Type="{RT_BASE}image" Target="../media/image{i}.png"/>"#));
+        }
+        x.push_str(&format!(r#"<Relationship Id="rId0" Type="{RT_BASE}image" Target="../media/dup.png"/></Relationships>"#));
+        let rels = rels_from_bytes(x.as_bytes(), "ppt/slides/slide1.xml");
+        assert_eq!(rels.target("rId0"), Some("ppt/media/image0.png"), "the first of a repeated id wins");
+        assert!((0..n).all(|i| rels.target(&format!("rId{i}")) == Some(&*format!("ppt/media/image{i}.png"))));
+
+        let mut out = RelsOut::default();
+        let ids: Vec<String> = (0..n).map(|i| out.add("hyperlink", &format!("https://example.com/{i}"), true)).collect();
+        assert_eq!(out.add("hyperlink", "https://example.com/7", true), ids[7], "an identical target reuses its id");
+        assert_eq!(out.add("hyperlink", "https://example.com/7", false), format!("rId{}", n + 1), "internal is distinct");
+        let fresh = out.add_new("image", "../media/a.png", false);
+        assert_ne!(out.add_new("image", "../media/a.png", false), fresh);
+        assert_eq!(out.add("image", "../media/a.png", false), fresh, "add reuses the first add_new made");
     }
 
     #[test]

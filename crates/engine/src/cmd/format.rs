@@ -8,7 +8,7 @@ use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot,
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::text::{format_body, format_para, format_run};
+use super::text::{format_body, format_para, format_run, format_run_levels};
 use super::{
     CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, color_param, edit_shapes, f64_or, f64_param, has_doc, has_text,
     has_text_or_shapes, ids_param, ok, str_param,
@@ -62,7 +62,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!(
+            "format.font",
+            "Font",
+            ["Home", "Font"],
+            None,
+            "{family, eastAsia?: family, complexScript?: family} — `family` is the Latin typeface (`a:latin`); the other two set the East Asian (`a:ea`) and complex-script (`a:cs`) typefaces, which are left alone when not given",
+            has_text_or_shapes,
+            font
+        ),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -70,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textTransparency",
             "Text Transparency",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{value: 0..1} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
@@ -128,7 +136,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textOutline",
             "Text Outline",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{color?, width?: pt} (no color = none)",
             has_text_or_shapes,
@@ -137,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "format.textWarp",
             "Text Transform",
-            ["Shape Format", "WordArt Styles"],
+            ["Shape Format", "Decorative Text Styles"],
             None,
             "{preset: a prstTxWarp name or none, adj?: [finite raw guide values, at most 8]} — none clears the transform; omitted adj uses the preset's defaults",
             has_text_or_shapes,
