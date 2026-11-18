@@ -170,7 +170,7 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("color").is_some_and(Value::is_null) {
         let automatic = |s: &mut Session, gid| crate::cmd::smartart::clear_text_color(s, gid, "format.color");
         return on_graphics(s, automatic, automatic_rest)
-            .unwrap_or_else(|| Err(bad("format.color", "missing or invalid `color` (null is Automatic, for a SmartArt graphic)")));
+            .unwrap_or_else(|| Err(bad("format.color", "missing or invalid `color` (null is Automatic, for a Diagram graphic)")));
     }
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
     // A selected chart has no runs: Font Color colours its text (title, axes, legend, labels),
