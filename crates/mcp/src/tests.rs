@@ -247,7 +247,11 @@ fn export_tool_lists_pdf_and_its_options() {
         assert!(formats.iter().any(|x| x == f), "format {f}: {export}");
     }
     assert_eq!(props["layout"]["enum"], json!(["slides", "notes", "handouts"]));
-    assert_eq!(props["perPage"]["enum"], json!([1, 2, 3, 4, 6, 9]));
+    // Gemini function declarations accept only string enums (#2211): perPage stays a plain integer
+    // and the allowed values are spelled out in the description (the engine validates the set).
+    assert_eq!(props["perPage"]["type"], "integer");
+    assert!(props["perPage"].get("enum").is_none(), "{export}");
+    assert!(props["perPage"]["description"].as_str().unwrap().contains("1, 2, 3, 4, 6 or 9"), "{export}");
     for p in ["dpi", "slides", "includeHidden", "textLayer", "frame", "paper", "orientation"] {
         assert!(props.get(p).is_some(), "{p}: {export}");
     }
