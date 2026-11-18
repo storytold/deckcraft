@@ -109,6 +109,22 @@ fn a_size_typed_into_the_value_field_applies() {
     assert_eq!(h.state().ui.ui_scale, 1.5, "the typed size applies");
 }
 
+/// A typed size with a space inside it still reads as egui reads numbers: spaces are ignored.
+#[test]
+fn a_typed_size_with_a_space_inside_applies() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.get_by_value("1.23").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("1.\u{2009}5".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_scale, 1.5, "the thin space is ignored");
+}
+
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
 #[test]
 fn options_cancel_undoes_the_changes() {

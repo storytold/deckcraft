@@ -1339,6 +1339,12 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// A typed number normalised the way egui's own parser reads it: spaces anywhere are ignored
+/// (thousands separators, a pasted thin space) and the minus sign U+2212 reads as `-`.
+fn number_text(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).map(|c| if c == '\u{2212}' { '-' } else { c }).collect()
+}
+
 fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // The controls apply as they change, so the dialog remembers what it opened with and
     // Cancel (or Esc, or the close button: see `show`) puts that back.
@@ -1366,7 +1372,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         .horizontal(|ui| {
             ui.label("Interface size:");
             ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).custom_formatter(|v, _| format!("{v:.2}")).custom_parser(|text| {
-                let text = text.trim();
+                let text = number_text(text);
                 if text == shown { Some(shown_for) } else { text.parse().ok() }
             }))
         })
