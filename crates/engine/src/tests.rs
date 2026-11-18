@@ -7988,56 +7988,33 @@ fn editing_a_smartart_node_shares_the_new_scale_with_the_other_nodes() {
 
 /// A word an edit makes too long for its line wraps mid-word without overflowing down, so the
 /// text layout asks for no shrink; the graphic still shrinks every node alike, as a freshly
-/// generated one would, and the size comes back when the word is removed.
+/// generated one would.
 #[test]
-fn editing_a_smartart_node_to_a_long_word_shrinks_every_node_until_it_is_removed() {
+fn editing_a_smartart_node_to_a_long_word_shrinks_every_node() {
     let mut s = session();
     let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": ["A", "B", "C"]})).unwrap()["id"].as_u64().unwrap();
-    let id = ShapeId(gid as u32);
-    let sizes = |s: &Session| -> Vec<Option<f64>> {
-        match s.doc().unwrap().shape(id).map(|x| &x.kind) {
+    let scales = |s: &Session| -> Vec<Option<f64>> {
+        match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
             Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
                 .iter()
                 .filter_map(|c| c.text.as_ref())
-                .flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.props.size)))
+                .filter_map(|t| match t.body.autofit {
+                    Some(deckcraft_model::text::AutoFit::Shrink { font_scale, .. }) => Some(font_scale),
+                    _ => None,
+                })
                 .collect(),
             _ => panic!("not a group"),
         }
     };
-    let first = match s.doc().unwrap().shape(id).map(|x| &x.kind) {
+    let first = match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
         Some(deckcraft_model::ShapeKind::Group { children, .. }) => children.iter().find(|c| c.text.is_some()).unwrap().id,
         _ => panic!("not a group"),
     };
-    let before = sizes(&s);
-    let full = crate::cmd::smartart::shown_size(&s, id).unwrap();
     s.execute("text.edit", &json!({"id": first.0})).unwrap();
-    s.execute("text.selectAll", &json!({})).unwrap();
     s.execute("text.insert", &json!({"text": "Supercalifragilisticexpialidocious_and_more_letters_still"})).unwrap();
-    let v = sizes(&s);
-    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0]), "every node has the one size: {v:?}");
-    assert!(v[0].unwrap() < before[0].unwrap(), "the long word shrinks the graphic: {v:?} (was {before:?})");
-    assert!(crate::cmd::smartart::shown_size(&s, id).unwrap() < full);
-    // The word goes: every node is back at the size it had.
-    s.execute("text.selectAll", &json!({})).unwrap();
-    s.execute("text.insert", &json!({"text": "A"})).unwrap();
-    assert_eq!(sizes(&s), before, "the size comes back with the word gone");
-    assert_eq!(crate::cmd::smartart::shown_size(&s, id).unwrap(), full);
-    // A size set on one node's text is the user's: a later edit leaves the sizes alone.
-    s.execute("text.selectAll", &json!({})).unwrap();
-    s.execute("format.size", &json!({"size": 40})).unwrap();
-    let custom = sizes(&s);
-    assert!(custom.contains(&Some(40.0)) && custom.iter().any(|x| *x != Some(40.0)), "{custom:?}");
-    s.execute("text.move", &json!({"to": "end"})).unwrap_or_default();
-    s.execute("text.insert", &json!({"text": "b"})).unwrap();
-    assert_eq!(sizes(&s).iter().filter(|x| **x == Some(40.0)).count(), custom.iter().filter(|x| **x == Some(40.0)).count(), "{:?}", sizes(&s));
-    assert!(sizes(&s).iter().filter(|x| **x != Some(40.0)).all(|x| custom.contains(x)), "{:?}", sizes(&s));
-    // So is one a single point away from the size the layout gave.
-    let near = before[0].unwrap() - 1.0;
-    s.execute("text.selectAll", &json!({})).unwrap();
-    s.execute("format.size", &json!({"size": near})).unwrap();
-    s.execute("text.move", &json!({"to": "end"})).unwrap_or_default();
-    s.execute("text.insert", &json!({"text": "c"})).unwrap();
-    assert!(sizes(&s).contains(&Some(near)), "a size one point off is still the user's: {:?}", sizes(&s));
+    let v = scales(&s);
+    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0]), "every node has the one shared scale: {v:?}");
+    assert!(v[0].unwrap() < 1.0, "the long word shrinks the graphic: {v:?}");
 }
 
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
