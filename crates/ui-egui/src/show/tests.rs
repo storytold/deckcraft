@@ -1429,8 +1429,9 @@ fn the_show_uses_the_saved_display_without_asking() {
     );
     harness.run_steps(3);
     // The setting is used on each start, with automatic and disconnected-display fallbacks: a
-    // saved display that has gone falls back to the primary one, not the editor's.
-    for (saved, expected, editor) in [(Some(1), 1, 0), (Some(1), 1, 0), (None, 0, 0), (Some(5), 0, 0), (Some(5), 0, 1), (None, 1, 1)] {
+    // saved display that has gone falls back to the primary one, not the editor's; Automatic
+    // uses a display other than the editor's (#2004).
+    for (saved, expected, editor) in [(Some(1), 1, 0), (Some(1), 1, 0), (None, 1, 0), (Some(5), 0, 0), (Some(5), 0, 1), (None, 0, 1)] {
         harness.state_mut().displays.editor = Some(editor);
         harness.state_mut().ui.show_display = saved;
         harness.state_mut().start_show(0, false);
@@ -1568,6 +1569,37 @@ fn setup_show_display_selection_can_be_cancelled_or_saved() {
     h.state_mut().start_show(0, false);
     h.run_steps(2);
     assert_eq!(h.state().show.as_ref().unwrap().display, None);
+}
+
+/// #2004: on macOS, Presenter View opened or moved while the show enters full screen on another
+/// display is taken to the show's display. It waits until the show fills its display.
+#[test]
+fn presenter_view_waits_for_the_show_to_fill_its_display() {
+    use crate::displays::{Display, Displays};
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.ui.presenter_view = true;
+    app.ui.show_display = Some(1);
+    app.displays = Displays {
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(3);
+    let show = harness.state().show.as_ref().unwrap();
+    assert!(show.started && show.presenter);
+    assert_eq!(show.display, Some(1));
+    // The test window never fills the 1280 × 720 display.
+    assert_eq!(show.presenter_open, None, "not open yet");
+    assert!(matches!(show.presenter_place, Some((_, false))), "not moved yet");
 }
 
 #[test]
@@ -1725,10 +1757,34 @@ fn displays_are_read_when_needed_only() {
 #[test]
 fn presenter_view_is_on_top_of_full_screen_shows_only() {
     use super::presenter::presenter_level;
-    assert_eq!(presenter_level(false, "speaker"), egui::WindowLevel::AlwaysOnTop);
-    assert_eq!(presenter_level(false, "kiosk"), egui::WindowLevel::AlwaysOnTop);
-    assert_eq!(presenter_level(false, "browsed"), egui::WindowLevel::Normal);
-    assert_eq!(presenter_level(true, "speaker"), egui::WindowLevel::Normal);
+    assert_eq!(presenter_level(false, "speaker", false), egui::WindowLevel::AlwaysOnTop);
+    assert_eq!(presenter_level(false, "kiosk", false), egui::WindowLevel::AlwaysOnTop);
+    assert_eq!(presenter_level(false, "browsed", false), egui::WindowLevel::Normal);
+    assert_eq!(presenter_level(true, "speaker", false), egui::WindowLevel::Normal);
+    // On a display of its own it does not cover other apps' windows (#2004).
+    assert_eq!(presenter_level(false, "speaker", true), egui::WindowLevel::Normal);
+
+    use super::presenter::presenter_apart;
+    use crate::displays::{Display, Displays};
+    let two = Displays {
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
+    let mut show = Show::new(&deckcraft_model::Presentation::default(), 0, false, true);
+    show.display = Some(1);
+    assert!(!presenter_apart(&show, &two), "nowhere yet");
+    // Being placed on the laptop, then there; then dragged over the show.
+    show.presenter_place = Some(([100, 100, 1100, 700], false));
+    assert!(presenter_apart(&show, &two));
+    show.presenter_place = None;
+    show.presenter_at = Some([100, 100, 1100, 700]);
+    assert!(presenter_apart(&show, &two));
+    show.presenter_at = Some([2000, 50, 900, 600]);
+    assert!(!presenter_apart(&show, &two));
+    // One display, or no display chosen: on top of the show.
+    show.display = None;
+    assert!(!presenter_apart(&show, &two));
 }
 
 /// The editor window is put back after a show on another display, however the show ended.

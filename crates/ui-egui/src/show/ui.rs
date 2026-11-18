@@ -2,7 +2,7 @@ use super::keys::{handle_keys, keyboard};
 use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
-use super::presenter::{PRESENTER_SIZE, PresenterTimer, format_elapsed, presenter_window};
+use super::presenter::{PRESENTER_SIZE, PresenterTimer, format_elapsed, presenter_window, show_settled};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
@@ -76,6 +76,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(app, &ctx, &mut show, &doc, now);
+    move_show(&ctx, &mut show, &app.displays, now);
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
@@ -233,6 +234,7 @@ fn begin_show(app: &mut SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Pr
         // time, so hiding and resuming shifts all of them by the same interval.
         show.step_end = now;
         show.show_start = now;
+        show.settle_from = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
         if full_screen {
@@ -248,6 +250,31 @@ fn begin_show(app: &mut SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Pr
         }
         show.after_enter(doc, now);
     }
+}
+
+/// Swap Displays: take the show to its new display, one step per frame ([`crate::displays::ShowMove`]).
+fn move_show(ctx: &egui::Context, show: &mut Show, displays: &crate::displays::Displays, now: f64) {
+    use crate::displays::MoveStep;
+    let Some(step) = show.show_move.as_mut() else { return };
+    let ppp = ctx.pixels_per_point();
+    let (fullscreen, at) = ctx.input(|i| {
+        let v = i.viewport();
+        let px = |v: f32| (v * ppp).round() as i32;
+        (v.fullscreen == Some(true), v.outer_rect.map(|r| [px(r.min.x), px(r.min.y), px(r.width()), px(r.height())]))
+    });
+    let on_target = at.is_some_and(|r| displays.on(step.to, r));
+    match step.next(now, fullscreen, on_target) {
+        None => show.show_move = None,
+        Some(MoveStep::Wait) => {}
+        Some(MoveStep::LeaveFullScreen) => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false)),
+        Some(MoveStep::Move(d)) => {
+            if let Some([x, y]) = displays.inside(d) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(x as f32 / ppp, y as f32 / ppp)));
+            }
+        }
+        Some(MoveStep::Enter(d)) => ctx.send_viewport_cmd(egui::ViewportCommand::SetMonitor(d)),
+    }
+    ctx.request_repaint();
 }
 
 fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: &mut Out) -> bool {
@@ -866,7 +893,14 @@ fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
     // Presenter view in a second window.
-    if out.keep && show.presenter && !show.reading && !show.remote_opened {
+    // It opens once the show fills its display, where it would otherwise follow the show there
+    // ([`show_settled`]); once open it stays open.
+    let opens = show.presenter_open.is_some() || show_settled(ctx, show, &app.displays, now);
+    if out.keep && show.presenter && !show.reading && !show.remote_opened && !opens {
+        ctx.request_repaint();
+    }
+    if out.keep && show.presenter && !show.reading && !show.remote_opened && opens {
+        show.presenter_open = show.presenter_open.or(Some(now));
         let previous_display = show.display;
         presenter_window(ctx, show, doc, &app.displays, now, &mut out.keep);
         // Remembered for the next show, as PowerPoint does.
