@@ -348,6 +348,79 @@ fn apply_scale(sh: &mut Shape, scale: f64) {
     }
 }
 
+/// After a node's text changed in a generated, automatically sized graphic: the text of `kids`
+/// (the graphic's shapes, in layout order) takes the sizes and indents a fresh layout of `d` (its
+/// text already synced) gives it. Only when every run still has the size generation gave it, at
+/// one shared scale: a size set on some text of a node is the user's and stays, with the rest.
+pub(super) fn size_afresh(d: &Diagram, area: Xfrm, kids: &mut [Shape]) {
+    let mut fresh = layout_raw(d, area);
+    if fresh.len() != kids.len() {
+        return;
+    }
+    let base = |p: &Paragraph| p.runs.first().and_then(|r| r.props.size).or(p.end_props.size);
+    // (size generation starts from, size now) of every run.
+    let mut sizes: Vec<(f64, f64)> = vec![];
+    for (kid, (raw, _)) in kids.iter().zip(&fresh) {
+        let (Some(kt), Some(rt)) = (&kid.text, &raw.text) else { continue };
+        if kt.paragraphs.len() != rt.paragraphs.len() {
+            return;
+        }
+        for (kp, rp) in kt.paragraphs.iter().zip(&rt.paragraphs) {
+            let Some(b) = base(rp).filter(|b| b.is_finite() && *b > 0.0) else { return };
+            for r in &kp.runs {
+                let Some(now) = r.props.size else { return };
+                sizes.push((b, now));
+            }
+        }
+    }
+    // Generation leaves every run at its starting size, or at that size times one shared scale,
+    // rounded down to half a point ([`apply_scale`]). So each run bounds the scale to
+    // `[now / b, (now + 0.5) / b)`, and the sizes are generation's only when one scale fits them all.
+    if sizes.is_empty() {
+        return;
+    }
+    let untouched = sizes.iter().all(|(b, now)| b == now);
+    let lo = sizes.iter().map(|(b, now)| now / b).fold(0.0_f64, f64::max);
+    let hi = sizes.iter().map(|(b, now)| (now + 0.5) / b).fold(f64::INFINITY, f64::min);
+    if !untouched && !(lo < hi && lo < 0.999) {
+        return;
+    }
+    let scale = fresh.iter().map(|(sh, _)| word_scale(sh, 1.0)).fold(1.0_f64, f64::min);
+    // Whether `now` is what generation makes of `start` at the scale the sizes were found at. An
+    // indent the user set on a paragraph is not, and stays.
+    let generated = |now: Option<f64>, start: Option<f64>, half_points: bool| match (now, start) {
+        (None, None) => true,
+        (Some(now), Some(start)) if untouched => now == start,
+        (Some(now), Some(start)) => {
+            let (a, b) = (start * lo, start * hi);
+            let (min, max) = (a.min(b), a.max(b));
+            if half_points {
+                now >= (min * 2.0).floor() / 2.0 - 1e-9 && now <= (max * 2.0).floor() / 2.0 + 1e-9
+            } else {
+                now >= min - 1e-9 && now <= max + 1e-9
+            }
+        }
+        _ => false,
+    };
+    for (kid, (raw, _)) in kids.iter_mut().zip(&mut fresh) {
+        let unscaled = raw.text.clone();
+        apply_scale(raw, scale);
+        let (Some(kt), Some(rt), Some(ut)) = (&mut kid.text, &raw.text, &unscaled) else { continue };
+        for ((kp, rp), up) in kt.paragraphs.iter_mut().zip(&rt.paragraphs).zip(&ut.paragraphs) {
+            if let Some(size) = base(rp) {
+                for r in &mut kp.runs {
+                    r.props.size = Some(size);
+                }
+            }
+            kp.end_props.size = rp.end_props.size;
+            if generated(kp.props.margin_left, up.props.margin_left, true) && generated(kp.props.indent, up.props.indent, false) {
+                kp.props.margin_left = rp.props.margin_left;
+                kp.props.indent = rp.props.indent;
+            }
+        }
+    }
+}
+
 /// A picture placeholder for node `node`: its picture when it has one, else a pale box.
 pub(super) fn picture_shape(d: &Diagram, preset: &str, x: Xfrm, i: usize, node: usize) -> Shape {
     let mut sh = Shape { name: "Diagram picture".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() };
