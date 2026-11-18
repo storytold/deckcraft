@@ -325,7 +325,7 @@ fn main() -> eframe::Result {
             // Presenter View asks winit how many displays there are when a show starts.
             #[cfg(all(unix, not(target_os = "macos")))]
             if let Some(window) = cc.winit_window().cloned() {
-                app.services.displays = Some(Box::new(move || display_count(&window)));
+                app.services.display_count = Some(Box::new(move || display_count(&window)));
             }
             load_prefs(&mut app);
             app.enable_update_checks();

@@ -47,7 +47,7 @@ impl SlideApp {
     /// windows ends up behind the other stalls the show (the compositor stops pacing a hidden
     /// window). Hosts that can't count displays keep Presenter View.
     fn second_display(&mut self) -> bool {
-        self.services.displays.as_mut().and_then(|f| f()).is_none_or(|n| n >= 2)
+        self.services.display_count.as_mut().and_then(|f| f()).is_none_or(|n| n >= 2)
     }
 
     /// Play custom show `name` from its first slide. Set Up Slide Show is left as it was.

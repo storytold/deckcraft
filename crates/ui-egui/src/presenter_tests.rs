@@ -22,7 +22,7 @@ fn presenter_view_needs_a_second_display() {
     // One display: the presenter window covered the show (or the show covered it) and the
     // hidden window stalled every frame.
     let presenter = |displays: Option<usize>, setting: bool| {
-        let services = Services { displays: Some(Box::new(move || displays)), ..Default::default() };
+        let services = Services { display_count: Some(Box::new(move || displays)), ..Default::default() };
         let mut app = SlideApp::new(Session::with_new(), services);
         app.ui.presenter_view = setting;
         app.start_show(0, false);
