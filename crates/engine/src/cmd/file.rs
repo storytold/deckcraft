@@ -139,11 +139,13 @@ pub struct Damage {
     pub media: Vec<String>,
     /// Slides a `.pptx` lists but that couldn't be read, so they are not in the presentation.
     pub slides: Vec<String>,
+    /// Content a `.pptx` had that was cut to fit a limit; the file still opened.
+    pub warnings: Vec<String>,
 }
 
 impl Damage {
     pub fn is_empty(&self) -> bool {
-        self.media.is_empty() && self.slides.is_empty()
+        self.media.is_empty() && self.slides.is_empty() && self.warnings.is_empty()
     }
 }
 
@@ -151,17 +153,17 @@ impl Damage {
 pub fn open_checked(name: &str, bytes: &[u8]) -> Result<(Presentation, Damage)> {
     if deckcraft_format::sniff(bytes) {
         let (p, media) = deckcraft_format::load_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
-        return Ok((p, Damage { media, slides: vec![] }));
+        return Ok((p, Damage { media, ..Default::default() }));
     }
-    open_other(name, bytes).map(|(p, slides)| (p, Damage { media: vec![], slides }))
+    open_other(name, bytes).map(|(p, slides, warnings)| (p, Damage { slides, warnings, ..Default::default() }))
 }
 
-fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
+fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>)> {
     if deckcraft_pptx::sniff(bytes) {
-        let (mut p, lost_slides) = deckcraft_pptx::import_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+        let (mut p, lost_slides, warnings) = deckcraft_pptx::import_report(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
         deckcraft_format::repair(&mut p);
         probe_clips(&mut p);
-        return Ok((p, lost_slides));
+        return Ok((p, lost_slides, warnings));
     }
     if deckcraft_pptx::is_encrypted(bytes) {
         return Err(EngineError::Other(format!("{name} is password-protected. DeckCraft can't open password-protected presentations yet.")));
@@ -180,7 +182,7 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
         if p.slides.is_empty() {
             p = defaults::new_presentation(None);
         }
-        return Ok((p, vec![]));
+        return Ok((p, vec![], vec![]));
     }
     Err(EngineError::Other(format!("{name}: not a presentation DeckCraft can read")))
 }
@@ -276,7 +278,7 @@ fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
     let st = s.doc()?;
     Ok(json!({
         "document": i, "slides": st.doc.slides.len(), "missingFonts": st.missing_fonts,
-        "damagedMedia": damaged.media, "lostSlides": damaged.slides,
+        "damagedMedia": damaged.media, "lostSlides": damaged.slides, "importWarnings": damaged.warnings,
     }))
 }
 
@@ -311,7 +313,9 @@ fn open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let (doc, damaged) = open_checked(name, &data)?;
     let i = add_opened(s, name, None, doc);
     report_damage(s, &damaged)?;
-    Ok(json!({"document": i, "missingFonts": s.doc()?.missing_fonts, "damagedMedia": damaged.media, "lostSlides": damaged.slides}))
+    Ok(
+        json!({"document": i, "missingFonts": s.doc()?.missing_fonts, "damagedMedia": damaged.media, "lostSlides": damaged.slides, "importWarnings": damaged.warnings}),
+    )
 }
 
 /// Tell the user which pictures, media and slides a damaged file lost, and mark the copy repaired.
@@ -338,6 +342,10 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
             if n == 1 { "" } else { "s" },
             if n == 1 { "was" } else { "were" },
         ));
+    }
+    for w in &damaged.warnings {
+        text.push_str(w);
+        text.push_str(". ");
     }
     text.push_str("It was opened as a repaired copy; save it under a new name to keep the original file.");
     s.ui_requests.push(crate::UiRequest::Message { text });
