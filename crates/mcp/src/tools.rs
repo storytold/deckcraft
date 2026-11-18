@@ -283,7 +283,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "call_app",
             "Call app method",
-            &format!("Call any control-channel method (ui.click, ui.set, ui.dialog.*, ui.inspect…).{APP_ONLY}"),
+            "Call a control-channel method (ui.click, ui.set, ui.dialog.*, ui.inspect…). Most need the desktop app (`deckcraft-cli mcp --connect PORT`); the headless server answers ui.render, app.renderSlide, app.open/save/export and the gesture methods (ui.key, ui.text, ui.tool.select).",
             obj(json!({"method": string("Method"), "params": {"type": "object"}}), &["method"]),
             false,
         ),

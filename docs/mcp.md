@@ -132,7 +132,7 @@ folders. Use both together.
 | `insert_picture`, `insert_table`, `insert_chart` | Content |
 | `select`, `pointer`, `select_tool`, `key`, `type_text` | The same selection, mouse and keyboard paths as the UI |
 | `screenshot` | The whole window, UI included (connected mode) |
-| `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
+| `call_app` | A [control protocol](control-protocol.md) method: any of them in connected mode; headless, only `ui.render`, `app.renderSlide`, `app.open`, `app.save`, `app.export` and the gesture methods (`ui.key`, `ui.text`, `ui.tool.select`, …) |
 
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
 
