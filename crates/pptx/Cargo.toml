@@ -13,7 +13,9 @@ craft-opc.workspace = true
 craft-xml.workspace = true
 craft-cfb.workspace = true
 craft-drawingml.workspace = true
+craft-drawingml-table.workspace = true
 deckcraft-model = { workspace = true }
+deckcraft-text = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 quick-xml = { workspace = true }

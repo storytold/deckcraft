@@ -516,6 +516,41 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
 }
 
+/// #2089: a slide's With Previous entrance waits for the slide's transition to finish, as in
+/// PowerPoint, instead of playing under it.
+#[test]
+fn animations_start_after_the_slides_transition() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "fade", "index": 1, "duration": 400})).unwrap();
+    let id = s.active().unwrap().doc.slides[1].shapes[0].id;
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "withPrevious", "duration": 500})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    let a = show.state.next(&doc);
+    assert_eq!(a, ShowAction::Slide(1));
+    assert!(show.apply(a, &doc, 10.0));
+    assert!(show.trans.is_some(), "the fade plays");
+    assert!(show.state.playing, "the With Previous step is under way");
+    assert!((show.clock_snapshot().step_start - 10.4).abs() < 1e-9, "its clock starts when the 0.4 s fade ends");
+    let tl = ShowState::timeline(&doc, 1);
+    let at = |now: f64| state_for(&tl, id, show.state.step, now - show.clock_snapshot().step_start, &[], &[]);
+    assert!(!at(10.3).visible, "hidden while the transition plays");
+    assert!(at(10.6).visible && at(10.6).opacity < 1.0, "fading in after it");
+    // The step is not cut short by the time the transition took.
+    let mut actions = Vec::new();
+    assert!(show.queue_clock_actions(&doc, 10.8, &mut actions));
+    assert!(actions.is_empty(), "0.4 s into a 0.5 s step: still playing");
+
+    // Without a transition the step starts at once, as before.
+    s.execute("transition.set", &json!({"kind": "none", "index": 1})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    let a = show.state.next(&doc);
+    assert!(show.apply(a, &doc, 10.0));
+    assert_eq!(show.clock_snapshot().step_start, 10.0);
+}
+
 #[test]
 fn going_back_plays_the_left_slides_transition_reversed() {
     // #1531: Back from B to A played A's own entrance transition. PowerPoint plays the one B came
