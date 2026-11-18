@@ -65,6 +65,8 @@ pub struct Exp<'a> {
     n_kept: u32,
     pub slide_parts: HashMap<SlideId, String>,
     pub table_styles: Vec<String>,
+    /// A table past the cell cap was met; export fails rather than write a trimmed one.
+    pub table_over_cap: bool,
     /// The ids in `table_styles`, for checking membership without a scan.
     pub table_style_set: std::collections::HashSet<String>,
     placeholder: Option<String>,
@@ -558,6 +560,7 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         n_kept: 0,
         slide_parts: HashMap::new(),
         table_styles: vec![],
+        table_over_cap: false,
         table_style_set: Default::default(),
         placeholder: None,
     };
@@ -766,6 +769,12 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         root.add_new(&k.rel_type, &k.name, false);
     }
     x.pkg.rels("", &root);
+    if x.table_over_cap {
+        return Err(PptxError::Unsupported(format!(
+            "a table has more than {} cells; export refused rather than drop rows",
+            deckcraft_model::table::MAX_CELLS
+        )));
+    }
     x.pkg.finish()
 }
 
@@ -794,11 +803,11 @@ fn master_xml(x: &mut Exp, o: &mut Out, m: &Master, layouts: &[(u64, String)]) -
     }
     w.close("p:sldLayoutIdLst");
     w.open0("p:txStyles");
-    let (dt, db, dother) = defaults::master_styles();
-    let pick = |s: &deckcraft_model::text::ListStyle, d: deckcraft_model::text::ListStyle| if s.is_empty() { d } else { s.clone() };
-    dml::list_style(&mut w, x, o, "p:titleStyle", &pick(&m.title_style, dt));
-    dml::list_style(&mut w, x, o, "p:bodyStyle", &pick(&m.body_style, db));
-    dml::list_style(&mut w, x, o, "p:otherStyle", &pick(&m.other_style, dother));
+    // An imported empty body style has no bullets; saving must not author defaults into it.
+    // New decks already carry their populated master styles in the model.
+    dml::list_style(&mut w, x, o, "p:titleStyle", &m.title_style);
+    dml::list_style(&mut w, x, o, "p:bodyStyle", &m.body_style);
+    dml::list_style(&mut w, x, o, "p:otherStyle", &m.other_style);
     w.close("p:txStyles");
     ext_list(&mut w, ext_children(m.raw_ext.as_deref()).as_deref());
     w.close("p:sldMaster");

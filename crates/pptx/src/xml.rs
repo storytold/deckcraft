@@ -354,45 +354,8 @@ fn decode_utf16(bytes: &[u8]) -> String {
     }
 }
 
-/// Is `c` allowed in XML 1.0 text?
-fn xml_char(c: char) -> bool {
-    matches!(c, '\t' | '\n' | '\r') || (c >= ' ' && c != '\u{FFFE}' && c != '\u{FFFF}')
-}
-
-/// Escape text content (and drop characters XML 1.0 forbids).
-pub fn esc(s: &str) -> String {
-    let mut o = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => o.push_str("&amp;"),
-            '<' => o.push_str("&lt;"),
-            '>' => o.push_str("&gt;"),
-            '\r' => o.push_str("&#13;"),
-            c if xml_char(c) => o.push(c),
-            _ => {}
-        }
-    }
-    o
-}
-
-/// Escape an attribute value.
-pub fn esc_attr(s: &str) -> String {
-    let mut o = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => o.push_str("&amp;"),
-            '<' => o.push_str("&lt;"),
-            '>' => o.push_str("&gt;"),
-            '"' => o.push_str("&quot;"),
-            '\n' => o.push_str("&#10;"),
-            '\r' => o.push_str("&#13;"),
-            '\t' => o.push_str("&#9;"),
-            c if xml_char(c) => o.push(c),
-            _ => {}
-        }
-    }
-    o
-}
+// Preserve the public writer helpers while sharing the XML 1.0 escaping rules.
+pub use craft_xml::{esc, esc_attr};
 
 /// A string builder for XML parts.
 #[derive(Default)]
@@ -540,6 +503,37 @@ mod tests {
     fn escape_drops_control_chars() {
         assert_eq!(esc("a\u{b}b<\u{0}"), "ab&lt;");
         assert_eq!(esc_attr("\"x\"\n"), "&quot;x&quot;&#10;");
+    }
+
+    #[test]
+    fn shared_escaping_preserves_xml_wire_bytes() {
+        let text = "&<>\"'\t\n\r\0\u{b}\u{fffe}\u{ffff}é😀&#13;";
+        assert_eq!(esc(text), "&amp;&lt;&gt;\"'\t\n&#13;é😀&amp;#13;");
+        assert_eq!(esc_attr(text), "&amp;&lt;&gt;&quot;'&#9;&#10;&#13;é😀&amp;#13;");
+        assert_eq!(esc(""), "");
+        assert_eq!(esc_attr(""), "");
+        for code in 0..32 {
+            let c = char::from_u32(code).unwrap();
+            let text = c.to_string();
+            match c {
+                '\t' => {
+                    assert_eq!(esc(&text), "\t");
+                    assert_eq!(esc_attr(&text), "&#9;");
+                }
+                '\n' => {
+                    assert_eq!(esc(&text), "\n");
+                    assert_eq!(esc_attr(&text), "&#10;");
+                }
+                '\r' => {
+                    assert_eq!(esc(&text), "&#13;");
+                    assert_eq!(esc_attr(&text), "&#13;");
+                }
+                _ => {
+                    assert_eq!(esc(&text), "");
+                    assert_eq!(esc_attr(&text), "");
+                }
+            }
+        }
     }
 
     #[test]

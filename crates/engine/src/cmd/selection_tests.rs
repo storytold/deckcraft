@@ -136,6 +136,14 @@ fn eye_show_all_and_hide_all() {
 }
 
 #[test]
+fn lock_group_with_its_child_targeted_leaves_child_locked() {
+    let (mut s, ids) = deck();
+    let (d, g) = (ids[3], ids[7]);
+    s.execute("shape.lock", &json!({"ids": [g, d, d]})).unwrap();
+    assert!(flags(&s, g).1 && flags(&s, d).1);
+}
+
+#[test]
 fn lock_cascades_through_groups_and_undoes() {
     let (mut s, ids) = deck();
     let (a, d, e, h, g) = (ids[0], ids[3], ids[4], ids[6], ids[7]);
