@@ -65,6 +65,19 @@ fn the_interface_size_value_always_has_two_decimals() {
     }
 }
 
+/// Showing two decimals doesn't round the size itself: opening Options with a size the
+/// slider can't show exactly leaves it as it was.
+#[test]
+fn opening_options_keeps_an_uneven_interface_size() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.run_steps(2);
+    assert!(h.query_by_value("1.23").is_some(), "the slider shows two decimals");
+    assert_eq!(h.state().ui.ui_scale, 1.234, "the size isn't rounded by showing it");
+}
+
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
 #[test]
 fn options_cancel_undoes_the_changes() {

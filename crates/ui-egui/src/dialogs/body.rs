@@ -1360,7 +1360,9 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let r = ui
         .horizontal(|ui| {
             ui.label("Interface size:");
-            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).fixed_decimals(2))
+            // Two decimals on screen only: rounding the value itself would rewrite a saved size
+            // such as 1.234 just by opening the dialog.
+            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).custom_formatter(|v, _| format!("{v:.2}")))
         })
         .inner;
     let enabled = r.enabled();
