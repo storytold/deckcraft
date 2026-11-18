@@ -7831,9 +7831,12 @@ fn shrink_on_a_smartart_graphic_steps_from_the_renderer_calculated_scale() {
         }
     }
     s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    let shown = crate::cmd::smartart::shown_size(&s, ShapeId(gid as u32)).unwrap();
+    assert!(shown > 96.0 && shown < 199.0, "200 pt is drawn smaller: {shown}");
     s.execute("format.shrink", &json!({})).unwrap();
     let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size.unwrap();
-    assert!(z < 200.0 * 0.6, "200 pt drawn much smaller steps down from the drawn size, not from 200: {z}");
+    // Above the size list a step is 8 points (#2059): from the drawn size, not from 200.
+    assert!((z - (shown - 8.0).max(96.0)).abs() < 1e-6, "one step down from the drawn size {shown}, not from 200: {z}");
 }
 
 /// A resized graphic measures its text in the box each node has on the slide, as the renderer
