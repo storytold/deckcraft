@@ -28,6 +28,7 @@ use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_note
 #[cfg(test)]
 use render::{below_playing_video, next_rect, render_frame, start_prefetch};
 use render::{render_backdrop, render_threads};
+pub(crate) use ui::end;
 #[cfg(test)]
 use ui::transition_layers;
 pub use ui::ui;
@@ -612,6 +613,15 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
             })
             .collect(),
     }
+}
+
+/// The native title bar is hidden on macOS, so a windowed show draws its own. Respect the
+/// actual window state too: a speaker show can be taken out of full screen by the user.
+pub(crate) fn needs_title_bar(app: &SlideApp, ctx: &egui::Context) -> bool {
+    app.integrated_titlebar
+        && !ctx.input(|i| i.viewport().fullscreen).unwrap_or_else(|| {
+            app.show.as_ref().zip(app.session.active()).is_some_and(|(show, d)| show_fills_screen(show.reading, &d.doc.show.show_type))
+        })
 }
 
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.

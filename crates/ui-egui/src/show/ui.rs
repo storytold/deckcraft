@@ -121,6 +121,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         show.last_move = now;
     }
     let full = ui.max_rect();
+    let pointer_in_show = ctx.input(|i| i.pointer.interact_pos().is_some_and(|p| full.contains(p)));
+    let clicked = clicked && pointer_in_show;
+    let secondary = secondary && pointer_in_show;
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, &doc);
     let pointer = ctx.input(|i| i.pointer.interact_pos());
@@ -189,6 +192,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             show.remote_sent = now;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
+    if !pointer_in_show {
+        ctx.set_cursor_icon(egui::CursorIcon::Default);
     }
     finish(app, show, &f, out.keep);
 }
@@ -300,7 +306,10 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
 }
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { ctx, doc, now, srect, pointer, .. } = *f;
+    let Fr { ctx, doc, now, srect, pointer, full, .. } = *f;
+    if pointer.is_some_and(|p| !full.contains(p)) {
+        return;
+    }
     // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
     // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
@@ -848,29 +857,34 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
 }
 
-fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
-    let Fr { ctx, now, .. } = *f;
+fn finish(app: &mut SlideApp, show: Show, f: &Fr, keep: bool) {
     if keep {
         app.show = Some(show);
     } else {
-        if let Some(host) = app.services.presenter.as_mut() {
-            host.close();
-        }
-        app.media.stop_owned(crate::media::Owner::Show);
-        if !show.reading {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-        }
-        if show.rehearse {
-            if let Some((_, tl)) = &show.timeline {
-                let _ = tl;
-            }
-            show.timings.push((show.state.slide, now - show.slide_start));
-            for (i, secs) in show.timings.clone() {
-                let _ = app.run("transition.timing", json!({"index": i, "after": (secs * 1000.0).round() as u64}));
-            }
-            app.set_status("Slide timings recorded.");
-        }
-        let last = show.state.slide;
-        let _ = app.run("slide.go", json!({"index": last}));
+        end(app, f.ctx, show, f.now);
     }
+}
+
+/// All show exits share cleanup, including a native audience-window close from the logic pass.
+pub(crate) fn end(app: &mut SlideApp, ctx: &egui::Context, mut show: Show, now: f64) {
+    if let Some(host) = app.services.presenter.as_mut() {
+        host.close();
+    }
+    app.media.stop_owned(crate::media::Owner::Show);
+    if !show.reading {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+    }
+    // A native close may arrive before begin_show initializes the rehearsal clock.
+    if show.rehearse && show.started {
+        if let Some((_, tl)) = &show.timeline {
+            let _ = tl;
+        }
+        show.timings.push((show.state.slide, now - show.slide_start));
+        for (i, secs) in show.timings.clone() {
+            let _ = app.run("transition.timing", json!({"index": i, "after": (secs * 1000.0).round() as u64}));
+        }
+        app.set_status("Slide timings recorded.");
+    }
+    let last = show.state.slide;
+    let _ = app.run("slide.go", json!({"index": last}));
 }

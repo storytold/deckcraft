@@ -104,7 +104,11 @@ pub fn inspect(app: &SlideApp, ctx: &egui::Context) -> Value {
                 (d.doc.slides.len(), d.doc.slide_size.width as f32 / h)
             }).unwrap_or((0, 16.0 / 9.0));
             let now = ctx.input(|i| i.time);
-            s.showing_value(n, aspect, ctx.content_rect(), now)
+            let mut full = ctx.content_rect();
+            if crate::show::needs_title_bar(app, ctx) {
+                full.min.y += crate::ribbon::MAC_TITLE_BAR;
+            }
+            s.showing_value(n, aspect, full, now)
         }),
         "animPreview": app.anim_preview_report().map(|(slide, time, duration)| json!({"slide": slide, "time": time, "duration": duration})),
         "documents": app.session.documents().iter().map(|d| json!({"title": d.title(), "dirty": d.is_dirty(), "path": d.path})).collect::<Vec<_>>(),
