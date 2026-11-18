@@ -246,6 +246,7 @@ impl SlideApp {
                     return Err("Traditional Chinese is not available in the web build".into());
                 }
                 self.ui.language = choice;
+                self.prefer_traditional_pending = true;
                 return Ok(json!({"language": choice.code(), "resolved": self.language().code()}));
             }
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),

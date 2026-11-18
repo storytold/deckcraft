@@ -96,6 +96,7 @@ impl SlideApp {
             quit_confirmed: false,
             notes_buf: (0, usize::MAX, notes::Draft::default()),
             ui_fonts: uifonts::UiFonts::default(),
+            prefer_traditional_pending: true,
             thumb_drag: None,
             selpane: selpane::State::default(),
             align_to: None,

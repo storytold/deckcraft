@@ -332,7 +332,7 @@ Detail in [hardware-parity.md](hardware-parity.md).
 
 Detail in [localization-parity.md](localization-parity.md).
 
-- **The shell has a 87-key catalog; the rest of the UI is English** (#15, #30; Ukrainian PR #34
+- **The shell has an 87-key catalog; the rest of the UI is English** (#15, #30; Ukrainian PR #34
   open). Preferences offers System, English and 繁體中文 (`app.language`). System selects
   Traditional Chinese for a `zh-Hant`, `zh-TW`, `zh-HK` or `zh-MO` locale. Ribbon groups,
   the other dialogs, command ids and presentation text stay English. The web build has no system
@@ -373,7 +373,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-04 | minor | Application shell has a 87-key catalog: ribbon tabs, File menu, title bar, status bar and Preferences in Taiwan Traditional Chinese; ribbon groups, other dialogs and command ids stay English |
+| 2026-11-04 | minor | Application shell has an 87-key catalog: ribbon tabs, File menu, title bar, status bar and Preferences in Taiwan Traditional Chinese; ribbon groups, other dialogs and command ids stay English |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

@@ -23,6 +23,7 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     }
     if let Some(language) = before.get("language").and_then(|v| serde_json::from_value(v.clone()).ok()) {
         app.ui.language = language;
+        app.prefer_traditional_pending = true;
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;
