@@ -1,12 +1,12 @@
 //! Transitions and the animation timing tree.
 
-use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
+use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, KeptSequence, TextBuild, Transition, build_filled, paragraph_build_roles};
 use deckcraft_model::{Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdMap;
 use super::{Exp, Out};
 use crate::opc::{NS_MC, NS_P14, NS_P15, NS_P159};
-use crate::xml::{A, W};
+use crate::xml::{A, El, W};
 
 pub fn transition(w: &mut W, x: &mut Exp, o: &mut Out, t: &Transition) {
     let adv_click = (!t.advance_on_click).then_some("0");
@@ -592,9 +592,103 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
     }
 }
 
-/// Write `p:timing` for a slide's animations.
-pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
-    let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
+/// The kept sequences ([`KeptSequence`]) with their shapes' file ids, and their build entries; one
+/// naming a shape the slide no longer has is left out.
+fn kept_with_file_ids(kept: &[KeptSequence], idmap: &IdMap) -> (Vec<El>, Vec<El>) {
+    let mut to_file = |id: u32| idmap.get(ShapeId(id));
+    let parse = |xml: &str| crate::xml::parse(xml.as_bytes()).ok().map(|d| d.root);
+    let mut mapped = vec![];
+    for k in kept.iter().take(1000) {
+        let Some(mut seq) = parse(&k.xml).filter(|s| s.is("seq")) else { continue };
+        if !seq.map_attr(None, "spid", &mut to_file) {
+            log::warn!("pptx: a kept animation sequence names a deleted shape and was left out");
+            continue;
+        }
+        mapped.push((seq, k));
+    }
+    // A condition (`p:tn`) naming a node outside the kept sequences would point at another node
+    // once ours are written: such a sequence is left out, its build entries with it. Leaving one
+    // out removes its nodes, so a sequence naming those goes too: repeat until none changes.
+    loop {
+        let mut nodes = std::collections::HashSet::new();
+        for (seq, _) in &mut mapped {
+            seq.map_attr(Some("cTn"), "id", &mut |id| {
+                nodes.insert(id);
+                Some(id)
+            });
+        }
+        let before = mapped.len();
+        mapped.retain(|(seq, _)| {
+            let ok = seq.clone().map_attr(Some("tn"), "val", &mut |v| nodes.contains(&v).then_some(v));
+            if !ok {
+                log::warn!("pptx: a kept animation sequence names a time node that is not kept and was left out");
+            }
+            ok
+        });
+        if mapped.len() == before {
+            break;
+        }
+    }
+    let (mut seqs, mut builds) = (vec![], vec![]);
+    for (seq, k) in mapped {
+        // Two sequences on the same shape both carry its build entry; it is written once, or each
+        // reload would hand both copies to both sequences and the copies would multiply.
+        for mut b in k.builds.iter().filter_map(|b| parse(b)) {
+            if b.map_attr(None, "spid", &mut to_file) && !builds.contains(&b) {
+                builds.push(b);
+            }
+        }
+        seqs.push(seq);
+    }
+    (seqs, builds)
+}
+
+/// The next group (`grpId`) of each shape after those the kept builds use, which stay theirs.
+fn kept_groups(kept_builds: &[El]) -> std::collections::HashMap<u32, u32> {
+    let mut grp_count = std::collections::HashMap::new();
+    for b in kept_builds {
+        if let (Some(spid), Some(g)) = (b.u32("spid"), b.u32("grpId")) {
+            let c = grp_count.entry(spid).or_insert(0);
+            *c = (*c).max(g.saturating_add(1));
+        }
+    }
+    grp_count
+}
+
+/// Write the kept sequences with time-node ids after ours; a condition naming a node (`p:tn`) follows it.
+fn write_kept(w: &mut W, ids: &mut Ids, mut kept: Vec<El>) {
+    // Every kept node is numbered first, so a condition in one kept sequence can name a node in
+    // another. A sequence's own nodes come first: two copies of one sequence share their old ids.
+    let mut all = std::collections::HashMap::new();
+    let own: Vec<std::collections::HashMap<u32, u32>> = kept
+        .iter_mut()
+        .map(|seq| {
+            let mut own = std::collections::HashMap::new();
+            seq.map_attr(Some("cTn"), "id", &mut |old| {
+                let id = ids.next();
+                own.insert(old, id);
+                all.entry(old).or_insert(id);
+                Some(id)
+            });
+            own
+        })
+        .collect();
+    for (mut seq, own) in kept.into_iter().zip(own) {
+        // A node outside the kept sequences is written anew under an id of ours, so a condition
+        // naming it would point at another node: such a sequence is left out, as one naming a
+        // deleted shape is.
+        if !seq.map_attr(Some("tn"), "val", &mut |old| own.get(&old).or_else(|| all.get(&old)).copied()) {
+            log::warn!("pptx: a kept animation sequence names a time node that is not kept and was left out");
+            continue;
+        }
+        w.raw(&seq.to_xml());
+    }
+}
+
+/// Write `p:timing` for a slide's animations and the sequences kept verbatim from its file.
+pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], kept: &[KeptSequence], shapes: &[Shape], idmap: &IdMap) {
+    let (kept, kept_builds) = kept_with_file_ids(kept, idmap);
+    let mut grp_count = kept_groups(&kept_builds);
     let mut main: Vec<Eff> = vec![];
     let mut triggered: Vec<(u32, Vec<Eff>)> = vec![];
     let mut bld: Vec<(u32, u32, bool)> = vec![];
@@ -634,9 +728,15 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         let grp = match prev_para {
             Some((.., g)) if joins => g,
             _ => {
+                // Past the groups the kept builds use; none is left after a kept `grpId` at the
+                // top of the range, and the effect is left out rather than share one.
                 let c = grp_count.entry(spid).or_insert(0);
                 let g = *c;
-                *c += 1;
+                let Some(next) = c.checked_add(1) else {
+                    log::warn!("pptx: no build group left for an animation on shape {spid}; it was left out");
+                    continue;
+                };
+                *c = next;
                 g
             }
         };
@@ -686,7 +786,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    if main.is_empty() && triggered.is_empty() && kept.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -757,14 +857,18 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
+    write_kept(w, &mut ids, kept);
     w.close("p:childTnLst");
     w.close("p:cTn");
     w.close("p:par");
     w.close("p:tnLst");
-    if !bld.is_empty() {
+    if !bld.is_empty() || !kept_builds.is_empty() {
         w.open0("p:bldLst");
         for (spid, grp, build_p) in bld {
             w.empty("p:bldP", A::new().a("spid", spid).a("grpId", grp).o("build", build_p.then_some("p")).t("animBg", !build_p));
+        }
+        for b in &kept_builds {
+            w.raw(&b.to_xml());
         }
         w.close("p:bldLst");
     }

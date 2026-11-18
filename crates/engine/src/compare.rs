@@ -458,6 +458,7 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
             *t = *n;
         }
     }
+    sl.kept_sequences.retain_mut(|k| k.remap_shapes(&|id| Some(id_map.get(&id).copied().unwrap_or(id))));
     let mut max = 0;
     max_shape_id(&sl.shapes, &mut max);
     doc.next_id = doc.next_id.max(max);
