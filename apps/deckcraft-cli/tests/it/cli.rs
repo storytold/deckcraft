@@ -1,7 +1,7 @@
 use std::process::{Command, Output};
 
 fn cli(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).args(args).output().unwrap()
+    Command::new(crate::deckcraft_cli()).args(args).output().unwrap()
 }
 
 fn stdout(o: &Output) -> String {
@@ -197,7 +197,7 @@ fn every_subcommand_answers_help_and_does_nothing_else() {
     std::fs::create_dir_all(&dir).unwrap();
     for sub in SUBCOMMANDS {
         for args in [vec![sub, "--help"], vec![sub, "-h", "out.png"], vec!["help", sub]] {
-            let o = Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).current_dir(&dir).args(&args).output().unwrap();
+            let o = Command::new(crate::deckcraft_cli()).current_dir(&dir).args(&args).output().unwrap();
             assert!(stdout(&o).starts_with(&format!("usage: deckcraft-cli {sub}")), "{args:?}");
         }
     }

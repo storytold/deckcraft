@@ -9,13 +9,10 @@ description = "DeckCraft media: probing, audio decoding (MP3, AAC/M4A, WAV, AIFF
 workspace = true
 
 [dependencies]
-# Containers (MP4/MOV, Matroska/WebM, Ogg) and the Opus decoder, shared with the other Craft apps.
+# Containers (MP4/MOV, Matroska/WebM, Ogg), the Opus decoder and the video decoders, shared with the other Craft apps.
 craft-media = { workspace = true, features = ["isobmff", "matroska", "ogg"] }
 craft-audio = { workspace = true }
-deckcraft-h264 = { workspace = true }
-deckcraft-hevc = { workspace = true }
-deckcraft-vp9 = { workspace = true }
-deckcraft-av1 = { workspace = true }
+craft-video = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
