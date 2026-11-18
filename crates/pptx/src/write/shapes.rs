@@ -94,7 +94,7 @@ pub fn geometry(w: &mut W, g: &Geom) {
                 w.empty0("a:avLst");
             } else {
                 // PowerPoint wants the complete guide list once any is given.
-                let defaults = deckcraft_geom::preset::info(name).map(|i| i.defaults).unwrap_or(&[]);
+                let defaults = deckcraft_geom::preset::adjust_defaults(name);
                 let mut vals: Vec<f64> = adj.iter().take(16).copied().collect();
                 while vals.len() < defaults.len() {
                     vals.push(defaults.get(vals.len()).copied().unwrap_or(0.0));
@@ -724,8 +724,8 @@ fn frame_close(w: &mut W) {
 }
 
 fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
-    let mut t = t.clone();
-    t.normalize();
+    x.table_over_cap |= t.over_cap();
+    let t = t.normalized();
     w.open0("a:tbl");
     let (guid, _) = crate::tables::guid_for_style(&t.style);
     if x.table_style_set.insert(t.style.clone()) {
