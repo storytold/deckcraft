@@ -68,6 +68,23 @@ fn options_cancel_undoes_the_changes() {
     assert!(h.state().dialog.is_none(), "and the dialog closes");
 }
 
+/// #1655: Options › "Automatically preview transitions when selecting them" goes back to what it
+/// was when the dialog is cancelled, like the other Options settings.
+#[test]
+fn options_cancel_undoes_auto_preview_transitions() {
+    let mut h = harness();
+    let was = h.state().ui.auto_preview_transitions;
+    open_options(&mut h);
+
+    h.query_by_label("Automatically preview transitions when selecting them").expect("checkbox exists").click();
+    h.run_steps(2);
+    assert_eq!(h.state().ui.auto_preview_transitions, !was);
+
+    h.query_by_label("Cancel").expect("the Cancel button is there").click();
+    h.run_steps(2);
+    assert_eq!(h.state().ui.auto_preview_transitions, was);
+}
+
 /// Every Editing setting and the name field go back on Cancel, not only the first checkbox: a
 /// reporter who changed a different control and saw Cancel do nothing has the same answer.
 #[test]

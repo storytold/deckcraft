@@ -40,7 +40,7 @@ perspective-correct subdivided meshes.
 | Effect Options per transition | yes | yes |
 | Duration, advance on click / after time, Apply To All | yes | yes |
 | Transition sounds | yes | yes: Transitions › Sound offers six built-in sounds (synthesised, no sound files shipped), Other Sound…, [Stop Previous Sound] and Loop Until Next Sound; they play in the show and round-trip |
-| Preview in the editor | yes | yes |
+| Preview in the editor | yes | yes; picking a transition in the gallery or an Effect Options entry plays it once (Preferences › Slide Show can turn this off, #1655) |
 | Going back in the show plays the left slide's transition in reverse | yes | yes (#1531); a jump (Go to Slide, links) plays the target slide's own transition |
 | Morph: objects move, resize, recolour; unmatched text boxes fade in place; a picture's crop morphs | yes | yes (#119, #118) |
 | Morph: Words and Characters | yes | yes (#5) |
@@ -94,6 +94,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-09 | trivial | Preview in the editor: picking a transition in the gallery or an Effect Options entry plays it once; Preferences › Slide Show turns this off (#1655). Scores unchanged |
 | 2026-10-30 | trivial | Animation Effect Options show readable, effect-aware labels for all gallery option codes; stored values and command parameters stay unchanged |
 | 2026-10-29 | minor | Going back in the show plays the transition of the slide being left, reversed, instead of the previous slide's entrance transition (#1531); new row in the transition features. Scores unchanged |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |
