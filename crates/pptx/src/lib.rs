@@ -264,17 +264,23 @@ mod group_fill_roundtrip_tests {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).expect("exported package");
         let mut xml = String::new();
         z.by_name("ppt/slides/slide1.xml").expect("slide part").read_to_string(&mut xml).expect("slide xml");
-        // Scope to the p:grpSp element: the slide's own root grpSpPr and its layout
-        // placeholders precede the group in the spTree and carry no fills.
-        let grp = xml.split("<p:grpSp>").nth(1).expect("the group is written as p:grpSp");
-        let grp_sp_pr = grp.split("<p:grpSpPr>").nth(1).expect("the group's grpSpPr").split("</p:grpSpPr>").next().unwrap();
-        assert!(grp_sp_pr.contains("a:blipFill"), "the group's picture fill is a:blipFill in its grpSpPr: {grp_sp_pr}");
-        assert!(!grp_sp_pr.contains("a:grpFill"), "the group's grpSpPr carries no a:grpFill: {grp_sp_pr}");
-        let members: Vec<&str> = grp.split("<p:sp>").skip(1).collect();
-        assert_eq!(members.len(), 2, "both members are written as p:sp: {xml}");
+        // Inspect the markers through the parsed XML tree, scoped to the group's
+        // direct children: string splitting on exact tag spellings would miss a
+        // member whose p:sp tag gained an attribute, and a slice running to the
+        // end of the slide would count a later sibling shape as a member. The
+        // slide's own root grpSpPr and its layout placeholders are not inside
+        // the group element, so they cannot be mistaken for its fills.
+        let doc = crate::parse_xml(xml.as_bytes()).expect("the slide XML parses");
+        let sp_tree = doc.root.find("spTree").expect("the slide has a spTree");
+        let grp = sp_tree.children_named("grpSp").next().expect("the group is written as a grpSp child of the spTree");
+        let grp_sp_pr = grp.child("grpSpPr").expect("the group's grpSpPr");
+        assert!(grp_sp_pr.child("blipFill").is_some(), "the group's picture fill is a:blipFill in its grpSpPr: {}", grp_sp_pr.to_xml());
+        assert!(grp_sp_pr.child("grpFill").is_none(), "the group's grpSpPr carries no a:grpFill: {}", grp_sp_pr.to_xml());
+        let members: Vec<_> = grp.children_named("sp").collect();
+        assert_eq!(members.len(), 2, "both members are direct p:sp children of the group: {xml}");
         for m in &members {
-            let sp_pr = m.split("<p:spPr>").nth(1).expect("a member's spPr").split("</p:spPr>").next().unwrap();
-            assert!(sp_pr.contains("a:grpFill"), "each member's spPr carries a:grpFill: {sp_pr}");
+            let sp_pr = m.child("spPr").expect("a member's spPr");
+            assert!(sp_pr.child("grpFill").is_some(), "each member's spPr carries a:grpFill: {}", sp_pr.to_xml());
         }
         let rt = crate::import(&bytes).expect("import");
         let g = rt.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Group { .. })).expect("the group survives");
