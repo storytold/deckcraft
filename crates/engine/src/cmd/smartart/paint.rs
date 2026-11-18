@@ -439,10 +439,16 @@ pub(super) fn size_afresh(d: &Diagram, area: Xfrm, kids: &mut [Shape]) {
             }
         }
     }
-    // The shared scale, read off the largest text (where half-point rounding matters least).
-    let Some(&(b0, s0)) = sizes.iter().max_by(|a, b| a.0.total_cmp(&b.0)) else { return };
-    let k = s0 / b0;
-    if !(k.is_finite() && k > 0.0 && k <= 1.001) || sizes.iter().any(|(b, now)| (now - b * k).abs() > 1.0) {
+    // Generation leaves every run at its starting size, or at that size times one shared scale,
+    // rounded down to half a point ([`apply_scale`]). So each run bounds the scale to
+    // `[now / b, (now + 0.5) / b)`, and the sizes are generation's only when one scale fits them all.
+    if sizes.is_empty() {
+        return;
+    }
+    let untouched = sizes.iter().all(|(b, now)| b == now);
+    let lo = sizes.iter().map(|(b, now)| now / b).fold(0.0_f64, f64::max);
+    let hi = sizes.iter().map(|(b, now)| (now + 0.5) / b).fold(f64::INFINITY, f64::min);
+    if !untouched && !(lo < hi && lo < 0.999) {
         return;
     }
     let scale = fresh.iter().map(|(sh, _)| word_scale(sh, 1.0)).fold(1.0_f64, f64::min);
