@@ -232,6 +232,8 @@ mod table_direction_tests {
 
 #[cfg(test)]
 mod group_fill_roundtrip_tests {
+    use std::io::Read;
+
     use deckcraft_model::style::{Fill, PictureFill, PictureMode};
     use deckcraft_model::{Shape, ShapeId, ShapeKind, Xfrm, defaults};
     use std::sync::Arc;
@@ -255,7 +257,26 @@ mod group_fill_roundtrip_tests {
             ..Default::default()
         };
         Arc::make_mut(&mut p.slides[0]).shapes.push(group);
-        let rt = crate::import(&crate::export(&p).expect("export")).expect("import");
+        let bytes = crate::export(&p).expect("export");
+        // The markers themselves must be in the exported slide XML, not only in the
+        // reimported model: an exporter writing a:noFill for the members could still
+        // pass the round trip below if the importer reconstructed Fill::Group for them.
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).expect("exported package");
+        let mut xml = String::new();
+        z.by_name("ppt/slides/slide1.xml").expect("slide part").read_to_string(&mut xml).expect("slide xml");
+        // Scope to the p:grpSp element: the slide's own root grpSpPr and its layout
+        // placeholders precede the group in the spTree and carry no fills.
+        let grp = xml.split("<p:grpSp>").nth(1).expect("the group is written as p:grpSp");
+        let grp_sp_pr = grp.split("<p:grpSpPr>").nth(1).expect("the group's grpSpPr").split("</p:grpSpPr>").next().unwrap();
+        assert!(grp_sp_pr.contains("a:blipFill"), "the group's picture fill is a:blipFill in its grpSpPr: {grp_sp_pr}");
+        assert!(!grp_sp_pr.contains("a:grpFill"), "the group's grpSpPr carries no a:grpFill: {grp_sp_pr}");
+        let members: Vec<&str> = grp.split("<p:sp>").skip(1).collect();
+        assert_eq!(members.len(), 2, "both members are written as p:sp: {xml}");
+        for m in &members {
+            let sp_pr = m.split("<p:spPr>").nth(1).expect("a member's spPr").split("</p:spPr>").next().unwrap();
+            assert!(sp_pr.contains("a:grpFill"), "each member's spPr carries a:grpFill: {sp_pr}");
+        }
+        let rt = crate::import(&bytes).expect("import");
         let g = rt.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Group { .. })).expect("the group survives");
         let Some(Fill::Picture(pic)) = &g.fill else { panic!("the group keeps its picture fill, got {:?}", g.fill) };
         assert!(matches!(pic.mode, PictureMode::Stretch { .. }), "the fill stays a stretch, not a tile");
