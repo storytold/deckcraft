@@ -65,6 +65,8 @@ pub struct Exp<'a> {
     n_kept: u32,
     pub slide_parts: HashMap<SlideId, String>,
     pub table_styles: Vec<String>,
+    /// A table past the cell cap was met; export fails rather than write a trimmed one.
+    pub table_over_cap: bool,
     /// The ids in `table_styles`, for checking membership without a scan.
     pub table_style_set: std::collections::HashSet<String>,
     placeholder: Option<String>,
@@ -558,6 +560,7 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         n_kept: 0,
         slide_parts: HashMap::new(),
         table_styles: vec![],
+        table_over_cap: false,
         table_style_set: Default::default(),
         placeholder: None,
     };
@@ -766,6 +769,12 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         root.add_new(&k.rel_type, &k.name, false);
     }
     x.pkg.rels("", &root);
+    if x.table_over_cap {
+        return Err(PptxError::Unsupported(format!(
+            "a table has more than {} cells; export refused rather than drop rows",
+            deckcraft_model::table::MAX_CELLS
+        )));
+    }
     x.pkg.finish()
 }
 
@@ -813,9 +822,7 @@ fn slide_xml(x: &mut Exp, o: &mut Out, s: &Slide, comment_rel: Option<&str>) -> 
     if let Some(t) = &s.transition {
         timing::transition(&mut w, x, o, t);
     }
-    if !s.animations.is_empty() {
-        timing::timing(&mut w, x, &s.animations, &s.shapes, &ids);
-    }
+    timing::timing(&mut w, x, &s.animations, &s.shapes, &ids);
     slide_ext_list(&mut w, s.raw_ext.as_deref(), comment_rel);
     w.close("p:sld");
     w.finish()
