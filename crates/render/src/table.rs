@@ -5,7 +5,7 @@ use deckcraft_model::resolve::Ctx;
 use deckcraft_model::style::{ColorRef, Fill};
 use deckcraft_model::table::{Cell, Table, TableBorder, TablePart, TablePartStyle, TableStyleDef};
 use deckcraft_model::text::{Anchor, TextBody, TextDir};
-use deckcraft_model::{Presentation, Shape};
+use deckcraft_model::{Presentation, Shape, ShapeId};
 use deckcraft_text::Fields;
 use kurbo::{Affine, BezPath, Rect, Shape as _};
 use vello_cpu::{RenderContext, peniko};
@@ -289,7 +289,10 @@ pub fn cell_body_with_def(rctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r:
     }
     for p in &mut body.paragraphs {
         for run in &mut p.runs {
+            // A hyperlink keeps the theme's hyperlink colour (and the followed one): the table
+            // style's text colour is not the run's own.
             if run.props.fill.is_none()
+                && run.props.link.is_none()
                 && let Some(tc) = lk.text
             {
                 run.props.fill = Some(Fill::solid(ColorRef::rgb(tc)));
@@ -383,6 +386,7 @@ pub fn draw(
     _w: f64,
     _h: f64,
     fields: &dyn deckcraft_text::Fields,
+    owner: ShapeId,
     editing: bool,
 ) -> Option<kurbo::Rect> {
     let _ = pres;
@@ -476,7 +480,15 @@ pub fn draw(
         let tmp = Shape::table_cell(body.clone());
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));
-        let mut l = deckcraft_text::layout(rctx, &tmp, &body, &deckcraft_text::Opts { rect: *rect, fields, prompt_color: None, no_shrink: false });
+        // The cell's links are told apart from the other cells' (which of them are followed).
+        let cell_fields = fields.in_cell(owner, *r, *c);
+        let cell_fields: &dyn deckcraft_text::Fields = cell_fields.as_deref().unwrap_or(fields);
+        let mut l = deckcraft_text::layout(
+            rctx,
+            &tmp,
+            &body,
+            &deckcraft_text::Opts { rect: *rect, fields: cell_fields, prompt_color: None, no_shrink: false },
+        );
         if editing {
             crate::preview_empty_bullets(&mut l);
         }

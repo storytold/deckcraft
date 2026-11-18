@@ -11,6 +11,19 @@ pub trait Fields {
         let _ = lang;
         self.field(kind)
     }
+    /// Has the slide show followed this link? Followed links are drawn in the theme's followed
+    /// hyperlink colour. Only a show knows; everything else draws every link as not followed.
+    /// `shape` holds the text; `para` is the paragraph and `run` the first run of the link.
+    fn followed(&self, shape: deckcraft_model::ShapeId, para: usize, run: usize) -> bool {
+        let _ = (shape, para, run);
+        false
+    }
+    /// The fields to lay out the text of cell (`row`, `col`) of table `table` with, when links in
+    /// a cell are told apart from the table's other cells. `None`: the same fields.
+    fn in_cell(&self, table: deckcraft_model::ShapeId, row: usize, col: usize) -> Option<Box<dyn Fields + '_>> {
+        let _ = (table, row, col);
+        None
+    }
 }
 
 pub struct NoFields;

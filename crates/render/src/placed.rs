@@ -2,7 +2,7 @@
 //! that put real text over a raster (PDF text layer, links) and for text extraction.
 
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Hyperlink, RunKind, TextBody};
+use deckcraft_model::text::{FollowedLink, Hyperlink, RunKind, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use deckcraft_text::{Fields, Opts, TextLayout};
 use kurbo::{Affine, Rect};
@@ -26,6 +26,9 @@ pub struct PlacedLink {
     pub shape: ShapeId,
     /// A hyperlink on text, not the shape's own action.
     pub text: bool,
+    /// Which link in the text this is, for a text hyperlink: what the slide show remembers as
+    /// followed. `None` for a shape's action.
+    pub followed: Option<FollowedLink>,
 }
 
 /// A shape of the slide itself (not of its layout or master) with its slide-space bounding box:
@@ -61,18 +64,20 @@ pub fn place_slide_with(pres: &Presentation, index: usize, opts: &crate::RenderO
     let mut out = Placed::default();
     let Some(slide) = pres.slides.get(index) else { return out };
     let Some(rctx) = Ctx::for_slide(pres, slide) else { return out };
-    let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts);
+    let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts, Some(slide.id));
+    // Master and layout links are never followed: their shape ids may clash with the slide's.
+    let back_fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts, None);
     let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
     if show_master {
         let mctx = Ctx::for_master(pres, rctx.master);
         for s in rctx.master.shapes.iter().filter(|s| s.ph.is_none()) {
-            place(&mut out, &mctx, &fields, s, Affine::IDENTITY, 0, None, false);
+            place(&mut out, &mctx, &back_fields, s, Affine::IDENTITY, 0, None, false);
         }
     }
     if show_layout && let Some(l) = rctx.layout {
         let lctx = Ctx::for_layout(pres, rctx.master, l);
         for s in l.shapes.iter().filter(|s| s.ph.is_none()) {
-            place(&mut out, &lctx, &fields, s, Affine::IDENTITY, 0, None, false);
+            place(&mut out, &lctx, &back_fields, s, Affine::IDENTITY, 0, None, false);
         }
     }
     for s in &slide.shapes {
@@ -88,7 +93,7 @@ pub fn place_master_texts(pres: &Presentation, master: &deckcraft_model::Master,
     use deckcraft_model::PhType;
     let mut out = Placed::default();
     let ctx = Ctx::for_master(pres, master);
-    let fields = SlideFields::new(u32::try_from(n).unwrap_or(u32::MAX), pres.header_footer.footer_text.clone(), &crate::RenderOpts::default());
+    let fields = SlideFields::new(u32::try_from(n).unwrap_or(u32::MAX), pres.header_footer.footer_text.clone(), &crate::RenderOpts::default(), None);
     for s in master.shapes.iter().filter(|s| matches!(s.ph_type(), Some(PhType::Header | PhType::Date | PhType::Footer | PhType::SlideNum))) {
         let mut s = s.clone();
         if s.ph_type() == Some(PhType::SlideNum) {
@@ -119,7 +124,7 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
     let m = parent * x.affine();
     let rect = m.transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h));
     if let Some(link) = &s.click {
-        out.links.push(PlacedLink { rect, link: link.clone(), shape: s.id, text: false });
+        out.links.push(PlacedLink { rect, link: link.clone(), shape: s.id, text: false, followed: None });
     }
     let me = if own {
         out.shapes.push(PlacedShape { id: s.id, parent: group, is_group: matches!(s.kind, ShapeKind::Group { .. }), rect, link: s.click.clone() });
@@ -143,22 +148,35 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
                 let Some(cell) = t.cell(r, c).filter(|cell| !cell.text.is_empty()) else { continue };
                 let body = table::cell_body_with_def(rctx, def, t, r, c, cell);
                 let tmp = Shape::table_cell(body.clone());
-                place_text(out, rctx, fields, s.id, &tmp, &body, rect, m);
+                place_text(out, rctx, fields, s.id, Some((r, c)), &tmp, &body, rect, m);
             }
         }
         ShapeKind::Chart(_) | ShapeKind::Ink { .. } => {}
         _ => {
             let Some(body) = s.text.as_ref().filter(|b| !b.is_empty()) else { return };
             let tr = shape_geometry(s, x.w, x.h).text_rect;
-            place_text(out, rctx, fields, s.id, s, body, tr, m);
+            place_text(out, rctx, fields, s.id, None, s, body, tr, m);
         }
     }
 }
 
 /// Lay out `body` in text rect `tr` of shape `s` (shape-local → slide `m`) and record it and its hyperlinks.
 #[allow(clippy::too_many_arguments)]
-fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId, s: &Shape, body: &TextBody, tr: Rect, m: Affine) {
-    let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: None, no_shrink: false });
+fn place_text(
+    out: &mut Placed,
+    rctx: &Ctx,
+    fields: &SlideFields,
+    owner: ShapeId,
+    cell: Option<(usize, usize)>,
+    s: &Shape,
+    body: &TextBody,
+    tr: Rect,
+    m: Affine,
+) {
+    // A table cell's links are told apart from the other cells' (the layout's fields know the cell).
+    let cell_fields = cell.and_then(|(r, c)| fields.in_cell(owner, r, c));
+    let layout_fields: &dyn Fields = cell_fields.as_deref().unwrap_or(fields);
+    let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields: layout_fields, prompt_color: None, no_shrink: false });
     let m = crate::text_transform(m, tr, layout.rotation);
     // Field runs carry their saved text (`‹#›`); the layout drew their values, so the body that
     // goes with it (character offsets, text layer) must hold the same values.
@@ -177,25 +195,32 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
     }
     // Text hyperlinks: one box per line segment of a linked run.
     for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
-        let Some(link) = run_link(&placed, run.para, run.chars.0) else { continue };
+        let Some((link, run_ix)) = run_link(&placed, run.para, run.chars.0) else { continue };
+        let followed = fields.slide.zip(placed.paragraphs.get(run.para)).map(|(slide, p)| FollowedLink {
+            slide,
+            shape: owner,
+            cell,
+            para: run.para,
+            run: p.link_start(run_ix),
+        });
         let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
         // The run's visual extent (right-to-left runs run from right to left).
         let first = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
         let (x0, x1) = line.span(run.chars.0, run.chars.1).unwrap_or((first, first));
         let r = Rect::new(x0, line.top, x1, line.bottom);
-        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
+        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true, followed });
     }
     out.texts.push(PlacedText { layout, transform: m, body: placed });
 }
 
-/// The hyperlink of the model run containing character `at` of paragraph `para`.
-fn run_link(body: &TextBody, para: usize, at: usize) -> Option<Hyperlink> {
+/// The hyperlink of the model run containing character `at` of paragraph `para`, and that run's index.
+fn run_link(body: &TextBody, para: usize, at: usize) -> Option<(Hyperlink, usize)> {
     let p = body.paragraphs.get(para)?;
     let mut pos = 0;
-    for r in &p.runs {
+    for (i, r) in p.runs.iter().enumerate() {
         let n = r.char_len();
         if at < pos + n.max(1) {
-            return r.props.link.clone();
+            return r.props.link.clone().map(|l| (l, i));
         }
         pos += n;
     }

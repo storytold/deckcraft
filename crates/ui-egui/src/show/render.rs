@@ -3,6 +3,7 @@ use super::{
     BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
     TriggerPlay, pos2, state_for, vec2,
 };
+use deckcraft_model::text::FollowedLink;
 
 pub(super) fn render_threads() -> u16 {
     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) }
@@ -48,6 +49,7 @@ pub(super) fn render_frame(
     threads: u16,
     plays: &[TriggerPlay],
     stamps: &[StepStamp],
+    followed: &[FollowedLink],
     backdrop: Option<&deckcraft_render::Image>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
@@ -63,6 +65,7 @@ pub(super) fn render_frame(
         state: Some(&f),
         gif_times: times,
         threads,
+        followed,
         ..Default::default()
     };
     match backdrop {
@@ -87,6 +90,7 @@ pub(super) fn render_overlay(
     threads: u16,
     plays: &[TriggerPlay],
     stamps: &[StepStamp],
+    followed: &[FollowedLink],
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
         let mut st = state_for(&tl, id, step, t, plays, stamps);
@@ -102,6 +106,7 @@ pub(super) fn render_overlay(
         skip,
         gif_times: times,
         threads,
+        followed,
         ..Default::default()
     };
     let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
@@ -126,19 +131,28 @@ fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
 }
 
 /// Start rendering slide `next`'s first frame on another thread. `None` on the web (no threads).
-pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u32)) -> Option<Prefetch> {
+pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u32), followed: Vec<FollowedLink>) -> Option<Prefetch> {
     if cfg!(target_arch = "wasm32") {
         return None;
     }
     let hidden = hidden_on_entry(doc, next);
-    let key = Key { slide: next, step: 0, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), gif: 0, plays: vec![] };
+    let key = Key {
+        slide: next,
+        step: 0,
+        size,
+        doc: std::sync::Arc::as_ptr(doc) as usize,
+        hidden: hidden.clone(),
+        gif: 0,
+        plays: vec![],
+        followed: followed.len(),
+    };
     let (tx, rx) = std::sync::mpsc::channel();
     let doc = doc.clone();
     // Leave a core for the UI thread.
     let threads = render_threads().saturating_sub(1).max(1);
     let spawned = std::thread::Builder::new().name("show-prefetch".into()).spawn(move || {
         let tl = ShowState::timeline(&doc, next);
-        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], None));
+        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], &followed, None));
     });
     spawned.ok().map(|_| Prefetch { key, rx })
 }
@@ -180,10 +194,17 @@ pub(super) fn quad_mesh(tex: Option<egui::TextureId>, rect: Rect, l: &Layer, col
 }
 
 /// Render the backgrounds and contents of a transition's two slides into textures, once.
-pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Option<usize>, to: usize, size: (u32, u32)) -> [Option<TextureHandle>; 4] {
+pub(super) fn part_textures(
+    ctx: &egui::Context,
+    doc: &Presentation,
+    from: Option<usize>,
+    to: usize,
+    size: (u32, u32),
+    followed: &[FollowedLink],
+) -> [Option<TextureHandle>; 4] {
     use deckcraft_render::SlidePart;
     let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
-    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
+    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, followed, ..Default::default() };
     let tex = |i: usize, part: SlidePart, name: &str| {
         let img = deckcraft_render::render_slide_part(doc, i, part, &opts);
         crate::textures::upload(ctx, name, crate::textures::to_color_image(&img, false))

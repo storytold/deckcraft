@@ -1,5 +1,5 @@
 use super::render::fit;
-use super::{Click, HitShape, Hyperlink, PlacedShape, Presentation, Rect, ShapeId, Show, SlideApp, Ui, pos2, vec2};
+use super::{Click, FollowedLink, HitShape, Hyperlink, PlacedShape, Presentation, Rect, ShapeId, Show, SlideApp, Ui, pos2, vec2};
 use deckcraft_anim::AnimState;
 
 /// The media-host voice for slide transition sounds (no shape has this id).
@@ -139,7 +139,7 @@ pub(super) fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Present
 #[derive(Clone)]
 pub(super) enum Pick {
     /// A hyperlink in text.
-    Text(Hyperlink),
+    Text(Hyperlink, Option<FollowedLink>),
     /// A shape with an action or a triggered animation.
     Shape,
 }
@@ -226,7 +226,7 @@ pub(super) fn shapes_under_pointer(ctx: &egui::Context, ui: &Ui, show: &mut Show
         })
     });
     under.pick = match text {
-        Some(l) => Some(Pick::Text(l.link.clone())),
+        Some(l) => Some(Pick::Text(l.link.clone(), l.followed)),
         None => show.state.target(doc, tl, &under.shapes, &shown).map(|_| Pick::Shape),
     };
     Some(under)

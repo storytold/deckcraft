@@ -1,3 +1,6 @@
+use deckcraft_color::SchemeSlot;
+use deckcraft_model::style::ColorRef;
+
 use super::autonum::autonum;
 use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
@@ -6,6 +9,15 @@ use super::{
     Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
     UnicodeSegmentation, bidi, resolve, script,
 };
+
+/// A followed link is drawn in the theme's followed hyperlink colour instead of its hyperlink
+/// colour. A colour the run sets itself is not the hyperlink colour, so it stays.
+fn followed_colour(rp: &mut RunProps) {
+    let hlink = ColorRef::scheme(SchemeSlot::Hlink);
+    if matches!(&rp.fill, Some(Fill::Solid { color }) if *color == hlink) {
+        rp.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::FolHlink)));
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn shape_para(
@@ -42,8 +54,23 @@ pub(crate) fn shape_para(
     // The logical paragraph: its text and each character's style.
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
-    for run in &para.runs {
-        let rp = resolve::run(ctx, shape, para, &run.props);
+    // The first run of the link the current run belongs to, tracked on the way so that a link in
+    // many runs is not searched back to its start for every run.
+    let mut link_start = 0;
+    for (ri, run) in para.runs.iter().enumerate() {
+        let mut rp = resolve::run(ctx, shape, para, &run.props);
+        match &run.props.link {
+            Some(link) => {
+                let continues = ri > 0 && para.runs.get(ri - 1).and_then(|r| r.props.link.as_ref()) == Some(link);
+                if !continues {
+                    link_start = ri;
+                }
+                if opts.fields.followed(shape.id, pi, link_start) {
+                    followed_colour(&mut rp);
+                }
+            }
+            None => link_start = ri,
+        }
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
         let t: String = match &run.kind {
             RunKind::Text => run.text.clone(),
