@@ -91,15 +91,15 @@ pub fn decode(bytes: &Bytes) -> Result<Pcm> {
 /// Ogg Opus with our decoder; `None` when the file holds no Opus stream.
 fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
     let src: &[u8] = bytes;
-    let file = deckcraft_ogg::open(src).ok()?;
-    let s = file.stream_of(deckcraft_ogg::Codec::Opus)?;
+    let file = craft_media::ogg::open(src).ok()?;
+    let s = file.stream_of(craft_media::ogg::Codec::Opus)?;
     let stream = file.streams.get(s)?;
     Some((|| {
         let head = stream.headers.first().ok_or(MediaError::Corrupt("Opus header missing".into()))?;
-        let mut dec = deckcraft_opus::Decoder::new(head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+        let mut dec = craft_audio::opus::Decoder::new(head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         dec.set_trim_pre_skip(true);
         let channels = dec.channels() as u16;
-        let timing = deckcraft_ogg::OpusTiming::of(stream, dec.pre_skip() as u32).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+        let timing = craft_media::ogg::OpusTiming::of(stream, dec.pre_skip() as u32);
         let mut out = Vec::new();
         for i in 0..stream.packets.len() {
             if MAX_PCM_SAMPLES.saturating_sub(out.len()) < channels.max(1) as usize {
@@ -115,7 +115,8 @@ fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
             }
         }
         // End trimming (RFC 7845 §4.5).
-        let total = timing.total.max(0) as usize * channels.max(1) as usize;
+        // the timing saturates on a hostile granule, so this product must too
+        let total = usize::try_from(timing.total).unwrap_or(0).saturating_mul(channels.max(1) as usize);
         if total > 0 && total < out.len() {
             out.truncate(total);
         }
@@ -126,13 +127,13 @@ fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
 /// WebM / Matroska Opus with our decoder; `None` when there is no Opus track.
 fn decode_mkv_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
     let src: &[u8] = bytes;
-    let file = deckcraft_matroska::open(src).ok()?;
+    let file = craft_media::matroska::open(src).ok()?;
     let (ti, head) = file.tracks.iter().enumerate().find_map(|(i, t)| match &t.codec {
-        deckcraft_matroska::Codec::Opus { head } => Some((i, head.clone())),
+        craft_media::matroska::Codec::Opus { head } => Some((i, head.clone())),
         _ => None,
     })?;
     Some((|| {
-        let mut dec = deckcraft_opus::Decoder::new(&head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
+        let mut dec = craft_audio::opus::Decoder::new(&head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         dec.set_trim_pre_skip(true);
         let channels = dec.channels() as u16;
         let mut out = Vec::new();

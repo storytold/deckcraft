@@ -292,6 +292,12 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
     };
     let r = edit_shapes(s, &json!({"id": id}), cmd, |sh| match &mut sh.kind {
         ShapeKind::Table(t) => {
+            // Edits walk the grid: bound it first (a loaded table need not be normalized yet).
+            // An over-cap table is refused, not trimmed: a trim would delete rows while reporting success.
+            if t.over_cap() {
+                return Err(bad(cmd, format!("the table is larger than {} cells; edit refused", deckcraft_model::table::MAX_CELLS)));
+            }
+            t.normalize();
             f(t)?;
             t.normalize();
             let (w, h) = (t.width(), t.height());
@@ -334,10 +340,17 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
     let op = op.to_string();
     with_table(s, p, name, move |t| {
         match op.as_str() {
-            "rowAbove" => t.insert_row(r),
-            "rowBelow" => t.insert_row(r.saturating_add(1)),
-            "colLeft" => insert_col_like(t, c, c, keep_width),
-            "colRight" => insert_col_like(t, c.saturating_add(1), c, keep_width),
+            "rowAbove" | "rowBelow" | "colLeft" | "colRight" => {
+                let ok = match op.as_str() {
+                    "rowAbove" => t.insert_row(r),
+                    "rowBelow" => t.insert_row(r.saturating_add(1)),
+                    "colLeft" => insert_col_like(t, c, c, keep_width),
+                    _ => insert_col_like(t, c.saturating_add(1), c, keep_width),
+                };
+                if !ok {
+                    return Err(bad(name, format!("the table is at its {}-cell limit", deckcraft_model::table::MAX_CELLS)));
+                }
+            }
             "delRow" => {
                 if !t.delete_row(r) {
                     return Err(bad(name, "can't delete the last row"));
@@ -357,7 +370,8 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
 /// its width, and in every row the neighbour cell's explicit formatting with no text. With
 /// `keep_width` the columns then shrink in proportion so the table keeps its total width;
 /// otherwise (PowerPoint's behaviour) the table grows by the new column and the widths stay.
-fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool) {
+/// Returns false, leaving the table as it was, when the column would take it past the cell limit.
+fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool) -> bool {
     let total = t.width();
     let neighbour = neighbour.min(t.cols.len().saturating_sub(1));
     let w = t.cols.get(neighbour).copied();
@@ -379,7 +393,9 @@ fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool)
             t.rows[r].cells.get(n).cloned()
         })
         .collect();
-    t.insert_col(at);
+    if !t.insert_col(at) {
+        return false;
+    }
     let at = at.min(t.cols.len().saturating_sub(1));
     if let (Some(w), Some(slot)) = (w, t.cols.get_mut(at)) {
         *slot = w;
@@ -396,6 +412,7 @@ fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool)
             *cw *= k;
         }
     }
+    true
 }
 
 /// `dst` takes `src`'s formatting (fill, borders, margins, anchor, text direction and the text
