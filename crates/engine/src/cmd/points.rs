@@ -484,7 +484,7 @@ fn target(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
             _ => return Err(bad(cmd, "select one shape")),
         },
     };
-    let sh = st.shape(id).ok_or_else(|| bad(cmd, "no such shape"))?;
+    let sh = st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, cmd))?;
     if !st.shapes().iter().any(|t| t.id == id) {
         return Err(bad(cmd, "a shape in a group can't have its points edited; ungroup it first"));
     }
@@ -556,7 +556,7 @@ fn points(s: &mut Session, p: &Value) -> Result<Value> {
         Some(i) => i,
         None => *st.selection.shapes.first().ok_or_else(|| bad("shape.points", "select a shape"))?,
     };
-    let sh = st.shape(id).ok_or_else(|| bad("shape.points", "no such shape"))?;
+    let sh = st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.points"))?;
     let paths: Vec<Vec<[f64; 2]>> =
         slide_vertices(&st.doc, &st.selection, sh).into_iter().map(|v| v.into_iter().map(|q| [q.x, q.y]).collect()).collect();
     let (mut types, mut kinds): (Vec<Vec<&str>>, Vec<Vec<Option<&str>>>) = (vec![], vec![]);

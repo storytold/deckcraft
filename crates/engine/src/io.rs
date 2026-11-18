@@ -36,7 +36,11 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     crate::file_access::check_write(path)?;
     let err = |e: std::io::Error| format!("{path}: {e}");
-
+    // A folder that isn't there yet is created, as a user saving into a new folder expects;
+    // the access check above already covered the whole path.
+    if let Some(dir) = std::path::Path::new(path).parent().filter(|d| !d.as_os_str().is_empty() && !d.is_dir()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: cannot create the folder: {e}", dir.display()))?;
+    }
     let target_path = match std::fs::canonicalize(path) {
         Ok(canonical) => canonical,
         Err(_) => std::path::PathBuf::from(path),

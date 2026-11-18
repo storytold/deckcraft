@@ -10,8 +10,8 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, NO_TEXT_POINT, SELECT_TEXT_OR_SHAPE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, has_text, id_param, ok, shape_of,
-    str_param, xfrm_of,
+    CommandSpec, NO_TEXT_POINT, SELECT_TEXT_OR_SHAPE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, has_text, id_param, ok, str_param,
+    xfrm_of,
 };
 use crate::{DocState, HistoryEntry, Result, Selection, Session, Target, TextSel, push_undo};
 
@@ -130,7 +130,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             set
         ),
-        cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs}", has_slide, get),
+        cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs, slide: the index of the slide the shape is on} (any slide; moves nothing)", has_slide, get),
     ]
 }
 

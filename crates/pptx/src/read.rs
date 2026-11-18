@@ -82,6 +82,10 @@ pub struct Imp<'a> {
     /// Whether a part has relationships of its own, by normalized part name: looked up once
     /// however many embedded objects point at the part.
     pub has_rels: HashMap<String, bool>,
+    /// Shape ids the slides read so far use. PowerPoint keeps a shape id unique within its slide
+    /// only; the model keeps it unique in the presentation, so a later slide's shape that repeats
+    /// one is given a fresh id (the slide's own references follow it through its [`shapes::IdCtx`]).
+    pub slide_shape_ids: HashSet<u32>,
 }
 
 /// Import warnings kept; a hostile file with many oversized tables adds no more than this.
@@ -615,6 +619,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         smartart_shapes: 0,
         diagram_xml_bytes: 0,
         has_rels: HashMap::new(),
+        slide_shape_ids: HashSet::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -692,6 +697,7 @@ fn import_report_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Res
         smartart_shapes: 0,
         diagram_xml_bytes: 0,
         has_rels: HashMap::new(),
+        slide_shape_ids: HashSet::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let slide_ids = register_slides(&mut imp, &docs, &slide_entries, &mut lost_slides);
@@ -1464,7 +1470,7 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
         color_map: color_map_override(root),
         ..Default::default()
     };
-    let mut ctx = shapes::IdCtx::default();
+    let mut ctx = shapes::IdCtx { used: std::mem::take(&mut imp.slide_shape_ids), ..Default::default() };
     if let Some(csld) = root.child("cSld") {
         s.name = csld.attr("name").unwrap_or("").to_string();
         s.tags = tags(imp, part, csld);
@@ -1487,6 +1493,7 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
         s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
     }
+    imp.slide_shape_ids = ctx.used;
     s
 }
 
@@ -1666,6 +1673,7 @@ mod rollback_tests {
             theme_extra_bytes: 0,
             smartart_shapes: 0,
             diagram_xml_bytes: 0,
+            slide_shape_ids: HashSet::new(),
             has_rels: HashMap::new(),
         };
         let kept_before = imp.media_for("ppt/presentation.xml").expect("media");
