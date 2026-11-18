@@ -599,6 +599,9 @@ fn notes(s: &mut Session, p: &Value) -> Result<Value> {
         Some(b) => Some(serde_json::from_value::<TextBody>(b.clone()).map_err(|e| bad("slide.notes", format!("invalid `body`: {e}")))?),
         None => None,
     };
+    if body.is_none() && str_param(p, "text").is_none() {
+        return Err(bad("slide.notes", "`text` must be a string when `body` is absent"));
+    }
     let text = str_param(p, "text").unwrap_or("").to_string();
     s.edit(|doc, _| {
         if let Some(sl) = doc.slides.get_mut(i) {
@@ -746,6 +749,37 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+
+    #[test]
+    fn notes_reject_missing_or_nonstring_text_without_changing_the_deck() {
+        let mut s = Session::with_new();
+        s.execute("slide.notes", &json!({"text": "Keep these speaker notes"})).expect("set notes");
+        let before = s.doc().expect("doc").doc.clone();
+        let undo = s.doc().expect("doc").history.undo.len();
+        for params in [json!({}), json!({"text": null}), json!({"text": false}), json!({"text": 42}), json!({"text": []}), json!({"text": {}})] {
+            assert!(s.execute("slide.notes", &params).is_err(), "must reject {params}");
+            assert_eq!(s.doc().expect("doc").doc, before, "must preserve the deck for {params}");
+            assert_eq!(s.doc().expect("doc").history.undo.len(), undo, "must not add an undo step for {params}");
+        }
+    }
+
+    #[test]
+    fn notes_allow_explicit_empty_text_and_prefer_a_formatted_body() {
+        let mut s = Session::with_new();
+        s.execute("slide.notes", &json!({"text": "Formatted notes"})).expect("set notes");
+        let mut body = s.doc().expect("doc").doc.slides[0].notes.clone();
+        body.paragraphs[0].runs[0].props.bold = Some(true);
+
+        s.execute("slide.notes", &json!({"text": ""})).expect("clear notes explicitly");
+        assert!(s.doc().expect("doc").doc.slides[0].notes_text().is_empty());
+
+        for text in [json!(null), json!(42), json!("ignored")] {
+            s.execute("slide.notes", &json!({"body": body, "text": text})).expect("formatted body takes precedence");
+            assert_eq!(s.doc().expect("doc").doc.slides[0].notes, body);
+        }
+        s.execute("slide.notes", &json!({"body": body})).expect("formatted body needs no text");
+        assert_eq!(s.doc().expect("doc").doc.slides[0].notes, body);
+    }
 
     #[test]
     fn invalid_index_params_are_rejected_not_defaulted_to_selection() {
