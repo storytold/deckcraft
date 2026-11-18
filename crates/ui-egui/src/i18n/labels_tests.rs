@@ -113,3 +113,43 @@ fn find_reports_in_the_interface_language() {
         assert_eq!(status(&h).as_deref(), Some(want));
     }
 }
+
+/// The strings the German smoke check on #2015 found in English: the closed Set Up Show choice,
+/// the GitHub link, the dictionary mark in the Language list, the task pane title and the fixed
+/// Accessibility Checker issues (#2235).
+#[test]
+fn strings_from_the_german_smoke_check_are_looked_up() {
+    use_fixture(
+        "de",
+        "@id\tlanguage.name\tDeutsch
+\tAll slides\tAlle Folien
+\tSource on GitHub\tQuellcode auf GitHub
+\t{name}  (dictionary)\t{name}  (Wörterbuch)
+\tSpelling is checked for languages marked (dictionary).\tDie Rechtschreibung wird für Sprachen geprüft, die mit (Wörterbuch) markiert sind.
+\tFormat Shape\tForm formatieren
+\tMissing slide title\tFolientitel fehlt
+",
+    );
+    let mut h = harness(SlideApp::new(Session::with_new(), Services::default()));
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    let show = |h: &mut Harness<'static, SlideApp>, id: &str| {
+        h.state_mut().dialog = Some(Dialog::new(id));
+        h.run_steps(4);
+    };
+    show(&mut h, "setupShow");
+    assert!(h.query_by_value("All slides").is_none(), "the closed Slides choice");
+    h.get_by_value("Alle Folien");
+    show(&mut h, "about");
+    h.get_by_label("Quellcode auf GitHub");
+    show(&mut h, "language");
+    assert!(h.query_all_by_label_contains("(dictionary)").next().is_none(), "the Language list's dictionary mark");
+    assert!(h.query_all_by_label_contains("  (Wörterbuch)").next().is_some());
+    show(&mut h, "accessibility");
+    assert!(h.query_by_label_contains("Missing slide title").is_none(), "a fixed Accessibility Checker issue");
+    assert!(h.query_all_by_label_contains("Folientitel fehlt").next().is_some());
+    h.state_mut().dialog = None;
+    h.state_mut().ui.pane = Some("format".into());
+    h.run_steps(4);
+    assert!(h.query_by_label("Format Shape").is_none(), "the task pane title");
+    h.get_by_label("Form formatieren");
+}

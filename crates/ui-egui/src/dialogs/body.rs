@@ -263,7 +263,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
     let field = ui.label(tl!("Slides"));
-    let label = if chosen.is_empty() { "All slides".to_string() } else { chosen.clone() };
+    let label = if chosen.is_empty() { tl!("All slides").to_string() } else { chosen.clone() };
     let combo = craft_ui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
         if ui.selectable_label(chosen.is_empty(), tl!("All slides")).clicked() {
             d.fields.insert("custom".into(), String::new());
@@ -1088,9 +1088,11 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
         for item in &list {
             ui.horizontal(|ui| {
-                // The issue text comes from the engine and stays English for now.
+                // The issue text comes from the engine in English (`review.check` returns it as
+                // is). The fixed ones are looked up here; one with a value filled in (the
+                // contrast ratio) has no row and stays English until craft-libs#1213.
                 let slide = (item.get("slide").and_then(Value::as_u64).unwrap_or(0) + 1).to_string();
-                let issue = item.get("issue").and_then(Value::as_str).unwrap_or("");
+                let issue = tl!(item.get("issue").and_then(Value::as_str).unwrap_or(""));
                 let line = match item.get("name").and_then(Value::as_str) {
                     Some(name) => crate::i18n::fmt(tl!("Slide {n}: {issue} — {name}"), &[("n", &slide), ("issue", issue), ("name", name)]),
                     None => crate::i18n::fmt(tl!("Slide {n}: {issue}"), &[("n", &slide), ("issue", issue)]),
@@ -1138,7 +1140,7 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             // the tag is the explicit fallback (egui 0.37 aborts on a missing glyph).
             let name = crate::squiggles::display_lang_name(ui.ctx(), &tag);
             let installed = deckcraft_engine::spell::dictionary(&tag).is_some();
-            let label = if installed { format!("{name}  (dictionary)") } else { name };
+            let label = if installed { crate::i18n::fmt(tl!("{name}  (dictionary)"), &[("name", name.as_str())]) } else { name };
             if ui.selectable_label(lang.eq_ignore_ascii_case(&tag), label).clicked() {
                 d.fields.insert("lang".into(), tag);
             }

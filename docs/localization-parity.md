@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-10 · **Change:** minor (labels built from a number or a name and dialog choice lists go through the catalogs, #2014; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, Review › Language offers Serbian in Cyrillic and Latin, each with its own dictionary; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-18 · **Change:** minor (strings the German smoke check found in English are looked up, #2235; previous: minor, labels built from a number or a name and dialog choice lists go through the catalogs, #2014; previous: major, interface catalogs from craft-i18n, language setting, German; previous: minor, Review › Language offers Serbian in Cyrillic and Latin, each with its own dictionary; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English or German. Strings stay English literals in the code and
 are looked up in the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs when the
@@ -10,6 +10,9 @@ system language (#15), or Preferences › Interface language and `app.language` 
 `de`). Command ids, engine labels returned to scripts, the control channel, the CLI and MCP stay
 English. Labels built from a number or a name (`Slide {n} of {total}`, `{n} Columns`) are looked up
 with their placeholders before the value goes in, and counts take the language's plural form.
+The Accessibility Checker shows its fixed issues (`Missing slide title`) in the interface language;
+`review.accessibility` still returns them in English, and one with a value filled in (the contrast
+ratio) stays English.
 Still English: slide placeholder prompts (drawn by the renderer), status messages from the engine,
 the native macOS menu bar and some choice lists outside dialogs (ribbon menus, panes, the File
 tab's Print page). Other requests: #30 and PR #34
@@ -79,6 +82,7 @@ A dictionary of the other script would flag every word, so it is never used.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | Strings the German smoke check on #2015 found in English are looked up: Set Up Show's closed choice, the GitHub link, the Language list's dictionary mark, task pane titles, fixed Accessibility Checker issues (#2235); score unchanged |
 | 2026-11-10 | minor | Labels built with `format!` and dialog choice lists go through the catalogs (#2014); score unchanged |
 | 2026-10-31 | minor | Review › Language offers Serbian (Cyrillic and Latin); each run's language tag picks a dictionary in the script it names |
 | 2026-10-28 | major | Interface catalogs from craft-i18n, system language and Preferences › Interface language (#15); German partial (~840 rows) |
