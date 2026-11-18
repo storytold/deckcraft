@@ -364,6 +364,37 @@ fn substitute(v: &mut Value, named: &std::collections::HashMap<String, Value>) -
     Ok(())
 }
 
+/// [`substitute`] for one batch item. A nested batch (named directly or through `run_command`) is a
+/// scope of its own: its `commands` are left as they are, for the inner batch to resolve against
+/// its own names, so a name declared inside it is found and a `$$name` is unescaped once.
+fn substitute_item(id: &str, params: &mut Value, named: &std::collections::HashMap<String, Value>) -> Result<(), String> {
+    match id {
+        "batch" => {
+            let inner = params.as_object_mut().and_then(|o| o.remove("commands"));
+            let r = substitute(params, named);
+            if let (Some(inner), Some(o)) = (inner, params.as_object_mut()) {
+                o.insert("commands".into(), inner);
+            }
+            r
+        }
+        "run_command" => {
+            let Some(o) = params.as_object_mut() else { return substitute(params, named) };
+            let inner_id = o.get("command").and_then(Value::as_str).unwrap_or("").to_string();
+            let mut inner = o.remove("params");
+            let mut r = Ok(());
+            if let Some(p) = inner.as_mut() {
+                r = substitute_item(&inner_id, p, named);
+            }
+            let r = r.and_then(|()| substitute(params, named));
+            if let (Some(p), Some(o)) = (inner, params.as_object_mut()) {
+                o.insert("params".into(), p);
+            }
+            r
+        }
+        _ => substitute(params, named),
+    }
+}
+
 /// A command id or a tool name, run either way, as a command's answer. A batch answers text, so a
 /// tool that answers an image (render_slide, screenshot without `path`) is refused rather than
 /// reported ok with the image dropped.
@@ -530,7 +561,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
                     )),
                     _ => Ok(()),
                 };
-                let run = name_ok.and_then(|()| substitute(&mut params, &named)).and_then(|()| run_either(b, id, params));
+                let run = name_ok.and_then(|()| substitute_item(id, &mut params, &named)).and_then(|()| run_either(b, id, params));
                 let (entry, failed) = match run {
                     Ok(v) => {
                         if let Some(name) = c.get("as").and_then(Value::as_str) {

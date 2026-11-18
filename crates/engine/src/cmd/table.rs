@@ -376,7 +376,9 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
     let ShapeKind::Table(t) = &sh.kind else { return Ok(answer) };
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let size = st.doc.slide_size;
-    let overflows = x.x < 0.0 || x.y < 0.0 || x.x + x.w > size.width || x.y + x.h > size.height;
+    // The box as drawn: a rotated table can leave the slide while its unrotated frame is inside.
+    let b = x.bounds();
+    let overflows = b.x0 < 0.0 || b.y0 < 0.0 || b.x1 > size.width || b.y1 > size.height;
     let mut out = match answer {
         Value::Object(o) => o,
         n => serde_json::Map::from_iter([("changed".to_string(), n)]),

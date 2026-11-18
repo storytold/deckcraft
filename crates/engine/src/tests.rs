@@ -7802,6 +7802,26 @@ fn insert_table_chart_and_picture_answer_their_rect() {
     assert_eq!((p["id"].clone(), p["rect"].clone()), (body, json!([b["x"], b["y"], b["w"], b["h"]])), "{p}");
 }
 
+/// An edit by id that changes shapes on several slides reroutes the connectors on every one of
+/// them, not only on the slide the selection ends on.
+#[test]
+fn an_edit_on_several_slides_reroutes_the_connectors_of_each() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let d = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 300, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 300, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.connect", &json!({"from": d, "to": e})).unwrap()["id"].as_u64().unwrap();
+    let line = |s: &Session| deckcraft_model::find_shape(&s.doc().unwrap().doc.slides[1].shapes, ShapeId(c as u32)).unwrap().xfrm.unwrap();
+    let before = line(&s);
+    // `a` is on slide 0, `d` on the current slide 1: the selection ends on slide 0.
+    let r = s.execute("shape.move", &json!({"ids": [d, a], "dy": 100})).unwrap();
+    assert_eq!(r["onSlides"], json!([0]), "{r}");
+    assert_eq!(s.doc().unwrap().selection.slide, 0);
+    let after = line(&s);
+    assert!((after.h - before.h).abs() > 50.0 || (after.y - before.y).abs() > 50.0, "the connector follows the moved shape: {before:?} -> {after:?}");
+}
+
 /// W3: the four table insert commands grow the table; the answer carries the table's resulting
 /// `rect`, `rows` and `cols`, and `overflows: true` when the box runs off the slide.
 #[test]
@@ -7822,6 +7842,13 @@ fn table_inserts_answer_the_resulting_rect_and_flag_overflow() {
         let r = s.execute(cmd, &json!({"id": id})).unwrap();
         assert!(r["rect"].is_array() && r["rows"].is_u64() && r["cols"].is_u64() && r["overflows"].is_boolean(), "{cmd}: {r}");
     }
+    // A rotated table is checked as it is drawn: a frame inside the slide can still stick out.
+    let tall = s.execute("insert.table", &json!({"rows": 2, "cols": 1, "rect": [900, 100, 40, 160]})).unwrap()["id"].clone();
+    s.execute("shape.rotate", &json!({"ids": [tall], "deg": 90})).unwrap();
+    let r = s.execute("table.insertRowBelow", &json!({"id": tall, "row": 1})).unwrap();
+    let rect: Vec<f64> = r["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!(rect[0] + rect[2] <= 960.0 && rect[3] > rect[2], "the frame itself is inside the slide: {r}");
+    assert_eq!(r["overflows"], true, "{r}");
     // Delete and the other table edits answer as before.
     let r = s.execute("table.deleteRow", &json!({"id": id, "row": 0})).unwrap();
     assert_eq!(r, json!(1), "{r}");

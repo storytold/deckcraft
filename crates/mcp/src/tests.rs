@@ -500,6 +500,31 @@ fn inspect_slide_summarises_animations_unless_asked() {
     assert_eq!(full["animations"].as_array().map(Vec::len), Some(2), "{full}");
 }
 
+/// A batch inside a batch (directly or through run_command) resolves its own names: the outer
+/// batch leaves its commands alone, so a name declared inside is found and `$$name` is unescaped once.
+#[test]
+fn a_nested_batch_resolves_its_own_references() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let inner = json!([
+        {"command": "shape.insert", "params": {"preset": "rect", "rect": [50, 50, 150, 60], "text": "A"}, "as": "box"},
+        {"command": "set_text", "params": {"id": "$box", "text": "$$box"}},
+    ]);
+    for item in [
+        json!({"command": "batch", "params": {"commands": inner}}),
+        json!({"command": "run_command", "params": {"command": "batch", "params": {"commands": inner}}}),
+    ] {
+        let out = tool(&mut s, "batch", json!({"commands": [item]}));
+        assert_eq!(out[0]["ok"], true, "{out}");
+        let items = out[0]["result"].as_array().unwrap();
+        assert!(items.iter().all(|i| i["ok"] == true), "{out}");
+        let id = items[0]["result"]["id"].clone();
+        let sl = tool(&mut s, "inspect_slide", json!({}));
+        assert!(sl["shapes"].as_array().unwrap().iter().any(|x| x["id"] == id && x["text"] == "$box"), "{sl}");
+    }
+}
+
 /// E5: a batch item can be named with `as`, and a later item's params can refer to its answer
 /// with "$name" (its id) wherever an id goes, so a diagram is one batch: insert, connect, animate.
 #[test]

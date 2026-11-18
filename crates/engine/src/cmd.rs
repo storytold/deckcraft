@@ -647,6 +647,8 @@ pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut
         let mut n = 0;
         let mut elsewhere: Vec<usize> = vec![];
         let mut missing: Option<ShapeId> = None;
+        let origin = sel.clone();
+        let mut changed_here = false;
         for id in &ids {
             let here = current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)).is_some();
             let on_slide = if here { None } else { doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, *id).is_some()) };
@@ -666,10 +668,10 @@ pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut
                 }
                 f(sh)?;
                 n += 1;
-                if let Some(i) = on_slide
-                    && !elsewhere.contains(&i)
-                {
-                    elsewhere.push(i);
+                match on_slide {
+                    Some(i) if !elsewhere.contains(&i) => elsewhere.push(i),
+                    Some(_) => {}
+                    None => changed_here = true,
                 }
             }
         }
@@ -677,6 +679,14 @@ pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut
             return Err(no_such_shape(doc, sel, missing.or(ids.first().copied()).unwrap_or_default(), cmd));
         }
         if let Some(&i) = elsewhere.last() {
+            // The edit reroutes the connectors of the slide the selection ends on; the other slides
+            // it changed (where the selection was, and every slide before the last) are rerouted here.
+            if changed_here {
+                crate::connect::reroute(doc, &origin);
+            }
+            for &j in elsewhere.iter().filter(|j| **j != i) {
+                crate::connect::reroute(doc, &crate::Selection { slide: j, target: crate::Target::Slides, ..origin.clone() });
+            }
             sel.slide = i;
             sel.target = crate::Target::Slides;
             sel.slides = doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default();
