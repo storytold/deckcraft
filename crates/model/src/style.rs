@@ -192,6 +192,10 @@ pub struct PictureFill {
 pub struct Artistic {
     pub effect: String,
     pub original: MediaId,
+    /// The SVG companion (`PictureFill::svg_media`) set aside while the effect is drawn on the
+    /// raster picture and restored when the effect is removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svg_media: Option<MediaId>,
 }
 
 /// Picture corrections and colour (Picture Format ▸ Corrections / Color / Transparency).

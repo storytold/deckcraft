@@ -203,6 +203,9 @@ fn compress(s: &mut Session, p: &Value) -> Result<Value> {
                 if let Some((id, new_crop, _)) = hit {
                     changed.push(media);
                     fill.media = id;
+                    if new_crop != crop {
+                        fill.svg_media = None;
+                    }
                     fill.crop = new_crop;
                     count += 1;
                     touched = true;
@@ -422,8 +425,11 @@ mod tests {
             let shown = doc.add_media("processed.png", "image/png", processed.clone()).expect("media");
             let slide = Arc::make_mut(doc.slides.first_mut().ok_or_else(|| bad("test", "no slide"))?);
             let xfrm = Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 36.0));
-            let with_effect =
-                PictureFill { media: shown, artistic: Some(Artistic { effect: "artisticBlur".into(), original }), ..Default::default() };
+            let with_effect = PictureFill {
+                media: shown,
+                artistic: Some(Artistic { effect: "artisticBlur".into(), original, svg_media: None }),
+                ..Default::default()
+            };
             slide.shapes.push(Shape { id: ShapeId(70_001), xfrm, kind: ShapeKind::Picture { fill: with_effect }, ..Default::default() });
             slide.shapes.push(Shape {
                 id: ShapeId(70_002),
@@ -443,5 +449,44 @@ mod tests {
         }
         assert!(doc.media.iter().any(|m| m.data.as_slice() == big.as_slice()), "the artistic original was deleted");
         assert!(!doc.media.iter().any(|m| m.data.as_slice() == processed.as_slice()), "the replaced processed picture is dropped");
+    }
+
+    #[test]
+    fn svg_companion_waits_across_artistic_effect_and_clears_when_crop_is_trimmed() {
+        let mut s = Session::with_new();
+        let big = png(600, 600);
+        let mut svg_id = MediaId(0);
+        s.edit(|doc, _| {
+            let raster = doc.add_media("pic.png", "image/png", big.clone()).expect("media");
+            svg_id = doc.add_media("pic.svg", "image/svg+xml", b"<svg/>".to_vec()).expect("svg");
+            let slide = Arc::make_mut(doc.slides.first_mut().ok_or_else(|| bad("test", "no slide"))?);
+            slide.shapes.push(Shape {
+                id: ShapeId(70_010),
+                xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 72.0)),
+                kind: ShapeKind::Picture {
+                    fill: PictureFill { media: raster, svg_media: Some(svg_id), crop: [0.25, 0.0, 0.0, 0.0], ..Default::default() },
+                },
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+        s.execute("picture.artisticEffect", &json!({"ids": [70_010], "effect": "artisticBlur"})).unwrap();
+        {
+            let Some(ShapeKind::Picture { fill }) = s.doc().unwrap().shape(ShapeId(70_010)).map(|sh| &sh.kind) else { panic!("missing shape") };
+            assert_eq!(fill.svg_media, None);
+            assert_eq!(fill.artistic.as_ref().and_then(|a| a.svg_media), Some(svg_id));
+        }
+        s.execute("picture.artisticEffect", &json!({"ids": [70_010], "effect": "none"})).unwrap();
+        {
+            let Some(ShapeKind::Picture { fill }) = s.doc().unwrap().shape(ShapeId(70_010)).map(|sh| &sh.kind) else { panic!("missing shape") };
+            assert_eq!(fill.svg_media, Some(svg_id));
+            assert!(fill.artistic.is_none());
+        }
+        s.execute("picture.compress", &json!({"all": true, "ppi": 96})).unwrap();
+        {
+            let Some(ShapeKind::Picture { fill }) = s.doc().unwrap().shape(ShapeId(70_010)).map(|sh| &sh.kind) else { panic!("missing shape") };
+            assert_eq!(fill.svg_media, None);
+        }
     }
 }

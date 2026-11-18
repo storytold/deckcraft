@@ -33,6 +33,9 @@ macro_rules! walkers {
             }
             if let Some(a) = &$($m)? p.artistic {
                 f(&$($m)? a.original);
+                if let Some(svg) = &$($m)? a.svg_media {
+                    f(svg);
+                }
             }
         }
 
@@ -342,7 +345,7 @@ mod tests {
             kind: ShapeKind::Picture {
                 fill: PictureFill {
                     svg_media: Some(MediaId(9003)),
-                    artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002) }),
+                    artistic: Some(Artistic { effect: "artisticBlur".into(), original: MediaId(9002), svg_media: None }),
                     ..pf(9001)
                 },
             },
