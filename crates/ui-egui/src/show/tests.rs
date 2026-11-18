@@ -1896,6 +1896,7 @@ fn section_tabs_scroll_independently_and_keyboard_reveals_selection() {
     })
     .textures_delta
     .clear();
+    assert_eq!(show.grid_filter, crate::sections::GridFilter::All, "ArrowLeft from the first section selects All");
     assert_eq!(show.grid_tab_scroll, 0.0);
     assert_eq!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, first), Some(crate::sections::GridFilter::All));
     let snapshot = show.input_state();
