@@ -1,5 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-18 · **Change:** trivial (Ecosystem: DeckCraft's own add-ins landed, RFC-0046; Office add-ins and VBA stay out of scope; add-in panels remain) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -356,7 +357,10 @@ Detail in [localization-parity.md](localization-parity.md).
   (`file.new {template}`), each a few slides on one of our themes. Dozens of further offline
   designs, and any online gallery, are still absent. 4–8 h for a larger original set (asset policy:
   our own designs only).
-- **No add-ins or VBA.** Out of scope by policy; MCP/CLI automation is the alternative.
+- **No Office add-ins or VBA; add-in panels not shown.** Office add-ins and VBA are out of scope by
+  policy. DeckCraft's own add-ins (WebAssembly command plug-ins, [plugins.md](plugins.md),
+  RFC-0046) and MCP/CLI automation are the alternative; their panels (`ui_show`) aren't shown
+  yet, and there is no catalog of add-ins to point people at. 3–6 h for panels.
 
 ## AI features
 
@@ -368,6 +372,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | trivial | Ecosystem: add-ins (WebAssembly command plug-ins, RFC-0046) landed; the entry now covers Office add-ins and VBA (out of scope) and add-in panels |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
