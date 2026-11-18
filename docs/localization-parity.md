@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, Japanese interface, second step: the dialog bodies and messages, the Format/selection panes and the File tab's page contents are drawn in Japanese too, 879 of ~1,050 strings, 84%; some tooltips and help text still English; previous: minor, Japanese interface, first step: a per-language TSV catalog, system-language following and the Interface language setting; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-31 · **Change:** minor (Review › Language offers Serbian in Cyrillic and Latin, each with its own dictionary; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, Japanese interface, second step: the dialog bodies and messages, the Format/selection panes and the File tab's page contents are drawn in Japanese too, 879 of ~1,050 strings, 84%; some tooltips and help text still English; previous: minor, Japanese interface, first step: a per-language TSV catalog, system-language following and the Interface language setting; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is written in English, and a catalog per language
 (`crates/ui-egui/src/i18n/*.tsv`) translates the strings the UI draws: English strings are the
@@ -58,15 +58,23 @@ place); the hours that included it are kept until the next re-measure.
 ## Proofing languages
 
 PowerPoint checks spelling in dozens of languages and lets each run carry a proofing language.
-DeckCraft keeps `a:rPr/@lang` on round trip but its spelling check is a small English list of
-common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
+DeckCraft keeps `a:rPr/@lang` on round trip and checks each run in its own language against the
+Hunspell dictionaries installed on the system (`crates/engine/src/spell.rs`), falling back to a
+built-in list of common English misspellings when there is none (`review.spelling`); see
+[gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
 Review › Language sets the proofing language of the selected text or, with *Whole presentation*,
-of every text in the file and the default for new text (`format.languageAll`).
+of every text in the file and the default for new text (`format.languageAll`). Each run is shaped
+in its language, so fonts draw their forms for it (OpenType `locl`: the Serbian б, г, д, п, т).
+Serbian is offered in both scripts (`sr-Cyrl-RS`, `sr-Latn-RS`). The run's language tag picks the
+dictionary, and only one in the script the tag names: LibreOffice's `sr` and `sr-Latn`, Hunspell's
+`sr_RS` and `sr_Latn_RS`, Fedora's `sr_RS@latin`, and the Serbo-Croatian `sh_RS`/`sh_YU` for Latin.
+A dictionary of the other script would flag every word, so it is never used.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | minor | Review › Language offers Serbian (Cyrillic and Latin); each run's language tag picks a dictionary in the script it names |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-22 | minor | Japanese interface, second step: 325 more catalog entries (879 of ~1,050, 84%) for the dialog bodies, their field labels and messages, the Format/selection panes, the File tab's page contents and the About window; the strings drawn by the shared field, check and choice helpers and by the backstage text helpers are translated too, and a catalog test pins the dialog coverage. Some tooltips and help text remain English |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
