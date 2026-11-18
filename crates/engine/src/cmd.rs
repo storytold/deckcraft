@@ -433,6 +433,15 @@ pub(crate) fn shape_of(s: &Session, id: ShapeId) -> Result<deckcraft_model::Shap
 pub fn xfrm_of(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Xfrm {
     let mut x = shape.xfrm.unwrap_or_else(|| ctx_xfrm(doc, sel, shape));
     if let deckcraft_model::ShapeKind::Table(t) = &shape.kind {
+        // A loaded table may not be normalized yet: measure the bounded grid an edit will
+        // leave, not every cell the file stored.
+        let normalized;
+        let t = if t.is_normalized() {
+            t
+        } else {
+            normalized = t.normalized();
+            &normalized
+        };
         let drawn: f64 = table_drawn_heights(doc, sel, t).iter().sum();
         if drawn.is_finite() && drawn > x.h {
             x.h = drawn;
@@ -607,50 +616,132 @@ fn param_optional(alt: &str) -> Option<bool> {
 
 /// Base64 (standard alphabet) for binary payloads in JSON params and results.
 pub fn base64_encode(data: &[u8]) -> String {
-    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
-        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-        for (i, shift) in [18, 12, 6, 0].iter().enumerate() {
-            if i <= chunk.len() {
-                out.push(A.get(((n >> shift) & 63) as usize).copied().unwrap_or(b'A') as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
+    craft_mime::base64::STANDARD.encode(data)
 }
 
 pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let s = s.split_once("base64,").map(|(_, b)| b).unwrap_or(s);
-    let mut out = Vec::with_capacity(s.len() / 4 * 3);
-    let mut acc = 0u32;
-    let mut bits = 0;
+    // Preserve the command transport's admission rules before the shared legacy decoder:
+    // padding ends the payload and one trailing symbol cannot encode a byte.
+    let (mut symbols_mod_four, mut padded) = (0u8, false);
     for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' | b'-' => 62,
-            b'/' | b'_' => 63,
-            b'=' | b'\n' | b'\r' | b' ' => continue,
+        match c {
+            b'=' => padded = true,
+            b'\n' | b'\r' | b' ' => {}
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'-' | b'/' | b'_' if !padded => {
+                symbols_mod_four = (symbols_mod_four + 1) % 4;
+            }
             _ => return None,
-        } as u32;
-        acc = (acc << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((acc >> bits) & 0xff) as u8);
         }
     }
-    Some(out)
+    if symbols_mod_four == 1 {
+        return None;
+    }
+    craft_mime::base64_compat::decode(s).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Frozen pre-cutover implementation (Brandon Thomas, with Mex's padding/tail fixes).
+    fn previous_base64_decode(s: &str) -> Option<Vec<u8>> {
+        let s = s.split_once("base64,").map(|(_, b)| b).unwrap_or(s);
+        let mut out = Vec::with_capacity(s.len() / 4 * 3);
+        let mut acc = 0u32;
+        let mut bits = 0;
+        let mut padded = false;
+        for c in s.bytes() {
+            let v = match c {
+                b'A'..=b'Z' => c - b'A',
+                b'a'..=b'z' => c - b'a' + 26,
+                b'0'..=b'9' => c - b'0' + 52,
+                b'+' | b'-' => 62,
+                b'/' | b'_' => 63,
+                b'=' => {
+                    padded = true;
+                    continue;
+                }
+                b'\n' | b'\r' | b' ' => continue,
+                _ => return None,
+            } as u32;
+            // Padding ends the payload; no further data may be decoded.
+            if padded {
+                return None;
+            }
+            acc = (acc << 6) | v;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push(((acc >> bits) & 0xff) as u8);
+            }
+        }
+        // A trailing lone Base64 character cannot encode another byte.
+        (bits != 6).then_some(out)
+    }
+
+    #[test]
+    fn shared_decoder_preserves_command_transport_admission() {
+        for text in ["", "=", "Zg== \r\n==", "Zg==A", "A", "AAAAA", "AB", "+_8=", "Z=m9v", "Zm9v\t", "Zm9v!", "data:text/plain;base64,Zm9v"] {
+            assert_eq!(base64_decode(text), previous_base64_decode(text), "{text:?}");
+        }
+        let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_= \r\n!\t";
+        let mut seed = 0x1234_5678u32;
+        for n in 0..50_000 {
+            let mut text = String::new();
+            for _ in 0..n % 65 {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                text.push(char::from(alphabet[(seed as usize) % alphabet.len()]));
+            }
+            assert_eq!(base64_decode(&text), previous_base64_decode(&text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn shared_encoder_preserves_rfc4648_and_all_byte_remainders() {
+        for (input, expected) in
+            [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")]
+        {
+            assert_eq!(base64_encode(input.as_bytes()), expected);
+        }
+        // The decoder accepts both alphabets, so pin the standard one explicitly.
+        assert_eq!(base64_encode(&[0xfb, 0xff]), "+/8=");
+        let all: Vec<u8> = (0..=255).cycle().take(513).collect();
+        for len in 0..=all.len() {
+            let encoded = base64_encode(&all[..len]);
+            assert_eq!(encoded.len(), len.div_ceil(3) * 4);
+            assert_eq!(encoded.bytes().rev().take_while(|b| *b == b'=').count(), (3 - len % 3) % 3);
+            assert_eq!(base64_decode(&encoded).as_deref(), Some(&all[..len]));
+        }
+    }
+
+    #[test]
+    fn base64_rejects_a_single_character_tail() {
+        for (encoded, decoded) in [
+            ("", b"".as_slice()),
+            ("Zg==", b"f"),
+            ("Zg", b"f"),
+            ("Zm8=", b"fo"),
+            ("Zm8", b"fo"),
+            (" Zm9v \r\n", b"foo"),
+            ("data:text/plain;base64,Zm9v", b"foo"),
+            ("+/8=", &[0xfb, 0xff]),
+            ("-_8=", &[0xfb, 0xff]),
+        ] {
+            assert_eq!(base64_decode(encoded).as_deref(), Some(decoded), "{encoded:?}");
+        }
+        for encoded in ["A", "AAAAA", "Zm9vZ", " Zm9vZ \r\n", "data:text/plain;base64,Z"] {
+            assert!(base64_decode(encoded).is_none(), "{encoded:?}");
+        }
+    }
+
+    #[test]
+    fn base64_rejects_data_after_padding() {
+        assert_eq!(base64_decode("Zg== \r\n=="), Some(b"f".to_vec()));
+        for encoded in ["Zg==A", "Zg== Zm8=", "Zm8=A", "=Zg", "Zg==\r\nA", "data:text/plain;base64,Zg==A"] {
+            assert!(base64_decode(encoded).is_none(), "{encoded:?}");
+        }
+    }
 
     #[test]
     fn the_palette_skips_a_command_that_needs_a_value() {

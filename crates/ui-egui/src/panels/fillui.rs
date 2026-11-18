@@ -238,6 +238,8 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     let (marks, _) = ui.allocate_exact_size(vec2(bar.width(), 14.0), Sense::hover());
     let drag_id = ui.scope_id().with((id, "drag"));
     let mut dragging: Option<(usize, f64)> = ui.data_mut(|d| d.get_temp(drag_id));
+    // A double-clicked stop opens its colour menu, as in PowerPoint (#2175).
+    let mut open_color = false;
     for (i, s) in g.stops.iter().enumerate() {
         let pos = dragging.filter(|d| d.0 == i).map_or(s.pos, |d| d.1);
         let x = bar.min.x + pos as f32 * bar.width();
@@ -250,6 +252,10 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         ui.painter().add(egui::Shape::convex_polygon(tri, fill, stroke));
         if resp.clicked() || resp.drag_started() {
             sel = i;
+        }
+        if resp.double_clicked() {
+            sel = i;
+            open_color = true;
         }
         if resp.dragged()
             && let Some(p) = resp.interact_pointer_pos()
@@ -293,7 +299,12 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             let (sw, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
             ui.painter().rect(sw, CornerRadius::same(3), c32(&s.color, sc), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
             let r = widgets::drop_button(ui, "", vec2(24.0, 20.0), true);
-            widgets::color_popup(&r).show(|ui| {
+            r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Stop color"));
+            let mut popup = widgets::color_popup(&r);
+            if open_color {
+                popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
+            }
+            popup.show(|ui| {
                 if let Some(Some(c)) = widgets::color_grid(ui, sc, None) {
                     let mut ng = g.clone();
                     ng.stops[sel].color = with_alpha(c, alpha_of(&s.color));
@@ -522,7 +533,58 @@ pub fn pattern_editor(ui: &mut Ui, pt: &PatternFill, sc: &ColorScheme) -> Option
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    /// #2175: double-clicking a gradient stop selects it and opens its colour menu; a colour
+    /// picked there colours that stop.
+    #[test]
+    fn double_clicking_a_stop_opens_its_color_menu() {
+        let sc = deckcraft_model::Theme::default().colors;
+        let start = Gradient {
+            stops: vec![
+                GradientStop { pos: 0.0, color: ColorRef::scheme(SchemeSlot::Accent1) },
+                GradientStop { pos: 1.0, color: ColorRef::scheme(SchemeSlot::Accent2) },
+            ],
+            ..default_gradient(ColorRef::scheme(SchemeSlot::Accent1), 90.0)
+        };
+        // The gradient, and whether the interface fonts are in (they apply from the next frame).
+        let mut h = Harness::builder().with_size(vec2(400.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            move |ui, (g, fonts): &mut (Gradient, bool)| {
+                if !*fonts {
+                    theme::install_fonts(ui.ctx());
+                    *fonts = true;
+                    return;
+                }
+                if let Some(ng) = gradient_editor(ui, "test-grad", &g.clone(), &sc) {
+                    *g = ng;
+                }
+            },
+            (start, false),
+        );
+        h.run_steps(3);
+        assert!(h.query_by_label("Theme Colors").is_none(), "the menu starts closed");
+        let stop = h.get_by_label("Gradient stop 2").rect().center();
+        h.hover_at(stop);
+        h.run_steps(1);
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                h.event(egui::Event::PointerButton { pos: stop, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+                h.run_steps(1);
+            }
+        }
+        h.run_steps(2);
+        assert!(h.query_by_label("Theme Colors").is_some(), "the colour menu opened");
+        h.get_by_label(SchemeSlot::Accent6.label()).click();
+        h.run_steps(2);
+        let g = &h.state().0;
+        assert_eq!(g.stops.len(), 2, "no stop was added");
+        assert_eq!(g.stops[1].color, ColorRef::scheme(SchemeSlot::Accent6), "the double-clicked stop took the colour");
+        assert_eq!(g.stops[0].color, ColorRef::scheme(SchemeSlot::Accent1));
+    }
 
     #[test]
     fn gradient_json_retains_flip_mode() {
