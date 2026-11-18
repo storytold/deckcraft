@@ -144,9 +144,10 @@ fn slot_dist(s: &Slot, x: f32, y: f32) -> f32 {
     } else {
         0.0
     };
-    // Inside a slot's height, prefer the innermost (shortest) argument.
+    // Inside a slot's height, prefer the innermost (shortest) argument nearest vertically to the click.
     let h = (s.a + s.d).max(0.1);
-    (s.x - x).abs() + dy * 3.0 + if dy == 0.0 { h * 0.05 } else { 0.0 }
+    let band_y = s.y + (s.a - s.d) * 0.35;
+    (s.x - x).abs() + dy * 3.0 + if dy == 0.0 { (y - band_y).abs() * 0.4 + h * 0.15 } else { 0.0 }
 }
 
 /// Numbered rows (`#`) in an equation: they advance the automatic numbering.

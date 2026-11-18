@@ -1188,4 +1188,18 @@ mod tests {
         assert!(matches!(parse_linear("sinx").as_slice(), [MNode::Run(_)]));
         assert!(matches!(parse_linear("arcsinhx").as_slice(), [MNode::Run(_)]));
     }
+
+    #[test]
+    fn bayes_vertical_bar_and_parenthesized_power_denominator() {
+        // Bayes' rule: `|` inside `P(A|B)` must not open an unclosed Delim across the rest of the equation.
+        let bayes = parse_linear("P(A|B)=(P(B|A)P(A))/P(B)");
+        assert!(bayes.iter().all(|n| !matches!(n, MNode::Delim { beg: Some('|'), end: None, .. })), "unclosed | Delim in {bayes:#?}");
+        // `(x+a)^n` after `/` keeps parentheses around `(x+a)` when attached to `^n`.
+        let frac = parse_linear("1/(x+a)^n");
+        let [MNode::Frac { den, .. }] = frac.as_slice() else { panic!("expected Frac, got {frac:#?}") };
+        assert!(
+            matches!(den.as_slice(), [MNode::Script { kind: ScriptKind::Sup, base, .. }] if matches!(base.as_slice(), [MNode::Delim { beg: Some('('), end: Some(')'), .. }])),
+            "expected parenthesized base in {den:#?}"
+        );
+    }
 }

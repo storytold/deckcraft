@@ -24,8 +24,11 @@ impl Session {
         if matches!(self.tool.drag, Some(Drag::Move { moved: false, .. })) {
             self.tool.drag = None;
         }
-        // In the text being edited: select the word double-clicked.
+        // In the text being edited: select the word double-clicked (or keep math editing active).
         if self.place_caret(p, tol, false)?.is_some() {
+            if self.active().is_some_and(|d| d.selection.math.is_some()) {
+                return Ok(json!({"math": true}));
+            }
             return self.execute("text.selectWord", &json!({}));
         }
         match self.hit_test(p, tol) {
@@ -35,9 +38,12 @@ impl Session {
                 match &sh.kind {
                     ShapeKind::Table(_) | ShapeKind::Shape | ShapeKind::Connector { .. } if !sh.is_line() => {
                         // Caret at the double-click (in a table, in the clicked cell), then select
-                        // the word there.
+                        // the word there unless the click landed inside an equation.
                         if !self.edit_text_at(id, p)? {
                             return Ok(Value::Null);
+                        }
+                        if self.active().is_some_and(|d| d.selection.math.is_some()) {
+                            return Ok(json!({"math": true}));
                         }
                         self.execute("text.selectWord", &json!({}))
                     }
@@ -46,8 +52,12 @@ impl Session {
                         // double-click reaches the text-holding member under the cursor.
                         match text_member_at(st, &sh, p, tol).and_then(|mid| st.shape(mid).cloned().map(|m| (mid, m))) {
                             Some((mid, msh)) if !msh.is_line() => {
-                                let pos = text_pos(st, &msh, p);
-                                self.execute("text.edit", &json!({"id": mid, "at": [pos.0, pos.1]}))?;
+                                if !self.edit_text_at(mid, p)? {
+                                    return Ok(Value::Null);
+                                }
+                                if self.active().is_some_and(|d| d.selection.math.is_some()) {
+                                    return Ok(json!({"math": true}));
+                                }
                                 self.execute("text.selectWord", &json!({}))
                             }
                             _ => Ok(Value::Null),
@@ -247,11 +257,11 @@ impl Session {
     }
 }
 
-fn math_hit_at(st: &crate::DocState, t: &TextSel, p: Point) -> Option<crate::MathEdit> {
+pub(super) fn math_hit_at(st: &crate::DocState, t: &TextSel, p: Point) -> Option<crate::MathEdit> {
     let (layout, to_slide) = cmd::text::text_frame(st, t)?;
     let lp = to_slide.inverse() * p;
     for eq in &layout.equations {
-        if lp.x >= eq.x - 2.0 && lp.x <= eq.x + f64::from(eq.math.width) + 2.0 && lp.y >= eq.top - 2.0 && lp.y <= eq.bottom + 2.0 {
+        if lp.x >= eq.x - 14.0 && lp.x <= eq.x + f64::from(eq.math.width) + 14.0 && lp.y >= eq.top - 4.0 && lp.y <= eq.bottom + 4.0 {
             let caret = eq
                 .math
                 .hit((lp.x - eq.x) as f32, (eq.base - lp.y) as f32)

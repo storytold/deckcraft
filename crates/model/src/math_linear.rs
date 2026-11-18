@@ -93,7 +93,7 @@ pub fn is_combining(c: char) -> bool {
 }
 
 /// Characters that end an operand.
-fn is_boundary(c: char) -> bool {
+pub(crate) fn is_boundary(c: char) -> bool {
     matches!(c, ' ' | '&' | '@' | '#' | '▒' | '│' | '/' | '⁄' | '∕' | '¦' | '\u{2061}')
         || is_closer(c)
         || matches!(math_class(c), MClass::Bin | MClass::Rel | MClass::Punct)
@@ -126,6 +126,27 @@ impl P {
     fn tired(&mut self) -> bool {
         self.steps += 1;
         self.steps > MAX_STEPS || self.depth > MAX_DEPTH
+    }
+
+    /// Returns whether `bar` (`|` or `‖`) has a matching closing delimiter at the current nesting depth.
+    fn has_matching_bar(&self, bar: char, stops: &[char]) -> bool {
+        let mut depth = 0usize;
+        for &ch in self.c.get(self.i + 1..).unwrap_or(&[]) {
+            if depth == 0 {
+                if ch == bar {
+                    return true;
+                }
+                if stops.contains(&ch) || is_closer(ch) || matches!(ch, '@' | '#') {
+                    return false;
+                }
+            }
+            if closer(ch).is_some() {
+                depth += 1;
+            } else if is_closer(ch) {
+                depth = depth.saturating_sub(1);
+            }
+        }
+        false
     }
     /// The rest of the input as text (when too deep or too long).
     fn rest(&mut self) -> Arg {
@@ -238,7 +259,7 @@ impl P {
             }
             return vec![self.group(None, &[')', ']', '}', '⟩', '⌉', '⌋', '|', '‖'])];
         }
-        if (c == '|' || c == '‖') && self.c.get(self.i + 1..).is_some_and(|r| r.contains(&c)) {
+        if (c == '|' || c == '‖') && self.has_matching_bar(c, stops) {
             self.i += 1;
             return vec![self.group(Some(c), &[c])];
         }
@@ -519,12 +540,30 @@ impl P {
         if self.peek() == Some('(') {
             self.i += 1;
             let g = self.group(Some('('), &[')']);
-            let inner = match g {
-                MNode::Delim { elems, end: Some(')'), .. } if elems.len() == 1 => elems.into_iter().next().unwrap_or_default(),
-                other => vec![other],
-            };
-            out = inner;
-            self.postfix(&mut out, stops, true);
+            let has_postfix =
+                self.peek().is_some_and(|c| matches!(c, '^' | '_') || (matches!(c, '┬' | '┴') && self.no_limits == 0) || is_combining(c));
+            if has_postfix {
+                out.push(g);
+                self.postfix(&mut out, stops, false);
+                while let Some(c) = self.peek() {
+                    if stops.contains(&c) || is_boundary(c) || self.tired() {
+                        break;
+                    }
+                    let a = self.atom(stops);
+                    if a.is_empty() {
+                        break;
+                    }
+                    out.extend(a);
+                    self.postfix(&mut out, stops, false);
+                }
+            } else {
+                let inner = match g {
+                    MNode::Delim { elems, end: Some(')'), .. } if elems.len() == 1 => elems.into_iter().next().unwrap_or_default(),
+                    other => vec![other],
+                };
+                out = inner;
+                self.postfix(&mut out, stops, true);
+            }
         } else if self.peek() == Some('〖') {
             self.i += 1;
             let g = self.group(Some('〖'), &['〗']);

@@ -176,6 +176,7 @@ fn text_overlays(app: &mut SlideApp, ui: &mut Ui, painter: &egui::Painter, xf: X
         for dy in [-3.0, 0.0, 3.0] {
             painter.circle_filled(pos2(c.x, c.y + dy), 1.0, frame);
         }
+        let _ = ui.interact(grip, ui.make_persistent_id("deckcraft_equation_grip_btn"), egui::Sense::click_and_drag());
         let opt = Rect::from_min_max(pos2(er.max.x, outer.min.y), outer.max);
         painter.rect_filled(opt, 2.0, fill);
         let oc = opt.center();
@@ -184,8 +185,9 @@ fn text_overlays(app: &mut SlideApp, ui: &mut Ui, painter: &egui::Painter, xf: X
             Color32::from_rgb(90, 105, 130),
             Stroke::NONE,
         ));
-        let opt_resp =
-            ui.interact(opt, ui.make_persistent_id("deckcraft_equation_options_btn"), egui::Sense::click()).on_hover_text("Equation Options");
+        let opt_resp = ui
+            .interact(opt, ui.make_persistent_id("deckcraft_equation_options_btn"), egui::Sense::click_and_drag())
+            .on_hover_text("Equation Options");
         egui::Popup::menu(&opt_resp).show(|ui| {
             super::context_menu::equation_items(app, ui);
         });

@@ -497,7 +497,12 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
             if shape.is_none_or(|id| serde_json::to_value(sh.id).ok().and_then(|v| v.as_u64()) == Some(id))
                 && let Some(t) = &sh.text
             {
-                any |= t.paragraphs.iter().flat_map(|p| &p.runs).any(|r| replace_word(&mut r.text.clone(), &word, &to, false) > 0);
+                any |= t
+                    .paragraphs
+                    .iter()
+                    .flat_map(|p| &p.runs)
+                    .filter(|r| r.kind == deckcraft_model::text::RunKind::Text)
+                    .any(|r| replace_word(&mut r.text.clone(), &word, &to, false) > 0);
             }
         });
     }
@@ -510,7 +515,14 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
         for sl in &mut doc.slides {
             let mut hit = false;
             deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
-                hit |= shape.is_none_or(|id| id_of(sh) == Some(id)) && sh.text.as_ref().is_some_and(|t| t.text().contains(word.as_str()));
+                hit |= shape.is_none_or(|id| id_of(sh) == Some(id))
+                    && sh.text.as_ref().is_some_and(|t| {
+                        t.paragraphs
+                            .iter()
+                            .flat_map(|p| &p.runs)
+                            .filter(|r| r.kind == deckcraft_model::text::RunKind::Text)
+                            .any(|r| r.text.contains(word.as_str()))
+                    });
             });
             if !hit || (!all && n > 0) {
                 continue;
@@ -520,7 +532,7 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
                     return;
                 }
                 let Some(t) = sh.text.as_mut() else { return };
-                for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()).filter(|r| r.kind == deckcraft_model::text::RunKind::Text) {
                     if !all && n > 0 {
                         break;
                     }

@@ -343,7 +343,8 @@ fn selected_text_of(st: &DocState) -> String {
 
 fn insert(s: &mut Session, v: &Value) -> Result<Value> {
     ensure_text_editing(s)?;
-    let selected = selected_text_of(s.doc()?);
+    let active_math = s.doc()?.selection.math.clone();
+    let selected = if active_math.is_some() { String::new() } else { selected_text_of(s.doc()?) };
     let nodes = match nodes_from(v) {
         Some(n) => n,
         None if str_param(v, "id").is_some() || str_param(v, "builtin").is_some() => {
@@ -351,6 +352,22 @@ fn insert(s: &mut Session, v: &Value) -> Result<Value> {
         }
         None => parse_linear(selected.trim()),
     };
+    if let Some(m) = active_math {
+        let active_empty = nodes_of(s.doc()?, m.pos).is_some_and(|n| n.is_empty());
+        if active_empty {
+            if let Some(d) = bool_param(v, "display") {
+                with_eq(s, m.pos, |_, display| *display = d)?;
+            }
+            if nodes.is_empty() {
+                return result(s);
+            }
+            return insert_nodes_into_active(s, nodes);
+        }
+        if !nodes.is_empty() {
+            return insert_nodes_into_active(s, nodes);
+        }
+        exit(s, &json!({"before": false}))?;
+    }
     insert_nodes_as_equation(s, nodes, v)
 }
 
@@ -477,13 +494,26 @@ fn type_text(s: &mut Session, v: &Value) -> Result<Value> {
         }
         for c in text.chars() {
             let rel = matches!(math_class(c), deckcraft_model::math::MClass::Rel);
-            if !style.nor && (c == ' ' || c == '\t' || rel) {
+            if !style.nor && !latex && !c.is_ascii_alphanumeric() {
                 let mut changed = false;
                 if let Some(p) = me::autocorrect(&mut math.nodes, &pos) {
                     pos = p;
+                    if c == ' ' {
+                        changed = true;
+                    }
+                }
+                if (c == ' ' || c == '\t' || rel)
+                    && let Some(p) = me::build_up(&mut math.nodes, &pos, false)
+                {
+                    pos = p;
                     changed = true;
                 }
-                if let Some(p) = me::build_up(&mut math.nodes, &pos, latex) {
+                if c == ' ' && changed {
+                    continue;
+                }
+            } else if !style.nor && latex && (c == ' ' || c == '\t' || rel) {
+                let mut changed = false;
+                if let Some(p) = me::build_up(&mut math.nodes, &pos, true) {
                     pos = p;
                     changed = true;
                 }
@@ -576,7 +606,7 @@ fn move_caret(s: &mut Session, v: &Value) -> Result<Value> {
         let mut candidate = nodes.clone();
         let mut candidate_pos = pos.clone();
         let mut changed = false;
-        if let Some(p) = me::autocorrect(&mut candidate, &candidate_pos) {
+        if !latex && let Some(p) = me::autocorrect(&mut candidate, &candidate_pos) {
             candidate_pos = p;
             changed = true;
         }
@@ -701,7 +731,7 @@ fn enter(s: &mut Session, _: &Value) -> Result<Value> {
         if math.linear {
             return;
         }
-        if let Some(p) = me::autocorrect(&mut math.nodes, &pos) {
+        if !latex && let Some(p) = me::autocorrect(&mut math.nodes, &pos) {
             pos = p;
             changed = true;
         }
@@ -711,6 +741,18 @@ fn enter(s: &mut Session, _: &Value) -> Result<Value> {
         }
         if me::number_equation(&mut math.nodes) {
             pos = MathPos::new(Vec::new(), me::units(&math.nodes));
+            changed = true;
+        }
+        if !changed
+            && let Some(level) = (0..pos.path.len()).rev().find(|&lvl| {
+                pos.path
+                    .get(lvl)
+                    .and_then(|&(j, _)| me::arg_at(&math.nodes, &pos.path[..lvl]).and_then(|a| a.get(j)))
+                    .is_some_and(|n| matches!(n, MNode::EqArr { rows } if rows.len() > 1 || !rows.first().is_some_and(|r| has_number_mark(r))))
+            })
+            && let Some(p) = me::apply_structure(&mut math.nodes, &pos, level, "eqarr.rowBelow")
+        {
+            pos = p;
             changed = true;
         }
     })?;
@@ -730,7 +772,8 @@ fn convert_math(math: &mut Math, professional: bool, latex: bool) {
     if professional {
         if math.linear {
             let text = plain(&math.nodes);
-            math.nodes = if latex { parse_latex(&text) } else { parse_linear(&text) };
+            let linear_ops = ['▒', '¦', '〖', '〗', '├', '┤', '■', '█', '┬', '┴'];
+            math.nodes = if latex && !text.contains(linear_ops) { parse_latex(&text) } else { parse_linear(&text) };
             math.linear = false;
         }
     } else if !math.linear {
@@ -1191,5 +1234,93 @@ mod tests {
         let too_long = "x".repeat(MAX_EQUATION_TYPE_CHARS + 1);
         let err = s.execute("equation.type", &json!({"text": too_long})).unwrap_err();
         assert!(err.to_string().contains("text exceeds maximum"));
+    }
+
+    #[test]
+    fn test_builtin_insertion_and_latex_navigation_preserve_binomial() {
+        use crate::tools::Mods;
+        let mut s = Session::with_new();
+        let id = s.execute("insert.textBox", &json!({"rect": [50.0, 50.0, 500.0, 80.0], "text": ""})).unwrap()["id"].as_u64().unwrap() as u32;
+
+        // 1. Insert empty equation (SirajHabsaia video step 1) -> replaces into single empty math run.
+        s.execute("insert.equation", &json!({})).unwrap();
+        // 2. Pick Binomial expansion while editing that empty equation (video step 2).
+        s.execute("insert.equation", &json!({"builtin": "binomial"})).unwrap();
+
+        let sh = s.active().unwrap().shape(deckcraft_model::ShapeId(id)).unwrap();
+        let para = &sh.text.as_ref().unwrap().paragraphs[0];
+        let math_runs: Vec<_> = para
+            .runs
+            .iter()
+            .filter_map(|r| match &r.kind {
+                RunKind::Math { math, .. } => Some(math),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(math_runs.len(), 1, "empty placeholder equation must be replaced, not duplicated: {math_runs:?}");
+
+        let orig_nodes = math_runs[0].nodes.clone();
+        assert!(matches!(orig_nodes.get(2), Some(MNode::Nary { chr: '∑', .. })), "{orig_nodes:#?}");
+
+        // 3. Switch to LaTeX mode and navigate / press Space / Backspace without corrupting the structure.
+        s.execute("equation.inputFormat", &json!({"format": "latex"})).unwrap();
+        for dir in ["left", "left", "right", "up", "down", "right", "home", "end"] {
+            s.execute("equation.move", &json!({"dir": dir})).unwrap();
+            assert_eq!(nodes_of(s.doc().unwrap(), (0, 0)).unwrap(), orig_nodes, "corrupted in LaTeX after move {dir}");
+        }
+        s.key("Right", Mods::default()).unwrap();
+        assert_eq!(nodes_of(s.doc().unwrap(), (0, 0)).unwrap(), orig_nodes, "corrupted in LaTeX after exiting via Right");
+        s.key("Left", Mods::default()).unwrap();
+        assert!(s.doc().unwrap().selection.math.is_some(), "expected Left to re-enter equation");
+
+        // Switch back to Unicode mode and verify moving around doesn't re-parse/corrupt either.
+        s.execute("equation.inputFormat", &json!({"format": "unicode"})).unwrap();
+        for dir in ["home", "right", "left", "end", "up", "down"] {
+            s.execute("equation.move", &json!({"dir": dir})).unwrap();
+            assert_eq!(nodes_of(s.doc().unwrap(), (0, 0)).unwrap(), orig_nodes, "corrupted in Unicode after move {dir}");
+        }
+
+        // Ctrl+Backspace / Ctrl+Arrow / Shift+Arrow while editing equation must not exit or wipe the equation in TextBody.
+        let ctrl = Mods { cmd: true, ..Default::default() };
+        let shift = Mods { shift: true, ..Default::default() };
+        s.key("Home", Mods::default()).unwrap();
+        s.key("Right", shift).unwrap();
+        s.key("Right", ctrl).unwrap();
+        s.key("Backspace", ctrl).unwrap();
+        assert!(s.doc().unwrap().selection.math.is_some());
+        assert_eq!(nodes_of(s.doc().unwrap(), (0, 0)).unwrap(), orig_nodes);
+    }
+
+    #[test]
+    fn test_double_click_and_small_drag_on_equation() {
+        use crate::tools::{Mods, PointerEvent, PointerKind};
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [50.0, 50.0, 500.0, 80.0], "text": ""})).unwrap();
+        s.execute("insert.equation", &json!({"builtin": "pythagoras"})).unwrap();
+        let (eq, to_slide) = placed_equation(s.doc().unwrap()).expect("placed equation");
+        let mid = to_slide * deckcraft_geom::Point::new(eq.x + f64::from(eq.math.width) * 0.5, (eq.top + eq.bottom) * 0.5);
+        let right_pad = to_slide * deckcraft_geom::Point::new(eq.x + f64::from(eq.math.width) + 8.0, (eq.top + eq.bottom) * 0.5);
+
+        let ev = |kind, pt: deckcraft_geom::Point| PointerEvent { kind, x: pt.x, y: pt.y, mods: Mods::default(), tol: 3.0, pressure: None };
+        // Small jitter drag on the equation keeps math mode active and does not turn text.anchor..caret into a range.
+        s.pointer(ev(PointerKind::Down, mid)).unwrap();
+        s.pointer(ev(PointerKind::Drag, deckcraft_geom::Point::new(mid.x + 1.5, mid.y))).unwrap();
+        s.pointer(ev(PointerKind::Up, deckcraft_geom::Point::new(mid.x + 1.5, mid.y))).unwrap();
+        let st = s.doc().unwrap();
+        assert!(st.selection.math.is_some());
+        let t = st.selection.text.as_ref().unwrap();
+        assert_eq!(t.anchor, t.caret);
+
+        // Clicking slightly inside the right padding still hits the equation.
+        s.pointer(ev(PointerKind::Down, right_pad)).unwrap();
+        s.pointer(ev(PointerKind::Up, right_pad)).unwrap();
+        assert!(s.doc().unwrap().selection.math.is_some());
+
+        // Double-clicking inside an equation keeps math editing active rather than running text.selectWord.
+        s.pointer(ev(PointerKind::DoubleClick, mid)).unwrap();
+        let st = s.doc().unwrap();
+        assert!(st.selection.math.is_some());
+        let t = st.selection.text.as_ref().unwrap();
+        assert_eq!(t.anchor, t.caret);
     }
 }

@@ -834,7 +834,8 @@ fn clamp_selection(st: &mut DocState) {
     if st.selection.text.is_none() {
         st.selection.math = None;
     } else if let (Some(t), Some(m)) = (&st.selection.text, &st.selection.math) {
-        let still_math = cmd::text::body_of(st, t).and_then(|b| cmd::equation::find_math_run_at(b, m.pos)).is_some();
+        let still_math =
+            t.anchor == m.pos && t.caret == m.pos && cmd::text::body_of(st, t).and_then(|b| cmd::equation::find_math_run_at(b, m.pos)).is_some();
         if !still_math {
             st.selection.math = None;
         }

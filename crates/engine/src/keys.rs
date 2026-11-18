@@ -67,9 +67,9 @@ impl Session {
             return Ok(json!({"handled": true, "command": "shape.editPoints"}));
         }
         let in_math = self.active().is_some_and(|d| d.selection.math.is_some());
-        if in_math && !mods.cmd && !mods.alt {
+        if in_math && !mods.alt {
             let r = match k {
-                "left" | "right" | "up" | "down" | "home" | "end" if !mods.shift => Some(self.execute("equation.move", &json!({"dir": k}))),
+                "left" | "right" | "up" | "down" | "home" | "end" => Some(self.execute("equation.move", &json!({"dir": k}))),
                 "tab" => Some(self.execute("equation.move", &json!({"dir": if mods.shift { "prev" } else { "next" }}))),
                 "backspace" => Some(self.execute("equation.backspace", &json!({}))),
                 "delete" => Some(self.execute("equation.delete", &json!({}))),

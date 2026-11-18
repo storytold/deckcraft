@@ -367,24 +367,6 @@ pub fn tidy(root: &mut Arg) {
         let taken = std::mem::take(a);
         *a = merge_shallow(taken);
         for n in a.iter_mut() {
-            if let MNode::Nary { sub_hide, sup_hide, sub, sup, e, .. } = n
-                && (*sub_hide || sub.is_empty())
-                && (*sup_hide || sup.is_empty())
-                && let Some(MNode::Script { kind, base, sub: s_sub, sup: s_sup }) = e.first().cloned()
-                && base.is_empty()
-            {
-                let has_sub = matches!(kind, ScriptKind::Sub | ScriptKind::SubSup) && !s_sub.is_empty();
-                let has_sup = matches!(kind, ScriptKind::Sup | ScriptKind::SubSup) && !s_sup.is_empty();
-                if has_sub {
-                    *sub = s_sub;
-                    *sub_hide = false;
-                }
-                if has_sup {
-                    *sup = s_sup;
-                    *sup_hide = false;
-                }
-                e.remove(0);
-            }
             for c in 0..child_count(n) {
                 if let Some(ch) = child_mut(n, c) {
                     go(ch, depth + 1);
@@ -492,24 +474,129 @@ pub fn delete_back(root: &mut Arg, pos: &MathPos) -> MathPos {
         }
         return pos;
     }
-    // At the start of an argument: remove an empty structure, or dissolve it from its first
-    // argument, or move to the previous argument.
+    // At the start of an argument: remove an empty structure, simplify an empty script/limit slot,
+    // merge rows in an equation array, dissolve single-wrapper structures, or step before the structure.
     let Some(((j, c), parent_path)) = pos.path.split_last() else { return pos };
     let parent_path = parent_path.to_vec();
     let (j, c) = (*j, *c);
     let Some(parent) = arg_at_mut(root, &parent_path) else { return pos };
     let start = node_start(parent, j);
     let Some(node) = parent.get(j) else { return pos };
+    if all_empty(node) {
+        parent.remove(j);
+        tidy(root);
+        return clamp(root, &MathPos { path: parent_path, off: start });
+    }
+    let child_empty = child(node, c).is_some_and(Arg::is_empty);
+    if child_empty {
+        match parent.get_mut(j) {
+            Some(MNode::Script { kind, base, sub, .. }) => match (c, *kind) {
+                (2, ScriptKind::Sup) if !base.is_empty() => {
+                    let MNode::Script { base, .. } = parent.remove(j) else { return pos };
+                    let b_units = units(&base);
+                    parent.splice(j..j, base);
+                    tidy(root);
+                    return clamp(root, &MathPos { path: parent_path, off: start + b_units });
+                }
+                (2, ScriptKind::SubSup) if !base.is_empty() => {
+                    *kind = ScriptKind::Sub;
+                    let off = units(sub);
+                    let mut path = parent_path;
+                    path.push((j, 1));
+                    tidy(root);
+                    return clamp(root, &MathPos { path, off });
+                }
+                (1, ScriptKind::Sub) if !base.is_empty() => {
+                    let MNode::Script { base, .. } = parent.remove(j) else { return pos };
+                    let b_units = units(&base);
+                    parent.splice(j..j, base);
+                    tidy(root);
+                    return clamp(root, &MathPos { path: parent_path, off: start + b_units });
+                }
+                (1, ScriptKind::SubSup) if !base.is_empty() => {
+                    *kind = ScriptKind::Sup;
+                    let off = units(base);
+                    let mut path = parent_path;
+                    path.push((j, 0));
+                    tidy(root);
+                    return clamp(root, &MathPos { path, off });
+                }
+                _ => {}
+            },
+            Some(MNode::Nary { sub_hide, sup_hide, sub, .. }) => {
+                if c == 0 {
+                    *sub_hide = true;
+                    let target = if !*sup_hide { 1 } else { 2 };
+                    let mut path = parent_path;
+                    path.push((j, target));
+                    tidy(root);
+                    return clamp(root, &MathPos { path, off: 0 });
+                }
+                if c == 1 {
+                    *sup_hide = true;
+                    let (target, off) = if !*sub_hide { (0, units(sub)) } else { (2, 0) };
+                    let mut path = parent_path;
+                    path.push((j, target));
+                    tidy(root);
+                    return clamp(root, &MathPos { path, off });
+                }
+            }
+            Some(MNode::Rad { deg_hide, .. }) if c == 0 => {
+                *deg_hide = true;
+                let mut path = parent_path;
+                path.push((j, 1));
+                tidy(root);
+                return clamp(root, &MathPos { path, off: 0 });
+            }
+            Some(MNode::Lim { .. }) if c == 1 => {
+                let MNode::Lim { e, .. } = parent.remove(j) else { return pos };
+                let e_units = units(&e);
+                parent.splice(j..j, e);
+                tidy(root);
+                return clamp(root, &MathPos { path: parent_path, off: start + e_units });
+            }
+            _ => {}
+        }
+    }
+    if let Some(MNode::EqArr { rows }) = parent.get_mut(j)
+        && c > 0
+        && c < rows.len()
+    {
+        let row = rows.remove(c);
+        if let Some(prev_row) = rows.get_mut(c - 1) {
+            let prev_len = units(prev_row);
+            prev_row.extend(row);
+            let mut path = parent_path;
+            path.push((j, c - 1));
+            tidy(root);
+            return clamp(root, &MathPos { path, off: prev_len });
+        }
+    }
+    let Some(node) = parent.get(j) else { return pos };
     let order = nav_children(node);
     let first = order.first() == Some(&c);
-    if all_empty(node) || first {
+    let single_wrapper = matches!(
+        node,
+        MNode::Rad { deg_hide: true, .. }
+            | MNode::Nary { sub_hide: true, sup_hide: true, .. }
+            | MNode::Acc { .. }
+            | MNode::Bar { .. }
+            | MNode::BorderBox { .. }
+            | MNode::Boxed { .. }
+            | MNode::GroupChr { .. }
+            | MNode::Phasor { .. }
+            | MNode::Phant { .. }
+    );
+    if first && single_wrapper {
         let n = parent.remove(j);
-        let contents = if all_empty(&n) { Vec::new() } else { dissolve(n) };
-        for (k, x) in contents.into_iter().enumerate() {
+        for (k, x) in dissolve(n).into_iter().enumerate() {
             parent.insert(j + k, x);
         }
         tidy(root);
         return clamp(root, &MathPos { path: parent_path, off: start });
+    }
+    if first {
+        return MathPos { path: parent_path, off: start };
     }
     let prev = order.iter().position(|x| *x == c).and_then(|p| p.checked_sub(1)).and_then(|p| order.get(p)).copied();
     match prev {
@@ -845,14 +932,41 @@ fn builds(s: &str) -> bool {
     }) || crate::math_linear::FUNCTION_NAMES.iter().any(|f| s.contains(f))
 }
 
-/// A run is plain math text that build-up may rewrite.
+/// Returns true when `r` is plain math text that build-up may rewrite.
+fn plain_run(r: &MRun) -> bool {
+    !r.nor && !r.lit && r.scr == MScr::Roman && r.color.is_none() && r.size.is_none() && r.font.is_none()
+}
+
+/// A run is plain math text or a structure that build-up may swallow as an operand.
 fn plain(n: &MNode) -> bool {
     match n {
-        MNode::Run(r) => !r.nor && !r.lit && r.scr == MScr::Roman && r.color.is_none() && r.size.is_none() && r.font.is_none(),
+        MNode::Run(r) => plain_run(r),
         // Arrays and matrices are finished pieces; typing after them builds up on its own.
         MNode::EqArr { .. } | MNode::Matrix { .. } => false,
         _ => true,
     }
+}
+
+/// Characters that make typed LaTeX text build up into structures.
+fn builds_latex(s: &str) -> bool {
+    s.chars().any(|c| matches!(c, '\\' | '^' | '_' | '{' | '}' | '&'))
+}
+
+/// Returns whether a newly typed math run `run_text` attaches directly to a preceding structure `prev`.
+fn attaches_to_prev(run_text: &str, prev: &MNode, latex: bool) -> bool {
+    if matches!(prev, MNode::Run(_) | MNode::EqArr { .. } | MNode::Matrix { .. }) {
+        return false;
+    }
+    if matches!(prev, MNode::Nary { e, .. } | MNode::Func { e, .. } if e.is_empty()) {
+        return !run_text.trim_start().starts_with(['=', '<', '>']);
+    }
+    if matches!(prev, MNode::Nary { .. } | MNode::Func { .. }) {
+        return false;
+    }
+    if run_text.starts_with(['^', '_', '┬', '┴']) || run_text.chars().next().is_some_and(crate::math_linear::is_combining) {
+        return true;
+    }
+    !latex && run_text.starts_with(['/', '⁄', '∕', '¦'])
 }
 
 /// Unclosed brackets (still being typed) or LaTeX braces.
@@ -873,18 +987,70 @@ pub fn build_up(root: &mut Arg, pos: &MathPos, latex: bool) -> Option<MathPos> {
     let pos = clamp(root, pos);
     let a = arg_at_mut(root, &pos.path)?;
     let at = split_at(a, pos.off);
-    // Rewrite from after the last formatted run (its formatting would be lost) to the caret.
-    let start = a.get(..at)?.iter().rposition(|n| !plain(n)).map(|k| k + 1).unwrap_or(0);
+    if at == 0 || !matches!(a.get(at - 1), Some(MNode::Run(r)) if plain_run(r)) {
+        tidy(root);
+        return None;
+    }
+    let mut run_start = at - 1;
+    while run_start > 0 && matches!(a.get(run_start - 1), Some(MNode::Run(r)) if plain_run(r)) {
+        run_start -= 1;
+    }
+    let run_text: String = a.get(run_start..at)?.iter().filter_map(|n| if let MNode::Run(r) = n { Some(r.text.as_str()) } else { None }).collect();
+    let prev_empty_op = run_start > 0
+        && a.get(run_start - 1).is_some_and(|p| matches!(p, MNode::Nary { e, .. } | MNode::Func { e, .. } if e.is_empty()))
+        && !run_text.trim().is_empty()
+        && !run_text.trim_start().starts_with(['=', '<', '>']);
+    let has_trigger = if latex { builds_latex(&run_text) } else { builds(&run_text) };
+    if !has_trigger && !prev_empty_op {
+        tidy(root);
+        return None;
+    }
+    let mut start = run_start;
+    if run_start > 0 && a.get(run_start - 1).is_some_and(|prev| attaches_to_prev(&run_text, prev, latex)) {
+        let prev = a.get(run_start - 1);
+        let single_atom = !matches!(prev, Some(MNode::Nary { .. } | MNode::Func { .. }))
+            && (run_text.starts_with(['^', '_', '┬', '┴']) || run_text.chars().next().is_some_and(crate::math_linear::is_combining));
+        if single_atom || matches!(prev, Some(MNode::Nary { .. } | MNode::Func { .. })) {
+            start = run_start - 1;
+        } else {
+            while start > 0 {
+                let Some(n) = a.get(start - 1) else { break };
+                if !plain(n) || matches!(n, MNode::Nary { e, .. } | MNode::Func { e, .. } if !e.is_empty()) {
+                    break;
+                }
+                if let MNode::Run(r) = n
+                    && r.text.chars().any(crate::math_linear::is_boundary)
+                {
+                    break;
+                }
+                start -= 1;
+            }
+        }
+    }
     let region: Arg = a.get(start..at)?.to_vec();
     if region.is_empty() {
         tidy(root);
         return None;
     }
-    let text = to_linear(&region);
-    if !latex && !builds(&text) {
-        tidy(root);
-        return None;
-    }
+    let text = if latex {
+        let mut s = String::new();
+        if start < run_start
+            && let Some(prefix_slice) = a.get(start..run_start)
+        {
+            let mut prefix = crate::math_latex::to_latex(prefix_slice);
+            if matches!(prefix_slice.first(), Some(MNode::Nary { e, .. }) if e.is_empty()) {
+                prefix = prefix.strip_suffix(" {}").unwrap_or(&prefix).to_string();
+                if !run_text.starts_with(['^', '_']) {
+                    prefix.push(' ');
+                }
+            }
+            s.push_str(&prefix);
+        }
+        s.push_str(&run_text);
+        s
+    } else {
+        to_linear(&region)
+    };
     let mut built = if latex { crate::math_latex::parse_latex(&text) } else { crate::math_linear::parse(&text) };
     // `#` numbering wraps the whole equation, not a piece of it.
     if let [MNode::EqArr { rows }] = built.as_slice()
@@ -1348,5 +1514,48 @@ mod tests {
             }
         }
         assert_eq!(p, MathPos::default());
+    }
+
+    #[test]
+    fn backspace_at_structure_start_is_non_destructive() {
+        // Fraction: backspace at start of numerator steps out without dissolving.
+        let mut eq = parse_linear("a/b");
+        let before = eq.clone();
+        let p = delete_back(&mut eq, &MathPos::new(vec![(0, 0)], 0));
+        assert_eq!(eq, before);
+        assert_eq!(p, MathPos::new(vec![], 0));
+
+        // Binomial / Delim: backspace at start of first arg steps before the Delim.
+        let mut eq = parse_linear("(n¦k)");
+        let before = eq.clone();
+        let p = delete_back(&mut eq, &MathPos::new(vec![(0, 0), (0, 0)], 0));
+        assert_eq!(eq, before);
+        assert_eq!(p, MathPos::new(vec![(0, 0)], 0));
+
+        // N-ary: backspace at start of lower limit steps before Nary without dissolving.
+        let mut eq = parse_linear("∑_(k=0)^n▒k");
+        let before = eq.clone();
+        let p = delete_back(&mut eq, &MathPos::new(vec![(0, 0)], 0));
+        assert_eq!(eq, before);
+        assert_eq!(p, MathPos::new(vec![], 0));
+
+        // Script with empty superscript: backspace removes the superscript while keeping base.
+        let mut eq = parse_linear("x^⬚");
+        let p = delete_back(&mut eq, &MathPos::new(vec![(0, 2)], 0));
+        assert_eq!(lin(&eq), "x");
+        assert_eq!(p, MathPos::new(vec![], 1));
+
+        // Script with non-empty base and sup: backspace at start of base steps before script.
+        let mut eq = parse_linear("x^2");
+        let before = eq.clone();
+        let p = delete_back(&mut eq, &MathPos::new(vec![(0, 0)], 0));
+        assert_eq!(eq, before);
+        assert_eq!(p, MathPos::new(vec![], 0));
+
+        // EqArr: backspace at start of row 1 merges row 1 onto row 0.
+        let mut eq = parse_linear("█(a+b@c+d)");
+        let p = delete_back(&mut eq, &MathPos::new(vec![(0, 1)], 0));
+        assert_eq!(lin(&eq), "█(a+bc+d)");
+        assert_eq!(p, MathPos::new(vec![(0, 0)], 3));
     }
 }

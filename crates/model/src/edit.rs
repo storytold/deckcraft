@@ -324,12 +324,26 @@ fn para_text(body: &TextBody, pi: usize) -> String {
     body.paragraphs.get(pi).map(Paragraph::text).unwrap_or_default()
 }
 
+/// Snap `ch` to the boundary of any non-text run (equation, field, break) it falls strictly inside.
+fn snap_atomic(body: &TextBody, pi: usize, ch: usize, forward: bool) -> usize {
+    let Some(p) = body.paragraphs.get(pi) else { return ch };
+    let mut acc = 0usize;
+    for r in &p.runs {
+        let len = r.char_len();
+        if ch > acc && ch < acc + len && r.kind != RunKind::Text {
+            return if forward { acc + len } else { acc };
+        }
+        acc += len;
+    }
+    ch
+}
+
 /// The word a double-click selects around `pos` (see [`words::word_at`]): the word without its
 /// trailing spaces, as PowerPoint selects it.
 pub fn word_at(body: &TextBody, pos: Pos) -> (Pos, Pos) {
     let (pi, ch) = clamp(body, pos);
     let (s, e) = words::word_at(&para_text(body, pi), ch);
-    ((pi, s), (pi, e))
+    ((pi, snap_atomic(body, pi, s, false)), (pi, snap_atomic(body, pi, e, true)))
 }
 
 /// Next/previous word stop (Ctrl+Right/Left on Windows, Option+arrows on the Mac). At the end of
@@ -340,13 +354,13 @@ pub fn word_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     let t = para_text(body, pi);
     if forward {
         match words::next_stop(&t, ch) {
-            Some(s) => (pi, s),
+            Some(s) => (pi, snap_atomic(body, pi, s, true)),
             None if pi + 1 < body.paragraphs.len() => (pi + 1, 0),
             None => (pi, ch),
         }
     } else {
         match words::prev_stop(&t, ch) {
-            Some(s) => (pi, s),
+            Some(s) => (pi, snap_atomic(body, pi, s, false)),
             None if pi > 0 => (pi - 1, body.paragraphs.get(pi - 1).map(Paragraph::char_len).unwrap_or(0)),
             None => (pi, 0),
         }
@@ -382,7 +396,7 @@ pub fn delete_word(body: &mut TextBody, pos: Pos, forward: bool) -> Pos {
     let t = para_text(body, pi);
     if !forward {
         let to = match words::prev_stop(&t, ch) {
-            Some(s) => (pi, s),
+            Some(s) => (pi, snap_atomic(body, pi, s, false)),
             None => char_move(body, (pi, ch), false),
         };
         return delete(body, to, (pi, ch));
@@ -391,6 +405,7 @@ pub fn delete_word(body: &mut TextBody, pos: Pos, forward: bool) -> Pos {
         let to = char_move(body, (pi, ch), true);
         return delete(body, (pi, ch), to);
     };
+    let e = snap_atomic(body, pi, e, true);
     let at = delete(body, (pi, ch), (pi, e));
     smart_space(body, at)
 }
