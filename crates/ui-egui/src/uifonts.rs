@@ -23,9 +23,23 @@ const MAX_FACE_BYTES: usize = 128 << 20;
 const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
 /// Installed faces preferred for the Traditional Chinese shell, in order. These are system
 /// fonts only: DeckCraft bundles no CJK face, per the asset policy.
+///
+/// Open faces come first. AGENTS §1.1 rules out assets taken from Microsoft, Adobe, Avid and
+/// Autodesk products, which includes the fonts those products install, so JhengHei, MingLiU and
+/// DFKai-SB are named only as a last resort after every openly licensed family has been tried.
+/// Apple's PingFang/Heiti/Songti are system faces of the operating system rather than of a
+/// creative product, so they stay ahead of the Microsoft ones but behind the open faces.
 #[cfg(not(target_arch = "wasm32"))]
-const TRADITIONAL_FAMILIES: &[&str] =
-    &["Microsoft JhengHei", "MingLiU", "DFKai-SB", "PingFang TC", "Heiti TC", "Songti TC", "AR PL UMing TW", "WenQuanYi Zen Hei"];
+const TRADITIONAL_FAMILIES: &[&str] = &[
+    "AR PL UMing TW",
+    "WenQuanYi Zen Hei",
+    "PingFang TC",
+    "Heiti TC",
+    "Songti TC",
+    "Microsoft JhengHei",
+    "MingLiU",
+    "DFKai-SB",
+];
 
 /// Whether a face may be borrowed for the interface: not a colour face, and within the per-face
 /// byte limit.

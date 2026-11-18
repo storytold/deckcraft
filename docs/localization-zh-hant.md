@@ -62,17 +62,20 @@ Chinese shell; every other locale stays English. System affects the shell only.
 
 外殼會依序偏好已安裝的下列字型，讓繁體中文使用台灣字形：
 
-1. Microsoft JhengHei（微軟正黑體，Windows）
-2. MingLiU／DFKai-SB（Windows）
-3. PingFang TC／Heiti TC／Songti TC（macOS）
-4. AR PL UMing TW／WenQuanYi Zen Hei（Linux、FreeBSD 常見的開放字型）
+1. AR PL UMing TW／WenQuanYi Zen Hei（開放字型，Linux、FreeBSD 常見）
+2. PingFang TC／Heiti TC／Songti TC（macOS 系統字型）
+3. Microsoft JhengHei／MingLiU／DFKai-SB（Windows 系統字型，最後才嘗試）
+
+開放字型排在最前面，因為 AGENTS §1.1 禁止使用 Microsoft、Adobe、Avid、Autodesk 產品所附的
+字型；JhengHei、MingLiU、DFKai-SB 只在其他候選都找不到時才會被選用。
 
 這些都是系統字型；DeckCraft 不內嵌、也不在候選清單中指定 Noto CJK／Source Han（資產政策
 禁止）。找不到上述字型時，仍會使用既有的逐字型遞補機制，介面不會因此停止運作。
 
-The shell prefers an installed face, in this order: Microsoft JhengHei, MingLiU/DFKai-SB,
-PingFang TC, Heiti TC, Songti TC, and the open AR PL UMing TW/WenQuanYi faces on Linux and
-FreeBSD. DeckCraft bundles no CJK font and does not name Noto CJK or Source Han in the candidate
+The shell prefers an installed face, in this order: the open AR PL UMing TW and WenQuanYi Zen
+Hei faces first, then Apple's PingFang TC, Heiti TC and Songti TC, and only then Microsoft
+JhengHei, MingLiU and DFKai-SB. The open faces lead because AGENTS §1.1 rules out fonts installed
+by Microsoft products, so those are named as a last resort rather than as the default. DeckCraft bundles no CJK font and does not name Noto CJK or Source Han in the candidate
 list (the asset policy excludes them). If none is installed, the existing per-character fallback
 still applies.
 
