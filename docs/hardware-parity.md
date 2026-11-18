@@ -34,7 +34,7 @@ because it mostly follows from hardware use.
 
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
-| Detect the projector, show on it, presenter view on the laptop | yes | partly: no projector detection; Automatic shows on the editor's display. A display chosen in Set Up Slide Show is used for full-screen shows (a disconnected one falls back to the primary display), Presenter View restores its saved placement or uses another display, and the editor window returns to its place after the show. On Wayland, the compositor controls placement. On Linux and the BSDs, when winit lists exactly one display, the show opens without Presenter View, as in PowerPoint; if it lists none, the setting is kept (#1156) |
+| Detect the projector, show on it, presenter view on the laptop | yes | partly: no projector detection; Automatic shows on a display other than the editor's (#2004). A display chosen in Set Up Slide Show is used for full-screen shows (a disconnected one falls back to the primary display), Presenter View restores its saved placement or uses another display, and the editor window returns to its place after the show. On Wayland, the compositor controls placement. On Linux and the BSDs, when winit lists exactly one display, the show opens without Presenter View, as in PowerPoint; if it lists none, the setting is kept (#1156) |
 | Swap displays, choose the monitor in Set Up Show | yes | yes: Set Up Slide Show ▸ Slide show monitor (saved per machine in `ui.json`); Swap Displays moves the show and Presenter View and saves the choice |
 | Mirroring-aware behaviour | yes | no |
 

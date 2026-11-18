@@ -11,10 +11,11 @@ ready** (estimated), **10–16 h** to parity.
 ## Running the show
 
 Set Up Slide Show includes **Multiple monitors → Slide show monitor**: Automatic or a
-connected display with its dimensions. OK commits the choice to the machine's `ui.json`
+connected display, by its name where the system gives a real one (macOS does not: "Display 2"), with its dimensions. OK commits the choice to the machine's `ui.json`
 (`showDisplay`); Cancel, Escape and the close button discard it. It is disabled for a
-browsed show. Starting a show uses the saved choice without prompting. Automatic uses the
-editor's display; a saved display that is no longer connected falls back to the primary display
+browsed show. Starting a show uses the saved choice without prompting. Automatic uses a
+display other than the editor's (one that is not the primary display first), so Presenter View,
+which opens on the editor's display, does not cover the show (#2004); a saved display that is no longer connected falls back to the primary display
 (the editor's where the system reports none, as on Wayland); a windowed show stays where it is.
 Swap Displays updates the same setting.
 
@@ -56,7 +57,7 @@ Swap Displays updates the same setting.
 | Slide counter, previous/next/end buttons | yes | yes | |
 | Keyboard navigation while Presenter View has focus | yes | yes | Shares the audience window's key handling; handled keys are consumed before buttons, and the presenter stays available at the end screen |
 | Notes font size, scrolling | yes | yes: A- / A+ (and `[` / `]`), 12–48 pt in steps of 4, default 18; the notes scroll | |
-| Placed on the presenter's display automatically, show on the projector | yes | yes: the saved show display is used for full-screen shows; Presenter View restores its saved placement or uses another display | On Wayland, the compositor controls window placement and stacking |
+| Placed on the presenter's display automatically, show on the projector | yes | yes: the saved show display is used for full-screen shows; Presenter View restores its saved placement unless that is over the show, else uses another display, shrunk to fit it. It opens once the show fills its display (macOS would otherwise move it onto the show's display) and stays on top only while it shares the show's display | On Wayland, the compositor controls window placement and stacking |
 | Swap displays | yes | yes: moves the audience show and Presenter View and saves the show display | On Wayland, the compositor controls Presenter View placement |
 | Pen, laser, black screen, zoom from presenter view | yes | Black, White and Zoom buttons; the audience zoom is framed on the presenter slide | Pen and laser are driven from the audience window only; the presenter window does not move the laser dot |
 | See all slides from presenter view | yes | yes: All slides (or G) opens the grid in presenter view only, the audience keeps the slide; click a thumbnail to go there, Esc closes it | |

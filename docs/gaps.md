@@ -316,7 +316,7 @@ Detail in [ui-parity.md](ui-parity.md).
 
 Detail in [hardware-parity.md](hardware-parity.md).
 
-- **The show doesn't detect the projector**: Automatic uses the editor's display. Set Up Slide Show
+- **The show doesn't detect the projector**: Automatic uses a display other than the editor's (#2004). Set Up Slide Show
   chooses the slide show monitor, Swap Displays moves the show and Presenter View, and Presenter
   View is placed on another display (#1225); not yet checked on real projectors. 3–5 h.
   **Beta blocker.**

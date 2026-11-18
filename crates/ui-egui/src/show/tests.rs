@@ -1704,7 +1704,8 @@ fn setup_show_keeps_a_saved_display_that_is_not_connected() {
     h.run_steps(2);
     h.get_by_label("Slide show monitor").click_accesskit();
     h.run_steps(2);
-    h.get_by_label("Display 2 (1280 × 720)").click_accesskit();
+    // Listed by the name the system gives it.
+    h.get_by_label(r"\.\DISPLAY3 (1280 × 720)").click_accesskit();
     h.run_steps(2);
     h.get_by_label("OK").click_accesskit();
     h.run_steps(2);
