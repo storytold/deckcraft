@@ -299,7 +299,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let mut done = false;
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new("Don't Save").stroke(egui::Stroke::new(1.0, t.text)).min_size(vec2(84.0, 24.0))).clicked() {
             let _ = app.session.execute("file.recovery.discard", &json!({}));
             app.quit_confirmed = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -314,7 +314,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new("Cancel").stroke(egui::Stroke::new(1.0, t.text)).min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
@@ -331,7 +331,7 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let mut done = false;
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new("Don't Save").stroke(egui::Stroke::new(1.0, t.text)).min_size(vec2(84.0, 24.0))).clicked() {
             run(app, "file.close", json!({}));
             done = true;
         }
@@ -347,7 +347,7 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new("Cancel").stroke(egui::Stroke::new(1.0, t.text)).min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
@@ -1332,65 +1332,139 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         });
     });
     let (ok, cancel) = buttons(ui, "OK");
+    if ok || cancel {
+        if let Some(parent_id) = d.params.get("parent_id").and_then(|v| v.as_str()) {
+            let mut parent = Dialog::new(parent_id);
+            if let Some(params) = d.params.get("parent_params") {
+                parent.params = params.clone();
+            }
+            if let Some(fields) = d.params.get("parent_fields").and_then(|v| v.as_object()) {
+                parent.fields = fields.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string())).collect();
+            }
+            *d = parent;
+            return false;
+        }
+    }
     ok || cancel
 }
 
-fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    // The controls apply as they change, so the dialog remembers what it opened with and
-    // Cancel (or Esc, or the close button: see `show`) puts that back.
+pub(super) fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
-    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
-    let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
-        let _ = app.run("view.dark", json!({"on": dark}));
-    }
-    // While the pointer holds the slider its value only waits in the dialog: applying it
-    // would rescale the slider under the pointer and run it to an end (#767). It applies
-    // on release, and at once from the keyboard.
-    let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
-    let mut scale = pending.unwrap_or(app.ui.ui_scale);
-    let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
-    // No visible label here (the row is laid out to fit); the accessible name only.
-    let enabled = r.enabled();
-    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
-    if r.is_pointer_button_down_on() {
-        if r.changed() || pending.is_some() {
-            d.fields.insert("uiScale".into(), scale.to_string());
-        }
-    } else {
-        if r.changed() || pending.is_some() {
-            app.ui.ui_scale = scale;
-        }
-        d.fields.remove("uiScale");
-    }
-    // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
+
+    let mut active_tab = d.fields.get("prefs_tab").cloned().unwrap_or_else(|| "General".into());
+    let mut open_autocorrect = false;
+
     ui.horizontal(|ui| {
-        ui.label("Measurement units:");
-        let units = &mut app.session.prefs.units;
-        ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
-        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
+        // Left Sidebar: PowerPoint-style vertical tabs
+        ui.vertical(|ui| {
+            ui.set_width(130.0);
+            if ui.selectable_label(active_tab == "General", "General").clicked() {
+                active_tab = "General".into();
+            }
+            if ui.selectable_label(active_tab == "Proofing", "Proofing").clicked() {
+                active_tab = "Proofing".into();
+            }
+            if ui.selectable_label(active_tab == "Save", "Save").clicked() {
+                active_tab = "Save".into();
+            }
+            if ui.selectable_label(active_tab == "Language", "Language").clicked() {
+                active_tab = "Language".into();
+            }
+            if ui.selectable_label(active_tab == "Advanced", "Advanced").clicked() {
+                active_tab = "Advanced".into();
+            }
+        });
+
+        ui.separator();
+
+        // Right Content Area
+        ui.vertical(|ui| {
+            match active_tab.as_str() {
+                "General" => {
+                    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+                    let mut dark = app.ui.brightness == theme::Brightness::Dark;
+                    if ui.checkbox(&mut dark, "Dark appearance").changed() {
+                        let _ = app.run("view.dark", json!({"on": dark}));
+                    }
+                    
+                    let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
+                    let mut scale = pending.unwrap_or(app.ui.ui_scale);
+                    let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
+                    let enabled = r.enabled();
+                    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
+                    if r.is_pointer_button_down_on() {
+                        if r.changed() || pending.is_some() {
+                            d.fields.insert("uiScale".into(), scale.to_string());
+                        }
+                    } else {
+                        if r.changed() || pending.is_some() {
+                            app.ui.ui_scale = scale;
+                        }
+                        d.fields.remove("uiScale");
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("Measurement units:");
+                        let units = &mut app.session.prefs.units;
+                        ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
+                        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
+                    });
+
+                    if d.id == "preferences" {
+                        ui.horizontal(|ui| {
+                            let label = ui.label("Your name (comments):");
+                            let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
+                        });
+                    }
+                }
+                "Proofing" => {
+                    ui.label(egui::RichText::new("Proofing & Editing").font(theme::bold(13.0)));
+                    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
+                    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
+                    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
+                        if ui.button("AutoCorrect Options…").clicked() {
+                            open_autocorrect = true;
+                        }
+                    });
+                }
+                "Save" => {
+                    ui.label(egui::RichText::new("Save Options").font(theme::bold(13.0)));
+                    ui.label("Auto-recover and file saving settings go here.");
+                }
+                "Language" => {
+                    ui.label(egui::RichText::new("Language Options").font(theme::bold(13.0)));
+                    ui.label("Dictionary and language preferences go here.");
+                }
+                "Advanced" => {
+                    ui.label(egui::RichText::new("Advanced Options").font(theme::bold(13.0)));
+                    ui.label("Advanced configuration settings go here.");
+                }
+                _ => {}
+            }
+        });
     });
-    ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-        if ui.button("AutoCorrect Options…").clicked() {
-            *d = Dialog::new("autocorrect");
-        }
-    });
+
+    d.fields.insert("prefs_tab".into(), active_tab);
+
+    if open_autocorrect {
+        let mut child = Dialog::new("autocorrect");
+        // Preserve the parent Preferences dialog state so it can be restored when AutoCorrect closes
+        child.params = json!({
+            "parent_id": d.id,
+            "parent_params": d.params,
+            "parent_fields": d.fields,
+        });
+        *d = child;
+    }
+
     if d.id != "preferences" {
         return false;
     }
-    ui.horizontal(|ui| {
-        let label = ui.label("Your name (comments):");
-        // Name the field for assistive technology; a bare text edit next to a label is an
-        // unnamed input in egui 0.37's accessibility tree.
-        let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
-    });
+
     let (ok, cancel) = buttons(ui, "Done");
     if cancel {
         restore_preferences(app, d);
