@@ -10,24 +10,24 @@ use deckcraft_model::text::{Paragraph, RunKind};
 
 /// RTF-escape `s` (non-ASCII as `\uN?`, UTF-16, signed as RTF wants).
 fn escape(out: &mut String, s: &str) {
-    for c in s.chars() {
-        match c {
-            '\\' | '{' | '}' => {
-                out.push('\\');
-                out.push(c);
-            }
-            '\t' => out.push_str("\\tab "),
-            '\u{b}' | '\n' => out.push_str("\\line "),
-            c if c.is_ascii() && !c.is_ascii_control() => out.push(c),
-            c if c.is_ascii() => {}
-            c => {
-                let mut buf = [0u16; 2];
-                for u in c.encode_utf16(&mut buf) {
-                    out.push_str(&format!("\\u{}?", *u as i16));
-                }
-            }
-        }
+    // Keep outline text literal: the shared writer also supports page/column breaks and
+    // shorthand controls that this app's deliberately small outline reader does not consume.
+    // Delegate ordinary spans, including UTF-16 escaping, without allocating a second string.
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        let replacement = match c {
+            '\u{000C}' | '\u{000E}' => "",
+            '\u{00A0}' => "\\u160?",
+            '\u{00AD}' => "\\u173?",
+            '\u{2011}' => "\\u8209?",
+            '\u{2028}' => "\\u8232?",
+            _ => continue,
+        };
+        craft_rtf::push_esc(out, &s[start..i]);
+        out.push_str(replacement);
+        start = i + c.len_utf8();
     }
+    craft_rtf::push_esc(out, &s[start..]);
 }
 
 fn runs(out: &mut String, p: &Paragraph) {
@@ -276,6 +276,9 @@ impl Outline<'_> {
         while k > 0 && self.i < self.b.len() {
             if self.b[self.i] == b'\\' && self.b.get(self.i + 1) == Some(&b'\'') {
                 self.i = advance(self.rtf, self.i, 4);
+            } else if self.b[self.i] == b'\\' && self.b.get(self.i + 1).is_some_and(|b| !b.is_ascii_alphabetic()) {
+                // An escaped control symbol counts as one Unicode fallback character.
+                self.i = advance(self.rtf, self.i + 1, 1);
             } else if matches!(self.b[self.i], b'{' | b'}' | b'\\') {
                 break;
             } else {
@@ -294,7 +297,7 @@ impl Outline<'_> {
             && let Some(h) = hex
             && h != 0
         {
-            self.line.push(cp1252(h));
+            self.line.push(craft_rtf::codepage::cp1252(h));
         }
     }
 
@@ -381,21 +384,74 @@ fn finish_surrogates(s: String) -> String {
     out
 }
 
-fn cp1252(b: u8) -> char {
-    const HIGH: [char; 32] = [
-        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—',
-        '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
-    ];
-    match b {
-        0x80..=0x9f => HIGH[(b - 0x80) as usize],
-        _ => b as char,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    // Frozen pre-cutover implementations are test oracles, not production parsers.
+    fn legacy_escape(out: &mut String, s: &str) {
+        for c in s.chars() {
+            match c {
+                '\\' | '{' | '}' => {
+                    out.push('\\');
+                    out.push(c);
+                }
+                '\t' => out.push_str("\\tab "),
+                '\u{b}' | '\n' => out.push_str("\\line "),
+                c if c.is_ascii() && !c.is_ascii_control() => out.push(c),
+                c if c.is_ascii() => {}
+                c => {
+                    let mut buf = [0u16; 2];
+                    for u in c.encode_utf16(&mut buf) {
+                        out.push_str(&format!("\\u{}?", *u as i16));
+                    }
+                }
+            }
+        }
+    }
+
+    fn legacy_cp1252(b: u8) -> char {
+        const HIGH: [char; 32] = [
+            '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–',
+            '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
+        ];
+        match b {
+            0x80..=0x9f => HIGH[(b - 0x80) as usize],
+            _ => b as char,
+        }
+    }
+
+    #[test]
+    fn shared_escape_preserves_every_unicode_scalar() {
+        for value in 0..=0x10ffff {
+            let Some(c) = char::from_u32(value) else { continue };
+            let mut buf = [0; 4];
+            let text = c.encode_utf8(&mut buf);
+            let mut expected = String::new();
+            let mut actual = String::new();
+            legacy_escape(&mut expected, text);
+            escape(&mut actual, text);
+            assert_eq!(actual, expected, "U+{value:04X}");
+        }
+    }
+
+    #[test]
+    fn shared_escape_preserves_mixed_spans_and_append() {
+        let text = "a\t中\u{a0}b\u{ad}c\u{2011}d\u{2028}e\u{c}f\u{e}g\n😀{}\\";
+        let mut expected = String::from("prefix:");
+        let mut actual = expected.clone();
+        legacy_escape(&mut expected, text);
+        escape(&mut actual, text);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn shared_cp1252_preserves_all_bytes() {
+        for b in 0..=u8::MAX {
+            assert_eq!(craft_rtf::codepage::cp1252(b), legacy_cp1252(b));
+        }
+    }
 
     /// A sign in a `\'hh` escape is not a hex digit and must be ignored.
     #[test]
@@ -420,6 +476,23 @@ mod tests {
         assert_eq!(rtf_to_outline(r"{\rtf1 a\'00bé\par}"), "abé\n");
         assert_eq!(rtf_to_outline("{\\rtf1 a\0b\\par}\0\0"), "ab\n");
         assert_eq!(rtf_to_outline(r"{\rtf1 x\u-70000?y\par}"), "x\u{ee90}y\n");
+    }
+
+    #[test]
+    fn unicode_fallback_control_symbols_are_skipped() {
+        for (rtf, expected) in [
+            (r"{\rtf1\uc1 \u92\\X\par}", "\\X\n"),
+            (r"{\rtf1\uc1 \u123\{X\par}", "{X\n"),
+            (r"{\rtf1\uc1 \u125\}X\par}", "}X\n"),
+            (r"{\rtf1\uc2 \u233\{\}X\par}", "éX\n"),
+            (r"{\rtf1\uc0 \u92\\X\par}", "\\\\X\n"),
+            (r"{\rtf1 \\ \{ \}X\par}", "\\ { }X\n"),
+            (r"{\rtf1\uc1 \u233{X}\par}", "éX\n"),
+            (r"{\rtf1\uc1 \u233\éX\par}", "éX\n"),
+            (r"{\rtf1\uc1 \u233\", "é\n"),
+        ] {
+            assert_eq!(rtf_to_outline(rtf), expected, "{rtf:?}");
+        }
     }
 
     #[test]

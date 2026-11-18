@@ -55,12 +55,18 @@ pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.size = Some(v))
 }
 
-/// PowerPoint's font size list (grow/shrink steps through it).
-pub const SIZES: [f64; 20] = [8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 54.0, 60.0, 66.0];
+/// PowerPoint's font size list, as the Font Size box lists it (grow/shrink steps through it).
+pub const SIZES: [f64; 24] =
+    [8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 54.0, 60.0, 66.0, 72.0, 80.0, 88.0, 96.0];
 
+/// Grow steps up the list, then 8 points at a time past its top; shrink steps back down the same
+/// way. A size past the top used to shrink straight to 66 (#2059).
 fn step(cur: f64, up: bool) -> f64 {
+    let top = SIZES[SIZES.len() - 1];
     if up {
         SIZES.iter().copied().find(|v| *v > cur + 0.01).unwrap_or((cur + 8.0).min(4000.0))
+    } else if cur - 0.01 > top {
+        (cur - 8.0).max(top)
     } else {
         SIZES.iter().rev().copied().find(|v| *v < cur - 0.01).unwrap_or((cur - 1.0).max(1.0))
     }
@@ -108,6 +114,7 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
             edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
                 if let ShapeKind::Chart(ch) = &mut sh.kind {
                     ch.text_color = Some(tc.clone());
+                    ch.legend_entries.iter_mut().for_each(|e| e.color = None);
                     ch.raw = None;
                 }
                 Ok(())

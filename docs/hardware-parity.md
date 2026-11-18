@@ -1,6 +1,6 @@
 # Hardware parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-05 · **Change:** trivial (slide show monitor choice, Swap Displays and Presenter View placement (#1225); estimates unchanged; previous: minor, community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
 
 What hardware PowerPoint uses and what DeckCraft uses, per platform. Dimension score: **~40%
 ready** (estimated), **25–45 h** to parity. Performance (unmeasured, ~55%) is tracked here too
@@ -23,7 +23,7 @@ because it mostly follows from hardware use.
 
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
-| Video decode | Hardware (AVFoundation/VideoToolbox, Media Foundation) | Software only: pure-Rust H.264, HEVC, VP9, AV1 (`crates/h264`, `hevc`, `vp9`, `av1`) |
+| Video decode | Hardware (AVFoundation/VideoToolbox, Media Foundation) | Software only: pure-Rust H.264, HEVC, VP9, AV1 (craft-video, from craft-libs) |
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
 | Microphone (record audio, narration) | yes | no |
@@ -34,7 +34,7 @@ because it mostly follows from hardware use.
 
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
-| Detect the projector, show on it, presenter view on the laptop | yes | partly: no projector detection; Automatic shows on the editor's display. A display chosen in Set Up Slide Show is used for full-screen shows (a disconnected one falls back to the primary display), Presenter View restores its saved placement or uses another display, and the editor window returns to its place after the show. On Wayland, the compositor controls placement |
+| Detect the projector, show on it, presenter view on the laptop | yes | partly: no projector detection; Automatic shows on the editor's display. A display chosen in Set Up Slide Show is used for full-screen shows (a disconnected one falls back to the primary display), Presenter View restores its saved placement or uses another display, and the editor window returns to its place after the show. On Wayland, the compositor controls placement. On Linux and the BSDs, when winit lists exactly one display, the show opens without Presenter View, as in PowerPoint; if it lists none, the setting is kept (#1156) |
 | Swap displays, choose the monitor in Set Up Show | yes | yes: Set Up Slide Show ▸ Slide show monitor (saved per machine in `ui.json`); Swap Displays moves the show and Presenter View and saves the choice |
 | Mirroring-aware behaviour | yes | no |
 
@@ -74,6 +74,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-11-05 | trivial | Slide show monitor choice in Set Up Slide Show, Swap Displays and Presenter View placement (#1225); projector detection stays open; estimates unchanged |
+| 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display: the presenter window covered the show and stalled it. If winit lists none, the setting is kept (#1156) |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |

@@ -6,7 +6,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
-const SHARED_REV: &str = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7";
+const SHARED_REPO: &str = "https://github.com/storytold/craft-libs";
+const SHARED_REV: &str = "63196e66f3033a6623eb629af95a104d26986725";
 const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
 pub fn run(root: &Path) -> Result<(), String> {
@@ -70,7 +71,7 @@ fn validate(metadata: &Value) -> Result<(), String> {
         }
         matches.first().copied().ok_or_else(|| format!("missing {name}"))
     };
-    let source = format!("git+https://github.com/storytold/craft-libs?rev={SHARED_REV}#{SHARED_REV}");
+    let source = format!("git+{SHARED_REPO}?rev={SHARED_REV}#{SHARED_REV}");
     for (name, version, expected_source, expected_features) in [
         ("craft-pdf", "0.1.0", source.as_str(), vec!["write", "write-simple-text"]),
         ("krilla", "0.8.2", source.as_str(), vec!["raster-images", "rayon", "simple-text"]),
@@ -143,7 +144,7 @@ mod tests {
     use serde_json::json;
 
     fn metadata() -> Value {
-        let source = format!("git+https://github.com/storytold/craft-libs?rev={SHARED_REV}#{SHARED_REV}");
+        let source = format!("git+{SHARED_REPO}?rev={SHARED_REV}#{SHARED_REV}");
         json!({
             "packages": [
                 {"id":"app", "name":"deckcraft-pdf"},
