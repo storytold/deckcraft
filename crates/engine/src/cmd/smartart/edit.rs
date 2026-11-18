@@ -33,10 +33,19 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
     let mut d = (*st.doc).clone();
     let sel = st.selection.clone();
     let Some(list) = crate::shapes_mut(&mut d, &sel) else { return Ok(()) };
-    let Some((ShapeKind::Group { children, child }, Some(group))) = deckcraft_model::find_shape(list, gid).map(|g| (g.kind.clone(), g.xfrm)) else {
+    let Some((ShapeKind::Group { children, child }, Some(group), diagram)) =
+        deckcraft_model::find_shape(list, gid).map(|g| (g.kind.clone(), g.xfrm, g.diagram.clone()))
+    else {
         return Ok(());
     };
     let mut kids = children;
+    // A generated graphic sized automatically takes the sizes a fresh layout gives the new text, so
+    // removing the long word that shrank every node brings the size back (PowerPoint fits the text
+    // again when text is deleted as when it is added).
+    if let Some(mut dg) = diagram.filter(|d| !d.imported && d.font_size.is_none()) {
+        sync_text(&mut dg, &kids);
+        super::paint::size_afresh(&dg, child, &mut kids);
+    }
     for sh in &mut kids {
         if let Some(t) = sh.text.as_mut()
             && let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut t.body.autofit
@@ -457,9 +466,13 @@ pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cm
     {
         return Ok(());
     }
-    // Automatic again on an imported graphic: the file's drawing stays; shrink-on-overflow comes back on its
-    // text and the nodes share one scale. The sizes the runs carry are not recoverable and stay as they are.
+    // Automatic again on an imported graphic that has no set size: the file's drawing stays, with
+    // shrink-on-overflow on its text and one shared scale. Once a size was set, the drawing's own run
+    // sizes are gone and shrinking cannot enlarge the text, so the graphic is laid out afresh below
+    // (as PowerPoint's Reset Graphic re-lays one out), which sizes its text automatically.
+    let sized = s.doc()?.shape(gid).and_then(|g| g.diagram.as_ref()).is_some_and(|d| d.font_size.is_some());
     if size.is_none()
+        && !sized
         && restyle_imported(
             s,
             gid,

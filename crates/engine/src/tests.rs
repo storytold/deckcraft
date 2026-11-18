@@ -7909,33 +7909,49 @@ fn editing_a_smartart_node_shares_the_new_scale_with_the_other_nodes() {
 
 /// A word an edit makes too long for its line wraps mid-word without overflowing down, so the
 /// text layout asks for no shrink; the graphic still shrinks every node alike, as a freshly
-/// generated one would.
+/// generated one would, and the size comes back when the word is removed.
 #[test]
-fn editing_a_smartart_node_to_a_long_word_shrinks_every_node() {
+fn editing_a_smartart_node_to_a_long_word_shrinks_every_node_until_it_is_removed() {
     let mut s = session();
     let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": ["A", "B", "C"]})).unwrap()["id"].as_u64().unwrap();
-    let scales = |s: &Session| -> Vec<Option<f64>> {
-        match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+    let id = ShapeId(gid as u32);
+    let sizes = |s: &Session| -> Vec<Option<f64>> {
+        match s.doc().unwrap().shape(id).map(|x| &x.kind) {
             Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
                 .iter()
                 .filter_map(|c| c.text.as_ref())
-                .filter_map(|t| match t.body.autofit {
-                    Some(deckcraft_model::text::AutoFit::Shrink { font_scale, .. }) => Some(font_scale),
-                    _ => None,
-                })
+                .flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.props.size)))
                 .collect(),
             _ => panic!("not a group"),
         }
     };
-    let first = match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+    let first = match s.doc().unwrap().shape(id).map(|x| &x.kind) {
         Some(deckcraft_model::ShapeKind::Group { children, .. }) => children.iter().find(|c| c.text.is_some()).unwrap().id,
         _ => panic!("not a group"),
     };
+    let before = sizes(&s);
+    let full = crate::cmd::smartart::shown_size(&s, id).unwrap();
     s.execute("text.edit", &json!({"id": first.0})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
     s.execute("text.insert", &json!({"text": "Supercalifragilisticexpialidocious_and_more_letters_still"})).unwrap();
-    let v = scales(&s);
-    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0]), "every node has the one shared scale: {v:?}");
-    assert!(v[0].unwrap() < 1.0, "the long word shrinks the graphic: {v:?}");
+    let v = sizes(&s);
+    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0]), "every node has the one size: {v:?}");
+    assert!(v[0].unwrap() < before[0].unwrap(), "the long word shrinks the graphic: {v:?} (was {before:?})");
+    assert!(crate::cmd::smartart::shown_size(&s, id).unwrap() < full);
+    // The word goes: every node is back at the size it had.
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": "A"})).unwrap();
+    assert_eq!(sizes(&s), before, "the size comes back with the word gone");
+    assert_eq!(crate::cmd::smartart::shown_size(&s, id).unwrap(), full);
+    // A size set on one node's text is the user's: a later edit leaves the sizes alone.
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.size", &json!({"size": 40})).unwrap();
+    let custom = sizes(&s);
+    assert!(custom.contains(&Some(40.0)) && custom.iter().any(|x| *x != Some(40.0)), "{custom:?}");
+    s.execute("text.move", &json!({"to": "end"})).unwrap_or_default();
+    s.execute("text.insert", &json!({"text": "b"})).unwrap();
+    assert_eq!(sizes(&s).iter().filter(|x| **x == Some(40.0)).count(), custom.iter().filter(|x| **x == Some(40.0)).count(), "{:?}", sizes(&s));
+    assert!(sizes(&s).iter().filter(|x| **x != Some(40.0)).all(|x| custom.contains(x)), "{:?}", sizes(&s));
 }
 
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
@@ -8180,18 +8196,43 @@ fn format_size_on_an_imported_smartart_graphic_keeps_its_drawing() {
             assert!(p.runs.iter().all(|r| r.props.size == Some(31.0)));
         }
     }
-    // Automatic again: still the file's drawing, with shrink-on-overflow back on and no recorded size.
+    // Automatic again after a set size: the drawing's own sizes are gone, so the graphic is laid out
+    // afresh and its text is sized automatically, not left at 31 pt (or at 1 pt after a tiny size).
     s.execute("smartArt.fontSize", &json!({"id": gid.0, "size": null})).unwrap();
     let again = snapshot(&s);
-    assert_eq!(before, again.iter().map(|c| (c.id, c.xfrm)).collect::<Vec<_>>(), "ids and geometry stay after automatic");
     let d = s.doc().unwrap().shape(gid).unwrap().diagram.clone().unwrap();
-    assert!(d.imported, "still an imported graphic");
+    assert!(!d.imported, "laid out afresh");
     assert_eq!(d.font_size, None);
     let texts: Vec<_> = again.iter().filter_map(|c| c.text.as_ref()).collect();
     assert!(!texts.is_empty());
     for t in texts {
         assert!(matches!(t.body.autofit, Some(deckcraft_model::text::AutoFit::Shrink { .. })), "shrink on overflow is back");
+        assert!(t.paragraphs.iter().flat_map(|p| &p.runs).all(|r| r.props.size != Some(31.0)), "the set size is gone");
     }
+}
+
+/// Automatic on an imported graphic that never had a size set keeps the file's drawing.
+#[test]
+fn automatic_size_on_an_untouched_imported_smartart_graphic_keeps_its_drawing() {
+    let mut s = session();
+    let gid = ShapeId(s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap() as u32);
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), gid).unwrap();
+        g.diagram.as_mut().unwrap().imported = true;
+    }
+    let kids = |s: &Session| -> Vec<(ShapeId, Option<deckcraft_geom::Xfrm>)> {
+        match &s.doc().unwrap().shape(gid).unwrap().kind {
+            deckcraft_model::ShapeKind::Group { children, .. } => children.iter().map(|c| (c.id, c.xfrm)).collect(),
+            _ => panic!("not a group"),
+        }
+    };
+    let before = kids(&s);
+    s.execute("smartArt.fontSize", &json!({"id": gid.0, "size": null})).unwrap();
+    assert_eq!(kids(&s), before, "ids and geometry stay");
+    assert!(s.doc().unwrap().shape(gid).unwrap().diagram.as_ref().unwrap().imported, "still an imported graphic");
 }
 
 #[test]
