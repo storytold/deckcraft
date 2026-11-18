@@ -25,11 +25,24 @@ use crate::PptxError;
 use crate::opc::{self, Package, Rels};
 use crate::xml::{Doc, El, Node};
 
+/// A snapshot of the import state a discarded read rolls back to.
+pub struct Mark {
+    diagram_xml_bytes: usize,
+    media: usize,
+    media_keys: usize,
+    tag_bytes: usize,
+    tags_capped: bool,
+    kept_sidecar_bytes: usize,
+    kept_chart_keys: usize,
+}
+
 /// Import state shared by all parts.
 pub struct Imp<'a> {
     pub pkg: &'a Package,
     pub media: Vec<MediaItem>,
     pub media_by_part: HashMap<String, MediaId>,
+    /// Keys added to `media_by_part`, in order, so a rollback removes only its own.
+    pub media_keys: Vec<String>,
     pub next: u32,
     pub slide_by_part: HashMap<String, SlideId>,
     pub custom_show_names: HashMap<String, String>,
@@ -45,6 +58,8 @@ pub struct Imp<'a> {
     pub chart_points_cap: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Keys added to `kept_charts`, in order, for rollback.
+    pub kept_chart_keys: Vec<String>,
     /// Chart parts whose sidecar capture was refused, with the retained-byte total it started from:
     /// the same start gives the same refusal, so the copy is not repeated.
     pub rejected_kept: HashMap<String, usize>,
@@ -56,12 +71,30 @@ pub struct Imp<'a> {
     pub tag_bytes: usize,
     /// The tag budget ran out and the warning was given.
     pub tags_capped: bool,
+    /// What the file lost that the reader kept going past (see [`MAX_IMPORT_WARNINGS`]).
+    pub warnings: Vec<String>,
+    /// Bytes of preserved theme XML kept by the masters read so far.
+    pub theme_extra_bytes: usize,
+    /// Shapes read from SmartArt drawings so far (see `shapes::MAX_SMARTART_SHAPES`).
+    pub smartart_shapes: usize,
+    /// Bytes of SmartArt layout, style and colour definitions copied into diagrams so far.
+    pub diagram_xml_bytes: usize,
     /// Whether a part has relationships of its own, by normalized part name: looked up once
     /// however many embedded objects point at the part.
     pub has_rels: HashMap<String, bool>,
 }
 
+/// Import warnings kept; a hostile file with many oversized tables adds no more than this.
+const MAX_IMPORT_WARNINGS: usize = 32;
+
 impl Imp<'_> {
+    /// Record something the file lost, and log it.
+    pub fn warn(&mut self, msg: String) {
+        log::warn!("pptx: {msg}");
+        if self.warnings.len() < MAX_IMPORT_WARNINGS {
+            self.warnings.push(msg);
+        }
+    }
     pub fn alloc(&mut self) -> u32 {
         self.next = self.next.saturating_add(1);
         self.next
@@ -77,8 +110,40 @@ impl Imp<'_> {
         let content_type = self.pkg.content_type(part).filter(|c| !c.is_empty()).unwrap_or_else(|| crate::mime_for(&name).to_string());
         let id = MediaId(self.alloc());
         self.media.push(MediaItem { id, name, content_type, data: Arc::new(data), link: None });
+        self.media_keys.push(key.clone());
         self.media_by_part.insert(key, id);
         Some(id)
+    }
+    /// What a discarded read must give back: the budgets it charged and the media and kept-chart
+    /// entries it added (see [`Imp::rollback`]).
+    pub fn mark(&self) -> Mark {
+        Mark {
+            diagram_xml_bytes: self.diagram_xml_bytes,
+            media: self.media.len(),
+            media_keys: self.media_keys.len(),
+            tag_bytes: self.tag_bytes,
+            tags_capped: self.tags_capped,
+            kept_sidecar_bytes: self.kept_sidecar_bytes,
+            kept_chart_keys: self.kept_chart_keys.len(),
+        }
+    }
+    /// Undo everything since `m`: only the entries added since are removed, so the cost follows
+    /// what the discarded read added, not the size of the caches.
+    pub fn rollback(&mut self, m: &Mark) {
+        self.diagram_xml_bytes = m.diagram_xml_bytes;
+        self.tag_bytes = m.tag_bytes;
+        self.tags_capped = m.tags_capped;
+        self.kept_sidecar_bytes = m.kept_sidecar_bytes;
+        self.media.truncate(m.media);
+        for k in self.media_keys.drain(m.media_keys..) {
+            self.media_by_part.remove(&k);
+        }
+        for k in self.kept_chart_keys.drain(m.kept_chart_keys..) {
+            self.kept_charts.remove(&k);
+        }
+        // Chart decode work (`chart_decode_bytes`, `chart_points`) stays charged: it was done, and
+        // giving it back would let a discarded read repeat it. `rejected_kept` is keyed by the
+        // retained total a refusal started from, so it stays valid after the rollback.
     }
     /// Media item for an external link.
     pub fn media_link(&mut self, url: &str) -> MediaId {
@@ -529,6 +594,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         pkg: &pkg,
         media: vec![],
         media_by_part: HashMap::new(),
+        media_keys: vec![],
         next: 0,
         slide_by_part: HashMap::new(),
         custom_show_names: HashMap::new(),
@@ -538,11 +604,16 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         chart_points: 0,
         chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
         kept_charts: HashMap::new(),
+        kept_chart_keys: vec![],
         rejected_kept: HashMap::new(),
         chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        warnings: vec![],
+        theme_extra_bytes: 0,
+        smartart_shapes: 0,
+        diagram_xml_bytes: 0,
         has_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
@@ -558,13 +629,24 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
 /// or truncated slide part, or an entry whose relationship is missing): those slides are left
 /// out, so a caller can say so (#203).
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
-    import_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
+    import_report(bytes).map(|(p, lost, _)| (p, lost))
+}
+
+/// [`import_checked`], plus warnings for content the file had that was cut to fit a limit (a
+/// table past the cell cap keeps its leading rows).
+pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
+    import_report_with_chart_points(bytes, chart::MAX_PRESENTATION_CHART_POINTS)
 }
 
 const MAX_SLIDE_ENTRIES: usize = 10_000;
 
 /// [`import_checked`] with the presentation's chart point budget set (tests lower it).
 pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>), PptxError> {
+    import_report_with_chart_points(bytes, chart_points_cap).map(|(p, lost, _)| (p, lost))
+}
+
+/// [`import_report`] with the presentation's chart point budget set.
+fn import_report_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
     let mut lost_slides: Vec<String> = vec![];
     let pkg = Package::open(bytes)?;
     let root_rels = pkg.rels("");
@@ -589,6 +671,7 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
         pkg: &pkg,
         media: vec![],
         media_by_part: HashMap::new(),
+        media_keys: vec![],
         next: max_id.max(1),
         slide_by_part: HashMap::new(),
         custom_show_names: HashMap::new(),
@@ -598,11 +681,16 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
         chart_points: 0,
         chart_points_cap,
         kept_charts: HashMap::new(),
+        kept_chart_keys: vec![],
         rejected_kept: HashMap::new(),
         chart_decode_bytes: 0,
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        warnings: vec![],
+        theme_extra_bytes: 0,
+        smartart_shapes: 0,
+        diagram_xml_bytes: 0,
         has_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
@@ -634,7 +722,7 @@ pub(crate) fn import_with_chart_points(bytes: &[u8], chart_points_cap: usize) ->
     p.media = std::mem::take(&mut imp.media);
     p.next_id = imp.next;
     p.fix_next_id();
-    Ok((p, lost_slides))
+    Ok((p, lost_slides, std::mem::take(&mut imp.warnings)))
 }
 
 /// Masters, layouts and slides to read, in file order and without duplicates: (master paths,
@@ -799,6 +887,7 @@ fn read_slides(
         let mut slide = read_slide(imp, &part, doc, *id, layout);
         if let Some(notes) = slide_notes(imp, &part, &mut owned_parts) {
             slide.notes = notes;
+            slide.has_notes_slide = true;
         }
         read_slide_comments(pkg, pres_part, &part, &mut slide, &mut owned_parts);
         file_slide_ids.insert(*file_id, *id);
@@ -1523,11 +1612,28 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
                 Some(PhType::SlideNum) => hf.slide_number = true,
                 Some(PhType::Date) => {
                     hf.date = true;
-                    if let Some(t) = &sh.text
-                        && !t.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(r.kind, deckcraft_model::text::RunKind::Field { .. }))
-                        && hf.date_text.is_empty()
-                    {
-                        hf.date_text = t.text();
+                    let field = sh.text.iter().flat_map(|t| t.paragraphs.iter()).flat_map(|p| p.runs.iter()).find_map(|r| match &r.kind {
+                        deckcraft_model::text::RunKind::Field { field } if deckcraft_text::datetime::is_date_field(field) => Some(field.as_str()),
+                        _ => None,
+                    });
+                    match field {
+                        // An automatic date: remember which of the thirteen formats it is, so the
+                        // Header and Footer dialog opens on the deck's own choice instead of the
+                        // default. An unknown spelling (`datetime`, `datetimeFigureOut`) is left
+                        // as no choice rather than guessed at.
+                        Some(kind) => {
+                            if hf.date_format.is_empty() && deckcraft_text::datetime::DATE_KINDS.contains(&kind) {
+                                hf.date_format = kind.to_string();
+                            }
+                        }
+                        // A fixed date: its text, as before.
+                        None => {
+                            if hf.date_text.is_empty()
+                                && let Some(t) = &sh.text
+                            {
+                                hf.date_text = t.text();
+                            }
+                        }
                     }
                 }
                 Some(PhType::Footer) => {
@@ -1543,6 +1649,55 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
         }
     }
     hf
+}
+
+#[cfg(test)]
+mod rollback_tests {
+    use super::*;
+
+    /// A rolled-back read gives back its budgets and removes only the media and kept-chart entries it added.
+    #[test]
+    fn rollback_restores_budgets_and_removes_only_what_was_added() {
+        let bytes = crate::export(&deckcraft_model::Presentation::default()).expect("export");
+        let pkg = Package::open(&bytes).expect("package");
+        let mut imp = Imp {
+            pkg: &pkg,
+            media: vec![],
+            media_by_part: HashMap::new(),
+            media_keys: vec![],
+            next: 0,
+            slide_by_part: HashMap::new(),
+            custom_show_names: HashMap::new(),
+            table_style_ids: Vec::new(),
+            vml_previews: HashMap::new(),
+            kept_sidecar_bytes: 0,
+            chart_points: 0,
+            chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
+            kept_charts: HashMap::new(),
+            kept_chart_keys: vec![],
+            rejected_kept: HashMap::new(),
+            chart_decode_bytes: 0,
+            tags_by_part: HashMap::new(),
+            tag_bytes: 0,
+            tags_capped: false,
+            warnings: vec![],
+            theme_extra_bytes: 0,
+            smartart_shapes: 0,
+            diagram_xml_bytes: 0,
+            has_rels: HashMap::new(),
+        };
+        let kept_before = imp.media_for("ppt/presentation.xml").expect("media");
+        let (m, items) = (imp.mark(), imp.media.len());
+        assert!(imp.media_for("ppt/presProps.xml").is_some());
+        imp.kept_chart_keys.push("ppt/charts/chart1.xml".into());
+        imp.kept_charts.insert("ppt/charts/chart1.xml".into(), Default::default());
+        (imp.diagram_xml_bytes, imp.tag_bytes, imp.tags_capped, imp.kept_sidecar_bytes) = (7, 5, true, 9);
+        imp.rollback(&m);
+        assert_eq!(imp.media.len(), items);
+        assert_eq!(imp.media_by_part.get("ppt/presentation.xml"), Some(&kept_before));
+        assert!(!imp.media_by_part.contains_key("ppt/presprops.xml") && imp.kept_charts.is_empty() && imp.kept_chart_keys.is_empty());
+        assert_eq!((imp.diagram_xml_bytes, imp.tag_bytes, imp.tags_capped, imp.kept_sidecar_bytes), (0, 0, false, 0));
+    }
 }
 
 #[cfg(test)]
