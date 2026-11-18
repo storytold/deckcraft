@@ -1,6 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; previous: minor, deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-18 · **Change:** minor (Browsed by an individual (window): the window takes the slide's shape, so no black bars; previous: minor, a slide the show advances to again plays its animations again, #2090; previous: minor, deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
@@ -35,7 +35,7 @@ ready** (estimated), **10–16 h** to parity.
 | Laser pointer | yes | yes in the show | Cmd/Ctrl+L and the on-screen button draw the show's laser colour and leave no ink. The presenter window does not move that dot |
 | Subtitles and live captions | yes (cloud speech) | no | AI dimension |
 | Custom shows | yes | yes: Show plays that list in order and does not change Set Up; Set Up Slide Show can keep one for Play from Start | Hidden slides in the list are skipped; deleting a slide removes its ID from every custom show |
-| Set Up Show: loop until Esc, kiosk (browsed at a kiosk), show without animation/narration, pen colour, slides range | yes | yes, most options | Keep mouse cursor visible (DeckCraft's own, #1445) stops the show hiding a still pointer after 2.5 s, for decks with clickable choices; it is a user preference (`ui.json`, `showKeepCursor`), since PPTX has no place for it |
+| Set Up Show: loop until Esc, kiosk (browsed at a kiosk), show without animation/narration, pen colour, slides range | yes | yes, most options | Keep mouse cursor visible (DeckCraft's own, #1445) stops the show hiding a still pointer after 2.5 s, for decks with clickable choices; it is a user preference (`ui.json`, `showKeepCursor`), since PPTX has no place for it. Browsed by an individual (window) plays in a window of the slide's shape: it shrinks to fit the slide when the show starts, snaps back to that shape after a resize, and the editor's size and maximized state return when the show ends |
 | Use rehearsed timings | yes | yes | |
 
 ## Presenter view
@@ -98,4 +98,5 @@ Reading View in a window with navigation: present (checklist row done).
 | 2026-10-24 | minor | Ctrl+wheel (Cmd+wheel on a Mac) zooms the show in and out around the pointer, up to 4×; the plain wheel still turns the page (#1286) |
 | 2026-10-23 | trivial | Presenter view draws the notes with their formatting (bullets, numbers, indents, bold/italic) instead of plain text (#1128) |
 | 2026-11-14 | minor | A slide the show advances to again starts over, so its entrance effects play again; Back and links still show it as it was left (#2090) |
+| 2026-11-18 | minor | Browsed by an individual (window): the show window takes the slide's shape instead of keeping the editor's size, so a 16:9 deck has no black bars; a resize snaps back to the slide's shape; the editor's window returns when the show ends |
 | 2026-10-10 | major | Created: show, presenter view, rehearse and record, compared with PowerPoint 16.113's Slide Show tab and menu |
