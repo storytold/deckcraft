@@ -1,8 +1,11 @@
 //! The browser shell: web `Services`, drag-and-drop, and the eframe web runner.
 
+use deckcraft_collab_web::HostParticipant;
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
+
+use crate::host_session::{self, HostAction, HostInbox, HostState};
 
 const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
@@ -34,12 +37,16 @@ pub fn start() {
             log::warn!("?host=parent needs a framing page on the same origin; saves download instead");
         }
         let app_bridge = bridge.clone();
+        // `deckcraft:session` / `deckcraft:committed` queued by the bridge callback, applied on the
+        // next frame.
+        let host_events: HostInbox = HostInbox::default();
         let mut options = eframe::WebOptions::default();
         if query_has("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
+        let shell_events = host_events.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -53,12 +60,24 @@ pub fn start() {
                         let presenter = crate::presenter::Popup::new(token, cc.egui_ctx.clone()).map_err(std::io::Error::other)?;
                         return Ok(Box::new(presenter) as Box<dyn eframe::App>);
                     }
+                    let cc_ctx = cc.egui_ctx.clone();
                     let inbox: Inbox = Inbox::default();
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone());
                     if let Some(bridge) = &app_bridge {
-                        bridge.connect(&mut services, cc.egui_ctx.clone());
+                        bridge.connect(&mut services, cc.egui_ctx.clone(), shell_events.clone());
                     }
                     let mut app = SlideApp::new(Session::new(), services);
+                    // Real-time collaboration is opt-in through the host page (`?collab=1`), and
+                    // starts for real only on a `deckcraft:session` message.
+                    if query_has("collab") {
+                        app.enable_collab();
+                    }
+                    // The host owns the stored file: Save in a live session asks the cabinet to
+                    // commit (`deckcraft:commit`), not the browser to download a copy.
+                    if let Some(bridge) = &app_bridge {
+                        let commit_bridge = bridge.clone();
+                        app.host_commit = Some(Box::new(move |session_id: &str, _bytes: Option<&[u8]>| commit_bridge.post_commit(session_id)));
+                    }
                     // In host mode the parent sends the presentation to edit; no sample meanwhile.
                     if app_bridge.is_some() {
                         if let Err(e) = app.start_for_host() {
@@ -80,7 +99,16 @@ pub fn start() {
                         crate::host::Bridge::set_author(&mut app, &author);
                     }
                     crate::api::install(&mut app, cc.egui_ctx.clone());
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
+                    Ok(Box::new(WebShell {
+                        app,
+                        inbox,
+                        bridge: app_bridge,
+                        ctx: cc_ctx.clone(),
+                        host_events: shell_events,
+                        host_state: HostState::default(),
+                        last_host_state: None,
+                        last_presence_ms: 0.0,
+                    }))
                 }),
             )
             .await;
@@ -121,6 +149,15 @@ struct WebShell {
     inbox: Inbox,
     /// The parent page that keeps the files (`?host=parent`).
     bridge: Option<crate::host::Bridge>,
+    /// The frame's context, for waking the page when the socket has something.
+    ctx: egui::Context,
+    /// `deckcraft:session` / `deckcraft:committed` queued by the bridge callback.
+    host_events: HostInbox,
+    host_state: HostState,
+    /// The last `session-state` posted: status and participants, to post only changes.
+    last_host_state: Option<(String, Vec<HostParticipant>)>,
+    /// Browser clock of the last `presence` post (5–10 Hz, ADR-0006).
+    last_presence_ms: f64,
 }
 
 impl eframe::App for WebShell {
@@ -130,6 +167,7 @@ impl eframe::App for WebShell {
         if let Some(bridge) = &self.bridge {
             bridge.open_files(&mut self.app);
         }
+        self.apply_host_events();
         self.app.logic(ctx);
         if let Some(bridge) = &self.bridge {
             bridge.report_dirty(&self.app);
@@ -170,6 +208,64 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        // After the frame: the state posted is the one this frame drew.
+        self.publish_host_state();
+    }
+}
+
+impl WebShell {
+    /// `deckcraft:session` opens the session; `deckcraft:committed` is the cabinet's commit
+    /// result. Nothing here runs without a session message.
+    fn apply_host_events(&mut self) {
+        let events = std::mem::take(&mut *self.host_events.borrow_mut());
+        for event in events {
+            match self.host_state.on_event(event) {
+                HostAction::Connect(session) => {
+                    let name = session.session_id().to_string();
+                    let ctx = self.ctx.clone();
+                    match host_session::connect(&session, &mut self.app, move || ctx.request_repaint()) {
+                        Ok(()) => {
+                            self.app.enable_collab();
+                            self.app.set_status(format!("Joining collaboration session {name}"));
+                        }
+                        Err(message) => {
+                            self.app.host_session_id = None;
+                            self.app.set_status(format!("Collaboration is unavailable: {message}"));
+                        }
+                    }
+                }
+                HostAction::Committed { version, etag } => {
+                    self.app.host_committed = Some((version, etag.clone()));
+                    self.app.set_status(format!("Committed as version {version} · etag {etag}"));
+                }
+            }
+        }
+    }
+
+    /// `session-state` on a status or participant change (join, leave, reconnect), `presence` at
+    /// the room's pace.
+    fn publish_host_state(&mut self) {
+        let Some(bridge) = self.bridge.clone() else { return };
+        if !self.app.collab.is_enabled() {
+            return;
+        }
+        let status = host_session::status_word(self.app.collab.status());
+        let participants = host_session::participants(&self.app);
+        let signature = (status.to_string(), participants.clone());
+        if self.last_host_state.as_ref() != Some(&signature) {
+            if let Err(message) = bridge.post_session_state(status, &participants) {
+                log::warn!("session-state: {message}");
+            }
+            self.last_host_state = Some(signature);
+            self.host_state.mark_connected();
+        }
+        let now = js_sys::Date::now();
+        if now - self.last_presence_ms >= 100.0 {
+            self.last_presence_ms = now;
+            if let Err(message) = bridge.post_presence(&participants) {
+                log::warn!("presence: {message}");
+            }
+        }
     }
 }
 

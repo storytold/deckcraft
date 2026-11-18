@@ -1,0 +1,13 @@
+[package]
+name = "deckcraft-collab-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Wire types for DeckCraft real-time collaboration: the shared envelope from .craft/protocol/ARCHITECTURE.md with DeckCraft's operation payloads"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

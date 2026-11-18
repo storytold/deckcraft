@@ -11,6 +11,29 @@ fn session() -> Session {
 }
 
 #[test]
+fn a_base_transfer_replaces_the_active_document_in_place() {
+    let mut s = session();
+    let uid = s.doc().unwrap().uid;
+    let revision = s.doc().unwrap().revision;
+    let before = s.doc().unwrap().doc.slides[0].shapes.len();
+    let mut source = Session::with_new();
+    source.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50], "text": "base"})).unwrap();
+    let doc = source.doc().unwrap().doc.as_ref().clone();
+
+    s.replace_active_document(doc).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.uid, uid, "the window keeps its document slot");
+    assert!(st.revision > revision, "caches see a new revision");
+    assert_eq!(st.doc.slides.len(), 1);
+    assert_eq!(st.doc.slides[0].shapes.len(), before + 1);
+    assert!(!st.is_dirty(), "the server's base is the saved state");
+
+    // The undo history described the old document and does not bring it back.
+    let _ = s.execute("edit.undo", &json!({}));
+    assert_eq!(s.doc().unwrap().doc.slides[0].shapes.len(), before + 1);
+}
+
+#[test]
 fn new_presentation_and_slides() {
     let mut s = session();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 1);

@@ -92,8 +92,40 @@ impl CommandSpec {
         })
     }
 
+    /// Whether the command may run now: its own eligibility check, and the read-only gate for
+    /// commands that change the document. The single rule the ribbon, the Quick Access Toolbar
+    /// and the command palette share, so a collaboration viewer sees one consistent set.
+    pub fn allowed(&self, s: &Session) -> std::result::Result<(), String> {
+        if s.is_read_only() && self.changes_document() {
+            return Err(READ_ONLY.into());
+        }
+        (self.enabled)(s)
+    }
+
+    /// Whether the command can change the document. `undoable` marks every editing command;
+    /// history, file replacement, recovery and the input-method handlers are `noundo` (or plain
+    /// specs) but still replace, rewind or type into the document, so a viewer gets them refused
+    /// too. Navigation, selection, copying, saving and exporting stay available.
+    pub fn changes_document(&self) -> bool {
+        self.undoable
+            || matches!(
+                self.id,
+                "edit.undo"
+                    | "edit.redo"
+                    | "file.new"
+                    | "file.open"
+                    | "file.openBytes"
+                    | "file.adopt"
+                    | "file.revert"
+                    | "file.recovery.open"
+                    | "text.compose"
+                    | "text.commit"
+                    | "text.deleteSurrounding"
+            )
+    }
+
     pub fn info(&self, s: &Session) -> CommandInfo {
-        let e = (self.enabled)(s);
+        let e = self.allowed(s);
         CommandInfo {
             id: self.id,
             label: self.label,
@@ -120,6 +152,9 @@ pub const NOTHING_SELECTED: &str = "nothing selected";
 pub const SELECT_TWO: &str = "select two or more objects";
 pub const NO_TEXT_POINT: &str = "no text insertion point";
 pub const SELECT_TEXT_OR_SHAPE: &str = "select text or a shape";
+/// The session is view-only (a collaboration viewer): commands that change the document are
+/// refused, queries and navigation still work.
+pub const READ_ONLY: &str = "the presentation is view-only";
 pub fn has_selection(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     if s.active().is_some_and(|d| !d.selection.shapes.is_empty()) { Ok(()) } else { Err(NOTHING_SELECTED.into()) }
