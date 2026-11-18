@@ -226,7 +226,7 @@ impl FontDb {
             return f;
         }
         let family = f.family.clone();
-        let ok = |s: &Arc<FontFace>| s.family.eq_ignore_ascii_case(&family) && covers_cluster(s, cluster);
+        let ok = |s: &Arc<FontFace>| s.family.eq_ignore_ascii_case(&family) && covers_cluster(s, cluster) && !s.is_color();
         let score = |s: &FontFace| (s.weight - weight).abs() + if s.italic != italic { 1000.0 } else { 0.0 };
         let named = self.face(&family, base);
         let best = if ok(&named) && score(&named) < score(&f) { named } else { f };
@@ -254,6 +254,7 @@ impl FontDb {
             let mut v: Vec<&Arc<FontFace>> = faces
                 .iter()
                 .filter(|f| !bundled.iter().any(|b| f.family.eq_ignore_ascii_case(b)) && !CRAFT_FONTS.iter().any(|c| c.family == f.family))
+                .filter(|f| !f.style.contains('{'))
                 .filter(|f| covers_cluster(f, cluster))
                 .collect();
             v.sort_by_key(|f| (f.italic, (f.weight - 400.0).abs() as i32));

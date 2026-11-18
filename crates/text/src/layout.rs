@@ -681,8 +681,9 @@ fn new_run(cell: &Cell, st: &Style, face: &Arc<FontFace>, para: usize, pos: &Cel
         glyphs: vec![],
         cells: vec![],
         // A bold or italic run's fallback face without that weight or slant (a CJK font) is made bolder or slanted; the run's own fonts keep the run's settings.
-        fake_bold: if cell.fallback { st.style_name.starts_with("Bold") && face.weight < 550.0 } else { st.fake_bold },
-        fake_italic: if cell.fallback { st.style_name.ends_with("Italic") && !face.italic } else { st.fake_italic },
+        // Colour (emoji) faces are never made bolder or slanted.
+        fake_bold: if cell.fallback { st.style_name.starts_with("Bold") && face.weight < 550.0 && !face.is_color() } else { st.fake_bold },
+        fake_italic: if cell.fallback { st.style_name.ends_with("Italic") && !face.italic && !face.is_color() } else { st.fake_italic },
         outline: st.outline,
         para,
         chars: (pos.ci, pos.ci + 1),
