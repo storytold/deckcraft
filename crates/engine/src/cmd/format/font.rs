@@ -457,8 +457,15 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             o.insert("scheme".into(), json!(slot.xml_name()));
             Value::Object(o)
         }
-        ColorBase::Preset { name } => json!(name),
-        ColorBase::System { last, .. } => json!(hex(last)),
+        ColorBase::Preset { name } => {
+            o.insert("preset".into(), json!(name));
+            Value::Object(o)
+        }
+        ColorBase::System { name, last } => {
+            o.insert("system".into(), json!(name));
+            o.insert("last".into(), json!(hex(last)));
+            Value::Object(o)
+        }
     }
 }
 

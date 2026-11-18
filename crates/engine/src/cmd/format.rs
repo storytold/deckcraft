@@ -434,6 +434,24 @@ mod tests {
         assert_eq!(params["color"], json!("#FF000080"));
     }
 
+    /// OK in the Font dialog with only the size changed leaves a system or preset text color,
+    /// its transparency included, as it was.
+    #[test]
+    fn font_dialog_ok_keeps_a_system_or_preset_color_and_its_transparency() {
+        for color in [json!({"system": "windowText", "last": "#000000"}), json!({"preset": "red"})] {
+            let mut s = shape();
+            s.execute("format.color", &json!({"color": color})).unwrap();
+            s.execute("format.textTransparency", &json!({"value": 0.4})).unwrap();
+            let before = props(&s).fill;
+            s.ui_requests.clear();
+            s.execute("format.fontDialog", &json!({})).unwrap();
+            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+            let sent = params["color"].clone();
+            s.execute("format.fontDialog", &json!({"size": 30, "color": sent})).unwrap();
+            assert_eq!(props(&s).fill, before, "{color}");
+        }
+    }
+
     #[test]
     fn font_dialog_rejects_bad_fields_without_editing() {
         let mut s = shape();
