@@ -403,6 +403,54 @@ fn apply_scale(sh: &mut Shape, scale: f64) {
     }
 }
 
+/// After a node's text changed in a generated, automatically sized graphic: the text of `kids`
+/// (the graphic's shapes, in layout order) takes the sizes and indents a fresh layout of `d` (its
+/// text already synced) gives it. Only when every run still has the size generation gave it, at
+/// one shared scale: a size set on some text of a node is the user's and stays, with the rest.
+pub(super) fn size_afresh(d: &Diagram, area: Xfrm, kids: &mut [Shape]) {
+    let mut fresh = layout_raw(d, area);
+    if fresh.len() != kids.len() {
+        return;
+    }
+    let base = |p: &Paragraph| p.runs.first().and_then(|r| r.props.size).or(p.end_props.size);
+    // (size generation starts from, size now) of every run.
+    let mut sizes: Vec<(f64, f64)> = vec![];
+    for (kid, (raw, _)) in kids.iter().zip(&fresh) {
+        let (Some(kt), Some(rt)) = (&kid.text, &raw.text) else { continue };
+        if kt.paragraphs.len() != rt.paragraphs.len() {
+            return;
+        }
+        for (kp, rp) in kt.paragraphs.iter().zip(&rt.paragraphs) {
+            let Some(b) = base(rp).filter(|b| b.is_finite() && *b > 0.0) else { return };
+            for r in &kp.runs {
+                let Some(now) = r.props.size else { return };
+                sizes.push((b, now));
+            }
+        }
+    }
+    // The shared scale, read off the largest text (where half-point rounding matters least).
+    let Some(&(b0, s0)) = sizes.iter().max_by(|a, b| a.0.total_cmp(&b.0)) else { return };
+    let k = s0 / b0;
+    if !(k.is_finite() && k > 0.0 && k <= 1.001) || sizes.iter().any(|(b, now)| (now - b * k).abs() > 1.0) {
+        return;
+    }
+    let scale = fresh.iter().map(|(sh, _)| word_scale(sh, 1.0)).fold(1.0_f64, f64::min);
+    for (kid, (raw, _)) in kids.iter_mut().zip(&mut fresh) {
+        apply_scale(raw, scale);
+        let (Some(kt), Some(rt)) = (&mut kid.text, &raw.text) else { continue };
+        for (kp, rp) in kt.paragraphs.iter_mut().zip(&rt.paragraphs) {
+            if let Some(size) = base(rp) {
+                for r in &mut kp.runs {
+                    r.props.size = Some(size);
+                }
+            }
+            kp.end_props.size = rp.end_props.size;
+            kp.props.margin_left = rp.props.margin_left;
+            kp.props.indent = rp.props.indent;
+        }
+    }
+}
+
 /// A picture placeholder for node `node`: its picture when it has one, else a pale box.
 pub(super) fn picture_shape(d: &Diagram, preset: &str, x: Xfrm, i: usize, node: usize) -> Shape {
     let mut sh = Shape { name: "Diagram picture".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() };

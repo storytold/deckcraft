@@ -316,9 +316,20 @@ fn text_carriers(p: &El) -> Vec<&El> {
 /// them (and PowerPoint, when Font Size or Font Color is set on the whole graphic): each from every
 /// run and field that carries text in the paragraphs [`outline`] keeps, or from the paragraph ends
 /// of a node with no text, and only when all of them agree. Line breaks and the end marks of
-/// paragraphs with text do not count.
+/// paragraphs with text do not count. Sizes that agree are a set size only where the text is marked
+/// customised (`custT` on the node's own properties or on a presentation point of the node, ECMA-376
+/// 21.4.3.4): without the mark, layout still sizes the text, so the graphic stays automatic.
 pub fn text_look(data: &El) -> (Option<f64>, Option<deckcraft_model::style::ColorRef>) {
     let Some(pts) = data.child("ptLst") else { return (None, None) };
+    let custom = |pr: Option<&El>| pr.and_then(|p| p.attr("custT")).is_some_and(|v| v == "1" || v == "true");
+    // Nodes whose text a presentation point marks as customised.
+    let marked: std::collections::HashSet<&str> = pts
+        .children_named("pt")
+        .take(MAX_NODES * 16)
+        .filter(|pt| pt.attr("type") == Some("pres") && custom(pt.child("prSet")))
+        .filter_map(|pt| pt.child("prSet").and_then(|p| p.attr("presAssocID")))
+        .collect();
+    let mut sized = true;
     let mut sizes = vec![];
     let mut colors = vec![];
     for pt in pts.children_named("pt").take(MAX_NODES * 4) {
@@ -329,6 +340,9 @@ pub fn text_look(data: &El) -> (Option<f64>, Option<deckcraft_model::style::Colo
         let paras: Vec<&El> = t.children_named("p").collect();
         if paras.is_empty() {
             return (None, None);
+        }
+        if !custom(pt.child("prSet")) && !pt.attr("modelId").is_some_and(|id| marked.contains(id)) {
+            sized = false;
         }
         // `outline` drops paragraphs whose text is blank.
         let kept: Vec<&El> = paras
@@ -352,7 +366,7 @@ pub fn text_look(data: &El) -> (Option<f64>, Option<deckcraft_model::style::Colo
         let first = v.first()?.clone()?;
         v.iter().all(|x| x.as_ref() == Some(&first)).then_some(first)
     }
-    (uniform(&sizes), uniform(&colors))
+    (uniform(&sizes).filter(|_| sized), uniform(&colors))
 }
 
 /// `ppt/diagrams/dataN.xml` for the outline. `drawing_rel` is the slide's relationship id of the
@@ -380,13 +394,20 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
     w.close("dgm:pt");
     // Node k: model id 1 + 3k; its link's parent and sibling transitions 2 + 3k and 3 + 3k.
     let node = |k: usize| guid(seed, 1 + 3 * k);
+    let sized = d.font_size.is_some_and(|v| v.is_finite());
     for (k, n) in d.nodes.iter().enumerate() {
         let mut a = A::new().a("modelId", node(k));
         if n.assistant {
             a = a.a("type", "asst");
         }
         w.open("dgm:pt", a);
-        w.empty("dgm:prSet", A::new().a("phldrT", "[Text]"));
+        // A set size is customised text (`custT`, ECMA-376 21.4.3.4): the mark that tells a size the
+        // user chose from sizes that merely agree.
+        let mut pr = A::new().a("phldrT", "[Text]");
+        if sized {
+            pr = pr.a("custT", "1");
+        }
+        w.empty("dgm:prSet", pr);
         w.empty0("dgm:spPr");
         text(&mut w, &n.text, Some(d));
         w.close("dgm:pt");
@@ -904,6 +925,28 @@ mod tests {
         let doc = crate::xml::parse(xml.as_bytes()).unwrap();
         assert_eq!(text_look(&doc.root), (d.font_size, d.text_color.clone()));
         assert_eq!(outline(&doc.root), d.nodes);
+        // The size is marked as customised text; sizes that merely agree, without the mark, leave
+        // the graphic automatic.
+        assert_eq!(xml.matches("custT=\"1\"").count(), 3, "{xml}");
+        let unmarked = xml.replace(" custT=\"1\"", "");
+        assert_eq!(text_look(&crate::xml::parse(unmarked.as_bytes()).unwrap().root), (None, d.text_color.clone()));
+        let one_unmarked = xml.replacen(" custT=\"1\"", "", 1);
+        assert_eq!(text_look(&crate::xml::parse(one_unmarked.as_bytes()).unwrap().root), (None, d.text_color.clone()));
+        // The mark also counts on a presentation point of the node.
+        let ids: Vec<&str> = unmarked
+            .split("<dgm:pt modelId=\"")
+            .skip(1)
+            .filter(|p| p.contains("phldrT") && !p.starts_with('<'))
+            .filter_map(|p| p.split('"').next())
+            .collect();
+        let nodes: Vec<&str> = ids.iter().copied().filter(|id| unmarked.contains(&format!("<dgm:pt modelId=\"{id}\"><dgm:prSet phldrT"))).collect();
+        assert_eq!(nodes.len(), 3, "{unmarked}");
+        let pres: String = nodes
+            .iter()
+            .map(|id| format!("<dgm:pt modelId=\"{{pres-{id}}}\" type=\"pres\"><dgm:prSet presAssocID=\"{id}\" presName=\"node\" custT=\"1\"/><dgm:spPr/></dgm:pt>"))
+            .collect();
+        let by_pres = unmarked.replacen("</dgm:ptLst>", &format!("{pres}</dgm:ptLst>"), 1);
+        assert_eq!(text_look(&crate::xml::parse(by_pres.as_bytes()).unwrap().root), (d.font_size, d.text_color.clone()));
         // Nodes that differ have no size for the whole graphic; the colour they share stays.
         let mixed = xml.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
         assert_eq!(text_look(&crate::xml::parse(mixed.as_bytes()).unwrap().root), (None, d.text_color.clone()));

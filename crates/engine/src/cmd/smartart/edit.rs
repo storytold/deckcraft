@@ -43,10 +43,19 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
 /// [`share_after_edit`] on the document `d` itself; whether the graphic's shapes were replaced.
 fn share_in(d: &mut Presentation, sel: &crate::Selection, gid: ShapeId) -> bool {
     let Some(list) = crate::shapes_mut(d, sel) else { return false };
-    let Some((ShapeKind::Group { children, child }, Some(group))) = deckcraft_model::find_shape(list, gid).map(|g| (g.kind.clone(), g.xfrm)) else {
+    let Some((ShapeKind::Group { children, child }, Some(group), diagram)) =
+        deckcraft_model::find_shape(list, gid).map(|g| (g.kind.clone(), g.xfrm, g.diagram.clone()))
+    else {
         return false;
     };
     let mut kids = children;
+    // A generated graphic sized automatically takes the sizes a fresh layout gives the new text, so
+    // removing the long word that shrank every node brings the size back (PowerPoint fits the text
+    // again when text is deleted as when it is added).
+    if let Some(mut dg) = diagram.filter(|d| !d.imported && d.font_size.is_none()) {
+        sync_text(&mut dg, &kids);
+        super::paint::size_afresh(&dg, child, &mut kids);
+    }
     for sh in &mut kids {
         if let Some(t) = sh.text.as_mut()
             && let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut t.body.autofit
@@ -74,10 +83,6 @@ fn share_in(d: &mut Presentation, sel: &crate::Selection, gid: ShapeId) -> bool 
 pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
     let st = s.doc().ok()?;
     let g = st.shape(gid)?;
-    let stretch = match (&g.kind, g.xfrm) {
-        (ShapeKind::Group { child, .. }, Some(x)) => super::paint::child_scale(&x, child),
-        _ => (1.0, 1.0),
-    };
     let set = g.diagram.as_ref().and_then(|d| d.font_size);
     if !g.diagram.as_ref().is_some_and(|d| d.imported)
         && let Some(z) = set
@@ -85,15 +90,26 @@ pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
         return Some(z);
     }
     let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;
-    // The smallest size of any line the text layout puts down, so what the renderer draws.
-    let mut shown: Option<f64> = None;
-    deckcraft_model::walk(std::slice::from_ref(g), &mut |x, _| {
-        if let Some(l) = super::paint::laid_out(&ctx, x, stretch) {
+    // The smallest size of any line the text layout puts down, so what the renderer draws. Each
+    // shape is measured in the box it has on the slide: stretched by every group above it, a
+    // nested group of an imported drawing as much as the graphic's own.
+    fn visit(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape, stretch: (f64, f64), depth: usize, shown: &mut Option<f64>) {
+        if let Some(l) = super::paint::laid_out(ctx, sh, stretch) {
             for line in l.lines.iter().filter(|ln| ln.size > 0.0) {
-                shown = Some(shown.map_or(line.size, |m| m.min(line.size)));
+                *shown = Some(shown.map_or(line.size, |m| m.min(line.size)));
             }
         }
-    });
+        if let ShapeKind::Group { children, child } = &sh.kind
+            && depth < 64
+        {
+            let own = sh.xfrm.map_or((1.0, 1.0), |x| super::paint::child_scale(&x, child));
+            for c in children {
+                visit(ctx, c, (stretch.0 * own.0, stretch.1 * own.1), depth + 1, shown);
+            }
+        }
+    }
+    let mut shown: Option<f64> = None;
+    visit(&ctx, g, (1.0, 1.0), 0, &mut shown);
     shown.or(set)
 }
 
@@ -477,24 +493,12 @@ pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cm
     {
         return Ok(());
     }
-    // Automatic again on an imported graphic: the file's drawing stays; shrink-on-overflow comes back on the text
-    // the set size had fixed and the nodes share one scale. The sizes the runs carry are not recoverable and stay.
-    if size.is_none() {
-        let fixed = has_set_size(s, gid);
-        if restyle_imported(
-            s,
-            gid,
-            cmd,
-            true,
-            |d| d.font_size = None,
-            move |sh| {
-                if fixed {
-                    restore_shrink(sh)
-                }
-            },
-        )? {
-            return Ok(());
-        }
+    // Automatic again on an imported graphic that has no set size: the file's drawing stays. Once a
+    // size was set, the drawing's own run sizes are gone and shrinking cannot enlarge the text, so the
+    // graphic is laid out afresh below (as PowerPoint's Reset Graphic re-lays one out), which sizes
+    // its text automatically.
+    if size.is_none() && !has_set_size(s, gid) && restyle_imported(s, gid, cmd, true, |d| d.font_size = None, |_| {})? {
+        return Ok(());
     }
     edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
         d.font_size = size;
