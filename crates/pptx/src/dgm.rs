@@ -309,18 +309,12 @@ fn text_carriers(p: &El) -> Vec<&El> {
 /// every run and field that carries text in the paragraphs [`outline`] keeps, or from the paragraph
 /// ends of a node with no text, and only when all of them agree. Line breaks and the end marks of
 /// paragraphs with text do not count. Sizes that agree are a set size only where the text is marked
-/// customised (`custT` on the node's own properties or on a presentation point of the node, ECMA-376
-/// 21.4.3.4): without the mark, layout still sizes the text, so the graphic stays automatic.
+/// customised (`custT` on the node's own properties, ECMA-376 21.4.3.4, where PowerPoint writes it):
+/// without the mark, layout still sizes the text, so the graphic stays automatic. The mark on a
+/// presentation point is about that shape's own text, so it does not count.
 pub fn text_size(data: &El) -> Option<f64> {
     let pts = data.child("ptLst")?;
     let custom = |pr: Option<&El>| pr.and_then(|p| p.attr("custT")).is_some_and(|v| v == "1" || v == "true");
-    // Nodes whose text a presentation point marks as customised.
-    let marked: std::collections::HashSet<&str> = pts
-        .children_named("pt")
-        .take(MAX_NODES * 16)
-        .filter(|pt| pt.attr("type") == Some("pres") && custom(pt.child("prSet")))
-        .filter_map(|pt| pt.child("prSet").and_then(|p| p.attr("presAssocID")))
-        .collect();
     let mut sizes = vec![];
     for pt in pts.children_named("pt").take(MAX_NODES * 4) {
         if !matches!(pt.attr("type").unwrap_or("node"), "node" | "asst") {
@@ -331,7 +325,7 @@ pub fn text_size(data: &El) -> Option<f64> {
         if paras.is_empty() {
             return None;
         }
-        if !custom(pt.child("prSet")) && !pt.attr("modelId").is_some_and(|id| marked.contains(id)) {
+        if !custom(pt.child("prSet")) {
             return None;
         }
         // `outline` drops paragraphs whose text is blank.
@@ -917,7 +911,7 @@ mod tests {
         assert_eq!(text_size(&crate::xml::parse(unmarked.as_bytes()).unwrap().root), None);
         let one_unmarked = xml.replacen(" custT=\"1\"", "", 1);
         assert_eq!(text_size(&crate::xml::parse(one_unmarked.as_bytes()).unwrap().root), None);
-        // The mark also counts on a presentation point of the node.
+        // The mark on a presentation point of a node is about that shape, not the node's text.
         let ids: Vec<&str> = unmarked
             .split("<dgm:pt modelId=\"")
             .skip(1)
@@ -931,7 +925,7 @@ mod tests {
             .map(|id| format!("<dgm:pt modelId=\"{{pres-{id}}}\" type=\"pres\"><dgm:prSet presAssocID=\"{id}\" presName=\"node\" custT=\"1\"/><dgm:spPr/></dgm:pt>"))
             .collect();
         let by_pres = unmarked.replacen("</dgm:ptLst>", &format!("{pres}</dgm:ptLst>"), 1);
-        assert_eq!(text_size(&crate::xml::parse(by_pres.as_bytes()).unwrap().root), d.font_size);
+        assert_eq!(text_size(&crate::xml::parse(by_pres.as_bytes()).unwrap().root), None);
         // Nodes that differ have no size for the whole graphic.
         let mixed = xml.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
         assert_eq!(text_size(&crate::xml::parse(mixed.as_bytes()).unwrap().root), None);
