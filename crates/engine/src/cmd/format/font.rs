@@ -531,6 +531,18 @@ pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }
+    // A selected SmartArt graphic takes the size as format.size gives it: one size for all its
+    // nodes, kept on the diagram, so regeneration draws it. Run formatting on a shape selection
+    // does not reach inside a group, so without this the dialog's size left the graphic as it was.
+    if let Some(z) = edits.size
+        && s.doc()?.selection.text.is_none()
+    {
+        let graphics = crate::cmd::smartart::selected_graphics(s);
+        if !graphics.is_empty() {
+            let z = z.clamp(1.0, 4000.0);
+            keeping_selection(s, |s| graphics.iter().try_for_each(|gid| crate::cmd::smartart::set_font_size(s, *gid, Some(z), "format.fontDialog")))?;
+        }
+    }
     format_run(s, &|r| edits.write(r))
 }
 
