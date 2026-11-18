@@ -17,6 +17,7 @@ mod media;
 mod presenter;
 mod render;
 mod ui;
+mod window_fit;
 mod zoom;
 pub(crate) use zoom::GRID_CAP;
 
@@ -31,6 +32,7 @@ use render::{render_backdrop, render_threads};
 #[cfg(test)]
 use ui::transition_layers;
 pub use ui::ui;
+pub(crate) use window_fit::WindowFit;
 use zoom::Zoom;
 #[cfg(test)]
 use zoom::{GOTO_DIGITS, norm_on_slide, see_all_cells, see_all_hit, toggle_blank, unit_uv, wheel_zoom_lines, zoom_uv};
@@ -617,6 +619,25 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.
 fn show_fills_screen(reading: bool, show_type: &str) -> bool {
     !reading && show_type != "browsed"
+}
+
+/// Whether the window takes the slide's shape while the show runs: "Browsed by an individual (window)", not reading view.
+fn show_fits_window(reading: bool, show_type: &str) -> bool {
+    !reading && show_type == "browsed"
+}
+
+/// After a browsed show, put the editor's window back as it was: its minimum size, its size and
+/// whether it was maximized. Runs on the first frame without a show, however the show ended.
+pub(crate) fn restore_window(app: &mut SlideApp, ctx: &egui::Context) {
+    if let Some(fit) = app.show_window.take() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(crate::EDITOR_MIN_INNER_SIZE));
+        if let Some(size) = fit.editor_inner {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        }
+        if fit.maximized {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
+    }
 }
 
 #[cfg(test)]

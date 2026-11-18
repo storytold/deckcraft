@@ -4,13 +4,15 @@ use super::media::{
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
+use super::window_fit::{SCREEN_MARGIN, SHOW_MIN_INNER_SIZE, Step, WindowFit};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, show_fits_window, state_for, theme, vec2,
+    viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -74,6 +76,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     show.observe_visible_frame(now, web_time::Instant::now());
+    let starting = !show.started;
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
@@ -123,6 +126,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let full = ui.max_rect();
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, &doc);
+    if starting && show_fits_window(show.reading, &doc.show.show_type) {
+        start_window_fit(app, &ctx);
+    }
+    fit_window(app, &ctx, &doc, full, now);
     let pointer = ctx.input(|i| i.pointer.interact_pos());
     show.expire_goto(now);
     // The clock of the triggered animations runs before anything reacts to the pointer.
@@ -224,6 +231,41 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
         }
         show.after_enter(doc, now);
+    }
+}
+
+/// A browsed show starts: remember the editor's window, leave maximized and lower the minimum
+/// size, which is taller than a 16:9 slide at its width.
+fn start_window_fit(app: &mut SlideApp, ctx: &egui::Context) {
+    // A restore still pending from a show that ended this frame keeps the editor's own size.
+    if app.show_window.is_none() {
+        let (inner, maximized) = ctx.input(|i| (i.viewport().inner_rect.map(|r| r.size()), i.viewport().maximized == Some(true)));
+        app.show_window = Some(WindowFit::new(inner, maximized));
+    }
+    if ctx.input(|i| i.viewport().maximized == Some(true)) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(SHOW_MIN_INNER_SIZE));
+}
+
+/// Keep a browsed show's window in the slide's shape: size it once, then snap it after a resize.
+/// Left alone while full screen or maximized.
+fn fit_window(app: &mut SlideApp, ctx: &egui::Context, doc: &Presentation, full: Rect, now: f64) {
+    let Some(fit) = app.show_window.as_mut() else { return };
+    let (inner, whole, monitor) = ctx.input(|i| {
+        let v = i.viewport();
+        (v.inner_rect.map(|r| r.size()), v.fullscreen == Some(true) || v.maximized == Some(true), v.monitor_size)
+    });
+    let Some(inner) = inner else { return };
+    if whole {
+        return;
+    }
+    match fit.frame(inner, full.size(), slide_aspect(doc), monitor.map(|m| m - SCREEN_MARGIN), now) {
+        Step::Resize(size) => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size)),
+        Step::Wait(secs) => {
+            ctx.request_repaint_after(std::time::Duration::try_from_secs_f64(secs).unwrap_or(std::time::Duration::from_millis(300)));
+        }
+        Step::Idle => {}
     }
 }
 
