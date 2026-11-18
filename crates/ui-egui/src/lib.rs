@@ -26,6 +26,8 @@ pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod opening;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod plugin_http;
 pub mod presenter;
 pub mod ribbon;
 pub mod settings;
@@ -158,6 +160,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
     ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
+    (
+        "app.addins",
+        "Add-ins…",
+        None,
+        "{page?: installed|get}: the Add-ins window (install, run, update and remove plug-ins; the plugin.* commands do the same without it)",
+    ),
 ];
 
 pub struct Perf {
@@ -229,6 +237,10 @@ pub struct SlideApp {
     /// Spelling squiggles, checked on a worker thread.
     pub squiggles: squiggles::Squiggles,
     pub dialog: Option<dialogs::Dialog>,
+    /// The Add-ins window's state while it is open (`dialog` "plugins").
+    pub plugins_form: Option<dialogs::plugins::PluginsForm>,
+    /// A plug-in command's parameter form while it is open (`dialog` "pluginParams").
+    pub plugin_params: Option<dialogs::plugins::ParamsForm>,
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,

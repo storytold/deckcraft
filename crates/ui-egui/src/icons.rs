@@ -144,6 +144,8 @@ icons! {
     Audio => "audio",
     ScreenRecording => "screen-recording",
     Cameo => "cameo",
+    /// Insert ▸ Add-ins: plug-ins (three blocks and a plus).
+    AddIns => "add-ins",
     // Draw
     Pen => "pen",
     Pencil => "pencil",

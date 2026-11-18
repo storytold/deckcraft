@@ -73,6 +73,8 @@ fn title(id: &str) -> &'static str {
         "quit" => "DeckCraft",
         "themeColors" => "Create New Theme Colors",
         "themeFonts" => "Create New Theme Fonts",
+        "plugins" => "Add-ins",
+        "pluginParams" => "Run Add-in",
         _ => "DeckCraft",
     }
 }
@@ -216,6 +218,7 @@ mod hyperlink;
 mod language;
 mod paragraph;
 mod photo_album;
+pub mod plugins;
 mod preferences;
 mod size_position;
 mod slide_size;

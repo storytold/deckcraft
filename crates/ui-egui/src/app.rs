@@ -50,6 +50,8 @@ impl SlideApp {
             control_rx: None,
             squiggles: Default::default(),
             dialog: None,
+            plugins_form: None,
+            plugin_params: None,
             thesaurus_query: String::new(),
             show: None,
             anim_preview: None,

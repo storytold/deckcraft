@@ -130,6 +130,17 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::Video, "Video", "app.insertVideoDialog", json!({}));
         big(app, ui, Icon::Audio, "Audio", "app.insertAudioDialog", json!({}));
     });
+    // Add-ins: plug-ins (RFC-0046). Get Add-ins opens the Add-ins window on its Get page; My
+    // Add-ins lists the installed add-ins' commands, built from what is installed.
+    group(ui, |ui| {
+        big(app, ui, Icon::AddIns, "Get\nAdd-ins", "app.addins", json!({"page": "get"}));
+        let r = big_button(ui, Icon::Grid, "My\nAdd-ins", true).on_hover_text("My Add-ins: run an installed add-in, or manage them");
+        egui::Popup::menu(&r).show(|ui| {
+            if crate::dialogs::plugins::my_addins_menu(app, ui) {
+                ui.close();
+            }
+        });
+    });
 }
 
 /// Hover-to-size table grid. Returns (rows, cols) when clicked.

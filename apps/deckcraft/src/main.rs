@@ -124,6 +124,7 @@ fn services(native_wayland: bool) -> Services {
                 ),
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
+                "plugin" => d.add_filter("DeckCraft add-ins", &["craftplugin"]),
                 _ => d
                     .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
                     .add_filter("DeckCraft", &["deckcraft"])
@@ -297,6 +298,14 @@ fn main() -> eframe::Result {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
             load_prefs(&mut app);
+            // Add-ins (RFC-0046): the user's `Plug-ins` folder beside the settings, and the HTTPS
+            // client DeckCraft checks for updates with, for catalogs and GitHub releases.
+            if std::env::var_os("DECKCRAFT_NO_PREFS").is_none()
+                && let Some(dir) = config_dir()
+            {
+                app.session.plugins.open_store(&dir);
+            }
+            app.session.plugins.set_fetch(deckcraft_ui_egui::plugin_http::http_fetch());
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
             if std::env::var_os("DECKCRAFT_NO_RECOVERY").is_none() {

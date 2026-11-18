@@ -234,6 +234,14 @@ impl SlideApp {
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
+            "app.addins" => {
+                let page = match p.get("page").and_then(Value::as_str) {
+                    None | Some("installed") => dialogs::plugins::Page::Installed,
+                    Some("get") => dialogs::plugins::Page::Get,
+                    Some(other) => return Err(format!("`page` is installed or get, not `{other}`")),
+                };
+                dialogs::plugins::open(self, page);
+            }
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {

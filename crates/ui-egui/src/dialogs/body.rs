@@ -65,6 +65,8 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "themeColors" => theme_colors_dialog(app, ui, d),
         "themeFonts" => theme_fonts_dialog(app, ui, d),
         "dateTime" => date_time_dialog(app, ui, d),
+        "plugins" => super::plugins::plugins_dialog(app, ui, d),
+        "pluginParams" => super::plugins::params_dialog(app, ui, d),
         _ => {
             ui.label(format!("“{}” is not available yet.", d.id));
             let (ok, cancel) = buttons(ui, "OK");
