@@ -1,5 +1,5 @@
 use super::effect_presets;
-use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, json, run, scheme, theme, vec2, widgets};
+use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, edited_scheme, json, run, scheme, theme, vec2, widgets};
 
 /// Percent transparency (0 = opaque) of a solid fill, the same number `shape.fill`'s
 /// `transparency` parameter writes as an alpha transform. Anything else (no fill, a
@@ -439,7 +439,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 picture_fill_options(app, ui, sh.id.0, pf);
             }
             if let Some(Fill::Gradient(g)) = shown_fill {
-                let sc = scheme(app);
+                let sc = edited_scheme(app);
                 if let Some(ng) = crate::fillui::gradient_editor(ui, "shape-grad", g, &sc) {
                     run(app, "shape.fill", json!({"gradient": crate::fillui::gradient_json(&ng)}));
                 }

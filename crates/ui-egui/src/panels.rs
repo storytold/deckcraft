@@ -89,6 +89,25 @@ fn scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
     app.session.active().and_then(|d| d.doc.masters.first().map(|m| m.scheme())).unwrap_or_else(|| deckcraft_model::Theme::default().colors)
 }
 
+/// The color scheme of the page being edited: the scheme of the master a slide uses, with its
+/// color map, or of the master or layout open in Slide Master view. Falls back to [`scheme`].
+fn edited_scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
+    use deckcraft_engine::Target;
+    use deckcraft_model::resolve::Ctx;
+    let edited = app.session.active().and_then(|d| {
+        let doc = &d.doc;
+        match d.selection.target {
+            Target::Slides => doc.slides.get(d.selection.slide).and_then(|s| Ctx::for_slide(doc, s)).map(|c| c.scheme),
+            Target::Master { master } => doc.masters.get(master).map(|m| m.scheme()),
+            Target::Layout { master, layout } => {
+                doc.masters.get(master).and_then(|m| m.layouts.get(layout).map(|l| Ctx::for_layout(doc, m, l).scheme))
+            }
+            t @ (Target::Handout | Target::NotesMaster) => deckcraft_engine::page_master(doc, t).map(|m| m.scheme()),
+        }
+    });
+    edited.unwrap_or_else(|| scheme(app))
+}
+
 fn color_button(
     app: &mut SlideApp,
     ui: &mut Ui,
@@ -141,6 +160,32 @@ mod tests {
 
     use super::{fill_transparency_to_apply, solid_fill_transparency_percent};
     use crate::{Services, SlideApp};
+
+    /// The fill panels resolve colors in the scheme of the master the edited slide uses, not the
+    /// first master's.
+    #[test]
+    fn edited_scheme_is_the_scheme_of_the_slides_master() {
+        use deckcraft_color::Rgba;
+        let half_red = Rgba::rgba(255, 0, 0, 128);
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.edit(|doc, sel| {
+            let mut m = (*doc.masters[0]).clone();
+            m.id = deckcraft_model::MasterId(m.id.0 + 1000);
+            for l in &mut m.layouts {
+                l.id = deckcraft_model::LayoutId(l.id.0 + 10_000);
+            }
+            m.theme.colors.set(SchemeSlot::Accent1, half_red);
+            let layout = m.layouts[0].id;
+            doc.masters.push(std::sync::Arc::new(m));
+            std::sync::Arc::make_mut(&mut doc.slides[sel.slide]).layout = layout;
+            Ok(())
+        })
+        .unwrap();
+        let app = SlideApp::new(s, Services::default());
+        assert_ne!(super::scheme(&app).get(SchemeSlot::Accent1), half_red);
+        assert_eq!(super::edited_scheme(&app).get(SchemeSlot::Accent1), half_red);
+    }
 
     #[test]
     fn solid_fill_transparency_reads_the_alpha_shape_fill_writes() {

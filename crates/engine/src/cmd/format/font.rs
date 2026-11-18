@@ -445,6 +445,14 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             o.insert(m.xml_name().to_string(), json!(v));
         }
     }
+    // One key per transform reads back in key order. When that would change the transforms (a
+    // repeated or valueless transform, or a different order), `mods` lists each one in order.
+    let keyed: Vec<_> =
+        o.iter().filter_map(|(k, v)| deckcraft_color::ColorTransform::from_xml(k, v.as_i64().and_then(|x| i32::try_from(x).ok()))).collect();
+    if keyed != c.mods {
+        o.clear();
+        o.insert("mods".into(), c.mods.iter().map(|m| json!([m.xml_name(), m.value()])).collect());
+    }
     // `#RRGGBB`, or `#RRGGBBAA` when the color is not opaque.
     let hex = |rgb: &deckcraft_color::Rgba| if rgb.a < 255 { format!("#{}{:02X}", rgb.hex(), rgb.a) } else { format!("#{}", rgb.hex()) };
     match &c.base {
