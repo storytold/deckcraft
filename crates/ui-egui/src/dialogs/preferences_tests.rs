@@ -51,6 +51,20 @@ fn the_interface_size_slider_is_labelled_on_screen() {
     assert!(label.center().y > slider.min.y && label.center().y < slider.max.y, "on the same row: {label:?}, {slider:?}");
 }
 
+/// The interface size value is shown with two decimals at every size: `1.75` at the maximum,
+/// not `1.750` beside a default of `1.00`.
+#[test]
+fn the_interface_size_value_always_has_two_decimals() {
+    for (scale, shown, longer) in [(1.75, "1.75", "1.750"), (0.75, "0.75", "0.750")] {
+        let mut h = harness();
+        h.state_mut().ui.ui_scale = scale;
+        h.run_steps(2);
+        open_options(&mut h);
+        assert!(h.query_by_value(shown).is_some(), "the slider shows {shown}");
+        assert!(h.query_by_value(longer).is_none(), "and not {longer}");
+    }
+}
+
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
 #[test]
 fn options_cancel_undoes_the_changes() {

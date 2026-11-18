@@ -1360,7 +1360,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let r = ui
         .horizontal(|ui| {
             ui.label("Interface size:");
-            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75))
+            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).fixed_decimals(2))
         })
         .inner;
     let enabled = r.enabled();
