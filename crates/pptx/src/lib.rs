@@ -66,8 +66,22 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
 
 /// [`import`], plus the part names of slides the file lists but that couldn't be read and were
 /// left out.
+/// Files with more than 10,000 slide-list entries return [`PptxError::Unsupported`] instead of a truncated presentation.
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
     read::import_checked(bytes)
+}
+
+/// [`import_checked`], plus warnings for content cut to fit a limit (a table past the cell cap
+/// keeps its leading rows); the file still opens.
+pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
+    read::import_report(bytes)
+}
+
+/// [`import`] with a lower presentation-wide chart point budget, so tests reach the over-budget
+/// path without a multi-million-point chart.
+#[doc(hidden)]
+pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
+    read::import_with_chart_points(bytes, points).map(|(p, _)| p)
 }
 
 /// Read the theme of a `.thmx` file, or of a `.pptx` / `.potx`'s first master, with its media.
