@@ -7635,15 +7635,16 @@ fn formatting_after_select_cells_touches_only_those_cells() {
     s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
     s.execute("format.align", &json!({"align": "center"})).unwrap();
     let t = table(&s);
-    for c in 0..3 {
-        let p = &t.rows[0].cells[c].text.paragraphs[0];
+    assert!(t.rows.len() >= 3 && t.rows.iter().all(|row| row.cells.len() >= 3));
+    for (c, cell) in t.rows[0].cells.iter().enumerate().take(3) {
+        let p = &cell.text.paragraphs[0];
         assert_eq!(p.runs[0].props.bold, Some(true), "header cell {c} bold");
         assert_eq!(p.runs[0].props.fill, red, "header cell {c} red");
         assert_eq!(p.props.align, Some(Align::Center), "header cell {c} centred");
     }
-    for r in 1..3 {
-        for c in 0..3 {
-            let p = &t.rows[r].cells[c].text.paragraphs[0];
+    for (r, row) in t.rows.iter().enumerate().take(3).skip(1) {
+        for (c, cell) in row.cells.iter().enumerate().take(3) {
+            let p = &cell.text.paragraphs[0];
             assert_eq!(p.runs[0].props.bold, None, "body cell {r},{c} not bold");
             assert_eq!(p.runs[0].props.fill, None, "body cell {r},{c} not coloured");
             assert_eq!(p.props.align, None, "body cell {r},{c} not centred");
