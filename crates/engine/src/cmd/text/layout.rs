@@ -145,14 +145,20 @@ fn shape_text_frame(st: &DocState, sh: &Shape, body: &TextBody) -> Option<(deckc
 }
 
 /// The text position under slide point `p` in the text being edited (its shape or cell).
-pub fn text_pos_at(st: &DocState, t: &TextSel, p: Point) -> Pos {
-    match text_frame(st, t) {
-        Some((l, m)) => {
-            let h = l.hit(m.inverse() * p);
-            (h.para, h.ch)
-        }
-        None => (0, 0),
+pub fn text_pos_at(st: &DocState, t: &TextSel, p: Point) -> Option<Pos> {
+    let (l, m) = text_frame(st, t)?;
+    let inverse = m.inverse();
+    // Do not let a collapsed frame's NaNs choose an unrelated line and replace the user's
+    // selection. Finite inverses remain valid even for very small groups.
+    if !inverse.is_finite() {
+        return None;
     }
+    let q = inverse * p;
+    if !q.x.is_finite() || !q.y.is_finite() {
+        return None;
+    }
+    let h = l.hit(q);
+    Some((h.para, h.ch))
 }
 
 /// The insertion point on the slide: its line from top to bottom, in slide coordinates (flips and

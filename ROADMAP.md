@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (grouped editing shares point-sized text layout with rendering; upstream changes retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (grouped connector attachments persist and follow targets; live collapsed-parent rotation and text selection are preserved; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-13 · **Change:** minor (collapsed-parent move and resize gestures preserve geometry; synced with current upstream; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -163,6 +163,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-18 | Grouped line-end attachments persist in the shape tree and follow target sites in connector parent space. Rotation and text-selection drags skip collapsed live mappings; normal and tiny finite frames stay valid (#1095) |
 | 2026-11-18 | Grouped text editing shares the renderer’s point-sized layout; caret, selection, spelling and composition underlines agree with scaled-group text placement (#1095) |
 | 2026-11-18 | Synced grouped-editing fixes with upstream, retaining canvas clipping, all-slides picture export, scaled-group text placement, language and format updates, and both documentation histories (#1095) |
 | 2026-11-16 | Grouped editing: collapsed parents preserve line ends and Decorative Text adjustments; nested/uneven scales retain slide-space click bands, rotation stays separate from resize, and Alt-drag copies members into their own group (#1095) |
@@ -371,6 +372,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | Grouped connector endpoint glue persists through target movement and native saves; live collapsed-parent rotation/text-selection samples preserve the whole selection; scale-tolerance regression strengthened. Scores unchanged |
 | 2026-11-18 | minor | Grouped text carets, selection, spelling and IME underlines share the renderer’s slide-point layout, preserving font sizes, insets and wrapping (#1095) |
 | 2026-11-18 | trivial | Synced grouped-editing fixes with upstream export, canvas and text-placement changes; retained both documentation histories and unchanged parity scores (#1095) |
 | 2026-11-16 | minor | Grouped handle, click-tolerance and Alt-drag regressions fixed; parity scores unchanged (#1095) |

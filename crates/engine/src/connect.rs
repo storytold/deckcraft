@@ -101,7 +101,20 @@ pub fn endpoints(x: &Xfrm) -> (Point, Point) {
 /// Connections to shapes that no longer exist are dropped.
 pub fn reroute(doc: &mut Presentation, sel: &Selection) {
     let Some(list) = crate::shapes_mut(doc, sel) else { return };
-    if !list.iter().any(|s| matches!(s.kind, ShapeKind::Connector { start: Some(_), .. } | ShapeKind::Connector { end: Some(_), .. })) {
+    fn connectors(shapes: &[Shape], ids: &mut Vec<ShapeId>, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for s in shapes {
+            if matches!(s.kind, ShapeKind::Connector { start: Some(_), .. } | ShapeKind::Connector { end: Some(_), .. }) {
+                ids.push(s.id);
+            }
+            connectors(s.children(), ids, depth + 1);
+        }
+    }
+    let mut ids = vec![];
+    connectors(list, &mut ids, 0);
+    if ids.is_empty() {
         return;
     }
     let snapshot: Vec<Shape> = list.clone();
@@ -111,8 +124,15 @@ pub fn reroute(doc: &mut Presentation, sel: &Selection) {
         let v = sites_of(&view, sel, &snapshot, id)?;
         v.get(idx as usize).or(v.first()).copied()
     };
-    let mut updates: Vec<(usize, Xfrm, bool, bool)> = vec![];
-    for (i, s) in snapshot.iter().enumerate() {
+    let mut updates: Vec<(ShapeId, Xfrm, bool, bool)> = vec![];
+    for id in ids {
+        let Some((s, parent)) = locate(&view, sel, &snapshot, id) else { continue };
+        let inverse = parent.inverse();
+        // A collapsed group cannot express a slide site in child coordinates. Preserve its
+        // connector and attachments until the parent has a finite inverse again.
+        if !inverse.is_finite() {
+            continue;
+        }
         let ShapeKind::Connector { start, end } = &s.kind else { continue };
         if start.is_none() && end.is_none() {
             continue;
@@ -122,10 +142,13 @@ pub fn reroute(doc: &mut Presentation, sel: &Selection) {
         let a = start.and_then(|(id, k)| site(id, k));
         let b = end.and_then(|(id, k)| site(id, k));
         if let Some(q) = a {
-            p0 = q;
+            p0 = inverse * q;
         }
         if let Some(q) = b {
-            p1 = q;
+            p1 = inverse * q;
+        }
+        if !p0.x.is_finite() || !p0.y.is_finite() || !p1.x.is_finite() || !p1.y.is_finite() {
+            continue;
         }
         let nx = crate::tools::line_xfrm(p0, p1, x.rot);
         let changed = (nx.x - x.x).abs() > 1e-6
@@ -137,12 +160,12 @@ pub fn reroute(doc: &mut Presentation, sel: &Selection) {
         let drop_a = start.is_some() && a.is_none();
         let drop_b = end.is_some() && b.is_none();
         if changed || drop_a || drop_b {
-            updates.push((i, nx, drop_a, drop_b));
+            updates.push((id, nx, drop_a, drop_b));
         }
     }
     let Some(list) = crate::shapes_mut(doc, sel) else { return };
-    for (i, nx, drop_a, drop_b) in updates {
-        if let Some(s) = list.get_mut(i) {
+    for (id, nx, drop_a, drop_b) in updates {
+        if let Some(s) = deckcraft_model::find_shape_mut(list, id) {
             s.xfrm = Some(nx);
             if let ShapeKind::Connector { start, end } = &mut s.kind {
                 if drop_a {
@@ -159,7 +182,7 @@ pub fn reroute(doc: &mut Presentation, sel: &Selection) {
 /// Glue end `end` (0 = start, 1 = end) of line `id` to `to` (or unglue with `None`). Plain lines
 /// become connectors when glued.
 pub fn set_glue(list: &mut [Shape], id: ShapeId, end: u8, to: Option<(ShapeId, u32)>) {
-    let Some(s) = list.iter_mut().find(|s| s.id == id) else { return };
+    let Some(s) = deckcraft_model::find_shape_mut(list, id) else { return };
     if !matches!(s.kind, ShapeKind::Connector { .. }) {
         if to.is_none() || !matches!(s.kind, ShapeKind::Shape) {
             return;

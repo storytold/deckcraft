@@ -167,7 +167,7 @@ impl Session {
         {
             t.cell = f.cell_at(f.local(p)).or(old_cell);
         }
-        let pos = cmd::text::text_pos_at(st, &t, p);
+        let Some(pos) = cmd::text::text_pos_at(st, &t, p) else { return Ok(None) };
         // A selection can't span cells: a click in another cell starts afresh.
         let extend = extend && t.cell == old_cell;
         let cell = t.cell;
@@ -191,7 +191,9 @@ impl Session {
         let params = match cmd::table::table_frame(st, sh) {
             Some(f) => {
                 let Some((r, c)) = f.cell_at(f.local(p)) else { return Ok(false) };
-                let pos = cmd::text::text_pos_at(st, &TextSel { shape: id, cell: Some((r, c)), ..Default::default() }, p);
+                let Some(pos) = cmd::text::text_pos_at(st, &TextSel { shape: id, cell: Some((r, c)), ..Default::default() }, p) else {
+                    return Ok(false);
+                };
                 json!({"id": id, "cell": [r, c], "at": [pos.0, pos.1]})
             }
             None => {

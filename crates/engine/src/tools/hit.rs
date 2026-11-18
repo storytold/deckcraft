@@ -375,7 +375,7 @@ pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) ->
 
 /// Text position under slide point `p` in shape `sh`.
 pub fn text_pos(st: &crate::DocState, sh: &Shape, p: Point) -> (usize, usize) {
-    cmd::text::text_pos_at(st, &TextSel { shape: sh.id, ..Default::default() }, p)
+    cmd::text::text_pos_at(st, &TextSel { shape: sh.id, ..Default::default() }, p).unwrap_or((0, 0))
 }
 
 /// Row heights of table `t` as drawn: rows grow to fit their text.

@@ -2398,6 +2398,44 @@ fn check_grouped_line_end_snap(nested: bool, end: u8, decoy: bool, rotated: bool
     let (moved, stationary) = if end == 0 { (parent_after * a, parent_after * b) } else { (parent_after * b, parent_after * a) };
     assert!((moved - target).hypot() < 1e-8, "line end {moved:?} must land on rendered target {target:?}");
     assert!((stationary - fixed).hypot() < 1e-8, "the other endpoint must stay fixed");
+    let model::ShapeKind::Connector { start, end: attached_end } = st.shape(id).unwrap().kind else { panic!("glued line") };
+    assert_eq!(if end == 0 { start } else { attached_end }.map(|g| g.0), Some(target_id));
+    let glued = st.shape(id).unwrap().clone();
+    // A second drag must detach immediately, rather than rerouting through the old glue
+    // between separate geometry and attachment edits.
+    let free = target + Vec2::new(80.0, 70.0);
+    s.pointer(event(PointerKind::Down, target)).unwrap();
+    s.pointer(event(PointerKind::Drag, free)).unwrap();
+    let st = s.doc().unwrap();
+    let parent = cmd::parent_transform(st, id);
+    let (a, b) = connect::endpoints(&st.shape(id).unwrap().xfrm.unwrap());
+    assert!((parent * if end == 0 { a } else { b } - free).hypot() < 1e-8, "detaching must move during Drag");
+    s.pointer(event(PointerKind::Up, free)).unwrap();
+    let model::ShapeKind::Connector { start, end: attached_end } = s.doc().unwrap().shape(id).unwrap().kind else { panic!("connector") };
+    assert_eq!(if end == 0 { start } else { attached_end }, None);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(id).unwrap(), &glued);
+    let other_site = Point::new(700.0, 250.0);
+    s.pointer(event(PointerKind::Down, target)).unwrap();
+    s.pointer(event(PointerKind::Drag, other_site)).unwrap();
+    s.pointer(event(PointerKind::Up, other_site)).unwrap();
+    let st = s.doc().unwrap();
+    let parent = cmd::parent_transform(st, id);
+    let (a, b) = connect::endpoints(&st.shape(id).unwrap().xfrm.unwrap());
+    assert!((parent * if end == 0 { a } else { b } - other_site).hypot() < 1e-8);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(id).unwrap(), &glued);
+    s.execute("shape.move", &json!({"ids":[target_id],"dx":40,"dy":25})).unwrap();
+    let st = s.doc().unwrap();
+    let parent = cmd::parent_transform(st, id);
+    let (a, b) = connect::endpoints(&st.shape(id).unwrap().xfrm.unwrap());
+    let (moved, stationary) = if end == 0 { (parent * a, parent * b) } else { (parent * b, parent * a) };
+    assert!((moved - (target + Vec2::new(40.0, 25.0))).hypot() < 1e-8, "glued end must follow target movement");
+    assert!((stationary - fixed).hypot() < 1e-8, "unglued end must stay fixed");
+    let bytes = cmd::file::save_bytes(&st.doc, "deckcraft").unwrap();
+    let back = deckcraft_format::load(&bytes).unwrap();
+    assert_eq!(model::find_shape(&back.slides[st.selection.slide].shapes, id), st.shape(id));
+    s.execute("edit.undo", &json!({})).unwrap();
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.doc().unwrap().shape(id).unwrap().xfrm, Some(orig), "endpoint drag must undo in one step");
 }
@@ -2575,7 +2613,7 @@ fn grouped_text_editing_matches_rendered_text() {
             assert!((a - drawn.transform * Point::new(cx, top)).hypot() < 1e-8);
             assert!((b - drawn.transform * Point::new(cx, bot)).hypot() < 1e-8);
             let p = drawn.transform * Point::new(cx, (top + bot) / 2.0);
-            assert_eq!(cmd::text::text_pos_at(st, &t, p), (0, 3));
+            assert_eq!(cmd::text::text_pos_at(st, &t, p), Some((0, 3)));
             let ev = |kind| PointerEvent { kind, x: p.x, y: p.y, mods: Mods::default(), tol: 1.0, pressure: None };
             s.pointer(ev(PointerKind::DoubleClick)).unwrap();
             assert_eq!(s.doc().unwrap().selection.text.as_ref().unwrap().shape, id);
@@ -2891,7 +2929,7 @@ fn grouped_text_frame_band_uses_slide_units() {
         ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[0,0,100,100],"text":"Editable"})).unwrap()["id"].as_u64().unwrap() as u32);
     wrap_test_member_in_group(&mut s, id, Xfrm::new(0.0, 0.0, 1000.0, 10.0), false);
     s.execute("text.edit", &json!({"id":id,"at":[0,0]})).unwrap();
-    let p = Point::new(50.0, 5.0);
+    let p = Point::new(5.0, 5.0);
     assert!(!matches!(s.hit_test(p, 1.0), Some(tools::Hit::Frame { .. })));
     for kind in [PointerKind::Down, PointerKind::Up] {
         s.pointer(PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() }).unwrap();
@@ -3072,8 +3110,8 @@ fn cell_text_is_laid_out_where_the_cell_draws_it() {
     // Hit testing: the start and the end of "Hello world".
     let st = s.doc().unwrap();
     let t = TextSel { shape: id, cell: Some((0, 0)), ..Default::default() };
-    assert_eq!(cmd::text::text_pos_at(st, &t, deckcraft_geom::Point::new(101.0, 115.0)), (0, 0));
-    assert_eq!(cmd::text::text_pos_at(st, &t, deckcraft_geom::Point::new(295.0, 115.0)), (0, 11));
+    assert_eq!(cmd::text::text_pos_at(st, &t, deckcraft_geom::Point::new(101.0, 115.0)), Some((0, 0)));
+    assert_eq!(cmd::text::text_pos_at(st, &t, deckcraft_geom::Point::new(295.0, 115.0)), Some((0, 11)));
 }
 
 #[test]
@@ -9011,4 +9049,109 @@ fn shape_adjust_and_quick_style_reject_invalid_index() {
     assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, before.geom);
     assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
     s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
+}
+
+/// A collapsed parent invalidates the entire captured rotation, including other selected members.
+#[test]
+fn grouped_rotation_rechecks_all_current_parents() {
+    use deckcraft_geom::{Point, Vec2, Xfrm};
+    for nested in [false, true] {
+        for collapse in [0, 1, 2] {
+            for (w, h) in [(0.0, 160.0), (240.0, 0.0), (0.0, 0.0)] {
+                let mut s = session();
+                let mut ids = vec![];
+                let mut groups = vec![];
+                for x in [300.0, 700.0] {
+                    let id =
+                        ShapeId(s.execute("shape.insert", &json!({"preset":"rect","rect":[0,0,120,80]})).unwrap()["id"].as_u64().unwrap() as u32);
+                    wrap_test_member_in_group(&mut s, id, Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(x, 100.0, 240.0, 160.0) }, nested);
+                    ids.push(id);
+                    groups.push(s.doc().unwrap().shapes().last().unwrap().id);
+                }
+                s.execute("edit.select", &json!({"ids":if collapse == 2 { &ids[..1] } else { &ids[..] }})).unwrap();
+                let st = s.doc().unwrap();
+                let parent = cmd::parent_transform(st, ids[0]);
+                let x = st.shape(ids[0]).unwrap().xfrm.unwrap();
+                let center = parent * x.center();
+                let at = tools::transformed_box_handles(&x, parent).1;
+                assert_eq!(s.hit_test(at, 1.0), Some(tools::Hit::Rotate { id: ids[0] }));
+                let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() };
+                s.pointer(ev(PointerKind::Down, at)).unwrap();
+                s.edit(|doc, sel| {
+                    let x = model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), groups[collapse % 2]).unwrap().xfrm.as_mut().unwrap();
+                    x.w = w;
+                    x.h = h;
+                    Ok(())
+                })
+                .unwrap();
+                let original = s.doc().unwrap().doc.clone();
+                let d = at - center;
+                let target = center + Vec2::new(-d.y, d.x);
+                s.pointer(ev(PointerKind::Drag, target)).unwrap();
+                assert_eq!(s.doc().unwrap().doc, original, "rotation changed after parent collapse: {nested}/{collapse}/{w}/{h}");
+                s.pointer(ev(PointerKind::Up, target)).unwrap();
+                assert_eq!(s.doc().unwrap().doc, original);
+            }
+        }
+    }
+}
+
+/// Invalid live text mappings cannot extend a selection to an unrelated paragraph.
+#[test]
+fn grouped_text_selection_rechecks_collapsed_frame() {
+    use deckcraft_geom::{Point, Xfrm};
+    for nested in [false, true] {
+        for (w, h) in [(0.0, 160.0), (240.0, 0.0), (0.0, 0.0)] {
+            let mut s = session();
+            let id = ShapeId(
+                s.execute("shape.insert", &json!({"preset":"rect","rect":[0,0,120,80],"text":"First line\nSecond line"})).unwrap()["id"]
+                    .as_u64()
+                    .unwrap() as u32,
+            );
+            wrap_test_member_in_group(&mut s, id, Xfrm::new(300.0, 100.0, 240.0, 160.0), nested);
+            s.execute("text.edit", &json!({"id":id,"at":[0,2]})).unwrap();
+            let st = s.doc().unwrap();
+            let t = st.selection.text.as_ref().unwrap();
+            let (l, m) = cmd::text::text_frame(st, t).unwrap();
+            assert_eq!(l.lines.len(), 2);
+            let (cx, top, bot) = l.caret_drawn(deckcraft_text::Pos { para: 0, ch: 2 }, deckcraft_text::Affinity::Downstream).unwrap();
+            let at = m * Point::new(cx, (top + bot) / 2.0);
+            let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() };
+            s.pointer(ev(PointerKind::Down, at)).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text.as_ref().unwrap().shape, id);
+            s.edit(|doc, sel| {
+                let x = crate::shapes_mut(doc, sel).unwrap().last_mut().unwrap().xfrm.as_mut().unwrap();
+                x.w = w;
+                x.h = h;
+                Ok(())
+            })
+            .unwrap();
+            let before = s.doc().unwrap().selection.text.clone();
+            s.pointer(ev(PointerKind::Drag, Point::new(500.0, 500.0))).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text, before, "selection changed after collapse: {nested}/{w}/{h}");
+            s.pointer(ev(PointerKind::Up, Point::new(500.0, 500.0))).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text, before);
+        }
+    }
+}
+
+/// A finite inverse is valid even when the group is tiny; non-finite mapped points are not hits.
+#[test]
+fn grouped_text_hit_accepts_tiny_finite_frames() {
+    use deckcraft_geom::{Point, Xfrm};
+    for size in [240.0, 1e-6, 1e-12] {
+        let mut s = session();
+        let id = ShapeId(
+            s.execute("shape.insert", &json!({"preset":"rect","rect":[0,0,120,80],"text":"First line"})).unwrap()["id"].as_u64().unwrap() as u32,
+        );
+        wrap_test_member_in_group(&mut s, id, Xfrm::new(0.0, 0.0, size, size), false);
+        s.execute("text.edit", &json!({"id":id,"at":[0,0]})).unwrap();
+        let st = s.doc().unwrap();
+        let t = st.selection.text.as_ref().unwrap();
+        let (l, m) = cmd::text::text_frame(st, t).unwrap();
+        let (cx, top, bot) = l.caret_drawn(deckcraft_text::Pos { para: 0, ch: 0 }, deckcraft_text::Affinity::Downstream).unwrap();
+        let p = m * Point::new(cx, (top + bot) / 2.0);
+        assert_eq!(cmd::text::text_pos_at(st, t, p), Some((0, 0)), "size={size}");
+        assert_eq!(cmd::text::text_pos_at(st, t, Point::new(f64::INFINITY, 0.0)), None);
+    }
 }

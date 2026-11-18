@@ -104,11 +104,15 @@ impl Session {
                 }
                 let q = parent.inverse() * q;
                 let (s0, s1) = if end == 0 { (q, p1) } else { (p0, q) };
-                self.set_xfrm(id, line_xfrm(s0, s1, orig.rot))?;
+                let nx = line_xfrm(s0, s1, orig.rot);
                 self.edit(|doc, sel| {
-                    if let Some(list) = crate::shapes_mut(doc, sel) {
-                        crate::connect::set_glue(list, id, end, glue.map(|g| (g.0, g.1)));
+                    let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("tool", "no slide"))?;
+                    // Reroute must see the new endpoint and attachment together; otherwise an
+                    // old glue pulls the endpoint back before a detach sample is committed.
+                    if let Some(sh) = deckcraft_model::find_shape_mut(list, id) {
+                        sh.xfrm = Some(nx);
                     }
+                    crate::connect::set_glue(list, id, end, glue.map(|g| (g.0, g.1)));
                     Ok(())
                 })?;
             }
@@ -209,6 +213,12 @@ impl Session {
 
     /// Rotate in the captured frame and map each box back to its own parent.
     fn drag_rotate(&mut self, to_frame: Affine, center: Point, start: f64, origs: &[(ShapeId, Xfrm, Affine)], p: Point, mods: Mods) -> Result<()> {
+        let st = self.doc()?;
+        // A parent may collapse after pointer-down. Skip the whole selection before any
+        // member is changed, rather than applying a stale captured mapping to part of it.
+        if origs.iter().any(|(id, _, _)| !cmd::parent_transform(st, *id).inverse().is_finite()) {
+            return Ok(());
+        }
         let p = to_frame * p;
         let ang = (p.y - center.y).atan2(p.x - center.x);
         let mut delta = (ang - start).to_degrees();
@@ -448,7 +458,7 @@ impl Session {
         }
         let st = self.doc()?;
         if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
-            let pos = cmd::text::text_pos_at(st, t, p);
+            let Some(pos) = cmd::text::text_pos_at(st, t, p) else { return Ok(Value::Null) };
             self.select(|_, sel| {
                 if let Some(t) = sel.text.as_mut() {
                     t.caret = pos;
