@@ -402,3 +402,14 @@ fn hidden_paints_are_bounded_to_queued_requests_and_the_deadline() {
     );
     output.drop_without_applying_deltas();
 }
+
+/// With a window per presentation, only the window of the presentation a screenshot is for
+/// settles and takes it.
+#[test]
+fn a_screenshot_is_for_its_presentations_window() {
+    let mut cap = Capture::default();
+    assert!(cap.is_for(Some(3)), "no request waits");
+    let _rx = setup(&mut cap, web_time::Instant::now(), None);
+    assert!(cap.is_for(Some(7)));
+    assert!(!cap.is_for(Some(3)), "another presentation's window leaves it alone");
+}

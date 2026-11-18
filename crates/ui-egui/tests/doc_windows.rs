@@ -18,6 +18,8 @@ thread_local! {
     static INFOS: RefCell<egui::ViewportIdMap<ViewportInfo>> = RefCell::new(egui::ViewportIdMap::default());
     /// The viewport commands the app sent this frame.
     static SENT: RefCell<Vec<(ViewportId, ViewportCommand)>> = const { RefCell::new(Vec::new()) };
+    /// Each window's builder as last shown.
+    static BUILDERS: RefCell<egui::ViewportIdMap<egui::ViewportBuilder>> = RefCell::new(egui::ViewportIdMap::default());
 }
 
 fn record(mut out: egui::FullOutput) {
@@ -39,11 +41,17 @@ struct Desk {
 impl Desk {
     /// The app with `n` new presentations, each in its own window.
     fn new(n: usize) -> Desk {
+        Desk::with_base(n, egui::ViewportBuilder::default())
+    }
+
+    /// The app with `n` new presentations, its windows built from `base`.
+    fn with_base(n: usize, base: egui::ViewportBuilder) -> Desk {
         INFOS.with(|i| i.borrow_mut().clear());
         let ctx = Context::default();
         ctx.set_embed_viewports(false);
         Context::set_immediate_viewport_renderer(|ctx, viewport| {
             let id = viewport.ids.this;
+            BUILDERS.with(|b| b.borrow_mut().insert(id, viewport.builder.clone()));
             let mut input = RawInput { viewport_id: id, ..RawInput::default() };
             input.viewports = INFOS.with(|i| i.borrow().clone());
             input.viewports.entry(id).or_default().parent = Some(viewport.ids.parent);
@@ -54,7 +62,7 @@ impl Desk {
         for _ in 0..n {
             app.run("file.new", json!({})).unwrap();
         }
-        let windows = DocWindows::new(&mut app, egui::ViewportBuilder::default());
+        let windows = DocWindows::new(&mut app, base);
         let mut desk = Desk { ctx, app, windows };
         desk.frames(3);
         desk
@@ -136,6 +144,31 @@ fn each_presentation_has_a_window_and_new_opens_another() {
     assert_ne!(desk.viewport(second), ViewportId::ROOT, "the new presentation opens in a window of its own");
     assert_eq!(desk.app.session.active().map(|d| d.uid), Some(second));
     assert_eq!(desk.windows.decks(), [second, first]);
+}
+
+#[test]
+fn a_new_window_opens_below_and_right_of_a_screen_sized_one() {
+    // The app's window size fills this 1440 × 900 screen, as on a 13" MacBook Air.
+    let base = egui::ViewportBuilder::default().with_inner_size([1440.0, 900.0]);
+    let mut desk = Desk::with_base(1, base);
+    let root = egui::Rect::from_min_size(egui::pos2(0.0, 31.0), egui::vec2(1440.0, 838.0));
+    INFOS.with(|i| {
+        let mut i = i.borrow_mut();
+        let info = i.entry(ViewportId::ROOT).or_default();
+        info.monitor_size = Some(egui::vec2(1440.0, 900.0));
+        info.outer_rect = Some(root);
+        info.inner_rect = Some(egui::Rect::from_min_max(root.min + egui::vec2(0.0, 33.0), root.max));
+    });
+    desk.frames(2);
+    desk.frame_with(|app, _| {
+        let _ = app.run("file.new", json!({}));
+    });
+    desk.frames(2);
+    let window = BUILDERS.with(|b| b.borrow()[&desk.viewport(desk.uid(1))].clone());
+    let at = window.position.expect("a cascaded position");
+    assert!(at.x > root.min.x && at.y > root.min.y, "{at:?} is not on top of {root:?}");
+    let size = window.inner_size.expect("a size");
+    assert!(at.x + size.x <= 1440.0 && at.y + size.y + 33.0 <= 900.0, "{at:?} {size:?} fits the screen");
 }
 
 #[test]

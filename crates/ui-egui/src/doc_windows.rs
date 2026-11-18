@@ -19,13 +19,15 @@ pub struct DocWindows {
     viewports: Viewports,
     /// The builder for a new window: the app's own window options.
     base: ViewportBuilder,
+    /// The largest inner size a new window opens at, once the screen is known (see [`Self::show`]).
+    fit: Option<egui::Vec2>,
 }
 
 impl DocWindows {
     /// Windows built like `base`, and the app switched to a window per presentation.
     pub fn new(app: &mut SlideApp, base: ViewportBuilder) -> Self {
         app.native_windows = true;
-        DocWindows { list: WindowList::new(), viewports: Viewports::new(Frame::Desktop), base }
+        DocWindows { list: WindowList::new(), viewports: Viewports::new(Frame::Desktop), base, fit: None }
     }
 
     /// The presentation each window shows, most recently focused first.
@@ -86,11 +88,28 @@ impl DocWindows {
         }
         let titles: std::collections::HashMap<u64, String> =
             app.session.documents().iter().map(|d| (d.uid, crate::window_ui::window_title(d))).collect();
-        let base = &self.base;
+        // craft-window's cascade puts a window that doesn't fit at the screen's corner, which is
+        // exactly on a screen-filling window before it: a new window is a few steps smaller than
+        // the screen, so it opens below and right of the last one. Kept once known, since a
+        // changed builder size would resize the open windows.
+        self.fit = self.fit.or_else(|| {
+            ctx.input(|i| {
+                let v = i.viewport();
+                let frame = v.outer_rect?.size() - v.inner_rect?.size();
+                Some(v.monitor_size? - frame - egui::Vec2::splat(3.0 * craft_window::CASCADE_STEP))
+            })
+        });
+        let (base, fit) = (&self.base, self.fit);
         let events = self.viewports.show(
             ui,
             &mut self.list,
-            |_, w| base.clone().with_title(titles.get(w).cloned().unwrap_or_default()),
+            |_, w| {
+                let builder = base.clone().with_title(titles.get(w).cloned().unwrap_or_default());
+                match (builder.inner_size, fit) {
+                    (Some(size), Some(fit)) => builder.with_inner_size(size.min(fit)),
+                    _ => builder,
+                }
+            },
             |ui, _, w| {
                 app.enter_deck(*w);
                 let viewport = ui.ctx().viewport_id();
@@ -106,7 +125,9 @@ impl DocWindows {
                         }
                     }
                 }
-                app.ui(ui);
+                // Each presentation's widget memory (scroll positions…) stays its own, also when
+                // another presentation takes over the root window.
+                ui.push_id(("deckcraft.deck", *w), |ui| app.ui(ui));
                 app.window_viewport = None;
                 // A command in this window made another presentation active (File › New, Open,
                 // Next Window): that window comes forward.
