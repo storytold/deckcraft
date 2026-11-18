@@ -1239,6 +1239,39 @@ fn effect_text(set: impl Fn(&mut deckcraft_model::text::RunProps)) -> Presentati
     deck_with(vec![sh])
 }
 
+/// Text whose glow comes only from its paragraph's `defRPr` needs the filters too: drawn on the
+/// worker threads it panicked (vello_cpu has no filters there) and the slide came out blank.
+#[test]
+fn a_paragraph_default_text_glow_needs_filters() {
+    let mut sh = Shape { id: ShapeId(741), xfrm: Some(Xfrm::new(100.0, 100.0, 600.0, 300.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text("IIII");
+    let p = &mut t.paragraphs[0];
+    p.runs[0].props.size = Some(100.0);
+    p.runs[0].props.fill = Some(deckcraft_model::style::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 0))));
+    p.def_props.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    sh.text = Some(t);
+    assert_green_glow_drawn_with_threads(&deck_with(vec![sh]));
+}
+
+/// Text whose glow comes only from the presentation's default text style (`p:defaultTextStyle`)
+/// needs the filters too, or the threaded render panics and the slide comes out blank.
+#[test]
+fn a_presentation_default_text_style_glow_needs_filters() {
+    let mut deck = effect_text(|_| {});
+    let level = deck.default_text_style.levels[0].as_mut().expect("the default text style sets level 1");
+    level.run.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    assert_green_glow_drawn_with_threads(&deck);
+}
+
+/// Asserts that `deck`'s first slide needs filters and that, rendered with worker threads
+/// requested, its text shows a green glow halo rather than a blank slide.
+fn assert_green_glow_drawn_with_threads(deck: &Presentation) {
+    assert!(needs_filters(deck, &deck.slides[0]));
+    let img = render_slide(deck, 0, &RenderOpts { scale: 1.0, threads: 4, ..Default::default() });
+    let halo = img.pixels.as_chunks::<4>().0.iter().filter(|p| p[1] > 150 && p[0] < 120 && p[2] < 120).count();
+    assert!(halo > 300, "green halo pixels {halo}");
+}
+
 #[test]
 fn text_glow_and_shadow_are_drawn() {
     let count = |img: &Image, f: &dyn Fn(&[u8; 4]) -> bool| img.pixels.as_chunks::<4>().0.iter().filter(|px| f(px)).count();
