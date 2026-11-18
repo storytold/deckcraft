@@ -1992,3 +1992,103 @@ fn signed_insets_are_preserved_when_they_fit() {
     assert_eq!(l.lines.len(), 1);
     assert_eq!(l.inner.x0, -10.0);
 }
+
+/// The families that draw the non-space characters of a one-run text box holding `text` in
+/// language `lang`, with the theme's minor fonts for `scripts` (`a:font@script`, typeface).
+fn script_families(text: &str, lang: &str, scripts: &[(&str, &str)]) -> Vec<String> {
+    let (mut p, mut sh) = setup(text, 2000.0, 300.0);
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    m.theme.fonts.minor.scripts =
+        scripts.iter().map(|(s, t)| deckcraft_model::theme::ScriptFont { script: (*s).into(), typeface: (*t).into() }).collect();
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.props.bullet = Some(Bullet::None);
+    for r in &mut para.runs {
+        r.props.lang = Some(lang.into());
+        r.props.size = Some(24.0);
+    }
+    let l = lay(&p, &sh, 2000.0, 300.0);
+    let mut v: Vec<String> = l.runs.iter().filter(|r| !r.glyphs.is_empty()).map(|r| r.face.family.clone()).collect();
+    v.dedup();
+    v
+}
+
+/// A theme lists East Asian fonts by writing system (`Jpan`, `Hans`, `Hant`, `Hang`), and text
+/// is tagged by Unicode script (`Hira`, `Hani`): the theme's Japanese font was never found, and
+/// Japanese text drew in the next face (#1727). It is found under its English or its Japanese
+/// name, and Han characters take the font of the run's language.
+#[test]
+fn the_themes_east_asian_font_is_found_by_writing_system() {
+    let db = FontDb::global();
+    if !db.has_family("BIZ UDPGothic") || !db.has_family("LXGW WenKai Lite") {
+        eprintln!("skipped: needs craft-fonts' BIZ UDPGothic and LXGW WenKai Lite (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let theme = [("Jpan", "BIZ UDPGothic"), ("Hans", "LXGW WenKai Lite")];
+    // Kana and kanji, Japanese.
+    assert_eq!(script_families("ひらがなと漢字", "ja-JP", &theme), ["BIZ UDPGothic"]);
+    // The theme names the font as a Japanese system lists it.
+    assert_eq!(script_families("ひらがなと漢字", "ja-JP", &[("Jpan", "BIZ UDPゴシック")]), ["BIZ UDPGothic"]);
+    // Han characters follow the language: Simplified Chinese takes the Hans font.
+    assert_eq!(script_families("汉字文本", "zh-CN", &theme), ["LXGW WenKai Lite"]);
+    // Kana is Japanese whatever the run's language says.
+    assert_eq!(script_families("カタカナ", "en-US", &theme), ["BIZ UDPGothic"]);
+}
+
+/// A run's East Asian font named in Japanese sets the line as it does named in English: the check
+/// that a face is the run's own East Asian font compared English names only, so the line took the
+/// Latin face's height (#1727).
+#[test]
+fn an_east_asian_font_named_in_japanese_sets_the_line_like_in_english() {
+    if !FontDb::global().has_family("BIZ UDPGothic") {
+        eprintln!("skipped: needs craft-fonts' BIZ UDPGothic (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let line = |ea: &str| {
+        let (p, mut sh) = setup("Latin 日本語のテキスト", 2000.0, 300.0);
+        let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        para.props.bullet = Some(Bullet::None);
+        for r in &mut para.runs {
+            r.props.lang = Some("ja-JP".into());
+            r.props.size = Some(24.0);
+            r.props.font_ea = Some(ea.into());
+        }
+        let l = lay(&p, &sh, 2000.0, 300.0);
+        let li = &l.lines[0];
+        let faces: Vec<String> = l.runs.iter().filter(|r| !r.glyphs.is_empty()).map(|r| r.face.family.clone()).collect();
+        (li.top, li.baseline, li.bottom, li.caret_x.clone(), faces)
+    };
+    let (en, ja) = (line("BIZ UDPGothic"), line("BIZ UDPゴシック"));
+    assert!(en.4.iter().any(|f| f == "BIZ UDPGothic"), "{:?}", en.4);
+    assert_eq!(ja, en);
+}
+
+/// A run with no East Asian typeface of its own takes the theme's font for its language as its
+/// East Asian font: the text draws in it and the line is set by it, as with the same font in
+/// `a:ea` (#1727).
+#[test]
+fn the_themes_font_for_the_language_sets_the_line_like_a_runs_own() {
+    if !FontDb::global().has_family("BIZ UDPGothic") {
+        eprintln!("skipped: needs craft-fonts' BIZ UDPGothic (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let line = |ea: Option<&str>, jpan: Option<&str>| {
+        let (mut p, mut sh) = setup("Latin 日本語のテキスト", 2000.0, 300.0);
+        let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+        m.theme.fonts.minor.scripts =
+            jpan.into_iter().map(|t| deckcraft_model::theme::ScriptFont { script: "Jpan".into(), typeface: t.into() }).collect();
+        let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        para.props.bullet = Some(Bullet::None);
+        for r in &mut para.runs {
+            r.props.lang = Some("ja-JP".into());
+            r.props.size = Some(24.0);
+            r.props.font_ea = ea.map(str::to_string);
+        }
+        let l = lay(&p, &sh, 2000.0, 300.0);
+        let li = &l.lines[0];
+        let faces: Vec<String> = l.runs.iter().filter(|r| !r.glyphs.is_empty()).map(|r| r.face.family.clone()).collect();
+        (li.top, li.baseline, li.bottom, li.caret_x.clone(), faces)
+    };
+    let own = line(Some("BIZ UDPGothic"), None);
+    assert_eq!(line(None, Some("BIZ UDPGothic")), own);
+    assert_eq!(line(None, Some("BIZ UDPゴシック")), own);
+}
