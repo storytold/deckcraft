@@ -112,6 +112,7 @@ pub(super) fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "bold": r.bold.unwrap_or(false),
         "italic": r.italic.unwrap_or(false),
         "underline": r.underline.as_deref().is_some_and(|u| u != "none"),
+        "shadow": r.shadow.is_some(),
         "strike": r.strike.is_some_and(|x| x != Strike::None),
         "superscript": r.baseline.unwrap_or(0.0) > 0.0,
         "subscript": r.baseline.unwrap_or(0.0) < 0.0,

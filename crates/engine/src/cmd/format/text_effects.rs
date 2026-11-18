@@ -2,9 +2,8 @@ use super::{
     Line, Result, Session, Value, bad, color_param, current_run, ed, edit_shapes, f64_or, format_body, format_run, json, ok, on_param, str_param,
 };
 
-pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
-    let v = on_param(p, Some(current_run(s).shadow.is_some()));
-    let sh = deckcraft_model::style::Shadow {
+pub fn default_text_shadow() -> deckcraft_model::style::Shadow {
+    deckcraft_model::style::Shadow {
         color: deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::BLACK).with(deckcraft_color::ColorTransform::Alpha(43000)),
         blur: 3.0,
         dist: 2.0,
@@ -16,8 +15,16 @@ pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
         ky: 0.0,
         align: String::new(),
         rotate_with_shape: false,
-    };
-    format_run(s, &move |r| r.shadow = if v { Some(sh.clone()) } else { None })
+    }
+}
+
+pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
+    let v = on_param(p, Some(current_run(s).shadow.is_some()));
+    let sh = default_text_shadow();
+    format_run(s, &move |r| {
+        r.shadow = if v { Some(sh.clone()) } else { None };
+        r.no_shadow = !v;
+    })
 }
 
 pub(super) fn text_outline(s: &mut Session, p: &Value) -> Result<Value> {
