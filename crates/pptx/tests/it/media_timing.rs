@@ -74,3 +74,62 @@ fn muted_audio_has_no_volume_and_other_clips_keep_theirs() {
     assert_eq!(c[0].volume, 1.0);
     assert_eq!((c[1].volume, c[1].loop_play, c[1].full_screen), (0.0, false, false));
 }
+
+/// A deck with one video clip carrying `clip`, exported; `patch` edits the slide XML before the deck is read back.
+fn round_trip_clip(clip: MediaClip, patch: impl Fn(String) -> String) -> (String, MediaClip) {
+    let mut p = defaults::new_presentation(None);
+    let media = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    let s = deckcraft_model::Shape {
+        id,
+        name: "Clip".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media, video: true, ..clip }),
+        ..Default::default()
+    };
+    Arc::make_mut(&mut p.slides[0]).shapes.push(s);
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let mut slide = String::new();
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        let mut d = vec![];
+        f.read_to_end(&mut d).expect("read");
+        if f.name() == "ppt/slides/slide1.xml" {
+            slide = String::from_utf8(d).expect("utf8");
+            d = patch(slide.clone()).into_bytes();
+        }
+        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
+        out.write_all(&d).expect("write");
+    }
+    let q = deckcraft_pptx::import(&out.finish().expect("finish").into_inner()).expect("import");
+    let clip = q.slides[0].shapes.iter().find_map(|s| if let ShapeKind::Media(m) = &s.kind { Some(m.clone()) } else { None });
+    (slide, clip.expect("clip"))
+}
+
+#[test]
+fn playback_options_are_written_to_the_timing_tree() {
+    let clip = MediaClip { volume: 0.4, loop_play: true, hide_while_not_playing: true, full_screen: true, ..Default::default() };
+    let (xml, back) = round_trip_clip(clip, |s| s);
+    assert!(xml.contains("<p:video fullScrn=\"1\">"), "{xml}");
+    assert!(xml.contains("vol=\"40000\"") && xml.contains("showWhenStopped=\"0\"") && xml.contains("repeatCount=\"indefinite\""), "{xml}");
+    assert_eq!((back.volume, back.loop_play, back.hide_while_not_playing, back.full_screen), (0.4, true, true, true));
+    // Clips left at the defaults add no timing tree at all.
+    let (xml, _) = round_trip_clip(MediaClip { volume: 1.0, ..Default::default() }, |s| s);
+    assert!(!xml.contains("cMediaNode") && !xml.contains("<p:timing"), "{xml}");
+}
+
+#[test]
+fn an_option_turned_off_in_the_timing_tree_stays_off() {
+    let clip = MediaClip { volume: 0.4, loop_play: true, hide_while_not_playing: true, full_screen: true, ..Default::default() };
+    // Another application switched the options off in the timing tree but left DeckCraft's private copy alone.
+    let (_, back) = round_trip_clip(clip, |s| {
+        assert!(s.contains("mediaOptions"));
+        s.replace(" fullScrn=\"1\"", "")
+            .replace(" showWhenStopped=\"0\"", "")
+            .replace(" repeatCount=\"indefinite\"", "")
+            .replace("vol=\"40000\"", "vol=\"100000\"")
+    });
+    assert_eq!((back.volume, back.loop_play, back.hide_while_not_playing, back.full_screen), (1.0, false, false, false));
+}
