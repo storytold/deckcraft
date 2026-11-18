@@ -238,10 +238,10 @@ mod group_fill_roundtrip_tests {
 
     #[test]
     fn group_picture_fill_survives_a_pptx_round_trip() {
-        // Regression coverage for #1798: the group's own picture fill and its members'
-        // grpFill markers are pptx semantics (grpFill in the group's grpSpPr, grpFill on
-        // each member), and both must survive a save/reload unchanged. The media bytes are
-        // opaque to the round trip; the PNG signature is enough for the content type.
+        // Regression coverage for #1798: the group's own picture fill (a:blipFill in its p:grpSpPr)
+        // and its members' grpFill markers (a:grpFill in each member's p:spPr) must survive a
+        // save/reload unchanged. The media bytes are opaque to the round trip; the PNG signature
+        // is enough for the content type.
         let mut p = defaults::new_presentation(None);
         let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         let media = p.add_media("t.png", "image/png", png.clone()).expect("media");
