@@ -887,6 +887,7 @@ fn read_slides(
         let mut slide = read_slide(imp, &part, doc, *id, layout);
         if let Some(notes) = slide_notes(imp, &part, &mut owned_parts) {
             slide.notes = notes;
+            slide.has_notes_slide = true;
         }
         read_slide_comments(pkg, pres_part, &part, &mut slide, &mut owned_parts);
         file_slide_ids.insert(*file_id, *id);
@@ -1611,11 +1612,28 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
                 Some(PhType::SlideNum) => hf.slide_number = true,
                 Some(PhType::Date) => {
                     hf.date = true;
-                    if let Some(t) = &sh.text
-                        && !t.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(r.kind, deckcraft_model::text::RunKind::Field { .. }))
-                        && hf.date_text.is_empty()
-                    {
-                        hf.date_text = t.text();
+                    let field = sh.text.iter().flat_map(|t| t.paragraphs.iter()).flat_map(|p| p.runs.iter()).find_map(|r| match &r.kind {
+                        deckcraft_model::text::RunKind::Field { field } if deckcraft_text::datetime::is_date_field(field) => Some(field.as_str()),
+                        _ => None,
+                    });
+                    match field {
+                        // An automatic date: remember which of the thirteen formats it is, so the
+                        // Header and Footer dialog opens on the deck's own choice instead of the
+                        // default. An unknown spelling (`datetime`, `datetimeFigureOut`) is left
+                        // as no choice rather than guessed at.
+                        Some(kind) => {
+                            if hf.date_format.is_empty() && deckcraft_text::datetime::DATE_KINDS.contains(&kind) {
+                                hf.date_format = kind.to_string();
+                            }
+                        }
+                        // A fixed date: its text, as before.
+                        None => {
+                            if hf.date_text.is_empty()
+                                && let Some(t) = &sh.text
+                            {
+                                hf.date_text = t.text();
+                            }
+                        }
                     }
                 }
                 Some(PhType::Footer) => {
