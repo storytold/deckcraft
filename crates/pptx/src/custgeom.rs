@@ -348,73 +348,7 @@ fn arc_to(d: &mut String, cur: (f64, f64), wr: f64, hr: f64, st: f64, sw: f64) -
 }
 
 /// Parse our path syntax into commands.
-pub fn parse_path(d: &str) -> Vec<(char, Vec<f64>)> {
-    let mut out = vec![];
-    let mut cmd: Option<char> = None;
-    let mut nums: Vec<f64> = vec![];
-    let flush = |cmd: Option<char>, nums: &mut Vec<f64>, out: &mut Vec<(char, Vec<f64>)>| {
-        if let Some(c) = cmd {
-            let n = match c {
-                'M' | 'L' => 2,
-                'C' => 6,
-                'Q' => 4,
-                _ => 0,
-            };
-            if n == 0 {
-                out.push((c, vec![]));
-            } else {
-                for (i, chunk) in nums.chunks(n).enumerate() {
-                    if chunk.len() == n && out.len() < 1_000_000 {
-                        // Repeated coordinates after M continue as L.
-                        let c2 = if c == 'M' && i > 0 { 'L' } else { c };
-                        out.push((c2, chunk.to_vec()));
-                    }
-                }
-            }
-        }
-        nums.clear();
-    };
-    let mut token = String::new();
-    let push_tok = |token: &mut String, nums: &mut Vec<f64>| {
-        if !token.is_empty() {
-            if let Ok(v) = token.parse::<f64>()
-                && v.is_finite()
-            {
-                nums.push(v);
-            }
-            token.clear();
-        }
-    };
-    let cs: Vec<char> = d.chars().collect();
-    for (i, &ch) in cs.iter().enumerate() {
-        match ch {
-            // An 'E' inside a number followed by a digit (or a sign and a digit) is an exponent,
-            // not the end command.
-            'E' if !token.is_empty() && {
-                let n1 = cs.get(i + 1).copied().unwrap_or(' ');
-                let n2 = cs.get(i + 2).copied().unwrap_or(' ');
-                n1.is_ascii_digit() || ((n1 == '-' || n1 == '+') && n2.is_ascii_digit())
-            } =>
-            {
-                token.push(ch)
-            }
-            'M' | 'L' | 'C' | 'Q' | 'Z' | 'm' | 'l' | 'c' | 'q' | 'z' | 'E' => {
-                push_tok(&mut token, &mut nums);
-                flush(cmd, &mut nums, &mut out);
-                cmd = Some(ch.to_ascii_uppercase());
-            }
-            ' ' | ',' | '\t' | '\n' => push_tok(&mut token, &mut nums),
-            '-' if !token.is_empty() && !token.ends_with(['e', 'E']) => {
-                push_tok(&mut token, &mut nums);
-                token.push(ch);
-            }
-            c => token.push(c),
-        }
-    }
-    push_tok(&mut token, &mut nums);
-    flush(cmd, &mut nums, &mut out);
-    out
-}
+pub use craft_drawingml::custgeom::parse_path;
 
 /// Write custom paths as `a:custGeom`. Coordinates are integers in the file, so small path spaces
 /// are scaled up.
@@ -594,5 +528,20 @@ mod tests {
         assert_eq!(v.len(), 3);
         assert_eq!(v[1], ('L', vec![10.0, -5.0]));
         assert!(parse_path("garbage ### C 1").is_empty() || parse_path("garbage").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod shared_path_tests {
+    use super::parse_path;
+
+    #[test]
+    fn shared_path_tokens_preserve_exponents_repeats_and_dropped_tails() {
+        assert_eq!(
+            parse_path("M1E2 -3E-1 4 5 L6-7 Q8 9 10 11 Z"),
+            vec![('M', vec![100.0, -0.3]), ('L', vec![4.0, 5.0]), ('L', vec![6.0, -7.0]), ('Q', vec![8.0, 9.0, 10.0, 11.0]), ('Z', vec![]),]
+        );
+        assert_eq!(parse_path("M0 0 L1"), vec![('M', vec![0.0, 0.0])]);
+        assert_eq!(parse_path("MNaN 0 1 2"), vec![('M', vec![0.0, 1.0])]);
     }
 }

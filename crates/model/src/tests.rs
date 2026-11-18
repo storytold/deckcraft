@@ -349,7 +349,7 @@ fn colour_alpha_follows_alpha_mod_and_off() {
 fn set_alpha_replaces_every_alpha_of_a_color() {
     use deckcraft_color::{ColorScheme, ColorTransform, Rgba};
     let half = Rgba::rgba(10, 20, 30, 128);
-    let scheme = ColorScheme { name: "Test".into(), colors: [half; 12] };
+    let scheme = ColorScheme::new("Test", [half; 12]);
     let bases = [
         ColorRef::rgb(half),
         ColorRef::scheme(SchemeSlot::Accent1),
