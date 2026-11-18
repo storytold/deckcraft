@@ -13,6 +13,9 @@ use deckcraft_ui_egui::{Services, SlideApp};
 use egui::{Context, RawInput, ViewportCommand, ViewportEvent, ViewportId, ViewportInfo};
 use serde_json::json;
 
+/// Every window's size: small enough that a long thumbnail pane scrolls.
+const SCREEN: egui::Rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1280.0, 800.0));
+
 thread_local! {
     /// Each viewport's input for the next frame (the close button).
     static INFOS: RefCell<egui::ViewportIdMap<ViewportInfo>> = RefCell::new(egui::ViewportIdMap::default());
@@ -52,7 +55,7 @@ impl Desk {
         Context::set_immediate_viewport_renderer(|ctx, viewport| {
             let id = viewport.ids.this;
             BUILDERS.with(|b| b.borrow_mut().insert(id, viewport.builder.clone()));
-            let mut input = RawInput { viewport_id: id, ..RawInput::default() };
+            let mut input = RawInput { viewport_id: id, screen_rect: Some(SCREEN), ..RawInput::default() };
             input.viewports = INFOS.with(|i| i.borrow().clone());
             input.viewports.entry(id).or_default().parent = Some(viewport.ids.parent);
             let mut cb = viewport.viewport_ui_cb;
@@ -72,7 +75,7 @@ impl Desk {
     /// commands sent.
     fn frame_with(&mut self, act: impl FnOnce(&mut SlideApp, &Context)) -> Vec<(ViewportId, ViewportCommand)> {
         SENT.with(|s| s.borrow_mut().clear());
-        let mut input = RawInput { viewport_id: ViewportId::ROOT, ..RawInput::default() };
+        let mut input = RawInput { viewport_id: ViewportId::ROOT, screen_rect: Some(SCREEN), ..RawInput::default() };
         input.viewports = INFOS.with(|i| i.borrow().clone());
         input.viewports.entry(ViewportId::ROOT).or_default();
         let Desk { ctx, app, windows } = self;
@@ -311,4 +314,65 @@ fn without_a_sheet_the_built_in_dialog_asks() {
     desk.frames(3);
     assert_eq!(desk.dialog_in(first).as_deref(), Some("close"));
     assert_eq!(calls.get(), 1, "asked the host once, then the built-in dialog");
+}
+
+#[test]
+fn each_window_scrolls_its_own_thumbnail_pane() {
+    let mut desk = Desk::new(2);
+    let (first, second) = (desk.uid(0), desk.uid(1));
+    for uid in [first, second] {
+        desk.frame_with(move |app, _| {
+            app.enter_deck(uid);
+            for _ in 0..40 {
+                app.run("slide.new", json!({})).unwrap();
+            }
+            app.run("slide.go", json!({"index": 0})).unwrap();
+        });
+    }
+    desk.frames(3);
+    // Going to the last slide scrolls the first window's pane to the bottom.
+    desk.frame_with(move |app, _| {
+        app.enter_deck(first);
+        app.run("slide.go", json!({"index": 40})).unwrap();
+    });
+    desk.frames(3);
+    let mut scroll = |uid| {
+        desk.app.enter_deck(uid);
+        desk.app.ui.thumbs_scroll
+    };
+    assert!(scroll(first) > 0.0, "the first window's pane scrolled to its last slide");
+    assert_eq!(scroll(second), 0.0, "the second window's pane stays at its first slide (#2200)");
+}
+
+#[test]
+fn a_presentation_that_takes_over_the_main_window_keeps_its_own_scroll() {
+    let mut desk = Desk::new(2);
+    let (mut root, mut other) = (desk.uid(0), desk.uid(1));
+    if desk.viewport(root) != ViewportId::ROOT {
+        std::mem::swap(&mut root, &mut other);
+    }
+    for uid in [root, other] {
+        desk.frame_with(move |app, _| {
+            app.enter_deck(uid);
+            for _ in 0..40 {
+                app.run("slide.new", json!({})).unwrap();
+            }
+            app.run("slide.go", json!({"index": 0})).unwrap();
+        });
+    }
+    desk.frames(3);
+    // The main window's pane scrolls to its last slide; the other window's stays at the top.
+    desk.frame_with(move |app, _| {
+        app.enter_deck(root);
+        app.run("slide.go", json!({"index": 40})).unwrap();
+    });
+    desk.frames(3);
+    let sheets = with_sheets(&mut desk);
+    desk.close(root);
+    sheets.borrow()[0].1.send("dontSave".into()).unwrap();
+    desk.frames(3);
+    assert_eq!(desk.viewport(other), ViewportId::ROOT, "the other presentation now has the main window");
+    desk.frames(3);
+    desk.app.enter_deck(other);
+    assert_eq!(desk.app.ui.thumbs_scroll, 0.0, "it keeps its own pane position, not the closed one's (#2200)");
 }
