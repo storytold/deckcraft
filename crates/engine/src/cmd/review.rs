@@ -1092,6 +1092,13 @@ mod accessibility_contrast_tests {
             s.execute("shape.altText", &json!({"text": text, "decorative": decorative, "ids": [id]})).unwrap();
             assert_eq!(named(&mut s), expected, "{text:?} decorative {decorative}");
         }
+        // A file name with spaces is reported when it is the picture's own file's.
+        let mut s = Session::with_new();
+        let id =
+            s.execute("insert.picture", &json!({"data": crate::cmd::base64_encode(&png), "name": "Screenshot 2024 at 10.00.png"})).unwrap()["id"]
+                .clone();
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        assert!(issues.as_array().unwrap().iter().any(|i| i["shape"] == id && i["issue"] == "Alternative text is a file name"), "{issues}");
         assert!(!is_file_name("Version 2.0", None), "a version number is not a picture's extension");
         assert!(!is_file_name(".png", None));
         assert!(!is_file_name("A red square, from IMG_2041.png", None));
