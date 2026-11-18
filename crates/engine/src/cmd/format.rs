@@ -487,6 +487,26 @@ mod tests {
         assert_eq!(props(&s).fill, Some(Fill::solid(want)));
     }
 
+    /// A preset name the color parser does not know opens in the Font dialog as the color it draws
+    /// with, so OK applies it.
+    #[test]
+    fn font_dialog_ok_accepts_an_unknown_preset_name() {
+        use deckcraft_color::ColorTransform::AlphaMod;
+        for mods in [vec![], vec![AlphaMod(50000)]] {
+            let mut s = shape();
+            let color = ColorRef { base: ColorBase::Preset { name: "notAColor".into() }, mods: mods.clone() };
+            format_run(&mut s, &move |r| r.fill = Some(Fill::solid(color.clone()))).unwrap();
+            s.ui_requests.clear();
+            s.execute("format.fontDialog", &json!({})).unwrap();
+            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+            let sent = params["color"].clone();
+            s.execute("format.fontDialog", &json!({"size": 30, "color": sent})).unwrap();
+            let want = ColorRef { base: ColorBase::Rgb { rgb: deckcraft_color::Rgba::BLACK }, mods };
+            assert_eq!(props(&s).fill, Some(Fill::solid(want)));
+            assert_eq!(props(&s).size, Some(30.0));
+        }
+    }
+
     /// `mods` must list `[name, value]` pairs of known transforms.
     #[test]
     fn font_dialog_rejects_a_bad_mods_list() {

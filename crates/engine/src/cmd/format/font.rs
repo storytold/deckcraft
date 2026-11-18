@@ -465,8 +465,17 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             o.insert("scheme".into(), json!(slot.xml_name()));
             Value::Object(o)
         }
-        ColorBase::Preset { name } => {
+        ColorBase::Preset { name } if deckcraft_color::is_preset_name(name) => {
             o.insert("preset".into(), json!(name));
+            Value::Object(o)
+        }
+        // A preset name the color parser does not know goes as the RGB color it draws with, so OK still accepts it.
+        ColorBase::Preset { name } => {
+            let drawn = hex(&deckcraft_color::preset(name).unwrap_or(deckcraft_color::Rgba::BLACK));
+            if o.is_empty() {
+                return json!(drawn);
+            }
+            o.insert("rgb".into(), json!(drawn));
             Value::Object(o)
         }
         ColorBase::System { name, last } if deckcraft_color::is_system_name(name) => {
