@@ -91,7 +91,7 @@ impl Bridge {
     pub fn set_author(app: &mut SlideApp, author: &str) {
         let author: String = author.trim().chars().take(MAX_AUTHOR_CHARS).collect();
         if !author.is_empty() {
-            app.session.prefs.author = author;
+            app.session.prefs.set_author(author);
         }
     }
 

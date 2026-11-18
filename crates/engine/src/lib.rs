@@ -329,9 +329,9 @@ pub fn shapes_mut<'a>(doc: &'a mut Presentation, sel: &Selection) -> Option<&'a 
 }
 
 /// The name a run starts with until the person names themselves in the Preferences dialog
-/// ("Your name (comments)"): DeckCraft's own placeholder, saved as any other name would be.
-/// "Presenter" is an ordinary word of a talk, so anything that asks "is this still our default?"
-/// compares against this constant and never against the word itself (#2209).
+/// ("Your name (comments)"): DeckCraft's own placeholder. "Presenter" is also an ordinary word of
+/// a talk, so [`Prefs::author_chosen`] records whether the saved string is a person's choice rather
+/// than this placeholder (#2209).
 pub const DEFAULT_AUTHOR: &str = "Presenter";
 
 /// The most characters a name in the preferences can hold: `prefs.json` is a file on disk, and a
@@ -365,6 +365,12 @@ pub struct Prefs {
     /// Built-in entries you deleted.
     pub ac_removed: Vec<String>,
     pub author: String,
+    /// Whether [`Prefs::author`] is the person's own choice. `false` is the unfilled placeholder,
+    /// which the first desktop start may replace with the operating system account's name.
+    /// Settings written before this flag existed cannot prove that an exact "Presenter" was
+    /// deliberate, so that legacy form migrates as unfilled; any other saved name is necessarily a
+    /// choice and migrates as chosen.
+    pub author_chosen: bool,
     pub undo_limit: usize,
     /// Minutes between AutoRecover saves of unsaved presentations.
     pub recovery_minutes: f64,
@@ -392,6 +398,7 @@ impl Default for Prefs {
             ac_entries: Vec::new(),
             ac_removed: Vec::new(),
             author: DEFAULT_AUTHOR.into(),
+            author_chosen: false,
             undo_limit: 500,
             recovery_minutes: 1.0,
             units: deckcraft_geom::Unit::Inches,
@@ -415,7 +422,17 @@ impl Prefs {
         if self.author.chars().count() > MAX_AUTHOR_CHARS {
             self.author = self.author.chars().take(MAX_AUTHOR_CHARS).collect();
         }
+        if self.author != DEFAULT_AUTHOR {
+            self.author_chosen = true;
+        }
         self
+    }
+
+    /// Set the name a person (or the host page) chose, including a cleared name or this exact
+    /// placeholder when it was typed deliberately, and remember that it is not the unfilled default.
+    pub fn set_author(&mut self, author: impl Into<String>) {
+        self.author = author.into();
+        self.author_chosen = true;
     }
 }
 

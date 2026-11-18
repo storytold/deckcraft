@@ -27,7 +27,7 @@ mod logging;
 mod pasteboard;
 mod user_name;
 
-use deckcraft_engine::{DEFAULT_AUTHOR, Session};
+use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
 
 struct App(
@@ -114,23 +114,22 @@ fn save_prefs(app: &SlideApp) {
 }
 
 /// The system account's name ([`user_name`], #2209, the same change as in WordCraft) while the
-/// name in the preferences is still DeckCraft's placeholder: on the first start, or in a
-/// `prefs.json` saved before there was a name to keep. A name set in Preferences ▸ "Your name
-/// (comments)" always wins, and the system is asked only until one is saved: the preferences keep
-/// it from then on. Only the exact placeholder asks, which is why the comparison is against
-/// [`DEFAULT_AUTHOR`] and never against the word "Presenter" — an ordinary word of a talk that
-/// someone may well have typed as their name. A name cleared in the dialog is a choice, not a
-/// missing name, so the empty name stays. The system's name is cleaned as a saved one is
-/// ([`user_name::usable`]). A run without preferences never asks the system, so what it saves or
-/// shows stays the same on every machine; that decision arrives as `prefs_on` (the caller's
-/// [`prefs_enabled`]) rather than being read from the environment here, so the tests cover both
-/// kinds of run.
+/// preferences' author is still the unfilled placeholder: on the first start, or in a `prefs.json`
+/// saved before there was a name to keep. A name set in Preferences ▸ "Your name (comments)"
+/// always wins, and the system is asked only until one is saved: the preferences keep both it and
+/// the fact that it was chosen from then on. The saved provenance matters because the exact
+/// placeholder can also be a deliberate name; only an unchosen placeholder asks. A name cleared in
+/// the dialog is a choice, not a missing name, so the empty name stays. The system's name is
+/// cleaned as a saved one is ([`user_name::usable`]). A run without preferences never asks the
+/// system, so what it saves or shows stays the same on every machine; that decision arrives as
+/// `prefs_on` (the caller's [`prefs_enabled`]) rather than being read from the environment here,
+/// so the tests cover both kinds of run.
 fn use_system_user_name(app: &mut SlideApp, prefs_on: bool, system: impl FnOnce() -> Option<String>) {
-    if !prefs_on || app.session.prefs.author != DEFAULT_AUTHOR {
+    if !prefs_on || app.session.prefs.author_chosen {
         return;
     }
     if let Some(name) = system().and_then(|name| user_name::usable(&name)) {
-        app.session.prefs.author = name;
+        app.session.prefs.set_author(name);
     }
 }
 
@@ -535,6 +534,8 @@ mod tests {
 
 #[cfg(test)]
 mod user_name_tests {
+    use deckcraft_engine::DEFAULT_AUTHOR;
+
     use super::*;
 
     fn app() -> SlideApp {
@@ -560,12 +561,10 @@ mod user_name_tests {
     #[test]
     fn a_name_set_in_the_options_always_wins() {
         // A name loaded from `prefs.json` or typed in the dialog this run beats the system's, and
-        // the system is not even asked. Only the exact placeholder counts: "Presenter" is an
-        // ordinary word of a talk, so a name that holds it is a person's own. (A name typed as
-        // exactly the placeholder cannot be told from it; that one run asks the system.)
+        // the system is not even asked.
         for name in ["Grace Hopper", "The Presenter", " presenter ", "Presenter Smith", "Lead Presenter"] {
             let mut a = app();
-            a.session.prefs.author = name.into();
+            a.session.prefs.set_author(name);
             let mut asked = false;
             use_system_user_name(&mut a, true, || {
                 asked = true;
@@ -577,12 +576,27 @@ mod user_name_tests {
     }
 
     #[test]
+    fn the_exact_placeholder_can_be_a_chosen_name() {
+        // "Presenter" is an ordinary word of a talk. Once it is typed deliberately, the saved
+        // provenance—not the string alone—keeps the first-run lookup from replacing it.
+        let mut a = app();
+        a.session.prefs.set_author(DEFAULT_AUTHOR);
+        let mut asked = false;
+        use_system_user_name(&mut a, true, || {
+            asked = true;
+            Some("Ada Lovelace".into())
+        });
+        assert!(!asked, "a chosen name never asks the system");
+        assert_eq!(a.session.prefs.author, DEFAULT_AUTHOR);
+    }
+
+    #[test]
     fn a_name_cleared_in_the_options_stays_cleared() {
         // The dialog writes the field straight into the preferences, so clearing it saves an empty
         // name: the person's own choice, not a missing name.
         for cleared in ["", " "] {
             let mut a = app();
-            a.session.prefs.author = cleared.into();
+            a.session.prefs.set_author(cleared);
             let mut asked = false;
             use_system_user_name(&mut a, true, || {
                 asked = true;
@@ -624,10 +638,12 @@ mod user_name_tests {
         let _ = std::fs::remove_dir_all(&dir);
         let mut a = app();
         use_system_user_name(&mut a, true, || Some("Ada Lovelace".into()));
+        assert!(a.session.prefs.author_chosen, "a filled name is a chosen one");
         deckcraft_ui_egui::settings::save(&dir, &a.ui, &a.session.prefs);
         let mut b = app();
         b.session.prefs = deckcraft_ui_egui::settings::load(&dir).1.expect("the preferences we just wrote");
         assert_eq!(b.session.prefs.author, "Ada Lovelace", "the system's name is saved as a chosen one");
+        assert!(b.session.prefs.author_chosen, "and stays chosen through the settings file");
         let mut asked = false;
         use_system_user_name(&mut b, true, || {
             asked = true;
@@ -635,11 +651,12 @@ mod user_name_tests {
         });
         assert!(!asked, "a saved name never asks the system");
 
-        a.session.prefs.author = String::new();
+        a.session.prefs.set_author(String::new());
         deckcraft_ui_egui::settings::save(&dir, &a.ui, &a.session.prefs);
         let mut c = app();
         c.session.prefs = deckcraft_ui_egui::settings::load(&dir).1.expect("the preferences we just wrote");
         assert_eq!(c.session.prefs.author, "", "a cleared name comes back empty, not as the placeholder");
+        assert!(c.session.prefs.author_chosen, "a cleared name is still a chosen one");
         use_system_user_name(&mut c, true, || Some("Grace Hopper".into()));
         assert_eq!(c.session.prefs.author, "", "and stays cleared");
         let _ = std::fs::remove_dir_all(&dir);

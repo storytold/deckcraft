@@ -1399,7 +1399,13 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         let label = ui.label("Your name (comments):");
         // Name the field for assistive technology; a bare text edit next to a label is an
         // unnamed input in egui 0.37's accessibility tree.
-        let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
+        let prefs = &mut app.session.prefs;
+        let edit = ui.add(egui::TextEdit::singleline(&mut prefs.author)).labelled_by(label.id);
+        if edit.changed() {
+            // Even typing the exact placeholder is a deliberate choice and must survive the
+            // first-run system-name lookup after a restart.
+            prefs.author_chosen = true;
+        }
     });
     let (ok, cancel) = buttons(ui, "Done");
     if cancel {
