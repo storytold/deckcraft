@@ -1357,12 +1357,18 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mut scale = pending.unwrap_or(app.ui.ui_scale);
     // Labelled like the Measurement units row below it. The egui 0.37 migration (#1350) dropped
     // the slider's own text and kept only its accessible name, which left a bare "1.00".
+    // Two decimals on screen only: rounding the value itself would rewrite a saved size such
+    // as 1.234 just by opening the dialog. For the same reason, the shown text read back
+    // unchanged (focus in the value field, then out) means the size it was shown for.
+    let shown_for = f64::from(scale);
+    let shown = format!("{shown_for:.2}");
     let r = ui
         .horizontal(|ui| {
             ui.label("Interface size:");
-            // Two decimals on screen only: rounding the value itself would rewrite a saved size
-            // such as 1.234 just by opening the dialog.
-            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).custom_formatter(|v, _| format!("{v:.2}")))
+            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).custom_formatter(|v, _| format!("{v:.2}")).custom_parser(|text| {
+                let text = text.trim();
+                if text == shown { Some(shown_for) } else { text.parse().ok() }
+            }))
         })
         .inner;
     let enabled = r.enabled();

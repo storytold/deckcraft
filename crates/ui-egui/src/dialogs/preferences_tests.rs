@@ -78,6 +78,37 @@ fn opening_options_keeps_an_uneven_interface_size() {
     assert_eq!(h.state().ui.ui_scale, 1.234, "the size isn't rounded by showing it");
 }
 
+/// Clicking into the shown value and leaving it without typing keeps the size too, though the
+/// text it read back is only two decimals.
+#[test]
+fn leaving_the_value_field_unedited_keeps_an_uneven_interface_size() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.get_by_value("1.23").click();
+    h.run_steps(2);
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_scale, 1.234, "an unedited value doesn't change the size");
+}
+
+/// A size typed into the value field still applies.
+#[test]
+fn a_size_typed_into_the_value_field_applies() {
+    let mut h = harness();
+    h.state_mut().ui.ui_scale = 1.234;
+    h.run_steps(2);
+    open_options(&mut h);
+    h.get_by_value("1.23").click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("1.5".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Tab);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_scale, 1.5, "the typed size applies");
+}
+
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
 #[test]
 fn options_cancel_undoes_the_changes() {
