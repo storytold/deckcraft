@@ -445,10 +445,12 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             o.insert(m.xml_name().to_string(), json!(v));
         }
     }
+    // `#RRGGBB`, or `#RRGGBBAA` when the color is not opaque.
+    let hex = |rgb: &deckcraft_color::Rgba| if rgb.a < 255 { format!("#{}{:02X}", rgb.hex(), rgb.a) } else { format!("#{}", rgb.hex()) };
     match &c.base {
-        ColorBase::Rgb { rgb } if o.is_empty() => json!(format!("#{}", rgb.hex())),
+        ColorBase::Rgb { rgb } if o.is_empty() => json!(hex(rgb)),
         ColorBase::Rgb { rgb } => {
-            o.insert("rgb".into(), json!(format!("#{}", rgb.hex())));
+            o.insert("rgb".into(), json!(hex(rgb)));
             Value::Object(o)
         }
         ColorBase::Scheme { slot } => {
@@ -456,7 +458,7 @@ fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
             Value::Object(o)
         }
         ColorBase::Preset { name } => json!(name),
-        ColorBase::System { last, .. } => json!(format!("#{}", last.hex())),
+        ColorBase::System { last, .. } => json!(hex(last)),
     }
 }
 

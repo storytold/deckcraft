@@ -44,9 +44,12 @@ pub fn gradient_json(g: &Gradient) -> Value {
     }
 }
 
-/// `c` with its alpha set to `a` (0–1), replacing every alpha it had.
+/// `c` with its alpha set to `a` (0–1), replacing every alpha it had. A color that already has
+/// that alpha is returned unchanged.
 fn with_alpha(mut c: ColorRef, a: f64) -> ColorRef {
-    c.set_alpha(a);
+    if (c.alpha() - a).abs() > f64::EPSILON {
+        c.set_alpha(a);
+    }
     c
 }
 
@@ -613,5 +616,32 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// An edit sends every stop of the gradient, so each stop's parameter keeps the alpha byte of
+    /// its RGB color.
+    #[test]
+    fn gradient_json_keeps_the_alpha_byte_of_every_stop() {
+        use deckcraft_color::Rgba;
+        let half = Rgba::rgba(255, 0, 0, 128);
+        let g = Gradient {
+            stops: vec![
+                GradientStop { pos: 0.0, color: ColorRef::rgb(half) },
+                GradientStop { pos: 1.0, color: ColorRef::rgb(half).with(ColorTransform::LumMod(60_000)) },
+            ],
+            ..default_gradient(ColorRef::scheme(SchemeSlot::Accent1), 90.0)
+        };
+        let stops = gradient_json(&g)["stops"].clone();
+        assert_eq!(stops, json!([[0.0, "#FF000080"], [1.0, {"rgb": "#FF000080", "lumMod": 60_000}]]));
+        assert_eq!(Rgba::from_hex("#FF000080"), Some(half));
+    }
+
+    /// A color picked for an opaque stop is stored as picked, with no added `alpha`.
+    #[test]
+    fn a_color_picked_for_an_opaque_stop_gets_no_alpha() {
+        let picked = with_alpha(ColorRef::scheme(SchemeSlot::Accent6), ColorRef::scheme(SchemeSlot::Accent2).alpha());
+        assert_eq!(picked, ColorRef::scheme(SchemeSlot::Accent6));
+        let half = with_alpha(ColorRef::scheme(SchemeSlot::Accent6), 0.5);
+        assert!((half.alpha() - 0.5).abs() < 1e-9);
     }
 }

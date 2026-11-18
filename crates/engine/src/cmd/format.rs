@@ -423,6 +423,17 @@ mod tests {
         assert!(params["size"].as_f64().is_some_and(|n| n > 0.0));
     }
 
+    /// The Font dialog opens with the alpha of an RGB text color, so OK keeps the transparency.
+    #[test]
+    fn font_dialog_keeps_the_alpha_byte_of_the_text_color() {
+        let mut s = shape();
+        s.execute("format.color", &json!({"color": "#ff000080"})).unwrap();
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({})).unwrap();
+        let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last() else { panic!("dialog request") };
+        assert_eq!(params["color"], json!("#FF000080"));
+    }
+
     #[test]
     fn font_dialog_rejects_bad_fields_without_editing() {
         let mut s = shape();
