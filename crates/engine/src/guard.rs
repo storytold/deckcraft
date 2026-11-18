@@ -42,6 +42,10 @@ impl Session {
             Ok(r) => r,
             Err(payload) => {
                 self.depth = depth;
+                if depth == 0 {
+                    // A plug-in run's undo name belongs to the run that panicked.
+                    self.undo_label = None;
+                }
                 // The remembered point type names a shape of the document it was chosen in.
                 let same = before.as_ref().is_some_and(|b| self.active().is_some_and(|st| st.uid == b.0));
                 self.tool.vertex_kind = if same { vertex_kind } else { None };

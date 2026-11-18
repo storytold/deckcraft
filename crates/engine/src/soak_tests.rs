@@ -12,11 +12,14 @@ use serde_json::{Value, json};
 use crate::{EngineError, Session, command_specs, sample};
 
 /// Commands that touch the file system, other windows or real time; the soak drives the rest.
+/// Plug-in commands read bundle files, the user's Plug-ins folder and the network; their own
+/// tests are in `plugin::tests`.
 fn skipped(id: &str) -> bool {
     matches!(id, "file.close" | "file.open" | "file.save" | "file.saveAs" | "file.export" | "file.saveTemplate" | "file.openBytes" | "file.new")
         || id.starts_with("window.")
         || id.starts_with("show.")
         || id.starts_with("media.")
+        || id.starts_with("plugin.")
 }
 
 /// xorshift64*: tiny, deterministic, no dependency.

@@ -73,6 +73,11 @@ craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "63196
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "63196e66f3033a6623eb629af95a104d26986725", features = ["egui"] }
+# Command plug-ins (WebAssembly, RFC-0046): craft-libs' shared runtime, pinned to the fork commit
+# that has it until the upstream pull request lands and re-pins it. Built without its `http`
+# feature (that implements `Fetch` for another revision's craft-update): the UI wraps DeckCraft's
+# own craft-update client instead.
+craft-plugin = { git = "https://github.com/Dasemu/craft-libs", rev = "93428fbe5d11b735365fa87068a9e1fc85fb3550", version = "=0.1.0" }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
 i_overlay = "9"
 quick-xml = "0.41"

@@ -21,6 +21,7 @@ pub mod io;
 pub mod keys;
 pub mod links;
 pub mod media_refs;
+pub mod plugin;
 pub mod recovery;
 pub mod sample;
 pub mod sounds;
@@ -517,6 +518,11 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    /// Plug-ins (RFC-0046): the installed ones, their settings and catalogs (`plugin.*`).
+    pub plugins: plugin::Runtime,
+    /// The name the undo step of the outermost command takes instead of its label (a plug-in
+    /// run is named after the plug-in). Read and cleared when that command ends.
+    pub(crate) undo_label: Option<String>,
 }
 
 impl Default for Session {
@@ -551,6 +557,8 @@ impl Session {
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            plugins: plugin::Runtime::default(),
+            undo_label: None,
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
@@ -659,6 +667,8 @@ impl Session {
         self.depth += 1;
         let r = (spec.run)(self, params);
         self.depth -= 1;
+        // A plug-in run names its undo step after the plug-in (`plugin::run`).
+        let label = if outer { self.undo_label.take() } else { None };
         let r = match r {
             Ok(r) => r,
             Err(e) => {
@@ -689,7 +699,7 @@ impl Session {
             && spec.undoable
             && outer
         {
-            push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel, vertex_kind });
+            push_undo(st, HistoryEntry { label: label.unwrap_or_else(|| spec.label.to_string()), doc: old, selection: sel, vertex_kind });
         }
         if spec.journal && outer {
             self.journal.push((id.to_string(), params.clone()));
