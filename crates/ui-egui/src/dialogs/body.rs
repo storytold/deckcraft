@@ -707,6 +707,9 @@ fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Export…: the format (PDF, PNG or JPEG of the current slide or of every slide, PowerPoint,
+/// outline, animated GIF, RTF) and its options; Export hands them to [`SlideApp::export_as`].
+/// Returns true when the dialog should close.
 fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label(tl!("Export the presentation as:"));
     let fmt = d.get("fmt", "pdf");
@@ -715,6 +718,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ("PNG images (current slide)", "png"),
         ("PNG images (all slides)", "pngAll"),
         ("JPEG image (current slide)", "jpeg"),
+        ("JPEG images (all slides)", "jpegAll"),
         ("PowerPoint Presentation (.pptx)", "pptx"),
         ("Outline (.txt)", "outline"),
         ("Animated GIF (.gif)", "gif"),
@@ -1369,8 +1373,14 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // on release, and at once from the keyboard.
     let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
     let mut scale = pending.unwrap_or(app.ui.ui_scale);
-    let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
-    // No visible label here (the row is laid out to fit); the accessible name only.
+    // Labelled like the Measurement units row below it. The egui 0.37 migration (#1350) dropped
+    // the slider's own text and kept only its accessible name, which left a bare "1.00".
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Interface size:");
+            ui.add(egui::Slider::new(&mut scale, 0.75..=1.75))
+        })
+        .inner;
     let enabled = r.enabled();
     r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), tl!("Interface size")));
     if r.is_pointer_button_down_on() {

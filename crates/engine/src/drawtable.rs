@@ -115,7 +115,7 @@ fn split_rows(t: &mut Table, y: f64, x0: f64, x1: f64) -> bool {
     let b = match ys.iter().position(|e| (e - y).abs() <= SNAP) {
         Some(b) => b,
         None => {
-            if t.rows.len() >= MAX_GRID {
+            if t.rows.len() >= MAX_GRID || t.cols.len().saturating_mul(t.rows.len().saturating_add(1)) > deckcraft_model::table::MAX_CELLS {
                 return false;
             }
             let Some(k) = ys.windows(2).position(|w| w[0] < y && y < w[1]) else { return false };
@@ -272,5 +272,18 @@ mod tests {
             }
         }
         assert!(t.rows.len() <= MAX_GRID && n > 100, "{} rows", t.rows.len());
+    }
+
+    #[test]
+    fn pencil_refuses_a_row_past_the_cell_cap() {
+        let cols = 1000;
+        let rows = deckcraft_model::table::MAX_CELLS / cols;
+        let mut t = Table {
+            cols: vec![10.0; cols],
+            rows: vec![deckcraft_model::table::Row { height: 50.0, cells: vec![Cell::new(""); cols] }; rows],
+            ..Default::default()
+        };
+        assert!(!draw_line(&mut t, (0.0, 25.0), (10_000.0, 25.0)));
+        assert_eq!((t.n_rows(), t.n_cols()), (rows, cols));
     }
 }
