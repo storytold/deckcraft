@@ -228,7 +228,10 @@ impl Session {
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });
                 return self.finish_freeform(true);
             }
-            points.push(p);
+            self.tool.press_added_vertex = points.len() < super::MAX_GESTURE_POINTS;
+            if self.tool.press_added_vertex {
+                points.push(p);
+            }
             self.tool.path_preview = points.clone();
             self.tool.drag = Some(Drag::Freeform { mode, points, pressed: true });
             return Ok(Value::Null);
@@ -350,7 +353,7 @@ impl Session {
                     bp.warp.map(|n| (n, bp.warp_adj))
                 });
                 if let Some((name, base)) = found {
-                    self.begin("Adjust WordArt");
+                    self.begin("Adjust Decorative Text");
                     self.tool.drag = Some(Drag::Warp { id, index, name, base, orig });
                 }
             }
