@@ -1,7 +1,7 @@
 use super::caret::cell_on_slide;
 use super::editing::unlinked_at_link_end;
-use super::layout::layout_for;
-use super::{DocState, Paragraph, Result, Session, TextBody, TextSel, Value, bad, body_of, ed, edit_text, json, str_param, xfrm_of};
+use super::layout::text_frame;
+use super::{DocState, Paragraph, Result, Session, TextBody, TextSel, Value, bad, body_of, ed, edit_text, json, str_param};
 
 /// Maximum number of UTF-8 bytes in an outgoing IME surrounding-text query.
 ///
@@ -328,11 +328,7 @@ pub fn range_underlines(
     id: deckcraft_model::ShapeId,
     ranges: &[(usize, usize, usize)],
 ) -> Vec<(deckcraft_geom::Point, deckcraft_geom::Point)> {
-    let Some(sh) = st.shape(id) else { return vec![] };
-    let Some(l) = layout_for(st, &TextSel { shape: id, ..Default::default() }) else { return vec![] };
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let m = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), tr, l.rotation);
+    let Some((l, m)) = text_frame(st, &TextSel { shape: id, ..Default::default() }) else { return vec![] };
     let mut out = vec![];
     for &(para, a, b) in ranges {
         for (x0, x1, y) in l.composition_underlines(deckcraft_text::Pos { para, ch: a }, deckcraft_text::Pos { para, ch: b }) {
@@ -372,11 +368,7 @@ pub fn composition_underlines(st: &DocState) -> Vec<(deckcraft_geom::Point, deck
         let Some(placed) = cell_on_slide(st, t.shape, row, col) else { return vec![] };
         return underline_segments(&placed.layout, placed.to_slide, c);
     }
-    let Some(sh) = st.shape(t.shape) else { return vec![] };
-    let Some(l) = layout_for(st, t) else { return vec![] };
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let m = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), tr, l.rotation);
+    let Some((l, m)) = text_frame(st, t) else { return vec![] };
     underline_segments(&l, m, c)
 }
 

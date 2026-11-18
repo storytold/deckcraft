@@ -1,8 +1,10 @@
 # UI parity with PowerPoint
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (grouped editing shares point-sized text layout with rendering; upstream changes retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-10 · **Change:** trivial (File › Export › Change File Type and Save As export every slide as PNG or JPEG, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -18,6 +20,9 @@ AGENTS.md §2). Dimension score: **~60% ready** (estimated), **30–50 h** to pa
 Double-clicking text inside a moved, scaled, rotated, flipped or nested group keeps the editing
 outline, caret, selection highlight and mouse hit testing at the text's drawn position. Moving
 its frame and resizing its handles map pointer movement back into the member's group space.
+Font sizes and text insets stay in slide points when group child coordinates scale the shape.
+Editing uses the same layout dimensions and transform as rendering, including wrapped text,
+spelling and input-method underlines, and empty text carets.
 Sibling hit tests map the click and its tolerance into each containing group's child space, so
 uncovered text keeps its caret and a member drawn over the text takes the click (#931).
 Synthetic engine tests compare editing coordinates with the renderer and cover caret placement,
@@ -92,10 +97,10 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Open | Recent, Shared with Me, OneDrive, This PC, Add a Place, Browse; Presentations / Folders; Recover Unsaved Presentations | Recent and Browse (`app.openDialog`), recent presentations with a search box (`file.open`), Recover Unsaved Presentations (`file.recovery.open`). No cloud places or Folders tab |
 | Info | Name and path, Upload / Share / Copy path / Open file location; Protect, Inspect, Version History, Manage Presentation; Properties, Related Dates, Related People | Name and path, Copy path, Open file location; Inspect Presentation (Accessibility Checker), Manage Presentation (Revert); Size, Slides, Hidden slides and editable Title, Subject, Tags, Categories, Company, Comments, Author (`file.info`, `file.properties`). No Protect, Version History or dates |
 | Save | Saves; a presentation never saved goes to Save As | Same (`file.save`) |
-| Save As | Places, folder, file name, type, Save, More options | Type (PowerPoint, DeckCraft, PDF, Outline, PNG, JPEG) and Save, which opens the system Save dialog (web: Download). .pptx/.deckcraft take the new file; the others are copies (`file.saveAs`, `file.export`) |
+| Save As | Places, folder, file name, type, Save, More options | Type (PowerPoint, DeckCraft, PDF, Outline, PNG, JPEG, and PNG or JPEG of every slide, #2019) and Save, which opens the system Save dialog (web: Download). .pptx/.deckcraft take the new file; the others are copies (`file.saveAs`, `file.export`) |
 | Print | Print and Copies, Printer, Print All / Selection / Current / Custom Range, Slides box, layout (Full Page Slides, Notes Pages, Outline, Handouts 1–9), sides, collation, colour, Edit Header & Footer; page preview with pager and zoom | Print, Print All Slides / Current Slide / Custom Range, Slides box (`1-3, 5`), Full Page Slides / Notes Pages / Handouts 1–9, Print Hidden Slides, Frame Slides, Edit Header & Footer; preview with pager. DeckCraft prints through a PDF (`file.export`) opened in the system viewer, which has the printers (web: downloaded). No printer list, copies, sides or colour |
 | Share | Cloud sharing | Not offered |
-| Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type (PNG with an optional transparent background, #784). No video, GIF or CD package |
+| Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type (PNG or JPEG of the current slide or of every slide, #2019; PNG with an optional transparent background, #784). No video, GIF or CD package |
 | Close | Closes; asks Save / Don't Save / Cancel about unsaved changes | Same (`file.close` after the prompt); Ctrl+W asks too |
 | Account | User information, sign-in, Office Background and Office Theme, product information, About | About: product information, project links, contributor/model credits and appearance (light/dark, `view.dark`). No Account entry |
 | Options | Opens the PowerPoint Options dialog | Opens Preferences |
@@ -208,6 +213,8 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | Grouped text carets, selection, spelling and IME underlines share the renderer’s slide-point layout, preserving font sizes, insets and wrapping (#1095) |
+| 2026-11-18 | trivial | Synced grouped-editing fixes with upstream export, canvas and text-placement changes; retained both documentation histories and unchanged parity scores (#1095) |
 | 2026-11-16 | minor | Grouped line-end/Decorative Text guards, slide-space click bands, separated rotation handles and member Alt-drag duplication; parity scores unchanged (#1095) |
 | 2026-11-13 | minor | Collapsed-parent resize and move gestures leave the whole selection unchanged before duplication or geometry writes; native save/load and tiny-invertible controls covered (#1095) |
 | 2026-11-11 | minor | Grouped table-cell frames, caret/underline geometry and pointer cell selection use the renderer’s slide-space mapping, including growing rows; context clicks respect covering siblings (#1095) |
@@ -216,6 +223,7 @@ consistency is open (#73, #56).
 | 2026-11-10 | minor | Rotation drags across groups share the grabbed handle’s slide pivot and do not jump at the start; reflected, unevenly scaled and nested group cases are covered (#1095) |
 | 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
 | 2026-11-05 | trivial | Sync grouped-editing fixes and regression coverage with current upstream; preserve both documentation updates and unchanged parity scores (#1095) |
+| 2026-11-10 | trivial | Change File Type and Save As export every slide as PNG or JPEG (#2019); scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-11-02 | minor | Renderer-based spelling-underline regressions for grouped/nested text and table cells; grouped line ends snap in slide space, with endpoint and undo coverage (#1095) |
 | 2026-11-01 | minor | Grouped-text editing coordinates, pointer gestures and sibling hit tests follow enclosing group transforms; synthetic regression coverage (#1095) |

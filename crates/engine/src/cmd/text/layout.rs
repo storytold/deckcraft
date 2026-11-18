@@ -1,7 +1,7 @@
 use super::caret::cell_on_slide;
 use super::{
-    Affine, Arc, AutoFit, Ctx, DocState, Paragraph, Point, Pos, Presentation, Rect, Result, Selection, Session, Shape, ShapeId, Target, TextBody,
-    TextSel, Value, ed, resolve, xfrm_of,
+    Affine, Arc, AutoFit, Ctx, DocState, Paragraph, Point, Pos, Presentation, Result, Selection, Session, Shape, ShapeId, Target, TextBody, TextSel,
+    Value, ed, resolve, xfrm_of,
 };
 
 /// Refit a shape after its text changed: remember the shrink-on-overflow scale the layout
@@ -115,10 +115,6 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
         return None;
     }
     let sh = st.shape(t.shape)?;
-    let ctx = ctx_for(&st.doc, &st.selection)?;
-    let lay = |s: &Shape, body: &TextBody, rect: Rect| {
-        deckcraft_text::layout(&ctx, s, body, &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false })
-    };
     if let Some((r, c)) = t.cell {
         // A cell's text is laid out in the cell's rect with the cell's margins, anchor and the
         // table style's text look, exactly as the table draws it.
@@ -126,10 +122,25 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
         return Some((placed.layout, placed.to_slide));
     }
     let body = sh.text.as_ref()?;
+    shape_text_frame(st, sh, body)
+}
+
+/// Grouped text is set at its slide size, with the group scale removed from the text
+/// transform. Reuse the renderer's rule so font sizes, insets and wrapping match the words.
+fn shape_text_frame(st: &DocState, sh: &Shape, body: &TextBody) -> Option<(deckcraft_text::TextLayout, Affine)> {
+    let ctx = ctx_for(&st.doc, &st.selection)?;
     let x = xfrm_of(&st.doc, &st.selection, sh);
-    let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let l = lay(sh, body, tr);
-    let m = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), tr, l.rotation);
+    let parent = crate::cmd::parent_transform(st, sh.id);
+    let m = parent * x.affine();
+    let (w, h, m) = deckcraft_render::text_space(m, m, usize::from(parent != Affine::IDENTITY), x.w, x.h);
+    let tr = deckcraft_render::shape_geometry(sh, w, h).text_rect;
+    let l = deckcraft_text::layout(
+        &ctx,
+        sh,
+        body,
+        &deckcraft_text::Opts { rect: tr, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
+    );
+    let m = deckcraft_render::text_transform(m, tr, l.rotation);
     Some((l, m))
 }
 
@@ -159,23 +170,14 @@ pub fn caret_line(st: &DocState, t: &TextSel) -> Option<(deckcraft_geom::Point, 
         return Some((placed.to_slide * deckcraft_geom::Point::new(cx, top), placed.to_slide * deckcraft_geom::Point::new(cx, bot)));
     }
     let sh = st.shape(t.shape)?;
-    let ctx = ctx_for(&st.doc, &st.selection)?;
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
     let mut body = sh.text.clone().unwrap_or_default();
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
     }
-    let l = deckcraft_text::layout(
-        &ctx,
-        sh,
-        &body,
-        &deckcraft_text::Opts { rect: geo.text_rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
-    );
+    let (l, m) = shape_text_frame(st, sh, &body)?;
     // After End on a wrapped line the caret is drawn at that line's end.
     let aff = if t.at_line_end() { deckcraft_text::Affinity::Upstream } else { deckcraft_text::Affinity::Downstream };
     let (cx, top, bot) = l.caret_drawn(deckcraft_text::Pos { para: t.caret.0, ch: t.caret.1 }, aff)?;
-    let m = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), geo.text_rect, l.rotation);
     Some((m * deckcraft_geom::Point::new(cx, top), m * deckcraft_geom::Point::new(cx, bot)))
 }
 

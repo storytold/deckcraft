@@ -2,11 +2,15 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-18 · **Change:** minor (grouped editing shares point-sized text layout with rendering; upstream changes retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** minor (grouped handle integrity, slide-space click tolerances and Alt-drag duplication; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** trivial (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-13 · **Change:** minor (collapsed-parent move and resize gestures preserve geometry; synced with current upstream; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-11 · **Change:** trivial (slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-16 · **Change:** trivial (progress log: every slide as PNG or JPEG from File › Export › Change File Type and Save As, #2019; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-14 · **Change:** minor (a slide the show advances to again plays its animations again, #2090; slide-list entries with missing relationships are reported as lost slides and open as repaired copies; the Opus decoder and the Ogg, MP4 and Matroska demuxers come from craft-libs; empty notes slides are kept through PPTX and native saves, #2025; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-07 · **Change:** trivial (progress log: text in a group whose child coordinates scale its shapes is placed for export where the slide draws it; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -159,6 +163,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-18 | Grouped text editing shares the renderer’s point-sized layout; caret, selection, spelling and composition underlines agree with scaled-group text placement (#1095) |
+| 2026-11-18 | Synced grouped-editing fixes with upstream, retaining canvas clipping, all-slides picture export, scaled-group text placement, language and format updates, and both documentation histories (#1095) |
 | 2026-11-16 | Grouped editing: collapsed parents preserve line ends and Decorative Text adjustments; nested/uneven scales retain slide-space click bands, rotation stays separate from resize, and Alt-drag copies members into their own group (#1095) |
 | 2026-11-16 | Synced grouped-editing fixes with upstream, retaining shared format helpers, display names, slide-show replay behavior and both documentation histories (#1095) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
@@ -171,8 +177,12 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-10 | Grouped editing: selected members of different groups rotate about one slide pivot without jumping when the pointer is still (#1095) |
 | 2026-11-06 | Grouped shape adjustments: skip drags when the parent transform cannot be inverted, preserving callout geometry in native saves; regression coverage includes collapsed and tiny invertible groups (#1095) |
 | 2026-11-05 | Grouped editing: sync #1095 with upstream, retaining text, sibling-click and line-end regression coverage; parity scores unchanged |
+| 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
+| 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
+| 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
 | 2026-11-11 | Media: the Opus decoder and the Ogg, MP4/MOV and Matroska demuxers are craft-audio and craft-media from craft-libs; DeckCraft's own copies and re-export crates are removed |
 | 2026-11-07 | PPTX slide-list entries with missing relationships are reported in lostSlides instead of silently omitted. The engine opens the partial deck as a repaired copy with no original save path. Slide lists over 10,000 entries are explicitly refused before a partial load; exactly 10,000 remain supported. Synthetic 13-slide regression; does not establish the cause of #1910's field report. |
+| 2026-11-07 | Text inside a group whose child coordinates scale its shapes is laid out for export as the slide draws it, at the shape's size in points, so the PDF text layer and the boxes of its text hyperlinks lie on the drawn text. SmartArt groups, whose child space equals their frame, are unchanged |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
@@ -361,6 +371,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-18 | minor | Grouped text carets, selection, spelling and IME underlines share the renderer’s slide-point layout, preserving font sizes, insets and wrapping (#1095) |
+| 2026-11-18 | trivial | Synced grouped-editing fixes with upstream export, canvas and text-placement changes; retained both documentation histories and unchanged parity scores (#1095) |
 | 2026-11-16 | minor | Grouped handle, click-tolerance and Alt-drag regressions fixed; parity scores unchanged (#1095) |
 | 2026-11-16 | trivial | Merged current upstream into #1095; retained grouped-editing fixes and upstream behavior. Parity scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
@@ -373,7 +385,11 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-10 | minor | Rotation drags across groups share the grabbed handle’s slide pivot and do not jump at the start; reflected, unevenly scaled and nested group cases are covered (#1095) |
 | 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
 | 2026-11-05 | trivial | Sync grouped-editing fixes and regression coverage with current upstream; preserve both documentation updates and unchanged parity scores (#1095) |
+| 2026-11-16 | trivial | Progress log: export all slides as PNG or JPEG from the File tab (#2019); scores unchanged |
+| 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
+| 2026-11-11 | minor | Progress log: empty notes slides preserved on PPTX/native save (#2025); parity scores unchanged |
 | 2026-11-11 | trivial | Opus and container code moved to craft-libs crates; parity scores unchanged |
+| 2026-11-07 | trivial | Progress log: text in scaled groups is placed for export where it is drawn; parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |

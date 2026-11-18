@@ -2620,6 +2620,57 @@ fn grouped_text_editing_matches_rendered_text() {
     }
 }
 
+/// IME underlines and empty-body carets use the same point-sized layout as grouped rendering.
+#[test]
+fn grouped_text_composition_and_empty_caret_use_rendered_space() {
+    use deckcraft_geom::{Point, Xfrm};
+    for nested in [false, true] {
+        for scale in [0.1, 0.5, 2.0, 10.0] {
+            let mut s = session();
+            let id = ShapeId(
+                s.execute("shape.insert", &json!({"preset":"rect", "rect":[0,0,140,60], "text":"Hello"})).unwrap()["id"].as_u64().unwrap() as u32,
+            );
+            wrap_test_member_in_group(&mut s, id, Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(300.0, 100.0, 140.0 * scale, 60.0 / scale) }, nested);
+            s.execute("text.edit", &json!({"id":id, "at":[0,2]})).unwrap();
+            s.compose_text("composition", Some((2, 5))).unwrap();
+            let st = s.doc().unwrap();
+            let placed = deckcraft_render::place_slide(&st.doc, 0);
+            let drawn = placed.texts.iter().find(|t| t.body.text().contains("composition")).unwrap();
+            let c = st.composition.as_ref().unwrap();
+            let mut expected = Vec::new();
+            for (a, b, thick) in [(0, c.len, false), (2, 5, true)] {
+                for (x0, x1, y) in drawn.layout.composition_underlines(
+                    deckcraft_text::Pos { para: c.start.0, ch: c.start.1 + a },
+                    deckcraft_text::Pos { para: c.start.0, ch: c.start.1 + b },
+                ) {
+                    expected.push((drawn.transform * Point::new(x0, y), drawn.transform * Point::new(x1, y), thick));
+                }
+            }
+            let actual = cmd::text::composition_underlines(st);
+            assert!(!expected.is_empty());
+            assert_eq!(actual.len(), expected.len());
+            for ((a, b, thick), (ea, eb, et)) in actual.iter().zip(&expected) {
+                assert!((*a - *ea).hypot() < 1e-8 && (*b - *eb).hypot() < 1e-8);
+                assert_eq!(thick, et);
+            }
+            s.commit_text("").unwrap();
+            let st = s.doc().unwrap();
+            let mut doc = (*st.doc).clone();
+            let body = deckcraft_model::find_shape_mut(crate::shapes_mut(&mut doc, &st.selection).unwrap(), id).unwrap().text.as_mut().unwrap();
+            body.paragraphs.clear();
+            let mut probe = st.clone();
+            probe.doc = std::sync::Arc::new(doc.clone());
+            let t = TextSel { shape: id, ..Default::default() };
+            let empty = cmd::text::caret_line(&probe, &t);
+            assert!(empty.is_some());
+            let body = deckcraft_model::find_shape_mut(crate::shapes_mut(&mut doc, &st.selection).unwrap(), id).unwrap().text.as_mut().unwrap();
+            body.paragraphs.push(deckcraft_model::text::Paragraph::default());
+            probe.doc = std::sync::Arc::new(doc);
+            assert_eq!(empty, cmd::text::caret_line(&probe, &t));
+        }
+    }
+}
+
 /// Build a two-member transformed group and place its sibling either over the rendered caret
 /// or over that point only in the stale, untransformed child coordinates.
 fn grouped_text_sibling_case(
@@ -2796,8 +2847,23 @@ fn grouped_text_sibling_line_width_stays_in_slide_units() {
     use deckcraft_geom::Xfrm;
     for scale in [0.1, 10.0] {
         for (gap, covered) in [(3.0, true), (12.0, false)] {
-            let (mut s, id, p) = grouped_text_sibling_case(Xfrm::new(300.0, 100.0, 140.0 * scale, 60.0 * scale), false, true);
+            let (mut s, id, _) = grouped_text_sibling_case(Xfrm::new(300.0, 100.0, 140.0 * scale, 60.0 * scale), false, true);
+            // Fonts and insets stay in slide points. Keep the caret inside the frame even
+            // at 0.1 scale, so this tests stroke occlusion rather than overflow text clicks.
+            s.edit(|doc, sel| {
+                let sh = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), id).unwrap();
+                let x = sh.xfrm.as_mut().unwrap();
+                x.w = 1400.0;
+                x.h = 600.0;
+                Ok(())
+            })
+            .unwrap();
+            let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 0);
+            let drawn = placed.texts.iter().find(|t| t.body.text() == "Hello group").unwrap();
+            let (cx, top, bot) = drawn.layout.caret_drawn(deckcraft_text::Pos { para: 0, ch: 3 }, deckcraft_text::Affinity::Downstream).unwrap();
+            let p = drawn.transform * deckcraft_geom::Point::new(cx, (top + bot) / 2.0);
             let q = cmd::parent_transform(s.doc().unwrap(), id).inverse() * p;
+            assert!(s.doc().unwrap().shape(id).unwrap().xfrm.unwrap().bounds().inset(-10.0).contains(q));
             s.edit(|doc, sel| {
                 let roots = crate::shapes_mut(doc, sel).unwrap();
                 let model::ShapeKind::Group { children, .. } = &mut roots[0].kind else { panic!("group") };
@@ -8642,6 +8708,45 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+#[test]
+fn table_edits_past_the_cell_cap_are_refused_not_trimmed() {
+    use deckcraft_model::table::{MAX_CELLS, Row};
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let cols = 200;
+    let rows = MAX_CELLS / cols;
+    let big = deckcraft_model::Table {
+        cols: vec![1.0; cols],
+        rows: vec![Row { height: 1.0, cells: vec![Default::default(); cols] }; rows],
+        ..Default::default()
+    };
+    for sl in std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides.iter_mut() {
+        for sh in std::sync::Arc::make_mut(sl).shapes.iter_mut() {
+            if sh.id == id {
+                sh.kind = deckcraft_model::ShapeKind::Table(big.clone());
+            }
+        }
+    }
+    for cmd in ["table.insertRowAbove", "table.insertRowBelow"] {
+        let e = s.execute(cmd, &json!({"id": id.0, "row": 0})).unwrap_err().to_string();
+        assert!(e.contains("cell limit"), "{cmd}: {e}");
+    }
+    let e = s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": 0})).unwrap_err().to_string();
+    assert!(e.contains("cell limit"), "{e}");
+    assert_eq!(table_of(&s, id), big, "a refused insert leaves every row in place");
+    // A table already over the cap is refused too, not trimmed behind a success.
+    let huge = deckcraft_model::Table { rows: vec![Row { height: 1.0, cells: vec![Default::default(); cols] }; rows + 1], ..big.clone() };
+    for sl in std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides.iter_mut() {
+        for sh in std::sync::Arc::make_mut(sl).shapes.iter_mut() {
+            if sh.id == id {
+                sh.kind = deckcraft_model::ShapeKind::Table(huge.clone());
+            }
+        }
+    }
+    assert!(s.execute("table.deleteRow", &json!({"id": id.0, "row": 0})).is_err());
+    assert_eq!(table_of(&s, id).n_rows(), rows + 1);
 }
 
 /// #2059: Decrease Font Size (Ctrl+[, Cmd+Shift+,) steps down one size at a time from any size:
