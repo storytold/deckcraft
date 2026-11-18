@@ -8031,6 +8031,13 @@ fn editing_a_smartart_node_to_a_long_word_shrinks_every_node_until_it_is_removed
     s.execute("text.insert", &json!({"text": "b"})).unwrap();
     assert_eq!(sizes(&s).iter().filter(|x| **x == Some(40.0)).count(), custom.iter().filter(|x| **x == Some(40.0)).count(), "{:?}", sizes(&s));
     assert!(sizes(&s).iter().filter(|x| **x != Some(40.0)).all(|x| custom.contains(x)), "{:?}", sizes(&s));
+    // So is one a single point away from the size the layout gave.
+    let near = before[0].unwrap() - 1.0;
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.size", &json!({"size": near})).unwrap();
+    s.execute("text.move", &json!({"to": "end"})).unwrap_or_default();
+    s.execute("text.insert", &json!({"text": "c"})).unwrap();
+    assert!(sizes(&s).contains(&Some(near)), "a size one point off is still the user's: {:?}", sizes(&s));
 }
 
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
