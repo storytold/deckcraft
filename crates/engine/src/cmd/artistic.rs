@@ -64,7 +64,14 @@ pub fn apply(effect: &str, img: &RgbaImage) -> Option<RgbaImage> {
     let scale = ((w * w + h * h) as f32).sqrt() / 1000.0;
     let alpha = |x: u32, y: u32| img.get_pixel(x, y)[3];
     let out = match effect {
-        "artisticBlur" => image::imageops::blur(img, (6.0 * scale).max(1.0)),
+        "artisticBlur" => {
+            let mut blurred = image::imageops::blur(img, (6.0 * scale).max(1.0));
+            // RGBA blur also softens alpha; artistic effects keep the picture's transparency mask.
+            for (out, source) in blurred.pixels_mut().zip(img.pixels()) {
+                out[3] = source[3];
+            }
+            blurred
+        }
         "artisticPencilGrayscale" | "artisticLineDrawing" | "artisticPhotocopy" => {
             let soft = image::imageops::blur(&gray(img), (0.8 * scale).max(0.5));
             let e = edges(&soft);
@@ -199,4 +206,23 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     Ok(json!({"effect": effect}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn artistic_blur_keeps_source_alpha_and_blurs_color() {
+        let img = RgbaImage::from_fn(8, 4, |x, y| {
+            let v = if x < 4 { 32 } else { 224 };
+            let alpha = [0, 64, 128, 255][((x + y) % 4) as usize];
+            Rgba([v, 255 - v, (x * 31) as u8, alpha])
+        });
+        let blurred = apply("artisticBlur", &img).expect("blur effect");
+        assert_eq!(blurred.dimensions(), img.dimensions());
+        for (out, source) in blurred.pixels().zip(img.pixels()) {
+            assert_eq!(out[3], source[3], "each pixel keeps its transparency");
+        }
+        assert!(blurred.pixels().zip(img.pixels()).any(|(out, source)| out.0[..3] != source.0[..3]), "the colors still blur");
+    }
 }
