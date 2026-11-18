@@ -428,14 +428,22 @@ fn align_to(cmd: &str, p: &Value) -> Result<Option<bool>> {
     }
 }
 
-fn align(s: &mut Session, p: &Value) -> Result<Value> {
+/// The validated `edge` and `to` of `arrange.align`, parsed once for both paths: the single-user
+/// command and a collaborating replica that sends the same boxes as final bounds, so neither
+/// accepts a value the other refuses.
+pub fn align_params(p: &Value) -> Result<(&str, Option<bool>)> {
     let edge = match str_param(p, "edge") {
-        Some(e @ ("left" | "center" | "right" | "top" | "middle" | "bottom")) => e.to_string(),
+        Some(e @ ("left" | "center" | "right" | "top" | "middle" | "bottom")) => e,
         _ => return Err(bad("arrange.align", "`edge` must be left, center, right, top, middle or bottom")),
     };
-    let to = align_to("arrange.align", p)?;
-    let ids = targets(s, p)?;
-    let st = s.doc()?;
+    Ok((edge, align_to("arrange.align", p)?))
+}
+
+/// Final boxes `arrange.align` gives its targets, in parent space. The command applies them; a
+/// collaborating replica sends the same values as final bounds in one step, so no replica
+/// recomputes the reference (RFC §3.2.1, RFC §13 item 4). `edge` and `to` are the values
+/// [`align_params`] validated.
+pub fn align_plan(st: &crate::DocState, ids: &[ShapeId], edge: &str, to: Option<bool>) -> Vec<(ShapeId, Xfrm)> {
     let size = st.doc.slide_size;
     let boxes: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).collect();
     let to_slide = to.unwrap_or(boxes.len() < 2);
@@ -444,10 +452,11 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         union_bounds(&boxes.iter().map(|b| b.1).collect::<Vec<_>>()).unwrap_or_default()
     };
-    edit_geometry(s, p, "arrange.align", |sh| {
-        if let Some(x) = sh.xfrm.as_mut() {
+    boxes
+        .into_iter()
+        .map(|(id, mut x)| {
             let b = x.bounds();
-            let (dx, dy) = match edge.as_str() {
+            let (dx, dy) = match edge {
                 "left" => (reference.x0 - b.x0, 0.0),
                 "center" => (reference.center().x - b.center().x, 0.0),
                 "right" => (reference.x1 - b.x1, 0.0),
@@ -458,26 +467,46 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
             };
             x.x += dx;
             x.y += dy;
+            (id, x)
+        })
+        .collect()
+}
+
+fn align(s: &mut Session, p: &Value) -> Result<Value> {
+    let (edge, to) = align_params(p)?;
+    let ids = targets(s, p)?;
+    let plan = align_plan(s.doc()?, &ids, edge, to);
+    edit_geometry(s, p, "arrange.align", |sh| {
+        if let (Some(x), Some((_, target))) = (sh.xfrm.as_mut(), plan.iter().find(|(i, _)| *i == sh.id)) {
+            *x = *target;
         }
         Ok(())
     })
 }
 
-fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
-    let horiz = match p.get("dir").map(Value::as_str) {
-        None | Some(Some("horizontal")) => true,
-        Some(Some("vertical")) => false,
+/// The validated `dir` and `to` of `arrange.distribute`, parsed once for both paths, like
+/// [`align_params`].
+pub fn distribute_params(p: &Value) -> Result<(Option<&str>, Option<bool>)> {
+    let dir = match p.get("dir").map(Value::as_str) {
+        None => None,
+        Some(Some("horizontal")) => Some("horizontal"),
+        Some(Some("vertical")) => Some("vertical"),
         Some(_) => return Err(bad("arrange.distribute", "`dir` must be horizontal or vertical")),
     };
-    let to = align_to("arrange.distribute", p)?;
-    let ids = targets(s, p)?;
-    let st = s.doc()?;
+    Ok((dir, align_to("arrange.distribute", p)?))
+}
+
+/// Final boxes `arrange.distribute` gives its targets, sorted by the distributing axis. The
+/// command applies them; a collaborating replica sends the same values as final bounds. `dir` and
+/// `to` are the values [`distribute_params`] validated.
+pub fn distribute_plan(st: &crate::DocState, ids: &[ShapeId], dir: Option<&str>, to: Option<bool>) -> Vec<(ShapeId, Xfrm)> {
+    let horiz = dir != Some("vertical");
     let size = st.doc.slide_size;
-    let mut boxes: Vec<(ShapeId, Rect)> =
-        ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x).bounds()))).collect();
+    let mut boxes: Vec<(ShapeId, Rect, Xfrm)> =
+        ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).map(|(id, x)| (id, x.bounds(), x)).collect();
     let to_slide = to == Some(true) || boxes.len() < 3;
     if boxes.is_empty() {
-        return ok();
+        return Vec::new();
     }
     boxes.sort_by(|a, b| if horiz { a.1.x0.total_cmp(&b.1.x0) } else { a.1.y0.total_cmp(&b.1.y0) });
     let total: f64 = boxes.iter().map(|b| if horiz { b.1.width() } else { b.1.height() }).sum();
@@ -490,24 +519,33 @@ fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let n = boxes.len();
     let gap = if n > 1 { ((end - start) - total) / (n - 1) as f64 } else { 0.0 };
-    let mut targets_pos: Vec<(ShapeId, f64)> = vec![];
     let mut cur = start;
     if n == 1 {
         let b = boxes.first().map(|b| b.1).unwrap_or_default();
         cur = start + ((end - start) - if horiz { b.width() } else { b.height() }) / 2.0;
     }
-    for (id, b) in &boxes {
+    let mut out = Vec::with_capacity(n);
+    for (id, b, x) in &boxes {
         let d = cur - if horiz { b.x0 } else { b.y0 };
-        targets_pos.push((*id, d));
+        let mut x = *x;
+        if horiz {
+            x.x += d;
+        } else {
+            x.y += d;
+        }
+        out.push((*id, x));
         cur += (if horiz { b.width() } else { b.height() }) + gap;
     }
+    out
+}
+
+fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
+    let (dir, to) = distribute_params(p)?;
+    let ids = targets(s, p)?;
+    let plan = distribute_plan(s.doc()?, &ids, dir, to);
     edit_geometry(s, p, "arrange.distribute", |sh| {
-        if let (Some(x), Some((_, d))) = (sh.xfrm.as_mut(), targets_pos.iter().find(|(i, _)| *i == sh.id)) {
-            if horiz {
-                x.x += d;
-            } else {
-                x.y += d;
-            }
+        if let (Some(x), Some((_, target))) = (sh.xfrm.as_mut(), plan.iter().find(|(i, _)| *i == sh.id)) {
+            *x = *target;
         }
         Ok(())
     })

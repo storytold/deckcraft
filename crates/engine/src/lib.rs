@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use deckcraft_model::{Presentation, Shape, ShapeId, Slide, SlideId};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use deckcraft_geom as geom;
@@ -512,6 +512,14 @@ pub struct Session {
     pub mac_keys: bool,
     /// Command panics caught by the guard (the document was rolled back); soak tests require 0.
     pub panics_caught: u64,
+    /// A collaboration viewer: commands that change the document are refused in
+    /// [`Self::execute`], while queries, navigation and [`Self::apply_remote`] still work. Off by
+    /// default, so the single-user application is untouched.
+    read_only: bool,
+    /// A collaboration editor: mutating commands are queued for the collaboration layer instead
+    /// of running here, so every path (ribbon, keyboard, pointer, IME) becomes an operation.
+    collab_queue: bool,
+    pending_commands: Vec<(String, Value)>,
     /// Presentations a host read off the UI thread, waiting for `file.adopt` (by token).
     loaded: Vec<(u64, cmd::file::LoadedFile)>,
     next_loaded: u64,
@@ -548,6 +556,9 @@ impl Session {
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
+            read_only: false,
+            collab_queue: false,
+            pending_commands: Vec::new(),
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
@@ -578,6 +589,29 @@ impl Session {
     }
     pub fn documents(&self) -> &[DocState] {
         &self.docs
+    }
+    /// Make every command that changes the document unavailable (a collaboration viewer).
+    /// Queries, selection, navigation and [`Self::apply_remote`] are unaffected.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+    /// In a shared session every mutating command is queued for the collaboration layer; the
+    /// engine does not execute it here. [`Self::apply_remote`] is unaffected.
+    pub fn set_collab_queue(&mut self, on: bool) {
+        self.collab_queue = on;
+        if !on {
+            self.pending_commands.clear();
+        }
+    }
+    pub fn is_collab_queue(&self) -> bool {
+        self.collab_queue
+    }
+    /// Commands a keyboard, pointer or menu action asked for while the queue was on.
+    pub fn take_pending_commands(&mut self) -> Vec<(String, Value)> {
+        std::mem::take(&mut self.pending_commands)
     }
     pub fn active_index(&self) -> Option<usize> {
         self.active
@@ -634,13 +668,56 @@ impl Session {
     /// Run command `id`. A panic inside it becomes [`EngineError::Internal`] and leaves the
     /// presentation as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
-        self.guarded(id, |s| s.execute_unguarded(id, params))
+        self.execute_inner(id, params, true)
+    }
+
+    /// Run a command that came from another participant of a shared session.
+    ///
+    /// The same eligibility check, rollback on failure and panic guard as [`Self::execute`], but
+    /// the step is **not** pushed to this document's undo history and **not** appended to the
+    /// local journal: those belong to the person using this session (ADR 0010). The caller
+    /// applies the authoritative result itself.
+    pub fn apply_remote(&mut self, id: &str, params: &Value) -> Result<Value> {
+        self.execute_inner(id, params, false)
+    }
+
+    /// Replace the active document wholesale with the one a collaboration base carried
+    /// (ADR-0005 §4.5). The selection and undo history describe the old state and are reset; any
+    /// composition or comparison in progress is dropped. The document keeps its slot, title and
+    /// path, and its uid, so open windows and the key map stay addressed to it.
+    pub fn replace_active_document(&mut self, doc: Presentation) -> Result<()> {
+        let i = self.active.ok_or(EngineError::NoDocument)?;
+        let old = self.docs.get(i).ok_or(EngineError::NoDocument)?;
+        let (uid, revision, path, title) = (old.uid, old.revision.saturating_add(1), old.path.clone(), old.title.clone());
+        crate::fonts::install_embedded_fonts(&doc);
+        let missing_fonts = crate::fonts::missing_fonts(&doc);
+        let mut st = DocState::new(doc, path, title);
+        st.uid = uid;
+        st.revision = revision;
+        st.missing_fonts = missing_fonts;
+        self.docs[i] = st;
+        Ok(())
+    }
+
+    fn execute_inner(&mut self, id: &str, params: &Value, record: bool) -> Result<Value> {
+        self.guarded(id, |s| s.execute_unguarded(id, params, record))
     }
 
     /// Resolve and run a command, settling composition first, checking eligibility, rolling back a
     /// failed outer command, and committing the resulting undo entry or journal record.
-    fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
+    fn execute_unguarded(&mut self, id: &str, params: &Value, record: bool) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // A viewer may not change the document. `apply_remote` passes `record: false`, so other
+        // participants' operations still land.
+        if self.read_only && record && spec.changes_document() {
+            return Err(EngineError::Disabled(id.into(), cmd::READ_ONLY.into()));
+        }
+        // In a shared session the document changes only through the server's `applied`. Queue the
+        // user's intent; the collaboration layer normalises and sends it.
+        if self.collab_queue && record && spec.changes_document() {
+            self.pending_commands.push((id.to_string(), params.clone()));
+            return Ok(json!({"queued": true}));
+        }
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
             self.settle_composition();
@@ -688,10 +765,11 @@ impl Session {
             && st.interaction.is_none()
             && spec.undoable
             && outer
+            && record
         {
             push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel, vertex_kind });
         }
-        if spec.journal && outer {
+        if spec.journal && outer && record {
             self.journal.push((id.to_string(), params.clone()));
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);

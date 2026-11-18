@@ -489,6 +489,18 @@ impl SlideApp {
     }
 
     pub fn save(&mut self) {
+        // A live session behind the host bridge: the cabinet owns the file, so Save asks it to
+        // commit (`deckcraft:commit`) instead of downloading a possibly stale local copy. Save As
+        // and Export stay local.
+        if let Some(session) = self.host_session_id.clone() {
+            let result = self.host_commit.as_ref().map(|commit| commit(&session, None));
+            self.set_status(match result {
+                Some(Ok(())) => "Committing…".to_string(),
+                Some(Err(error)) => format!("Commit failed: {error}"),
+                None => "The page cannot commit this session".to_string(),
+            });
+            return;
+        }
         if self.services.host_save.is_some() {
             let _ = self.save_to_host(None);
             return;

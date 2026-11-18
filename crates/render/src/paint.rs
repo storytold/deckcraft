@@ -373,6 +373,42 @@ pub fn media_glyph(ctx: &mut RenderContext, video: bool, b: Rect) {
     ctx.stroke_path(&w);
 }
 
+/// The stand-in a 3-D model draws when the file carries no fallback poster: an isometric cube on
+/// the model's own frame, so the frame reads as a model rather than an empty box. DeckCraft keeps
+/// the `.glb` part and copies it through the package; it does not tessellate it here.
+pub fn model_glyph(ctx: &mut RenderContext, b: Rect) {
+    let r = (b.width().min(b.height()) * 0.28).clamp(6.0, 120.0);
+    let c = b.center();
+    let (top, side) = (r, r * 0.5);
+    // The top rhombus.
+    let mut face = BezPath::new();
+    face.move_to((c.x, c.y - top));
+    face.line_to((c.x + r * 0.866, c.y - side));
+    face.line_to((c.x, c.y));
+    face.line_to((c.x - r * 0.866, c.y - side));
+    face.close_path();
+    ctx.set_paint(peniko::Color::from_rgba8(0x7E, 0xA6, 0xE8, 255));
+    ctx.fill_path(&face);
+    // The left face.
+    let mut face = BezPath::new();
+    face.move_to((c.x - r * 0.866, c.y - side));
+    face.line_to((c.x, c.y));
+    face.line_to((c.x, c.y + r));
+    face.line_to((c.x - r * 0.866, c.y + side));
+    face.close_path();
+    ctx.set_paint(peniko::Color::from_rgba8(0x2E, 0x6F, 0xD8, 255));
+    ctx.fill_path(&face);
+    // The right face, darker, so the cube turns in one direction.
+    let mut face = BezPath::new();
+    face.move_to((c.x + r * 0.866, c.y - side));
+    face.line_to((c.x, c.y));
+    face.line_to((c.x, c.y + r));
+    face.line_to((c.x + r * 0.866, c.y + side));
+    face.close_path();
+    ctx.set_paint(peniko::Color::from_rgba8(0x1E, 0x4C, 0xA0, 255));
+    ctx.fill_path(&face);
+}
+
 /// A content-type icon drawn in empty picture/chart/table placeholders.
 pub fn placeholder_icon(ctx: &mut RenderContext, kind: PhType, b: Rect) {
     let s = (b.width().min(b.height()) * 0.18).clamp(10.0, 48.0);
