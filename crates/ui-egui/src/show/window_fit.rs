@@ -93,7 +93,7 @@ pub(crate) struct WindowFit {
     sized: bool,
     /// The inner size seen on the last frame.
     seen: Vec2,
-    /// The inner size before the user's last resize.
+    /// The inner size the last resize settled on or asked for.
     settled: Vec2,
     changed_at: f64,
     pending: bool,
@@ -122,7 +122,9 @@ impl WindowFit {
             if fits(slide_area, aspect) {
                 return Step::Idle;
             }
-            return Step::Resize(fitted_inner_size(inner, slide_area, aspect, Keep::Inside, max));
+            let size = fitted_inner_size(inner, slide_area, aspect, Keep::Inside, max);
+            self.settled = size;
+            return Step::Resize(size);
         }
         if (inner - self.seen).length() > 0.5 {
             self.seen = inner;
@@ -148,6 +150,8 @@ impl WindowFit {
         }
         let moved = inner - before;
         let keep = if moved.y.abs() > moved.x.abs() { Keep::Height } else { Keep::Width };
-        Step::Resize(fitted_inner_size(inner, slide_area, aspect, keep, max))
+        let size = fitted_inner_size(inner, slide_area, aspect, keep, max);
+        self.settled = size;
+        Step::Resize(size)
     }
 }

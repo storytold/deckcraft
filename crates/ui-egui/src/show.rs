@@ -627,10 +627,14 @@ fn show_fits_window(reading: bool, show_type: &str) -> bool {
 }
 
 /// After a browsed show, put the editor's window back as it was: its minimum size, its size and
-/// whether it was maximized. Runs on the first frame without a show, however the show ended.
+/// whether it was maximized. Runs on the first frame without a show, however the show ended,
+/// or when a show that does not fit the window replaces it.
 pub(crate) fn restore_window(app: &mut SlideApp, ctx: &egui::Context) {
     if let Some(fit) = app.show_window.take() {
         ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(crate::EDITOR_MIN_INNER_SIZE));
+        if !fit.maximized {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+        }
         if let Some(size) = fit.editor_inner {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }

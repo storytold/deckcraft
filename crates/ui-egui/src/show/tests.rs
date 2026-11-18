@@ -1111,8 +1111,12 @@ fn a_resized_browsed_show_window_snaps_back_after_it_settles() {
     assert!(matches!(fit.frame(dragged, dragged, wide, None, None, 1.0), Step::Wait(_)));
     assert!(matches!(fit.frame(dragged, dragged, wide, None, None, 1.1), Step::Wait(_)));
     assert_eq!(fit.frame(dragged, dragged, wide, None, None, 1.0 + SETTLE_SECS), Step::Resize(vec2(1000.0, 563.0)));
+    // The snap lands and the user widens the window before it settles: the width is kept.
+    let wider = vec2(1100.0, 563.0);
+    assert!(matches!(fit.frame(wider, wider, wide, None, None, 1.4), Step::Wait(_)));
+    assert_eq!(fit.frame(wider, wider, wide, None, None, 1.4 + SETTLE_SECS), Step::Resize(vec2(1100.0, 619.0)));
     // Then the bottom edge down: the height is kept.
-    let taller = vec2(1000.0, 700.0);
+    let taller = vec2(1100.0, 700.0);
     assert!(matches!(fit.frame(taller, taller, wide, None, None, 2.0), Step::Wait(_)));
     assert_eq!(fit.frame(taller, taller, wide, None, None, 2.0 + SETTLE_SECS), Step::Resize(vec2(1244.0, 700.0)));
     // The monitor's margin does not shrink a window that is already on screen.

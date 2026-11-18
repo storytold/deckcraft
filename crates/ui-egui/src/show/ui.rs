@@ -129,7 +129,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     if starting && show_fits_window(show.reading, &doc.show.show_type) {
         start_window_fit(app, &ctx);
     }
-    fit_window(app, &ctx, &doc, full, now);
+    if show_fits_window(show.reading, &doc.show.show_type) {
+        fit_window(app, &ctx, &doc, full, now);
+    } else {
+        super::restore_window(app, &ctx);
+    }
     let pointer = ctx.input(|i| i.pointer.interact_pos());
     show.expire_goto(now);
     // The clock of the triggered animations runs before anything reacts to the pointer.
