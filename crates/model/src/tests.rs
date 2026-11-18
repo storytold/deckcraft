@@ -327,3 +327,15 @@ fn only_web_and_mail_links_are_safe_to_open() {
         assert!(!safe_url(url), "{url}");
     }
 }
+
+#[test]
+fn colour_alpha_follows_alpha_mod_and_off() {
+    use deckcraft_color::{ColorTransform, Rgba};
+    let base = || ColorRef::rgb(Rgba::rgb(1, 2, 3));
+    let mod_half = base().with(ColorTransform::AlphaMod(50000));
+    assert!((mod_half.alpha() - 0.5).abs() < 1e-9, "{}", mod_half.alpha());
+    let off = base().with(ColorTransform::AlphaOff(-50000));
+    assert!((off.alpha() - 0.5).abs() < 1e-9, "{}", off.alpha());
+    let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
+    assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
+}

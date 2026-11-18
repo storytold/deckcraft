@@ -55,10 +55,12 @@ impl ColorRef {
         };
         deckcraft_color::apply(base, &self.mods)
     }
-    /// Alpha (0–1) from an `alpha` transform, if any.
+    /// Alpha (0–1) from the `alpha`, `alphaMod` and `alphaOff` transforms, applied in order.
     pub fn alpha(&self) -> f64 {
         self.mods.iter().fold(1.0, |a, m| match m {
             ColorTransform::Alpha(v) => (*v as f64 / 100_000.0).clamp(0.0, 1.0),
+            ColorTransform::AlphaMod(v) => (a * *v as f64 / 100_000.0).clamp(0.0, 1.0),
+            ColorTransform::AlphaOff(v) => (a + *v as f64 / 100_000.0).clamp(0.0, 1.0),
             _ => a,
         })
     }
@@ -457,13 +459,44 @@ pub struct Glow {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct Reflection {
     pub blur: f64,
     pub start_alpha: f64,
     pub end_alpha: f64,
     pub end_pos: f64,
     pub dist: f64,
+    /// DrawingML reflection transform values retain their native integer units.
+    pub st_pos: Option<i32>,
+    pub dir: Option<i32>,
+    pub fade_dir: Option<i32>,
+    pub sx: Option<i32>,
+    pub sy: Option<i32>,
+    pub kx: Option<i32>,
+    pub ky: Option<i32>,
+    pub align: Option<String>,
+    pub rotate_with_shape: Option<bool>,
+}
+
+impl Default for Reflection {
+    fn default() -> Self {
+        Self {
+            blur: 0.0,
+            start_alpha: 0.0,
+            end_alpha: 0.0,
+            end_pos: 0.0,
+            dist: 0.0,
+            st_pos: None,
+            dir: Some(5_400_000),
+            fade_dir: None,
+            sx: None,
+            sy: Some(-100_000),
+            kx: None,
+            ky: None,
+            align: Some("bl".into()),
+            rotate_with_shape: Some(false),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

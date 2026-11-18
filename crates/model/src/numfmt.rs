@@ -143,9 +143,14 @@ fn group(digits: &str, sep: char) -> String {
     out
 }
 
+/// Longest number format applied, as in Excel (255 characters); a longer one formats as
+/// General, so a chart cannot make every label expand a huge format.
+pub const MAX_CODE_LEN: usize = 255;
+
 /// `v` formatted with the Excel number format `code` in language `lang` (axis labels: the text
 /// section of a format doesn't apply).
 pub fn format(code: &str, v: f64, lang: Option<&str>) -> String {
+    let code = if code.len() > MAX_CODE_LEN * 4 || code.chars().count() > MAX_CODE_LEN { "General" } else { code };
     let (sep, dec) = marks(lang);
     if !v.is_finite() {
         return String::new();
@@ -229,16 +234,18 @@ fn sci(toks: &[Tok], v: f64, sep: char, dec: char) -> Option<String> {
             m *= 10.0;
             exp -= 1;
         }
-        // Rounding the mantissa to its digits can reach 10 (9.999 as `0.00`).
-        if format!("{m:.mant_frac$}").starts_with("10") {
-            m /= 10.0;
-            exp += 1;
-        }
     }
     let step = mant.iter().take_while(|t| **t != Tok::Dot).filter(|t| matches!(t, Tok::Digit(_))).count().max(1) as i32;
     let shift = exp.rem_euclid(step);
     exp -= shift;
     m *= 10f64.powi(shift);
+    // Round after forming the engineering mantissa: 999.94 as `##0.0` stays 999.9.
+    // Carry only when rounding exceeds all of the format's integer placeholders.
+    let carry = 10f64.powi(step);
+    if format!("{m:.mant_frac$}").parse::<f64>().is_ok_and(|rounded| rounded >= carry) {
+        m /= carry;
+        exp += step;
+    }
     let mantissa = fixed(mant, mfirst, mlast, m, sep, dec);
     let sign = if exp < 0 {
         "-"
@@ -298,6 +305,14 @@ mod tests {
     use super::*;
 
     const RUB: &str = r#"_-* #\ ##0\ "₽"_-;\-* #\ ##0\ "₽"_-;_-* "-"??\ "₽"_-;_-@_-"#;
+
+    #[test]
+    fn an_overlong_format_is_general() {
+        let code = "0".repeat(100_000);
+        assert_eq!(format(&code, 12.5, None), format("General", 12.5, None));
+        let ok = "0".repeat(MAX_CODE_LEN);
+        assert_eq!(format(&ok, 7.0, None).len(), MAX_CODE_LEN);
+    }
 
     #[test]
     fn scientific_subnormal() {
@@ -389,6 +404,21 @@ mod tests {
         assert_eq!(format("##0.0E+0", 12_345.0, None), "12.3E+3");
         assert_eq!(format("##0.0E+0", 0.012, None), "12.0E-3");
         assert_eq!(format("##0.0E+0", 999.96, None), "1.0E+3");
+    }
+
+    #[test]
+    fn engineering_formats_round_the_full_mantissa() {
+        for (code, value, expected) in [
+            ("##0.0E+00", 999.94, "999.9E+00"),
+            ("##0.0E+00", 0.99994, "999.9E-03"),
+            ("##0.0E+00", -999.94, "-999.9E+00"),
+            ("#0.0E+00", 99.94, "99.9E+00"),
+            ("##0.0E+00", 999.96, "1.0E+03"),
+            ("#0.0E+00", 99.96, "1.0E+02"),
+        ] {
+            assert_eq!(format(code, value, None), expected, "{code}, {value}");
+        }
+        assert_eq!(format("##0.0E+00", 999.94, Some("de-DE")), "999,9E+00");
     }
 
     #[test]
