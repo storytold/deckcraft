@@ -28,7 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Move Slide",
             [],
             None,
-            "{from?: index, ids?: [slide id], to: index (counted without the moved slides)}",
+            "{from?: index, ids?: [slide id], to: index (counted without the moved slides), section?: index (the section they join: one that meets the gap at `to`; default the section of the slide before them)}",
             has_slide,
             move_slide
         ),
@@ -280,7 +280,8 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Moves one slide (`from`, else the current slide) or several (`ids`) to `to`, in one undo step.
 /// `to` counts in the deck without the moved slides; they land there as one run, in the order
-/// they had, join the section of the slide before them, and stay selected.
+/// they had, join the section of the slide before them (or `section`, any section that meets the
+/// gap, so a drop under a section's header lands at its start), and stay selected.
 fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = p.get("ids").filter(|v| !v.is_null());
     let from = match ids {
@@ -288,6 +289,7 @@ fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => 0,
     };
     let to = usize_param(p, "to").ok_or_else(|| bad("slide.move", "missing `to`"))?;
+    let section = opt_usize_param(p, "section", "slide.move")?;
     s.edit(|doc, sel| {
         let moving: HashSet<SlideId> = match ids {
             Some(v) => slide_ids_param(v, doc, "slide.move")?,
@@ -299,11 +301,17 @@ fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
         let (block, mut rest): (Vec<_>, Vec<_>) = std::mem::take(&mut doc.slides).into_iter().partition(|x| moving.contains(&x.id));
         let to = to.min(rest.len());
         let tail = rest.split_off(to);
+        // `doc` is a copy (Session::edit), so an error here leaves the deck as it was.
+        if let Some(si) = section
+            && (si >= doc.sections.len() || !gap_sections(doc, rest.last().map(|x| x.id), tail.first().map(|x| x.id)).contains(&si))
+        {
+            return Err(bad("slide.move", format!("section {si} does not meet the gap at {to}")));
+        }
         let moved: Vec<SlideId> = block.iter().map(|x| x.id).collect();
         rest.extend(block);
         rest.extend(tail);
         doc.slides = rest;
-        reassign_sections(doc, &moved, to);
+        reassign_sections(doc, &moved, to, section);
         sel.slide = to;
         sel.slides = moved;
         sel.shapes.clear();
@@ -328,9 +336,19 @@ fn slide_ids_param(v: &Value, doc: &Presentation, cmd: &str) -> Result<HashSet<S
     Ok(out)
 }
 
-/// Keeps sections in step after `moved` landed as a run at `at`: the run joins the section of
-/// the slide just before it (the first section when it opens the deck), in document order.
-fn reassign_sections(doc: &mut Presentation, moved: &[SlideId], at: usize) {
+/// The sections a run dropped between slides `before` and `after` may join without breaking
+/// document order: the section of `before` (the first when there is none) through the section of
+/// `after` (the last when there is none), so empty sections between them count too.
+fn gap_sections(doc: &Presentation, before: Option<SlideId>, after: Option<SlideId>) -> std::ops::RangeInclusive<usize> {
+    let lo = before.and_then(|id| doc.section_of(id)).unwrap_or(0);
+    let hi = after.and_then(|id| doc.section_of(id)).unwrap_or(doc.sections.len().saturating_sub(1));
+    lo..=hi
+}
+
+/// Keeps sections in step after `moved` landed as a run at `at`: the run joins section `joins`,
+/// else the section of the slide just before it (the first section when it opens the deck), in
+/// document order.
+fn reassign_sections(doc: &mut Presentation, moved: &[SlideId], at: usize, joins: Option<usize>) {
     if doc.sections.is_empty() {
         return;
     }
@@ -339,7 +357,7 @@ fn reassign_sections(doc: &mut Presentation, moved: &[SlideId], at: usize) {
         sec.slides.retain(|x| !moving.contains(x));
     }
     let neighbour = at.checked_sub(1).and_then(|i| doc.slides.get(i)).map(|x| x.id);
-    let si = neighbour.and_then(|n| doc.section_of(n)).unwrap_or(0);
+    let si = joins.or_else(|| neighbour.and_then(|n| doc.section_of(n))).unwrap_or(0);
     let order: HashMap<SlideId, usize> = doc.slides.iter().enumerate().map(|(i, x)| (x.id, i)).collect();
     if let Some(sec) = doc.sections.get_mut(si) {
         sec.slides.extend_from_slice(moved);
@@ -643,8 +661,9 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
             let sec = doc.sections.get_mut(si).ok_or_else(|| bad("section.add", "no section"))?;
             let k = sec.slides.iter().position(|x| *x == start).unwrap_or(sec.slides.len());
             let tail = sec.slides.split_off(k);
+            // At a section's first slide the section stays, empty, before the new one, as in
+            // PowerPoint (#2187), whatever its name.
             doc.sections.insert(si + 1, Section { name, slides: tail });
-            doc.sections.retain(|x| !x.slides.is_empty() || x.name != "Default Section");
         }
         Ok(json!({"sections": doc.sections.len()}))
     })
@@ -877,6 +896,71 @@ mod tests {
         assert_eq!(sections(&s), [vec![], vec![ids[3], ids[4], ids[0], ids[1], ids[2]]]);
         s.execute("slide.move", &json!({"ids": [ids[0], ids[1]], "to": 0})).expect("to the front");
         assert_eq!(sections(&s), [vec![ids[0], ids[1]], vec![ids[3], ids[4], ids[2]]]);
+        let all: Vec<u32> = sections(&s).concat();
+        assert_eq!(all, order(&s), "sections follow slide order");
+    }
+
+    /// #2187: a section added at the first slide of another leaves that one in place, empty,
+    /// instead of replacing it, a "Default Section" included.
+    #[test]
+    fn a_section_added_at_a_section_start_leaves_the_old_one_empty() {
+        let (mut s, ids) = deck(3);
+        s.execute("section.add", &json!({"at": 1})).expect("Default + Untitled");
+        let sections = |s: &Session| -> Vec<(String, Vec<u32>)> {
+            s.doc().expect("doc").doc.sections.iter().map(|x| (x.name.clone(), x.slides.iter().map(|id| id.0).collect())).collect()
+        };
+        s.execute("section.add", &json!({"name": "Intro", "at": 0})).expect("at the Default Section's start");
+        assert_eq!(
+            sections(&s),
+            [("Default Section".into(), vec![]), ("Intro".into(), vec![ids[0]]), ("Untitled Section".into(), vec![ids[1], ids[2]])]
+        );
+        s.execute("section.add", &json!({"name": "Body", "at": 1})).expect("at Untitled's start");
+        assert_eq!(
+            sections(&s),
+            [
+                ("Default Section".into(), vec![]),
+                ("Intro".into(), vec![ids[0]]),
+                ("Untitled Section".into(), vec![]),
+                ("Body".into(), vec![ids[1], ids[2]])
+            ]
+        );
+    }
+
+    /// #2185: a slide dropped under a section's header joins that section at its start, and an
+    /// empty section between two slides can take it too; a section away from the gap is refused.
+    #[test]
+    fn a_moved_slide_can_join_the_section_after_the_gap() {
+        let (mut s, ids) = deck(5);
+        assert!(s.execute("slide.move", &json!({"ids": [ids[0]], "to": 2, "section": 0})).is_err(), "a deck without sections has no section to join");
+        s.execute("section.add", &json!({"name": "A", "at": 0})).expect("A");
+        s.execute("section.add", &json!({"name": "B", "at": 3})).expect("B");
+        let sections =
+            |s: &Session| -> Vec<Vec<u32>> { s.doc().expect("doc").doc.sections.iter().map(|x| x.slides.iter().map(|id| id.0).collect()).collect() };
+        // A = 0,1,2; B = 3,4. Slide 4 to the start of B: B, not A, takes it.
+        s.execute("slide.move", &json!({"ids": [ids[4]], "to": 3, "section": 1})).expect("start of B");
+        assert_eq!(sections(&s), [vec![ids[0], ids[1], ids[2]], vec![ids[4], ids[3]]]);
+        // Without `section`, the same gap still means the end of A.
+        s.execute("slide.move", &json!({"ids": [ids[3]], "to": 3})).expect("end of A");
+        assert_eq!(sections(&s), [vec![ids[0], ids[1], ids[2], ids[3]], vec![ids[4]]]);
+        // Slide 3 is already last in A: joining B where it stands moves it across.
+        s.execute("slide.move", &json!({"ids": [ids[3]], "to": 3, "section": 1})).expect("across");
+        assert_eq!(sections(&s), [vec![ids[0], ids[1], ids[2]], vec![ids[3], ids[4]]]);
+        // A new section at B's first slide leaves B empty between A and C (#2187); B takes a
+        // slide dropped into it.
+        s.execute("section.add", &json!({"name": "C", "at": 3})).expect("C");
+        assert_eq!(sections(&s), [vec![ids[0], ids[1], ids[2]], vec![], vec![ids[3], ids[4]]]);
+        s.execute("slide.move", &json!({"ids": [ids[3]], "to": 3, "section": 1})).expect("into empty B");
+        assert_eq!(sections(&s), [vec![ids[0], ids[1], ids[2]], vec![ids[3]], vec![ids[4]]]);
+        // A section that does not meet the gap, or does not exist, is refused and changes nothing.
+        let before = (order(&s), sections(&s));
+        for p in [
+            json!({"ids": [ids[0]], "to": 4, "section": 0}),
+            json!({"ids": [ids[0]], "to": 0, "section": 9}),
+            json!({"ids": [ids[0]], "to": 0, "section": -1}),
+        ] {
+            assert!(s.execute("slide.move", &p).is_err(), "slide.move must reject {p}");
+            assert_eq!((order(&s), sections(&s)), before, "{p}");
+        }
         let all: Vec<u32> = sections(&s).concat();
         assert_eq!(all, order(&s), "sections follow slide order");
     }

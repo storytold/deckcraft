@@ -38,7 +38,7 @@ fn section_slides(h: &Harness<'_, SlideApp>) -> Vec<Vec<u32>> {
     h.state().session.active().unwrap().doc.sections.iter().map(|s| s.slides.iter().map(|id| id.0).collect()).collect()
 }
 
-fn double_click(h: &mut Harness<'_, SlideApp>, p: Pos2) {
+pub(crate) fn double_click(h: &mut Harness<'_, SlideApp>, p: Pos2) {
     h.hover_at(p);
     h.run_steps(1);
     for _ in 0..2 {

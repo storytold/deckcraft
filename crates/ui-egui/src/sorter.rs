@@ -62,12 +62,59 @@ fn groups(doc: &Presentation) -> Vec<(Option<usize>, Vec<usize>)> {
     out
 }
 
-struct Header<'a> {
-    uid: u64,
-    index: usize,
-    name: &'a str,
-    count: usize,
-    first: Option<u32>,
+pub(crate) struct Header<'a> {
+    pub uid: u64,
+    pub index: usize,
+    pub name: &'a str,
+    pub count: usize,
+    pub first: Option<u32>,
+}
+
+/// The inline rename box over a section's name at `rect`, while that section is being renamed
+/// (Slide Sorter and the thumbnail pane share it): Enter or clicking away renames, Esc cancels.
+/// Returns whether the box is showing.
+pub(crate) fn rename_field(app: &mut SlideApp, ui: &mut Ui, rect: Rect, h: &Header<'_>, font: egui::FontId) -> bool {
+    let renaming = app.sorter.renaming.clone().filter(|(uid, index, _)| *uid == h.uid && *index == h.index).map(|(_, _, text)| text);
+    let Some(mut buf) = renaming else { return false };
+    let edit_id = ui.scope_id().with(("sorter-rename", h.uid, h.index));
+    let out = ui.put(rect, egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text("Name").font(font).margin(vec2(4.0, 2.0)));
+    let already = app.sorter.rename_started;
+    if !already {
+        out.request_focus();
+        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
+            let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(buf.chars().count()));
+            state.cursor.set_char_range(Some(all));
+            state.store(ui.ctx(), edit_id);
+        }
+        app.sorter.rename_started = true;
+    }
+    let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+    // The frame that asks for focus has not had it yet; committing then would cancel the rename.
+    if already && (out.lost_focus() || enter || esc) {
+        app.sorter.renaming = None;
+        app.sorter.rename_started = false;
+        let trimmed = buf.trim();
+        if !esc && !trimmed.is_empty() && trimmed != h.name {
+            let _ = app.run("section.rename", json!({"index": h.index, "name": trimmed}));
+        }
+    } else if let Some((_, _, text)) = app.sorter.renaming.as_mut() {
+        *text = buf;
+    }
+    true
+}
+
+/// Starts renaming section `index` of document `uid` inline, its name selected.
+pub(crate) fn start_rename(app: &mut SlideApp, uid: u64, index: usize, name: &str) {
+    app.sorter.renaming = Some((uid, index, name.to_string()));
+    app.sorter.rename_started = false;
+}
+
+/// Drops a rename begun in another document or for a section that no longer exists.
+pub(crate) fn drop_stale_rename(app: &mut SlideApp, uid: u64, sections: usize) {
+    if app.sorter.renaming.as_ref().is_some_and(|(u, i, _)| *u != uid || *i >= sections) {
+        app.sorter.renaming = None;
+        app.sorter.rename_started = false;
+    }
 }
 
 /// Render one slide-sorter section header, handle its collapse/drag interactions, and return the
@@ -94,35 +141,8 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
     let fold = format!("{} {}", if open { "Collapse" } else { "Expand" }, h.name);
     cresp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &fold));
     icons::paint(&painter, chev.shrink(4.0), if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_dim, h.first.is_none());
-    let renaming = app.sorter.renaming.clone().filter(|(uid, index, _)| *uid == h.uid && *index == h.index).map(|(_, _, text)| text);
     let name_rect = Rect::from_min_max(pos2(r.min.x + 40.0, r.min.y + 4.0), pos2(r.max.x - 56.0, r.max.y - 4.0));
-    if let Some(mut buf) = renaming {
-        let edit_id = ui.scope_id().with(("sorter-rename", h.uid, h.index));
-        let out =
-            ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text("Name").font(theme::bold(13.0)).margin(vec2(4.0, 2.0)));
-        let already = app.sorter.rename_started;
-        if !already {
-            out.request_focus();
-            if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
-                let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(buf.chars().count()));
-                state.cursor.set_char_range(Some(all));
-                state.store(ui.ctx(), edit_id);
-            }
-            app.sorter.rename_started = true;
-        }
-        let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
-        // The frame that asks for focus has not had it yet; committing then would cancel the rename.
-        if already && (out.lost_focus() || enter || esc) {
-            app.sorter.renaming = None;
-            app.sorter.rename_started = false;
-            let trimmed = buf.trim();
-            if !esc && !trimmed.is_empty() && trimmed != h.name {
-                let _ = app.run("section.rename", json!({"index": h.index, "name": trimmed}));
-            }
-        } else if let Some((_, _, text)) = app.sorter.renaming.as_mut() {
-            *text = buf;
-        }
-    } else {
+    if !rename_field(app, ui, name_rect, h, theme::bold(13.0)) {
         painter.text(pos2(name_rect.min.x, r.center().y), Align2::LEFT_CENTER, h.name, theme::bold(13.0), t.text);
     }
     painter.text(pos2(r.max.x - 16.0, r.center().y), Align2::RIGHT_CENTER, format!("({})", h.count), theme::font(12.0), t.text_dim);
@@ -136,8 +156,7 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
             app.sorter.collapsed.remove(&key);
         }
     } else if resp.double_clicked() && app.sorter.renaming.is_none() {
-        app.sorter.renaming = Some((h.uid, h.index, h.name.to_string()));
-        app.sorter.rename_started = false;
+        start_rename(app, h.uid, h.index, h.name);
     }
     let on_chevron = resp.interact_pointer_pos().is_some_and(|p| chev.contains(p));
     if resp.drag_started() && !on_chevron && app.sorter.renaming.is_none() {
@@ -269,13 +288,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         return;
     };
     let uid = st.uid;
-    if app.sorter.renaming.as_ref().is_some_and(|(u, i, _)| *u != uid || *i >= st.doc.sections.len()) {
-        app.sorter.renaming = None;
-        app.sorter.rename_started = false;
-    }
     let doc = st.doc.clone();
     let cur = st.selection.slide;
     let multi = st.selection.slides.clone();
+    drop_stale_rename(app, uid, doc.sections.len());
     let zoom = app.ui.sorter_zoom.clamp(0.5, 3.0);
     let grouped = groups(&doc);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -336,10 +352,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         if app.sorter.drag.is_none() && crate::thumbs::slide_drag_live(app, crate::thumbs::drag_button(ui)) {
             if let Some(pp) = ui.input(|i| i.pointer.interact_pos()) {
-                let to =
-                    rects.iter().find(|(_, r)| r.contains(pp)).map(|(i, r)| if pp.x > r.center().x { i + 1 } else { *i }).unwrap_or(doc.slides.len());
+                let hit = rects.iter().find(|(_, r)| r.contains(pp));
+                let to = hit.map(|(i, r)| if pp.x > r.center().x { i + 1 } else { *i }).unwrap_or(doc.slides.len());
+                // The slides join the section of the slide they are dropped on, so the first
+                // slot of a section is that section's, not the end of the one before (#2185).
+                let section = hit.and_then(|(i, _)| doc.slides.get(*i)).and_then(|s| doc.section_of(s.id));
                 if let Some(d) = app.thumb_drag.as_mut() {
                     d.slot = to;
+                    d.section = section;
                 }
                 if let Some((_, r)) = rects.iter().find(|(i, _)| *i == to).or(rects.last()) {
                     let x = if to >= doc.slides.len() { r.max.x - 6.0 } else { r.min.x + 6.0 };
