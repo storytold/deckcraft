@@ -342,7 +342,7 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     assert!((byte.alpha() - 0.1).abs() < 1e-9, "{}", byte.alpha());
 }
 
-/// `set_alpha` replaces every alpha a color has, for each kind of base. A base other than RGB
+/// `set_alpha` replaces every alpha a color has, for each kind of base. A theme or system base
 /// can resolve to a color with its own alpha, so it keeps an explicit `alpha` transform even when
 /// opaque.
 #[test]
@@ -372,4 +372,8 @@ fn set_alpha_replaces_every_alpha_of_a_color() {
     let mut plain = ColorRef::rgb(half);
     plain.set_alpha(1.0);
     assert_eq!(plain, ColorRef::rgb(Rgba::rgb(10, 20, 30)), "an opaque RGB color gets no transform");
+    let red = ColorRef { base: style::ColorBase::Preset { name: "red".into() }, mods: vec![] };
+    let mut opaque = red.clone();
+    opaque.set_alpha(1.0);
+    assert_eq!(opaque, red, "an opaque preset color gets no transform");
 }

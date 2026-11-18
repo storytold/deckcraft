@@ -70,21 +70,22 @@ impl ColorRef {
         })
     }
     /// Sets the alpha to `a` (0–1), replacing every alpha the color had: the `alpha`, `alphaMod`
-    /// and `alphaOff` transforms and the alpha of an RGB base. An RGB color that ends up fully
-    /// opaque gets no transform. A color with any other base (a theme color, `phClr`, a preset or
-    /// a system color) always gets an `alpha` transform, which also replaces the alpha that base
+    /// and `alphaOff` transforms and the alpha of an RGB base. An RGB or preset color that ends up
+    /// fully opaque gets no transform. A color with any other base (a theme color, `phClr` or a
+    /// system color) always gets an `alpha` transform, which also replaces the alpha that base
     /// resolves to.
     pub fn set_alpha(&mut self, a: f64) {
         self.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_) | ColorTransform::AlphaMod(_) | ColorTransform::AlphaOff(_)));
-        let rgb = match &mut self.base {
+        let opaque_base = match &mut self.base {
             ColorBase::Rgb { rgb } => {
                 rgb.a = 255;
                 true
             }
-            ColorBase::Scheme { .. } | ColorBase::Preset { .. } | ColorBase::System { .. } => false,
+            ColorBase::Preset { .. } => true,
+            ColorBase::Scheme { .. } | ColorBase::System { .. } => false,
         };
         let a = if a.is_finite() { a.clamp(0.0, 1.0) } else { 1.0 };
-        if a < 1.0 || !rgb {
+        if a < 1.0 || !opaque_base {
             self.mods.push(ColorTransform::Alpha((a * 100_000.0).round() as i32));
         }
     }
