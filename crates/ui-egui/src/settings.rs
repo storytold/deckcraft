@@ -34,10 +34,10 @@ fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
 }
 
 /// The saved UI state and preferences in `dir` (each `None` when missing or unusable). The
-/// ribbon tab and hidden ribbon are not restored: every document window, new, opened or at
-/// launch, shows its ribbon on Home.
+/// ribbon tab is not restored: every document window, new, opened or at launch, opens on Home. A
+/// hidden ribbon stays hidden, as in PowerPoint.
 pub fn load(dir: &Path) -> (Option<UiState>, Option<Prefs>) {
-    let ui = read::<UiState>(&dir.join(UI_FILE)).map(|u| UiState { tab: "Home".into(), ribbon_collapsed: false, ..u.sanitized() });
+    let ui = read::<UiState>(&dir.join(UI_FILE)).map(|u| UiState { tab: "Home".into(), ..u.sanitized() });
     (ui, read::<Prefs>(&dir.join(PREFS_FILE)).map(Prefs::sanitized))
 }
 
@@ -135,7 +135,7 @@ mod tests {
         let (u, p) = load(&d.join("nested"));
         let u = u.unwrap();
         assert_eq!(u.zoom, Some(1.5));
-        assert_eq!((u.tab.as_str(), u.ribbon_collapsed), ("Home", false), "a launch opens on Home with the ribbon shown");
+        assert_eq!((u.tab.as_str(), u.ribbon_collapsed), ("Home", true), "a launch opens on Home, keeping a hidden ribbon hidden");
         let p = p.unwrap();
         assert_eq!((p.author.as_str(), p.units), ("Ann", deckcraft_geom::Unit::Centimeters));
         let names: Vec<String> =

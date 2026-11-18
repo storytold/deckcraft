@@ -166,7 +166,9 @@ impl SlideApp {
         if let Some(previous) = self.live_deck
             && active != Some(previous)
         {
-            let mut parked = active.and_then(|uid| self.parked.remove(&uid)).unwrap_or_default();
+            // A new window opens on Home, keeping a hidden ribbon hidden, as PowerPoint does.
+            let fresh = || WindowUi { ribbon_collapsed: self.ui.ribbon_collapsed, ..Default::default() };
+            let mut parked = active.and_then(|uid| self.parked.remove(&uid)).unwrap_or_else(fresh);
             parked.swap(self);
             self.parked.insert(previous, parked);
         }
@@ -256,8 +258,13 @@ mod tests {
         app.run("file.new", json!({})).unwrap();
         app.follow_active_deck();
         let second = app.session.active().unwrap().uid;
-        assert_eq!((app.ui.tab.as_str(), app.ui.ribbon_collapsed), ("Home", false), "a new window shows its ribbon on Home");
+        assert_eq!(
+            (app.ui.tab.as_str(), app.ui.ribbon_collapsed),
+            ("Home", true),
+            "a new window opens on Home, its ribbon hidden as the first has it"
+        );
         app.ui.tab = "Insert".into();
+        app.run("view.collapseRibbon", json!({})).unwrap();
         app.enter_deck(first);
         assert_eq!((app.ui.tab.as_str(), app.ui.ribbon_collapsed), ("Design", true), "the first window's ribbon stays as it was");
         app.enter_deck(second);
