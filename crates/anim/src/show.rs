@@ -47,7 +47,8 @@ pub enum LinkJump {
 
 /// Where a slide show is. Besides the current position it remembers what was played on every slide
 /// the show has visited (main steps, triggered sequences), so a slide reached again by a link or
-/// the arrow keys looks the way it was left, as in PowerPoint.
+/// by going back looks the way it was left, as in PowerPoint. Going forward to a slide starts it
+/// over, so its animations play again (#2090).
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ShowState {
     /// Index into `presentation.slides`.
@@ -226,6 +227,14 @@ impl ShowState {
         }
     }
 
+    /// Advance to slide `i`: it starts over, as if the show had not been there, so its
+    /// animations play again (#2090). Links and Back keep a slide as it was left.
+    fn enter_forward(&mut self, pres: &Presentation, i: usize) {
+        self.leave(pres);
+        self.runs.remove(&i);
+        self.enter(pres, i);
+    }
+
     fn next_index(&self, pres: &Presentation) -> Option<usize> {
         let order = self.visit(pres);
         match order.iter().position(|&i| i == self.slide) {
@@ -271,12 +280,12 @@ impl ShowState {
         }
         match self.next_index(pres) {
             Some(i) => {
-                self.enter(pres, i);
+                self.enter_forward(pres, i);
                 ShowAction::Slide(i)
             }
             None if looping(pres) => match self.visit(pres).first() {
                 Some(&i) => {
-                    self.enter(pres, i);
+                    self.enter_forward(pres, i);
                     ShowAction::Slide(i)
                 }
                 None => {
