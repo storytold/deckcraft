@@ -39,6 +39,9 @@ pub struct WindowUi {
     canvas_region: Option<egui::Rect>,
     ribbon_scroll: HashMap<String, u32>,
     reuse_target: Option<crate::FileTarget>,
+    // The ribbon tab shown and whether the ribbon is hidden: each window has its own.
+    tab: String,
+    ribbon_collapsed: bool,
 }
 
 impl Default for WindowUi {
@@ -71,6 +74,8 @@ impl Default for WindowUi {
             canvas_region: None,
             ribbon_scroll: HashMap::new(),
             reuse_target: None,
+            tab: "Home".into(),
+            ribbon_collapsed: false,
         }
     }
 }
@@ -107,6 +112,8 @@ impl WindowUi {
             canvas_region,
             ribbon_scroll,
             reuse_target,
+            tab,
+            ribbon_collapsed,
         } = self;
         swap(dialog, &mut app.dialog);
         swap(backstage, &mut app.backstage);
@@ -134,6 +141,8 @@ impl WindowUi {
         swap(canvas_region, &mut app.canvas_region);
         swap(ribbon_scroll, &mut app.ribbon_scroll);
         swap(reuse_target, &mut app.reuse_target);
+        swap(tab, &mut app.ui.tab);
+        swap(ribbon_collapsed, &mut app.ui.ribbon_collapsed);
     }
 }
 
@@ -232,6 +241,27 @@ mod tests {
         assert_eq!(app.dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
         app.enter_deck(second);
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn each_window_keeps_its_own_ribbon_tab_and_hidden_ribbon() {
+        let mut app = SlideApp::new(Session::new(), Services::default());
+        app.native_windows = true;
+        app.run("file.new", json!({})).unwrap();
+        app.follow_active_deck();
+        let first = app.session.active().unwrap().uid;
+        app.ui.tab = "Design".into();
+        app.run("view.collapseRibbon", json!({})).unwrap();
+        assert!(app.ui.ribbon_collapsed);
+        app.run("file.new", json!({})).unwrap();
+        app.follow_active_deck();
+        let second = app.session.active().unwrap().uid;
+        assert_eq!((app.ui.tab.as_str(), app.ui.ribbon_collapsed), ("Home", false), "a new window shows its ribbon on Home");
+        app.ui.tab = "Insert".into();
+        app.enter_deck(first);
+        assert_eq!((app.ui.tab.as_str(), app.ui.ribbon_collapsed), ("Design", true), "the first window's ribbon stays as it was");
+        app.enter_deck(second);
+        assert_eq!((app.ui.tab.as_str(), app.ui.ribbon_collapsed), ("Insert", false));
     }
 
     #[test]
