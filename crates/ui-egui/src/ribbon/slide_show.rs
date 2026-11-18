@@ -55,14 +55,23 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.label("Monitor:");
                 let monitors = crate::monitors::detect_monitors();
-                let primary_name = monitors.iter().find(|m| m.primary).map(|m| m.name.clone()).unwrap_or_else(|| "Primary".into());
-                let extended_name = monitors.iter().find(|m| !m.primary && m.name != primary_name).map(|m| m.name.clone()).unwrap_or_else(|| "Second Display".into());
+                let primary = crate::monitors::get_primary_monitor(&monitors);
+                let extended = crate::monitors::get_extended_monitor(&monitors, &primary);
+                let primary_name = primary.name.clone();
+                let extended_name = extended.as_ref().map(|m| m.name.clone());
+                let auto_name = extended.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| primary_name.clone());
 
                 let cur = app.ui.presentation_monitor.clone();
                 let cur_label = match cur.as_str() {
                     "primary" => format!("Primary ({primary_name})"),
-                    "extended" => format!("Extended ({extended_name})"),
-                    "auto" => format!("Automatic ({extended_name})"),
+                    "extended" => {
+                        if let Some(ext) = &extended_name {
+                            format!("Extended ({ext})")
+                        } else {
+                            format!("Extended (None: {primary_name})")
+                        }
+                    }
+                    "auto" => format!("Automatic ({auto_name})"),
                     other => {
                         if let Some(m) = monitors.iter().find(|m| m.name == other) {
                             crate::monitors::format_monitor_label(m)
@@ -75,11 +84,15 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
                     .selected_text(cur_label)
                     .width(180.0)
                     .show_ui(ui, |ui| {
-                        if ui.selectable_label(cur == "auto", format!("Automatic ({extended_name})")).clicked() {
+                        if ui.selectable_label(cur == "auto", format!("Automatic ({auto_name})")).clicked() {
                             app.ui.presentation_monitor = "auto".into();
                         }
-                        if ui.selectable_label(cur == "extended", format!("Extended Display ({extended_name})")).clicked() {
-                            app.ui.presentation_monitor = "extended".into();
+                        if let Some(ext) = &extended_name {
+                            if ui.selectable_label(cur == "extended", format!("Extended Display ({ext})")).clicked() {
+                                app.ui.presentation_monitor = "extended".into();
+                            }
+                        } else {
+                            let _ = ui.selectable_label(false, format!("Extended Display (None: {primary_name})"));
                         }
                         if ui.selectable_label(cur == "primary", format!("Primary Monitor ({primary_name})")).clicked() {
                             app.ui.presentation_monitor = "primary".into();

@@ -278,14 +278,23 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.add_space(8.0);
     ui.label("Multiple monitors");
     let monitors = crate::monitors::detect_monitors();
-    let primary_name = monitors.iter().find(|m| m.primary).map(|m| m.name.clone()).unwrap_or_else(|| "Primary".into());
-    let extended_name = monitors.iter().find(|m| !m.primary && m.name != primary_name).map(|m| m.name.clone()).unwrap_or_else(|| "Second Display".into());
+    let primary = crate::monitors::get_primary_monitor(&monitors);
+    let extended = crate::monitors::get_extended_monitor(&monitors, &primary);
+    let primary_name = primary.name.clone();
+    let extended_name = extended.as_ref().map(|m| m.name.clone());
+    let auto_name = extended.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| primary_name.clone());
 
     let mon_choice = d.fields.entry("monitor".into()).or_insert_with(|| app.ui.presentation_monitor.clone());
     let mon_label = match mon_choice.as_str() {
         "primary" => format!("Primary ({primary_name})"),
-        "extended" => format!("Extended ({extended_name})"),
-        "auto" => format!("Automatic ({extended_name})"),
+        "extended" => {
+            if let Some(ext) = &extended_name {
+                format!("Extended ({ext})")
+            } else {
+                format!("Extended (None: {primary_name})")
+            }
+        }
+        "auto" => format!("Automatic ({auto_name})"),
         other => {
             if let Some(m) = monitors.iter().find(|m| m.name == other) {
                 crate::monitors::format_monitor_label(m)
@@ -295,11 +304,15 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     };
     craft_ui::ComboBox::from_id_salt("setup_monitor").selected_text(mon_label).show_ui(ui, |ui| {
-        if ui.selectable_label(mon_choice == "auto", format!("Automatic ({extended_name})")).clicked() {
+        if ui.selectable_label(mon_choice == "auto", format!("Automatic ({auto_name})")).clicked() {
             *mon_choice = "auto".into();
         }
-        if ui.selectable_label(mon_choice == "extended", format!("Extended Display ({extended_name})")).clicked() {
-            *mon_choice = "extended".into();
+        if let Some(ext) = &extended_name {
+            if ui.selectable_label(mon_choice == "extended", format!("Extended Display ({ext})")).clicked() {
+                *mon_choice = "extended".into();
+            }
+        } else {
+            let _ = ui.selectable_label(false, format!("Extended Display (None: {primary_name})"));
         }
         if ui.selectable_label(mon_choice == "primary", format!("Primary Monitor ({primary_name})")).clicked() {
             *mon_choice = "primary".into();

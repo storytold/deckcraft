@@ -121,6 +121,9 @@ pub struct Show {
     pub monitor_choice: Option<String>,
     pub hud_toast: Option<(String, f64)>,
     pub cached_monitors: Vec<crate::monitors::MonitorInfo>,
+    pub placed: bool,
+    pub last_monitor_scan: f64,
+    pub pending_swap: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -278,6 +281,9 @@ impl Show {
             monitor_choice: None,
             hud_toast: None,
             cached_monitors: crate::monitors::detect_monitors(),
+            placed: false,
+            last_monitor_scan: 0.0,
+            pending_swap: false,
         }
     }
 

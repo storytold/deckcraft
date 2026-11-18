@@ -62,7 +62,7 @@ pub fn has_second_display() -> bool {
     monitors.iter().any(|m| m.name != primary.name || m.x != primary.x || m.y != primary.y)
 }
 
-fn get_primary_monitor(monitors: &[MonitorInfo]) -> MonitorInfo {
+pub fn get_primary_monitor(monitors: &[MonitorInfo]) -> MonitorInfo {
     monitors
         .iter()
         .find(|m| m.primary)
@@ -79,7 +79,7 @@ fn get_primary_monitor(monitors: &[MonitorInfo]) -> MonitorInfo {
         })
 }
 
-fn get_extended_monitor(monitors: &[MonitorInfo], primary: &MonitorInfo) -> Option<MonitorInfo> {
+pub fn get_extended_monitor(monitors: &[MonitorInfo], primary: &MonitorInfo) -> Option<MonitorInfo> {
     monitors
         .iter()
         .find(|m| m.name != primary.name && (m.x != primary.x || m.y != primary.y || !m.primary))
@@ -110,12 +110,11 @@ pub fn format_monitor_label(m: &MonitorInfo) -> String {
     format!("{}: {}×{} ({role})", m.name, m.width, m.height)
 }
 
-/// Resolves which monitor gets the audience Slide Show and which gets Presenter View.
+/// Resolves which monitor gets the audience Slide Show and which gets Presenter View using the given monitors slice.
 /// Returns `(audience_monitor, presenter_monitor)`.
-pub fn get_active_routing(choice: &str, swapped: bool) -> (MonitorInfo, MonitorInfo) {
-    let monitors = detect_monitors();
-    let primary = get_primary_monitor(&monitors);
-    let extended = get_extended_monitor(&monitors, &primary);
+pub fn get_active_routing_from(monitors: &[MonitorInfo], choice: &str, swapped: bool) -> (MonitorInfo, MonitorInfo) {
+    let primary = get_primary_monitor(monitors);
+    let extended = get_extended_monitor(monitors, &primary);
 
     let (mut audience_mon, mut presenter_mon) = if let Some(chosen) = monitors.iter().find(|m| m.name.eq_ignore_ascii_case(choice)) {
         let other = if chosen.name == primary.name {
@@ -152,14 +151,43 @@ pub fn get_active_routing(choice: &str, swapped: bool) -> (MonitorInfo, MonitorI
     (audience_mon, presenter_mon)
 }
 
-/// Calculate audience and presenter window coordinates based on presentation_monitor setting and swapped state.
-/// Returns (audience_pos, presenter_pos).
-pub fn presentation_placement(choice: &str, swapped: bool) -> (egui::Pos2, egui::Pos2) {
-    let (aud, pres) = get_active_routing(choice, swapped);
+/// Resolves which monitor gets the audience Slide Show and which gets Presenter View.
+/// Returns `(audience_monitor, presenter_monitor)`.
+pub fn get_active_routing(choice: &str, swapped: bool) -> (MonitorInfo, MonitorInfo) {
+    let monitors = detect_monitors();
+    get_active_routing_from(&monitors, choice, swapped)
+}
+
+/// Calculate audience and presenter window coordinates using a specific monitor list.
+pub fn presentation_placement_from(monitors: &[MonitorInfo], choice: &str, swapped: bool) -> (egui::Pos2, egui::Pos2) {
+    let (aud, pres) = get_active_routing_from(monitors, choice, swapped);
     (
         egui::pos2(aud.x as f32, aud.y as f32),
         egui::pos2(pres.x as f32, pres.y as f32),
     )
+}
+
+/// Calculate audience and presenter window coordinates based on presentation_monitor setting and swapped state.
+/// Returns (audience_pos, presenter_pos).
+pub fn presentation_placement(choice: &str, swapped: bool) -> (egui::Pos2, egui::Pos2) {
+    let monitors = detect_monitors();
+    presentation_placement_from(&monitors, choice, swapped)
+}
+
+/// Returns whether programmatic window routing is supported on this platform.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn can_route_windows() -> bool {
+    std::process::Command::new("xdotool")
+        .arg("-v")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Returns whether programmatic window routing is supported on this platform.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+pub fn can_route_windows() -> bool {
+    true
 }
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -217,19 +245,9 @@ pub fn restore_editor_window() {
 fn get_window_ids(name_pattern: &str) -> Vec<String> {
     let pid = std::process::id().to_string();
     match std::process::Command::new("xdotool")
-        .args(["search", "--onlyvisible", "--pid", &pid, "--name", name_pattern])
+        .args(["search", "--all", "--onlyvisible", "--pid", &pid, "--name", name_pattern])
         .output()
     {
-        Ok(out) if out.status.success() => {
-            let s = String::from_utf8_lossy(&out.stdout);
-            let wids: Vec<String> = s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
-            if !wids.is_empty() {
-                return wids;
-            }
-        }
-        _ => {}
-    }
-    match std::process::Command::new("xdotool").args(["search", "--onlyvisible", "--name", name_pattern]).output() {
         Ok(out) if out.status.success() => {
             let s = String::from_utf8_lossy(&out.stdout);
             s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()

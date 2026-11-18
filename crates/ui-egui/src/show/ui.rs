@@ -226,6 +226,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(aud_pos));
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
             crate::monitors::route_presentation(target_mon, show.swapped);
+            show.placed = true;
         }
         show.after_enter(doc, now);
     }
@@ -858,7 +859,9 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         app.show = Some(show);
     } else {
         crate::monitors::cancel_pending_routing();
-        crate::monitors::restore_editor_window();
+        if show.placed {
+            crate::monitors::restore_editor_window();
+        }
         if let Some(host) = app.services.presenter.as_mut() {
             host.close();
         }
