@@ -65,10 +65,6 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
 pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
     let st = s.doc().ok()?;
     let g = st.shape(gid)?;
-    let stretch = match (&g.kind, g.xfrm) {
-        (ShapeKind::Group { child, .. }, Some(x)) => super::paint::child_scale(&x, child),
-        _ => (1.0, 1.0),
-    };
     let set = g.diagram.as_ref().and_then(|d| d.font_size);
     if !g.diagram.as_ref().is_some_and(|d| d.imported)
         && let Some(z) = set
@@ -76,15 +72,26 @@ pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
         return Some(z);
     }
     let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;
-    // The smallest size of any line the text layout puts down, so what the renderer draws.
-    let mut shown: Option<f64> = None;
-    deckcraft_model::walk(std::slice::from_ref(g), &mut |x, _| {
-        if let Some(l) = super::paint::laid_out(&ctx, x, stretch) {
+    // The smallest size of any line the text layout puts down, so what the renderer draws. Each
+    // shape is measured in the box it has on the slide: stretched by every group above it, a
+    // nested group of an imported drawing as much as the graphic's own.
+    fn visit(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape, stretch: (f64, f64), depth: usize, shown: &mut Option<f64>) {
+        if let Some(l) = super::paint::laid_out(ctx, sh, stretch) {
             for line in l.lines.iter().filter(|ln| ln.size > 0.0) {
-                shown = Some(shown.map_or(line.size, |m| m.min(line.size)));
+                *shown = Some(shown.map_or(line.size, |m| m.min(line.size)));
             }
         }
-    });
+        if let ShapeKind::Group { children, child } = &sh.kind
+            && depth < 64
+        {
+            let own = sh.xfrm.map_or((1.0, 1.0), |x| super::paint::child_scale(&x, child));
+            for c in children {
+                visit(ctx, c, (stretch.0 * own.0, stretch.1 * own.1), depth + 1, shown);
+            }
+        }
+    }
+    let mut shown: Option<f64> = None;
+    visit(&ctx, g, (1.0, 1.0), 0, &mut shown);
     shown.or(set)
 }
 

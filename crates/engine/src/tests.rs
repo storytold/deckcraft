@@ -7760,6 +7760,77 @@ fn shrink_on_a_smartart_graphic_steps_from_the_renderer_calculated_scale() {
     assert!((z - (shown - 8.0).max(96.0)).abs() < 1e-6, "one step down from the drawn size {shown}, not from 200: {z}");
 }
 
+/// The Font dialog's size on a selected graphic is the graphic's size, as Font Size sets it: kept
+/// on the diagram and drawn on every node.
+#[test]
+fn the_font_dialog_size_on_a_smartart_graphic_is_kept_on_the_diagram() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(gid as u32);
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.fontDialog", &json!({"size": 30})).unwrap();
+    let runs = |s: &Session| -> Vec<Option<f64>> {
+        match s.doc().unwrap().shape(id).map(|x| &x.kind) {
+            Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+                .iter()
+                .filter_map(|c| c.text.as_ref())
+                .flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.props.size)))
+                .collect(),
+            _ => panic!("not a group"),
+        }
+    };
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().diagram.as_ref().unwrap().font_size, Some(30.0));
+    assert!(!runs(&s).is_empty() && runs(&s).iter().all(|r| *r == Some(30.0)), "{:?}", runs(&s));
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![id], "the graphic stays selected");
+    // Without a size the dialog leaves the graphic's size alone.
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.fontDialog", &json!({"italic": true})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().diagram.as_ref().unwrap().font_size, Some(30.0));
+}
+
+/// Text in a nested group of an imported drawing is measured in the box it has on the slide: the
+/// nested group's own stretch counts with the graphic's, so the shown size is what is drawn.
+#[test]
+fn the_shown_size_of_an_imported_smartart_graphic_counts_a_nested_groups_scale() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(gid as u32);
+    // Long text that fits its node at 20 pt; then the node goes into a group drawn at a quarter size.
+    let nest = |s: &mut Session, k: f64| {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), id).unwrap();
+        g.diagram.as_mut().unwrap().imported = true;
+        let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind else { panic!("not a group") };
+        let at = children.iter().position(|c| c.text.is_some()).unwrap();
+        let mut node = children[at].clone();
+        let t = node.text.as_mut().unwrap();
+        t.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+        for p in &mut t.paragraphs {
+            for r in &mut p.runs {
+                r.text = "some words that take a few lines to set in the node ".repeat(3);
+                r.props.size = Some(20.0);
+            }
+        }
+        let x = node.xfrm.unwrap();
+        children[at] = deckcraft_model::Shape {
+            id: ShapeId(node.id.0 + 100_000),
+            xfrm: Some(deckcraft_geom::Xfrm::new(x.x, x.y, x.w * k, x.h * k)),
+            kind: deckcraft_model::ShapeKind::Group { children: vec![node], child: x },
+            ..Default::default()
+        };
+    };
+    let mut flat = session();
+    let fid = flat.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(fid, gid);
+    nest(&mut flat, 1.0);
+    nest(&mut s, 0.25);
+    let full = crate::cmd::smartart::shown_size(&flat, id).unwrap();
+    let small = crate::cmd::smartart::shown_size(&s, id).unwrap();
+    assert!(small < full * 0.9, "a quarter-size nested group shrinks its text further: {small} (unscaled group: {full})");
+}
+
 /// A resized graphic measures its text in the box each node has on the slide, as the renderer
 /// draws it: text that fits in the child space but overflows the shrunk graphic shares a shrink,
 /// and the shown size reflects it.
