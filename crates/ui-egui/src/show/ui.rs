@@ -1,11 +1,11 @@
-use super::keys::{handle_keys, keyboard};
+use super::keys::{keyboard, remote_key};
 use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
-    Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
+    Zoom, grid_slide_hit, grid_tab_hit, norm_on_slide, paint_grid, scroll_grid_at, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
 };
 use super::{
@@ -101,7 +101,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     if let Some(key) = egui::Key::from_name(&name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
                         // The popup is the Presenter View: G opens All slides there, not on the audience screen (#1866).
-                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], true).0;
+                        out.keep &= remote_key(&mut show, &doc, now, key, modifiers);
                     }
                 }
                 crate::presenter::Command::Goto { slide } if show.presenter_grid && slide < doc.slides.len() => {
@@ -158,9 +158,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             }
             if !show.presenter_grid {
                 show.remote_grid.clear();
-            } else if show.remote_grid.len() < grid_indices(doc.slides.len()).len() {
+            } else if show.remote_grid.len() < doc.slides.len().min(crate::presenter::REMOTE_GRID_CAP) {
                 // A few thumbnails per update keep the audience window responsive on the web.
-                for i in grid_indices(doc.slides.len()).into_iter().skip(show.remote_grid.len()).take(4) {
+                for i in (0..doc.slides.len().min(crate::presenter::REMOTE_GRID_CAP)).skip(show.remote_grid.len()).take(4) {
                     // At most 96 px on the long side: 48 thumbnails stay well under the popup's message limit.
                     let (w, h) = (doc.slide_size.width.max(1.0), doc.slide_size.height.max(1.0));
                     let scale = REMOTE_THUMB / w.max(h);
@@ -257,16 +257,21 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             LinkJump::None => {}
         }
     } else if show.grid && clicked {
-        let aspect = slide_aspect(doc);
-        if let Some(p) = pointer
-            && let Some(n) = see_all_hit(full, grid_indices(doc.slides.len()).len(), aspect, p)
-            && let Some(&i) = grid_indices(doc.slides.len()).get(n)
-        {
-            show.grid = false;
-            show.blank = None;
-            show.zoom = None;
-            show.zoom_arm = false;
-            out.actions.push(show.state.goto(doc, i));
+        show.normalize_grid_filter(doc);
+        if let Some(p) = pointer {
+            if let Some(filter) = grid_tab_hit(full, doc, show.grid_tab_scroll, p) {
+                if filter != show.grid_filter {
+                    show.select_grid_filter(doc, filter);
+                    show.grid_scroll = 0.0;
+                    ctx.request_repaint();
+                }
+            } else if let Some(i) = grid_slide_hit(full, doc, show.grid_filter, show.grid_scroll, p) {
+                show.grid = false;
+                show.blank = None;
+                show.zoom = None;
+                show.zoom_arm = false;
+                out.actions.push(show.state.goto(doc, i));
+            }
         }
     } else if clicked && show.zoom_arm && !show.reading_bar_hit(ctx) {
         if let Some(p) = pointer
@@ -300,7 +305,15 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
 }
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { ctx, doc, now, srect, pointer, .. } = *f;
+    let Fr { ctx, doc, now, full, srect, pointer, .. } = *f;
+    // While See All Slides is open, the wheel scrolls the grid instead of turning the page.
+    if show.grid {
+        let delta = ctx.input(|i| i.smooth_scroll_delta.y);
+        if delta != 0.0 {
+            scroll_grid_at(show, -delta, full, doc, pointer);
+        }
+        return;
+    }
     // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
     // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
@@ -811,7 +824,11 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
             toggle_blank(show, Color32::WHITE);
         }
         if b(&mut child, "All").clicked() {
-            show.grid = !show.grid;
+            if show.grid {
+                show.grid = false;
+            } else {
+                show.open_grid(false, doc);
+            }
         }
         if b(&mut child, show.zoom_label()).clicked() {
             show.zoom_key();
@@ -844,7 +861,15 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        // An immediate viewport paints before its parent. At startup (--show / .ppsx),
+        // the parent's first font-atlas allocation has not reached the GPU yet, so a
+        // child using a different scale can issue a partial update for a missing texture.
+        // Let the root finish its first frame before opening the presenter window.
+        if ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 0 {
+            ctx.request_repaint();
+        } else {
+            presenter_window(ctx, show, doc, now, &mut out.keep);
+        }
     }
 }
 
