@@ -2,14 +2,16 @@
 //! OLE and other objects) and `p:contentPart` (3-D models).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use deckcraft_color::SchemeSlot;
 use deckcraft_geom::{Xfrm, preset};
 use deckcraft_model::style::{ColorRef, Effects, Fill};
 use deckcraft_model::table::{Cell, Row, Table};
 use deckcraft_model::text::{Anchor, TextDir};
-use deckcraft_model::{Geom, MediaClip, PhType, Placeholder, Shape, ShapeId, ShapeKind, ShapeStyle};
+use deckcraft_model::{Geom, MediaClip, PartRel, PartRelTarget, PhType, Placeholder, Shape, ShapeId, ShapeKind, ShapeStyle};
 
+use super::chart::{MAX_KEPT_DEPTH, MAX_KEPT_PARTS, MAX_KEPT_TOTAL_BYTES};
 use super::{Imp, Part, dml};
 use crate::xml::El;
 
@@ -472,58 +474,249 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
     } else {
         uri.rsplit('/').next().unwrap_or("Object").to_string()
     };
-    // Keep the parts it points to so a save writes it back whole (#203). A part with relationships
-    // of its own, or an external link, can't be carried: the save then falls back to the preview.
-    // Validate every relationship (and charge the budget) before copying anything, so a fallback
-    // that cannot be kept whole copies no part at all.
+    // Keep the parts it points to so a save writes it back whole (#203), with the parts those
+    // reach in turn and its external links (#1993). Validate every relationship (and charge the
+    // budget) before copying anything, so an object that cannot be kept whole keeps no part at
+    // all: a save then falls back to the preview.
     let mark = imp.mark();
     let mut planned = Vec::new();
     let mut spent = imp.diagram_xml_bytes;
     let mut ok = true;
     for id in super::rel_refs(e) {
-        let Some(rel) = part.rels.get(&id).filter(|r| !r.external) else {
+        let Some(rel) = part.rels.get(&id) else {
+            ok = false;
+            break;
+        };
+        // A linked object (or a hyperlink): the target stays a link and is never fetched.
+        if rel.external {
+            if !crate::opc::safe_rel(&rel.id, &rel.ty, &rel.target_raw) {
+                ok = false;
+                break;
+            }
+            planned.push((id, rel.ty.clone(), rel.target_raw.clone(), Keep::Link));
+            continue;
+        }
+        // Checked as the parts those reach are (see `walk`): a direct target that couldn't be
+        // carried along safely keeps the fallback too.
+        let Some(target) = crate::opc::kept_target(&part.name, &rel.target_raw) else {
+            log::warn!("pptx: relationship {} of {} points outside what an object may keep", rel.id, part.name);
             ok = false;
             break;
         };
         let pkg = imp.pkg;
-        if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
-            ok = false;
-            break;
-        }
         // A diagram's definition parts copied here count against the same presentation-wide budget.
-        if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&rel.target)) {
-            let len = pkg.get(&rel.target).map_or(0, |b| b.len());
+        if rel.kind.starts_with("diagram") && !imp.media_by_part.contains_key(&crate::opc::norm(&target)) {
+            let len = pkg.get(&target).map_or(0, |b| b.len());
             if len > MAX_DIAGRAM_PART_BYTES || spent.saturating_add(len) > MAX_DIAGRAM_XML_BYTES {
                 ok = false;
                 break;
             }
             spent += len;
         }
-        if pkg.get(&rel.target).is_none() {
+        if pkg.get(&target).is_none() {
             ok = false;
             break;
         }
-        planned.push((id, rel.ty.clone(), rel.target.clone(), rel.kind == "diagramData"));
+        let keep = if rel.kind == "diagramData" { Keep::Data } else { Keep::Part };
+        planned.push((id, rel.ty.clone(), target, keep));
     }
-    let parts = if ok {
+    let kept = if ok {
         imp.diagram_xml_bytes = spent;
-        let copied: Option<Vec<_>> = planned
-            .into_iter()
-            .map(|(id, kind, target, data)| {
-                let media = if data { diagram_data(imp, &target) } else { imp.media_for(&target) };
-                Some((id, kind, media?))
-            })
-            .collect();
-        if copied.is_none() {
+        let kept = keep_parts(imp, planned);
+        if kept.is_none() {
             imp.rollback(&mark);
         }
-        copied
+        kept
     } else {
         None
     };
-    let parts = parts.unwrap_or_default();
-    s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label, parts };
+    let (parts, part_rels) = kept.unwrap_or_default();
+    s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label, parts, part_rels };
     s
+}
+
+/// How an unmodelled object keeps one of its relationships.
+enum Keep {
+    /// An external target, kept as a link.
+    Link,
+    /// A diagram's data part (see [`diagram_data`]).
+    Data,
+    /// Any other part, as it is.
+    Part,
+}
+
+/// Relationships an unmodelled object keeps from the parts it carries along, all of them: one
+/// part's own relationships can't run past this.
+const MAX_OBJECT_RELS: usize = 1024;
+
+/// The parts an unmodelled object keeps, and the relationships of those parts.
+type KeptParts = (Vec<(String, String, deckcraft_model::MediaId)>, Vec<PartRel>);
+
+/// Where a relationship found by [`walk`] points: a part (by its index in [`Graph::parts`]) or an
+/// external target.
+enum Reach {
+    Part(usize),
+    External(String),
+}
+
+/// The parts an unmodelled object would keep and their relationships, found without copying any.
+#[derive(Default)]
+struct Graph {
+    /// Each part visited, by normalized name, and its index in `parts`: a cycle ends here.
+    seen: HashMap<String, usize>,
+    parts: Vec<String>,
+    /// (index of the part it belongs to, id, type, target).
+    rels: Vec<(usize, String, String, Reach)>,
+    /// Bytes the relationships and the parts they reach (not read yet) would retain.
+    cost: usize,
+    /// The parts whose bytes are in `cost`, by normalized name.
+    charged: HashSet<String>,
+}
+
+/// Copy what `planned` (relationship id, type, target, how) reaches, with the parts those reach
+/// in turn (#1993). The whole closure is checked first ([`walk`]) and its cost charged before any
+/// part is copied, so a graph that can't be kept copies nothing, however many frames share it.
+/// `None` when any of it can't be kept.
+fn keep_parts(imp: &mut Imp, planned: Vec<(String, String, String, Keep)>) -> Option<KeptParts> {
+    let mut g = Graph::default();
+    for (_, _, target, keep) in &planned {
+        if !matches!(keep, Keep::Link) {
+            walk(imp, target, &mut g, 0)?;
+        }
+    }
+    // An object with relationships beyond its own parts (#1993) is charged whole: its own
+    // relationships and its own parts not read yet, except a diagram's data part (it has its own
+    // budget). One without them is kept as #203 kept it.
+    let mut cost = g.cost;
+    if !g.rels.is_empty() || planned.iter().any(|(.., keep)| matches!(keep, Keep::Link)) {
+        let mut charged = std::mem::take(&mut g.charged);
+        for (id, ty, target, keep) in &planned {
+            cost = cost.saturating_add(id.len() + ty.len() + target.len());
+            let key = crate::opc::norm(target);
+            if matches!(keep, Keep::Part) && !imp.media_by_part.contains_key(&key) && charged.insert(key) {
+                cost = cost.saturating_add(imp.pkg.get(target).map_or(0, <[u8]>::len));
+            }
+        }
+    }
+    charge(imp, cost)?;
+    // Copy. A diagram's data part first, so a relationship reaching it gets the same item.
+    let mut media = vec![None; g.parts.len()];
+    for (_, _, target, keep) in &planned {
+        if matches!(keep, Keep::Data)
+            && let Some(&i) = g.seen.get(&crate::opc::norm(target))
+            && let Some(slot) = media.get_mut(i)
+        {
+            *slot = Some(diagram_data(imp, target)?);
+        }
+    }
+    for (slot, name) in media.iter_mut().zip(&g.parts) {
+        if slot.is_none() {
+            *slot = Some(imp.media_for(name)?);
+        }
+    }
+    let item = |i: usize| media.get(i).copied().flatten();
+    let mut parts = Vec::with_capacity(planned.len());
+    for (id, ty, target, keep) in planned {
+        let m = match keep {
+            Keep::Link => imp.media_link(&target),
+            Keep::Data | Keep::Part => item(*g.seen.get(&crate::opc::norm(&target))?)?,
+        };
+        parts.push((id, ty, m));
+    }
+    let mut rels = Vec::with_capacity(g.rels.len());
+    for (from, id, rel_type, reach) in g.rels {
+        let target = match reach {
+            Reach::Part(i) => PartRelTarget::Part(item(i)?),
+            Reach::External(url) => PartRelTarget::External(url),
+        };
+        rels.push(PartRel { from: item(from)?, id, rel_type, target });
+    }
+    Some((parts, rels))
+}
+
+/// Visit `part` and, through its relationships, the parts it reaches in turn, without copying
+/// any: its index in `g.parts`. Internal targets become parts the object keeps (a save writes
+/// them under new names); external ones stay links that are never fetched. `None`, so the object
+/// falls back to its preview, when any of it can't be kept safely: a target
+/// [`crate::opc::kept_target`] refuses, a relationship that can't be written back as it was, a
+/// missing part, a relationships part that is there but can't be read (its relationships would be
+/// lost and the part's ids left dangling), or a graph past the depth, part, relationship or
+/// retained-byte limits the chart sidecars use too.
+fn walk(imp: &mut Imp, part: &str, g: &mut Graph, depth: usize) -> Option<usize> {
+    let key = crate::opc::norm(part);
+    if let Some(&i) = g.seen.get(&key) {
+        return Some(i);
+    }
+    if g.parts.len() >= MAX_KEPT_PARTS {
+        log::warn!("pptx: object part closure stopped at {part}");
+        return None;
+    }
+    let i = g.parts.len();
+    g.seen.insert(key.clone(), i);
+    g.parts.push(part.to_string());
+    let pkg = imp.pkg;
+    let Some(rels) =
+        imp.part_rels.entry(key).or_insert_with(|| pkg.rels_checked(part).filter(|r| r.items.len() <= MAX_OBJECT_RELS).map(Arc::new)).clone()
+    else {
+        log::warn!("pptx: the relationships of {part} can't be read or are too many to keep");
+        return None;
+    };
+    if rels.items.is_empty() {
+        return Some(i);
+    }
+    if depth >= MAX_KEPT_DEPTH {
+        log::warn!("pptx: object part closure stopped at {part}");
+        return None;
+    }
+    let mut ids = HashSet::new();
+    for r in &rels.items {
+        // As `Rels::get`: the first relationship with an id is the one the part's XML reaches.
+        if !ids.insert(r.id.as_str()) {
+            continue;
+        }
+        if g.rels.len() >= MAX_OBJECT_RELS || !crate::opc::safe_rel(&r.id, &r.ty, &r.target_raw) {
+            log::warn!("pptx: relationship {} of {part} can't be kept", r.id);
+            return None;
+        }
+        g.cost = g.cost.saturating_add(r.id.len() + r.ty.len() + r.target_raw.len());
+        let reach = if r.external {
+            Reach::External(r.target_raw.clone())
+        } else {
+            let Some(name) = crate::opc::kept_target(part, &r.target_raw) else {
+                log::warn!("pptx: relationship {} of {part} points outside what an object may keep", r.id);
+                return None;
+            };
+            let to_key = crate::opc::norm(&name);
+            if !g.seen.contains_key(&to_key) {
+                let Some(bytes) = pkg.get(&name) else {
+                    log::warn!("pptx: relationship {} of {part} points at a missing part", r.id);
+                    return None;
+                };
+                // A part already read (a picture on a slide, another object's) costs nothing more.
+                if !imp.media_by_part.contains_key(&to_key) {
+                    g.cost = g.cost.saturating_add(bytes.len());
+                    g.charged.insert(to_key);
+                }
+            }
+            Reach::Part(walk(imp, &name, g, depth + 1)?)
+        };
+        if imp.kept_sidecar_bytes.saturating_add(g.cost) > MAX_KEPT_TOTAL_BYTES {
+            log::warn!("pptx: retained byte budget exceeded by an object's parts");
+            return None;
+        }
+        g.rels.push((i, r.id.clone(), r.ty.clone(), reach));
+    }
+    Some(i)
+}
+
+/// Charge `bytes` an object carries along to the presentation's retained-sidecar budget.
+fn charge(imp: &mut Imp, bytes: usize) -> Option<()> {
+    let Some(total) = imp.kept_sidecar_bytes.checked_add(bytes).filter(|t| *t <= MAX_KEPT_TOTAL_BYTES) else {
+        log::warn!("pptx: retained byte budget exceeded by an object's parts");
+        return None;
+    };
+    imp.kept_sidecar_bytes = total;
+    Some(())
 }
 
 /// The preview picture of an old-style embedded object (`p:oleObj spid` with no `p:pic`): the
@@ -899,6 +1092,108 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
         c.fill = dml::fill_of(imp, part, pr);
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RT: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+    /// A relationships part: (id, type, target, external).
+    fn rels(items: &[(&str, &str, &str, bool)]) -> Vec<u8> {
+        let mut out = String::from(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
+        for (id, ty, target, external) in items {
+            let mode = if *external { r#" TargetMode="External""# } else { "" };
+            out += &format!(r#"<Relationship Id="{id}" Type="{RT}/{ty}" Target="{target}"{mode}/>"#);
+        }
+        out += "</Relationships>";
+        out.into_bytes()
+    }
+
+    fn package(parts: &[(&str, Vec<u8>)]) -> crate::opc::Package {
+        let entries: Vec<(String, Vec<u8>)> = parts.iter().map(|(n, d)| (n.to_string(), d.clone())).collect();
+        crate::opc::Package::open(&craft_opc::zip_entries(&entries).expect("zip")).expect("package")
+    }
+
+    /// An object whose only relationship reaches `target`.
+    fn ole(target: &str) -> Vec<(String, String, String, Keep)> {
+        vec![("rId2".into(), format!("{RT}/oleObject"), target.into(), Keep::Part)]
+    }
+
+    /// #1993 review: frames sharing a graph that can't be kept (a large part, then a missing one)
+    /// don't each copy the large part before the refusal.
+    #[test]
+    fn a_refused_graph_copies_no_part() {
+        let pkg = package(&[
+            ("ppt/embeddings/a.bin", b"a".to_vec()),
+            ("ppt/embeddings/_rels/a.bin.rels", rels(&[("rId1", "package", "b.bin", false)])),
+            ("ppt/embeddings/b.bin", vec![7; 1 << 20]),
+            ("ppt/embeddings/_rels/b.bin.rels", rels(&[("rId1", "package", "missing.bin", false)])),
+        ]);
+        let mut imp = crate::read::test_imp(&pkg);
+        for _ in 0..3 {
+            // As `frame` does with each object.
+            let mark = imp.mark();
+            assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_none());
+            imp.rollback(&mark);
+        }
+        assert_eq!(imp.next, 0, "no media item was made, not even one rolled back");
+        assert_eq!(imp.kept_sidecar_bytes, 0);
+    }
+
+    /// #1993 review: an object kept with relationships of its own pays for its own part too, not
+    /// only for the relationships; one without them is kept as #203 kept it, uncharged.
+    #[test]
+    fn an_object_with_relationships_is_charged_for_its_own_part() {
+        let pkg = package(&[
+            ("ppt/embeddings/a.bin", vec![1; 4096]),
+            ("ppt/embeddings/_rels/a.bin.rels", rels(&[("rId1", "hyperlink", "https://example.com/", true)])),
+            ("ppt/embeddings/plain.bin", vec![2; 4096]),
+        ]);
+        let mut imp = crate::read::test_imp(&pkg);
+        // Room for the relationship strings, not for the part's 4 KiB.
+        imp.kept_sidecar_bytes = MAX_KEPT_TOTAL_BYTES - 1024;
+        assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_none(), "the part's bytes are over the budget");
+        assert_eq!(imp.kept_sidecar_bytes, MAX_KEPT_TOTAL_BYTES - 1024);
+
+        imp.kept_sidecar_bytes = MAX_KEPT_TOTAL_BYTES - 8192;
+        let (parts, part_rels) = keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).expect("kept");
+        assert_eq!((parts.len(), part_rels.len()), (1, 1));
+        assert!(imp.kept_sidecar_bytes > MAX_KEPT_TOTAL_BYTES - 8192 + 4096, "{}", imp.kept_sidecar_bytes);
+
+        imp.kept_sidecar_bytes = MAX_KEPT_TOTAL_BYTES;
+        let (parts, part_rels) = keep_parts(&mut imp, ole("ppt/embeddings/plain.bin")).expect("kept");
+        assert_eq!((parts.len(), part_rels.len()), (1, 0));
+    }
+
+    /// #1993 review: a part whose relationships part is there but can't be read isn't kept as if
+    /// it had none (its ids would dangle after a save): the object falls back to its preview.
+    #[test]
+    fn an_unreadable_relationships_part_refuses_the_object() {
+        for bad in [&b"<Relationships xmlns=\"x\"><Relationship"[..], b"<Other/>"] {
+            let pkg = package(&[("ppt/embeddings/a.bin", b"a".to_vec()), ("ppt/embeddings/_rels/a.bin.rels", bad.to_vec())]);
+            let mut imp = crate::read::test_imp(&pkg);
+            assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_none(), "{}", String::from_utf8_lossy(bad));
+        }
+        // With no relationships part at all, the part simply has none.
+        let pkg = package(&[("ppt/embeddings/a.bin", b"a".to_vec())]);
+        let mut imp = crate::read::test_imp(&pkg);
+        assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_some());
+    }
+
+    /// #1993 review: a relationships part listing more relationships than an object may keep
+    /// refuses the object, and the import keeps only that refusal, not the parsed list.
+    #[test]
+    fn too_many_relationships_are_refused_and_not_kept() {
+        let links: Vec<(String, &str, String, bool)> =
+            (0..=MAX_OBJECT_RELS).map(|i| (format!("rId{i}"), "hyperlink", format!("https://example.com/{i}"), true)).collect();
+        let items: Vec<(&str, &str, &str, bool)> = links.iter().map(|(id, ty, t, e)| (id.as_str(), *ty, t.as_str(), *e)).collect();
+        let pkg = package(&[("ppt/embeddings/a.bin", b"a".to_vec()), ("ppt/embeddings/_rels/a.bin.rels", rels(&items))]);
+        let mut imp = crate::read::test_imp(&pkg);
+        assert!(keep_parts(&mut imp, ole("ppt/embeddings/a.bin")).is_none());
+        assert!(matches!(imp.part_rels.get("ppt/embeddings/a.bin"), Some(None)), "only the refusal is cached");
+    }
 }
 
 #[cfg(test)]

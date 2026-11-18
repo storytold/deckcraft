@@ -1795,7 +1795,13 @@ fn an_object_deckcraft_doesnt_model_shows_its_preview_picture() {
         let sh = Shape {
             id: ShapeId(600),
             xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)),
-            kind: ShapeKind::Opaque { xml: String::new(), preview: with_preview.then_some(media), label: "Package".into(), parts: vec![] },
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: with_preview.then_some(media),
+                label: "Package".into(),
+                parts: vec![],
+                part_rels: vec![],
+            },
             ..Default::default()
         };
         std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];
@@ -2276,7 +2282,7 @@ fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_
         let mut p = Presentation::default();
         let media = p.add_media("half.png", "image/png", png.clone()).expect("media");
         let kind = if object {
-            ShapeKind::Opaque { xml: String::new(), preview: Some(media), label: "Equation.3".into(), parts: vec![] }
+            ShapeKind::Opaque { xml: String::new(), preview: Some(media), label: "Equation.3".into(), parts: vec![], part_rels: vec![] }
         } else {
             ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } }
         };

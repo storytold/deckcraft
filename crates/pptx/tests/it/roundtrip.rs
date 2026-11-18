@@ -2156,7 +2156,7 @@ fn smartart_without_a_drawing_keeps_its_parts() {
     let xml = r#"<p:graphicFrame xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:nvGraphicFramePr><p:cNvPr id="4" name="Diagram 3"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId2" r:lo="rId3" r:qs="rId4" r:cs="rId5"/></a:graphicData></a:graphic></p:graphicFrame>"#;
     let mut s = new_slide(&mut p, "SmartArt");
     let mut frame = shape(&mut p, "Diagram 3", 0.0, 0.0, 72.0, 72.0);
-    frame.kind = ShapeKind::Opaque { xml: xml.into(), preview: None, label: "SmartArt".into(), parts };
+    frame.kind = ShapeKind::Opaque { xml: xml.into(), preview: None, label: "SmartArt".into(), parts, part_rels: vec![] };
     s.shapes.push(frame);
     p.slides.push(Arc::new(s));
 
@@ -2183,7 +2183,7 @@ fn legacy_ole_object_is_written_in_the_fallback_form() {
     let parts = vec![("rId4".to_string(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject".to_string(), bin)];
     let mut s = new_slide(&mut p, "OLE");
     let mut frame = shape(&mut p, "Object 3", 0.0, 0.0, 72.0, 72.0);
-    frame.kind = ShapeKind::Opaque { xml: xml.into(), preview: Some(prev), label: "Slide".into(), parts };
+    frame.kind = ShapeKind::Opaque { xml: xml.into(), preview: Some(prev), label: "Slide".into(), parts, part_rels: vec![] };
     s.shapes.push(frame);
     p.slides.push(Arc::new(s));
 

@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 
-use deckcraft_model::{MediaId, Presentation, Shape, Slide};
+use deckcraft_model::{MediaId, Presentation, Shape, ShapeKind, Slide};
 
 macro_rules! walkers {
     ($($m:tt)?) => {
@@ -165,13 +165,20 @@ macro_rules! walkers {
                     }
                 }
                 // Every field named, so a new one can't slip past.
-                ShapeKind::Opaque { xml: _, preview, label: _, parts } => {
+                ShapeKind::Opaque { xml: _, preview, label: _, parts, part_rels } => {
                     if let Some(p) = preview {
                         f(p);
                     }
                     // SmartArt data, OLE embeddings… kept as media items (#209).
                     for (_, _, id) in parts {
                         f(id);
+                    }
+                    // The parts those reach in turn (#1993).
+                    for r in part_rels {
+                        f(&$($m)? r.from);
+                        if let deckcraft_model::PartRelTarget::Part(id) = &$($m)? r.target {
+                            f(id);
+                        }
                     }
                 }
             }
@@ -306,6 +313,101 @@ pub fn shapes_media(v: &[Shape]) -> Vec<MediaId> {
     collect(|f| visit::shapes(v, f))
 }
 
+/// The kept parts with relationships of their own (`PartRel::from`, #1993) that `shapes` (groups
+/// included) use. Such a part belongs to the objects it was read with: copied into another deck it
+/// gets its own media item rather than one with equal bytes, whose relationships may differ.
+pub fn parts_with_rels(v: &[Shape]) -> HashSet<MediaId> {
+    let mut out = HashSet::new();
+    deckcraft_model::walk(v, &mut |s, _| {
+        if let ShapeKind::Opaque { part_rels, .. } = &s.kind {
+            out.extend(part_rels.iter().map(|r| r.from));
+        }
+    });
+    out
+}
+
+/// [`parts_with_rels`] over a whole presentation: slides, masters and their layouts, the notes
+/// and handout masters.
+pub fn presentation_parts_with_rels(p: &Presentation) -> HashSet<MediaId> {
+    let mut out = HashSet::new();
+    for s in &p.slides {
+        out.extend(parts_with_rels(&s.shapes));
+    }
+    for m in p.masters.iter().chain(p.notes_master.iter()).chain(p.handout_master.iter()) {
+        out.extend(parts_with_rels(&m.shapes));
+        for l in &m.layouts {
+            out.extend(parts_with_rels(&l.shapes));
+        }
+    }
+    out
+}
+
+/// Media brought into a destination deck from another (paste, Reuse Slides, accepting a compared
+/// slide), one item at a time, with the one rule all of them follow (#1993). A kept part with
+/// relationships of its own belongs to the objects it was read with, so:
+/// - an incoming such part (`own`) always gets an item of its own;
+/// - such a part already in the destination, or a copy made for an incoming one, is never shared
+///   by another incoming item, by id or by bytes;
+/// - any other item is shared only when it matches exactly: bytes and link alike. A linked item
+///   keeps its link; an ordinary one never becomes a linked item or the part pointing at it.
+pub struct MediaInto {
+    /// Destination items nothing incoming may share: kept parts with relationships of their own,
+    /// the destination's and the copies made for incoming ones.
+    apart: HashSet<MediaId>,
+    /// Each destination id's item (the first with the id, as `Presentation::media`), so a lookup
+    /// by id isn't a search of every item; built on the first lookup.
+    at: Option<std::collections::HashMap<MediaId, usize>>,
+}
+
+impl MediaInto {
+    pub fn new(doc: &Presentation) -> Self {
+        MediaInto { apart: presentation_parts_with_rels(doc), at: None }
+    }
+
+    /// Bring `m` into `doc` (which only this brings items into while it is in use) and return the
+    /// id to use for it there. `own`: `m` is a kept part with relationships of its own. `keep_id`:
+    /// `m` keeps its own id when `doc` doesn't use it (paste, compare), rather than always taking a
+    /// fresh one (reuse). `None` when `doc` has no ids left.
+    pub fn bring(&mut self, doc: &mut Presentation, m: &deckcraft_model::MediaItem, own: bool, keep_id: bool) -> Option<MediaId> {
+        let same = |x: &deckcraft_model::MediaItem| x.link == m.link && x.data == m.data;
+        if keep_id {
+            let at = self.at.get_or_insert_with(|| {
+                let mut at = std::collections::HashMap::new();
+                for (i, x) in doc.media.iter().enumerate() {
+                    at.entry(x.id).or_insert(i);
+                }
+                at
+            });
+            match at.get(&m.id).and_then(|&i| doc.media.get(i)) {
+                None => {
+                    // Keeps the foreign id, so later ids must start past it.
+                    doc.next_id = doc.next_id.max(m.id.0);
+                    self.push(doc, m.clone(), own);
+                    return Some(m.id);
+                }
+                Some(x) if !own && !self.apart.contains(&m.id) && same(x) => return Some(m.id),
+                Some(_) => {}
+            }
+        }
+        if !own && let Some(x) = doc.media.iter().find(|x| !self.apart.contains(&x.id) && same(x)) {
+            return Some(x.id);
+        }
+        let id = MediaId(doc.alloc_id()?);
+        self.push(doc, deckcraft_model::MediaItem { id, ..m.clone() }, own);
+        Some(id)
+    }
+
+    fn push(&mut self, doc: &mut Presentation, item: deckcraft_model::MediaItem, own: bool) {
+        if own {
+            self.apart.insert(item.id);
+        }
+        if let Some(at) = &mut self.at {
+            at.entry(item.id).or_insert(doc.media.len());
+        }
+        doc.media.push(item);
+    }
+}
+
 fn collect(walk: impl FnOnce(&mut visit::F)) -> Vec<MediaId> {
     let mut seen = HashSet::new();
     let mut out = vec![];
@@ -394,18 +496,52 @@ mod tests {
         assert_eq!(got, (9101..=9108).map(MediaId).collect::<Vec<_>>());
     }
 
-    /// SmartArt and OLE objects keep their parts as media items (#209); those count as used.
+    /// SmartArt and OLE objects keep their parts as media items (#209), and the parts those reach
+    /// (#1993); all of them count as used.
     #[test]
     fn kept_parts_of_unmodelled_objects_are_references() {
+        use deckcraft_model::{PartRel, PartRelTarget};
+        let rel = |to| PartRel { from: MediaId(9102), id: "rId1".into(), rel_type: "image".into(), target: to };
         let opaque = Shape {
             kind: ShapeKind::Opaque {
                 xml: String::new(),
                 preview: Some(MediaId(9101)),
                 label: "object".into(),
                 parts: vec![("rId2".into(), "oleObject".into(), MediaId(9102))],
+                part_rels: vec![rel(PartRelTarget::Part(MediaId(9103))), rel(PartRelTarget::External("https://example.com/".into()))],
             },
             ..Default::default()
         };
-        assert_eq!(shapes_media(std::slice::from_ref(&opaque)), vec![MediaId(9101), MediaId(9102)]);
+        let mut got = shapes_media(std::slice::from_ref(&opaque));
+        got.sort();
+        got.dedup();
+        assert_eq!(got, vec![MediaId(9101), MediaId(9102), MediaId(9103)]);
+    }
+
+    /// #1993: what `MediaInto` shares and what it keeps apart, by id and by bytes.
+    #[test]
+    fn media_into_shares_only_exact_matches_and_never_an_owned_part() {
+        let item = |id: u32, data: &[u8], link: Option<&str>| deckcraft_model::MediaItem {
+            id: MediaId(id),
+            name: "m.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: link.map(Into::into),
+        };
+        let mut doc = defaults::new_presentation(None);
+        doc.media.extend([item(10, b"other", None), item(11, b"plain", None), item(12, b"bytes", None)]);
+        let fresh = doc.next_id.max(1) + 1;
+        let mut into = MediaInto::new(&doc);
+        // An owned part whose id is taken gets the next id; an item arriving with that id and the
+        // same bytes isn't that part.
+        assert_eq!(into.bring(&mut doc, &item(10, b"same", None), true, true), Some(MediaId(fresh)));
+        let target = into.bring(&mut doc, &item(fresh, b"same", None), false, true).expect("id");
+        assert_ne!(target, MediaId(fresh));
+        // A linked item whose id is taken keeps its link.
+        let linked = into.bring(&mut doc, &item(12, b"", Some("https://example.com/a.png")), false, true).expect("id");
+        assert_eq!(doc.media(linked).and_then(|m| m.link.as_deref()), Some("https://example.com/a.png"));
+        // Exact matches are still shared, by id or by bytes.
+        assert_eq!(into.bring(&mut doc, &item(11, b"plain", None), false, true), Some(MediaId(11)));
+        assert_eq!(into.bring(&mut doc, &item(500, b"plain", None), false, false), Some(MediaId(11)));
     }
 }

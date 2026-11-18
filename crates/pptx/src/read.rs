@@ -50,7 +50,8 @@ pub struct Imp<'a> {
     pub table_style_ids: Vec<String>,
     /// Per legacy VML drawing part: shape id → preview picture part (see `shapes::vml_preview`).
     pub vml_previews: HashMap<String, HashMap<String, String>>,
-    /// Aggregate byte count of retained chart sidecars across the presentation.
+    /// Aggregate byte count of retained chart sidecars, and of the parts (and relationships) an
+    /// unmodelled object carries along from its own parts (#1993), across the presentation.
     pub kept_sidecar_bytes: usize,
     /// Data slots of the charts decoded so far (see `chart::MAX_PRESENTATION_CHART_POINTS`).
     pub chart_points: usize,
@@ -79,9 +80,10 @@ pub struct Imp<'a> {
     pub smartart_shapes: usize,
     /// Bytes of SmartArt layout, style and colour definitions copied into diagrams so far.
     pub diagram_xml_bytes: usize,
-    /// Whether a part has relationships of its own, by normalized part name: looked up once
-    /// however many embedded objects point at the part.
-    pub has_rels: HashMap<String, bool>,
+    /// The relationships of the parts unmodelled objects keep, by normalized part name: parsed
+    /// once however many embedded objects point at the part. `None` for a relationships part that
+    /// is there but can't be read, or that lists more relationships than an object may keep.
+    pub part_rels: HashMap<String, Option<Arc<Rels>>>,
 }
 
 /// Import warnings kept; a hostile file with many oversized tables adds no more than this.
@@ -614,7 +616,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         theme_extra_bytes: 0,
         smartart_shapes: 0,
         diagram_xml_bytes: 0,
-        has_rels: HashMap::new(),
+        part_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -691,7 +693,7 @@ fn import_report_with_chart_points(bytes: &[u8], chart_points_cap: usize) -> Res
         theme_extra_bytes: 0,
         smartart_shapes: 0,
         diagram_xml_bytes: 0,
-        has_rels: HashMap::new(),
+        part_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let slide_ids = register_slides(&mut imp, &docs, &slide_entries, &mut lost_slides);
@@ -1633,6 +1635,37 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
     hf
 }
 
+/// An empty import over `pkg`, for tests of the readers.
+#[cfg(test)]
+pub(crate) fn test_imp(pkg: &Package) -> Imp<'_> {
+    Imp {
+        pkg,
+        media: vec![],
+        media_by_part: HashMap::new(),
+        media_keys: vec![],
+        next: 0,
+        slide_by_part: HashMap::new(),
+        custom_show_names: HashMap::new(),
+        table_style_ids: Vec::new(),
+        vml_previews: HashMap::new(),
+        kept_sidecar_bytes: 0,
+        chart_points: 0,
+        chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
+        kept_charts: HashMap::new(),
+        kept_chart_keys: vec![],
+        rejected_kept: HashMap::new(),
+        chart_decode_bytes: 0,
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
+        warnings: vec![],
+        theme_extra_bytes: 0,
+        smartart_shapes: 0,
+        diagram_xml_bytes: 0,
+        part_rels: HashMap::new(),
+    }
+}
+
 #[cfg(test)]
 mod rollback_tests {
     use super::*;
@@ -1642,32 +1675,7 @@ mod rollback_tests {
     fn rollback_restores_budgets_and_removes_only_what_was_added() {
         let bytes = crate::export(&deckcraft_model::Presentation::default()).expect("export");
         let pkg = Package::open(&bytes).expect("package");
-        let mut imp = Imp {
-            pkg: &pkg,
-            media: vec![],
-            media_by_part: HashMap::new(),
-            media_keys: vec![],
-            next: 0,
-            slide_by_part: HashMap::new(),
-            custom_show_names: HashMap::new(),
-            table_style_ids: Vec::new(),
-            vml_previews: HashMap::new(),
-            kept_sidecar_bytes: 0,
-            chart_points: 0,
-            chart_points_cap: chart::MAX_PRESENTATION_CHART_POINTS,
-            kept_charts: HashMap::new(),
-            kept_chart_keys: vec![],
-            rejected_kept: HashMap::new(),
-            chart_decode_bytes: 0,
-            tags_by_part: HashMap::new(),
-            tag_bytes: 0,
-            tags_capped: false,
-            warnings: vec![],
-            theme_extra_bytes: 0,
-            smartart_shapes: 0,
-            diagram_xml_bytes: 0,
-            has_rels: HashMap::new(),
-        };
+        let mut imp = test_imp(&pkg);
         let kept_before = imp.media_for("ppt/presentation.xml").expect("media");
         let (m, items) = (imp.mark(), imp.media.len());
         assert!(imp.media_for("ppt/presProps.xml").is_some());

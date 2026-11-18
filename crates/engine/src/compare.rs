@@ -380,36 +380,21 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
     let mut sl = slide.clone();
     // Media.
     let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
-    // Both decks' media by id (the first item with an id wins, as in `Presentation::media`),
-    // looked up once per reference instead of searched.
+    // The revised deck's media by id (the first item with an id wins, as in
+    // `Presentation::media`), looked up once per reference instead of searched.
     let mut rev_at: HashMap<MediaId, usize> = HashMap::new();
     for (i, m) in rev.media.iter().enumerate() {
         rev_at.entry(m.id).or_insert(i);
     }
-    let mut doc_at: HashMap<MediaId, usize> = HashMap::new();
-    for (i, m) in doc.media.iter().enumerate() {
-        doc_at.entry(m.id).or_insert(i);
-    }
+    // Kept parts with relationships of their own and linked items follow the rules of
+    // `MediaInto` (#1993).
+    let own = crate::media_refs::parts_with_rels(&sl.shapes);
+    let mut into = crate::media_refs::MediaInto::new(doc);
     for id in crate::media_refs::slide_media(&sl) {
         let Some(m) = rev_at.get(&id).and_then(|&i| rev.media.get(i)) else { continue };
-        match doc_at.get(&id).and_then(|&i| doc.media.get(i)) {
-            Some(x) if x.data == m.data => {}
-            None => {
-                // Keeps the revision's id, so later ids must start past it.
-                doc_at.insert(id, doc.media.len());
-                doc.media.push(m.clone());
-                doc.next_id = doc.next_id.max(id.0);
-            }
-            Some(_) => {
-                let before = doc.media.len();
-                let new = doc
-                    .add_media(&m.name, &m.content_type, m.data.as_ref().clone())
-                    .ok_or_else(|| crate::cmd::bad("review.accept", crate::cmd::NO_ID_SPACE))?;
-                if doc.media.len() > before {
-                    doc_at.entry(new).or_insert(before);
-                }
-                media_map.insert(id, new);
-            }
+        let new = into.bring(doc, m, own.contains(&id), true).ok_or_else(|| crate::cmd::bad("review.accept", crate::cmd::NO_ID_SPACE))?;
+        if new != id {
+            media_map.insert(id, new);
         }
     }
     // Shape ids used elsewhere in the open deck.
@@ -657,6 +642,226 @@ mod tests {
         let own = &doc.slides[0];
         let Some(Background::Fill { fill: Fill::Picture(back) }) = &own.background else { panic!("no background picture") };
         assert_eq!(bytes(back.media), b"open background");
+    }
+
+    /// #1993 review: an accepted slide's kept parts with equal bytes and different relationships of
+    /// their own stay two media items, so a save doesn't give one the other's.
+    #[test]
+    fn accepted_kept_parts_with_relationships_keep_their_own_items() {
+        use std::sync::Arc;
+
+        use deckcraft_model::{MediaId, MediaItem, PartRel, PartRelTarget, Shape, ShapeId, ShapeKind, defaults};
+
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "oleObject1.bin".into(),
+            content_type: "application/vnd.openxmlformats-officedocument.oleObject".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let object = |id: u32, part: u32, icon: u32| Shape {
+            id: ShapeId(id),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(part))],
+                part_rels: vec![PartRel {
+                    from: MediaId(part),
+                    id: "rId1".into(),
+                    rel_type: "image".into(),
+                    target: PartRelTarget::Part(MediaId(icon)),
+                }],
+            },
+            ..Default::default()
+        };
+        // The open deck uses the parts' ids for other bytes.
+        let mut doc = defaults::new_presentation(None);
+        doc.media.extend([item(9001, b"open a"), item(9002, b"open b")]);
+        doc.next_id = doc.next_id.max(9200);
+        let mut rev = defaults::new_presentation(None);
+        rev.media.extend([item(9001, b"same"), item(9002, b"same"), item(9003, b"first icon"), item(9004, b"second icon")]);
+        Arc::make_mut(&mut rev.slides[0]).shapes = vec![object(9101, 9001, 9003), object(9102, 9002, 9004)];
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let froms: Vec<MediaId> = sl
+            .shapes
+            .iter()
+            .filter_map(|sh| if let ShapeKind::Opaque { part_rels, .. } = &sh.kind { part_rels.first().map(|r| r.from) } else { None })
+            .collect();
+        assert_eq!(froms.len(), 2);
+        assert_ne!(froms[0], froms[1], "each object keeps its own part");
+        assert!(froms.iter().all(|&m| doc.media(m).unwrap().data.as_slice() == b"same"));
+    }
+
+    /// #1993 review: a revised part with the same id and bytes as one in the open deck, but other
+    /// relationships, gets its own item rather than the open deck's.
+    #[test]
+    fn an_accepted_part_with_an_equal_id_and_bytes_keeps_its_own_item() {
+        use std::sync::Arc;
+
+        use deckcraft_model::{MediaId, MediaItem, PartRel, PartRelTarget, Shape, ShapeId, ShapeKind, defaults};
+
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "oleObject1.bin".into(),
+            content_type: "application/vnd.openxmlformats-officedocument.oleObject".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let object = |id: u32, part: u32, icon: u32| Shape {
+            id: ShapeId(id),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(part))],
+                part_rels: vec![PartRel {
+                    from: MediaId(part),
+                    id: "rId1".into(),
+                    rel_type: "image".into(),
+                    target: PartRelTarget::Part(MediaId(icon)),
+                }],
+            },
+            ..Default::default()
+        };
+        // Both decks hold the part as 9001 with the same bytes; its picture differs.
+        let mut doc = defaults::new_presentation(None);
+        doc.media.extend([item(9001, b"same"), item(9003, b"open icon")]);
+        doc.next_id = doc.next_id.max(9200);
+        Arc::make_mut(&mut doc.slides[0]).shapes = vec![object(9101, 9001, 9003)];
+        let mut rev = defaults::new_presentation(None);
+        rev.media.extend([item(9001, b"same"), item(9004, b"revised icon")]);
+        Arc::make_mut(&mut rev.slides[0]).shapes = vec![object(9102, 9001, 9004)];
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let Some(ShapeKind::Opaque { part_rels, .. }) = sl.shapes.first().map(|sh| &sh.kind) else { panic!("the object") };
+        let rel = part_rels.first().unwrap();
+        assert_ne!(rel.from, MediaId(9001), "not the open deck's part");
+        assert_eq!(doc.media(rel.from).unwrap().data.as_slice(), b"same");
+        let PartRelTarget::Part(icon) = rel.target else { panic!("internal target") };
+        assert_eq!(doc.media(icon).unwrap().data.as_slice(), b"revised icon");
+    }
+
+    /// #1993 review: an accepted ordinary item with the bytes of the part that points at it isn't
+    /// shared with that part's new item, which would make the relationship point at the part itself.
+    #[test]
+    fn an_accepted_ordinary_target_is_not_its_owner() {
+        use std::sync::Arc;
+
+        use deckcraft_model::{MediaId, MediaItem, PartRel, PartRelTarget, Shape, ShapeId, ShapeKind, defaults};
+
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "part.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        // The open deck uses both ids for other bytes.
+        let mut doc = defaults::new_presentation(None);
+        doc.media.extend([item(9001, b"open a"), item(9002, b"open b")]);
+        doc.next_id = doc.next_id.max(9200);
+        let mut rev = defaults::new_presentation(None);
+        rev.media.extend([item(9001, b"same"), item(9002, b"same")]);
+        Arc::make_mut(&mut rev.slides[0]).shapes = vec![Shape {
+            id: ShapeId(9101),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(9001))],
+                part_rels: vec![PartRel {
+                    from: MediaId(9001),
+                    id: "rId1".into(),
+                    rel_type: "package".into(),
+                    target: PartRelTarget::Part(MediaId(9002)),
+                }],
+            },
+            ..Default::default()
+        }];
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let Some(ShapeKind::Opaque { part_rels, .. }) = sl.shapes.first().map(|sh| &sh.kind) else { panic!("the object") };
+        let rel = part_rels.first().unwrap();
+        assert_ne!(rel.target, PartRelTarget::Part(rel.from), "the relationship doesn't point at its own part");
+    }
+
+    /// #1993 review: an accepted target whose id is the one just given to its owner's copy (with
+    /// equal bytes) isn't taken for that copy, which would make the relationship point at itself.
+    #[test]
+    fn an_accepted_target_with_the_id_just_given_to_its_owner_is_not_its_owner() {
+        use std::sync::Arc;
+
+        use deckcraft_model::{MediaId, MediaItem, PartRel, PartRelTarget, Shape, ShapeId, ShapeKind, defaults};
+
+        let item = |id: u32, data: &[u8]| MediaItem {
+            id: MediaId(id),
+            name: "part.bin".into(),
+            content_type: "application/octet-stream".into(),
+            data: Arc::new(data.to_vec()),
+            link: None,
+        };
+        let mut doc = defaults::new_presentation(None);
+        doc.media.push(item(9001, b"open a"));
+        doc.next_id = doc.next_id.max(9200);
+        // The owner's copy gets 9201; the revised target already has that id.
+        let mut rev = defaults::new_presentation(None);
+        rev.media.extend([item(9001, b"same"), item(9201, b"same")]);
+        Arc::make_mut(&mut rev.slides[0]).shapes = vec![Shape {
+            id: ShapeId(9101),
+            kind: ShapeKind::Opaque {
+                xml: String::new(),
+                preview: None,
+                label: "Package".into(),
+                parts: vec![("rId2".into(), "oleObject".into(), MediaId(9001))],
+                part_rels: vec![PartRel {
+                    from: MediaId(9001),
+                    id: "rId1".into(),
+                    rel_type: "package".into(),
+                    target: PartRelTarget::Part(MediaId(9201)),
+                }],
+            },
+            ..Default::default()
+        }];
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let Some(ShapeKind::Opaque { part_rels, .. }) = sl.shapes.first().map(|sh| &sh.kind) else { panic!("the object") };
+        let rel = part_rels.first().unwrap();
+        assert_eq!(rel.from, MediaId(9201), "the owner's copy takes the next id");
+        assert_ne!(rel.target, PartRelTarget::Part(rel.from), "the relationship doesn't point at its own part");
+    }
+
+    /// #1993 review: an accepted linked picture whose id the open deck uses keeps its link.
+    #[test]
+    fn an_accepted_linked_picture_whose_id_is_taken_keeps_its_link() {
+        use std::sync::Arc;
+
+        use deckcraft_model::style::PictureFill;
+        use deckcraft_model::{MediaId, MediaItem, Shape, ShapeId, ShapeKind, defaults};
+
+        let url = "https://example.com/linked.png";
+        let mut doc = defaults::new_presentation(None);
+        doc.media.push(MediaItem {
+            id: MediaId(9001),
+            name: "a.png".into(),
+            content_type: "image/png".into(),
+            data: Arc::new(b"open".to_vec()),
+            link: None,
+        });
+        doc.next_id = doc.next_id.max(9200);
+        let mut rev = defaults::new_presentation(None);
+        rev.media.push(MediaItem {
+            id: MediaId(9001),
+            name: "linked.png".into(),
+            content_type: "image/png".into(),
+            data: Arc::new(vec![]),
+            link: Some(url.into()),
+        });
+        Arc::make_mut(&mut rev.slides[0]).shapes = vec![Shape {
+            id: ShapeId(9101),
+            kind: ShapeKind::Picture { fill: PictureFill { media: MediaId(9001), ..Default::default() } },
+            ..Default::default()
+        }];
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let Some(ShapeKind::Picture { fill }) = sl.shapes.first().map(|sh| &sh.kind) else { panic!("the picture") };
+        assert_eq!(doc.media(fill.media).and_then(|m| m.link.as_deref()), Some(url));
     }
 
     /// NN6: a slide reset drops the placeholders' stored boxes; comparing it with the copy from

@@ -39,6 +39,9 @@ pub const RT_CORE: &str = "http://schemas.openxmlformats.org/package/2006/relati
 /// The files of a package, keyed by normalised part name (no leading slash, lowercase).
 pub struct Package {
     parts: HashMap<String, (String, Vec<u8>)>,
+    /// Entries the archive has but that weren't read (too large, over the inflate budget,
+    /// unreadable), by normalised name: such a part is there, not absent.
+    skipped: std::collections::HashSet<String>,
     ct_cache: std::sync::OnceLock<(HashMap<String, String>, HashMap<String, String>)>,
 }
 
@@ -53,17 +56,22 @@ impl Package {
             return Err(PptxError::NotPptx(format!("too many entries ({})", zip.len())));
         }
         let mut parts = HashMap::new();
+        let mut skipped = std::collections::HashSet::new();
+        // Entries `by_index` couldn't open, named once the loop no longer borrows the archive.
+        let mut unreadable = vec![];
         let mut total: u64 = 0;
         let mut work: u64 = 0;
         for i in 0..zip.len() {
             if work >= max_work {
                 log::warn!("pptx: decompression budget spent; skipping the remaining {} entries", zip.len() - i);
+                skipped.extend((i..zip.len()).filter_map(|j| zip.name_for_index(j)).map(|n| norm(n.trim_start_matches('/'))));
                 break;
             }
             let mut f = match zip.by_index(i) {
                 Ok(f) => f,
                 Err(e) => {
                     log::warn!("pptx: skipping unreadable zip entry {i}: {e}");
+                    unreadable.push(i);
                     continue;
                 }
             };
@@ -74,6 +82,7 @@ impl Package {
             let declared = f.size();
             if declared > max_part {
                 log::warn!("pptx: skipping oversized part {name} ({declared} bytes)");
+                skipped.insert(norm(&name));
                 continue;
             }
             let mut data = Vec::with_capacity(declared.min(16 * 1024 * 1024) as usize);
@@ -84,11 +93,13 @@ impl Package {
             match read {
                 Ok(_) if data.len() as u64 > cap => {
                     log::warn!("pptx: part {name} exceeds size limits; skipped");
+                    skipped.insert(norm(&name));
                     continue;
                 }
                 Ok(_) => {}
                 Err(e) => {
                     log::warn!("pptx: could not read {name}: {e}");
+                    skipped.insert(norm(&name));
                     continue;
                 }
             }
@@ -96,7 +107,8 @@ impl Package {
             // A name kept with `\` would reach code that splits paths on `/`.
             parts.insert(norm(&name), (name.replace('\\', "/"), data));
         }
-        Ok(Package { parts, ct_cache: std::sync::OnceLock::new() })
+        skipped.extend(unreadable.into_iter().filter_map(|i| zip.name_for_index(i)).map(|n| norm(n.trim_start_matches('/'))));
+        Ok(Package { parts, skipped, ct_cache: std::sync::OnceLock::new() })
     }
     pub fn get(&self, name: &str) -> Option<&[u8]> {
         self.parts.get(&norm(name)).map(|(_, d)| d.as_slice())
@@ -130,6 +142,17 @@ impl Package {
         let rp = rels_path(part);
         let Some(doc) = self.xml(&rp) else { return Rels::default() };
         rels_of(&doc, part)
+    }
+    /// [`Package::rels`], told apart from a relationships part that is there but can't be read
+    /// (left out when the package was opened, over the XML size limit, not XML, or not a
+    /// `Relationships` list): `None` then. A part without a relationships part has none.
+    pub fn rels_checked(&self, part: &str) -> Option<Rels> {
+        let rp = rels_path(part);
+        if self.get(&rp).is_none() {
+            return (!self.skipped.contains(&norm(&rp))).then(Rels::default);
+        }
+        let doc = self.xml(&rp)?;
+        doc.root.is("Relationships").then(|| rels_of(&doc, part))
     }
     /// Content types: (extension defaults, part overrides).
     pub fn content_type(&self, part: &str) -> Option<String> {
@@ -252,6 +275,51 @@ pub fn sidecar_part(name: &str) -> bool {
     let stem = file.strip_prefix("chart").unwrap_or("");
     let num = stem.strip_suffix(".xml.rels").or_else(|| stem.strip_suffix(".xml")).unwrap_or("");
     !(stem != file && !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// A relationship we can write back as it was read: id, type and target present, of a sane
+/// length, and free of control characters and of characters that would need escaping.
+pub fn safe_rel(id: &str, ty: &str, target: &str) -> bool {
+    [id, ty, target].iter().all(|s| !s.is_empty() && s.len() <= 4096 && !s.chars().any(|c| c.is_control() || matches!(c, '<' | '>' | '"' | '\'')))
+}
+
+/// The part an internal relationship of `part` reaches, when an unmodelled object may carry it
+/// along (#1993): a path that stays inside the package and lands in one of the folders embedded
+/// objects keep their parts in. It is relative to `part`'s folder, or to the package root after
+/// one leading `/` (a package-absolute target, as ECMA-376 Part 2 allows). `None` for an empty
+/// target, one with a scheme, query, fragment, backslash or empty segment such as `//` (before or
+/// after percent-decoding), one climbing above the package root, a relationships part, and
+/// anything else: the object then falls back to its preview.
+pub fn kept_target(part: &str, raw: &str) -> Option<String> {
+    let plain = |s: &str| !s.is_empty() && !s.starts_with('/') && !s.chars().any(|c| c.is_control() || matches!(c, ':' | '\\' | '#' | '?'));
+    let (absolute, rest) = match raw.strip_prefix('/') {
+        Some(rest) => (true, rest),
+        None => (false, raw),
+    };
+    if !plain(rest) {
+        return None;
+    }
+    let decoded = percent_decode(rest);
+    if !plain(&decoded) {
+        return None;
+    }
+    let base = if absolute { String::new() } else { dir_of(part) };
+    let mut segs: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
+    for s in decoded.split('/') {
+        match s {
+            "" => return None,
+            "." => {}
+            ".." => {
+                segs.pop()?;
+            }
+            s => segs.push(s),
+        }
+    }
+    let name = segs.join("/");
+    let n = norm(&name);
+    let mut it = n.split('/');
+    let kept_area = it.next() == Some("ppt") && matches!(it.next(), Some("embeddings" | "media" | "diagrams" | "drawings")) && it.next().is_some();
+    (kept_area && !n.split('/').any(|s| s == "_rels")).then_some(name)
 }
 
 pub fn dir_of(part: &str) -> String {
@@ -490,6 +558,26 @@ mod tests {
         // With room to spare the same small part is kept.
         let p = Package::open_within(&z, 1000, 100, 10_000).unwrap();
         assert!(p.get("e").is_some());
+    }
+
+    /// #1993 review: a relationships part the package left out on opening (too large, past the
+    /// inflate budget) is there but unreadable, not absent, so an object keeping its part falls
+    /// back instead of being kept with dangling ids.
+    #[test]
+    fn a_relationships_part_left_out_on_opening_is_unreadable_not_absent() {
+        let z = zip_of(&[("ppt/embeddings/a.bin", 10), ("ppt/embeddings/_rels/a.bin.rels", 500), ("ppt/embeddings/b.bin", 10)]);
+        // Over the size of one part.
+        let p = Package::open_within(&z, 100, 10_000, 10_000).unwrap();
+        assert!(p.get("ppt/embeddings/a.bin").is_some());
+        assert!(p.rels_checked("ppt/embeddings/a.bin").is_none(), "oversized");
+        assert!(p.rels_checked("ppt/embeddings/b.bin").is_some_and(|r| r.items.is_empty()), "absent");
+        // Past the inflate budget: the rels part and everything after it.
+        let z = zip_of(&[("ppt/embeddings/a.bin", 50), ("ppt/embeddings/_rels/a.bin.rels", 10), ("ppt/embeddings/_rels/b.bin.rels", 10)]);
+        let p = Package::open_within(&z, 1000, 10_000, 50).unwrap();
+        assert!(p.get("ppt/embeddings/a.bin").is_some());
+        assert!(p.rels_checked("ppt/embeddings/a.bin").is_none(), "after the budget break");
+        assert!(p.rels_checked("ppt/embeddings/b.bin").is_none(), "after the budget break");
+        assert!(p.rels_checked("ppt/embeddings/c.bin").is_some(), "absent");
     }
 
     #[test]

@@ -251,7 +251,7 @@ fn export_of_odd_models_is_valid() {
     }
     s.shapes.push(Shape {
         id: ShapeId(7),
-        kind: ShapeKind::Opaque { xml: "<not xml".into(), preview: None, label: "Thing".into(), parts: vec![] },
+        kind: ShapeKind::Opaque { xml: "<not xml".into(), preview: None, label: "Thing".into(), parts: vec![], part_rels: vec![] },
         ..Default::default()
     });
     p.slides.push(Arc::new(s));

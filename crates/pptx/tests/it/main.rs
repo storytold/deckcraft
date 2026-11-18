@@ -18,6 +18,7 @@ mod master_text_styles;
 mod math_ns;
 mod media_timing;
 mod notes;
+mod object_rels;
 mod ole;
 mod ole_vml;
 mod parent_delays;

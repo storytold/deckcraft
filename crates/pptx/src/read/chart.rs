@@ -548,8 +548,8 @@ fn text_color(e: Option<&El>) -> Option<deckcraft_model::ColorRef> {
     rec(e?, 0)
 }
 
-const MAX_KEPT_PARTS: usize = 256;
-const MAX_KEPT_DEPTH: usize = 8;
+pub(crate) const MAX_KEPT_PARTS: usize = 256;
+pub(crate) const MAX_KEPT_DEPTH: usize = 8;
 pub const MAX_KEPT_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 /// Relationships and parts a chart points at, so a later save can write them back.
@@ -576,7 +576,7 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
     // The chart document itself is rewritten; don't store a second copy of it.
     let mut seen = std::collections::HashMap::from([(key.clone(), true)]);
     for r in imp.pkg.rels(chart_part).items {
-        if !safe_rel(&r.id, &r.ty, &r.target_raw) {
+        if !crate::opc::safe_rel(&r.id, &r.ty, &r.target_raw) {
             log::warn!("pptx: skipping chart relationship {}", r.id);
             continue;
         }
@@ -603,10 +603,6 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
     imp.kept_chart_keys.push(key.clone());
     imp.kept_charts.insert(key, kept.clone());
     kept
-}
-
-fn safe_rel(id: &str, ty: &str, target: &str) -> bool {
-    [id, ty, target].iter().all(|s| !s.is_empty() && s.len() <= 4096 && !s.chars().any(|c| c.is_control() || matches!(c, '<' | '>' | '"' | '\'')))
 }
 
 /// `true` when `part` is stored (now or from an earlier relationship).

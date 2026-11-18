@@ -12,7 +12,7 @@ fn deck(fill: Option<Fill>, object: bool) -> Presentation {
     image::DynamicImage::ImageRgba8(image).write_to(&mut png, image::ImageFormat::Png).expect("PNG");
     let media = p.add_media("transparent.png", "image/png", png.into_inner()).expect("media");
     let kind = if object {
-        ShapeKind::Opaque { xml: String::new(), preview: Some(media), label: "synthetic preview".into(), parts: vec![] }
+        ShapeKind::Opaque { xml: String::new(), preview: Some(media), label: "synthetic preview".into(), parts: vec![], part_rels: vec![] }
     } else {
         ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } }
     };
