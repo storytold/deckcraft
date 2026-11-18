@@ -146,8 +146,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
+    let audience_id = ctx.viewport_id();
+    let presenter_id = egui::ViewportId::from_hash_of("deckcraft_presenter");
     ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("deckcraft_presenter"),
+        presenter_id,
         egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
@@ -157,8 +159,8 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
             let elapsed = show.timer.elapsed(now);
             let paused = show.timer.paused();
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
-                if let Some((msg, until)) = &show.hud_toast {
-                    if now < *until {
+                match &show.hud_toast {
+                    Some((msg, until)) if now < *until => {
                         ui.horizontal(|ui| {
                             egui::Frame::NONE
                                 .fill(Color32::from_rgb(30, 100, 180))
@@ -170,6 +172,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         });
                         ui.add_space(6.0);
                     }
+                    _ => {}
                 }
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
@@ -206,28 +209,35 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
                         toggle_blank(show, Color32::WHITE);
                     }
-                    if button(ui, "⇄ Swap (F6)").on_hover_text("Swap Slide Show and Presenter View monitors (F6 / Alt+S)").clicked() {
-                        show.swapped = !show.swapped;
-                        let choice = show.monitor_choice.as_deref().unwrap_or("auto");
-                        let (aud_mon, pres_mon) = crate::monitors::get_active_routing(choice, show.swapped);
-                        let (aud_pos, pres_pos) = crate::monitors::presentation_placement(choice, show.swapped);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(aud_pos));
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::OuterPosition(pres_pos));
-                        crate::monitors::route_presentation(choice, show.swapped);
-                        show.hud_toast = Some((
-                            format!("Slide Show ➔ {} | Presenter View ➔ {}", aud_mon.name, pres_mon.name),
-                            now + 2.5,
-                        ));
+                    if button(ui, "Swap (F6)").on_hover_text("Swap Slide Show and Presenter View monitors (F6 / Alt+S)").clicked() {
+                        if crate::monitors::has_second_display() {
+                            show.swapped = !show.swapped;
+                            let choice = show.monitor_choice.as_deref().unwrap_or("auto");
+                            let (aud_mon, pres_mon) = crate::monitors::get_active_routing(choice, show.swapped);
+                            let (aud_pos, pres_pos) = crate::monitors::presentation_placement(choice, show.swapped);
+                            ctx.send_viewport_cmd_to(audience_id, egui::ViewportCommand::OuterPosition(aud_pos));
+                            ctx.send_viewport_cmd_to(presenter_id, egui::ViewportCommand::OuterPosition(pres_pos));
+                            crate::monitors::route_presentation(choice, show.swapped);
+                            show.hud_toast = Some((
+                                format!("Slide Show -> {} | Presenter View -> {}", aud_mon.name, pres_mon.name),
+                                now + 2.5,
+                            ));
+                        } else {
+                            show.hud_toast = Some((
+                                "Single display: only one screen detected".to_string(),
+                                now + 2.0,
+                            ));
+                        }
                     }
                     let choice = show.monitor_choice.as_deref().unwrap_or("auto");
                     let (aud_mon, _) = crate::monitors::get_active_routing(choice, show.swapped);
-                    let all_monitors = crate::monitors::detect_monitors();
-                    let switcher_label = format!("🖥 Display: {}", aud_mon.name);
-                    egui::ComboBox::from_id_salt("presenter_display_settings")
+                    let all_monitors = &show.cached_monitors;
+                    let switcher_label = format!("Display: {}", aud_mon.name);
+                    let combo = craft_ui::ComboBox::from_id_salt("presenter_display_settings")
                         .selected_text(egui::RichText::new(switcher_label).size(14.0).color(Color32::WHITE))
                         .show_ui(ui, |ui| {
                             ui.label(egui::RichText::new("Slide Show Target:").strong().size(13.0));
-                            for m in &all_monitors {
+                            for m in all_monitors {
                                 let label = crate::monitors::format_monitor_label(m);
                                 let is_active = aud_mon.name == m.name;
                                 if ui.selectable_label(is_active, &label).clicked() {
@@ -235,30 +245,38 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                                     show.swapped = false;
                                     let (new_aud, new_pres) = crate::monitors::get_active_routing(&m.name, false);
                                     let (aud_pos, pres_pos) = crate::monitors::presentation_placement(&m.name, false);
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(aud_pos));
-                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::OuterPosition(pres_pos));
+                                    ctx.send_viewport_cmd_to(audience_id, egui::ViewportCommand::OuterPosition(aud_pos));
+                                    ctx.send_viewport_cmd_to(presenter_id, egui::ViewportCommand::OuterPosition(pres_pos));
                                     crate::monitors::route_presentation(&m.name, false);
                                     show.hud_toast = Some((
-                                        format!("Slide Show ➔ {} | Presenter View ➔ {}", new_aud.name, new_pres.name),
+                                        format!("Slide Show -> {} | Presenter View -> {}", new_aud.name, new_pres.name),
                                         now + 2.5,
                                     ));
                                 }
                             }
                             ui.separator();
-                            if ui.button("⇄ Swap Displays (F6)").clicked() {
-                                show.swapped = !show.swapped;
-                                let choice = show.monitor_choice.as_deref().unwrap_or("auto");
-                                let (new_aud, new_pres) = crate::monitors::get_active_routing(choice, show.swapped);
-                                let (aud_pos, pres_pos) = crate::monitors::presentation_placement(choice, show.swapped);
-                                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(aud_pos));
-                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::OuterPosition(pres_pos));
-                                crate::monitors::route_presentation(choice, show.swapped);
-                                show.hud_toast = Some((
-                                    format!("Slide Show ➔ {} | Presenter View ➔ {}", new_aud.name, new_pres.name),
-                                    now + 2.5,
-                                ));
+                            if ui.button("Swap Displays (F6)").clicked() {
+                                if crate::monitors::has_second_display() {
+                                    show.swapped = !show.swapped;
+                                    let choice = show.monitor_choice.as_deref().unwrap_or("auto");
+                                    let (new_aud, new_pres) = crate::monitors::get_active_routing(choice, show.swapped);
+                                    let (aud_pos, pres_pos) = crate::monitors::presentation_placement(choice, show.swapped);
+                                    ctx.send_viewport_cmd_to(audience_id, egui::ViewportCommand::OuterPosition(aud_pos));
+                                    ctx.send_viewport_cmd_to(presenter_id, egui::ViewportCommand::OuterPosition(pres_pos));
+                                    crate::monitors::route_presentation(choice, show.swapped);
+                                    show.hud_toast = Some((
+                                        format!("Slide Show -> {} | Presenter View -> {}", new_aud.name, new_pres.name),
+                                        now + 2.5,
+                                    ));
+                                } else {
+                                    show.hud_toast = Some((
+                                        "Single display: only one screen detected".to_string(),
+                                        now + 2.0,
+                                    ));
+                                }
                             }
                         });
+                    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Display Settings"));
                     if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
                         show.presenter_grid = !show.presenter_grid;
                     }
@@ -287,7 +305,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 }
                 let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
                 let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.72)), doc);
+                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -311,42 +329,6 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 if let Some(c) = show.blank {
                     ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
                 }
-                // Filmstrip of slide thumbnails below current preview
-                let thumbs_h = (left.height() * 0.22).clamp(70.0, 130.0);
-                let filmstrip_rect = Rect::from_min_max(pos2(left.min.x, left.max.y - thumbs_h), left.max);
-                let mut strip_ui = ui.new_child(egui::UiBuilder::new().max_rect(filmstrip_rect));
-                egui::ScrollArea::horizontal().show(&mut strip_ui, |ui| {
-                    ui.horizontal(|ui| {
-                        for (idx, slide) in doc.slides.iter().enumerate() {
-                            let is_current = idx == cur;
-                            let aspect = (doc.slide_size.width / doc.slide_size.height.max(1.0)).clamp(0.5, 3.0) as f32;
-                            let thumb_h = (thumbs_h - 22.0).max(40.0);
-                            let thumb_w = thumb_h * aspect;
-                            let label_text = format!("{}", idx + 1);
-                            let response = ui.allocate_response(vec2(thumb_w, thumb_h + 16.0), Sense::click());
-                            let r = response.rect;
-                            let img_rect = Rect::from_min_size(r.min, vec2(thumb_w, thumb_h));
-                            let bg_color = if is_current {
-                                Color32::from_rgb(0, 120, 215)
-                            } else if response.hovered() {
-                                Color32::from_gray(80)
-                            } else {
-                                Color32::from_gray(45)
-                            };
-                            ui.painter().rect_filled(img_rect, CornerRadius::same(3), bg_color);
-                            let border_color = if is_current { Color32::WHITE } else { Color32::from_gray(100) };
-                            ui.painter().rect_stroke(img_rect, CornerRadius::same(3), Stroke::new(if is_current { 2.0 } else { 1.0 }, border_color), egui::StrokeKind::Inside);
-                            let title = slide.shapes.iter().find(|s| s.text_box || s.text.is_some()).and_then(|s| s.text.as_ref()).map(|t| t.text()).unwrap_or_default();
-                            let summary = if title.trim().is_empty() { format!("Slide {}", idx + 1) } else { title.chars().take(8).collect::<String>() };
-                            ui.painter().text(img_rect.center(), Align2::CENTER_CENTER, summary, theme::font(11.0), if is_current { Color32::WHITE } else { Color32::from_gray(210) });
-                            let num_rect = Rect::from_min_size(pos2(r.min.x, img_rect.max.y + 2.0), vec2(thumb_w, 14.0));
-                            ui.painter().text(num_rect.center(), Align2::CENTER_CENTER, label_text, theme::font(10.0), if is_current { Color32::from_rgb(80, 180, 255) } else { Color32::from_gray(160) });
-                            if response.clicked() {
-                                actions.push(show.state.goto(doc, idx));
-                            }
-                        }
-                    });
-                });
                 let nr = next_rect(right, doc);
                 ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
                 match &next_tex {

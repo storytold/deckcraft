@@ -120,6 +120,7 @@ pub struct Show {
     hidden_anchor: Option<(f64, web_time::Instant)>,
     pub monitor_choice: Option<String>,
     pub hud_toast: Option<(String, f64)>,
+    pub cached_monitors: Vec<crate::monitors::MonitorInfo>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -276,6 +277,7 @@ impl Show {
             hidden_anchor: None,
             monitor_choice: None,
             hud_toast: None,
+            cached_monitors: crate::monitors::detect_monitors(),
         }
     }
 

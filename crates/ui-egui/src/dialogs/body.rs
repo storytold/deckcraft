@@ -285,9 +285,16 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let mon_label = match mon_choice.as_str() {
         "primary" => format!("Primary ({primary_name})"),
         "extended" => format!("Extended ({extended_name})"),
-        _ => format!("Automatic ({extended_name})"),
+        "auto" => format!("Automatic ({extended_name})"),
+        other => {
+            if let Some(m) = monitors.iter().find(|m| m.name == other) {
+                crate::monitors::format_monitor_label(m)
+            } else {
+                format!("Monitor: {other}")
+            }
+        }
     };
-    egui::ComboBox::from_id_salt("setup_monitor").selected_text(mon_label).show_ui(ui, |ui| {
+    craft_ui::ComboBox::from_id_salt("setup_monitor").selected_text(mon_label).show_ui(ui, |ui| {
         if ui.selectable_label(mon_choice == "auto", format!("Automatic ({extended_name})")).clicked() {
             *mon_choice = "auto".into();
         }
@@ -296,6 +303,12 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
         if ui.selectable_label(mon_choice == "primary", format!("Primary Monitor ({primary_name})")).clicked() {
             *mon_choice = "primary".into();
+        }
+        for m in &monitors {
+            let label = crate::monitors::format_monitor_label(m);
+            if ui.selectable_label(*mon_choice == m.name, &label).clicked() {
+                *mon_choice = m.name.clone();
+            }
         }
     });
     let pv = check(ui, d, "Use Presenter View", "pv", app.ui.presenter_view);

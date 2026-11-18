@@ -219,6 +219,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.step_end = now;
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
+        show.monitor_choice = Some(target_mon.to_string());
         show.last_move = now;
         if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
             let (aud_pos, _) = crate::monitors::presentation_placement(target_mon, show.swapped);
@@ -856,6 +857,8 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
     if keep {
         app.show = Some(show);
     } else {
+        crate::monitors::cancel_pending_routing();
+        crate::monitors::restore_editor_window();
         if let Some(host) = app.services.presenter.as_mut() {
             host.close();
         }

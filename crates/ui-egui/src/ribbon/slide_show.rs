@@ -62,9 +62,16 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
                 let cur_label = match cur.as_str() {
                     "primary" => format!("Primary ({primary_name})"),
                     "extended" => format!("Extended ({extended_name})"),
-                    _ => format!("Automatic ({extended_name})"),
+                    "auto" => format!("Automatic ({extended_name})"),
+                    other => {
+                        if let Some(m) = monitors.iter().find(|m| m.name == other) {
+                            crate::monitors::format_monitor_label(m)
+                        } else {
+                            format!("Monitor: {other}")
+                        }
+                    }
                 };
-                egui::ComboBox::from_id_salt("slide_show_monitor_select")
+                craft_ui::ComboBox::from_id_salt("slide_show_monitor_select")
                     .selected_text(cur_label)
                     .width(180.0)
                     .show_ui(ui, |ui| {
@@ -76,6 +83,12 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
                         }
                         if ui.selectable_label(cur == "primary", format!("Primary Monitor ({primary_name})")).clicked() {
                             app.ui.presentation_monitor = "primary".into();
+                        }
+                        for m in &monitors {
+                            let label = crate::monitors::format_monitor_label(m);
+                            if ui.selectable_label(cur == m.name, &label).clicked() {
+                                app.ui.presentation_monitor = m.name.clone();
+                            }
                         }
                     });
             });

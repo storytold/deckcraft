@@ -16,9 +16,8 @@ pub struct MonitorInfo {
 pub fn detect_monitors() -> Vec<MonitorInfo> {
     let mut monitors = Vec::new();
     #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Ok(output) = std::process::Command::new("xrandr").arg("--listmonitors").output() {
-            if output.status.success() {
+        match std::process::Command::new("xrandr").arg("--listmonitors").output() {
+            Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout);
                 for line in text.lines().skip(1) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -39,8 +38,8 @@ pub fn detect_monitors() -> Vec<MonitorInfo> {
                     }
                 }
             }
+            _ => {}
         }
-    }
     if monitors.is_empty() {
         monitors.push(MonitorInfo {
             name: "Primary".to_string(),
@@ -163,15 +162,28 @@ pub fn presentation_placement(choice: &str, swapped: bool) -> (egui::Pos2, egui:
     )
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static ROUTING_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Invalidate any pending routing workers so they exit immediately without moving windows.
+pub fn cancel_pending_routing() {
+    ROUTING_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
 /// Spawns a background thread to route audience and presenter windows on Linux X11/Xwayland.
 /// Retries progressively for 1.5 seconds so newly-opened viewports are captured and positioned.
 pub fn route_presentation(choice: &str, swapped: bool) {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         let choice_owned = choice.to_string();
+        let generation = ROUTING_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         std::thread::spawn(move || {
             for attempt in 0..15 {
                 std::thread::sleep(std::time::Duration::from_millis(100));
+                if ROUTING_GENERATION.load(Ordering::SeqCst) != generation {
+                    break;
+                }
                 let done = do_route(&choice_owned, swapped);
                 if done && attempt >= 2 {
                     break;
@@ -183,6 +195,7 @@ pub fn route_presentation(choice: &str, swapped: bool) {
 
 /// Restores the main DeckCraft editor window back to the primary display when presentation ends.
 pub fn restore_editor_window() {
+    cancel_pending_routing();
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::thread::spawn(move || {
@@ -202,13 +215,27 @@ pub fn restore_editor_window() {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn get_window_ids(name_pattern: &str) -> Vec<String> {
-    if let Ok(out) = std::process::Command::new("xdotool").args(["search", "--name", name_pattern]).output() {
-        if out.status.success() {
+    let pid = std::process::id().to_string();
+    match std::process::Command::new("xdotool")
+        .args(["search", "--onlyvisible", "--pid", &pid, "--name", name_pattern])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
             let s = String::from_utf8_lossy(&out.stdout);
-            return s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+            let wids: Vec<String> = s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+            if !wids.is_empty() {
+                return wids;
+            }
         }
+        _ => {}
     }
-    vec![]
+    match std::process::Command::new("xdotool").args(["search", "--onlyvisible", "--name", name_pattern]).output() {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout);
+            s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+        }
+        _ => vec![],
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
