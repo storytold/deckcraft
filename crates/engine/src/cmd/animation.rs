@@ -2,11 +2,13 @@
 
 use std::sync::Arc;
 
+use deckcraft_model::ShapeId;
 use deckcraft_model::anim::{ANIMATIONS, AnimClass, AnimStart, Animation, TextBuild, animation_info};
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, always, bad, bool_or, bool_param, cmd, has_selection, has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param,
+    CommandSpec, always, bad, bool_or, bool_param, cmd, has_doc, has_selection, has_slide, id_param, ok, opt_usize_param, str_param, targets,
+    usize_param,
 };
 use crate::{Result, Session};
 
@@ -63,6 +65,24 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("animation.painterApply", "Apply Animation", [], Some("Alt+Shift+V"), "{ids?}", has_selection, painter_apply),
         cmd!(query "animation.list", "Animation Gallery", [], None, "{} → [{id, label, class, options}]", always, list),
         cmd!(query "animation.get", "Animations on Slide", [], None, "{slide?} → [animation]", has_slide, get),
+        cmd!(
+            "slide.animation.set",
+            "Set Shape Animations",
+            [],
+            None,
+            "{index, shape, animations: [the whole Animation model as JSON]} (exact final value for collaboration; [] clears the shape's steps)",
+            has_doc,
+            set_steps
+        ),
+        cmd!(
+            "slide.animations.set",
+            "Set Slide Animations",
+            [],
+            None,
+            "{index, animations: [the whole Animation model as JSON, every step naming its shape]} (exact final ordered list for collaboration; [] clears the slide's steps)",
+            has_doc,
+            set_list
+        ),
     ]
 }
 
@@ -166,6 +186,13 @@ fn build(p: &Value, slide: (f64, f64)) -> Result<Animation> {
         a.amount = Some(1.5);
     }
     Ok(a)
+}
+
+/// The animation `animation.add` appends for one shape, from the command's parameters and the
+/// slide's size. The collaboration normaliser runs the same function, so a shared session reaches
+/// exactly the value the single-user command builds (the `set_plan`/`align_plan` pattern).
+pub fn add_plan(p: &Value, slide: (f64, f64)) -> Result<Animation> {
+    build(p, slide)
 }
 
 /// Most points of a motion path given as an array, and longest path string given as text.
@@ -278,34 +305,43 @@ pub fn default_path(effect: &str, option: &str) -> String {
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
-    let a = build(p, slide_extent(s)?)?;
+    let size = slide_extent(s)?;
     s.edit(|doc, sel| {
         let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.set", "no slide"))?;
+        let animations = set_plan(p, &sl.animations, &ids, size)?;
         let sl = Arc::make_mut(sl);
-        // Replace each shape's animations, keeping their place in the sequence.
-        let mut out = vec![];
-        let mut placed = vec![];
-        for x in sl.animations.drain(..) {
-            if ids.contains(&x.shape) {
-                if !placed.contains(&x.shape) {
-                    placed.push(x.shape);
-                    out.push(Animation { shape: x.shape, start: x.start, ..a.clone() });
-                }
-            } else {
-                out.push(x);
-            }
-        }
-        for id in &ids {
-            if !placed.contains(id) {
-                out.push(Animation { shape: *id, ..a.clone() });
-            }
-        }
-        if a.effect == "none" {
-            out.retain(|x| !ids.contains(&x.shape));
-        }
-        sl.animations = out;
+        sl.animations = animations;
         Ok(json!({"count": sl.animations.len()}))
     })
+}
+
+/// The slide animation list `animation.set` leaves: each addressed shape's steps become one built
+/// step where its first step stood (an `effect: none` removes them), and a shape without steps
+/// gets the built step at the end. The collaboration normaliser runs this same function, so a
+/// shared session reaches exactly the value the single-user command builds.
+pub fn set_plan(p: &Value, animations: &[Animation], ids: &[ShapeId], slide: (f64, f64)) -> Result<Vec<Animation>> {
+    let a = build(p, slide)?;
+    let mut out = Vec::with_capacity(animations.len() + ids.len());
+    let mut placed = vec![];
+    for x in animations {
+        if ids.contains(&x.shape) {
+            if !placed.contains(&x.shape) {
+                placed.push(x.shape);
+                out.push(Animation { shape: x.shape, start: x.start, ..a.clone() });
+            }
+        } else {
+            out.push(x.clone());
+        }
+    }
+    for id in ids {
+        if !placed.contains(id) {
+            out.push(Animation { shape: *id, ..a.clone() });
+        }
+    }
+    if a.effect == "none" {
+        out.retain(|x| !ids.contains(&x.shape));
+    }
+    Ok(out)
 }
 
 /// The slide's width and height in points.
@@ -355,67 +391,104 @@ fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
     let i = opt_usize_param(p, "index", "animation.move")?.ok_or_else(|| bad("animation.move", "missing `index`"))?;
     let to = usize_param(p, "to").ok_or_else(|| bad("animation.move", "missing `to`"))?;
     s.edit(|doc, sel| {
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.move", "no slide"))?);
-        if i >= sl.animations.len() {
-            return Err(bad("animation.move", "no such animation"));
-        }
-        let a = sl.animations.remove(i);
-        let to = to.min(sl.animations.len());
-        sl.animations.insert(to, a);
+        let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.move", "no slide"))?;
+        let animations = move_plan(&sl.animations, i, to)?;
+        Arc::make_mut(sl).animations = animations;
         Ok(())
     })?;
     ok()
 }
 
-fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result<Value> {
-    let index = opt_usize_param(p, "index", "animation")?;
-    let ids = if index.is_none() { targets(s, p)? } else { vec![] };
-    s.edit(|doc, sel| {
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?);
-        let mut n = 0;
-        for (k, a) in sl.animations.iter_mut().enumerate() {
-            if index == Some(k) || (index.is_none() && ids.contains(&a.shape)) {
-                f(a);
-                n += 1;
-            }
-        }
-        if n == 0 {
-            return Err(bad("animation", "no animation to change (select an animated object or give `index`)"));
-        }
-        Ok(json!({"changed": n}))
-    })
+/// The slide animation list `animation.move` leaves: the step at `index` moves to `to`, clamped
+/// to the end. Shared with the normaliser.
+pub fn move_plan(animations: &[Animation], index: usize, to: usize) -> Result<Vec<Animation>> {
+    if index >= animations.len() {
+        return Err(bad("animation.move", "no such animation"));
+    }
+    let mut out = animations.to_vec();
+    let step = out.remove(index);
+    let to = to.min(out.len());
+    out.insert(to, step);
+    Ok(out)
 }
 
 fn timing(s: &mut Session, p: &Value) -> Result<Value> {
+    let index = opt_usize_param(p, "index", "animation")?;
+    let ids = if index.is_none() { targets(s, p)? } else { vec![] };
+    s.edit(|doc, sel| {
+        let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?;
+        let (animations, changed) = timing_plan(p, &sl.animations, index, &ids)?;
+        let sl = Arc::make_mut(sl);
+        sl.animations = animations;
+        Ok(json!({"changed": changed}))
+    })
+}
+
+/// The slide animation list `animation.timing` leaves, and how many steps it changed. Each step
+/// named by `index`, or by the shape ids when `index` is absent, takes the fields given; a field
+/// left out keeps its value. Shared with the normaliser.
+pub fn timing_plan(p: &Value, animations: &[Animation], index: Option<usize>, ids: &[ShapeId]) -> Result<(Vec<Animation>, usize)> {
     let start = str_param(p, "start").map(start_of);
     let dur = p.get("duration").and_then(Value::as_u64).map(|v| v.min(600_000) as u32);
     let delay = p.get("delay").and_then(Value::as_u64).map(|v| v.min(600_000) as u32);
     let repeat = p.get("repeat").and_then(Value::as_u64).map(|v| v.min(u32::MAX as u64) as u32);
     let rewind = bool_param(p, "rewind");
-    let trigger = p.get("trigger").map(|v| v.as_u64().and_then(|x| u32::try_from(x).ok()).map(deckcraft_model::ShapeId));
-    each_target(s, p, |a| {
-        if let Some(x) = start {
-            a.start = x;
+    let trigger = p.get("trigger").map(|v| v.as_u64().and_then(|x| u32::try_from(x).ok()).map(ShapeId));
+    let mut out = animations.to_vec();
+    let mut n = 0;
+    for (k, a) in out.iter_mut().enumerate() {
+        if index == Some(k) || (index.is_none() && ids.contains(&a.shape)) {
+            if let Some(x) = start {
+                a.start = x;
+            }
+            if let Some(x) = dur {
+                a.duration_ms = x;
+            }
+            if let Some(x) = delay {
+                a.delay_ms = x;
+            }
+            if let Some(x) = repeat {
+                a.repeat = x;
+            }
+            if let Some(x) = rewind {
+                a.rewind = x;
+            }
+            if let Some(t) = trigger {
+                a.trigger = t;
+            }
+            n += 1;
         }
-        if let Some(x) = dur {
-            a.duration_ms = x;
-        }
-        if let Some(x) = delay {
-            a.delay_ms = x;
-        }
-        if let Some(x) = repeat {
-            a.repeat = x;
-        }
-        if let Some(x) = rewind {
-            a.rewind = x;
-        }
-        if let Some(t) = trigger {
-            a.trigger = t;
-        }
-    })
+    }
+    if n == 0 {
+        return Err(bad("animation", "no animation to change (select an animated object or give `index`)"));
+    }
+    Ok((out, n))
 }
 
 fn options(s: &mut Session, p: &Value) -> Result<Value> {
+    let index = opt_usize_param(p, "index", "animation")?;
+    let ids = if index.is_none() { targets(s, p)? } else { vec![] };
+    let size = slide_extent(s)?;
+    s.edit(|doc, sel| {
+        let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.options", "no slide"))?;
+        let (animations, changed) = options_plan(p, &sl.animations, index, &ids, size)?;
+        Arc::make_mut(sl).animations = animations;
+        Ok(json!({"changed": changed}))
+    })
+}
+
+/// The slide animation list `animation.options` leaves, and how many steps it changed. Each step
+/// named by `index`, or by the shape ids when `index` is absent, takes the option in its own
+/// effect's terms, the motion path (path-class steps only) and the text build mode; a field left
+/// out keeps its value. Shared with the collaboration normaliser, so every replica gets exactly
+/// the option codes the single-user command resolves.
+pub fn options_plan(
+    p: &Value,
+    animations: &[Animation],
+    index: Option<usize>,
+    ids: &[ShapeId],
+    slide: (f64, f64),
+) -> Result<(Vec<Animation>, usize)> {
     let option = str_param(p, "option").map(String::from);
     let build_mode = str_param(p, "textBuild").map(|b| match b {
         "byParagraph" => TextBuild::ByParagraph,
@@ -423,26 +496,35 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
         "byLetter" => TextBuild::ByLetter,
         _ => TextBuild::AsOne,
     });
-    let path = path_param(p, slide_extent(s)?)?;
-    each_target(s, p, |a| {
-        if let (Some(path), AnimClass::Path) = (&path, a.class) {
-            a.path = Some(path.clone());
-        }
-        if let Some(o) = &option {
-            // Each target takes the option in its own effect's terms; one it has no such
-            // option for keeps its own.
-            let allowed = animation_info(&a.effect, a.class).map(|i| i.5).unwrap_or(&[]);
-            if let Some(o) = resolve_option(allowed, o) {
-                if a.class == AnimClass::Path && path.is_none() {
-                    a.path = Some(default_path(&a.effect, &o));
-                }
-                a.option = o;
+    let path = path_param(p, slide)?;
+    let mut out = animations.to_vec();
+    let mut n = 0;
+    for (k, a) in out.iter_mut().enumerate() {
+        if index == Some(k) || (index.is_none() && ids.contains(&a.shape)) {
+            if let (Some(path), AnimClass::Path) = (&path, a.class) {
+                a.path = Some(path.clone());
             }
+            if let Some(o) = &option {
+                // Each target takes the option in its own effect's terms; one it has no such
+                // option for keeps its own.
+                let allowed = animation_info(&a.effect, a.class).map(|i| i.5).unwrap_or(&[]);
+                if let Some(o) = resolve_option(allowed, o) {
+                    if a.class == AnimClass::Path && path.is_none() {
+                        a.path = Some(default_path(&a.effect, &o));
+                    }
+                    a.option = o;
+                }
+            }
+            if let Some(b) = build_mode {
+                a.text_build = b;
+            }
+            n += 1;
         }
-        if let Some(b) = build_mode {
-            a.text_build = b;
-        }
-    })
+    }
+    if n == 0 {
+        return Err(bad("animation", "no animation to change (select an animated object or give `index`)"));
+    }
+    Ok((out, n))
 }
 
 fn clear(s: &mut Session, p: &Value) -> Result<Value> {
@@ -499,25 +581,164 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.painterApply", "no slide"))?);
-        // As in PowerPoint, painting replaces the target's own animations (painting a shape onto
-        // itself doesn't double them). A paragraph effect keeps its paragraph only if the target
-        // has that paragraph; otherwise it animates the whole shape.
-        sl.animations.retain(|a| !ids.contains(&a.shape));
-        let mut added = 0;
-        for id in &ids {
-            let paras = deckcraft_model::find_shape(&sl.shapes, *id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len());
-            for a in &painted {
-                let mut cloned = a.clone();
-                cloned.shape = *id;
-                if cloned.paragraph.is_some_and(|i| i as usize >= paras) {
-                    cloned.paragraph = None;
+        let animations = painter_plan(&painted, &sl.animations, &ids, |id| paragraphs(&sl.shapes, id));
+        sl.animations = animations;
+        Ok(json!({"applied": painted.len().saturating_mul(ids.len())}))
+    })
+}
+
+/// The slide animation list `animation.painterApply` leaves: every addressed shape's own steps are
+/// replaced by the picked ones, painted in the order they were picked (painting a shape onto itself
+/// does not double its steps). A paragraph effect keeps its paragraph only if the target has that
+/// paragraph; otherwise it animates the whole shape. `paragraphs` answers the paragraph count of an
+/// addressed shape, so the result is a deterministic function of the authoritative slide and the
+/// payload — the collaboration normaliser runs this same function.
+pub fn painter_plan(picked: &[Animation], animations: &[Animation], ids: &[ShapeId], paragraphs: impl Fn(ShapeId) -> usize) -> Vec<Animation> {
+    let mut out: Vec<Animation> = animations.iter().filter(|a| !ids.contains(&a.shape)).cloned().collect();
+    for id in ids {
+        let paras = paragraphs(*id);
+        for a in picked {
+            let mut cloned = a.clone();
+            cloned.shape = *id;
+            if cloned.paragraph.is_some_and(|i| i as usize >= paras) {
+                cloned.paragraph = None;
+            }
+            out.push(cloned);
+        }
+    }
+    out
+}
+
+/// How many paragraphs a shape's own text body has (`0` for a shape without text).
+pub fn paragraphs(shapes: &[deckcraft_model::Shape], id: ShapeId) -> usize {
+    deckcraft_model::find_shape(shapes, id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len())
+}
+
+/// Most animation steps one shape may carry in a `slide.animation.set` image, and the longest
+/// such image as JSON bytes. A step is a few hundred bytes; the bounds keep a hostile or
+/// corrupted history well inside the 256 KiB wire message.
+const MAX_ANIMATION_STEPS: usize = 256;
+const MAX_ANIMATION_JSON: usize = 64 * 1024;
+
+/// Most steps one slide may carry in a `slide.animations.set` image, and the longest such image
+/// as JSON bytes. A slide-wide list is the normalised form of `animation.set`, `animation.timing`
+/// and `animation.move`, so its bound covers every shape on the slide and still leaves the wire
+/// message room for its envelope (RFC §4.1).
+pub const MAX_SLIDE_ANIMATION_STEPS: usize = 4096;
+pub const MAX_SLIDE_ANIMATION_JSON: usize = 192 * 1024;
+
+/// Set one shape's animation steps to an exact final list (collaboration).
+///
+/// This is the confirmed command of `Payload::ShapeAnimations`: the whole list of model values,
+/// not the arguments of `animation.add`, because a file carries preset ids, timings, colours and
+/// paths that `animation.add` cannot repeat, and because it is the exact-image restore of an
+/// animation step (ADR 0010). The values are hostile input even though the server builds them:
+/// the list is bounded, every value is deserialised into the model type, its effect must be one
+/// the model knows, and its shape is forced to the addressed one. Nothing is written until every
+/// value has passed. The list replaces the shape's own steps where the first one stood, so steps
+/// of other shapes keep their place; a shape without steps gets them at the end.
+fn set_steps(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "slide.animation.set";
+    let index = opt_usize_param(p, "index", CMD)?.ok_or_else(|| bad(CMD, "missing `index`"))?;
+    let shape = id_param(p, "shape", CMD)?.ok_or_else(|| bad(CMD, "missing `shape`"))?;
+    let value = p.get("animations").cloned().ok_or_else(|| bad(CMD, "missing `animations` ([] clears the shape's steps)"))?;
+    let mut steps = read_steps(&value, MAX_ANIMATION_STEPS, MAX_ANIMATION_JSON, CMD)?;
+    for step in &mut steps {
+        step.shape = shape;
+    }
+    s.edit(|doc, _| {
+        let sl = doc.slides.get_mut(index).ok_or_else(|| bad(CMD, "no such slide"))?;
+        if deckcraft_model::find_shape(&sl.shapes, shape).is_none() {
+            return Err(bad(CMD, format!("no shape {} on that slide", shape.0)));
+        }
+        let sl = Arc::make_mut(sl);
+        let mut out = Vec::with_capacity(sl.animations.len() + steps.len());
+        let mut placed = false;
+        for step in sl.animations.drain(..) {
+            if step.shape == shape {
+                if !placed {
+                    out.extend(steps.iter().cloned());
+                    placed = true;
                 }
-                sl.animations.push(cloned);
-                added += 1;
+            } else {
+                out.push(step);
             }
         }
-        Ok(json!({"applied": added}))
+        if !placed {
+            out.extend(steps);
+        }
+        sl.animations = out;
+        let count = sl.animations.iter().filter(|a| a.shape == shape).count();
+        Ok(json!({"count": count}))
     })
+}
+
+/// Set one slide's whole animation sequence to an exact final list (collaboration).
+///
+/// This is the confirmed command of `Payload::SlideAnimations`: the whole ordered sequence with
+/// every step naming its own shape, which the per-shape `slide.animation.set` cannot express when
+/// steps of different shapes interleave. It is also the exact-image restore of an
+/// `animation.set`/`animation.timing`/`animation.move` step (ADR 0010). Every value is validated
+/// before the first write, and every named shape must still be on that slide.
+fn set_list(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "slide.animations.set";
+    let index = opt_usize_param(p, "index", CMD)?.ok_or_else(|| bad(CMD, "missing `index`"))?;
+    let value = p.get("animations").cloned().ok_or_else(|| bad(CMD, "missing `animations` ([] clears the slide's steps)"))?;
+    let steps = read_steps(&value, MAX_SLIDE_ANIMATION_STEPS, MAX_SLIDE_ANIMATION_JSON, CMD)?;
+    s.edit(|doc, _| {
+        let sl = doc.slides.get_mut(index).ok_or_else(|| bad(CMD, "no such slide"))?;
+        for step in &steps {
+            if deckcraft_model::find_shape(&sl.shapes, step.shape).is_none() {
+                return Err(bad(CMD, format!("no shape {} on that slide", step.shape.0)));
+            }
+        }
+        let sl = Arc::make_mut(sl);
+        sl.animations = steps;
+        Ok(json!({"count": sl.animations.len()}))
+    })
+}
+
+/// The model animation values of one exact-image list, validated before any write. The list is
+/// bounded in entries and bytes; every value must be an object with the model's own field names,
+/// a known effect, a bounded option and motion path.
+fn read_steps(value: &Value, max_count: usize, max_json: usize, cmd: &str) -> Result<Vec<Animation>> {
+    let list = value.as_array().ok_or_else(|| bad(cmd, "`animations` must be an array"))?;
+    if list.len() > max_count {
+        return Err(bad(cmd, format!("at most {max_count} animation steps")));
+    }
+    let bytes = serde_json::to_vec(value).map_err(|e| bad(cmd, format!("invalid animation step: {e}")))?;
+    if bytes.len() > max_json {
+        return Err(bad(cmd, "the animation image is too large"));
+    }
+    let mut steps = Vec::with_capacity(list.len());
+    // The model's own field names, from its default value: a value with any other key is not an
+    // animation this build wrote, and silently deserialising it into the defaults would animate
+    // the shape with a step nobody asked for.
+    let fields: Vec<String> = match serde_json::to_value(Animation::default()) {
+        Ok(Value::Object(map)) => map.keys().cloned().collect(),
+        _ => return Err(bad(cmd, "the animation model cannot be described")),
+    };
+    for value in list {
+        let object = value.as_object().ok_or_else(|| bad(cmd, "an animation step must be an object"))?;
+        if !object.contains_key("effect") {
+            return Err(bad(cmd, "an animation step has no `effect`"));
+        }
+        if let Some(key) = object.keys().find(|key| !fields.iter().any(|field| field == *key)) {
+            return Err(bad(cmd, format!("unknown animation field `{key}`")));
+        }
+        let a: Animation = serde_json::from_value(value.clone()).map_err(|e| bad(cmd, format!("invalid animation step: {e}")))?;
+        if !ANIMATIONS.iter().any(|x| x.0 == a.effect) {
+            return Err(bad(cmd, format!("unknown effect `{}`", a.effect)));
+        }
+        if a.option.len() > 64 {
+            return Err(bad(cmd, "the animation option is too long"));
+        }
+        if a.path.as_ref().is_some_and(|path| path.len() > MAX_PATH_TEXT) {
+            return Err(bad(cmd, "the motion path is too long"));
+        }
+        steps.push(a);
+    }
+    Ok(steps)
 }
 
 #[cfg(test)]
@@ -784,5 +1005,185 @@ mod tests {
             "path only fits a motion path"
         );
         assert!(s.execute("animation.get", &json!({})).unwrap().as_array().unwrap().is_empty(), "a refused add left an animation behind");
+    }
+
+    fn two_shapes(s: &mut Session) -> (u64, u64) {
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [150.0, 10.0, 100.0, 100.0]})).unwrap()["id"].as_u64().unwrap();
+        (a, b)
+    }
+
+    #[test]
+    fn an_exact_animation_list_replaces_one_shapes_steps_in_place() {
+        let mut s = Session::with_new();
+        let (a, b) = two_shapes(&mut s);
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [a]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "zoom", "ids": [b]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "pulse", "class": "emphasis", "ids": [a]})).unwrap();
+        let before = s.execute("animation.get", &json!({})).unwrap();
+        assert_eq!(before.as_array().unwrap().len(), 3);
+
+        // The shape's second step asserts itself with the exact model value it has.
+        let pulse = before.as_array().unwrap().iter().find(|x| x["effect"] == "pulse").cloned().unwrap();
+        let only_pulse = json!([pulse]);
+        let r = s.execute("slide.animation.set", &json!({"index": 0, "shape": a, "animations": only_pulse})).unwrap();
+        assert_eq!(r["count"], 1);
+        let now = s.execute("animation.get", &json!({})).unwrap();
+        let effects: Vec<&str> = now.as_array().unwrap().iter().map(|x| x["effect"].as_str().unwrap()).collect();
+        assert_eq!(effects, vec!["pulse", "zoom"], "the shape keeps its place among the other shapes");
+
+        // A shape without steps gets them at the end; an empty list clears them.
+        let fade = now.as_array().unwrap().iter().find(|x| x["effect"] == "zoom").cloned().unwrap();
+        s.execute("slide.animation.set", &json!({"index": 0, "shape": a, "animations": [fade]})).unwrap();
+        let effects: Vec<String> =
+            s.execute("animation.get", &json!({})).unwrap().as_array().unwrap().iter().map(|x| x["effect"].as_str().unwrap().to_string()).collect();
+        assert_eq!(effects, vec!["zoom", "zoom"]);
+        s.execute("slide.animation.set", &json!({"index": 0, "shape": a, "animations": []})).unwrap();
+        let left = s.execute("animation.get", &json!({})).unwrap();
+        assert_eq!(left.as_array().unwrap().len(), 1, "only the other shape still has its step");
+        assert_eq!(left[0]["shape"], b);
+    }
+
+    #[test]
+    fn an_exact_animation_list_is_validated_before_the_first_write() {
+        let mut s = Session::with_new();
+        let (a, _) = two_shapes(&mut s);
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [a]})).unwrap();
+        let kept = s.execute("animation.get", &json!({})).unwrap();
+        let step = kept.as_array().unwrap()[0].clone();
+        for (why, list) in [
+            ("an unknown effect", json!([{"effect": "mystery", "shape": a}])),
+            ("a non-animation", json!([{"nope": true}])),
+            ("not an array", json!({"x": 1})),
+        ] {
+            assert!(s.execute("slide.animation.set", &json!({"index": 0, "shape": a, "animations": list})).is_err(), "{why}");
+            assert_eq!(s.execute("animation.get", &json!({})).unwrap(), kept, "{why} wrote something");
+        }
+        assert!(s.execute("slide.animation.set", &json!({"index": 9, "shape": a, "animations": [step.clone()]})).is_err(), "no such slide");
+        let missing = 9_999;
+        assert!(
+            s.execute("slide.animation.set", &json!({"index": 0, "shape": missing, "animations": [step.clone()]})).is_err(),
+            "a step on a shape that is not on the slide"
+        );
+        assert!(s.execute("slide.animation.set", &json!({"shape": a, "animations": [step]})).is_err(), "missing `index`");
+        let many = Value::Array((0..257).map(|_| json!({"effect": "fade", "shape": a})).collect());
+        assert!(s.execute("slide.animation.set", &json!({"index": 0, "shape": a, "animations": many})).is_err(), "too many steps");
+        assert_eq!(s.execute("animation.get", &json!({})).unwrap(), kept, "every refusal left the slide alone");
+    }
+
+    #[test]
+    fn a_slide_wide_animation_list_keeps_interleaved_steps_and_validates_every_shape() {
+        let mut s = Session::with_new();
+        let (a, b) = two_shapes(&mut s);
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [a]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "zoom", "ids": [b]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "pulse", "class": "emphasis", "ids": [a]})).unwrap();
+        let list = s.execute("animation.get", &json!({})).unwrap();
+        let effects = |v: &Value| v.as_array().unwrap().iter().map(|x| x["effect"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(effects(&list), ["fade", "zoom", "pulse"], "steps of two shapes interleave");
+
+        // The exact same list through the slide-wide command changes nothing, interleaving kept.
+        s.execute("slide.animations.set", &json!({"index": 0, "animations": list})).unwrap();
+        assert_eq!(s.execute("animation.get", &json!({})).unwrap(), list);
+
+        // A step on a shape that is not on the slide, an unknown effect and an unknown field are
+        // refused before any write.
+        let mut missing = list.clone();
+        missing[1]["shape"] = json!(9_999);
+        for (why, animations) in [
+            ("a shape that is not on the slide", missing),
+            ("an unknown effect", json!([{"effect": "mystery", "shape": a}])),
+            ("an unknown field", json!([{"effect": "fade", "shape": a, "nope": 1}])),
+            ("not an array", json!({"x": 1})),
+        ] {
+            assert!(s.execute("slide.animations.set", &json!({"index": 0, "animations": animations})).is_err(), "{why}");
+            assert_eq!(s.execute("animation.get", &json!({})).unwrap(), list, "{why} wrote something");
+        }
+        assert!(s.execute("slide.animations.set", &json!({"index": 9, "animations": list})).is_err(), "no such slide");
+        assert!(s.execute("slide.animations.set", &json!({"animations": list})).is_err(), "missing `index`");
+        let many = Value::Array((0..4_097).map(|_| json!({"effect": "fade", "shape": a})).collect());
+        assert!(s.execute("slide.animations.set", &json!({"index": 0, "animations": many})).is_err(), "too many steps");
+
+        // An empty list clears the whole slide.
+        s.execute("slide.animations.set", &json!({"index": 0, "animations": []})).unwrap();
+        assert!(s.execute("animation.get", &json!({})).unwrap().as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_animation_plans_match_the_single_user_commands() {
+        use super::{move_plan, set_plan, timing_plan};
+        use deckcraft_model::ShapeId;
+
+        let mut s = Session::with_new();
+        let (a, b) = two_shapes(&mut s);
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [a]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "zoom", "ids": [b]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "pulse", "class": "emphasis", "ids": [a]})).unwrap();
+        let current = |s: &mut Session| serde_json::from_value::<Vec<Animation>>(s.execute("animation.get", &json!({})).unwrap()).unwrap();
+        let size = (s.doc().unwrap().doc.slide_size.width, s.doc().unwrap().doc.slide_size.height);
+        let ids = vec![ShapeId(a as u32)];
+
+        // `animation.set` on one shape leaves exactly the planned sequence.
+        let planned = set_plan(&json!({"effect": "zoom"}), &current(&mut s), &ids, size).unwrap();
+        s.execute("animation.set", &json!({"effect": "zoom", "ids": [a]})).unwrap();
+        assert_eq!(current(&mut s), planned);
+
+        // `animation.timing` by index changes exactly the planned step.
+        let planned = timing_plan(&json!({"index": 1, "duration": 1_200, "start": "afterPrevious"}), &current(&mut s), Some(1), &[]).unwrap().0;
+        s.execute("animation.timing", &json!({"index": 1, "duration": 1_200, "start": "afterPrevious"})).unwrap();
+        assert_eq!(current(&mut s), planned);
+
+        // `animation.move` reorders exactly the way the plan does.
+        let planned = move_plan(&current(&mut s), 0, 2).unwrap();
+        s.execute("animation.move", &json!({"index": 0, "to": 2})).unwrap();
+        assert_eq!(current(&mut s), planned);
+        let effects = |v: &[Animation]| v.iter().map(|x| x.effect.clone()).collect::<Vec<_>>();
+        assert_eq!(effects(&current(&mut s)), ["zoom", "zoom"]);
+    }
+
+    #[test]
+    fn the_options_and_painter_plans_match_the_single_user_commands() {
+        use super::{options_plan, painter_plan};
+        use deckcraft_model::ShapeId;
+
+        let mut s = Session::with_new();
+        let (a, b) = two_shapes(&mut s);
+        s.execute("text.set", &json!({"id": a, "text": "one\ntwo"})).unwrap();
+        s.execute(
+            "slide.animations.set",
+            &json!({"index": 0, "animations": [
+                {"shape": a, "effect": "fade"},
+                {"shape": a, "effect": "pulse", "class": "emphasis", "paragraph": 1},
+                {"shape": b, "effect": "zoom"},
+            ]}),
+        )
+        .unwrap();
+        let current = |s: &mut Session| serde_json::from_value::<Vec<Animation>>(s.execute("animation.get", &json!({})).unwrap()).unwrap();
+        let size = (s.doc().unwrap().doc.slide_size.width, s.doc().unwrap().doc.slide_size.height);
+
+        // `animation.options` by index leaves exactly the planned option and text build; the other
+        // steps keep theirs.
+        let planned = options_plan(&json!({"index": 0, "textBuild": "byParagraph"}), &current(&mut s), Some(0), &[], size).unwrap();
+        s.execute("animation.options", &json!({"index": 0, "textBuild": "byParagraph"})).unwrap();
+        assert_eq!(current(&mut s), planned.0);
+        assert_eq!(planned.1, 1, "one step changed");
+        assert_eq!(current(&mut s)[0].text_build, TextBuild::ByParagraph);
+        assert_eq!(current(&mut s)[1].text_build, TextBuild::AsOne, "another step keeps its build mode");
+        // An options edit that names no step is refused by the plan too.
+        assert!(options_plan(&json!({"index": 9, "option": "b"}), &current(&mut s), Some(9), &[], size).is_err());
+
+        // The painter copies a shape's paragraph-level step onto a shape with one paragraph: the
+        // step falls back to the whole shape, exactly as the single-user command does.
+        let picked: Vec<Animation> = current(&mut s).into_iter().filter(|x| x.shape == ShapeId(a as u32)).collect();
+        assert_eq!(picked.len(), 2, "the picked shape's own steps");
+        let shapes = s.doc().unwrap().doc.slides[0].shapes.clone();
+        let planned = painter_plan(&picked, &current(&mut s), &[ShapeId(b as u32)], |id| paragraphs(&shapes, id));
+        s.execute("animation.painter", &json!({"id": a})).unwrap();
+        let applied = s.execute("animation.painterApply", &json!({"ids": [b]})).unwrap();
+        assert_eq!(applied["applied"], json!(picked.len() as u64));
+        assert_eq!(current(&mut s), planned);
+        let on_b: Vec<Animation> = current(&mut s).into_iter().filter(|x| x.shape == ShapeId(b as u32)).collect();
+        assert_eq!(on_b.len(), 2, "the target's own step was replaced by the picked ones");
+        assert!(on_b.iter().all(|x| x.paragraph.is_none()), "a paragraph the target does not have becomes the whole shape");
     }
 }

@@ -91,7 +91,9 @@ pub fn command(app: &mut SlideApp, p: &Value) -> Result<Value, String> {
 
 fn run(app: &mut SlideApp, q: &QatItem) {
     match q.id.as_str() {
-        "file.save" => app.save(),
+        "file.save" => {
+            let _ = app.save();
+        }
         "show.fromStart" => app.start_show(app.show_start_index(), false),
         "review.spelling" => app.dialog = Some(crate::dialogs::Dialog::new("spelling")),
         id => {

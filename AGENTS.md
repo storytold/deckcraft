@@ -160,12 +160,12 @@ People trust DeckCraft with their talks; a crash loses work. **This outranks fea
 
 | Layer | Crates |
 |---|---|
-| L0 | `geom` (units, transforms, preset shapes), `color` |
+| L0 | `geom` (units, transforms, preset shapes), `color`, `collab-proto` (wire types) |
 | L1 | `model` (presentation, masters, layouts, slides, shapes, text, themes, inheritance, text edit ops) |
 | L2 | `fonts`, `text` (layout), |
 | L3 | `render` (vello_cpu) |
 | L4 | `format` (.deckcraft), `pptx` |
-| L5 | `engine` (session, history, commands, tools, keys, sample) |
+| L5 | `engine` (session, history, commands, tools, keys, sample), `collab` (collaboration adapter) |
 | L6 | `mcp` |
 | L7 | `ui-egui` (swappable; nothing below depends on egui/eframe/winit/rfd) |
 | apps | `deckcraft` (desktop), `deckcraft-cli`, `deckcraft-web` |

@@ -158,6 +158,8 @@ pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf:
     let Some(st) = app.session.active() else { return };
     selection_handles(app, st, painter, xf, t);
     text_overlays(st, ui, painter, xf, t);
+    // Other participants' selections and carets (no-op while collaboration is off).
+    crate::collab::paint_presence(app, painter, xf);
     // Smart guides, marquee, previews.
     for g in &app.session.tool.guides {
         let (a, b) =

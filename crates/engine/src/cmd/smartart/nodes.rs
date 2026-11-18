@@ -12,6 +12,7 @@ pub fn nodes_from_lines<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<Dia
                 text: l.trim().to_string(),
                 level: u8::try_from(tabs).unwrap_or(MAX_LEVEL).min(MAX_LEVEL),
                 picture: None,
+                picture_place: None,
                 assistant: false,
                 title: String::new(),
             }
@@ -46,7 +47,7 @@ fn subtree_end(nodes: &[DiagramNode], i: usize) -> usize {
 /// new node's index.
 pub fn add(nodes: &mut Vec<DiagramNode>, index: Option<usize>, position: &str, text: &str) -> usize {
     let Some(i) = index.filter(|i| *i < nodes.len()) else {
-        nodes.push(DiagramNode { text: text.into(), level: 0, picture: None, assistant: false, title: String::new() });
+        nodes.push(DiagramNode { text: text.into(), level: 0, picture: None, picture_place: None, assistant: false, title: String::new() });
         return nodes.len() - 1;
     };
     let lv = nodes[i].level;
@@ -63,7 +64,10 @@ pub fn add(nodes: &mut Vec<DiagramNode>, index: Option<usize>, position: &str, t
         "assistant" => (i + 1, (lv + 1).min(MAX_LEVEL)),
         _ => (subtree_end(nodes, i), lv),
     };
-    nodes.insert(at, DiagramNode { text: text.into(), level, picture: None, assistant: position == "assistant", title: String::new() });
+    nodes.insert(
+        at,
+        DiagramNode { text: text.into(), level, picture: None, picture_place: None, assistant: position == "assistant", title: String::new() },
+    );
     at
 }
 

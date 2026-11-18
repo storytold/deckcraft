@@ -256,7 +256,7 @@ fn act(app: &mut SlideApp, nav: Nav, current: Page) -> Option<Page> {
                 // A presentation that was never saved goes to Save As first, as in PowerPoint.
                 return Some(Page::SaveAs);
             }
-            app.save();
+            let _ = app.save();
             let saved = app.session.active().is_some_and(|d| !d.is_dirty());
             if saved || web { None } else { Some(current) }
         }

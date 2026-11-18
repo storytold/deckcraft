@@ -30,7 +30,7 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (S, true, false, false) => {
-            app.save();
+            let _ = app.save();
             return true;
         }
         (S, true, true, false) => "app.saveAsDialog",

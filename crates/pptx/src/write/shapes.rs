@@ -9,7 +9,7 @@ use deckcraft_model::{Geom, PhType, Shape, ShapeId, ShapeKind, ShapeStyle, walk}
 
 use super::dml::{self, emu, emu_pos};
 use super::{Exp, Out};
-use crate::opc::NS_MC;
+use crate::opc::{NS_AM3D, NS_MC};
 use crate::xml::{A, W};
 
 /// cNvPr ids for one part.
@@ -436,7 +436,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             media(w, x, o, id, s, m);
         }
-        ShapeKind::Model3d { media, poster } => write_model(w, x, o, cx, s, *media, *poster),
+        ShapeKind::Model3d { media, poster, .. } => write_model(w, x, o, cx, s, *media, *poster),
         ShapeKind::Ink { strokes } => {
             // Ink becomes a group of freeform lines.
             let id = cx.id_for(s);
@@ -469,7 +469,7 @@ fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Optio
 }
 
 fn write_model_part(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, rid: &str) {
-    w.open("p:contentPart", A::new().a("r:id", rid));
+    w.open("p:contentPart", A::new().a("r:id", rid).a("xmlns:am3d", NS_AM3D));
     w.open0("p:nvContentPartPr");
     cnvpr(w, x, o, id, s);
     w.empty0("p:cNvContentPartPr");
@@ -477,6 +477,43 @@ fn write_model_part(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, rid
     w.close("p:nvContentPartPr");
     if let Some(xf) = &s.xfrm {
         dml::xfrm(w, "p:xfrm", xf, None);
+    }
+    // The view the file shows the model from. Office keeps a 3-D model's camera in the slide
+    // part next to the content part: `am3d:pos`/`am3d:lookAt`/`am3d:up` in EMU and the
+    // perspective's `fov` in 1/60000 degree. An absent camera leaves the reader's default view.
+    if let ShapeKind::Model3d { camera: Some(cam), .. } = &s.kind {
+        let emu = |v: f64| (v.round() as i64).to_string();
+        let deg = |v: f64| ((v * 60_000.0).round() as i64).to_string();
+        w.open("am3d:camera", A::new());
+        w.empty("am3d:pos", A::new().a("x", emu(cam.position[0])).a("y", emu(cam.position[1])).a("z", emu(cam.position[2])));
+        w.empty("am3d:up", A::new().a("dx", emu(cam.up[0])).a("dy", emu(cam.up[1])).a("dz", emu(cam.up[2])));
+        w.empty("am3d:lookAt", A::new().a("x", emu(cam.target[0])).a("y", emu(cam.target[1])).a("z", emu(cam.target[2])));
+        w.empty("am3d:perspective", A::new().a("fov", deg(cam.fov)));
+        w.close("am3d:camera");
+    }
+    // The scene the model is lit by, next to the camera: one light (`type`, `direction`,
+    // `intensity`, and a spot's `angle`) and the environment (`ambient`, an optional
+    // background). Intensity and ambient use Office's thousandths of a percent; the angle uses
+    // 1/60000 degree like the camera's `fov`; an absent scene leaves the reader's default.
+    if let ShapeKind::Model3d { scene: Some(scene), .. } = &s.kind {
+        let pct = |v: f64| ((v * 100_000.0).round() as i64).to_string();
+        let deg = |v: f64| ((v * 60_000.0).round() as i64).to_string();
+        let light = &scene.light;
+        let mut attrs = A::new().a("type", light.kind.name()).a("intensity", pct(light.intensity));
+        if let Some(angle) = light.angle {
+            attrs = attrs.a("angle", deg(angle));
+        }
+        w.open("am3d:scene", A::new());
+        w.open("am3d:light", attrs);
+        w.empty("am3d:dir", A::new().a("dx", light.direction[0]).a("dy", light.direction[1]).a("dz", light.direction[2]));
+        w.close("am3d:light");
+        let env = &scene.environment;
+        let mut attrs = A::new().a("ambient", pct(env.ambient));
+        if let Some([r, g, b]) = env.background {
+            attrs = attrs.a("color", format!("{r:02X}{g:02X}{b:02X}"));
+        }
+        w.empty("am3d:environment", attrs);
+        w.close("am3d:scene");
     }
     w.close("p:contentPart");
 }
@@ -502,7 +539,7 @@ fn write_model(
     };
     // Older readers draw the fallback picture; readers that know `am3d` use the model.
     w.open("mc:AlternateContent", A::new().a("xmlns:mc", NS_MC));
-    w.open("mc:Choice", A::new().a("xmlns:am3d", "http://schemas.microsoft.com/office/drawing/2017/model3d").a("Requires", "am3d"));
+    w.open("mc:Choice", A::new().a("xmlns:am3d", NS_AM3D).a("Requires", "am3d"));
     write_model_part(w, x, o, id, s, &rid);
     w.close("mc:Choice");
     w.open0("mc:Fallback");

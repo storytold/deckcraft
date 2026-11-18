@@ -66,13 +66,13 @@ fn host_saves_go_back_to_the_opened_file() {
     app.open_from_host(Some("Lecture 3.pptx"), &pptx(2));
     assert_eq!(app.session.documents().len(), 1, "the untouched blank presentation gave way");
     edit(&mut app);
-    app.save();
+    let _ = app.save();
     assert!(!app.session.active().unwrap().is_dirty());
     edit(&mut app);
     app.save_as_dialog("deckcraft");
     assert!(!app.session.active().unwrap().is_dirty());
     edit(&mut app);
-    app.save();
+    let _ = app.save();
     let names = [("Lecture 3.pptx", false), ("Lecture 3.deckcraft", true), ("Lecture 3.deckcraft", false)];
     assert_eq!(calls(&got), names.map(|(n, s)| (n.to_string(), s)));
     // The first save is a .pptx that reopens with the edit in it.
@@ -89,9 +89,9 @@ fn host_save_of_an_untitled_presentation_is_save_as() {
     let (mut app, got) = host_app(false);
     let name = format!("{}.deckcraft", app.session.active().unwrap().title());
     edit(&mut app);
-    app.save();
+    let _ = app.save();
     edit(&mut app);
-    app.save();
+    let _ = app.save();
     assert_eq!(calls(&got), [(name.clone(), true), (name, false)]);
 }
 
@@ -101,7 +101,7 @@ fn host_save_of_an_untitled_presentation_is_save_as() {
 fn a_file_the_page_never_sent_saves_as_a_new_file() {
     let (mut app, got) = host_app(false);
     app.open_or_insert_bytes("dropped.pptx", &pptx(1));
-    app.save();
+    let _ = app.save();
     assert_eq!(calls(&got), [("dropped.deckcraft".to_string(), true)]);
 }
 
@@ -125,7 +125,7 @@ fn a_host_save_that_fails_leaves_the_presentation_unsaved() {
     let (mut app, _) = host_app(true);
     app.open_from_host(Some("deck.pptx"), &pptx(1));
     edit(&mut app);
-    app.save();
+    assert!(app.save().is_err(), "a failed host save is reported to the caller");
     assert!(app.session.active().unwrap().is_dirty());
     assert!(app.status.as_ref().is_some_and(|(m, _)| m.contains("Couldn't save deck.pptx")));
 }
@@ -176,7 +176,7 @@ fn a_file_sent_without_a_presentation_name_saves_as_a_new_file() {
         assert_eq!(app.session.documents().len(), 1, "{name:?}");
         assert_eq!(app.session.active().unwrap().doc.slides.len(), 2, "{name:?}");
         assert_eq!(path(&app), None, "{name:?}");
-        app.save();
+        let _ = app.save();
         assert_eq!(calls(&got), [(saved.to_string(), true)], "{name:?}");
     }
 }
@@ -190,7 +190,7 @@ fn an_outline_from_the_page_opens_as_a_new_presentation() {
     assert_eq!(app.session.documents().len(), 1);
     assert_eq!(app.session.active().unwrap().doc.slides.len(), 3);
     assert_eq!(path(&app), None);
-    app.save();
+    let _ = app.save();
     assert_eq!(calls(&got), [("notes.deckcraft".to_string(), true)]);
 }
 
@@ -208,6 +208,6 @@ fn a_damaged_file_from_the_page_saves_as_a_new_repaired_file() {
     app.open_from_host(Some("talk.deckcraft"), &bad);
     assert_eq!(path(&app), None);
     assert!(app.session.active().unwrap().title().ends_with("(Repaired)"));
-    app.save();
+    let _ = app.save();
     assert_eq!(calls(&got), [("talk (Repaired).deckcraft".to_string(), true)]);
 }

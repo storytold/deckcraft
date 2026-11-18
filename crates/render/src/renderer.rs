@@ -835,6 +835,25 @@ impl Renderer {
                     paint::media_glyph(ctx, mc.video, bounds);
                 }
             }
+            // A 3-D model: its `mc:Fallback` poster when the file carries one, else a stand-in
+            // cube. DeckCraft has no glTF tessellator, so the model part is kept and copied
+            // through the package and the frame is drawn as a placeholder instead of nothing.
+            ShapeKind::Model3d { poster, .. } => {
+                ctx.set_transform(m);
+                let bounds = Rect::new(0.0, 0.0, w, h);
+                if let Some(p) = poster
+                    && f.pres.media(*p).is_some_and(|m| !m.data.is_empty())
+                {
+                    let pf = deckcraft_model::style::PictureFill { media: *p, ..Default::default() };
+                    ctx.push_clip_layer(outline);
+                    paint::picture(ctx, f.pres, &pf, bounds, m, None);
+                    ctx.pop_layer();
+                } else {
+                    ctx.set_paint(peniko::Color::from_rgba8(0xF2, 0xF4, 0xF8, 0xFF));
+                    ctx.fill_rect(&bounds);
+                    paint::model_glyph(ctx, bounds);
+                }
+            }
             _ => {
                 if let Some(fl) = &fill
                     && !(empty_ph && f.opts.edit && s.fill.is_none() && s.line.is_none() && s.style.is_none())

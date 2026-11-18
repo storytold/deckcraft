@@ -1,0 +1,1812 @@
+//! One document session on the authoritative side (ADR 0001–0005, 0009, 0010), without a
+//! transport.
+//!
+//! `DocSession` is the server's brain: it owns the engine session, applies operations in one
+//! order, dedups on `opId`, keeps a journal tail and snapshots, and builds the commit file. The
+//! WebSocket layer (a separate crate) only moves [`deckcraft_collab_proto`] messages in and out,
+//! so all of this is testable headless.
+//!
+//! Snapshots are the native `.deckcraft` format (`crates/format`): the model, the pass-through
+//! XML and the media bytes, without the file-id renumbering a `.pptx` export does (ADR-0005).
+//! Commit is the separate `.pptx` export (ADR-0009).
+
+use std::collections::{HashMap, VecDeque};
+
+use base64::Engine as _;
+use deckcraft_collab_proto::{
+    Applied, BaseChunks, BaseHttp, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, ServerError, SnapshotMode, SnapshotMsg,
+    SnapshotRef, Target,
+};
+use deckcraft_engine::Session;
+use deckcraft_engine::cmd::file::{Damage, LoadedFile};
+use deckcraft_model::{MediaClip, Presentation, Shape, ShapeKind};
+use serde_json::{Value, json};
+
+use crate::apply::{Adapter, Rejection};
+
+/// Tunables of one session.
+#[derive(Clone, Copy, Debug)]
+pub struct SessionConfig {
+    /// Operations between snapshots.
+    pub snapshot_every: u64,
+    /// Remembered `opId`s for dedup (ADR 0003).
+    pub dedup_window: usize,
+    /// How many applied operations the journal tail keeps between snapshots.
+    pub max_tail: usize,
+    /// Largest native base sent inline to a client whose tail was compacted. Above it the base is
+    /// announced as one HTTP request and as a chain of chunks ([`Self::max_base_chunk`],
+    /// [`Self::max_base_chunks`]); the client takes the request when it has an HTTP side and the
+    /// chain when it does not.
+    pub max_base_inline: usize,
+    /// Bytes of one chunk of a chained base. A chunk is base64-encoded into one frame, so this is
+    /// also what keeps one base frame well below the frame limit.
+    pub max_base_chunk: usize,
+    /// Deepest chain the server hands out. A base larger than
+    /// `max_base_chunk * max_base_chunks` is announced as one HTTP request instead (or inline, if
+    /// it is small).
+    pub max_base_chunks: usize,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        SessionConfig {
+            snapshot_every: 200,
+            dedup_window: 10_000,
+            max_tail: 10_000,
+            max_base_inline: 8 << 20,
+            max_base_chunk: 1 << 20,
+            max_base_chunks: 1024,
+        }
+    }
+}
+
+/// A stored base: the native file, its digest and the version it represents.
+#[derive(Clone, Debug)]
+pub struct SnapshotState {
+    pub version: u64,
+    pub bytes: Vec<u8>,
+    pub cursor: String,
+    /// Hex digest of `bytes`, so a chained transfer announces it without hashing per request.
+    pub sha256: String,
+}
+
+/// One base in the form the snapshot carries it: inline bytes, one HTTP request that fetches it,
+/// a chain of chunks, or (when it is too large for all of them) only its version and cursor.
+struct BaseTransfer {
+    version: u64,
+    cursor: String,
+    bytes_base64: Option<String>,
+    keys: deckcraft_collab_proto::SnapshotKeys,
+    chunks: Option<BaseChunks>,
+    http: Option<BaseHttp>,
+}
+
+/// What a commit produced. The bytes are the `.pptx` the cabinet stores.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Committed {
+    pub version: u64,
+    pub bytes: Vec<u8>,
+    pub warnings: Vec<String>,
+    /// The file version this commit was built against, when the session knows it.
+    pub file_version: Option<String>,
+}
+
+/// Why a commit did not produce a file.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommitError {
+    /// The file changed since the session opened it, or since this session last wrote it:
+    /// the cabinet answers `409` and offers "save a copy" instead of overwriting (ADR-0009 §4).
+    Conflict { expected: String, current: Option<String> },
+    /// The writer refused the model; the session is untouched.
+    Build(String),
+}
+
+impl std::fmt::Display for CommitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommitError::Conflict { expected, current } => match current {
+                Some(current) => write!(f, "the file changed: expected {expected}, it is {current}"),
+                None => write!(f, "the file changed: expected {expected}, the session has no version"),
+            },
+            CommitError::Build(message) => f.write_str(message),
+        }
+    }
+}
+
+/// One document served to several participants.
+pub struct DocSession {
+    file_id: String,
+    engine: Session,
+    adapter: Adapter,
+    version: u64,
+    dedup: VecDeque<String>,
+    applied: HashMap<String, Applied>,
+    tail: Vec<Applied>,
+    snapshot: Option<SnapshotState>,
+    config: SessionConfig,
+    /// The version of the file this session was opened from, for `409` on commit (ADR-0009).
+    base_file_etag: Option<String>,
+    /// The last file this session produced, so a repeated commit is idempotent (ADR-0009 §6).
+    last_commit: Option<Committed>,
+}
+
+impl DocSession {
+    /// Open a document from `.pptx` (or native `.deckcraft`) bytes.
+    pub fn open(file_id: impl Into<String>, bytes: &[u8]) -> Result<Self, String> {
+        let file_id = file_id.into();
+        let path = format!("{file_id}.session");
+        let loaded = deckcraft_engine::cmd::file::loaded_file(&path, bytes).map_err(|e| e.to_string())?;
+        let mut engine = Session::new();
+        let token = engine.stage_loaded(loaded);
+        engine.execute("file.adopt", &json!({"path": path, "token": token})).map_err(|e| e.to_string())?;
+        Ok(Self::with_engine(file_id, engine, SessionConfig::default()))
+    }
+
+    /// A session over an already built document (tests, imports from another source).
+    pub fn from_document(file_id: impl Into<String>, doc: Presentation, config: SessionConfig) -> Result<Self, String> {
+        let file_id = file_id.into();
+        let path = format!("{file_id}.session");
+        let mut engine = Session::new();
+        let loaded = LoadedFile { path: path.clone(), doc, native: true, damaged: Damage { media: vec![], slides: vec![] } };
+        let token = engine.stage_loaded(loaded);
+        engine.execute("file.adopt", &json!({"path": path, "token": token})).map_err(|e| e.to_string())?;
+        Ok(Self::with_engine(file_id, engine, config))
+    }
+
+    fn with_engine(file_id: String, engine: Session, config: SessionConfig) -> Self {
+        let doc = engine.doc().map(|d| d.doc.as_ref().clone()).unwrap_or_default();
+        let mut adapter = Adapter::new(format!("{file_id}-"));
+        adapter.join(&doc);
+        DocSession {
+            file_id,
+            engine,
+            adapter,
+            version: 0,
+            dedup: VecDeque::new(),
+            applied: HashMap::new(),
+            tail: Vec::new(),
+            snapshot: None,
+            config,
+            base_file_etag: None,
+            last_commit: None,
+        }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Whether this room already answered this `opId` (the dedup window of ADR 0003). The server
+    /// asks before it journals: a repeat answers the stored `Applied` and is not a new step.
+    pub fn already_applied(&self, op_id: &str) -> bool {
+        self.applied.contains_key(op_id)
+    }
+
+    /// Continue the numbering a stored base left off at. A room reopened from its base has the
+    /// document but not the version, which lives in the store's `meta.json`: without this a base
+    /// taken at version 200 would answer version 0, and a client holding 200 would be refused as
+    /// behind while the journal tail — which starts above the base — was numbered again from 1.
+    pub fn set_version(&mut self, version: u64) {
+        self.version = version;
+    }
+
+    /// Replace the session's tunables (server configuration: snapshot frequency, base size).
+    pub fn set_config(&mut self, config: SessionConfig) {
+        self.config = config;
+    }
+
+    pub fn config(&self) -> SessionConfig {
+        self.config
+    }
+
+    pub fn file_id(&self) -> &str {
+        &self.file_id
+    }
+
+    pub fn set_base_file_etag(&mut self, etag: impl Into<String>) {
+        self.base_file_etag = Some(etag.into());
+    }
+
+    pub fn base_file_etag(&self) -> Option<&str> {
+        self.base_file_etag.as_deref()
+    }
+
+    /// Store an uploaded picture and return its digest, or explain why it was refused. The
+    /// server calls this before accepting a `picture.insert` that refers to it.
+    pub fn put_media(&mut self, name: &str, bytes: Vec<u8>) -> Result<String, crate::MediaError> {
+        self.adapter.media_mut().put(name, bytes)
+    }
+
+    /// Insert bytes that came with their digest (a journal replay, or a client that fetched
+    /// them). The digest is verified, never trusted.
+    pub fn insert_media(&mut self, sha: &str, bytes: Vec<u8>) -> Result<(), crate::MediaError> {
+        self.adapter.media_mut().insert(sha, bytes)
+    }
+
+    /// The bytes named by `sha`, if this session has them.
+    pub fn media(&self, sha: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.adapter.media().get(sha)
+    }
+
+    /// Every picture this session holds, for persistence.
+    pub fn media_entries(&self) -> Vec<(String, std::sync::Arc<Vec<u8>>)> {
+        self.adapter.media().entries()
+    }
+
+    pub fn document(&self) -> Option<&Presentation> {
+        self.engine.doc().ok().map(|d| d.doc.as_ref())
+    }
+
+    /// The session-scoped keys issued so far; the transport sends them with the welcome and the
+    /// snapshot so a client can address objects (ADR 0002).
+    pub fn keys(&self) -> &crate::keys::KeyMap {
+        self.adapter.keys()
+    }
+
+    /// Apply one operation in the session's order and return the authoritative result.
+    ///
+    /// A repeat of an `opId` returns the stored answer and changes nothing (ADR 0003): relative
+    /// operations are not idempotent, so a resend must not run twice.
+    pub fn apply(&mut self, actor: &str, op: &OpEnvelope) -> Result<Applied, Rejected> {
+        if let Some(done) = self.applied.get(&op.op_id) {
+            return Ok(done.clone());
+        }
+        // `preview` is the sender's local id for its optimistic copy (RFC §3). It is not part of
+        // the room's identity, is never stored and is never echoed, so no code below this line —
+        // journal, dedup, undo images, commit — can see it.
+        let without_preview;
+        let op = if op.preview.is_some() {
+            let mut copy = op.clone();
+            copy.preview = None;
+            without_preview = copy;
+            &without_preview
+        } else {
+            op
+        };
+        if op.doc != self.file_id {
+            return Err(refuse(op, Rejection::invalid("the operation is for another document", Some(self.version))));
+        }
+        // Text operations carry a character offset and/or a table cell address; turn both into
+        // the position and cell this operation actually has after everything that arrived since
+        // its base (ADR 0004, merge class).
+        let rebases = match &op.payload {
+            deckcraft_collab_proto::Payload::TextInsert { .. } | deckcraft_collab_proto::Payload::TextDelete { .. } => true,
+            deckcraft_collab_proto::Payload::TextSet { cell, .. } => cell.is_some(),
+            // A format step addresses one body or N cells and, per address, no offset, a range or
+            // a caret: a row or column edit moves every cell address, a text edit moves the
+            // offsets in its own body.
+            deckcraft_collab_proto::Payload::FormatSet { addresses, .. } => {
+                addresses.iter().any(|address| address.cell.is_some() || address.range.is_some() || address.caret.is_some())
+            }
+            // A cell fill carries explicit cell addresses: a row or column edit moves them, and a
+            // merge that covered a cell refuses it, like a cell text edit.
+            deckcraft_collab_proto::Payload::TableCellFill { .. } => true,
+            // Notes edits carry a body offset like shape text; their address is the slide, so a
+            // slide move or a shape edit never shifts them.
+            deckcraft_collab_proto::Payload::NotesInsert { .. } | deckcraft_collab_proto::Payload::NotesDelete { .. } => true,
+            _ => false,
+        };
+        let mut rebased: Option<OpEnvelope> = None;
+        if rebases && op.base_version < self.version {
+            let mut adjusted = op.clone();
+            self.rebase_text(&mut adjusted)?;
+            rebased = Some(adjusted);
+        }
+        let op = rebased.as_ref().unwrap_or(op);
+        let delta = match self.adapter.apply(&mut self.engine, self.version, actor, op) {
+            Ok(delta) => delta,
+            Err(rejection) => return Err(refuse(op, rejection)),
+        };
+        self.version = self.version.saturating_add(1);
+        let out = Applied {
+            op_id: op.op_id.clone(),
+            version: self.version,
+            actor_id: actor.to_string(),
+            command: Some(ConfirmedCommand { cmd: op.payload.command().to_string(), target: op.target.clone(), payload: op.payload.clone() }),
+            delta,
+        };
+        self.remember(&out);
+        self.tail.push(out.clone());
+        if self.tail.len() > self.config.max_tail {
+            self.tail.remove(0);
+        }
+        self.maybe_snapshot();
+        Ok(out)
+    }
+
+    /// Answer one read-only engine query from the authoritative document.
+    ///
+    /// The address is resolved with this session's keys, the query runs on the server's engine
+    /// session and its selection is restored afterwards. No version moves, nothing enters the
+    /// journal and nobody's undo history changes, so a viewer may ask and a refusal is a plain
+    /// answer rather than a rejected operation.
+    pub fn query(&mut self, cmd: &str, target: &Target, params: &Value) -> Result<Value, ServerError> {
+        self.adapter.query(&mut self.engine, cmd, target, params, self.version).map_err(|failure| ServerError {
+            code: failure.code.as_str().to_string(),
+            message: failure.message,
+            retryable: failure.retryable,
+        })
+    }
+
+    /// Replay one already-accepted operation from the journal.
+    ///
+    /// The stored `Applied` already carries the authoritative command: replay must not re-run the
+    /// history checks (there is no client undo on this path) and must not record a new undo step,
+    /// but it fills the same version, dedup window and journal tail as [`Self::apply`]. This is
+    /// what lets an undo operation (an exact `shape_field`, a group's `shape_fields`, a
+    /// `shape_restore` or a `slide_restore`) survive a restart.
+    pub fn replay(&mut self, actor: &str, stored: &Applied) -> Result<(), String> {
+        let Some(command) = &stored.command else { return Ok(()) };
+        let op = OpEnvelope {
+            op_id: stored.op_id.clone(),
+            doc: self.file_id.clone(),
+            base_version: self.version,
+            kind: crate::apply::class_of(&command.payload),
+            target: command.target.clone(),
+            payload: command.payload.clone(),
+            history: None,
+            preview: None,
+        };
+        let delta = self.adapter.apply_confirmed(&mut self.engine, self.version, actor, &op).map_err(|e| e.message)?;
+        self.version = self.version.saturating_add(1);
+        let out = Applied { op_id: op.op_id, version: self.version, actor_id: actor.to_string(), command: Some(command.clone()), delta };
+        self.remember(&out);
+        self.tail.push(out);
+        if self.tail.len() > self.config.max_tail {
+            self.tail.remove(0);
+        }
+        self.maybe_snapshot();
+        Ok(())
+    }
+
+    /// Move a text operation's offsets past the operations that arrived after its base. The
+    /// journal tail is the source: inserts shift positions right, deletes pull them left (and
+    /// clamp positions inside a removed range). Ties go to the earlier operation, so two people
+    /// typing at one caret both keep their text.
+    fn rebase_text(&mut self, op: &mut OpEnvelope) -> Result<(), Rejected> {
+        use deckcraft_collab_proto::Payload;
+        if self.tail.is_empty() && self.version > op.base_version {
+            return Err(refuse(op, Rejection::stale("the text history was compacted; resync first", Some(self.version))));
+        }
+        if let Some(first) = self.tail.first()
+            && op.base_version.saturating_add(1) < first.version
+            && self.version > op.base_version
+        {
+            return Err(refuse(op, Rejection::stale("the text history was compacted; resync first", Some(self.version))));
+        }
+        // The cell address is part of the text address: a row or column edit moves it, and two
+        // operations in different cells of one table never shift each other's offsets. A
+        // `format.*` step addresses one body or N cells, so it carries as many cell addresses.
+        let mut cells: Vec<Option<(u32, u32)>> = match &op.payload {
+            Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => vec![*cell],
+            Payload::FormatSet { addresses, .. } => addresses.iter().map(|address| address.cell).collect(),
+            Payload::TableCellFill { cells, .. } => cells.iter().copied().map(Some).collect(),
+            _ => vec![None],
+        };
+        let shift = |point: &mut u32, payload: &Payload, cell: Option<(u32, u32)>| match payload {
+            Payload::TextInsert { at, text, cell: entry } if *entry == cell => {
+                if *at <= *point {
+                    *point = point.saturating_add(text.chars().count() as u32);
+                }
+            }
+            Payload::TextDelete { from, to, cell: entry } if *entry == cell => {
+                if *to <= *point {
+                    *point = point.saturating_sub(to.saturating_sub(*from));
+                } else if *from < *point {
+                    *point = *from;
+                }
+            }
+            // A notes body has one address (the slide), so its `cell` is always absent.
+            Payload::NotesInsert { at, text } if cell.is_none() => {
+                if *at <= *point {
+                    *point = point.saturating_add(text.chars().count() as u32);
+                }
+            }
+            Payload::NotesDelete { from, to } if cell.is_none() => {
+                if *to <= *point {
+                    *point = point.saturating_sub(to.saturating_sub(*from));
+                } else if *from < *point {
+                    *point = *from;
+                }
+            }
+            _ => {}
+        };
+        let tail: Vec<Applied> = self.tail.iter().filter(|a| a.version > op.base_version).cloned().collect();
+        for applied in tail {
+            let Some(command) = applied.command else { continue };
+            if command.target.shape != op.target.shape {
+                continue;
+            }
+            // Two text bodies on different slides (or two notes bodies) never shift each other.
+            if command.target.slide != op.target.slide {
+                continue;
+            }
+            // A whole-body notes value replaces every offset: an insert or delete that was based
+            // before it cannot say where its text now belongs, so it is refused and the client
+            // resyncs instead of writing in the wrong place.
+            if matches!(command.payload, Payload::NotesSet { .. }) && matches!(op.payload, Payload::NotesInsert { .. } | Payload::NotesDelete { .. })
+            {
+                return Err(refuse(op, Rejection::stale("the notes were replaced after this edit began; resync first", Some(self.version))));
+            }
+            if let Payload::TableEdit { axis, at, insert } = &command.payload {
+                for cell in cells.iter_mut() {
+                    let index = match axis {
+                        deckcraft_collab_proto::TableAxis::Row => cell.as_mut().map(|(r, _)| r),
+                        deckcraft_collab_proto::TableAxis::Column => cell.as_mut().map(|(_, c)| c),
+                    };
+                    if let Some(index) = index {
+                        if *insert {
+                            if *index >= *at {
+                                *index = index.saturating_add(1);
+                            }
+                        } else if *index == *at {
+                            return Err(refuse(op, Rejection::stale("the table line holding this operation was removed", Some(self.version))));
+                        } else if *index > *at {
+                            *index -= 1;
+                        }
+                    }
+                }
+                continue;
+            }
+            match &mut op.payload {
+                Payload::TextInsert { at, .. } => shift(at, &command.payload, cells[0]),
+                Payload::TextDelete { from, to, .. } => {
+                    shift(from, &command.payload, cells[0]);
+                    shift(to, &command.payload, cells[0]);
+                }
+                Payload::NotesInsert { at, .. } => shift(at, &command.payload, cells[0]),
+                Payload::NotesDelete { from, to } => {
+                    shift(from, &command.payload, cells[0]);
+                    shift(to, &command.payload, cells[0]);
+                }
+                // A run-range format addresses two offsets into one body; a caret address one.
+                // Each address moves by the edit that arrived before it in its own body, so the
+                // same characters are formatted (RFC §4.4).
+                Payload::FormatSet { addresses, .. } => {
+                    for (address, cell) in addresses.iter_mut().zip(&cells) {
+                        if let Some(range) = &mut address.range {
+                            shift(&mut range.from, &command.payload, *cell);
+                            shift(&mut range.to, &command.payload, *cell);
+                        }
+                        if let Some(caret) = &mut address.caret {
+                            shift(caret, &command.payload, *cell);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        match &mut op.payload {
+            Payload::TextSet { cell: at, .. } | Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cells[0],
+            Payload::FormatSet { addresses, .. } => {
+                for (address, cell) in addresses.iter_mut().zip(cells) {
+                    address.cell = cell;
+                }
+            }
+            Payload::TableCellFill { cells: list, .. } => {
+                *list = cells.into_iter().flatten().collect();
+            }
+            _ => {}
+        }
+        // A merge that arrived after the base may have folded an addressed cell into another one:
+        // the cell's own text now lives in the merge's anchor, so a write into it would land where
+        // nobody can see it. The address is checked against the table as it is now, after every
+        // row/column edit in the tail has moved it.
+        self.refuse_covered_cells(op)?;
+        let empty = match &op.payload {
+            Payload::TextDelete { from, to, .. } => Some((to <= from, "the deleted text was already changed")),
+            Payload::NotesDelete { from, to } => Some((to <= from, "the deleted text was already changed")),
+            // The characters a queued range formats were removed after it was sent: the address
+            // means nothing now, so the operation is refused instead of formatting a different
+            // span (RFC §15). A caret is a position, not a span: it stays valid when text around
+            // it changes, so it is never emptied here.
+            Payload::FormatSet { addresses, .. } => addresses
+                .iter()
+                .filter_map(|address| address.range)
+                .find(|range| range.to <= range.from)
+                .map(|_| (true, "the formatted range was removed before this operation arrived")),
+            _ => None,
+        };
+        if let Some((true, message)) = empty {
+            return Err(refuse(op, Rejection::invalid(message, Some(self.version))));
+        }
+        Ok(())
+    }
+
+    /// Refuse an operation addressed to a cell that a merge has covered since the sender's base:
+    /// the cell's own text now lives in the merge's anchor, so a write into it would land where
+    /// nobody can see it. Runs on the rebased operation, after every row/column edit in the tail
+    /// has moved its addresses, against the table as it is now.
+    fn refuse_covered_cells(&self, op: &OpEnvelope) -> Result<(), Rejected> {
+        use deckcraft_collab_proto::Payload;
+        let cells: Vec<(u32, u32)> = match &op.payload {
+            Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => cell.iter().copied().collect(),
+            Payload::FormatSet { addresses, .. } => addresses.iter().filter_map(|address| address.cell).collect(),
+            Payload::TableCellFill { cells, .. } => cells.clone(),
+            _ => return Ok(()),
+        };
+        let (Some(slide_key), Some(shape_key)) = (&op.target.slide, &op.target.shape) else { return Ok(()) };
+        let Ok(state) = self.engine.doc() else { return Ok(()) };
+        let keys = self.adapter.keys();
+        let Some(slide) = keys.slide_id(slide_key) else { return Ok(()) };
+        let Some(shape) = keys.shape_id(slide, shape_key) else { return Ok(()) };
+        let Some(table) =
+            state.doc.slides.iter().find(|s| s.id == slide).and_then(|s| deckcraft_model::find_shape(&s.shapes, shape)).and_then(|sh| {
+                match &sh.kind {
+                    ShapeKind::Table(t) => Some(t),
+                    _ => None,
+                }
+            })
+        else {
+            return Ok(());
+        };
+        if let Some((r, c)) = cells.iter().find(|(r, c)| table.cell(*r as usize, *c as usize).is_some_and(|cell| cell.is_covered())) {
+            return Err(refuse(op, Rejection::stale(format!("the cell ({r}, {c}) was merged into another cell"), Some(self.version))));
+        }
+        Ok(())
+    }
+
+    /// What a reconnecting client gets: the base (when the journal can no longer rebuild its
+    /// version) and the journal tail above it (ADR-0005, RFC §4.5).
+    /// A tail answer is used while the journal still covers the client. Once compaction removed
+    /// it, the client replaces its replica with the native base, so the session takes a snapshot
+    /// on demand when the stored one is too old or missing. A base larger than
+    /// [`SessionConfig::max_base_inline`] is announced as one HTTP request
+    /// ([`BaseSnapshot::http`], the media endpoint's pattern, RFC §4.5.2) and, beside it, as a
+    /// chain of chunks the client asks for one at a time (RFC §4.5.1): a client that knows the
+    /// HTTP side rebuilds from one answer, one that does not keeps using the chain, and only a
+    /// server with neither (or a base too large for both) names it without bytes, which makes the
+    /// client reopen the file from the cabinet.
+    pub fn resync(&mut self, last_version: u64) -> SnapshotMsg {
+        let head = self.version;
+        // A replica that holds a version this room never had cannot be caught up by the journal:
+        // its tail starts above a head the replica does not share. That happens when the room is
+        // re-created after its store was lost or quarantined, or when it is restored from an older
+        // base while a participant kept its version. The room is the authority, so the answer is
+        // its **own whole document** as a base: the replica is replaced instead of being advanced
+        // past a head it never saw, and the next structural operation carries the room's head
+        // rather than a stale `baseVersion` (RFC §4.5.3, "a version gap is a snapshot").
+        let ahead = last_version > head;
+        if !ahead && self.tail_covers(last_version) {
+            return SnapshotMsg {
+                version: head,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: format!("tail@{}", last_version.min(head)) },
+                tail: self.tail_after(last_version),
+                base: None,
+            };
+        }
+        // The journal cannot rebuild this client's state: a base is needed, and the tail must
+        // still reach the head. Otherwise take a fresh base at the head (compaction). A client
+        // above the head can only use a base taken **at** the head: an older one starts below it.
+        let usable = self.snapshot.as_ref().is_some_and(|snapshot| if ahead { snapshot.version == head } else { self.tail_covers(snapshot.version) });
+        if !usable {
+            let _ = self.take_snapshot();
+        }
+        if !self.snapshot.as_ref().is_some_and(|snapshot| if ahead { snapshot.version == head } else { self.tail_covers(snapshot.version) }) {
+            // The base could not be written; the tail-only answer is all this session has.
+            return SnapshotMsg {
+                version: head,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: format!("tail@{}", last_version.min(head)) },
+                tail: self.tail_after(last_version),
+                base: None,
+            };
+        }
+        let Some(base) = self.base_transfer() else {
+            // No base is stored; the tail-only answer is all this session has.
+            return SnapshotMsg {
+                version: head,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: format!("tail@{}", last_version.min(head)) },
+                tail: self.tail_after(last_version),
+                base: None,
+            };
+        };
+        SnapshotMsg {
+            version: head,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: base.cursor },
+            tail: self.tail_after(base.version),
+            base: Some(BaseSnapshot {
+                version: base.version,
+                bytes_base64: base.bytes_base64,
+                keys: base.keys,
+                chunks: base.chunks,
+                http: base.http,
+            }),
+        }
+    }
+
+    /// The stored base in wire form, with the key map every replica needs to address it.
+    fn base_transfer(&self) -> Option<BaseTransfer> {
+        let snapshot = self.snapshot.as_ref()?;
+        let inline = snapshot.bytes.len() <= self.config.max_base_inline;
+        let bytes_base64 = inline.then(|| base64::engine::general_purpose::STANDARD.encode(&snapshot.bytes));
+        let chunks = (!inline).then(|| self.base_chain(snapshot)).flatten();
+        let http = if inline { None } else { self.base_http(snapshot) };
+        Some(BaseTransfer {
+            version: snapshot.version,
+            cursor: snapshot.cursor.clone(),
+            bytes_base64,
+            keys: self.adapter.snapshot_keys(),
+            chunks,
+            http,
+        })
+    }
+
+    /// The one request that fetches this base over the session's HTTP side, or `None` when the id
+    /// this session was created with cannot name it in a path (a `/`, `?` or `#` would be split by
+    /// the endpoint, so such a base stays on the chain).
+    fn base_http(&self, snapshot: &SnapshotState) -> Option<BaseHttp> {
+        let id = self.file_id.as_str();
+        if id.is_empty() || id.contains(['/', '\\', '?', '#']) || id.chars().any(char::is_control) {
+            return None;
+        }
+        let http = BaseHttp {
+            path: format!("/v1/sessions/{id}/base/{}", snapshot.sha256),
+            sha256: snapshot.sha256.clone(),
+            len: snapshot.bytes.len() as u64,
+        };
+        http.is_well_formed().then_some(http)
+    }
+
+    /// The chain parameters for a base that is too large to inline, or `None` when it is also too
+    /// large for a chain — the session then names the base and the client reopens the file.
+    fn base_chain(&self, snapshot: &SnapshotState) -> Option<BaseChunks> {
+        let chunk_size = self.config.max_base_chunk.max(1);
+        let len = snapshot.bytes.len() as u64;
+        let count = len.div_ceil(chunk_size as u64);
+        let chain = BaseChunks { sha256: snapshot.sha256.clone(), len, chunk_size: chunk_size as u32, count: count as u32 };
+        (chunk_size <= BaseChunks::MAX_CHUNK_SIZE as usize
+            && count <= self.config.max_base_chunks as u64
+            && count <= BaseChunks::MAX_COUNT as u64
+            && chain.is_well_formed())
+        .then_some(chain)
+    }
+
+    /// One chunk of the stored base, for a client assembling a chain (RFC §4.5.1). The base must
+    /// still be the one the snapshot named: when compaction replaced it the answer is a retryable
+    /// `stale`, and the client asks for a fresh snapshot instead of finishing the old chain.
+    pub fn base_chunk(&self, version: u64, index: u32) -> Result<(u32, String), ServerError> {
+        let Some(snapshot) = self.snapshot.as_ref().filter(|snapshot| snapshot.version == version) else {
+            return Err(ServerError {
+                code: "stale".into(),
+                message: "the base was replaced by a newer snapshot; ask for the session again".into(),
+                retryable: true,
+            });
+        };
+        let Some(chain) = self.base_chain(snapshot) else {
+            return Err(ServerError { code: "invalid".into(), message: "this base does not travel as a chain".into(), retryable: false });
+        };
+        let Some(len) = chain.chunk_len(index) else {
+            return Err(ServerError {
+                code: "invalid".into(),
+                message: format!("the base has {} chunks, not {index}", chain.count),
+                retryable: false,
+            });
+        };
+        let start = index as usize * self.config.max_base_chunk.max(1);
+        let data = base64::engine::general_purpose::STANDARD.encode(&snapshot.bytes[start..start + len]);
+        Ok((chain.count, data))
+    }
+
+    /// Does the tail hold every step after `version` (so replaying it rebuilds the head)?
+    fn tail_covers(&self, version: u64) -> bool {
+        version >= self.version || self.tail.first().is_some_and(|first| first.version <= version.saturating_add(1))
+    }
+
+    fn tail_after(&self, version: u64) -> Vec<Applied> {
+        self.tail.iter().filter(|applied| applied.version > version).cloned().collect()
+    }
+
+    /// The current base, if one has been taken.
+    pub fn snapshot(&self) -> Option<&SnapshotState> {
+        self.snapshot.as_ref()
+    }
+
+    /// Take a base now (also happens every `snapshot_every` operations).
+    pub fn take_snapshot(&mut self) -> Result<&SnapshotState, String> {
+        let doc = self.engine.doc().map_err(|e| e.to_string())?;
+        let bytes = deckcraft_format::save(&doc.doc).map_err(|e| e.to_string())?;
+        let cursor = format!("base@{}", self.version);
+        let sha256 = crate::media::sha256_hex(&bytes);
+        self.snapshot = Some(SnapshotState { version: self.version, bytes, cursor, sha256 });
+        // The tail before the base is no longer needed to rebuild the state.
+        self.tail.retain(|a| a.version > self.version);
+        self.snapshot.as_ref().ok_or_else(|| "the snapshot was just written".to_string())
+    }
+
+    fn maybe_snapshot(&mut self) {
+        if self.config.snapshot_every == 0 || !self.version.is_multiple_of(self.config.snapshot_every) {
+            return;
+        }
+        // A snapshot that cannot be written leaves the journal intact; the session keeps serving
+        // and tries again at the next boundary.
+        let _ = self.take_snapshot();
+    }
+
+    /// Build the operation that takes back `actor`'s last step at the current head.
+    ///
+    /// The answer is an ordinary operation: the caller applies it through [`Self::apply`], so it
+    /// is ordered, versioned and checked exactly like any other (ADR 0010 §2).
+    pub fn undo(&mut self, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
+        let mut op = self.adapter.undo(&self.engine, self.version, actor, op_id)?;
+        op.doc = self.file_id.clone();
+        Ok(op)
+    }
+
+    /// Build the operation that re-applies `actor`'s last undone step.
+    pub fn redo(&mut self, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
+        let mut op = self.adapter.redo(&self.engine, self.version, actor, op_id)?;
+        op.doc = self.file_id.clone();
+        Ok(op)
+    }
+
+    /// The `.pptx` the cabinet receives (ADR-0009) and the list of what will not survive it.
+    ///
+    /// No version check: the caller decided that it may write. Use [`Self::commit_checked`] for
+    /// the cabinet path, where an external change must become a `409`.
+    pub fn commit(&self) -> Result<(Vec<u8>, Vec<String>), String> {
+        Ok((self.commit_bytes()?, self.commit_warnings()?))
+    }
+
+    fn commit_bytes(&self) -> Result<Vec<u8>, String> {
+        let doc = self.engine.doc().map_err(|e| e.to_string())?;
+        deckcraft_pptx::export_as(&doc.doc, "pptx").map_err(|e| e.to_string())
+    }
+
+    fn commit_warnings(&self) -> Result<Vec<String>, String> {
+        let doc = self.engine.doc().map_err(|e| e.to_string())?;
+        Ok(warnings(&doc.doc))
+    }
+
+    /// Commit with the cabinet's version check (ADR-0009).
+    ///
+    /// - `expected` is the file version the cabinet believes is current; when it does not match
+    ///   what the session knows, the answer is `Conflict` (`409`) and nothing is written.
+    /// - A repeated commit of the same document version returns the same bytes and does not
+    ///   rebuild them (ADR-0009 §6).
+    pub fn commit_checked(&mut self, expected: Option<&str>) -> Result<Committed, CommitError> {
+        if let Some(expected) = expected
+            && self.base_file_etag.as_deref() != Some(expected)
+        {
+            return Err(CommitError::Conflict { expected: expected.to_string(), current: self.base_file_etag.clone() });
+        }
+        if let Some(done) = &self.last_commit
+            && done.version == self.version
+        {
+            // The cabinet may have accepted a version since this file was built; the cached bytes
+            // are still current, but the version they were built against has moved.
+            let mut done = done.clone();
+            done.file_version = self.base_file_etag.clone();
+            return Ok(done);
+        }
+        let bytes = self.commit_bytes().map_err(CommitError::Build)?;
+        let warnings = self.commit_warnings().map_err(CommitError::Build)?;
+        let done = Committed { version: self.version, bytes, warnings, file_version: self.base_file_etag.clone() };
+        self.last_commit = Some(done.clone());
+        Ok(done)
+    }
+
+    /// The cabinet assigned a new file version after a commit; the next commit checks against it.
+    pub fn accept_file_version(&mut self, version: impl Into<String>) {
+        self.base_file_etag = Some(version.into());
+    }
+
+    /// A commit answer with the file's hash placeholder filled by the transport, if it has one.
+    pub fn commit_result(&self, sha256: impl Into<String>) -> Result<CommitResult, String> {
+        let warnings = self.commit_warnings()?;
+        Ok(CommitResult {
+            sha256: sha256.into(),
+            version: self.version,
+            file_version: self.base_file_etag.clone(),
+            bytes_base64: None,
+            blob: None,
+            warnings,
+        })
+    }
+
+    fn remember(&mut self, applied: &Applied) {
+        self.applied.insert(applied.op_id.clone(), applied.clone());
+        self.dedup.push_back(applied.op_id.clone());
+        while self.dedup.len() > self.config.dedup_window {
+            if let Some(old) = self.dedup.pop_front() {
+                self.applied.remove(&old);
+            }
+        }
+    }
+}
+
+fn refuse(op: &OpEnvelope, rejection: Rejection) -> Rejected {
+    let retryable = rejection.retryable;
+    Rejected {
+        op_id: op.op_id.clone(),
+        code: rejection.code,
+        message: rejection.message,
+        retryable,
+        hint: rejection.hint_version.map(|version| Hint { version }),
+    }
+}
+
+/// What a `.pptx` export will not keep, by slide and object — not a boolean flag (ADR-0009 §2).
+///
+/// Only known losses are listed; an empty list means nothing DeckCraft knows about is dropped.
+pub fn warnings(doc: &Presentation) -> Vec<String> {
+    let mut out = Vec::new();
+    for (index, slide) in doc.slides.iter().enumerate() {
+        let number = index.saturating_add(1);
+        for shape in &slide.shapes {
+            collect_warnings(shape, number, &mut out, 0);
+        }
+    }
+    out
+}
+
+fn collect_warnings(shape: &Shape, slide: usize, out: &mut Vec<String>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    let name = if shape.name.is_empty() { format!("#{}", shape.id.0) } else { shape.name.clone() };
+    match &shape.kind {
+        ShapeKind::Opaque { label, .. } => {
+            out.push(format!("slide {slide}: `{name}` ({label}) is kept as its original XML and cannot be edited"));
+        }
+        ShapeKind::Model3d { .. } => {
+            out.push(format!("slide {slide}: `{name}` is a 3-D model: drawn as its poster or a placeholder, not as a rendered model"));
+        }
+        ShapeKind::Media(clip) if media_options_differ(clip) => {
+            out.push(format!("slide {slide}: `{name}` has playback options (trim, fade, volume, loop, bookmarks) that the writer may not keep"));
+        }
+        _ => {}
+    }
+    if shape.diagram.as_ref().is_some_and(|d| d.imported) {
+        out.push(format!("slide {slide}: `{name}` is SmartArt imported as graphics; editing its text regenerates the diagram"));
+    }
+    for child in shape.children() {
+        collect_warnings(child, slide, out, depth + 1);
+    }
+}
+
+fn media_options_differ(clip: &MediaClip) -> bool {
+    let defaults = MediaClip::default();
+    clip.trim_start_ms != defaults.trim_start_ms
+        || clip.trim_end_ms != defaults.trim_end_ms
+        || clip.fade_in_ms != defaults.fade_in_ms
+        || clip.fade_out_ms != defaults.fade_out_ms
+        || (clip.volume - defaults.volume).abs() > f64::EPSILON
+        || clip.autoplay != defaults.autoplay
+        || clip.loop_play != defaults.loop_play
+        || clip.rewind != defaults.rewind
+        || clip.play_across_slides != defaults.play_across_slides
+        || clip.hide_while_not_playing != defaults.hide_while_not_playing
+        || clip.full_screen != defaults.full_screen
+        || !clip.bookmarks.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_collab_proto::{FormatCmd, OpKind, Payload, RejectCode, ShapeKey, SlideKey, TableAxis, Target};
+
+    /// One `format.*` address.
+    fn address(cell: Option<(u32, u32)>, range: Option<deckcraft_collab_proto::TextRange>) -> deckcraft_collab_proto::FormatAddress {
+        deckcraft_collab_proto::FormatAddress { cell, range, caret: None }
+    }
+
+    fn deck() -> Presentation {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("insert");
+        s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    /// One blank slide with a 2×2 table whose top-left cell holds "ab".
+    fn table_deck() -> Presentation {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 100, 300, 100]})).expect("table");
+        let table = s.doc().expect("doc").doc.slides[0].shapes[0].id;
+        s.apply_remote("text.set", &json!({"id": table.0, "cell": [0, 0], "text": "ab"})).expect("seed");
+        s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    /// One blank slide with a shape holding "abc", so a run range has a body to format.
+    fn text_deck() -> Presentation {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("insert");
+        let shape = s.doc().expect("doc").doc.slides[0].shapes[0].id;
+        s.apply_remote("text.set", &json!({"id": shape.0, "text": "abc"})).expect("text");
+        s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    fn table_keys(session: &DocSession) -> (SlideKey, ShapeKey) {
+        let doc = session.document().expect("doc");
+        let slide = doc.slides.first().expect("slide");
+        let key = session.adapter.keys();
+        (
+            key.slide_key(slide.id).expect("slide key").clone(),
+            key.shape_key(slide.id, slide.shapes.first().expect("table").id).expect("shape key").clone(),
+        )
+    }
+
+    fn cell(session: &DocSession, r: usize, c: usize) -> String {
+        let doc = session.document().expect("doc");
+        match &doc.slides[0].shapes[0].kind {
+            deckcraft_model::ShapeKind::Table(t) => t.cell(r, c).expect("cell").text.text(),
+            other => panic!("not a table: {other:?}"),
+        }
+    }
+
+    fn cell_op(slide: &SlideKey, shape: &ShapeKey, payload: Payload, base: u64, op_id: &str) -> OpEnvelope {
+        OpEnvelope {
+            op_id: op_id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
+            payload,
+            history: None,
+            preview: None,
+        }
+    }
+
+    fn keys(session: &DocSession) -> (SlideKey, ShapeKey) {
+        // The first slide and its first shape, as the adapter issued them.
+        let doc = session.document().expect("doc");
+        let slide = doc.slides.first().expect("slide");
+        let key = session.adapter.keys();
+        (
+            key.slide_key(slide.id).expect("slide key").clone(),
+            key.shape_key(slide.id, slide.shapes.first().expect("shape").id).expect("shape key").clone(),
+        )
+    }
+
+    fn move_op(slide: &SlideKey, shape: &ShapeKey, x: f64, base: u64, op_id: &str) -> OpEnvelope {
+        OpEnvelope {
+            op_id: op_id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
+            payload: Payload::ShapeMove { x, y: 100.0 },
+            history: None,
+            preview: None,
+        }
+    }
+
+    #[test]
+    fn a_preview_id_is_the_senders_local_note_not_part_of_the_room() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let mut op = move_op(&slide, &shape, 300.0, 0, "op-1");
+        op.preview = Some("local-9".into());
+        let applied = s.apply("alice", &op).expect("applied");
+        assert_eq!(applied.version, 1);
+        assert!(applied.command.is_some(), "the room answers with the command it ran, not a preview");
+
+        // The same operation id with another local id is the same operation: dedup does not look
+        // at the preview, so a resent preview moves no version and runs nothing twice.
+        let mut again = op.clone();
+        again.preview = Some("local-10".into());
+        assert_eq!(s.apply("alice", &again).expect("dedup").version, 1);
+        assert_eq!(s.version(), 1);
+
+        // The journal is the room's own record: the applied step and the snapshot that carries it
+        // contain the command and no preview id.
+        let snapshot = s.resync(0);
+        assert_eq!(snapshot.tail.len(), 1);
+        let text = serde_json::to_string(&snapshot.tail).expect("json");
+        assert!(!text.contains("local-9") && !text.contains("local-10"), "a preview id is never stored: {text}");
+    }
+
+    #[test]
+    fn a_repeated_op_id_returns_the_same_answer_and_changes_nothing() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let op = move_op(&slide, &shape, 300.0, 0, "op-1");
+        let first = s.apply("a", &op).expect("first");
+        let doc_after = s.document().expect("doc").clone();
+        let again = s.apply("a", &op).expect("dedup");
+        assert_eq!(first, again);
+        assert_eq!(s.version(), 1);
+        assert_eq!(*s.document().expect("doc"), doc_after, "a resend does not apply twice");
+    }
+
+    #[test]
+    fn a_cell_resend_after_reconnect_applies_once() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let op = cell_op(&slide, &shape, Payload::TextInsert { at: 2, text: "X".into(), cell: Some((0, 0)) }, 0, "op-1");
+        s.apply("a", &op).expect("first");
+        assert_eq!(cell(&s, 0, 0), "abX");
+        let again = s.apply("a", &op).expect("resend after reconnect");
+        assert_eq!(again.version, 1);
+        assert_eq!(s.version(), 1, "the resend does not bump the version");
+        assert_eq!(cell(&s, 0, 0), "abX", "the character is not inserted twice");
+    }
+
+    #[test]
+    fn a_cell_insert_rebases_past_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        // A client at version 0 types before the "b" of the seeded cell.
+        let queued = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "X".into(), cell: Some((0, 0)) }, 0, "typed");
+        // Someone else inserts a row above it; the queued operation's address must move down.
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the queued cell insert applies after the shift");
+        assert_eq!(cell(&s, 1, 0), "aXb");
+        assert_eq!(cell(&s, 0, 0), "", "the inserted row stays empty");
+        assert_eq!(s.version(), 2);
+    }
+
+    #[test]
+    fn a_cell_insert_is_refused_when_its_row_is_deleted() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let target = Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() };
+        let queued = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "X".into(), cell: Some((0, 0)) }, 0, "typed");
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target,
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: false },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &row).expect("delete row");
+        let err = s.apply("a", &queued).expect_err("the cell is gone");
+        assert_eq!(err.code, RejectCode::Stale);
+        assert!(err.retryable);
+        assert_eq!(s.version(), 1, "the refused operation does not bump the version");
+    }
+
+    #[test]
+    fn a_queued_cell_set_moves_with_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued = cell_op(&slide, &shape, Payload::TextSet { text: "replaced".into(), cell: Some((0, 0)) }, 0, "set");
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the set follows its cell");
+        assert_eq!(cell(&s, 1, 0), "replaced");
+        assert_eq!(cell(&s, 0, 0), "", "the inserted row stays empty");
+    }
+
+    /// The bold flag of each run of one cell, so a test can see that a whole cell body was
+    /// formatted (including runs someone else added).
+    fn cell_bolds(session: &DocSession, r: usize, c: usize) -> Vec<Option<bool>> {
+        let doc = session.document().expect("doc");
+        match &doc.slides[0].shapes[0].kind {
+            deckcraft_model::ShapeKind::Table(t) => {
+                t.cell(r, c).expect("cell").text.paragraphs.iter().flat_map(|p| p.runs.iter()).map(|run| run.props.bold).collect()
+            }
+            other => panic!("not a table: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_queued_cell_format_applies_to_the_cell_someone_else_typed_in() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        // A client at version 0 formats the cell it sees ("ab").
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(Some((0, 0)), None)] },
+            0,
+            "bold",
+        );
+        // Someone else types into the same cell first: the format must land on that cell's body
+        // as it is now, not on the body the client saw.
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextInsert { at: 2, text: "X".into(), cell: Some((0, 0)) }, 0, "typed")).expect("typed");
+        s.apply("a", &queued).expect("the queued format applies after the insert");
+        assert_eq!(cell(&s, 0, 0), "abX");
+        let bolds = cell_bolds(&s, 0, 0);
+        assert!(!bolds.is_empty(), "the cell has runs");
+        assert!(bolds.iter().all(|b| *b == Some(true)), "every run, including the other participant's text, is bold: {bolds:?}");
+        assert_eq!(cell(&s, 1, 1), "", "another cell is untouched");
+    }
+
+    #[test]
+    fn a_queued_cell_format_moves_with_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(Some((0, 0)), None)] },
+            0,
+            "bold",
+        );
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the format follows its cell");
+        assert_eq!(cell(&s, 1, 0), "ab", "the cell moved down with its row");
+        let bolds = cell_bolds(&s, 1, 0);
+        assert!(!bolds.is_empty() && bolds.iter().all(|b| *b == Some(true)), "the moved cell was formatted: {bolds:?}");
+        assert_eq!(cell_bolds(&s, 0, 0), Vec::<Option<bool>>::new(), "the inserted row is not formatted");
+        assert_eq!(s.version(), 2);
+    }
+
+    #[test]
+    fn a_queued_cell_format_is_refused_when_its_row_is_deleted() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(Some((0, 0)), None)] },
+            0,
+            "bold",
+        );
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: false },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &row).expect("delete row");
+        let err = s.apply("a", &queued).expect_err("the addressed cell is gone");
+        assert_eq!(err.code, RejectCode::Stale);
+        assert!(err.retryable);
+        assert_eq!(s.version(), 1, "the refused format does not bump the version");
+    }
+
+    #[test]
+    fn a_queued_cell_fill_follows_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::TableCellFill { fill: deckcraft_collab_proto::CellFillSpec::Solid { color: "#ff0000".into() }, cells: vec![(1, 1)] },
+            0,
+            "fill",
+        );
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the fill follows its cell");
+        let doc = s.document().expect("doc");
+        let table = match &doc.slides[0].shapes[0].kind {
+            deckcraft_model::ShapeKind::Table(t) => t,
+            other => panic!("not a table: {other:?}"),
+        };
+        assert!(table.cell(2, 1).expect("cell").fill.is_some(), "the addressed cell kept its address through the insert");
+        for (r, c) in [(0, 1), (1, 1), (2, 0)] {
+            assert!(table.cell(r, c).expect("cell").fill.is_none(), "({r}, {c}) is not filled");
+        }
+        assert_eq!(s.version(), 2);
+    }
+
+    #[test]
+    fn a_queued_cell_operation_is_refused_after_a_merge_covers_its_cell() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let text = cell_op(&slide, &shape, Payload::TextInsert { at: 0, text: "x".into(), cell: Some((1, 1)) }, 0, "text");
+        let fill =
+            cell_op(&slide, &shape, Payload::TableCellFill { fill: deckcraft_collab_proto::CellFillSpec::Inherit, cells: vec![(1, 0)] }, 0, "fill");
+        let merge = OpEnvelope {
+            op_id: "merge".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableMerge { from: (0, 0), to: (1, 1) },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &merge).expect("merge the table");
+        for (name, op) in [("text", &text), ("fill", &fill)] {
+            let err = s.apply("a", op).expect_err("the addressed cell is covered by the merge");
+            assert_eq!(err.code, RejectCode::Stale, "{name}: {err:?}");
+            assert!(err.retryable, "{name}: the client can resync and retry");
+            assert_eq!(s.version(), 1, "{name}: the refused operation moves no version");
+        }
+    }
+
+    #[test]
+    fn a_multi_cell_format_with_an_unaddressable_body_is_refused_before_any_write() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let before = s.document().expect("doc").clone();
+        let cases: Vec<(&str, Payload, RejectCode)> = vec![
+            ("empty", Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![] }, RejectCode::Invalid),
+            (
+                "missing cell",
+                Payload::FormatSet {
+                    format: FormatCmd::Bold,
+                    args: json!({"on": true}),
+                    addresses: vec![address(Some((0, 0)), None), address(Some((5, 5)), None)],
+                },
+                RejectCode::Invalid,
+            ),
+            (
+                "range out of body",
+                Payload::FormatSet {
+                    format: FormatCmd::Bold,
+                    args: json!({"on": true}),
+                    addresses: vec![address(Some((0, 0)), Some(deckcraft_collab_proto::TextRange { from: 0, to: 9 }))],
+                },
+                RejectCode::Invalid,
+            ),
+            (
+                "duplicate cell",
+                Payload::FormatSet {
+                    format: FormatCmd::Bold,
+                    args: json!({"on": true}),
+                    addresses: vec![address(Some((0, 0)), None), address(Some((0, 0)), Some(deckcraft_collab_proto::TextRange { from: 0, to: 1 }))],
+                },
+                RejectCode::Invalid,
+            ),
+            (
+                "table without a cell",
+                Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(None, None)] },
+                RejectCode::Unsupported,
+            ),
+        ];
+        for (name, payload, code) in cases {
+            let err = s.apply("a", &cell_op(&slide, &shape, payload, 0, name)).expect_err(name);
+            assert_eq!(err.code, code, "{name}: {err:?}");
+            assert_eq!(s.version(), 0, "{name}: the refused step does not bump the version");
+            assert_eq!(s.document(), Some(&before), "{name}: nothing was written");
+        }
+        assert_eq!(s.adapter.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "and no step was recorded");
+    }
+
+    #[test]
+    fn a_queued_multi_cell_format_moves_all_its_addresses_with_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextSet { text: "cd".into(), cell: Some((0, 1)) }, 0, "seed")).expect("seed the second cell");
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![address(Some((0, 0)), None), address(Some((0, 1)), None)],
+            },
+            1,
+            "bold",
+        );
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 1,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+            preview: None,
+        };
+        s.apply("c", &row).expect("insert row");
+        s.apply("a", &queued).expect("both addresses follow their cells");
+        assert_eq!(s.version(), 3);
+        assert_eq!(cell(&s, 1, 0), "ab");
+        assert_eq!(cell(&s, 1, 1), "cd");
+        for (r, c, cell_name) in [(1, 0, "first"), (1, 1, "second")] {
+            let bolds = cell_bolds(&s, r, c);
+            assert!(!bolds.is_empty() && bolds.iter().all(|b| *b == Some(true)), "the {cell_name} addressed cell moved and is bold: {bolds:?}");
+        }
+        assert_eq!(cell_bolds(&s, 0, 0), Vec::<Option<bool>>::new(), "the inserted row is not addressed");
+        assert_eq!(cell_bolds(&s, 0, 1), Vec::<Option<bool>>::new());
+    }
+
+    #[test]
+    fn a_queued_range_format_follows_the_characters_someone_typed_before_it() {
+        let mut s = DocSession::from_document("d", text_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        // A client at version 0 bolds the "b" of "abc".
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![address(None, Some(deckcraft_collab_proto::TextRange { from: 1, to: 2 }))],
+            },
+            0,
+            "bold",
+        );
+        // Someone types before it: the two offsets move right, so the same characters are bold.
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextInsert { at: 0, text: "X".into(), cell: None }, 0, "typed")).expect("typed");
+        s.apply("a", &queued).expect("the queued range format applies after the shift");
+        assert_eq!(s.version(), 2);
+        let doc = s.document().expect("doc");
+        let runs: Vec<(String, Option<bool>)> = doc.slides[0].shapes[0]
+            .text
+            .as_ref()
+            .expect("text")
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .map(|r| (r.text.clone(), r.props.bold))
+            .collect();
+        assert_eq!(runs, vec![("Xa".to_string(), None), ("b".to_string(), Some(true)), ("c".to_string(), None)], "the typed text is not bold");
+        assert_eq!(doc.slides[0].shapes[0].text.as_ref().map(|t| t.text()).as_deref(), Some("Xabc"));
+    }
+
+    #[test]
+    fn a_queued_range_format_is_refused_when_its_text_was_removed() {
+        let mut s = DocSession::from_document("d", text_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![address(None, Some(deckcraft_collab_proto::TextRange { from: 0, to: 3 }))],
+            },
+            0,
+            "bold",
+        );
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextDelete { from: 0, to: 3, cell: None }, 0, "delete")).expect("delete the range");
+        let err = s.apply("a", &queued).expect_err("the formatted text is gone");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(err.message.contains("range"), "{}", err.message);
+        assert!(!err.retryable, "an address that no longer exists is meaningless, not retryable");
+        assert_eq!(s.version(), 1, "the refused format does not bump the version");
+    }
+
+    #[test]
+    fn two_people_typing_in_one_cell_keep_both_insertions() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let x = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "X".into(), cell: Some((0, 0)) }, 0, "x");
+        let y = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "Y".into(), cell: Some((0, 0)) }, 0, "y");
+        s.apply("a", &x).expect("x");
+        s.apply("b", &y).expect("y is rebased past x");
+        assert_eq!(cell(&s, 0, 0), "aXYb");
+
+        // The same offsets in two different cells do not shift each other.
+        let other = cell_op(&slide, &shape, Payload::TextInsert { at: 0, text: "Q".into(), cell: Some((1, 1)) }, 0, "q");
+        s.apply("b", &other).expect("another cell");
+        assert_eq!(cell(&s, 0, 0), "aXYb", "the other cell's offset did not move this one");
+        assert_eq!(cell(&s, 1, 1), "Q");
+    }
+
+    fn notes_op(slide: &SlideKey, payload: Payload, base: u64, op_id: &str) -> OpEnvelope {
+        OpEnvelope {
+            op_id: op_id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide.clone()), ..Target::default() },
+            payload,
+            history: None,
+            preview: None,
+        }
+    }
+
+    fn notes_key(session: &DocSession, index: usize) -> SlideKey {
+        let doc = session.document().expect("doc");
+        let slide = doc.slides.get(index).expect("slide");
+        session.adapter.keys().slide_key(slide.id).expect("slide key").clone()
+    }
+
+    /// Two slides; the first one carries seeded notes.
+    fn two_slide_deck() -> Presentation {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("second");
+        s.apply_remote("slide.notes", &json!({"index": 0, "text": "ab"})).expect("notes");
+        s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    #[test]
+    fn two_people_typing_in_one_slides_notes_keep_both_insertions() {
+        let mut s = DocSession::from_document("d", two_slide_deck(), SessionConfig::default()).expect("session");
+        let slide = notes_key(&s, 0);
+        let x = notes_op(&slide, Payload::NotesInsert { at: 0, text: "X".into() }, 0, "x");
+        let y = notes_op(&slide, Payload::NotesInsert { at: 0, text: "Y".into() }, 0, "y");
+        s.apply("a", &x).expect("x");
+        s.apply("b", &y).expect("y is rebased past x");
+        assert_eq!(s.document().expect("doc").slides[0].notes.text(), "XYab");
+        assert_eq!(s.version(), 2);
+
+        // A notes body on another slide has no address in common: its offsets do not shift.
+        let second = notes_key(&s, 1);
+        let other = notes_op(&second, Payload::NotesInsert { at: 0, text: "Q".into() }, 1, "q");
+        s.apply("b", &other).expect("the second slide's notes");
+        assert_eq!(s.document().expect("doc").slides[0].notes.text(), "XYab");
+        assert_eq!(s.document().expect("doc").slides[1].notes.text(), "Q", "the base 0 operation did not move this one");
+    }
+
+    #[test]
+    fn a_queued_notes_insert_rebases_across_a_slide_insert() {
+        let mut s = DocSession::from_document("d", two_slide_deck(), SessionConfig::default()).expect("session");
+        let first = notes_key(&s, 0);
+        let typed = notes_op(&first, Payload::NotesInsert { at: 1, text: "X".into() }, 0, "typed");
+        let new_slide = OpEnvelope {
+            op_id: "new".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(notes_key(&s, 1)), ..Target::default() },
+            payload: Payload::SlideInsert { before: None, layout: Some("blank".into()) },
+            history: None,
+            preview: None,
+        };
+        s.apply("b", &new_slide).expect("insert a slide");
+        s.apply("a", &typed).expect("the queued notes insert applies to the same slide");
+        assert_eq!(s.document().expect("doc").slides[0].notes.text(), "aXb");
+        assert_eq!(s.document().expect("doc").slides.len(), 3);
+    }
+
+    #[test]
+    fn a_queued_notes_insert_is_refused_after_a_whole_body_replacement() {
+        let mut s = DocSession::from_document("d", two_slide_deck(), SessionConfig::default()).expect("session");
+        let first = notes_key(&s, 0);
+        let typed = notes_op(&first, Payload::NotesInsert { at: 1, text: "X".into() }, 0, "typed");
+        let body = s.document().expect("doc").slides[0].notes.clone();
+        let replaced = notes_op(&first, Payload::NotesSet { notes: serde_json::to_value(&body).expect("json") }, 0, "set");
+        s.apply("b", &replaced).expect("the whole body");
+        let err = s.apply("a", &typed).expect_err("its offset no longer means this body");
+        assert_eq!(err.code, RejectCode::Stale);
+        assert!(err.retryable, "the client resyncs and re-reads the body");
+        assert_eq!(s.version(), 1, "the refused operation does not bump the version");
+    }
+
+    #[test]
+    fn versions_advance_in_apply_order() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        for (i, x) in [200.0, 300.0, 400.0].iter().enumerate() {
+            let out = s.apply("a", &move_op(&slide, &shape, *x, i as u64, &format!("op-{i}"))).expect("apply");
+            assert_eq!(out.version, i as u64 + 1);
+        }
+        assert_eq!(s.version(), 3);
+    }
+
+    #[test]
+    fn a_structural_operation_with_a_stale_base_is_refused_with_a_hint() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let stale = OpEnvelope {
+            op_id: "op-2".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::ShapeDelete {},
+            history: None,
+            preview: None,
+        };
+        let err = s.apply("a", &stale).expect_err("stale");
+        assert_eq!(err.code, RejectCode::Stale);
+        assert!(err.retryable);
+        assert_eq!(err.hint.map(|h| h.version), Some(1));
+        assert_eq!(s.version(), 1, "a refusal does not bump the version");
+    }
+
+    #[test]
+    fn an_operation_for_another_document_is_refused() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let mut op = move_op(&slide, &shape, 300.0, 0, "op-1");
+        op.doc = "other".into();
+        let err = s.apply("a", &op).expect_err("wrong doc");
+        assert_eq!(err.code, RejectCode::Invalid);
+    }
+
+    #[test]
+    fn a_snapshot_reloads_into_the_same_document() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 1, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let snapshot = s.snapshot().expect("snapshot").clone();
+        let reloaded = DocSession::open("d", &snapshot.bytes).expect("reopen");
+        assert_eq!(*reloaded.document().expect("doc"), *s.document().expect("doc"));
+    }
+
+    #[test]
+    fn resync_gives_the_tail_after_the_client_version() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 2, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        for i in 0..4 {
+            s.apply("a", &move_op(&slide, &shape, 200.0 + i as f64 * 10.0, i, &format!("op-{i}"))).expect("apply");
+        }
+        // A snapshot was taken at version 4, so a client from nothing rebuilds from the base.
+        assert_eq!(s.snapshot().map(|x| x.version), Some(4));
+        let at_base = s.resync(0);
+        assert_eq!(at_base.version, 4);
+        assert!(at_base.tail.is_empty(), "the base already covers every operation");
+        assert_eq!(at_base.snapshot.mode, SnapshotMode::Base);
+        assert!(at_base.snapshot.cursor.starts_with("base@4"));
+        let base = at_base.base.expect("the compacted client gets the base");
+        assert_eq!(base.version, 4);
+        assert!(base.bytes_base64.is_some(), "a small base travels inline");
+        assert!(!base.keys.shapes.is_empty(), "the base carries the session key map");
+
+        // One more operation: a client at 4 gets exactly that one, from the journal.
+        s.apply("a", &move_op(&slide, &shape, 500.0, 4, "op-4")).expect("apply");
+        let caught = s.resync(4);
+        assert_eq!(caught.version, 5);
+        assert_eq!(caught.tail.len(), 1);
+        assert_eq!(caught.tail[0].version, 5);
+        assert!(caught.base.is_none(), "a covered client needs no base");
+        assert!(s.resync(5).tail.is_empty(), "up to date");
+    }
+
+    #[test]
+    fn resync_answers_a_base_to_a_replica_above_the_head() {
+        // The room came back behind its client (re-created, or restored from an older base): the
+        // tail starts above a head the replica never saw, so the only answer that repairs it is
+        // the room's own document as a base, at the room's head and with nothing above it.
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 2, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        for i in 0..4 {
+            s.apply("a", &move_op(&slide, &shape, 200.0 + i as f64 * 10.0, i, &format!("op-{i}"))).expect("apply");
+        }
+        let document = s.document().expect("doc").clone();
+        let ahead = s.resync(9);
+        assert_eq!(ahead.version, 4, "the answer is the room's head, not the replica's version");
+        assert!(ahead.tail.is_empty(), "nothing sits above the head");
+        assert_eq!(ahead.snapshot.mode, SnapshotMode::Base, "the replica is replaced, not advanced");
+        let base = ahead.base.expect("a base replaces the replica");
+        assert_eq!(base.version, 4, "the base is the head itself, never an older one");
+        assert!(base.bytes_base64.is_some());
+        assert!(!base.keys.shapes.is_empty(), "the base carries the session key map");
+
+        // A replica at or below the head keeps the journal answer: the rule did not change for it.
+        s.apply("a", &move_op(&slide, &shape, 500.0, 4, "op-4")).expect("apply");
+        let behind = s.resync(4);
+        assert_eq!(behind.tail.len(), 1, "the step above the client's version");
+        assert!(behind.base.is_none());
+        assert!(s.resync(5).tail.is_empty(), "up to date");
+        assert_ne!(s.document().expect("doc"), &document, "the applied step moved the room's document, no resync did");
+    }
+
+    #[test]
+    fn a_compacted_tail_sends_a_base_that_reloads_into_the_snapshot_document() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 2, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        for i in 0..4 {
+            s.apply("a", &move_op(&slide, &shape, 200.0 + i as f64 * 10.0, i, &format!("op-{i}"))).expect("apply");
+        }
+        let at_four = s.document().expect("doc").clone();
+        s.apply("a", &move_op(&slide, &shape, 500.0, 4, "op-4")).expect("apply");
+
+        // The client missed 1..4 (the tail starts at 5): base at 4 plus the step above it.
+        let snapshot = s.resync(0);
+        assert_eq!(snapshot.snapshot.mode, SnapshotMode::Base);
+        let base = snapshot.base.expect("a base");
+        assert_eq!(base.version, 4);
+        let bytes = base64::engine::general_purpose::STANDARD.decode(base.bytes_base64.as_deref().expect("inline")).expect("base64");
+        let reloaded = DocSession::open("d", &bytes).expect("the base reloads");
+        assert_eq!(*reloaded.document().expect("doc"), at_four, "the base is the document at its version");
+        assert_eq!(snapshot.tail.len(), 1);
+        assert_eq!(snapshot.tail[0].version, 5);
+        assert_eq!(snapshot.version, 5, "the tail above the base reaches the head");
+    }
+
+    #[test]
+    fn a_base_above_the_inline_limit_travels_as_a_chain_of_chunks() {
+        let mut s = DocSession::from_document(
+            "d",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 1024, ..SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let snapshot = s.resync(0);
+        let base = snapshot.base.expect("a base");
+        assert_eq!(base.version, 1);
+        assert!(base.bytes_base64.is_none(), "over the inline limit no bytes ride in the snapshot frame");
+        let chain = base.chunks.expect("the base travels as a chain");
+        assert!(chain.is_well_formed(), "{chain:?}");
+        let len = s.snapshot().expect("base").bytes.len();
+        assert_eq!(chain.len, len as u64);
+        assert_eq!(chain.count as usize, len.div_ceil(1024), "1000 bytes per chunk");
+        assert!(chain.count > 1, "the base is bigger than one chunk");
+        assert!(!base.keys.shapes.is_empty(), "the key map is small and still travels");
+        let http = base.http.clone().expect("and one request fetches it whole");
+        assert!(http.is_well_formed(), "{http:?}");
+        assert_eq!(http.len, len as u64, "the request names the size the chain carries");
+
+        // The chain assembles into exactly the base the snapshot was taken from.
+        let mut assembled = Vec::new();
+        for index in 0..chain.count {
+            let (count, data) = s.base_chunk(1, index).expect("a chunk");
+            assert_eq!(count, chain.count);
+            let bytes = base64::engine::general_purpose::STANDARD.decode(data).expect("base64");
+            assert_eq!(bytes.len(), chain.chunk_len(index).expect("length"));
+            assembled.extend_from_slice(&bytes);
+        }
+        assert_eq!(assembled, s.snapshot().expect("base").bytes, "the chunks are the base");
+        assert_eq!(crate::media::sha256_hex(&assembled), chain.sha256, "and match the announced digest");
+        let reloaded = DocSession::open("d", &assembled).expect("the assembled base loads");
+        assert_eq!(*reloaded.document().expect("doc"), *s.document().expect("doc"));
+    }
+
+    #[test]
+    fn a_base_too_deep_for_a_chain_is_offered_over_http_instead() {
+        // One chunk is allowed, the base is bigger than that: the chain cannot carry it, so the
+        // snapshot names one HTTP request for the whole base instead of making the client reopen
+        // the file from the cabinet.
+        let mut s = DocSession::from_document(
+            "d",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 1024, max_base_chunks: 1, ..SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let base = s.resync(0).base.expect("a base cursor");
+        assert_eq!(base.version, 1);
+        assert!(base.bytes_base64.is_none(), "over the inline limit the bytes do not travel inline");
+        assert!(base.chunks.is_none(), "and above the chain's depth the server does not offer one");
+        assert!(!base.keys.shapes.is_empty(), "the key map is small and still travels");
+        let http = base.http.clone().expect("the base is still fetchable in one request");
+        let stored = s.snapshot().expect("base");
+        assert_eq!(http.path, format!("/v1/sessions/d/base/{}", stored.sha256));
+        assert_eq!(http.sha256, stored.sha256);
+        assert_eq!(http.len, stored.bytes.len() as u64);
+        assert!(s.base_chunk(1, 0).is_err(), "a base that does not travel as a chain has no chunks");
+    }
+
+    #[test]
+    fn an_inline_base_names_no_http_request_and_an_id_a_path_would_split_names_none_either() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 1, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let base = s.resync(0).base.expect("a base");
+        assert!(base.bytes_base64.is_some(), "a small base still travels inline");
+        assert!(base.http.is_none(), "and names no request beside it");
+
+        // A cabinet file id may hold any character; one a path would split leaves the base on the
+        // chain, where the id never appears.
+        let mut split = DocSession::from_document(
+            "folder/deck",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 4096, ..SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide, shape) = keys(&split);
+        let mut op = move_op(&slide, &shape, 300.0, 0, "op-1");
+        op.doc = "folder/deck".into();
+        split.apply("a", &op).expect("apply");
+        let base = split.resync(0).base.expect("a base");
+        assert!(base.chunks.is_some(), "the chain carries it instead");
+        assert!(base.http.is_none(), "an id with a slash cannot name a path segment");
+    }
+
+    #[test]
+    fn a_chunk_of_a_base_that_moved_or_a_chunk_past_the_chain_is_refused() {
+        let mut s = DocSession::from_document(
+            "d",
+            deck(),
+            SessionConfig { snapshot_every: 1, max_base_inline: 1, max_base_chunk: 512, ..SessionConfig::default() },
+        )
+        .expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let base = s.resync(0).base.expect("a base");
+        let chain = base.chunks.expect("a chain");
+        assert!(s.base_chunk(0, 0).is_err(), "no base at version 0");
+        let error = s.base_chunk(base.version + 1, 0).expect_err("a refusal");
+        assert_eq!(error.code, "stale");
+        assert!(error.retryable, "the client asks for a fresh snapshot");
+        let error = s.base_chunk(base.version, chain.count).expect_err("a refusal");
+        assert_eq!(error.code, "invalid", "{}", error.message);
+        assert!(!error.retryable);
+
+        // Compaction replaces the base: a chunk of the old one is stale, never a slice of the new.
+        s.apply("a", &move_op(&slide, &shape, 340.0, 1, "op-2")).expect("apply");
+        s.resync(0);
+        let current = s.snapshot().expect("base").version;
+        assert!(current > base.version);
+        assert_eq!(s.base_chunk(base.version, 0).expect_err("a refusal").code, "stale");
+        assert!(s.base_chunk(current, 0).is_ok(), "the current base is served");
+    }
+
+    #[test]
+    fn commit_writes_a_pptx_that_reads_back() {
+        let s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (bytes, warnings) = s.commit().expect("commit");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let reopened = deckcraft_pptx::import(&bytes).expect("reimport");
+        assert_eq!(reopened.slides.len(), s.document().expect("doc").slides.len());
+        assert_eq!(reopened.slides[0].shapes.len(), s.document().expect("doc").slides[0].shapes.len());
+    }
+
+    #[test]
+    fn commit_lists_what_will_not_survive() {
+        let mut doc = deck();
+        {
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            slide.shapes.push(Shape {
+                id: deckcraft_model::ShapeId(999),
+                name: "Embedded object".into(),
+                kind: ShapeKind::Opaque { xml: "<p:oleObj/>".into(), preview: None, label: "OLE".into(), parts: vec![] },
+                ..Default::default()
+            });
+        }
+        let s = DocSession::from_document("d", doc, SessionConfig::default()).expect("session");
+        let (_, warnings) = s.commit().expect("commit");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("slide 1"), "{warnings:?}");
+        assert!(warnings[0].contains("original XML"), "{warnings:?}");
+    }
+
+    #[test]
+    fn commit_is_refused_when_the_file_changed_under_the_session() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        s.accept_file_version("etag-1");
+        let err = s.commit_checked(Some("etag-0")).expect_err("stale file version");
+        assert_eq!(err, CommitError::Conflict { expected: "etag-0".into(), current: Some("etag-1".into()) });
+        assert!(s.commit_checked(Some("etag-1")).is_ok(), "the current version may be written");
+    }
+
+    #[test]
+    fn a_repeated_commit_of_one_version_is_idempotent() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let first = s.commit_checked(None).expect("commit");
+        let again = s.commit_checked(None).expect("commit again");
+        assert_eq!(first, again, "same bytes, no second build");
+        assert_eq!(s.version(), 0, "a commit does not advance the document version");
+    }
+
+    #[test]
+    fn a_new_operation_makes_the_next_commit_fresh() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let first = s.commit_checked(None).expect("commit");
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let second = s.commit_checked(None).expect("commit");
+        assert_eq!(second.version, 1);
+        assert_ne!(first.bytes, second.bytes, "a moved shape changes the file");
+    }
+}

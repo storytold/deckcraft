@@ -1,0 +1,25 @@
+[package]
+name = "deckcraft-collab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft collaboration adapter: normalised operations, session-scoped keys, tombstones and deltas over the engine (ADR 0001-0010)"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-collab-proto = { path = "../collab-proto" }
+deckcraft-model = { workspace = true }
+deckcraft-engine = { workspace = true }
+deckcraft-format = { workspace = true }
+deckcraft-pptx = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+log = { workspace = true }
+base64 = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12", "logging"] }
+rustls-native-certs = "0.8"
