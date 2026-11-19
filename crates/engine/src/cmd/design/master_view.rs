@@ -317,7 +317,7 @@ pub(super) fn insert_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or(deckcraft_geom::Xfrm::new(size.width * 0.25, size.height * 0.3, size.width * 0.5, size.height * 0.4));
-    let idx = s.doc()?.shapes().iter().filter_map(|x| x.ph.as_ref().map(|p| p.idx)).max().unwrap_or(0) + 1;
+    let idx = next_ph_idx(s.doc()?.shapes()).ok_or_else(|| bad("master.insertPlaceholder", "no unused placeholder index"))?;
     let shape = Shape {
         xfrm: Some(rect),
         ph: Some(deckcraft_model::Placeholder { kind, idx, ..Default::default() }),
@@ -408,7 +408,7 @@ pub(super) fn placeholders(s: &mut Session, p: &Value) -> Result<Value> {
             shapes.retain(|sh| !sh.ph_type().is_some_and(PhType::is_footer_kind));
         }
         for (kind, id) in add.into_iter().zip(ids) {
-            let idx = free_ph_idx(shapes, preferred_ph_idx(kind));
+            let idx = free_ph_idx(shapes, preferred_ph_idx(kind)).ok_or_else(|| bad("master.placeholders", "no unused placeholder index"))?;
             let proto = prototypes.iter().find(|sh| match kind {
                 PhType::Title => sh.ph_type().is_some_and(PhType::is_title),
                 other => sh.ph_type() == Some(other),
@@ -437,9 +437,29 @@ fn preferred_ph_idx(kind: PhType) -> u32 {
     }
 }
 
-fn free_ph_idx(shapes: &[Shape], preferred: u32) -> u32 {
+fn free_ph_idx(shapes: &[Shape], preferred: u32) -> Option<u32> {
     let taken = |idx: u32| shapes.iter().any(|sh| sh.ph.as_ref().is_some_and(|p| p.idx == idx));
-    if !taken(preferred) { preferred } else { shapes.iter().filter_map(|sh| sh.ph.as_ref().map(|p| p.idx)).max().unwrap_or(0).saturating_add(1) }
+    if !taken(preferred) { Some(preferred) } else { next_ph_idx(shapes) }
+}
+
+fn next_ph_idx(shapes: &[Shape]) -> Option<u32> {
+    if let Some(next) = shapes.iter().filter_map(|sh| sh.ph.as_ref().map(|p| p.idx)).max().unwrap_or(0).checked_add(1) {
+        return Some(next);
+    }
+    // Imported layouts may already use u32::MAX. Wrapping or saturating would reuse an index
+    // that binds a different placeholder, so find the first hole without scanning the u32 range.
+    let mut used: Vec<u32> = shapes.iter().filter_map(|sh| sh.ph.as_ref().map(|p| p.idx)).collect();
+    used.sort_unstable();
+    let mut next = 0_u32;
+    for idx in used {
+        if idx > next {
+            return Some(next);
+        }
+        if idx == next {
+            next = next.checked_add(1)?;
+        }
+    }
+    Some(next)
 }
 
 /// A copy of a master placeholder, with a new id and index. Prompt text is cleared; a slide
@@ -497,5 +517,87 @@ fn slide_number_paragraph() -> deckcraft_model::Paragraph {
     deckcraft_model::Paragraph {
         runs: vec![Run { text: "‹#›".into(), props: Default::default(), kind: RunKind::Field { field: "slidenum".into() } }],
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod placeholder_index_tests {
+    use super::*;
+
+    fn layout_with_indices(indices: &[u32]) -> Session {
+        let mut s = Session::with_new();
+        s.execute("view.slideMaster", &json!({"master": 0, "layout": 0})).unwrap();
+        s.edit(|doc, sel| {
+            let mut shapes = Vec::new();
+            for &idx in indices {
+                shapes.push(Shape {
+                    id: ShapeId(doc.alloc_id().unwrap()),
+                    ph: Some(deckcraft_model::Placeholder { kind: PhType::Obj, idx, ..Default::default() }),
+                    text: Some(TextBody::default()),
+                    ..Default::default()
+                });
+            }
+            *crate::shapes_mut(doc, sel).unwrap() = shapes;
+            Ok(())
+        })
+        .unwrap();
+        s
+    }
+
+    #[test]
+    fn inserting_placeholders_after_a_maximum_index_uses_holes_and_supports_undo() {
+        let mut s = layout_with_indices(&[0, 1, u32::MAX]);
+        let before = s.doc().unwrap().doc.clone();
+        let undo = s.doc().unwrap().history.undo.len();
+        for (n, idx) in [2, 3].into_iter().enumerate() {
+            let result = s.execute("master.insertPlaceholder", &json!({"kind": "text"})).unwrap();
+            let id = ShapeId(result["id"].as_u64().unwrap() as u32);
+            let st = s.doc().unwrap();
+            let added = st.shapes().iter().find(|sh| sh.id == id).unwrap();
+            assert_eq!(added.ph.as_ref().unwrap().idx, idx);
+            assert_eq!(st.history.undo.len(), undo + n + 1, "each insertion is one undo step");
+        }
+        let after = s.doc().unwrap().doc.clone();
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before, "original placeholders are unchanged");
+        s.execute("edit.redo", &json!({})).unwrap();
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, after);
+    }
+
+    #[test]
+    fn restoring_a_title_does_not_reuse_an_occupied_maximum_index() {
+        let mut s = layout_with_indices(&[0, 1, u32::MAX]);
+        let before = s.doc().unwrap().doc.clone();
+        let undo = s.doc().unwrap().history.undo.len();
+        s.execute("master.placeholders", &json!({"title": true})).unwrap();
+        let st = s.doc().unwrap();
+        let title = st.shapes().iter().find(|sh| sh.ph_type() == Some(PhType::Title)).unwrap();
+        assert_eq!(title.ph.as_ref().unwrap().idx, 2, "the preferred title index is occupied, so use the first hole");
+        let mut indices: Vec<_> = st.shapes().iter().filter_map(|sh| sh.ph.as_ref().map(|p| p.idx)).collect();
+        indices.sort_unstable();
+        assert_eq!(indices, vec![0, 1, 2, u32::MAX]);
+        assert_eq!(st.history.undo.len(), undo + 1);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before);
+    }
+
+    #[test]
+    fn ordinary_placeholder_append_and_preferred_indices_stay_the_same() {
+        let mut s = layout_with_indices(&[1, 7]);
+        s.execute("master.insertPlaceholder", &json!({"kind": "text"})).unwrap();
+        assert_eq!(s.doc().unwrap().shapes().last().unwrap().ph.as_ref().unwrap().idx, 8, "append rather than fill a lower hole");
+        s.execute("master.placeholders", &json!({"title": true, "footers": true})).unwrap();
+        for (kind, idx) in [(PhType::Title, 0), (PhType::Date, 10), (PhType::Footer, 11), (PhType::SlideNum, 12)] {
+            let st = s.doc().unwrap();
+            assert_eq!(st.shapes().iter().find(|sh| sh.ph_type() == Some(kind)).unwrap().ph.as_ref().unwrap().idx, idx);
+        }
+
+        let mut s = layout_with_indices(&[u32::MAX - 1]);
+        s.execute("master.insertPlaceholder", &json!({"kind": "content"})).unwrap();
+        assert_eq!(s.doc().unwrap().shapes().last().unwrap().ph.as_ref().unwrap().idx, u32::MAX, "the last index is still usable");
+        s.execute("master.placeholders", &json!({"title": true})).unwrap();
+        assert_eq!(s.doc().unwrap().shapes().last().unwrap().ph.as_ref().unwrap().idx, 0, "a free preferred index still wins");
     }
 }
