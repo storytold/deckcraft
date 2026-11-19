@@ -4,9 +4,9 @@ use std::f64::consts::PI;
 
 use deckcraft_model::{AnimClass, Rgba, Xfrm};
 
-use crate::AnimState;
 use crate::easing::{bounce_out, ease, smooth};
 use crate::path::{MotionPath, default_path};
+use crate::{AnimState, Reveal, RevealShape};
 
 /// Everything an effect needs besides its progress.
 #[derive(Clone, Debug)]
@@ -156,32 +156,32 @@ impl EffectSpec {
                 st.opacity = e;
             }
             "split" => {
-                let horz = o.starts_with("horz");
-                // "In" closes from the edges: approximated with the centre reveal plus a fade.
-                st.clip = if horz { center_clip(e, false, true) } else { center_clip(e, true, false) };
-                if o.ends_with("In") {
-                    st.opacity = e;
-                }
+                let shape = if o.starts_with("horz") { RevealShape::SplitHorizontal } else { RevealShape::SplitVertical };
+                st.reveal = Some(Reveal::new(shape, o.ends_with("In"), e));
             }
             "wipe" => {
-                st.clip = Some(match o {
-                    "l" => [0.0, 0.0, e, 1.0],
-                    "t" => [0.0, 0.0, 1.0, e],
-                    "r" => [1.0 - e, 0.0, 1.0, 1.0],
-                    _ => [0.0, 1.0 - e, 1.0, 1.0],
-                });
+                let shape = match o {
+                    "l" => RevealShape::WipeLeft,
+                    "t" => RevealShape::WipeTop,
+                    "r" => RevealShape::WipeRight,
+                    _ => RevealShape::WipeBottom,
+                };
+                st.reveal = Some(Reveal::new(shape, false, e));
             }
-            "shape" | "circle" | "box" | "diamond" | "expandClip" => {
-                let round = matches!(self.effect.as_str(), "circle" | "diamond")
-                    || o.starts_with("circle")
-                    || o.starts_with("diamond")
-                    || o.starts_with("plus");
-                let f = if round { (e * std::f64::consts::SQRT_2).min(1.0) } else { e };
-                st.clip = center_clip(f, true, true);
-                if o.ends_with("In") || o == "in" {
-                    st.opacity = e;
-                }
+            "shape" | "circle" | "box" | "diamond" => {
+                let kind = if self.effect == "shape" { o } else { self.effect.as_str() };
+                let shape = if kind.starts_with("circle") {
+                    RevealShape::Circle
+                } else if kind.starts_with("diamond") {
+                    RevealShape::Diamond
+                } else if kind.starts_with("plus") {
+                    RevealShape::Plus
+                } else {
+                    RevealShape::Box
+                };
+                st.reveal = Some(Reveal::new(shape, o.ends_with("In") || o == "in", e));
             }
+            "expandClip" => st.clip = center_clip(e, true, true),
             "grow" => {
                 st.scale_x = e;
                 st.scale_y = e;
