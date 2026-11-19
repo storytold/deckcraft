@@ -71,6 +71,7 @@ fn title(id: &str) -> &'static str {
         "bullets" => "Bullets and Numbering",
         "action" => "Action Settings",
         "quit" => "DeckCraft",
+        "saveError" => "Couldn't Save Presentation",
         "themeColors" => "Create New Theme Colors",
         "themeFonts" => "Create New Theme Fonts",
         _ => "DeckCraft",
