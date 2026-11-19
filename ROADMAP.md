@@ -115,7 +115,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English and German, and Hebrew when `locales/he/deckcraft.tsv` is embedded (`app.language`: `auto`, `en`, `de`, `he`). The pin in `craft-i18n.rev` does not include that file yet, and the panels are not mirrored. Interface text comes from the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs (`locales/<lang>/deckcraft.tsv`); the interface follows the system language, or Preferences › Interface language (#15). Detail:
+English and German, and Hebrew when `locales/he/deckcraft.tsv` is embedded (`app.language`: `auto`, `en`, `de`, `he`). The pin in `craft-i18n.rev` does not include that file yet. Side panels, Backstage navigation, the ribbon tab strip, and the status bar mirror right to left; dialog internals and canvas overlays are not fully mirrored. Interface text comes from the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs (`locales/<lang>/deckcraft.tsv`); the interface follows the system language, or Preferences › Interface language (#15). Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
