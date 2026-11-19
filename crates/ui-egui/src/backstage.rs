@@ -340,7 +340,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
             }
-            icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(22.0, 22.0)), Icon::BackCircle, t.text, rtl);
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(22.0, 22.0)), Icon::BackCircle, t.text, false);
             if resp.on_hover_text(tl!("Back (Esc)")).clicked() {
                 out.close = true;
             }

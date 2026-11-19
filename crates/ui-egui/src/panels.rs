@@ -55,7 +55,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             };
             let header_layout = if rtl { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
             let close_layout = if rtl { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::right_to_left(egui::Align::Center) };
-            ui.with_layout(header_layout, |ui| {
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 24.0), header_layout, |ui| {
                 ui.label(egui::RichText::new(title).font(theme::bold(16.0)));
                 ui.with_layout(close_layout, |ui| {
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());

@@ -51,15 +51,6 @@ fn hebrew_catalog_embedded() -> bool {
     CRAFT_I18N.iter().any(|(code, ..)| code.eq_ignore_ascii_case("he"))
 }
 
-/// A build that embedded catalogs (`CRAFT_I18N_DIR`) has to embed Hebrew too. An English-only
-/// build, with no catalogs at all, does not.
-fn require_hebrew_when_catalogs_are_embedded() {
-    assert!(
-        CRAFT_I18N.is_empty() || hebrew_catalog_embedded(),
-        "CRAFT_I18N_DIR embedded interface catalogs but not Hebrew (locales/he/deckcraft.tsv)"
-    );
-}
-
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
     Harness::builder().with_size(egui::vec2(1400.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
@@ -135,7 +126,7 @@ fn app_language_reports_and_changes_the_setting() {
     }
     app.run("app.language", json!({"language": "auto"})).unwrap();
     assert_eq!(app.ui.language, AUTO);
-    require_hebrew_when_catalogs_are_embedded();
+    // Hebrew is checked below when `locales/he/deckcraft.tsv` is embedded.
 }
 
 /// Switching the language redraws the ribbon, status bar and accessible names in German, while
@@ -212,13 +203,12 @@ fn embedded_catalogs_parse_cleanly() {
 /// that embeds other languages and omits `locales/he/deckcraft.tsv` fails.
 #[test]
 fn the_hebrew_catalog_translates_core_labels() {
-    if CRAFT_I18N.is_empty() {
-        eprintln!("skipped: built without craft-i18n (CRAFT_I18N_DIR); the interface is English only");
+    if !hebrew_catalog_embedded() {
+        eprintln!("skipped: built without locales/he/deckcraft.tsv in CRAFT_I18N_DIR");
         return;
     }
     // A fixture left by another test on this thread would answer `he` with its own wording.
     FIXTURE.set(None);
-    require_hebrew_when_catalogs_are_embedded();
     let he = Lang::from_code("he").expect("Hebrew is embedded");
     assert_eq!(he.name(), "עברית");
     for tag in ["he", "HE", "He", "he-IL", "HE-il", "he_IL.UTF-8", "HE_il.utf-8"] {

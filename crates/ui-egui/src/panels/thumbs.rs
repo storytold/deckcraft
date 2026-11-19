@@ -285,8 +285,9 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
             if let Some(d) = app.thumb_drag.as_mut() {
                 d.slot = to;
             }
+            let (line_x0, line_x1) = rects.first().map(|(_, r)| (r.min.x, r.max.x)).unwrap_or((26.0, width));
             let y = rects.iter().find(|(i, _)| *i == to).map(|(_, r)| r.min.y + 2.0).or_else(|| rects.last().map(|(_, r)| r.max.y)).unwrap_or(0.0);
-            ui.painter().line_segment([pos2(26.0, y), pos2(width, y)], Stroke::new(2.0, t.accent));
+            ui.painter().line_segment([pos2(line_x0, y), pos2(line_x1, y)], Stroke::new(2.0, t.accent));
         }
         if ui.input(|i| i.pointer.any_released()) {
             drop_slide_drag(app);
