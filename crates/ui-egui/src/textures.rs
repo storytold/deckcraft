@@ -22,6 +22,8 @@ struct Key {
     /// The pasteboard region the slide's drawing calls for (canvas only).
     want: Region,
     editing_text: Option<ShapeId>,
+    /// The interface language the placeholder prompts are drawn in.
+    lang: &'static str,
 }
 
 struct Entry {
@@ -292,6 +294,7 @@ impl Textures {
             extra: extra ^ grayscale as u64 ^ anim_key(anim),
             want,
             editing_text,
+            lang: crate::i18n::current().code(),
         };
         if let Some(e) = &self.canvas
             && e.key == key
@@ -299,6 +302,7 @@ impl Textures {
             return Some((e.tex.clone(), e.region));
         }
         let t0 = crate::now_ms();
+        let prompts = crate::i18n::prompts();
         let render = |region: Region| {
             let state_of = |id: ShapeId| anim.map(|(tl, time)| crate::preview::shape_state_at(tl, id, time)).unwrap_or_default();
             let state: Option<&dyn Fn(ShapeId) -> deckcraft_render::ShapeState> = if anim.is_some() { Some(&state_of) } else { None };
@@ -310,6 +314,7 @@ impl Textures {
                 offset: region.offset(),
                 size: Some(region.size()),
                 state,
+                prompt: Some(&prompts),
                 editing_text,
                 ..Default::default()
             };
@@ -385,6 +390,8 @@ impl Textures {
             extra: grayscale as u64,
             want: Region::slide(width_px, h),
             editing_text: None,
+            // Thumbnails draw no placeholder prompts.
+            lang: "",
         };
         self.clock += 1;
         let clock = self.clock;

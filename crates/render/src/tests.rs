@@ -575,6 +575,27 @@ fn placeholder_prompts_only_in_edit_view() {
     assert_eq!(ink(&show), 0);
 }
 
+/// The editor passes its interface language's lookup: the prompts are drawn as it returns them,
+/// and without one (exports, the CLI) they stay English.
+#[test]
+fn placeholder_prompts_are_drawn_through_the_prompt_translator() {
+    let p = Presentation::default();
+    let asked = std::cell::RefCell::new(Vec::new());
+    let short = |s: &str| {
+        asked.borrow_mut().push(s.to_string());
+        "·".to_string()
+    };
+    let same = |s: &str| s.to_string();
+    let english = render_slide(&p, 0, &RenderOpts { scale: 0.5, edit: true, ..Default::default() });
+    let translated = render_slide(&p, 0, &RenderOpts { scale: 0.5, edit: true, prompt: Some(&short), ..Default::default() });
+    let unchanged = render_slide(&p, 0, &RenderOpts { scale: 0.5, edit: true, prompt: Some(&same), ..Default::default() });
+    let ink = |i: &Image| i.pixels.as_chunks::<4>().0.iter().filter(|px| px[0] < 200).count();
+    assert!(ink(&translated) * 4 < ink(&english), "the translated prompts are drawn instead");
+    assert_eq!(unchanged.pixels, english.pixels, "the English prompt, looked up unchanged, draws the same");
+    let asked = asked.borrow();
+    assert!(asked.iter().any(|s| s == "Click to add title") && asked.iter().any(|s| s == "Click to add subtitle"), "{asked:?}");
+}
+
 #[test]
 fn png_encodes() {
     let p = Presentation::default();

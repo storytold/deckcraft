@@ -5,7 +5,7 @@ use super::{
 };
 
 /// The prompt shown in an empty placeholder, formatted like its content would be.
-pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
+pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType, translate: Option<&dyn Fn(&str) -> String>) -> TextBody {
     // Layout/master prompt text when the layout supplies a custom one.
     let (lp, _) = resolve::parents(rctx, s);
     let custom = lp.and_then(|l| l.ph.as_ref().filter(|p| p.has_custom_prompt).and(l.text.as_ref())).filter(|t| !t.is_empty());
@@ -19,7 +19,10 @@ pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
     if txt.is_empty() || kind.is_footer_kind() {
         return TextBody::default();
     }
-    let mut t = TextBody::from_text(txt);
+    let mut t = match translate {
+        Some(translate) => TextBody::from_text(&translate(txt)),
+        None => TextBody::from_text(txt),
+    };
     if matches!(kind, PhType::Picture | PhType::Chart | PhType::Table | PhType::Media | PhType::Diagram | PhType::ClipArt) {
         t.body.anchor = Some(deckcraft_model::text::Anchor::Bottom);
         if let Some(p) = t.paragraphs.first_mut() {

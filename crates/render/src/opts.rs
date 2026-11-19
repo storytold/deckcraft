@@ -47,6 +47,10 @@ pub struct RenderOpts<'a> {
     pub show_hidden: bool,
     /// Per-shape animation state.
     pub state: Option<&'a dyn Fn(ShapeId) -> ShapeState>,
+    /// Editor view: the placeholder prompts in the interface language. Called with the English
+    /// prompt (`Click to add title`); `None` draws the English. A layout's own prompt text is
+    /// presentation content and is drawn as authored.
+    pub prompt: Option<&'a dyn Fn(&str) -> String>,
     /// Don't draw these shapes (being edited in place, drawn by the UI).
     pub skip: &'a [ShapeId],
     /// Hide the text of this shape (the UI draws it while editing).
@@ -80,6 +84,7 @@ impl Default for RenderOpts<'_> {
             edit: false,
             show_hidden: false,
             state: None,
+            prompt: None,
             skip: &[],
             skip_text: None,
             editing_text: None,
