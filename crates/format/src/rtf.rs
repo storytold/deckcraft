@@ -127,6 +127,12 @@ const SKIP: &[&str] = &[
     "pntxtb",
 ];
 
+/// `i + n`, or one character on when that would land inside a multi-byte character (a fallback
+/// run after `\uN` or `\'hh` may be followed by non-ASCII text).
+fn advance(rtf: &str, i: usize, n: usize) -> usize {
+    if rtf.is_char_boundary(i + n) { i + n } else { i + rtf.get(i..).and_then(|r| r.chars().next()).map_or(1, char::len_utf8) }
+}
+
 /// Group state: whether the text is being skipped, and the `\uc` fallback count.
 #[derive(Clone, Copy)]
 struct St {
@@ -134,8 +140,11 @@ struct St {
     uc: usize,
 }
 
-/// Parser state for [`rtf_to_outline`]: the group stack and the outline so far.
-struct Outline {
+/// Parser state for [`rtf_to_outline`]: the cursor, the group stack and the outline so far.
+struct Outline<'a> {
+    rtf: &'a str,
+    b: &'a [u8],
+    i: usize,
     stack: Vec<St>,
     st: St,
     level: Option<u32>,
@@ -144,14 +153,7 @@ struct Outline {
     indent: i64,
     /// Which `\s1`-`\s9` the stylesheet names "heading N"; any other `\sN` is a body style.
     headings: [bool; 10],
-    /// Remaining `\uN` fallback characters to skip.
-    uc_skip: usize,
-    /// Whether the previous token was a non-ASCII `\Symbol` skipped as a `\uN` fallback,
-    /// whose UTF-8 continuation bytes at the start of the next `Text` token must also be skipped.
-    skip_utf8_cont: bool,
-    /// Leading byte(s) of a non-ASCII `\<char>` control symbol awaiting UTF-8 continuation bytes.
-    utf8_pending: [u8; 4],
-    utf8_len: usize,
+    pending_skip: usize,
     line: String,
     /// Paragraphs so far: outline level and text (empty only for an empty level-0 title).
     out: Vec<(usize, String)>,
@@ -187,102 +189,148 @@ pub fn rtf_to_slides(p: &mut Presentation, rtf: &str) -> usize {
 /// The `\sN` styles the stylesheet calls "heading N": `{\s1\li360 heading 1;}`.
 fn heading_styles(rtf: &str) -> [bool; 10] {
     let mut out = [false; 10];
-    let mut depth = 0usize;
-    let mut ss_depth: Option<usize> = None;
+    let Some(at) = rtf.find("\\stylesheet") else { return out };
+    let b = rtf.as_bytes();
+    let (mut i, mut depth) = (at + "\\stylesheet".len(), 1);
     let (mut style, mut name): (Option<usize>, String) = (None, String::new());
-    for token in craft_rtf::Tokens::new(rtf.as_bytes()) {
-        match token {
-            craft_rtf::Token::Open => {
+    while i < b.len() && depth > 0 {
+        match b[i] {
+            b'{' => {
                 depth += 1;
-                if ss_depth.is_some_and(|sd| depth == sd + 1) {
-                    (style, name) = (None, String::new());
-                }
+                (style, name) = (None, String::new());
             }
-            craft_rtf::Token::Close => {
-                depth = depth.saturating_sub(1);
-                let Some(sd) = ss_depth else { continue };
-                if depth == sd
+            b'}' => {
+                depth -= 1;
+                if depth == 1
                     && let Some(n) = style.filter(|n| (1..=9).contains(n))
                 {
                     out[n] = name.trim().to_ascii_lowercase().starts_with("heading");
-                } else if depth < sd {
-                    break;
                 }
             }
-            craft_rtf::Token::Word { name: "stylesheet", .. } if ss_depth.is_none() => {
-                ss_depth = Some(depth);
+            b'\\' => {
+                let w = i + 1;
+                let mut j = w;
+                while j < b.len() && b[j].is_ascii_alphabetic() {
+                    j += 1;
+                }
+                let k = j;
+                while j < b.len() && (b[j].is_ascii_digit() || j == k && b[j] == b'-') {
+                    j += 1;
+                }
+                if depth == 2 && &rtf[w..k] == "s" {
+                    style = rtf[k..j].parse().ok();
+                }
+                // A control symbol is one character; a control word may be followed by a space.
+                i = if k == w {
+                    w + 1
+                } else if b.get(j) == Some(&b' ') {
+                    j + 1
+                } else {
+                    j
+                };
+                continue;
             }
-            craft_rtf::Token::Word { name: "s", param: Some(n) } if ss_depth.is_some_and(|sd| depth == sd + 1) => {
-                style = usize::try_from(n).ok();
-            }
-            craft_rtf::Token::Text(t) if ss_depth.is_some_and(|sd| depth == sd + 1) => {
-                name.extend(t.iter().map(|&c| c as char));
-            }
+            c if depth == 2 && !matches!(c, b'\r' | b'\n') => name.push(c as char),
             _ => {}
         }
+        i += 1;
     }
     out
 }
 
 fn paragraphs(rtf: &str) -> Vec<(usize, String)> {
     let mut p = Outline {
+        rtf,
+        b: rtf.as_bytes(),
+        i: 0,
         stack: vec![],
         st: St { skip: false, uc: 1 },
         level: None,
         style_level: None,
         indent: 0,
         headings: heading_styles(rtf),
-        uc_skip: 0,
-        skip_utf8_cont: false,
-        utf8_pending: [0; 4],
-        utf8_len: 0,
+        pending_skip: 0,
         line: String::new(),
         out: vec![],
     };
-    p.run(rtf.as_bytes());
+    p.run();
     p.flush(false);
     p.out.into_iter().map(|(n, t)| (n, finish_surrogates(t))).collect()
 }
 
-impl Outline {
-    fn run(&mut self, bytes: &[u8]) {
-        for token in craft_rtf::Tokens::new(bytes) {
-            match token {
-                craft_rtf::Token::Open => self.open_group(),
-                craft_rtf::Token::Close => self.close_group(),
-                craft_rtf::Token::Star => self.st.skip = true,
-                craft_rtf::Token::Word { name, param } => self.control_word(name, param),
-                craft_rtf::Token::Hex(h) => self.hex_escape(h),
-                craft_rtf::Token::Symbol(s) => self.symbol(s),
-                craft_rtf::Token::Text(t) => self.text(t),
-                craft_rtf::Token::Bin(_) => {}
+impl Outline<'_> {
+    fn run(&mut self) {
+        while self.i < self.b.len() {
+            match self.b[self.i] {
+                b'{' => self.open_group(),
+                b'}' => self.close_group(),
+                b'\\' => {
+                    self.i += 1;
+                    if !self.escape() {
+                        break;
+                    }
+                }
+                b'\r' | b'\n' => self.i += 1,
+                _ => self.text(),
             }
         }
     }
 
-    fn reset_fallback(&mut self) {
-        self.uc_skip = 0;
-        self.skip_utf8_cont = false;
-        self.utf8_len = 0;
-    }
-
+    /// `{`: push the group; `{\*\dest …}` is an ignorable destination.
     fn open_group(&mut self) {
-        self.reset_fallback();
         self.stack.push(self.st);
+        self.i += 1;
+        if self.b[self.i..].starts_with(b"\\*") {
+            self.st.skip = true;
+        }
     }
 
     fn close_group(&mut self) {
-        self.reset_fallback();
         self.st = self.stack.pop().unwrap_or(St { skip: false, uc: 1 });
+        self.i += 1;
     }
 
-    fn control_word(&mut self, word: &str, arg: Option<i32>) {
-        self.reset_fallback();
+    /// The character after a backslash: a control word, a hex escape or a symbol. False at the
+    /// end of the input.
+    fn escape(&mut self) -> bool {
+        let Some(&n) = self.b.get(self.i) else { return false };
+        if n.is_ascii_alphabetic() {
+            self.control_word();
+        } else if n == b'\'' {
+            self.hex_escape();
+        } else {
+            self.symbol(n);
+        }
+        true
+    }
+
+    fn control_word(&mut self) {
+        let rtf = self.rtf;
+        let s = self.i;
+        while self.i < self.b.len() && self.b[self.i].is_ascii_alphabetic() {
+            self.i += 1;
+        }
+        let word = &rtf[s..self.i];
+        let ns = self.i;
+        if self.i < self.b.len() && (self.b[self.i] == b'-' || self.b[self.i].is_ascii_digit()) {
+            self.i += 1;
+            while self.i < self.b.len() && self.b[self.i].is_ascii_digit() {
+                self.i += 1;
+            }
+        }
+        let arg: Option<i64> = rtf[ns..self.i].parse().ok();
+        if self.i < self.b.len() && self.b[self.i] == b' ' {
+            self.i += 1;
+        }
+        if self.pending_skip > 0 {
+            self.pending_skip -= 1;
+            return;
+        }
         if SKIP.contains(&word) {
             self.st.skip = true;
         }
         if !self.st.skip {
-            self.apply(word, arg.map(i64::from));
+            self.apply(word, arg);
         }
     }
 
@@ -319,31 +367,40 @@ impl Outline {
     fn unicode(&mut self, v: i64) {
         // RTF writes UTF-16 units as signed 16-bit values.
         push_utf16(&mut self.line, (v & 0xffff) as u32);
-        self.uc_skip = self.st.uc;
+        self.pending_skip = 0;
+        let mut k = self.st.uc;
+        while k > 0 && self.i < self.b.len() {
+            if self.b[self.i] == b'\\' && self.b.get(self.i + 1) == Some(&b'\'') {
+                self.i = advance(self.rtf, self.i, 4);
+            } else if self.b[self.i] == b'\\' && self.b.get(self.i + 1).is_some_and(|b| !b.is_ascii_alphabetic()) {
+                // An escaped control symbol counts as one Unicode fallback character.
+                self.i = advance(self.rtf, self.i + 1, 1);
+            } else if matches!(self.b[self.i], b'{' | b'}' | b'\\') {
+                break;
+            } else {
+                self.i = advance(self.rtf, self.i, 1);
+            }
+            k -= 1;
+        }
     }
 
     /// `\'hh`: one cp1252 byte.
-    fn hex_escape(&mut self, h: u8) {
-        self.utf8_len = 0;
-        self.skip_utf8_cont = false;
-        if self.uc_skip > 0 {
-            self.uc_skip -= 1;
-            return;
-        }
-        if !self.st.skip && h != 0 {
+    fn hex_escape(&mut self) {
+        let hex =
+            self.rtf.get(self.i + 1..self.i + 3).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit())).and_then(|h| u8::from_str_radix(h, 16).ok());
+        self.i = advance(self.rtf, self.i, 3);
+        if !self.st.skip
+            && let Some(h) = hex
+            && h != 0
+        {
             self.line.push(craft_rtf::codepage::cp1252(h));
         }
     }
 
     /// A one-character control symbol (`\\`, `\{`, `\~`, ...).
     fn symbol(&mut self, n: u8) {
-        self.utf8_len = 0;
-        self.skip_utf8_cont = false;
-        if self.uc_skip > 0 {
-            self.uc_skip -= 1;
-            self.skip_utf8_cont = !n.is_ascii();
-            return;
-        }
+        let c = self.rtf.get(self.i..).and_then(|r| r.chars().next());
+        self.i = advance(self.rtf, self.i, 1);
         if self.st.skip {
             return;
         }
@@ -352,45 +409,21 @@ impl Outline {
             b'~' => self.line.push('\u{a0}'),
             b'_' => self.line.push('\u{2011}'),
             b'\n' | b'\r' => self.flush(true),
-            _ if !n.is_ascii() => {
-                self.utf8_pending[0] = n;
-                self.utf8_len = 1;
-            }
+            _ if !n.is_ascii() => self.line.extend(c),
             _ => {}
         }
     }
 
     /// Plain text up to the next special character.
-    fn text(&mut self, mut bytes: &[u8]) {
-        if self.skip_utf8_cont {
-            let cont = bytes.iter().take_while(|&&b| (b & 0xC0) == 0x80).count();
-            bytes = &bytes[cont..];
-            self.skip_utf8_cont = false;
+    fn text(&mut self) {
+        let s = self.i;
+        while self.i < self.b.len() && !matches!(self.b[self.i], b'{' | b'}' | b'\\' | b'\r' | b'\n') {
+            self.i += 1;
         }
-        if self.utf8_len > 0 {
-            let cont = bytes.iter().take_while(|&&b| (b & 0xC0) == 0x80).take(4 - self.utf8_len).count();
-            self.utf8_pending[self.utf8_len..self.utf8_len + cont].copy_from_slice(&bytes[..cont]);
-            self.utf8_len += cont;
-            if !self.st.skip
-                && let Ok(s) = std::str::from_utf8(&self.utf8_pending[..self.utf8_len])
-            {
-                self.line.push_str(s);
-            }
-            self.utf8_len = 0;
-            bytes = &bytes[cont..];
-        }
-        let s = std::str::from_utf8(bytes).unwrap_or("");
-        let mut rest = s;
-        while self.uc_skip > 0 {
-            let mut chars = rest.chars();
-            if chars.next().is_none() {
-                break;
-            }
-            rest = chars.as_str();
-            self.uc_skip -= 1;
-        }
-        if !self.st.skip && !rest.is_empty() {
-            self.line.push_str(rest);
+        if !self.st.skip
+            && let Some(t) = self.rtf.get(s..self.i)
+        {
+            self.line.push_str(&t.replace('\u{0}', ""));
         }
     }
 
