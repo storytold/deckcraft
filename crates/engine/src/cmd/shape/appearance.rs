@@ -305,9 +305,11 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(c) = &color {
             l.fill = Some(Fill::solid(c.clone()));
         }
+        // With a transparency, an inherited solid line keeps its effective color instead of Text 1.
+        let inherits_solid = transparency.is_some() && matches!(ctx_line.get(&sh.id), Some(Some(Fill::Solid { .. })));
         if width.is_some() {
             l.width = width;
-            if l.fill.is_none() || matches!(l.fill, Some(Fill::None)) && !none {
+            if (l.fill.is_none() && !inherits_solid) || matches!(l.fill, Some(Fill::None)) && !none {
                 l.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Tx1)));
             }
         }

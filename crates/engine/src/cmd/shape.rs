@@ -557,6 +557,44 @@ mod tests {
     }
 
     #[test]
+    fn line_width_and_transparency_together_keep_an_automatic_lines_color() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let boxed = ShapeId(s.execute("insert.textBox", &json!({"rect": [200, 100, 80, 60], "text": "x"})).unwrap()["id"].as_u64().unwrap() as u32);
+        let (auto_color, boxed_line) = {
+            let st = s.doc().unwrap();
+            let Some(Fill::Solid { color }) = effective_line_fill(&st.doc, &st.selection, st.shape(auto).unwrap()) else {
+                panic!("solid theme line")
+            };
+            let ColorBase::Rgb { rgb } = color.base else { panic!("resolved color, got {color:?}") };
+            (rgb, effective_line_fill(&st.doc, &st.selection, st.shape(boxed).unwrap()))
+        };
+        assert!(!matches!(boxed_line, Some(Fill::Solid { .. })), "{boxed_line:?}");
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        s.execute("shape.line", &json!({"ids": [auto], "width": 3, "transparency": 0.4})).unwrap();
+        let l = s.doc().unwrap().shape(auto).unwrap().line.clone().unwrap();
+        assert_eq!(l.fill, Some(Fill::solid(ColorRef::rgb(auto_color).with(ColorTransform::Alpha(60_000)))));
+        assert_eq!(l.width, Some(3.0));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
+        // A shape that inherits no solid line still gets Text 1, now with the transparency.
+        s.execute("shape.line", &json!({"ids": [boxed], "width": 3, "transparency": 0.4})).unwrap();
+        let l = s.doc().unwrap().shape(boxed).unwrap().line.clone().unwrap();
+        assert_eq!(l.fill, Some(Fill::solid(ColorRef::scheme(SchemeSlot::Tx1).with(ColorTransform::Alpha(60_000)))));
+        assert_eq!(l.width, Some(3.0));
+    }
+
+    #[test]
+    fn line_width_with_zero_transparency_leaves_an_opaque_automatic_line_inherited() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        s.execute("shape.line", &json!({"ids": [auto], "width": 2, "transparency": 0.0})).unwrap();
+        let l = s.doc().unwrap().shape(auto).unwrap().line.clone().unwrap();
+        assert_eq!(l.fill, None, "{l:?}");
+        assert_eq!(l.width, Some(2.0));
+    }
+
+    #[test]
     fn line_transparency_replaces_the_alpha_an_automatic_line_inherits() {
         let mut s = Session::with_new();
         let id = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
