@@ -36,6 +36,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx}", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
+        cmd!(
+            "file.embedFonts",
+            "Embed Fonts in the File",
+            [],
+            None,
+            "{on?: bool, characters?: used|all} → {on, characters} (File ▸ Options ▸ Save: embed the fonts the presentation uses when it is saved as .pptx, only the characters used or all of them; off removes the fonts the presentation carries)",
+            has_doc,
+            embed_fonts
+        ),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
         cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|rtf|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
@@ -365,6 +374,22 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
 
 /// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
+    save_bytes_reporting(doc, format).map(|(b, _)| b)
+}
+
+/// [`save_bytes`], and for a PowerPoint file of a presentation that embeds its fonts
+/// ([`Presentation::embed_fonts`]), which typefaces the file carries and which it couldn't.
+pub fn save_bytes_reporting(doc: &Presentation, format: &str) -> Result<(Vec<u8>, Option<crate::fonts::FontEmbedding>)> {
+    if doc.embed_fonts && matches!(format, "pptx" | "potx" | "ppsx") {
+        let mut copy = doc.clone();
+        let report = crate::fonts::embed_used_fonts(&mut copy, deckcraft_fonts::FontDb::global());
+        let bytes = deckcraft_pptx::export_as(&copy, format).map_err(|e| EngineError::Other(e.to_string()))?;
+        return Ok((bytes, Some(report)));
+    }
+    plain_bytes(doc, format).map(|b| (b, None))
+}
+
+fn plain_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
         f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
@@ -524,10 +549,56 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({"needsPath": true}));
     };
     let format = str_param(p, "format").unwrap_or(format_for_path(&path));
-    let bytes = save_bytes(&s.doc()?.doc, format)?;
+    let (bytes, fonts) = save_bytes_reporting(&s.doc()?.doc, format)?;
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
-    Ok(json!({"path": path, "bytes": bytes.len()}))
+    let mut out = json!({"path": path, "bytes": bytes.len()});
+    add_font_report(s, &mut out, fonts);
+    Ok(out)
+}
+
+/// `fonts: {embedded, skipped: [{family, reason}]}` in a save's answer, and a message naming the
+/// fonts whose licence kept them out of the file (PowerPoint warns about those too).
+fn add_font_report(s: &mut Session, out: &mut Value, fonts: Option<crate::fonts::FontEmbedding>) {
+    let Some(f) = fonts else { return };
+    let restricted: Vec<&str> = f.skipped.iter().filter(|(_, r)| *r == crate::fonts::SkipReason::Restricted).map(|(n, _)| n.as_str()).collect();
+    if !restricted.is_empty() {
+        let text = format!("Some fonts could not be embedded because their licence doesn't allow it: {}.", restricted.join(", "));
+        s.ui_requests.push(crate::UiRequest::Message { text });
+    }
+    out["fonts"] = json!({
+        "embedded": f.embedded,
+        "skipped": f.skipped.iter().map(|(n, r)| json!({"family": n, "reason": r.as_str()})).collect::<Vec<_>>(),
+    });
+}
+
+fn embed_fonts(s: &mut Session, p: &Value) -> Result<Value> {
+    let all = match str_param(p, "characters") {
+        None => None,
+        Some("used") => Some(false),
+        Some("all") => Some(true),
+        Some(other) => return Err(bad("file.embedFonts", format!("`characters` is used or all, not `{other}`"))),
+    };
+    let on = p.get("on").map(|v| v.as_bool().ok_or_else(|| bad("file.embedFonts", "`on` is true or false"))).transpose()?;
+    let doc = &s.doc()?.doc;
+    let changes =
+        on.is_some_and(|v| v != doc.embed_fonts || (!v && !doc.embedded_fonts.is_empty())) || all.is_some_and(|v| v != doc.embed_all_characters);
+    if changes {
+        s.edit(|doc, _| {
+            if let Some(v) = on {
+                doc.embed_fonts = v;
+                if !v {
+                    doc.embedded_fonts.clear();
+                }
+            }
+            if let Some(v) = all {
+                doc.embed_all_characters = v;
+            }
+            Ok(())
+        })?;
+    }
+    let doc = &s.doc()?.doc;
+    Ok(json!({"on": doc.embed_fonts, "characters": if doc.embed_all_characters { "all" } else { "used" }}))
 }
 
 fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
@@ -540,8 +611,10 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn save_bytes_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let format = str_param(p, "format").unwrap_or("deckcraft");
-    let bytes = save_bytes(&s.doc()?.doc, format)?;
-    Ok(json!({"data": base64_encode(&bytes), "bytes": bytes.len()}))
+    let (bytes, fonts) = save_bytes_reporting(&s.doc()?.doc, format)?;
+    let mut out = json!({"data": base64_encode(&bytes), "bytes": bytes.len()});
+    add_font_report(s, &mut out, fonts);
+    Ok(out)
 }
 
 /// `scale` for rendering `doc`'s slides to an image: within 0.01–16, and small enough that the
@@ -675,9 +748,11 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             }))
         }
         "pptx" | "potx" | "ppsx" | "deckcraft" | "outline" | "txt" | "rtf" => {
-            let bytes = save_bytes(&st.doc, &format)?;
+            let (bytes, fonts) = save_bytes_reporting(&st.doc, &format)?;
             write_file(&path, &bytes)?;
-            Ok(json!({"path": path, "bytes": bytes.len()}))
+            let mut out = json!({"path": path, "bytes": bytes.len()});
+            add_font_report(s, &mut out, fonts);
+            Ok(out)
         }
         other => Err(bad("file.export", format!("unknown format `{other}`"))),
     }

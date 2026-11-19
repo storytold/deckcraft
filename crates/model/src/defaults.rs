@@ -512,6 +512,8 @@ pub fn blank_presentation(size: Size, theme: Theme, title_slide: bool) -> Presen
         first_slide_number: 1,
         next_id: next.max(256),
         embedded_fonts: vec![],
+        embed_fonts: false,
+        embed_all_characters: false,
         table_styles: vec![],
         tags: vec![],
         kept_parts: vec![],

@@ -2302,6 +2302,8 @@ pub(crate) fn pres_from_craft(p: craft_pptx::Presentation) -> deckcraft_model::P
                 bold_italic: f.bold_italic.map(media_id_from),
             })
             .collect(),
+        embed_fonts: false,
+        embed_all_characters: false,
         table_styles: p.table_styles.into_iter().map(table_style_def_from).collect(),
         tags: p.tags,
         kept_parts: p

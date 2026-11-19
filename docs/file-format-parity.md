@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-11 · **Change:** minor (empty notes slides are preserved on save and reopen, #2025; previous: minor, PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import; previous: trivial, a slide whose relationship is missing is reported in `lostSlides`; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-19 · **Change:** minor (Embed fonts in the file on save, only the characters used or all, #2093; previous: minor, empty notes slides are preserved on save and reopen, #2025; previous: minor, PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import; previous: trivial, a slide whose relationship is missing is reported in `lostSlides`; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -63,7 +63,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | WMV | yes (Windows) | embedded, not playable | |
 | Online video (YouTube embeds) | yes | no | Cloud feature |
 | Embedded OLE objects | yes | kept on round trip (opaque), not insertable or editable | `ShapeKind::Opaque` |
-| Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn |
+| Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn. Embed fonts in the file: saving embeds the installed fonts the deck uses as uncompressed Embedded OpenType, only the characters used or all of them; fonts whose `fsType` forbids embedding are left out. The setting itself (`embedTrueTypeFonts`, `saveSubsetFonts`) is kept in `.deckcraft` but not yet in `.pptx` |
 | 3-D models (`.glb`) | yes | kept | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Not drawn as a mesh and not inserted from the ribbon |
 
 ## PPTX coverage (PresentationML / DrawingML)
@@ -119,6 +119,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-19 | minor | Embed fonts in the file: `file.embedFonts` and Options ▸ Save; a `.pptx` save embeds the installed fonts the deck uses (regular, bold, italic, bold italic), cut down to the characters used or whole, as uncompressed Embedded OpenType; restricted fonts are reported and left out (#2093) |
 | 2026-11-09 | minor | PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` open (import only): masters, layouts from title masters, slides, text and styles, shapes, pictures, notes. Saving asks for a new name |
 | 2026-11-07 | trivial | A slide-list entry whose relationship is missing is reported in `lostSlides` like an unreadable slide part, so the deck opens as a repaired copy; slide lists over 10,000 entries are refused with an import-limit error rather than silently truncated (#1910) |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |

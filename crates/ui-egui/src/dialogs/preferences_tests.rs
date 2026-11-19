@@ -144,3 +144,37 @@ fn options_close_button_restores_the_settings() {
     assert_eq!(h.state().session.prefs.smart_guides, was, "the close button restores the setting");
     assert!(h.state().dialog.is_none(), "and the dialog closes");
 }
+
+fn embedding(app: &SlideApp) -> (bool, bool) {
+    let doc = &app.session.active().expect("a presentation").doc;
+    (doc.embed_fonts, doc.embed_all_characters)
+}
+
+/// Save ▸ Embed fonts in the file changes the presentation when Done is pressed (#2093).
+#[test]
+fn options_embed_fonts_applies_on_done() {
+    let mut h = harness();
+    assert_eq!(embedding(h.state()), (false, false));
+    open_options(&mut h);
+    h.query_by_label("Embed fonts in the file").expect("the checkbox is there").click();
+    h.run_steps(2);
+    h.query_by_label("All characters (others can edit the text)").expect("the choice is there").click();
+    h.run_steps(2);
+    assert_eq!(embedding(h.state()), (false, false), "the presentation waits for Done");
+    h.query_by_label("Done").expect("the Done button is there").click();
+    h.run_steps(2);
+    assert_eq!(embedding(h.state()), (true, true));
+    assert!(h.state().dialog.is_none());
+}
+
+/// Cancel leaves the presentation's embedding choice as it was.
+#[test]
+fn options_cancel_keeps_the_embedding_choice() {
+    let mut h = harness();
+    open_options(&mut h);
+    h.query_by_label("Embed fonts in the file").expect("the checkbox is there").click();
+    h.run_steps(2);
+    h.query_by_label("Cancel").expect("the Cancel button is there").click();
+    h.run_steps(2);
+    assert_eq!(embedding(h.state()), (false, false));
+}

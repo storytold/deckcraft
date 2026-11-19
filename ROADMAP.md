@@ -158,6 +158,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-19 | PPTX: Embed fonts in the file (Options ▸ Save, `file.embedFonts`): saving embeds the installed fonts the deck uses, only the characters used or all of them, and skips fonts whose licence forbids embedding (#2093) |
 | 2026-11-16 | Export: every slide as its own PNG or JPEG picture from File › Export › Change File Type and File › Save As; the Export… dialog adds JPEG images (all slides) (#2019) |
 | 2026-11-14 | Slide show: a slide the show advances to again (click, →, Space, automatic advance or a loop) starts over, so its animations play again, as in PowerPoint. Back and links still show it as it was left (#2090) |
 | 2026-11-11 | PPTX: a slide whose notes slide has empty text retains its notesSlide part and relationship on save and reopen (#2025); empty notes slides survive native round trips |
@@ -351,6 +352,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-19 | trivial | Progress log: embed fonts when saving .pptx (#2093); scores unchanged |
 | 2026-11-16 | trivial | Progress log: export all slides as PNG or JPEG from the File tab (#2019); scores unchanged |
 | 2026-11-14 | trivial | Progress log: a slide the show advances to again plays its animations again (#2090); parity scores unchanged |
 | 2026-11-11 | minor | Progress log: empty notes slides preserved on PPTX/native save (#2025); parity scores unchanged |
