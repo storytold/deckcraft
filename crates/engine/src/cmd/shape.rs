@@ -595,6 +595,20 @@ mod tests {
     }
 
     #[test]
+    fn line_transparency_that_changes_nothing_records_no_undo_step() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let boxed = ShapeId(s.execute("insert.textBox", &json!({"rect": [200, 100, 80, 60], "text": "x"})).unwrap()["id"].as_u64().unwrap() as u32);
+        // 0% on an opaque automatic line, and any transparency on a shape with no solid line.
+        assert_eq!(s.execute("shape.line", &json!({"ids": [auto], "transparency": 0.0})).unwrap(), json!(1));
+        assert_eq!(s.execute("shape.line", &json!({"ids": [boxed], "transparency": 0.4})).unwrap(), json!(1));
+        // Undo goes straight back to before the text box was inserted.
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(s.doc().unwrap().shape(boxed).is_none());
+        assert!(s.doc().unwrap().shape(auto).is_some());
+    }
+
+    #[test]
     fn line_transparency_outside_zero_to_one_or_not_a_number_is_rejected() {
         let mut s = Session::with_new();
         let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);

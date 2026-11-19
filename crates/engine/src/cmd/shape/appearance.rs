@@ -121,19 +121,39 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
 /// Fill and outline apply to a group's visible members as well as its container. Other edits
 /// (notably geometry) still target only the selected shape. The whole traversal stays in one edit.
 fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
-    fn apply(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
-        if depth > 64 {
-            return Ok(());
-        }
-        f(sh)?;
-        if let Some(children) = sh.children_mut() {
-            for child in children {
-                apply(child, depth + 1, f)?;
-            }
-        }
-        Ok(())
+    edit_shapes(s, p, cmd, |sh| apply_to_group(sh, 0, &f))
+}
+
+fn apply_to_group(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
+    if depth > 64 {
+        return Ok(());
     }
-    edit_shapes(s, p, cmd, |sh| apply(sh, 0, &f))
+    f(sh)?;
+    if let Some(children) = sh.children_mut() {
+        for child in children {
+            apply_to_group(child, depth + 1, f)?;
+        }
+    }
+    Ok(())
+}
+
+/// How many target shapes [`edit_group_appearance`] would edit, or `None` when `f` would change
+/// at least one of them (or no target is found, so the edit reports the error).
+fn unchanged_appearance(s: &Session, p: &Value, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Option<usize>> {
+    let ids = targets(s, p)?;
+    let st = s.doc()?;
+    let mut seen = std::collections::HashSet::new();
+    let mut n = 0;
+    for id in ids.into_iter().filter(|id| seen.insert(*id)) {
+        let Some(sh) = st.shape(id) else { continue };
+        let mut copy = sh.clone();
+        apply_to_group(&mut copy, 0, f)?;
+        if copy != *sh {
+            return Ok(None);
+        }
+        n += 1;
+    }
+    Ok((n > 0).then_some(n))
 }
 
 pub(super) fn fill(s: &mut Session, p: &Value) -> Result<Value> {
@@ -298,7 +318,7 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
             lines
         }
     };
-    edit_group_appearance(s, p, "shape.line", |sh| {
+    let edit = |sh: &mut deckcraft_model::Shape| -> Result<()> {
         if reset {
             sh.line = None;
             return Ok(());
@@ -381,7 +401,12 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
             sh.line = None;
         }
         Ok(())
-    })
+    };
+    // A call that changes no line records no undo step.
+    if let Some(n) = unchanged_appearance(s, p, &edit)? {
+        return Ok(Value::from(n));
+    }
+    edit_group_appearance(s, p, "shape.line", edit)
 }
 
 fn shadow_preset(v: &Value) -> Option<Option<Shadow>> {
