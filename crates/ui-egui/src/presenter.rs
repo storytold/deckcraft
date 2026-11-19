@@ -58,6 +58,16 @@ pub struct Snapshot {
     /// means "unchanged since the last snapshot the window received".
     #[serde(default)]
     pub slides: Option<Vec<Preview>>,
+    /// The audience window's interface language (one of `i18n::LANGUAGES`), so the popup, its own
+    /// program on the web, draws in the same one. Empty from an older build: the popup follows
+    /// the system language then.
+    #[serde(default)]
+    pub language: String,
+}
+
+/// Draw the popup in the language of its latest snapshot (the system's before the first one).
+pub fn apply_language(snapshot: Option<&Snapshot>) {
+    crate::i18n::set_current(crate::i18n::Lang::from_pref(snapshot.map_or(crate::i18n::AUTO, |s| s.language.as_str())));
 }
 
 /// Images acknowledged by a successful transport send, never merely attempted images.
@@ -213,7 +223,7 @@ impl View {
                     commands.push(key(name));
                 }
             }
-            if ui.button("End Show").clicked() {
+            if ui.button(tl!("End Show")).clicked() {
                 commands.push(Command::End);
             }
         });
@@ -240,7 +250,7 @@ impl View {
         ui.columns(2, |columns| {
             let left = &mut columns[0];
             if snapshot.ended {
-                left.heading("End of slide show");
+                left.heading(tl!("End of slide show"));
             } else if let Some(texture) = &self.current {
                 let response = left.add(
                     egui::Image::new(texture)
@@ -262,10 +272,10 @@ impl View {
                 }
             }
             if snapshot.zoom_armed {
-                left.label("Click the preview to zoom.");
+                left.label(tl!("Click the preview to zoom."));
             }
             let right = &mut columns[1];
-            right.label("Next");
+            right.label(tl!("Next"));
             if let Some(texture) = &self.next {
                 right.add(egui::Image::new(texture).fit_to_exact_size(fit_preview(
                     texture.size_vec2(),
@@ -273,14 +283,14 @@ impl View {
                     right.available_height() * 0.45,
                 )));
             } else {
-                right.label("End of slide show");
+                right.label(tl!("End of slide show"));
             }
             right.horizontal(|ui| {
-                ui.label("Notes");
-                if ui.button("A−").clicked() {
+                ui.label(tl!("Notes"));
+                if ui.button(tl!("A−")).clicked() {
                     commands.push(key(egui::Key::OpenBracket.name()));
                 }
-                if ui.button("A+").clicked() {
+                if ui.button(tl!("A+")).clicked() {
                     commands.push(key(egui::Key::CloseBracket.name()));
                 }
             });
@@ -305,8 +315,8 @@ impl View {
                 .map(|(i, p)| p.image().map(|image| ui.ctx().load_texture(format!("remote-grid-{i}"), image, egui::TextureOptions::LINEAR)))
                 .collect();
         }
-        ui.heading("All slides");
-        ui.label("Choose a slide to show it, or press G to return.");
+        ui.heading(tl!("All slides"));
+        ui.label(tl!("Choose a slide to show it, or press G to return."));
         if snapshot.total > crate::show::GRID_CAP {
             ui.label(format!("First {} slides", crate::show::GRID_CAP));
         }
@@ -354,7 +364,28 @@ mod tests {
             current: Some(Preview { width: 1, height: 1, rgba: vec![255; 4] }),
             next: Some(Preview { width: 1, height: 1, rgba: vec![0; 4] }),
             slides: None,
+            language: String::new(),
         }
+    }
+
+    /// The web popup is its own program: it takes the audience window's language from the
+    /// snapshot, and a snapshot from an older build without one follows the system.
+    #[test]
+    fn the_popup_draws_in_the_audience_language() {
+        crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n");
+        let mut s = snapshot();
+        s.language = "de".into();
+        apply_language(Some(&s));
+        assert_eq!(crate::i18n::current().code(), "de");
+        let mut old = serde_json::to_value(&s).unwrap();
+        old.as_object_mut().unwrap().remove("language");
+        let old: Snapshot = serde_json::from_value(old).unwrap();
+        assert_eq!(old.language, "");
+        apply_language(Some(&old));
+        assert_eq!(crate::i18n::current().code(), "en", "the system language, English in tests");
+        apply_language(Some(&s));
+        apply_language(None);
+        assert_eq!(crate::i18n::current().code(), "en", "before the first snapshot");
     }
 
     #[test]
@@ -491,6 +522,7 @@ mod tests {
             current: None,
             next: None,
             slides: None,
+            language: String::new(),
         };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
             |ui, (view, snapshot, sent): &mut (View, Snapshot, Vec<Command>)| {
