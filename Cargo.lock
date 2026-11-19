@@ -1018,6 +1018,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-mcp-server"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=bc186ca719958fcce3b6ee24794277eabed14609#bc186ca719958fcce3b6ee24794277eabed14609"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "craft-media"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=010702ee9b030844c852939095b1da0d0656a890#010702ee9b030844c852939095b1da0d0656a890"
@@ -1384,6 +1392,7 @@ dependencies = [
 name = "deckcraft-mcp"
 version = "0.19.0"
 dependencies = [
+ "craft-mcp-server",
  "deckcraft-engine",
  "deckcraft-render",
  "log",
