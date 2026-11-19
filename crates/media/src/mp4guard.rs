@@ -55,7 +55,7 @@ fn boxes_fit(b: &[u8], file_len: u64, depth: u32) -> bool {
             // short; symphonia stops there), but never inside a parent (the iterator rejects it there) or for `moov` / `moof`.
             return !matches!(kind, b"moov" | b"moof");
         }
-        let ok = if CONTAINERS.iter().any(|c| *c == kind) {
+        let ok = if CONTAINERS.contains(&kind) {
             boxes_fit(bx.payload, file_len, depth + 1)
         } else if kind == b"meta" {
             // ISO `meta` is a full box (4 bytes of version and flags first); QuickTime's is not.
