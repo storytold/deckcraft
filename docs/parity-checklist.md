@@ -2,7 +2,9 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-03 · Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
+> **Last updated:** 2026-11-05 · Copy/paste slides between decks also works between separate DeckCraft processes on Windows, with media; pasted slides take the destination layout with the same name or type (row stays P: the native format is not yet offered on other hosts). Scores unchanged.
+>
+> **Previously (2026-11-03):** Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
 >
 > **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
 >
@@ -84,7 +86,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Slides | Slide layouts (11 standard) | P0 | D |
 | Slides | Reset slide | P1 | D |
 | Slides | Slides from outline | P2 | D |
-| Slides | Copy/paste slides between decks | P1 | P |
+| Slides | Copy/paste slides between decks (including separate Windows processes; native system format not yet offered on other hosts) | P1 | P |
 | Slides | Zoom (summary, section and slide zoom) | P2 | P |
 | Views | Normal view (thumbnails, slide, notes) | P0 | D |
 | Views | Outline view | P1 | D |
@@ -244,6 +246,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | trivial | Windows native clipboard transfer now covers slides, shapes and media across processes; pasted slides take the destination layout with the same name or type. The between-decks row stays P pending native clipboard adapters on other hosts |
 | 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
 | 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |

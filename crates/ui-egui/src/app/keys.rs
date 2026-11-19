@@ -146,6 +146,7 @@ impl SlideApp {
                 egui::Event::Copy => self.publish_clipboard(ctx, false),
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
+                    let native = self.import_system_clipboard();
                     // Our own marker for objects without text: paste what the session copied.
                     let text = if text == OBJECTS_MARKER { String::new() } else { text };
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
@@ -154,7 +155,7 @@ impl SlideApp {
                     // egui 0.37 sends `PasteImage` directly; the services fallback stays for
                     // integrations that still send an empty `Paste`, and for a browser's Copy
                     // Image, whose text is only the picture's link. Never insert twice.
-                    let wants_picture = text.is_empty() || super::clipboard::names_a_picture(&text, html.as_deref());
+                    let wants_picture = !native && (text.is_empty() || super::clipboard::names_a_picture(&text, html.as_deref()));
                     let img = if wants_picture && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
                     let revision = self.session.active().map(|d| d.revision);
                     let r = match img {
@@ -162,8 +163,8 @@ impl SlideApp {
                             .session
                             .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
                         None => {
-                            let mut params = json!({"text": text});
-                            if let Some(h) = html {
+                            let mut params = if native { json!({}) } else { json!({"text": text}) };
+                            if let Some(h) = html.filter(|_| !native) {
                                 params["html"] = Value::String(h);
                             }
                             self.session.execute("edit.paste", &params)
