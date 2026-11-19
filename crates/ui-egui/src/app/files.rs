@@ -452,17 +452,8 @@ impl SlideApp {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
-        if let Some(pick) = self.services.pick_save.as_mut() {
-            if let Some(path) = pick(&suggested) {
-                match self.session.execute("file.saveAs", &json!({"path": path})) {
-                    Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
-                        self.ui.recent.retain(|p| *p != path);
-                        self.ui.recent.insert(0, path);
-                    }
-                    Err(e) => self.set_status(e.to_string()),
-                }
-            }
+        if self.services.pick_save.is_some() {
+            self.save_as_native(&suggested);
         } else if self.services.host_save.is_some() {
             let _ = self.save_to_host(Some(ext));
         } else if let Some(dl) = self.services.download.as_mut()
@@ -494,14 +485,53 @@ impl SlideApp {
             let _ = self.save_to_host(None);
             return;
         }
-        if self.session.active().and_then(|d| d.path.clone()).is_some() {
+        if let Some(path) = self.session.active().and_then(|d| d.path.clone()) {
             match self.session.execute("file.save", &json!({})) {
                 Ok(_) => self.set_status("Saved"),
-                Err(e) => self.set_status(e.to_string()),
+                Err(e) => self.show_save_error(&e.to_string(), Some(&path), None),
             }
         } else {
             self.save_as_dialog("deckcraft");
         }
+    }
+
+    /// A picked native save was attempted; cancellation leaves the current dialog open.
+    fn save_as_native(&mut self, suggested: &str) -> bool {
+        let Some(path) = self.services.pick_save.as_mut().and_then(|pick| pick(suggested)) else { return false };
+        match self.session.execute("file.saveAs", &json!({"path": path})) {
+            Ok(_) => {
+                self.set_status(format!("Saved {path}"));
+                self.ui.recent.retain(|p| *p != path);
+                self.ui.recent.insert(0, path);
+            }
+            Err(e) => self.show_save_error(&e.to_string(), Some(&path), None),
+        }
+        true
+    }
+
+    /// Native Save failures need to stay visible after the status message expires.
+    pub(super) fn show_save_error(&mut self, error: &str, path: Option<&str>, format: Option<&str>) {
+        self.set_status(error);
+        // The browser and its host keep their existing save/download policy.
+        if self.services.pick_save.is_none() {
+            return;
+        }
+        let Some(doc) = self.session.active() else { return };
+        let path = path.or(doc.path.as_deref());
+        let format = format.unwrap_or_else(|| deckcraft_engine::cmd::file::format_for_path(path.unwrap_or("")));
+        let mut d = dialogs::Dialog::new("saveError");
+        d.params = json!({"uid": doc.uid, "title": doc.title(), "path": path, "format": format, "error": error});
+        self.dialog = Some(d);
+    }
+
+    /// Save As from a failed save belongs to that presentation, even if the active tab changed.
+    pub(crate) fn save_as_after_error(&mut self, params: &Value) -> bool {
+        let uid = params.get("uid").and_then(Value::as_u64);
+        let Some(index) = self.session.documents().iter().position(|d| Some(d.uid) == uid) else { return true };
+        self.session.set_active(index);
+        let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
+        let ext = if params.get("format").and_then(Value::as_str) == Some("pptx") { "pptx" } else { "deckcraft" };
+        self.save_as_native(&format!("{name}.{ext}"))
     }
 
     /// Saves to the page that keeps the files ([`Services::host_save`](crate::Services::host_save)).
@@ -864,5 +894,183 @@ mod print_preview_tests {
 
         assert!(!dir.exists());
         std::fs::remove_dir(base).unwrap();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod save_error_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable as _;
+
+    use super::*;
+    use crate::{Services, Session};
+
+    struct Temp(std::path::PathBuf);
+
+    impl Temp {
+        fn new() -> Self {
+            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let path = std::env::temp_dir().join(format!("deckcraft-save-error-{}-{stamp}", std::process::id()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self, name: &str) -> String {
+            self.0.join(name).to_string_lossy().to_string()
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn app(path: &str, services: Services) -> SlideApp {
+        let mut session = Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        session.doc_mut().unwrap().path = Some(path.into());
+        SlideApp::new(session, services)
+    }
+
+    fn native() -> Services {
+        Services { pick_save: Some(Box::new(|_| None)), ..Default::default() }
+    }
+
+    fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn native_save_routes_keep_the_error_and_unsaved_document() {
+        let dir = Temp::new();
+        let path = dir.path("missing/deck.pptx");
+        for command in [None, Some("file.save"), Some("file.saveAs")] {
+            let mut app = app(&path, native());
+            let doc = app.session.active().unwrap().doc.clone();
+            let saved = app.session.active().unwrap().saved_doc.clone();
+            let revision = app.session.active().unwrap().revision;
+            if let Some(id) = command {
+                assert!(app.run(id, json!({"path": path})).is_err(), "{id}");
+            } else {
+                app.save();
+            }
+            let d = app.dialog.as_ref().unwrap();
+            assert_eq!(d.id, "saveError");
+            assert_eq!(d.params["path"], path);
+            assert_eq!(d.params["format"], "pptx");
+            assert_eq!(d.params["error"].as_str(), app.status.as_ref().map(|(error, _)| error.as_str()));
+            let active = app.session.active().unwrap();
+            assert_eq!(d.params["uid"], active.uid);
+            assert_eq!(active.path.as_deref(), Some(path.as_str()));
+            assert_eq!(active.revision, revision);
+            assert!(active.is_dirty());
+            assert!(Arc::ptr_eq(&active.doc, &doc) && Arc::ptr_eq(&active.saved_doc, &saved));
+            // The explanation survives even after the transient status has gone.
+            app.status = None;
+            let mut h = harness(app);
+            assert!(h.query_by_label("Your presentation is still open. Use Save As to choose another location.").is_some());
+            h.get_by_label("Close").click_accesskit();
+            h.run_steps(3);
+            assert!(h.state().dialog.is_none());
+            assert!(h.state().session.active().unwrap().is_dirty());
+        }
+    }
+
+    #[test]
+    fn save_as_retry_uses_failed_document_and_format_and_handles_cancel() {
+        let dir = Temp::new();
+        let bad = dir.path("missing/target.pptx");
+        let good = dir.path("recovered.pptx");
+        let picks = Rc::new(RefCell::new(std::collections::VecDeque::from([Some(bad.clone()), None, Some(bad), Some(good.clone())])));
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let (choices, names) = (picks.clone(), asked.clone());
+        let services = Services {
+            pick_save: Some(Box::new(move |suggested| {
+                names.borrow_mut().push(suggested.to_string());
+                choices.borrow_mut().pop_front().unwrap()
+            })),
+            ..Default::default()
+        };
+        let mut app = app(&dir.path("original.deckcraft"), services);
+        let uid = app.session.active().unwrap().uid;
+        app.save_as_dialog("pptx");
+        assert_eq!(app.dialog.as_ref().unwrap().params["format"], "pptx");
+        assert_eq!(app.session.active().unwrap().path.as_deref(), Some(dir.path("original.deckcraft").as_str()));
+        app.session.execute("file.new", &json!({})).unwrap();
+        let other = app.session.active().unwrap().uid;
+        let mut h = harness(app);
+        // Cancellation keeps the failure visible and does not save the newly active tab.
+        h.get_by_label("Save As…").click_accesskit();
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().unwrap().id, "saveError");
+        assert_eq!(h.state().session.active().unwrap().uid, uid);
+        assert!(h.state().session.active().unwrap().is_dirty());
+        // Another failure replaces the old error; success dismisses it without closing either tab.
+        h.get_by_label("Save As…").click_accesskit();
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().unwrap().params["uid"], uid);
+        h.get_by_label("Save As…").click_accesskit();
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none());
+        let active = h.state().session.active().unwrap();
+        assert_eq!(active.path.as_deref(), Some(good.as_str()));
+        assert!(!active.is_dirty());
+        assert_eq!(active.uid, uid);
+        assert_eq!(h.state().session.documents().len(), 2);
+        assert!(h.state().session.documents().iter().any(|d| d.uid == other && d.path.is_none()));
+        assert_eq!(asked.borrow().as_slice(), ["original.pptx"; 4]);
+        assert!(std::fs::read(&good).unwrap().windows(20).any(|w| w == b"ppt/presentation.xml"));
+    }
+
+    #[test]
+    fn failed_close_and_quit_saves_keep_the_error_and_presentations_open() {
+        let dir = Temp::new();
+        for id in ["close", "quit"] {
+            let mut app = app(&dir.path("missing/deck.pptx"), native());
+            if id == "quit" {
+                app.session.execute("file.new", &json!({})).unwrap();
+                app.session.execute("slide.new", &json!({})).unwrap();
+                app.session.doc_mut().unwrap().path = Some(dir.path("second.deckcraft"));
+            }
+            let count = app.session.documents().len();
+            app.run("app.dialog", json!({"id": id})).unwrap();
+            let mut h = harness(app);
+            h.key_press(egui::Key::Enter);
+            h.run_steps(3);
+            assert_eq!(h.state().dialog.as_ref().unwrap().id, "saveError", "{id}");
+            assert_eq!(h.state().session.documents().len(), count);
+            assert!(h.state().session.active().unwrap().is_dirty());
+            assert!(!h.state().quit_confirmed);
+            assert!(!std::path::Path::new(&dir.path("second.deckcraft")).exists(), "save all stopped at the first failure");
+        }
+    }
+
+    #[test]
+    fn error_for_a_closed_document_cannot_save_another_tab() {
+        let dir = Temp::new();
+        let mut app = app(&dir.path("missing/deck.pptx"), native());
+        app.save();
+        let params = app.dialog.as_ref().unwrap().params.clone();
+        app.session.execute("file.new", &json!({})).unwrap();
+        let other = app.session.active().unwrap().uid;
+        app.session.close_document(0);
+        assert!(app.save_as_after_error(&params));
+        assert_eq!(app.session.active().unwrap().uid, other);
+        assert!(app.session.active().unwrap().path.is_none());
     }
 }
