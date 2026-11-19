@@ -49,7 +49,10 @@
        Apple events arrive through apps/deckcraft/src/apple_events.rs). PowerPoint stays the
        preferred app for its formats unless the user picks DeckCraft. The same set as the Windows
        installer (deckcraft.wxs) and the Linux desktop file; a test in apps/deckcraft keeps
-       them equal. -->
+       them equal. Every type names the app icon (CFBundleIconFile), so Finder draws DeckCraft's
+       icon on these files once DeckCraft is their default app instead of the system's generic
+       one, as PdfCraft does for PDFs. CFBundleTypeIconSystemGenerated alone had no effect on
+       PDFs there (storytold/pdfcraft#910), a type with its own system icon like .pptx. -->
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
@@ -73,6 +76,8 @@
       <string>Editor</string>
       <key>LSHandlerRank</key>
       <string>Alternate</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>DeckCraft</string>
       <key>LSItemContentTypes</key>
       <array>
         <string>org.openxmlformats.presentationml.presentation</string>
@@ -89,6 +94,8 @@
       <string>Editor</string>
       <key>LSHandlerRank</key>
       <string>Alternate</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>DeckCraft</string>
       <key>LSItemContentTypes</key>
       <array>
         <string>org.openxmlformats.presentationml.template</string>
@@ -105,6 +112,8 @@
       <string>Editor</string>
       <key>LSHandlerRank</key>
       <string>Alternate</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>DeckCraft</string>
       <key>LSItemContentTypes</key>
       <array>
         <string>org.openxmlformats.presentationml.slideshow</string>
