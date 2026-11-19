@@ -34,6 +34,8 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (S, true, true, false) => "app.saveAsDialog",
+        // The Mac's Redo, next to the registry's Ctrl+Y.
+        (Z, true, true, false) => "edit.redo",
         // File tab: Alt+F opens it on Home with the keyboard in its side menu; Ctrl+P on Print.
         (F, false, false, true) => {
             app.open_backstage(crate::backstage::Page::Home);
@@ -226,7 +228,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Entry>)> {
             "Edit",
             vec![
                 key("Undo", "edit.undo", "Cmd+Z"),
-                key("Redo", "edit.redo", "Cmd+Y"),
+                // macOS redoes with ⇧⌘Z; Windows and Linux with Ctrl+Y.
+                key("Redo", "edit.redo", if cfg!(target_os = "macos") { "Cmd+Shift+Z" } else { "Cmd+Y" }),
                 Sep,
                 key("Cut", "edit.cut", "Cmd+X"),
                 key("Copy", "edit.copy", "Cmd+C"),
