@@ -326,25 +326,21 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     if !has_doc && bs.page.needs_doc() {
         bs.page = Page::Home;
     }
+    let rtl = crate::i18n::is_rtl();
     let (nav_bg, page_bg) = colours(&t);
     let mut out = Outcome::default();
     let (top, bottom) = entries(has_doc);
-    egui::Panel::left("backstage_nav").exact_size(NAV_W).resizable(false).frame(egui::Frame::NONE.fill(nav_bg)).show(ui, |ui| {
+    crate::i18n::leading_panel("backstage_nav").exact_size(NAV_W).resizable(false).frame(egui::Frame::NONE.fill(nav_bg)).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Back")));
+            let icon_cx = if rtl { r.right() - 26.0 } else { r.left() + 26.0 };
             let hovered = resp.hovered();
             if hovered {
-                ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
+                ui.painter().rect_filled(Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
             }
-            icons::paint(
-                ui.painter(),
-                Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(22.0, 22.0)),
-                Icon::BackCircle,
-                t.text,
-                false,
-            );
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(22.0, 22.0)), Icon::BackCircle, t.text, rtl);
             if resp.on_hover_text(tl!("Back (Esc)")).clicked() {
                 out.close = true;
             }
@@ -354,9 +350,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut index = 0;
         for (k, nav) in top.iter().enumerate() {
             if k == 3 {
-                separator(ui, &t);
+                separator(ui, &t, rtl);
             }
-            if nav_item(ui, *nav, &bs, index, &t).clicked() {
+            if nav_item(ui, *nav, &bs, index, &t, rtl).clicked() {
                 bs.focus = None;
                 commit_props(app, &bs);
                 match act(app, *nav, bs.page) {
@@ -371,7 +367,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(8.0);
             // Bottom-up: draw the last entry first.
             for (k, nav) in bottom.iter().enumerate().rev() {
-                if nav_item(ui, *nav, &bs, first_bottom + k, &t).clicked() {
+                if nav_item(ui, *nav, &bs, first_bottom + k, &t, rtl).clicked() {
                     bs.focus = None;
                     commit_props(app, &bs);
                     match act(app, *nav, bs.page) {
@@ -380,9 +376,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             }
-            separator(ui, &t);
+            separator(ui, &t, rtl);
         });
     });
+    let page_margin =
+        if rtl { egui::Margin { left: 36, right: 48, top: 22, bottom: 32 } } else { egui::Margin { left: 48, right: 36, top: 22, bottom: 32 } };
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(page_bg)).show(ui, |ui| {
         // Fields, boxes and buttons sit on the page's own colour: outline them, as PowerPoint does.
         ui.visuals_mut().text_edit_bg_color = Some(t.field_bg);
@@ -393,7 +391,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         w.hovered.bg_stroke = Stroke::new(1.0, t.accent);
         w.active.bg_stroke = Stroke::new(1.0, t.accent);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
+            egui::Frame::NONE.inner_margin(page_margin).show(ui, |ui| {
                 // set_max_width can also widen: in a window narrower than CONTENT_W it would push the
                 // page past the right margin and clip the tiles (#1421).
                 ui.set_max_width(ui.available_width().min(CONTENT_W));
@@ -436,7 +434,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 // ---------------------------------------------------------------- side menu
 
 /// Draw one clickable Backstage navigation row and return its interaction response.
-fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
+fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens, rtl: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
     let selected = nav == Nav::Page(bs.page);
     let label = tl!(nav.label());
@@ -452,15 +450,21 @@ fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> 
         p.rect_stroke(row, CornerRadius::same(2), Stroke::new(1.0, ink), StrokeKind::Inside);
     }
     let ink = if selected { t.accent } else { t.text };
-    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 26.0, rect.center().y), vec2(16.0, 16.0)), nav.icon(), ink, false);
-    p.text(pos2(rect.left() + 44.0, rect.center().y), Align2::LEFT_CENTER, label, theme::font(13.0), ink);
+    let (icon_cx, label_x, align) = if rtl {
+        (rect.right() - 26.0, rect.right() - 44.0, Align2::RIGHT_CENTER)
+    } else {
+        (rect.left() + 26.0, rect.left() + 44.0, Align2::LEFT_CENTER)
+    };
+    icons::paint(p, Rect::from_center_size(pos2(icon_cx, rect.center().y), vec2(16.0, 16.0)), nav.icon(), ink, false);
+    p.text(pos2(label_x, rect.center().y), align, label, theme::font(13.0), ink);
     resp
 }
 
-fn separator(ui: &mut Ui, t: &Tokens) {
+fn separator(ui: &mut Ui, t: &Tokens, rtl: bool) {
     let (rect, _) = ui.allocate_exact_size(vec2(NAV_W, 13.0), Sense::hover());
     let y = rect.center().y;
-    ui.painter().line_segment([pos2(rect.left() + 20.0, y), pos2(rect.right() - 14.0, y)], Stroke::new(1.0, t.separator));
+    let (x0, x1) = if rtl { (rect.left() + 14.0, rect.right() - 20.0) } else { (rect.left() + 20.0, rect.right() - 14.0) };
+    ui.painter().line_segment([pos2(x0, y), pos2(x1, y)], Stroke::new(1.0, t.separator));
 }
 
 // ---------------------------------------------------------------- shared pieces

@@ -137,12 +137,25 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     egui::Panel::top("ribbon").exact_size(h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         // Tabs. File comes first and opens the File tab's full-window view (Backstage), as in
-        // PowerPoint.
-        let mut x = rect.min.x + 12.0;
+        // PowerPoint. In RTL languages, the tab strip flows from the right edge leftward.
+        let rtl = crate::i18n::is_rtl();
+        let next_tab_rect = |cursor: &mut f32, y: f32, w: f32| {
+            if rtl {
+                *cursor -= w;
+                let r = Rect::from_min_size(pos2(*cursor, y), vec2(w, 24.0));
+                *cursor -= 2.0;
+                r
+            } else {
+                let r = Rect::from_min_size(pos2(*cursor, y), vec2(w, 24.0));
+                *cursor += w + 2.0;
+                r
+            }
+        };
+        let mut x = if rtl { rect.max.x - 12.0 } else { rect.min.x + 12.0 };
         let y = rect.min.y + 2.0;
         {
             let w = ui.fonts_mut(|f| f.layout_no_wrap(tl!("File").to_string(), theme::font(13.0), t.text).size().x) + 18.0;
-            let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
+            let r = next_tab_rect(&mut x, y, w);
             let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("File")));
             if resp.hovered() {
@@ -152,7 +165,6 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             if resp.on_hover_text(format!("{} ({})", tl!("File"), pretty_shortcut("Alt+F"))).clicked() {
                 app.open_backstage(crate::backstage::Page::Home);
             }
-            x += w + 2.0;
         }
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
@@ -161,7 +173,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let label = tl!(tab_label(name));
             let font = theme::font(13.0);
             let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
-            let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
+            let r = next_tab_rect(&mut x, y, w);
             let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
             let active = app.ui.tab == name;
@@ -186,7 +198,6 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             if resp.double_clicked() {
                 app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
             }
-            x += w + 2.0;
         }
         if app.ui.ribbon_collapsed {
             return;

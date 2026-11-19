@@ -439,9 +439,11 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
 /// Outline view: slide titles and body text as an editable outline.
 pub fn outline_pane(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    egui::Panel::left("outline").resizable(true).default_size(360.0).frame(egui::Frame::NONE.fill(t.card).inner_margin(egui::Margin::same(10))).show(
-        ui,
-        |ui| {
+    crate::i18n::leading_panel("outline")
+        .resizable(true)
+        .default_size(360.0)
+        .frame(egui::Frame::NONE.fill(t.card).inner_margin(egui::Margin::same(10)))
+        .show(ui, |ui| {
             let Some(st) = app.session.active() else { return };
             let doc = st.doc.clone();
             let cur = st.selection.slide;
@@ -465,8 +467,7 @@ pub fn outline_pane(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-        },
-    );
+        });
 }
 
 #[cfg(test)]

@@ -23,19 +23,25 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
             ),
             _ => tl!("Slide Master").to_string(),
         };
+        let rtl = crate::i18n::is_rtl();
+        let align = if rtl { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER };
         let p = ui.painter();
-        // Left to right: slide counter, language, status message. Each starts at its usual column, or
-        // after the one before it when that runs long ("Slide 100 of 120", "… (not checked)").
-        let sr = p.text(pos2(rect.min.x + 14.0, rect.center().y), Align2::LEFT_CENTER, &left, theme::font(12.0), t.text_dim);
+        // Flowing from leading edge (left in LTR, right in RTL): slide counter, language, status message.
+        let sx = if rtl { rect.max.x - 14.0 } else { rect.min.x + 14.0 };
+        let sr = p.text(pos2(sx, rect.center().y), align, &left, theme::font(12.0), t.text_dim);
         shown_text(ui, sr, "status_slide", &left);
-        // Where the controls on the right begin; nothing on the left paints or clicks past it.
-        let right_x = rect.max.x - 560.0;
+        // Edge where the trailing controls begin; nothing on the leading side paints or clicks past it.
+        let controls_edge = if rtl { rect.min.x + 560.0 } else { rect.max.x - 560.0 };
         // The selection's proofing language; a click opens Review › Language.
         let (lang, no_proof) = crate::dialogs::selected_language(app);
         let name = crate::squiggles::display_lang_name(ui.ctx(), &lang) + if no_proof { tl!(" (not checked)") } else { "" };
-        let lx = (rect.min.x + 120.0).max(sr.max.x + 16.0);
-        let lclip = Rect::from_min_max(pos2(lx - 3.0, rect.min.y), pos2(right_x.max(lx - 3.0), rect.max.y));
-        let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
+        let lx = if rtl { (rect.max.x - 120.0).min(sr.min.x - 16.0) } else { (rect.min.x + 120.0).max(sr.max.x + 16.0) };
+        let lclip = if rtl {
+            Rect::from_min_max(pos2(controls_edge.min(lx + 3.0), rect.min.y), pos2(lx + 3.0, rect.max.y))
+        } else {
+            Rect::from_min_max(pos2(lx - 3.0, rect.min.y), pos2(controls_edge.max(lx - 3.0), rect.max.y))
+        };
+        let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), align, &name, theme::font(12.0), t.text_dim);
         let hit = lr.expand(3.0).intersect(lclip);
         if hit.is_positive() {
             let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text(tl!("Language"));
@@ -44,19 +50,25 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
                 app.dialog = Some(crate::dialogs::Dialog::new("language"));
             }
         }
-        // Transient status message, clipped before the controls on the right.
+        // Transient status message, clipped before the controls.
         if let Some(msg) = app.fresh_status() {
-            let mx = (rect.min.x + 290.0).max(lr.max.x + 16.0);
-            let clip = Rect::from_min_max(pos2(mx, rect.min.y), pos2(right_x.max(mx), rect.max.y));
-            let mr = p.with_clip_rect(clip).text(pos2(mx, rect.center().y), Align2::LEFT_CENTER, &msg, theme::font(12.0), t.accent);
+            let mx = if rtl { (rect.max.x - 290.0).min(lr.min.x - 16.0) } else { (rect.min.x + 290.0).max(lr.max.x + 16.0) };
+            let clip = if rtl {
+                Rect::from_min_max(pos2(controls_edge.min(mx), rect.min.y), pos2(mx, rect.max.y))
+            } else {
+                Rect::from_min_max(pos2(mx, rect.min.y), pos2(controls_edge.max(mx), rect.max.y))
+            };
+            let mr = p.with_clip_rect(clip).text(pos2(mx, rect.center().y), align, &msg, theme::font(12.0), t.accent);
             shown_text(ui, mr.intersect(clip), "status_message", &msg);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         }
-        let mut right = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(pos2(right_x, rect.min.y), pos2(rect.max.x - 8.0, rect.max.y)))
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        );
+        let controls_rect = if rtl {
+            Rect::from_min_max(pos2(rect.min.x + 8.0, rect.min.y), pos2(controls_edge, rect.max.y))
+        } else {
+            Rect::from_min_max(pos2(controls_edge, rect.min.y), pos2(rect.max.x - 8.0, rect.max.y))
+        };
+        let controls_layout = if rtl { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::right_to_left(egui::Align::Center) };
+        let mut right = ui.new_child(egui::UiBuilder::new().max_rect(controls_rect).layout(controls_layout));
         right.spacing_mut().item_spacing.x = 4.0;
         if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
             app.ui.zoom = None;
@@ -170,8 +182,13 @@ fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
     if on || resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(4), if on { t.selected } else { t.hover });
     }
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 11.0, r.center().y), vec2(15.0, 15.0)), icon, t.text_dim, false);
-    ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, label, theme::font(12.0), t.text_dim);
+    let (icon_cx, label_x, align) = if crate::i18n::is_rtl() {
+        (r.max.x - 11.0, r.max.x - 22.0, Align2::RIGHT_CENTER)
+    } else {
+        (r.min.x + 11.0, r.min.x + 22.0, Align2::LEFT_CENTER)
+    };
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_cx, r.center().y), vec2(15.0, 15.0)), icon, t.text_dim, false);
+    ui.painter().text(pos2(label_x, r.center().y), align, label, theme::font(12.0), t.text_dim);
     // The visible label is painted directly, so name the interactive control explicitly and
     // expose the toggle state as selected: a screen reader hears "Notes, pressed" not "Notes".
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));

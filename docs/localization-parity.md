@@ -49,7 +49,7 @@ support partly there), **45–80 h** to parity plus native-speaker review.
 | German | de | ~840 rows (654 DeckCraft, 185 shared): ribbon, menus, palette, status bar, File tab, dialogs, panes | partly / yes / no help | full (Latin) | no | **partial** | yes | 1–3 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
-| Hebrew | he | 652 DeckCraft rows, embedded only when `locales/he/deckcraft.tsv` is in the checkout (`craft-i18n.rev` does not have it yet) | partly / yes / no help | bidi; bundled Noto Sans Hebrew in the interface; panels are not mirrored yet | no | **partial** | yes | 6–10 (panel mirroring) |
+| Hebrew | he | 652 DeckCraft rows, embedded only when `locales/he/deckcraft.tsv` is in the checkout (`craft-i18n.rev` does not have it yet) | partly / yes / no help | bidi; bundled Noto Sans Hebrew in the interface; side panels, Backstage nav, ribbon tab strip, and status bar mirror in RTL | no | **partial** | yes (he, iw legacy alias) | 2–4 (dialogs / fine polish) |
 
 German is partial, and Hebrew is partial when its catalog is embedded (the panels are not mirrored yet). Ukrainian is in review as PR #34. PowerPoint for Mac ships 15 further languages DeckCraft does not: Czech, Danish, Greek, Finnish, Hungarian, Italian, Dutch, Norwegian, Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
 
@@ -73,6 +73,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-19 | minor | Legacy `iw` tags normalize to `he`, `is_rtl_lang` is exposed, and side panels (`thumbs`, `task_pane`, `outline`, `backstage_nav`), Backstage margins/nav, ribbon tab strip, and status bar mirror in RTL |
 | 2026-11-09 | minor | Hebrew is partial when `locales/he/deckcraft.tsv` is embedded; panels are not mirrored; `app.language` lists `he`. The dimension score stays ~15% until the pin includes the catalog |
 | 2026-10-28 | major | Interface catalogs from craft-i18n, system language and Preferences › Interface language (#15); German partial (~840 rows) |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |

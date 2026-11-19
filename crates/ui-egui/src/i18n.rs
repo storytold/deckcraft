@@ -58,10 +58,10 @@ pub const AUTO: &str = "auto";
 /// The languages DeckCraft offers, as lowercase BCP 47 codes (also the `language` setting's value
 /// and the craft-i18n locale), when their catalogs are embedded. English first: it is the source
 /// language and the fallback. German (`de`) is neutral across Germany, Austria and Switzerland:
-/// `de-DE`, `de-AT`, `de_CH.UTF-8` … resolve to it. Hebrew (`he-IL`, `he_IL.UTF-8`) resolves to
-/// `he`. Its letters come from the Noto Sans Hebrew interface face (`theme::font_definitions`),
-/// and the egui fork shapes and orders each run right to left. The panels themselves are not
-/// mirrored yet.
+/// `de-DE`, `de-AT`, `de_CH.UTF-8` … resolve to it. Hebrew (`he-IL`, `he_IL.UTF-8`, and legacy
+/// `iw` tags) resolves to `he`. Its letters come from the Noto Sans Hebrew interface face
+/// (`theme::font_definitions`), the egui fork shapes and orders each run right to left, and the
+/// side panels, Backstage nav, ribbon tab strip, and status bar mirror in RTL.
 pub static LANGUAGES: [&str; 3] = ["en", "de", "he"];
 
 /// A language the UI can be shown in: English, or an offered language whose catalogs are embedded.
@@ -102,9 +102,10 @@ impl Lang {
         self.i18n().name(self.lang)
     }
 
-    /// A language by its exact code (any case): one of [`LANGUAGES`] whose catalogs are embedded.
+    /// A language by its exact code (any case, normalizing legacy `iw` tags to `he`): one of [`LANGUAGES`] whose catalogs are embedded.
     pub fn from_code(code: &str) -> Option<Lang> {
-        let code = LANGUAGES.iter().find(|l| l.eq_ignore_ascii_case(code.trim()))?;
+        let normalized = normalize_legacy_code(code.trim());
+        let code = LANGUAGES.iter().find(|l| l.eq_ignore_ascii_case(&normalized))?;
         #[cfg(test)]
         if let Some(l) = FIXTURE.get().filter(|l| l.code() == *code) {
             return Some(l);
@@ -134,17 +135,32 @@ pub fn normalize_pref(pref: &str) -> Option<&'static str> {
     Lang::from_code(pref).map(Lang::code)
 }
 
+/// Normalizes legacy ISO 639-1 Hebrew tags (`iw`, `iw-IL`, `iw_IL.UTF-8`) to `he` / `he-...`.
+fn normalize_legacy_code(tag: &str) -> std::borrow::Cow<'_, str> {
+    if tag.eq_ignore_ascii_case("iw") {
+        std::borrow::Cow::Borrowed("he")
+    } else if tag.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("iw"))
+        && tag.as_bytes().get(2).is_some_and(|b| matches!(b, b'-' | b'_'))
+        && let Some(rest) = tag.get(2..)
+    {
+        std::borrow::Cow::Owned(format!("he{rest}"))
+    } else {
+        std::borrow::Cow::Borrowed(tag)
+    }
+}
+
 /// The offered language for a locale tag such as `de_DE.UTF-8` or `de-AT`; `None` when there is
 /// no catalog for it. `C`/`POSIX` mean English.
 pub fn lang_from_tag(tag: &str) -> Option<Lang> {
+    let tag = normalize_legacy_code(tag.trim());
     // A test fixture stands in for one embedded catalog (`use_fixture`), so tag matching can run
     // without `CRAFT_I18N_DIR`. A tag the fixture does not answer falls through to the embedded
     // catalogs, and a German fixture does not hide an embedded Hebrew tag (or the reverse).
     #[cfg(test)]
-    if let Some(lang) = fixture_lang_from_tag(tag) {
+    if let Some(lang) = fixture_lang_from_tag(&tag) {
         return Some(lang);
     }
-    I18N.match_tag(tag).and_then(|lang| Lang::from_code(I18N.code(lang)))
+    I18N.match_tag(&tag).and_then(|lang| Lang::from_code(I18N.code(lang)))
 }
 
 /// The fixture language for `tag`, when the fixture's own catalogs match it. `None` when no
@@ -197,10 +213,27 @@ pub fn current() -> Lang {
     CURRENT.get()
 }
 
+/// Whether `code` names a right-to-left language (normalizing legacy `iw` tags to `he`).
+pub fn is_rtl_lang(code: &str) -> bool {
+    let normalized = normalize_legacy_code(code.trim()).to_ascii_lowercase().replace('_', "-");
+    let base = normalized.split('-').next().unwrap_or("");
+    matches!(base, "ar" | "dv" | "fa" | "he" | "ku" | "ps" | "sd" | "ug" | "ur" | "yi")
+}
+
 /// Whether the current interface language is written right to left (Hebrew, Arabic, …).
-pub(crate) fn is_rtl() -> bool {
+pub fn is_rtl() -> bool {
     let lang = current();
     lang.i18n().rtl(lang.lang)
+}
+
+/// Leading side panel (`Panel::left` in LTR, `Panel::right` in RTL).
+pub(crate) fn leading_panel(id: &str) -> egui::Panel {
+    if is_rtl() { egui::Panel::right(id) } else { egui::Panel::left(id) }
+}
+
+/// Trailing side panel (`Panel::right` in LTR, `Panel::left` in RTL).
+pub(crate) fn trailing_panel(id: &str) -> egui::Panel {
+    if is_rtl() { egui::Panel::left(id) } else { egui::Panel::right(id) }
 }
 
 /// `ltr` as drawn for the current language. A right-to-left language mirrors a forward or

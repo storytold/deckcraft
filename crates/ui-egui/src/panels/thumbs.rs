@@ -87,7 +87,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     if app.session.active().is_some_and(|d| d.selection.target.is_page_master()) {
         return;
     }
-    let panel = egui::Panel::left("thumbs")
+    let panel = crate::i18n::leading_panel("thumbs")
         .resizable(true)
         .default_size(app.ui.thumbs_width)
         .size_range(150.0..=420.0)

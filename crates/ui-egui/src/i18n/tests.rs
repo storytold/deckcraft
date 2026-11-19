@@ -248,9 +248,15 @@ fn hebrew_fixture_covers_lookup_tags_and_app_language() {
     assert_eq!(tr(he, "New\nSlide"), "שקופית\nחדשה");
     assert_eq!(tr(he, "Not in the catalog"), "Not in the catalog");
 
-    for tag in ["he", "HE", "He", "he-IL", "HE-il", "he_IL.UTF-8", "HE_il.utf-8"] {
+    for tag in ["he", "HE", "He", "he-IL", "HE-il", "he_IL.UTF-8", "HE_il.utf-8", "iw", "IW", "iw-IL", "iw_IL.UTF-8"] {
         assert_eq!(lang_from_tag(tag), Some(he), "{tag}");
     }
+    assert_eq!(Lang::from_code("iw"), Some(he));
+    assert_eq!(normalize_pref("iw"), Some("he"));
+    assert!(is_rtl_lang("he"));
+    assert!(is_rtl_lang("iw"));
+    assert!(is_rtl_lang("iw-IL"));
+    assert!(!is_rtl_lang("en"));
     for tag in ["fr-FR", "fr", "ar", "xx", ""] {
         assert_eq!(lang_from_tag(tag), None, "{tag}");
     }
@@ -332,4 +338,38 @@ fn a_selected_shapes_width_label_uses_the_catalog_key() {
     h.run_steps(4);
     h.get_by_label("WIDTH ");
     assert!(h.query_by_label("Width: ").is_none());
+}
+
+#[test]
+fn rtl_layout_mirrors_panels_backstage_ribbon_and_status() {
+    let _reset = ResetLang::arm();
+    let _he = use_fixture("he", HE);
+
+    let center_x = |lang: &str, open_backstage: bool, label: &str| {
+        let mut session = Session::with_new();
+        session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let mut app = SlideApp::new(session, Services::default());
+        app.run("app.language", json!({"language": lang})).unwrap();
+        app.ui.pane = Some("format".into());
+        if open_backstage {
+            app.open_backstage(crate::backstage::Page::Home);
+        }
+        let mut h = harness(app);
+        h.run_steps(3);
+        h.get_by_label(label).rect().center().x
+    };
+
+    assert!(center_x("en", false, "Slide 1") < 700.0);
+    assert!(center_x("en", false, "Format Shape") > 700.0);
+    assert!(center_x("en", false, "File") < 700.0);
+    assert!(center_x("en", false, "Language") < 700.0);
+    assert!(center_x("en", false, "Fit slide to current window") > 700.0);
+    assert!(center_x("en", true, "Back") < 700.0);
+
+    assert!(center_x("he", false, "Slide 1") > 700.0);
+    assert!(center_x("he", false, "Format Shape") < 700.0);
+    assert!(center_x("he", false, "File") > 700.0);
+    assert!(center_x("he", false, "Language") > 700.0);
+    assert!(center_x("he", false, "Fit slide to current window") < 700.0);
+    assert!(center_x("he", true, "Back") > 700.0);
 }
