@@ -1416,6 +1416,7 @@ dependencies = [
 name = "deckcraft-model"
 version = "0.19.0"
 dependencies = [
+ "craft-drawingml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=44d83fa8f635333dcb3c231f87381387a1f5631b)",
  "deckcraft-color",
  "deckcraft-geom",
  "serde",
