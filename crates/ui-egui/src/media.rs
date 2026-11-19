@@ -528,7 +528,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
             "fwd" => "Forward 0.25 seconds",
             _ => "Media control",
         };
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!(name)));
         if resp.hovered() {
             painter.rect_filled(r, CornerRadius::same(3), Color32::from_white_alpha(28));
         }
@@ -583,7 +583,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
         painter.circle_filled(pos2(done.max.x, track.center().y), 5.0, white);
         let hit = track.expand2(vec2(4.0, 8.0));
         let resp = ui.interact(hit, ui.scope_id().with("media_bar_track"), Sense::click_and_drag());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Media position"));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, tl!("Media position")));
         if (resp.clicked() || resp.dragged())
             && duration > 0.0
             && let Some(p) = resp.interact_pointer_pos()

@@ -231,7 +231,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 }
                 if show.zoom_arm {
                     let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
-                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
+                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Zoom")));
                     if hit.clicked()
                         && let Some(p) = hit.interact_pointer_pos()
                         && cr.width() > 1.0
@@ -245,7 +245,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
                 }
                 let nr = next_rect(right, doc);
-                ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
+                ui.painter().text(right.min, Align2::LEFT_TOP, tl!("Next"), theme::font(13.0), Color32::from_gray(170));
                 match &next_tex {
                     Some(t) => {
                         ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -261,12 +261,12 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
+                    ui.label(egui::RichText::new(tl!("Notes")).size(13.0).color(Color32::from_gray(170)));
+                    if ui.button(tl!("A-")).clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
                     ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
+                    if ui.button(tl!("A+")).clicked() {
                         show.nudge_notes(NOTES_STEP);
                     }
                 });
@@ -294,7 +294,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
 pub(super) fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
     let color = Color32::from_gray(230);
     if notes.text().is_empty() {
-        ui.label(egui::RichText::new("No notes.").size(px).color(color))
+        ui.label(egui::RichText::new(tl!("No notes.")).size(px).color(color))
     } else {
         crate::notes::view(ui, notes, &crate::notes::Look { size: px, color: Some(color) })
     }

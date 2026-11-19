@@ -71,6 +71,28 @@ fn play_on_the_editor_media_bar_plays_the_selected_clip() {
     assert_eq!(h.state().session.active().unwrap().selection.shapes, vec![id]);
 }
 
+/// The bar's buttons are named in the interface language for screen readers (#2142 review).
+#[test]
+fn the_media_bar_buttons_are_named_in_the_interface_language() {
+    use egui_kittest::kittest::Queryable;
+    crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n\tPlay or pause media\tMedien abspielen oder anhalten\n");
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.audio", &json!({"name": "tone.wav", "data": deckcraft_engine::cmd::base64_encode(&wav(2.0))})).unwrap();
+    let mut app = SlideApp::new(s, Services::default());
+    app.run("app.language", json!({"language": "de"})).unwrap();
+    let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert!(h.query_by_label("Play or pause media").is_none());
+    assert!(h.query_by_label("Medien abspielen oder anhalten").is_some());
+}
+
 /// #1922: the bar hangs 6 pt under the clip, so a clip at the bottom edge of the slide put it
 /// inside the speaker-notes pane, painted over the notes text. The canvas is clipped to its own
 /// rect: nothing it paints reaches the notes pane, and a click there goes to the notes field.

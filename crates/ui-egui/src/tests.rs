@@ -2143,6 +2143,27 @@ fn input_target_tracks_slideshow_opening_and_palette_selection() {
     assert_eq!(app.input_target(), base);
 }
 
+/// A click queued before the interface language changes is retracted: translated labels have other
+/// widths, so the same window point can be a different ribbon button (#2236 review).
+#[test]
+fn a_language_change_retracts_a_queued_click() {
+    crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n\tInsert\tEinfügen\n");
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let base = app.input_target();
+    app.run("app.language", serde_json::json!({"language": "de"})).unwrap();
+    assert_ne!(app.input_target(), base, "another interface language is another click target");
+    app.run("app.language", serde_json::json!({"language": "en"})).unwrap();
+    assert_eq!(app.input_target(), base);
+
+    let ctx = egui::Context::default();
+    app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
+    app.run("app.language", serde_json::json!({"language": "de"})).unwrap();
+    let mut raw = egui::RawInput::default();
+    app.raw_input_hook(&ctx, &mut raw);
+    assert!(raw.events.is_empty(), "a click queued in English does not land on the German ribbon");
+    assert!(app.synthetic.is_empty());
+}
+
 /// A click queued for the editor is retracted when a slideshow, background-open window or
 /// different palette entry takes over before the input pass.
 #[test]

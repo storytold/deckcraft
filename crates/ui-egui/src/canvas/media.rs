@@ -17,7 +17,9 @@ pub(super) fn gif_buttons(app: &mut SlideApp, ui: &mut Ui, xf: Xf, gifs: &[crate
         let b = crate::media::gif_button_rect(r);
         // Sensing drags too keeps the press from reaching the canvas (selecting or moving the GIF).
         let resp = ui.interact(b, ui.scope_id().with(("gif_button", g.id.0)), Sense::click_and_drag());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, if g.paused { "Play animated GIF" } else { "Pause animated GIF" }));
+        resp.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, true, tl!(if g.paused { "Play animated GIF" } else { "Pause animated GIF" }))
+        });
         crate::media::paint_gif_button(ui.painter(), b, g.paused, resp.hovered());
         if resp.clicked() {
             toggle = Some(g.id);
