@@ -37,6 +37,9 @@ impl SlideApp {
                 }
             }
             Ok(_) => {}
+            Err(e) if matches!(id, "file.save" | "file.saveAs") && self.services.host_save.is_none() && self.services.pick_save.is_some() => {
+                self.show_save_error(e, params.get("path").and_then(Value::as_str), params.get("format").and_then(Value::as_str));
+            }
             Err(e) => self.set_status(e.clone()),
         }
         self.drain_requests();
