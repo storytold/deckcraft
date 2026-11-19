@@ -275,7 +275,13 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         "miter" => deckcraft_model::style::LineJoin::Miter,
         _ => deckcraft_model::style::LineJoin::Round,
     });
-    let transparency = f64_param(p, "transparency");
+    let transparency = match p.get("transparency") {
+        None => None,
+        Some(v) => match v.as_f64() {
+            Some(t) if (0.0..=1.0).contains(&t) => Some(t),
+            _ => return Err(bad("shape.line", "`transparency` must be a number from 0 to 1")),
+        },
+    };
     // Transparency on an inherited (style) line needs the effective color.
     let ctx_line = match transparency {
         None => HashMap::new(),

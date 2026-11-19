@@ -595,6 +595,17 @@ mod tests {
     }
 
     #[test]
+    fn line_transparency_outside_zero_to_one_or_not_a_number_is_rejected() {
+        let mut s = Session::with_new();
+        let auto = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        for bad in [json!(-0.1), json!(1.5), json!("0.4"), json!(true), json!(null)] {
+            assert!(s.execute("shape.line", &json!({"ids": [auto], "width": 2, "transparency": bad})).is_err(), "{bad}");
+        }
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
+    }
+
+    #[test]
     fn line_transparency_replaces_the_alpha_an_automatic_line_inherits() {
         let mut s = Session::with_new();
         let id = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32);
