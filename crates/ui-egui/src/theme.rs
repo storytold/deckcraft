@@ -254,8 +254,7 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
                 if let Some(f) = system_cjk_font(mode, &uncovered, extra_bytes) {
                     let name = format!("system-cjk-{}", f.family);
                     if !defs.font_data.contains_key(&name) {
-                        let mut data = FontData::from_owned((*f.bytes).clone());
-                        data.index = f.index;
+                        let data = FontData::from_blob(f.bytes.clone(), f.index);
                         defs.font_data.insert(name.clone(), std::sync::Arc::new(data));
                         for list in defs.families.values_mut() {
                             if !list.contains(&name) {
