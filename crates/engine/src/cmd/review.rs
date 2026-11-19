@@ -627,12 +627,31 @@ fn setup(s: &mut Session, p: &Value) -> Result<Value> {
 fn custom_show(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("show.customShow", "missing `name`"))?.to_string();
     let delete = bool_or(p, "delete", false);
-    let idx: Vec<usize> =
-        p.get("slides").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|v| v as usize).collect()).unwrap_or_default();
+    // Validate the whole sequence before replacing a same-named show; dropping a bad entry
+    // would silently shorten or erase the saved show. Deletion does not use this sequence.
+    let slides = if delete {
+        Vec::new()
+    } else {
+        let doc = &s.doc()?.doc;
+        match p.get("slides") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(a)) => a
+                .iter()
+                .map(|v| {
+                    v.as_u64().and_then(|i| usize::try_from(i).ok()).and_then(|i| doc.slides.get(i)).map(|sl| sl.id).ok_or_else(|| {
+                        bad(
+                            "show.customShow",
+                            format!("invalid slide index {v}; indices count from 0 and this presentation has {} slides", doc.slides.len()),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+            Some(_) => return Err(bad("show.customShow", "`slides` must be an array of slide indices")),
+        }
+    };
     s.edit(|doc, _| {
         doc.custom_shows.retain(|c| c.name != name);
         if !delete {
-            let slides = idx.iter().filter_map(|i| doc.slides.get(*i).map(|x| x.id)).collect();
             doc.custom_shows.push(deckcraft_model::CustomShow { name: name.clone(), slides });
         }
         Ok(())
@@ -1040,5 +1059,90 @@ mod accessibility_contrast_tests {
         }
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 6), "black control warned: {issues}");
         assert!(!contrasts.iter().any(|issue| issue["shape"] == 8), "white break or spaces warned: {issues}");
+    }
+}
+
+#[cfg(test)]
+mod custom_show_tests {
+    use crate::{EngineError, Session};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[test]
+    fn malformed_custom_show_sequences_preserve_the_deck_revision_and_history() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("show.customShow", &json!({"name": "Short", "slides": [1, 0]})).unwrap();
+        s.execute("show.customShow", &json!({"name": "Other", "slides": [0]})).unwrap();
+        s.execute("show.customShow", &json!({"name": "Undone", "slides": [1]})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        let st = s.doc().unwrap();
+        let before = st.doc.clone();
+        let revision = st.revision;
+        let (undo, redo) = (st.history.undo.len(), st.history.redo.len());
+        assert!(undo > 0 && redo > 0, "check that both history stacks are populated");
+
+        for slides in [
+            json!(false),
+            json!(42),
+            json!("0,1"),
+            json!({"index": 0}),
+            json!([0, "oops", 1]),
+            json!([0, null, 1]),
+            json!([0, false, 1]),
+            json!([0, {}, 1]),
+            json!([0, [], 1]),
+            json!([0, -1, 1]),
+            json!([0, 0.5, 1]),
+            json!([0, 2, 1]),
+            json!([0, 4_294_967_296_u64, 1]),
+            json!([0, 4_294_967_297_u64, 1]),
+            json!([0, u64::MAX, 1]),
+        ] {
+            let err = s.execute("show.customShow", &json!({"name": "Short", "slides": slides})).unwrap_err();
+            assert!(matches!(err, EngineError::BadParams { .. }), "{slides}: {err:?}");
+            let st = s.doc().unwrap();
+            assert!(Arc::ptr_eq(&st.doc, &before), "preserve the whole deck for {slides}");
+            assert_eq!(st.revision, revision, "no revision change for {slides}");
+            assert_eq!((st.history.undo.len(), st.history.redo.len()), (undo, redo), "preserve undo and redo for {slides}");
+        }
+    }
+
+    #[test]
+    fn custom_show_sequences_keep_order_repetitions_and_undo() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("show.customShow", &json!({"name": "Short", "slides": [0]})).unwrap();
+        let before = s.doc().unwrap().doc.clone();
+        let expected = [2, 0, 2, 1].map(|i| before.slides[i].id).to_vec();
+        s.execute("show.customShow", &json!({"name": "Short", "slides": [2, 0, 2, 1]})).unwrap();
+        let after = s.doc().unwrap().doc.clone();
+        assert_eq!(after.custom_shows.len(), 1, "replace the same-named show once");
+        assert_eq!(after.custom_shows[0].slides, expected);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, after);
+    }
+
+    #[test]
+    fn custom_show_empty_defaults_and_deletion_remain_available() {
+        let mut s = Session::with_new();
+        s.execute("show.customShow", &json!({"name": "Other", "slides": [0]})).unwrap();
+        for params in [json!({"name": "Short", "slides": []}), json!({"name": "Short", "slides": null}), json!({"name": "Short"})] {
+            s.execute("show.customShow", &json!({"name": "Short", "slides": [0]})).unwrap();
+            s.execute("show.customShow", &params).unwrap();
+            let shows = &s.doc().unwrap().doc.custom_shows;
+            assert_eq!(shows.len(), 2);
+            assert!(shows.iter().find(|show| show.name == "Short").unwrap().slides.is_empty());
+        }
+        for slides in [json!(false), json!("ignored"), json!([0, "oops"]), json!([u64::MAX])] {
+            s.execute("show.customShow", &json!({"name": "Short", "slides": [0]})).unwrap();
+            s.execute("show.customShow", &json!({"name": "Short", "delete": true, "slides": slides})).unwrap();
+            let shows = &s.doc().unwrap().doc.custom_shows;
+            assert_eq!(shows.len(), 1);
+            assert_eq!(shows[0].name, "Other");
+        }
     }
 }
