@@ -487,7 +487,10 @@ impl SlideApp {
         }
         if let Some(path) = self.session.active().and_then(|d| d.path.clone()) {
             match self.session.execute("file.save", &json!({})) {
-                Ok(_) => self.set_status("Saved"),
+                Ok(_) => {
+                    self.clear_save_error();
+                    self.set_status("Saved");
+                }
                 Err(e) => self.show_save_error(&e.to_string(), Some(&path), None),
             }
         } else {
@@ -500,6 +503,7 @@ impl SlideApp {
         let Some(path) = self.services.pick_save.as_mut().and_then(|pick| pick(suggested)) else { return false };
         match self.session.execute("file.saveAs", &json!({"path": path})) {
             Ok(_) => {
+                self.clear_save_error();
                 self.set_status(format!("Saved {path}"));
                 self.ui.recent.retain(|p| *p != path);
                 self.ui.recent.insert(0, path);
@@ -507,6 +511,16 @@ impl SlideApp {
             Err(e) => self.show_save_error(&e.to_string(), Some(&path), None),
         }
         true
+    }
+
+    /// A successful save dismisses only that presentation's previous save failure.
+    pub(super) fn clear_save_error(&mut self) {
+        if self.dialog.as_ref().is_some_and(|d| {
+            d.id == "saveError"
+                && d.params.get("uid").and_then(Value::as_u64).is_some_and(|uid| self.session.active().is_some_and(|doc| doc.uid == uid))
+        }) {
+            self.dialog = None;
+        }
     }
 
     /// Native Save failures need to stay visible after the status message expires.
@@ -530,7 +544,10 @@ impl SlideApp {
         let Some(index) = self.session.documents().iter().position(|d| Some(d.uid) == uid) else { return true };
         self.session.set_active(index);
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        let ext = if params.get("format").and_then(Value::as_str) == Some("pptx") { "pptx" } else { "deckcraft" };
+        let ext = match params.get("format").and_then(Value::as_str) {
+            Some(format @ ("pptx" | "potx" | "ppsx")) => format,
+            _ => "deckcraft",
+        };
         self.save_as_native(&format!("{name}.{ext}"))
     }
 
@@ -1072,5 +1089,99 @@ mod save_error_tests {
         assert!(app.save_as_after_error(&params));
         assert_eq!(app.session.active().unwrap().uid, other);
         assert!(app.session.active().unwrap().path.is_none());
+    }
+
+    fn save_through(app: &mut SlideApp, route: &str, path: &str) {
+        match route {
+            "save" => {
+                app.session.doc_mut().unwrap().path = Some(path.into());
+                app.save();
+            }
+            "dialog" => {
+                let path = path.to_string();
+                app.services.pick_save = Some(Box::new(move |_| Some(path.clone())));
+                app.save_as_dialog("deckcraft");
+            }
+            id => {
+                let result = app.run(id, json!({"path": path})).unwrap();
+                assert_eq!(result["path"], path);
+            }
+        }
+        assert!(!app.session.active().unwrap().is_dirty(), "{route}");
+    }
+
+    #[test]
+    fn a_successful_native_save_clears_its_previous_error_on_every_route() {
+        let dir = Temp::new();
+        let mut lingering = Vec::new();
+        for route in ["save", "dialog", "file.save", "file.saveAs"] {
+            let mut app = app(&dir.path("missing/deck.deckcraft"), native());
+            app.save();
+            assert_eq!(app.dialog.as_ref().unwrap().id, "saveError");
+            save_through(&mut app, route, &dir.path(&format!("{route}.deckcraft")));
+            if app.dialog.is_some() {
+                lingering.push(route);
+            }
+        }
+        assert!(lingering.is_empty(), "saved but left the failure visible: {lingering:?}");
+    }
+
+    #[test]
+    fn successful_saves_leave_other_documents_errors_and_unrelated_dialogs() {
+        let dir = Temp::new();
+        for route in ["save", "dialog", "file.save", "file.saveAs"] {
+            for other_document in [false, true] {
+                let mut app = app(&dir.path("missing/deck.deckcraft"), native());
+                app.save();
+                if other_document {
+                    app.session.execute("file.new", &json!({})).unwrap();
+                    app.session.execute("slide.new", &json!({})).unwrap();
+                } else {
+                    app.dialog.as_mut().unwrap().id = "font".into();
+                }
+                let before = serde_json::to_value(app.dialog.as_ref().unwrap()).unwrap();
+                save_through(&mut app, route, &dir.path(&format!("{route}-{other_document}.deckcraft")));
+                assert_eq!(serde_json::to_value(app.dialog.as_ref().unwrap()).unwrap(), before, "{route}, other={other_document}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_save_picker_cancellation_keeps_the_previous_error() {
+        let dir = Temp::new();
+        for id in ["file.save", "file.saveAs"] {
+            let mut app = app(&dir.path("missing/deck.deckcraft"), native());
+            app.save();
+            let before = serde_json::to_value(app.dialog.as_ref().unwrap()).unwrap();
+            app.session.doc_mut().unwrap().path = None;
+            let result = app.run(id, json!({})).unwrap();
+            assert_eq!(result["needsPath"], true);
+            assert_eq!(serde_json::to_value(app.dialog.as_ref().unwrap()).unwrap(), before);
+            assert!(app.session.active().unwrap().is_dirty());
+        }
+    }
+
+    #[test]
+    fn retry_preserves_document_formats_and_uses_a_safe_fallback() {
+        let dir = Temp::new();
+        for (format, expected) in [("deckcraft", "deckcraft"), ("pptx", "pptx"), ("potx", "potx"), ("ppsx", "ppsx"), ("svg", "deckcraft")] {
+            let asked = Rc::new(RefCell::new(Vec::new()));
+            let names = asked.clone();
+            let services = Services {
+                pick_save: Some(Box::new(move |name| {
+                    names.borrow_mut().push(name.to_string());
+                    None
+                })),
+                ..Default::default()
+            };
+            let mut app = app(&dir.path("missing/deck.deckcraft"), services);
+            // Explicit format may differ from the failed path, so it is the retry's source.
+            let result = app.run("file.saveAs", json!({"path": dir.path("missing/target.pptx"), "format": format}));
+            assert!(result.is_err());
+            let params = app.dialog.as_ref().unwrap().params.clone();
+            assert!(!app.save_as_after_error(&params));
+            assert_eq!(asked.borrow().as_slice(), [format!("deck.{expected}")], "{format}");
+            assert!(app.session.active().unwrap().is_dirty());
+        }
     }
 }
