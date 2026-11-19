@@ -96,7 +96,7 @@ pub fn slides_to_rtf(p: &Presentation) -> String {
 
 /// Whether `bytes` look like RTF.
 pub fn sniff_rtf(bytes: &[u8]) -> bool {
-    bytes.trim_ascii_start().starts_with(b"{\\rtf")
+    craft_rtf::is_rtf(bytes)
 }
 
 /// Destinations whose text is not document text.
