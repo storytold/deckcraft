@@ -471,9 +471,11 @@ fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(8.0);
 }
 
+/// Dimmed text, shown as given: callers look interface text up (`tl!`) and pass file paths and
+/// other values literally, so a path that happens to match a catalog entry is never translated.
 fn dim(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(tl!(text)).font(theme::font(12.5)).color(t.text_dim));
+    ui.label(RichText::new(text).font(theme::font(12.5)).color(t.text_dim));
 }
 
 /// A link with an arrow (More themes →): true when clicked.

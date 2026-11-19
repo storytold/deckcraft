@@ -217,6 +217,9 @@ struct InputTarget {
     ribbon_tab: egui::Id,
     ribbon_collapsed: bool,
     ribbon_scroll: u32,
+    /// The interface language the window is drawn in: translated labels have other widths, so
+    /// the ribbon's buttons move under a click when it changes.
+    language: &'static str,
     /// Full-screen slide show: the show instance, slide, step and the layout/mode state that
     /// changes what a click at the same window point does.
     show: Option<show::ShowInputState>,

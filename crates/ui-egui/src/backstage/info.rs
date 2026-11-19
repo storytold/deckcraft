@@ -30,7 +30,7 @@ pub(super) const PROPERTIES: [(&str, &str, &str); 7] = [
 pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
     let Ok(v) = app.session.execute("file.info", &json!({})) else {
-        dim(ui, "No presentation is open.");
+        dim(ui, tl!("No presentation is open."));
         return;
     };
     let path = v.get("path").and_then(Value::as_str).map(str::to_string);
@@ -39,7 +39,7 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     ui.label(RichText::new(&title).font(theme::font(24.0)).color(t.accent));
     match &path {
         Some(p) => dim(ui, p),
-        None => dim(ui, "Not saved yet"),
+        None => dim(ui, tl!("Not saved yet")),
     }
     if let Some(p) = &path {
         ui.add_space(8.0);
@@ -152,7 +152,7 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();
     ui.label(RichText::new(&title).font(theme::font(15.0)).color(t.text));
-    dim(ui, path.as_deref().unwrap_or("Not saved yet"));
+    dim(ui, path.as_deref().unwrap_or(tl!("Not saved yet")));
     ui.add_space(14.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {
@@ -202,7 +202,7 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     });
     ui.add_space(8.0);
     if let Some((_, _, detail)) = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type) {
-        dim(ui, detail);
+        dim(ui, tl!(detail));
     }
 }
 
@@ -221,7 +221,7 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
                 ui.label(RichText::new(tl!("DeckCraft")).font(theme::bold(24.0)).color(t.text));
             });
             dim(ui, &crate::dialogs::version_line());
-            dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
+            dim(ui, tl!("Open source under MIT OR Apache-2.0. Not affiliated with Microsoft."));
             ui.add_space(14.0);
             if task(ui, Icon::Help, "Credits", "Credits", "The people and models who built DeckCraft.", true) {
                 let _ = app.run("app.about", json!({}));

@@ -67,7 +67,7 @@ const LAYOUTS: [(&str, &str); 8] = [
 pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
     let Some((doc, current)) = app.session.active().map(|d| (d.doc.clone(), d.selection.slide)) else {
-        dim(ui, "No presentation is open.");
+        dim(ui, tl!("No presentation is open."));
         return;
     };
     let slides = print_slides(&doc, bs, current);
@@ -176,7 +176,7 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.add_space(20.0);
         ui.vertical(|ui| match &slides {
             Err(e) => dim(ui, e),
-            Ok(s) if s.is_empty() => dim(ui, "Nothing to print: every slide in the range is hidden."),
+            Ok(s) if s.is_empty() => dim(ui, tl!("Nothing to print: every slide in the range is hidden.")),
             Ok(s) => preview(app, ui, bs, &doc, s),
         });
     });

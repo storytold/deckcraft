@@ -97,14 +97,14 @@ pub fn split_path(path: &str) -> (String, String) {
 fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
     let t = Tokens::get(ui.ctx());
     if app.ui.recent.is_empty() {
-        dim(ui, "Presentations you open show up here. Use Open to browse for one.");
+        dim(ui, tl!("Presentations you open show up here. Use Open to browse for one."));
         return;
     }
     let q = query.trim().to_lowercase();
     let list: Vec<String> =
         app.ui.recent.iter().filter(|p| q.is_empty() || split_path(p).0.to_lowercase().contains(&q)).take(limit).cloned().collect();
     if list.is_empty() {
-        dim(ui, &format!("No recent presentations match “{}”.", query.trim()));
+        dim(ui, &crate::i18n::fmt(tl!("No recent presentations match “{query}”."), &[("query", query.trim())]));
         return;
     }
     let width = ui.available_width().min(CONTENT_W);
@@ -194,7 +194,7 @@ pub(super) fn task(ui: &mut Ui, icon: Icon, button: &str, title: &str, detail: &
         ui.vertical(|ui| {
             ui.add_space(4.0);
             ui.label(RichText::new(title).font(theme::font(15.0)).color(t.text));
-            dim(ui, detail);
+            dim(ui, tl!(detail));
         });
     });
     ui.add_space(14.0);
@@ -278,7 +278,7 @@ pub(super) fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         false
     };
     if !themes && !templates {
-        dim(ui, &format!("No themes or templates match “{}”.", q.trim()));
+        dim(ui, &crate::i18n::fmt(tl!("No themes or templates match “{query}”."), &[("query", q.trim())]));
     }
 }
 

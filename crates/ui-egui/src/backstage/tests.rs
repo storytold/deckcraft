@@ -859,3 +859,21 @@ fn about_appearance_stays_on_the_page_at_minimum_width() {
     let r = h.query_all_by_role_and_label(Role::ComboBox, "Appearance").next().expect("Appearance selector").rect();
     assert!(r.right() <= 900.0, "Appearance selector ends at {}, inside the window", r.right());
 }
+
+/// File › Info shows the file's location as it is, even when it matches a catalog entry; the
+/// interface text around it is still translated (#2236 review).
+#[test]
+fn info_shows_a_path_literally_and_translates_the_text_around_it() {
+    crate::i18n::use_fixture("de", "@id\tlanguage.name\tDeutsch\n\tNotes\tNotizen\n\tNot saved yet\tNoch nicht gespeichert\n");
+    let mut app = new_app();
+    app.session.active_mut().unwrap().path = Some("Notes".into());
+    app.run("app.language", json!({"language": "de"})).unwrap();
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "info"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_all_by_label("Notizen").next().is_none(), "the path went through the catalog");
+    assert!(h.query_all_by_label("Notes").next().is_some(), "the path is shown as it is");
+    h.state_mut().session.active_mut().unwrap().path = None;
+    h.run_steps(3);
+    assert!(h.query_all_by_label("Noch nicht gespeichert").next().is_some(), "interface text is still looked up");
+}

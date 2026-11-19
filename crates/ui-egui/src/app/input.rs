@@ -20,6 +20,7 @@ impl SlideApp {
             ribbon_tab: egui::Id::unique(("ribbon-tab", self.ui.tab.as_str())),
             ribbon_collapsed: self.ui.ribbon_collapsed,
             ribbon_scroll: self.ribbon_scroll.get(&self.ui.tab).copied().unwrap_or(0),
+            language: crate::i18n::Lang::from_pref(&self.ui.language).code(),
             show: self.show.as_ref().map(show::Show::input_state),
             opening: self.opening.as_ref().map(|o| (egui::Id::unique(("opening", o.path.as_str())), o.generation)),
         }
