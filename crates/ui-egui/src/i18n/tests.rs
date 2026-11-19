@@ -83,7 +83,12 @@ fn app_language_reports_and_changes_the_setting() {
     let v = app.run("app.language", json!({})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some(AUTO), Some("en")));
     let codes: Vec<&str> = v["available"].as_array().unwrap().iter().filter_map(|l| l["code"].as_str()).collect();
-    assert_eq!(codes, ["en", "de"]);
+    // Korean is offered when its catalogs are embedded (a build with `CRAFT_I18N_DIR`).
+    let mut expected = vec!["en", "de"];
+    if CRAFT_I18N.iter().any(|(code, ..)| *code == "ko") {
+        expected.push("ko");
+    }
+    assert_eq!(codes, expected);
     let v = app.run("app.language", json!({"language": "DE"})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some("de"), Some("de")));
     assert_eq!(app.ui.language, "de");
@@ -162,4 +167,27 @@ fn embedded_catalogs_parse_cleanly() {
             assert!(Lang::all().all(|l| l.code() != *code), "{code} is not in the language list");
         }
     }
+}
+
+/// The Korean catalogs reach the strings the UI draws: shared `common.tsv` rows, a two-line ribbon
+/// label, a placeholder status line and the regional system tags. Skipped without `CRAFT_I18N_DIR`.
+#[test]
+fn the_korean_catalog_translates_core_labels() {
+    let Some(korean) = Lang::from_code("ko") else {
+        eprintln!("skipped: the ko catalogs are not embedded");
+        return;
+    };
+    assert_eq!(korean.name(), "한국어");
+    assert_eq!(tr(korean, "Insert"), "삽입");
+    assert_eq!(tr(korean, "Cancel"), "취소");
+    assert_eq!(tr(korean, "New\nSlide"), "새\n슬라이드");
+    assert_eq!(fmt(tr(korean, "Slide {n} of {total}"), &[("n", "1"), ("total", "8")]), "슬라이드 1/8");
+    for tag in ["ko", "ko-KR", "ko_KR.UTF-8"] {
+        assert_eq!(lang_from_tag(tag), Some(korean), "{tag}");
+    }
+    // Korean has one plural form: 항목 1개, 항목 2개, 항목 0개.
+    let count = |n| korean.i18n().trn(korean.lang, n, "{n} item", "{n} items");
+    assert_eq!(count(0), "항목 0개");
+    assert_eq!(count(1), "항목 1개");
+    assert_eq!(count(2), "항목 2개");
 }
