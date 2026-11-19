@@ -32,16 +32,11 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 | `engine.execute` / `ui.menu.invoke` / `command` | `{command, params}` | Run any command (see `engine.commands`; `deckcraft-cli describe COMMAND` documents one) |
 | `engine.commands` | — | Every command: id, label, menu path, shortcut, params doc, enabled / disabled reason |
 | `document.inspect` | — | Slides, sections, layouts, shapes, selection |
-| `slide.actions` | `{index?}` | Actions on one slide; returns `{index, slideId, actions}`. Each action has an `owner` (shape id/name and group path; text actions also include paragraph/run indexes and run text, plus table row/cell indexes for table text), `event` (`click`, `hover`, `textLink`, or `textHover`), action `type`, `target`, and the full `hyperlink`. Listing is read-only and never executes an action. An empty slide returns `"actions": []`. |
-| `ui.inspect` | — | UI state, active tool, window/canvas/slide rects, dialog, `home` (the File tab open over a presentation), `backstage` (its page, also the start screen), slide show state (`grid`, `zoomArm`, `zoom`, `blank`, `presenterPaused`, `presenterSecs`, `notesPx`, `custom`, `goto`; `cells` while See All Slides is open), documents, perf (fps, render ms) |
-| `ui.inspect` | — | UI state, active tool, window/canvas/slide rects, dialog, `home` (the File tab open over a presentation), `backstage` (its page, also the start screen), slide show state, `animPreview` (canvas playback: slide, time, duration), documents, perf (fps, render ms) |
+| `ui.inspect` | — | UI state, active tool, window/canvas/slide rects, dialog, `home` (the File tab over an open presentation), `backstage` (the current File page, including the start screen), slide show state (`grid`, `zoomArm`, `zoom`, `blank`, `presenterPaused`, `presenterSecs`, `notesPx`, `custom`, `goto`; `cells` when See All Slides is open), `animPreview` (canvas playback: slide, time, duration), documents, perf (fps, render ms) |
 | `ui.tool.select` | `{tool, preset?}` | `select`, `text`, `shape` + preset, any preset name, `curve`, `freeform`, `scribble`, `pen`, `highlighter`, `eraser` |
-| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick\|contextclick, x, y, mods?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse (`contextclick`: the right-button press that selects before the context menu) |
-| `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show: digits then Enter go to that slide, G is See All Slides, Z arms zoom, T pauses the presenter timer, R resets it, `[` and `]` change notes size, Esc clears a slide number, the grid and zoom before it leaves the show) |
-| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick, x, y, mods?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse |
-| `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show; Escape stops the canvas animation preview) |
-| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick, x, y, mods?, pressure?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse. `pressure` is `0..=1` for a pen; omit it for a mouse |
-| `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show) |
+| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick\|contextclick, x, y, mods?, pressure?}], mods?}` | Send slide-point pointer events through the active tool's mouse path. `contextclick` performs the right-click selection used by context menus; `pressure` is `0..=1` for a pen and can be omitted for a mouse |
+| `ui.key` | `{key, shift?, alt?, cmd?}` | Send a key press. During an active slide show, digits followed by Enter jump to that slide; G opens See All Slides, Z arms zoom, T toggles the presenter timer's pause, R resets it, and `[` / `]` resize notes. Esc clears a typed slide number or backs out of the grid/zoom before ending the active show. Close See All Slides with Esc or G before using the other listed show shortcuts. Slide-show keys ignore modifier flags; use `show.end` to leave the end-of-show screen. Outside a show, Escape stops canvas animation preview |
+| `ui.text` | `{text}` | Insert into the current text edit. With one shape selected and no active text edit, begin editing and replace the shape's existing text |
 | `ui.ime` | `{preedit, active?: [start, end]}` / `{commit}` | An input method's composition through egui, as a real one arrives: shown in place on the slide or in a focused field; `{"preedit": ""}` cancels |
 | `ui.move` / `ui.click` / `ui.drag` | screen points | Real egui pointer input — reaches every widget, menu and pane |
 | `ui.set` | `{tab?, view?, pane?, notes?, zoom?, brightness?, ruler?, gridlines?, guides?, …}` | UI state (returns the full state) |
@@ -54,3 +49,18 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 
 The MCP server (`deckcraft-cli mcp`, see [mcp.md](mcp.md)) wraps the same methods for Claude
 and other agents; `deckcraft-cli app --method METHOD [PARAMS]` sends one request from a shell.
+
+## Inspecting slide actions
+
+Run the `slide.actions` engine command through `engine.execute`:
+
+```json
+{"id": 2, "method": "engine.execute", "params": {"command": "slide.actions", "params": {"index": 0}}}
+```
+
+`index` is zero-based and optional; omitting it inspects the selected slide. The reply's `result`
+contains `{index, slideId, actions}`. Each action includes an `owner` with the shape id/name and
+its group path; text actions also identify the paragraph/run and run text, plus the table row/cell
+for table text. Actions report their `event` (`click`, `hover`, `textLink`, or `textHover`),
+`type`, `target`, and full `hyperlink`. Inspection never runs an action. A slide without actions
+returns `"actions": []`.

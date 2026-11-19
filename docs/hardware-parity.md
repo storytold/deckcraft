@@ -23,7 +23,7 @@ because it mostly follows from hardware use.
 
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
-| Video decode | Hardware (AVFoundation/VideoToolbox, Media Foundation) | Software only: pure-Rust H.264, HEVC, VP9, AV1 (`crates/h264`, `hevc`, `vp9`, `av1`) |
+| Video decode | Hardware (AVFoundation/VideoToolbox, Media Foundation) | Software only: pure-Rust H.264, HEVC, VP9, AV1 (craft-video, from craft-libs) |
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
 | Microphone (record audio, narration) | yes | no |
