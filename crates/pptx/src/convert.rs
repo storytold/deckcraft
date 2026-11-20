@@ -1280,7 +1280,7 @@ fn chart_kept_from(k: cd_chart::ChartKept) -> dm_chart::ChartKept {
 }
 
 fn chart_to(c: &dm_chart::Chart) -> cd_chart::Chart {
-    cd_chart::Chart {
+    let mut out = cd_chart::Chart {
         kind: chart_type_to(c.kind),
         title: c.title.clone(),
         categories: c.categories.clone(),
@@ -1332,7 +1332,19 @@ fn chart_to(c: &dm_chart::Chart) -> cd_chart::Chart {
         raw: c.raw.clone(),
         verbatim: c.verbatim,
         kept: chart_kept_to(&c.kept),
+    };
+    if !c.verbatim
+        && let Some(raw) = &c.raw
+        && let Some(parsed) = cd_chart::read::read_chart_xml(raw.as_bytes()).or_else(|| cd_chart::chartex::read_chartex_xml(raw.as_bytes()))
+    {
+        out.data_table = parsed.data_table;
+        out.first_slice_angle = parsed.first_slice_angle;
+        out.pivot_source = parsed.pivot_source;
+        for (dst, src) in out.series.iter_mut().zip(parsed.series.into_iter()) {
+            dst.refs = src.refs;
+        }
     }
+    out
 }
 
 fn chart_from(c: cd_chart::Chart) -> dm_chart::Chart {
