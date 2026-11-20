@@ -1220,7 +1220,10 @@ impl Renderer {
             mask.set_fill_rule(if even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
             mask.push_clip_layer(path);
             if upright {
-                paint::picture(&mut mask, rctx.pres, pf, src.m.transform_rect_bbox(bounds), device_to_mask, src.gif_time);
+                // Drawn in device pixels, as the visible fill is, so a tile (given in shape units)
+                // is sized to pixels first.
+                let tiled = paint::tiled_picture_per_point(pf, (c[0].hypot(c[1]), c[2].hypot(c[3])));
+                paint::picture(&mut mask, rctx.pres, &tiled, src.m.transform_rect_bbox(bounds), device_to_mask, src.gif_time);
             } else {
                 paint::picture(&mut mask, rctx.pres, pf, bounds, plan.to_mask, src.gif_time);
             }

@@ -3627,6 +3627,23 @@ fn a_picture_glow_matches_upright_picture_fill_mapping() {
     }
 }
 
+#[test]
+fn a_picture_glow_sizes_an_upright_tiled_fill_like_its_face() {
+    // A 64 px tile at twice its size is 96 pt wide; its right half is opaque. The square is
+    // turned a quarter, so the upright fill is drawn in device pixels, at 2x here.
+    let mut p = picture_glow_deck(255, false, true, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
+    let Some(Fill::Picture(fill)) = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0].fill else { panic!("picture fill fixture") };
+    fill.upright = true;
+    fill.mode = deckcraft_model::style::PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 2.0, sy: 2.0, flip: "none".into(), align: "tl".into() };
+    let image = render_slide(&p, 0, &RenderOpts { scale: 2.0, ..Default::default() });
+    let at = |x: f64, y: f64| glow_sample(&image, Point::new(x, y), 2.0);
+    // The face: opaque from 148 to 196 pt across, clear from 196 to 244.
+    assert_eq!(at(172.0, 180.0)[..3], [220, 30, 20], "the face's tile is 96 pt wide");
+    assert!(at(199.0, 180.0)[0] > 60, "the opaque column casts its glow");
+    // A tile sized in shape units on the device-pixel mask would be half as wide and opaque here.
+    assert_eq!(at(226.0, 180.0)[..3], [40, 110, 60], "the clear column far from the opaque ones casts no glow");
+}
+
 fn upright_picture_background_alpha(gradient: bool) -> Image {
     let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
     let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
