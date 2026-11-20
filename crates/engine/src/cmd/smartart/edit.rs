@@ -38,7 +38,7 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     let st = s.doc()?;
     let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(cmd, "no slide"))?;
     let ids = targets(s, p)?;
-    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a SmartArt graphic"))
+    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a Diagram graphic"))
 }
 
 /// Children with fresh ids for diagram `d` inside a group whose child space is `area`.
@@ -55,7 +55,7 @@ fn edit_diagram<T>(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Di
     let gid = target_group(s, p, cmd)?;
     s.edit(|doc, sel| {
         let g = current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, gid)).cloned().ok_or_else(|| bad(cmd, "no such shape"))?;
-        let (ShapeKind::Group { children, child }, Some(mut d)) = (g.kind, g.diagram) else { return Err(bad(cmd, "not a SmartArt graphic")) };
+        let (ShapeKind::Group { children, child }, Some(mut d)) = (g.kind, g.diagram) else { return Err(bad(cmd, "not a Diagram graphic")) };
         sync_text(&mut d, &children);
         let out = f(&mut d)?;
         normalize(&mut d.nodes);
@@ -90,7 +90,7 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
         let g = Shape {
             id,
-            name: format!("SmartArt ({kind})"),
+            name: format!("Diagram ({kind})"),
             xfrm: Some(area),
             kind: ShapeKind::Group { children, child: area },
             diagram: Some(d),
@@ -201,7 +201,7 @@ pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
         let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let g = Shape {
             id: gid,
-            name: format!("SmartArt ({kind})"),
+            name: format!("Diagram ({kind})"),
             xfrm: Some(area),
             kind: ShapeKind::Group { children, child: area },
             diagram: Some(d),
@@ -222,12 +222,12 @@ pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
 pub(super) fn to_text(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.toText";
     let gid = target_group(s, p, CMD)?;
-    let (_, d) = selected_for(s, gid).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+    let (_, d) = selected_for(s, gid).ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
     // The sizes the graphic's text shows at: its titles' and its bullets' (shrunk to fit included).
     let (title_pt, bullet_pt) = {
         let st = s.doc()?;
         let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(CMD, "no slide"))?;
-        let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "select a SmartArt graphic"))?;
+        let g = diagram_group(shapes, gid).ok_or_else(|| bad(CMD, "select a Diagram graphic"))?;
         text_sizes(g.children())
     };
     let new = s.edit(|doc, sel| {

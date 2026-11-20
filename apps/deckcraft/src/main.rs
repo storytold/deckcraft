@@ -118,9 +118,10 @@ fn open_filters(purpose: &str) -> &'static [(&'static str, &'static [&'static st
         "video" => &[("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"])],
         "theme" => &[("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]), ("Office Theme", &["thmx"])],
         _ => &[
-            ("Presentations", &["deckcraft", "pptx", "potx", "ppsx"]),
+            ("Presentations", &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps"]),
             ("DeckCraft", &["deckcraft"]),
             ("PowerPoint", &["pptx", "potx", "ppsx"]),
+            ("PowerPoint 97-2003", &["ppt", "pot", "pps"]),
             ("Outline", &["txt", "md"]),
         ],
     }
@@ -470,12 +471,16 @@ mod tests {
             .collect();
         win.sort();
 
-        let mime_ext = |m: &str| match m {
-            "application/x-deckcraft" => Some("deckcraft"),
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.template" => Some("potx"),
-            "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => Some("ppsx"),
-            _ => None,
+        // One MIME type covers all three PowerPoint 97-2003 extensions.
+        let mime_exts = |m: &str| -> Option<&[&str]> {
+            Some(match m {
+                "application/x-deckcraft" => &["deckcraft"],
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation" => &["pptx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.template" => &["potx"],
+                "application/vnd.openxmlformats-officedocument.presentationml.slideshow" => &["ppsx"],
+                "application/vnd.ms-powerpoint" => &["ppt", "pot", "pps"],
+                _ => return None,
+            })
         };
         let mut linux: Vec<String> = desktop
             .lines()
@@ -483,7 +488,8 @@ mod tests {
             .unwrap_or_default()
             .split(';')
             .filter(|m| !m.is_empty())
-            .map(|m| mime_ext(m).unwrap_or(m).to_string()) // an unknown MIME type shows up in the diff
+            // An unknown MIME type shows up in the diff.
+            .flat_map(|m| mime_exts(m).map_or_else(|| vec![m.to_string()], |e| e.iter().map(|x| x.to_string()).collect()))
             .collect();
         linux.sort();
 
