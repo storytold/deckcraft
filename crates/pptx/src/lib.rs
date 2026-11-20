@@ -120,7 +120,52 @@ fn has_unfolded_paragraph_builds(p: &Presentation) -> bool {
     p.slides.iter().any(|s| s.animations.windows(2).any(|w| w[0].paragraph.is_some() && w[1].paragraph.is_some() && w[0].shape == w[1].shape))
 }
 
-fn slide_opt_out_spids(bytes: &[u8]) -> Vec<std::collections::HashSet<u32>> {
+#[derive(Default)]
+struct SlideTimingInfo {
+    opt_out: std::collections::HashSet<u32>,
+    offsets: std::collections::HashMap<(u32, u32), u32>,
+}
+
+fn timing_ms(e: &craft_xml::El, name: &str) -> Option<u32> {
+    let v = e.attr_local(name)?.trim();
+    if v == "indefinite" {
+        return None;
+    }
+    v.parse::<f64>().ok().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n.min(u32::MAX as f64) as u32)
+}
+
+fn collect_timing_offsets(e: &craft_xml::El, offset: u32, out: &mut std::collections::HashMap<(u32, u32), u32>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for c in e.elements() {
+        if c.is(craft_xml::Local("cTn")) && c.attr_local("presetClass").is_some() {
+            if let Some(sp) = c.find(craft_xml::Local("spTgt"))
+                && let Some(spid) = sp.attr_local("spid").and_then(craft_xml::value::to_u32_lossy)
+                && let Some(p) = sp
+                    .path(&[craft_xml::Local("txEl"), craft_xml::Local("pRg")])
+                    .and_then(|r| r.attr_local("st"))
+                    .and_then(craft_xml::value::to_u32_lossy)
+            {
+                out.entry((spid, p)).or_insert(offset);
+            }
+            continue;
+        }
+        let mut next_offset = offset;
+        if c.is(craft_xml::Local("cTn"))
+            && let Some(cond) = c.path(&[craft_xml::Local("stCondLst"), craft_xml::Local("cond")])
+        {
+            if cond.attr_local("delay").map(str::trim) == Some("indefinite") {
+                next_offset = 0;
+            } else {
+                next_offset = next_offset.saturating_add(timing_ms(cond, "delay").unwrap_or(0));
+            }
+        }
+        collect_timing_offsets(c, next_offset, out, depth + 1);
+    }
+}
+
+fn slide_timing_info(bytes: &[u8]) -> Vec<SlideTimingInfo> {
     let Ok(mut pkg) = craft_opc::LazyPackage::open(bytes, &craft_pptx::LIMITS) else {
         return vec![];
     };
@@ -138,21 +183,24 @@ fn slide_opt_out_spids(bytes: &[u8]) -> Vec<std::collections::HashSet<u32>> {
     };
     let mut out = Vec::new();
     for s in list.children(craft_xml::Local("sldId")).take(MAX_SLIDE_ENTRIES) {
-        let mut set = std::collections::HashSet::new();
+        let mut info = SlideTimingInfo::default();
         if let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid))
             && let Ok(Some(sb)) = pkg.read_limited(target, craft_pptx::MAX_XML_PART as u64)
             && let Ok(se) = craft_drawingml::xmlx::parse(&sb)
-            && let Some(bld_lst) = se.path(&[craft_xml::Local("timing"), craft_xml::Local("bldLst")])
+            && let Some(timing) = se.child(craft_xml::Local("timing"))
         {
-            for b in bld_lst.children(craft_xml::Local("bldP")) {
-                if b.attr_local("build").unwrap_or("") != "p"
-                    && let Some(spid) = b.attr_local("spid").and_then(craft_xml::value::to_u32_lossy)
-                {
-                    set.insert(spid);
+            collect_timing_offsets(timing, 0, &mut info.offsets, 0);
+            if let Some(bld_lst) = timing.child(craft_xml::Local("bldLst")) {
+                for b in bld_lst.children(craft_xml::Local("bldP")) {
+                    if b.attr_local("build").unwrap_or("") != "p"
+                        && let Some(spid) = b.attr_local("spid").and_then(craft_xml::value::to_u32_lossy)
+                    {
+                        info.opt_out.insert(spid);
+                    }
                 }
             }
         }
-        out.push(set);
+        out.push(info);
     }
     out
 }
@@ -162,10 +210,32 @@ fn span_ms(a: &deckcraft_model::anim::Animation) -> u32 {
     a.duration_ms.saturating_mul(if a.auto_reverse { 2 } else { 1 }).saturating_mul(iterations)
 }
 
-fn plays_as_build(effects: &[&deckcraft_model::anim::Animation], text: &deckcraft_model::text::TextBody) -> bool {
+fn flat_starts(anims: &[&deckcraft_model::anim::Animation]) -> Vec<u32> {
+    let (mut begin, mut end) = (0u32, 0u32);
+    anims
+        .iter()
+        .map(|a| {
+            if a.start == deckcraft_model::anim::AnimStart::AfterPrevious {
+                begin = end;
+            }
+            let start = begin.saturating_add(a.delay_ms);
+            end = end.max(start.saturating_add(span_ms(a)));
+            start
+        })
+        .collect()
+}
+
+fn plays_as_build(effects: &[&deckcraft_model::anim::Animation], offsets: &[u32], text: &deckcraft_model::text::TextBody) -> bool {
     use deckcraft_model::anim::{AnimStart, Animation, BuildRole, build_filled, paragraph_build_roles};
     let Some(first) = effects.first() else { return false };
-    if first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0) {
+    let off0 = offsets.first().copied().unwrap_or(0);
+    let flat = flat_starts(effects);
+    let parent_starts_match = offsets
+        .iter()
+        .zip(effects.iter())
+        .zip(flat.iter())
+        .all(|((&off, a), &ft)| off == off0 || off.saturating_add(a.delay_ms) == off0.saturating_add(ft));
+    if !parent_starts_match || (first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0 || off0 != 0)) {
         return false;
     }
     let roles = paragraph_build_roles(text);
@@ -193,7 +263,7 @@ fn plays_as_build(effects: &[&deckcraft_model::anim::Animation], text: &deckcraf
     matched == effects.len()
 }
 
-fn fold_slide_paragraph_builds(slide: &mut deckcraft_model::Slide, opt_out: &std::collections::HashSet<u32>) {
+fn fold_slide_paragraph_builds(slide: &mut deckcraft_model::Slide, info: &SlideTimingInfo) {
     use deckcraft_model::anim::{Animation, TextBuild};
     let same = |x: &Animation, y: &Animation| {
         x.paragraph.is_some()
@@ -202,16 +272,17 @@ fn fold_slide_paragraph_builds(slide: &mut deckcraft_model::Slide, opt_out: &std
             && y.text_build == TextBuild::AsOne
             && x.shape == y.shape
             && x.trigger == y.trigger
-            && !opt_out.contains(&x.shape.0)
+            && !info.opt_out.contains(&x.shape.0)
     };
     let mut folded = Vec::with_capacity(slide.animations.len());
     for run in slide.animations.chunk_by(same) {
         let effects: Vec<&Animation> = run.iter().collect();
+        let offsets: Vec<u32> = run.iter().map(|a| a.paragraph.and_then(|p| info.offsets.get(&(a.shape.0, p)).copied()).unwrap_or(0)).collect();
         let text = effects.first().and_then(|a| deckcraft_model::find_shape(&slide.shapes, a.shape)).and_then(|s| s.text.as_ref());
         if run.len() > 1
             && let (Some(first), Some(text)) = (effects.first(), text)
-            && !opt_out.contains(&first.shape.0)
-            && plays_as_build(&effects, text)
+            && !info.opt_out.contains(&first.shape.0)
+            && plays_as_build(&effects, &offsets, text)
         {
             folded.push(Animation { text_build: TextBuild::ByParagraph, paragraph: None, ..(*first).clone() });
         } else {
@@ -225,11 +296,11 @@ fn fold_paragraph_builds(bytes: &[u8], pres: &mut Presentation) {
     if !has_unfolded_paragraph_builds(pres) {
         return;
     }
-    let opt_outs = slide_opt_out_spids(bytes);
-    let empty = std::collections::HashSet::new();
+    let infos = slide_timing_info(bytes);
+    let empty = SlideTimingInfo::default();
     for (i, slide) in pres.slides.iter_mut().enumerate() {
-        let opt_out = opt_outs.get(i).unwrap_or(&empty);
-        fold_slide_paragraph_builds(std::sync::Arc::make_mut(slide), opt_out);
+        let info = infos.get(i).unwrap_or(&empty);
+        fold_slide_paragraph_builds(std::sync::Arc::make_mut(slide), info);
     }
 }
 
