@@ -13,8 +13,16 @@ repository = "https://github.com/storytold/deckcraft"
 [workspace.dependencies]
 # OPC part-name primitives; relationship admission stays app-local.
 craft-opc = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
+# Compound File Binary directory reads (password-protected deck detection).
+craft-cfb = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
 # XML writer primitives; parser admission and OOXML policy stay app-local.
 craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "ea24422ae9859dc5da398d0462bc87f8e02e0d10", version = "0.1.0" }
+# DrawingML colours, themes and text (craft-libs#778, #792): the model DeckCraft reads and writes.
+# Isolated table XML writer; existing DrawingML model/readers keep their revision.
+craft-drawingml-table = { package = "craft-drawingml", git = "https://github.com/storytold/craft-libs", rev = "cff5af869dbf6926801c9ac63a927d155202ba3b" }
+craft-drawingml = { git = "https://github.com/storytold/craft-libs", rev = "44d83fa8f635333dcb3c231f87381387a1f5631b", version = "0.1.0" }
+# Shared MCP stdio framing and protocol constants (craft-libs#778).
+craft-mcp-server = { git = "https://github.com/storytold/craft-libs", rev = "bc186ca719958fcce3b6ee24794277eabed14609", version = "0.1.0" }
 # internal
 deckcraft-geom = { path = "crates/geom" }
 deckcraft-color = { path = "crates/color" }
@@ -58,10 +66,10 @@ craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "254e9a409
 # The .deckcraft package layer (identity, manifest, member names, bounded reads); crates/format maps the presentation onto it.
 craft-deckcraft-format = { git = "https://github.com/storytold/craft-libs", rev = "254e9a409b410dc93c0e06ff66cd1e767893ac32", version = "=0.1.0" }
 craft-rtf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
-craft-media = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false }
-craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
+craft-media = { git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890", version = "=0.1.0", default-features = false }
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890", version = "=0.1.0", default-features = false, features = ["opus-decode"] }
 # H.264, HEVC, VP9 and AV1 decoders.
-craft-video = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["h264-decode", "hevc-decode", "vp9-decode", "av1-decode", "threads"] }
+craft-video = { git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890", version = "=0.1.0", default-features = false, features = ["h264-decode", "hevc-decode", "vp9-decode", "av1-decode", "threads"] }
 # WMF, EMF and EMF+ reader.
 craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
