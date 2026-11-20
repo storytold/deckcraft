@@ -25,6 +25,46 @@ impl El {
         local_of(&self.name)
     }
 
+    pub fn prefix(&self) -> &str {
+        self.name.split_once(':').map_or("", |(p, _)| p)
+    }
+
+    pub fn is(&self, local: &str) -> bool {
+        self.local() == local
+    }
+
+    pub fn to_xml(&self) -> String {
+        let mut out = String::new();
+        self.write_xml(&mut out);
+        out
+    }
+
+    fn write_xml(&self, out: &mut String) {
+        out.push('<');
+        out.push_str(&self.name);
+        for (k, v) in &self.attrs {
+            out.push(' ');
+            out.push_str(k);
+            out.push_str("=\"");
+            craft_xml::push_esc_attr(out, v);
+            out.push('"');
+        }
+        if self.children.is_empty() {
+            out.push_str("/>");
+            return;
+        }
+        out.push('>');
+        for c in &self.children {
+            match c {
+                Node::El(e) => e.write_xml(out),
+                Node::Text(t) => craft_xml::push_esc(out, t),
+            }
+        }
+        out.push_str("</");
+        out.push_str(&self.name);
+        out.push('>');
+    }
+
     pub fn attr(&self, name: &str) -> Option<&str> {
         self.attrs.iter().find(|(k, _)| k == name || local_of(k) == name).map(|(_, v)| v.as_str())
     }
