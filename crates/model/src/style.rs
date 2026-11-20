@@ -51,7 +51,7 @@ impl ColorRef {
             ColorBase::Scheme { slot: SchemeSlot::PhClr } => ph.unwrap_or_else(|| scheme.get(SchemeSlot::Accent1)),
             ColorBase::Scheme { slot } => scheme.get(*slot),
             ColorBase::Preset { name } => deckcraft_color::preset(name).unwrap_or(Rgba::BLACK),
-            ColorBase::System { last, .. } => *last,
+            ColorBase::System { name, last } => deckcraft_color::system_color(name, *last),
         };
         deckcraft_color::apply(base, &self.mods)
     }

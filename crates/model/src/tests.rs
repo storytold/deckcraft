@@ -339,3 +339,13 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
 }
+
+#[test]
+fn system_colours_draw_window_text_black_whatever_was_saved() {
+    let scheme = Presentation::default().masters[0].theme.colors.clone();
+    let system = |name: &str, last| ColorRef { base: style::ColorBase::System { name: name.into(), last }, mods: vec![] };
+    assert_eq!(system("windowText", deckcraft_color::Rgba::WHITE).resolve(&scheme, None), deckcraft_color::Rgba::BLACK);
+    assert_eq!(system("window", deckcraft_color::Rgba::rgb(0x2D, 0x32, 0x36)).resolve(&scheme, None), deckcraft_color::Rgba::WHITE);
+    let saved = deckcraft_color::Rgba::rgb(0x12, 0x34, 0x56);
+    assert_eq!(system("btnFace", saved).resolve(&scheme, None), saved);
+}
