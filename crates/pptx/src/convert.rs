@@ -1347,8 +1347,26 @@ fn chart_to(c: &dm_chart::Chart) -> cd_chart::Chart {
     out
 }
 
+fn apply_series_dlbls_delete(raw: &str, series: &mut [dm_chart::Series]) {
+    let Ok(root) = craft_drawingml::xmlx::parse(raw.as_bytes()) else {
+        return;
+    };
+    let Some(pa) = root.path(&[craft_xml::Local("chart"), craft_xml::Local("plotArea")]) else {
+        return;
+    };
+    let sers = pa.elements().flat_map(|g| g.children(craft_xml::Local("ser")));
+    for (ser_el, dst) in sers.zip(series) {
+        let deleted = ser_el
+            .path(&[craft_xml::Local("dLbls"), craft_xml::Local("delete")])
+            .map(|v| v.attr_local("val").and_then(craft_xml::value::to_bool).unwrap_or(true));
+        if deleted == Some(true) {
+            dst.data_labels = Some(false);
+        }
+    }
+}
+
 fn chart_from(c: cd_chart::Chart) -> dm_chart::Chart {
-    dm_chart::Chart {
+    let mut out = dm_chart::Chart {
         kind: chart_type_from(c.kind),
         title: c.title,
         categories: c.categories,
@@ -1397,7 +1415,11 @@ fn chart_from(c: cd_chart::Chart) -> dm_chart::Chart {
         raw: c.raw,
         verbatim: c.verbatim,
         kept: chart_kept_from(c.kept),
+    };
+    if let Some(raw) = &out.raw {
+        apply_series_dlbls_delete(raw, &mut out.series);
     }
+    out
 }
 
 // ---------------------------------------------------------------------------
