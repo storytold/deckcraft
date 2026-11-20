@@ -539,7 +539,7 @@ fn media_needs_timing(clip: &deckcraft_model::MediaClip) -> bool {
         || (clip.video && clip.full_screen)
 }
 
-fn collect_export_media(shapes: &[Shape]) -> Vec<(u32, &deckcraft_model::MediaClip)> {
+fn assign_spids(shapes: &[Shape], mut visit: impl FnMut(u32, &Shape)) {
     let mut used = std::collections::HashSet::new();
     let mut max = 1u32;
     deckcraft_model::walk(shapes, &mut |s, _| {
@@ -548,7 +548,6 @@ fn collect_export_media(shapes: &[Shape]) -> Vec<(u32, &deckcraft_model::MediaCl
         }
     });
     let mut next = max;
-    let mut media = Vec::new();
     deckcraft_model::walk(shapes, &mut |s, _| {
         let spid = if s.id.0 >= 2 && s.id.0 < i32::MAX as u32 && !used.contains(&s.id.0) {
             s.id.0
@@ -557,6 +556,13 @@ fn collect_export_media(shapes: &[Shape]) -> Vec<(u32, &deckcraft_model::MediaCl
             next
         };
         used.insert(spid);
+        visit(spid, s);
+    });
+}
+
+fn collect_export_media(shapes: &[Shape]) -> Vec<(u32, &deckcraft_model::MediaClip)> {
+    let mut media = Vec::new();
+    assign_spids(shapes, |spid, s| {
         if let ShapeKind::Media(clip) = &s.kind
             && media_needs_timing(clip)
         {
@@ -564,6 +570,18 @@ fn collect_export_media(shapes: &[Shape]) -> Vec<(u32, &deckcraft_model::MediaCl
         }
     });
     media
+}
+
+fn collect_grp_fill_pic_spids(shapes: &[Shape]) -> std::collections::HashSet<u32> {
+    let mut spids = std::collections::HashSet::new();
+    assign_spids(shapes, |spid, s| {
+        if s.fill == Some(deckcraft_model::style::Fill::Group)
+            && matches!(s.kind, ShapeKind::Picture { .. } | ShapeKind::Opaque { preview: Some(_), .. })
+        {
+            spids.insert(spid);
+        }
+    });
+    spids
 }
 
 fn write_media_node(w: &mut craft_xml::Writer, id: &mut u32, spid: u32, clip: &deckcraft_model::MediaClip) {
@@ -642,9 +660,46 @@ fn patch_slide_media_timing(xml_bytes: &[u8], media: &[(u32, &deckcraft_model::M
     xml.into_bytes()
 }
 
-fn patch_exported_media_timing(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, PptxError> {
+fn patch_pic_grp_fill(xml_bytes: &[u8], spids: &std::collections::HashSet<u32>) -> Vec<u8> {
+    let Ok(mut xml) = String::from_utf8(xml_bytes.to_vec()) else {
+        return xml_bytes.to_vec();
+    };
+    for &spid in spids {
+        let needle = format!(r#"<p:cNvPr id="{spid}""#);
+        let mut search_from = 0;
+        while let Some(rel) = xml[search_from..].find(&needle) {
+            let start = search_from + rel;
+            let after = start + needle.len();
+            let boundary_ok = xml.as_bytes().get(after).is_some_and(|b| matches!(b, b' ' | b'/' | b'>'));
+            if boundary_ok
+                && let Some(pic_end_rel) = xml[after..].find("</p:pic>")
+                && let Some(sp_pr_rel) = xml[after..after + pic_end_rel].find("<p:spPr>")
+            {
+                let sp_pr_start = after + sp_pr_rel + "<p:spPr>".len();
+                if let Some(sp_pr_end_rel) = xml[sp_pr_start..after + pic_end_rel].find("</p:spPr>") {
+                    let sp_pr_end = sp_pr_start + sp_pr_end_rel;
+                    let inner = &xml[sp_pr_start..sp_pr_end];
+                    if !inner.contains("<a:grpFill") {
+                        let insert_rel = ["<a:ln", "<a:effectLst", "<a:effectDag", "<a:scene3d", "<a:sp3d", "<a:extLst"]
+                            .iter()
+                            .filter_map(|tag| inner.find(tag))
+                            .min()
+                            .unwrap_or(sp_pr_end_rel);
+                        xml.insert_str(sp_pr_start + insert_rel, "<a:grpFill/>");
+                    }
+                    break;
+                }
+            }
+            search_from = after;
+        }
+    }
+    xml.into_bytes()
+}
+
+fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, PptxError> {
     let slide_media: Vec<Vec<(u32, &deckcraft_model::MediaClip)>> = p.slides.iter().map(|s| collect_export_media(&s.shapes)).collect();
-    if slide_media.iter().all(Vec::is_empty) {
+    let slide_grp_pics: Vec<std::collections::HashSet<u32>> = p.slides.iter().map(|s| collect_grp_fill_pic_spids(&s.shapes)).collect();
+    if slide_media.iter().all(Vec::is_empty) && slide_grp_pics.iter().all(std::collections::HashSet::is_empty) {
         return Ok(bytes);
     }
     let pkg = craft_opc::Package::open(&bytes, &craft_pptx::LIMITS).map_err(|e| PptxError::Write(e.to_string()))?;
@@ -657,14 +712,22 @@ fn patch_exported_media_timing(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u
         && let Some(list) = pres_el.child(craft_xml::Local("sldIdLst"))
     {
         for (i, s) in list.children(craft_xml::Local("sldId")).enumerate() {
-            let Some(media) = slide_media.get(i) else { break };
-            if media.is_empty() {
+            let media = slide_media.get(i).map(Vec::as_slice).unwrap_or(&[]);
+            let grp_pics = slide_grp_pics.get(i);
+            let need_grp = grp_pics.is_some_and(|g| !g.is_empty());
+            if media.is_empty() && !need_grp {
                 continue;
             }
             if let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid))
                 && let Some(sb) = pkg.get(target)
             {
-                patches.insert(target.to_string(), patch_slide_media_timing(sb, media));
+                let mut patched = if media.is_empty() { sb.to_vec() } else { patch_slide_media_timing(sb, media) };
+                if let Some(g) = grp_pics
+                    && !g.is_empty()
+                {
+                    patched = patch_pic_grp_fill(&patched, g);
+                }
+                patches.insert(target.to_string(), patched);
             }
         }
     }
@@ -685,7 +748,7 @@ fn patch_exported_media_timing(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u
 pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
     check_table_caps(p)?;
     let bytes = craft_pptx::export(&convert::pres_to_craft(p), &DeckDefaults)?;
-    patch_exported_media_timing(p, bytes)
+    patch_exported_slides(p, bytes)
 }
 
 /// Write a package for `ext`: `potx` (template) and `ppsx` (slide show) differ from `pptx` only in
@@ -693,7 +756,7 @@ pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
 pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
     check_table_caps(p)?;
     let bytes = craft_pptx::export_as(&convert::pres_to_craft(p), &DeckDefaults, ext)?;
-    patch_exported_media_timing(p, bytes)
+    patch_exported_slides(p, bytes)
 }
 
 #[cfg(test)]
