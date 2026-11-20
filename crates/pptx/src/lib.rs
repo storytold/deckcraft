@@ -539,7 +539,7 @@ fn media_needs_timing(clip: &deckcraft_model::MediaClip) -> bool {
         || (clip.video && clip.full_screen)
 }
 
-fn collect_export_media<'a>(shapes: &'a [Shape]) -> Vec<(u32, &'a deckcraft_model::MediaClip)> {
+fn collect_export_media(shapes: &[Shape]) -> Vec<(u32, &deckcraft_model::MediaClip)> {
     let mut used = std::collections::HashSet::new();
     let mut max = 1u32;
     deckcraft_model::walk(shapes, &mut |s, _| {
