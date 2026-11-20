@@ -3644,6 +3644,44 @@ fn a_picture_glow_sizes_an_upright_tiled_fill_like_its_face() {
     assert_eq!(at(226.0, 180.0)[..3], [40, 110, 60], "the clear column far from the opaque ones casts no glow");
 }
 
+#[test]
+fn a_picture_glow_snaps_tiles_to_screen_pixels_in_a_downsampled_mask() {
+    // A 2400 pt picture at 2x needs a downsampled mask (0.85 px per pt). Its 52.5 pt tiles are 105
+    // whole screen pixels, but 44.5 mask pixels: rounded there, each tile would drift by half a
+    // point, 44 tiles drift by a whole column, and an opaque stripe of the mask would sit in the
+    // middle of a clear stretch of the picture on screen.
+    let stripes = {
+        let image = image::RgbaImage::from_fn(64, 64, |x, _| image::Rgba([220, 30, 20, if x < 8 { 255 } else { 0 }]));
+        let mut bytes = std::io::Cursor::new(vec![]);
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    };
+    let tile = deckcraft_model::style::PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 1.09375, sy: 1.09375, flip: "none".into(), align: "tl".into() };
+    // A picture, a shape's picture fill, and a picture's own fill behind its (clear) pixels.
+    for case in ["picture", "fill", "background"] {
+        let mut p = picture_glow_deck(255, false, case == "fill", [0.0; 4], Xfrm::new(-1500.0, 200.0, 2400.0, 100.0));
+        assert!(p.slide_size.width >= 880.0);
+        let media = p.add_media("original-stripes.png", "image/png", stripes.clone()).unwrap();
+        let tiled = deckcraft_model::style::PictureFill { media, mode: tile.clone(), ..Default::default() };
+        let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
+        match case {
+            "fill" => shape.fill = Some(Fill::Picture(tiled)),
+            "picture" => shape.kind = ShapeKind::Picture { fill: tiled },
+            _ => {
+                let ShapeKind::Picture { fill } = &mut shape.kind else { panic!("picture fixture") };
+                fill.alpha = Some(0.0);
+                shape.fill = Some(Fill::Picture(tiled));
+            }
+        }
+        let image = render_slide(&p, 0, &RenderOpts { scale: 2.0, ..Default::default() });
+        let at = |x: f64| glow_sample(&image, Point::new(x, 250.0), 2.0);
+        // The 45th tile's stripe covers 810 to 816.6 pt on the slide.
+        assert_eq!(at(813.0)[..3], [220, 30, 20], "{case}: the stripe is where the face draws it");
+        assert!(at(819.5)[0] > 60, "{case}: the stripe casts its glow");
+        assert_eq!(at(838.5)[..3], [40, 110, 60], "{case}: 22 pt from any stripe, the picture casts no glow");
+    }
+}
+
 fn upright_picture_background_alpha(gradient: bool) -> Image {
     let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
     let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];

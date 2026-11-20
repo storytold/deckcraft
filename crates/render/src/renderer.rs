@@ -1223,9 +1223,11 @@ impl Renderer {
                 // Drawn in device pixels, as the visible fill is, so a tile (given in shape units)
                 // is sized to pixels first.
                 let tiled = paint::tiled_picture_per_point(pf, (c[0].hypot(c[1]), c[2].hypot(c[3])));
-                paint::picture(&mut mask, rctx.pres, &tiled, src.m.transform_rect_bbox(bounds), device_to_mask, src.gif_time);
+                let on_slide = src.m.transform_rect_bbox(bounds);
+                paint::picture_in_view(&mut mask, rctx.pres, &tiled, on_slide, Affine::IDENTITY, device_to_mask, src.gif_time);
             } else {
-                paint::picture(&mut mask, rctx.pres, pf, bounds, plan.to_mask, src.gif_time);
+                // Tiles snap to device pixels, as the face's do, even when the mask is downsampled.
+                paint::picture_in_view(&mut mask, rctx.pres, pf, bounds, src.m, device_to_mask, src.gif_time);
             }
             mask.pop_layer();
         };

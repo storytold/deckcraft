@@ -114,12 +114,12 @@ pub(crate) fn fill_path_in_view(
                 // Drawn in device pixels, so a tile (given in shape units) is sized to pixels first.
                 let tiled = tiled_per_point(fill, (c[0].hypot(c[1]), c[2].hypot(c[3])));
                 let upright = if let Fill::Picture(p) = tiled.as_ref() { p } else { pf };
-                picture(ctx, pres, &resolved(rctx, upright, ph), on_slide, view, None);
+                picture_in_view(ctx, pres, &resolved(rctx, upright, ph), on_slide, Affine::IDENTITY, view, None);
                 ctx.pop_layer();
                 return;
             }
             ctx.push_clip_layer(path);
-            picture(ctx, pres, &resolved(rctx, pf, ph), bounds, mapped, None);
+            picture_in_view(ctx, pres, &resolved(rctx, pf, ph), bounds, m, view, None);
             ctx.pop_layer();
         }
         Fill::Pattern(p) => {
@@ -206,11 +206,27 @@ pub fn circle_gradient(focus: [f64; 4], bounds: Rect, tile: Rect) -> peniko::Gra
 /// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes; an animated
 /// GIF shows its frame at `gif_time` seconds.
 pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, bounds: Rect, m: Affine, gif_time: Option<f64>) {
+    picture_in_view(ctx, pres, pf, bounds, m, Affine::IDENTITY, gif_time);
+}
+
+/// [`picture`] laid out on the output pixels of `m`, then mapped by `view` into another surface
+/// (a downsampled effect mask): a tile keeps the whole-pixel size it has on screen.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn picture_in_view(
+    ctx: &mut RenderContext,
+    pres: &Presentation,
+    pf: &PictureFill,
+    bounds: Rect,
+    m: Affine,
+    view: Affine,
+    gif_time: Option<f64>,
+) {
     let Some(item) = pres.media(pf.media) else {
         missing(ctx, bounds);
         return;
     };
-    let px_scale = crate::scale_of(m);
+    let mapped = view * m;
+    let px_scale = crate::scale_of(mapped);
     let dest = match &pf.mode {
         PictureMode::Stretch { fill_rect } => {
             let [l, t, r, b] = *fill_rect;
@@ -270,7 +286,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
                 alpha: 1.0,
             },
         };
-        ctx.set_transform(m);
+        ctx.set_transform(mapped);
         if alpha < 0.999 {
             ctx.push_layer(None, None, Some(alpha as f32), None, None);
         }
@@ -283,7 +299,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         }
         return;
     }
-    draw_image(ctx, &image, iw, ih, dest, m, alpha);
+    draw_image(ctx, &image, iw, ih, dest, mapped, alpha);
 }
 
 /// `fill`, with a tiled picture's tile size and offset moved from points to shape units, given
