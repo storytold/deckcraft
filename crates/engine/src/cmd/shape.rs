@@ -556,6 +556,36 @@ mod tests {
         assert_eq!(line(&s, solid).unwrap().fill, Some(Fill::solid(red)));
     }
 
+    /// 100% makes a line fully transparent, and a theme color keeps its other modifiers next to
+    /// the new alpha, also after a PPTX save and reopen.
+    #[test]
+    fn line_transparency_at_100_percent_keeps_a_theme_colors_other_modifiers() {
+        let mut s = Session::with_new();
+        let rect = |s: &mut Session, x: i32| {
+            ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap() as u32)
+        };
+        let (red, themed) = (rect(&mut s, 40), rect(&mut s, 140));
+        s.execute("shape.line", &json!({"ids": [red], "color": "#ff0000"})).unwrap();
+        s.execute("shape.line", &json!({"ids": [themed], "color": {"scheme": "accent2", "lumMod": 75_000, "lumOff": 10_000}})).unwrap();
+        s.execute("shape.line", &json!({"ids": [red], "transparency": 1.0})).unwrap();
+        s.execute("shape.line", &json!({"ids": [themed], "transparency": 0.25})).unwrap();
+        let line = |doc: &deckcraft_model::Presentation, id: ShapeId| doc.slides[0].shape(id).and_then(|sh| sh.line.clone()).and_then(|l| l.fill);
+        let clear = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0)).with(ColorTransform::Alpha(0))));
+        let accent = Some(Fill::solid(
+            ColorRef::scheme(SchemeSlot::Accent2)
+                .with(ColorTransform::LumMod(75_000))
+                .with(ColorTransform::LumOff(10_000))
+                .with(ColorTransform::Alpha(75_000)),
+        ));
+        assert_eq!(line(&s.doc().unwrap().doc, red), clear);
+        assert_eq!(line(&s.doc().unwrap().doc, themed), accent);
+
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let back = deckcraft_pptx::import(&bytes).unwrap();
+        assert_eq!(line(&back, red), clear);
+        assert_eq!(line(&back, themed), accent);
+    }
+
     #[test]
     fn line_width_and_transparency_together_keep_an_automatic_lines_color() {
         let mut s = Session::with_new();

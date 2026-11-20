@@ -53,11 +53,25 @@ fn doc_revision(app: &SlideApp) -> u64 {
     app.session.active().map_or(0, |d| d.revision)
 }
 
+/// The note Format Shape ▸ Line shows next to a disabled Transparency row.
+const LINE_TRANSPARENCY_SOLID_ONLY: &str = "Transparency applies to solid lines";
+
 /// Format Shape ▸ Line's Transparency row. `shape.line {transparency}` changes a solid line (an
-/// automatic one through its effective color).
+/// automatic one through its effective color); a gradient, pattern or picture line shows the row
+/// disabled.
 fn line_transparency_row(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, effective_line: Option<&Fill>, revision: u64) {
     let line_fill = sh.line.as_ref().and_then(|l| l.fill.as_ref());
     let Some(seed) = line_transparency_percent(line_fill, effective_line) else {
+        if matches!(line_fill.or(effective_line), Some(Fill::Gradient(_) | Fill::Pattern(_) | Fill::Picture(_))) {
+            ui.horizontal(|ui| {
+                let label = ui.label("Transparency");
+                let mut v = 0.0_f32;
+                ui.add_enabled(false, egui::Slider::new(&mut v, 0.0..=100.0).suffix("%"))
+                    .labelled_by(label.id)
+                    .on_disabled_hover_text(LINE_TRANSPARENCY_SOLID_ONLY);
+            });
+            ui.weak(LINE_TRANSPARENCY_SOLID_ONLY);
+        }
         return;
     };
     ui.horizontal(|ui| {
