@@ -1,15 +1,13 @@
 //! JSON-RPC 2.0 framing and the MCP lifecycle / tools / resources methods.
 
-use std::io::{self, BufRead, Write};
+use std::io::{BufRead, Write};
 
+pub use craft_mcp_server::PROTOCOL_VERSION;
+use craft_mcp_server::{Incoming, SUPPORTED_VERSIONS, read_message, response};
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
 use crate::tools::{call_tool, tool_definitions};
-
-/// The MCP revision we implement.
-pub const PROTOCOL_VERSION: &str = "2025-06-18";
-const SUPPORTED_VERSIONS: &[&str] = &[PROTOCOL_VERSION, "2025-03-26", "2024-11-05"];
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -45,10 +43,6 @@ pub struct Server {
     initialized: bool,
 }
 
-fn response(id: Value, result: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
-}
-
 fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message.into()}})
 }
@@ -69,15 +63,11 @@ impl Server {
 
     /// Serve newline-delimited JSON-RPC until `input` closes. Logs go to stderr only (stdout is
     /// the protocol stream).
-    pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-        let mut input = input;
-        while let Some(frame) = read_frame(&mut input)? {
-            let reply = match frame {
-                Frame::Complete(bytes) => match std::str::from_utf8(&bytes) {
-                    Ok(line) => self.handle_line(line),
-                    Err(_) => Some(error(Value::Null, PARSE_ERROR, "request frame is not valid UTF-8").to_string()),
-                },
-                Frame::TooLarge => Some(error(Value::Null, INVALID_REQUEST, "request frame exceeds 16 MiB").to_string()),
+    pub fn serve(&mut self, mut input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
+        while let Some(incoming) = read_message(&mut input, MAX_FRAME_BYTES)? {
+            let reply = match incoming {
+                Incoming::Line(line) => self.handle_line(&line),
+                Incoming::Refused(reply) => Some(reply),
             };
             if let Some(reply) = reply {
                 output.write_all(reply.as_bytes())?;
@@ -204,41 +194,6 @@ impl Server {
                 Ok(json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}]}))
             }
             other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
-        }
-    }
-}
-
-enum Frame {
-    Complete(Vec<u8>),
-    TooLarge,
-}
-
-/// Read through one newline while retaining no more than the documented frame budget.
-fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Frame>> {
-    let mut bytes = Vec::new();
-    let mut too_large = false;
-    loop {
-        let available = input.fill_buf()?;
-        if available.is_empty() {
-            if bytes.is_empty() && !too_large {
-                return Ok(None);
-            }
-            return Ok(Some(if too_large { Frame::TooLarge } else { Frame::Complete(bytes) }));
-        }
-        let count = available.iter().position(|byte| *byte == b'\n').map_or(available.len(), |i| i + 1);
-        if !too_large {
-            let remaining = MAX_FRAME_BYTES.saturating_sub(bytes.len());
-            if count > remaining {
-                too_large = true;
-                bytes.clear();
-            } else {
-                bytes.extend_from_slice(&available[..count]);
-            }
-        }
-        let ended = available[count - 1] == b'\n';
-        input.consume(count);
-        if ended {
-            return Ok(Some(if too_large { Frame::TooLarge } else { Frame::Complete(bytes) }));
         }
     }
 }

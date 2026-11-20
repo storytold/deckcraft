@@ -20,7 +20,7 @@ fn oversized_stdio_frame_is_drained_before_the_next_request() {
     let replies: Vec<Value> = std::str::from_utf8(&output).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     assert_eq!(replies.len(), 2);
     assert_eq!(replies[0]["error"]["code"], -32600);
-    assert!(replies[0]["error"]["message"].as_str().unwrap().contains("16 MiB"));
+    assert!(replies[0]["error"]["message"].as_str().unwrap().contains("too large"));
     assert_eq!(replies[1]["id"], 1);
     assert_eq!(replies[1]["result"]["serverInfo"]["name"], "deckcraft");
 }
