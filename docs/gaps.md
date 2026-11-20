@@ -341,12 +341,14 @@ Detail in [hardware-parity.md](hardware-parity.md).
 
 Detail in [localization-parity.md](localization-parity.md).
 
-- **English and German, and Hebrew only when its catalog is embedded** (#15, #30; Ukrainian PR #34
-  open). The interface reads the shared craft-i18n catalogs and follows the system language, or
-  `app.language` (`auto`, `en`, `de`, `he`). German covers the ribbon, menus, palette, status bar,
-  File tab, dialogs and panes. Hebrew (`he`, `he-IL`, `he_IL.UTF-8`) does the same when
-  `locales/he/deckcraft.tsv` is in the checkout; `craft-i18n.rev` does not include it yet, so a
-  build from the pin does not list Hebrew. Side panels, Backstage navigation, the ribbon tab strip, and the status bar mirror right to left. PowerPoint for Mac ships
+- **English, and German or Hebrew only when `CRAFT_I18N_DIR` embeds their catalogs** (#15, #30; Ukrainian PR #34
+  open). Without `CRAFT_I18N_DIR`, the build embeds no catalogs and the interface is English only.
+  When `CRAFT_I18N_DIR` is set, the interface reads the shared craft-i18n catalogs and follows the
+  system language, or `app.language` (`auto`, `en`, `de`, `he`). German (included at
+  `craft-i18n.rev`) covers the ribbon, menus, palette, status bar, File tab, dialogs and panes;
+  Hebrew (`he`, `he-IL`, `he_IL.UTF-8`) does the same when `CRAFT_I18N_DIR` points to a checkout
+  with `locales/he/deckcraft.tsv` (`craft-i18n.rev` does not include it yet, so a build from the
+  pin does not list Hebrew). Side panels, Backstage navigation, the ribbon tab strip, and the status bar mirror right to left. PowerPoint for Mac ships
   26 languages: 3–16 h per language plus native review. Beta needs at least Simplified Chinese,
   Spanish, French and Japanese as well (~25–40 h).
 - **Hangul in the interface needs an installed Korean font** (#101). craft-fonts has no Korean face
