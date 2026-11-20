@@ -539,7 +539,7 @@ fn media_needs_timing(clip: &deckcraft_model::MediaClip) -> bool {
         || (clip.video && clip.full_screen)
 }
 
-fn assign_spids(shapes: &[Shape], mut visit: impl FnMut(u32, &Shape)) {
+fn assign_spids<'a>(shapes: &'a [Shape], mut visit: impl FnMut(u32, &'a Shape)) {
     let mut used = std::collections::HashSet::new();
     let mut max = 1u32;
     deckcraft_model::walk(shapes, &mut |s, _| {
