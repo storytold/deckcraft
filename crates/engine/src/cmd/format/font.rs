@@ -407,45 +407,6 @@ fn font_edits(p: &Value) -> Result<FontEdits> {
     Ok(FontEdits { family, size, bold: font_bool(p, "bold")?, italic: font_bool(p, "italic")?, underline, color, strike, baseline, caps, spacing })
 }
 
-/// A colour as a `format.fontDialog` / `format.color` parameter, including transforms.
-fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
-    use deckcraft_model::ColorBase;
-    let mut o = serde_json::Map::new();
-    // An ordered list, so the order of the transforms and repeated ones such as `[inv, inv]` are kept.
-    if !c.mods.is_empty() {
-        o.insert("mods".into(), json!(c.mods));
-    }
-    // `#RRGGBB`, or `#RRGGBBAA` for a color that is not opaque.
-    let hex = |c: &deckcraft_color::Rgba| if c.a == 255 { format!("#{}", c.hex()) } else { format!("#{}{:02X}", c.hex(), c.a) };
-    // A preset or system name that `color_value` does not know (kept from an opened file) is given as
-    // the color it is drawn with, so OK does not reject it.
-    let base = match &c.base {
-        ColorBase::Preset { name } if !deckcraft_color::is_preset_name(name) => ColorBase::Rgb { rgb: deckcraft_color::Rgba::BLACK },
-        ColorBase::System { name, last } if !deckcraft_color::is_system_name(name) => ColorBase::Rgb { rgb: *last },
-        b => b.clone(),
-    };
-    match &base {
-        ColorBase::Rgb { rgb } if o.is_empty() => json!(hex(rgb)),
-        ColorBase::Rgb { rgb } => {
-            o.insert("rgb".into(), json!(hex(rgb)));
-            Value::Object(o)
-        }
-        ColorBase::Scheme { slot } => {
-            o.insert("scheme".into(), json!(slot.xml_name()));
-            Value::Object(o)
-        }
-        ColorBase::Preset { name } => {
-            o.insert("preset".into(), json!(name));
-            Value::Object(o)
-        }
-        ColorBase::System { name, last } => {
-            o.insert("system".into(), json!(name));
-            o.insert("last".into(), json!(hex(last)));
-            Value::Object(o)
-        }
-    }
-}
-
 fn font_dialog_params(s: &Session) -> Value {
     let r = current_run(s);
     let family =
@@ -471,7 +432,7 @@ fn font_dialog_params(s: &Session) -> Value {
         "spacing": r.spacing.unwrap_or(0.0),
     });
     if let Some(Fill::Solid { color }) = &r.fill {
-        v["color"] = color_command_value(color);
+        v["color"] = crate::cmd::color_command_value(color);
     }
     v
 }

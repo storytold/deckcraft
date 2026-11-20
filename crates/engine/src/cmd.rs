@@ -438,6 +438,46 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
     }
 }
 
+/// A colour as a command colour parameter, including transforms: the form [`color_value`] reads back
+/// into the same colour.
+pub fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
+    use deckcraft_model::ColorBase;
+    let mut o = serde_json::Map::new();
+    // An ordered list, so the order of the transforms and repeated ones such as `[inv, inv]` are kept.
+    if !c.mods.is_empty() {
+        o.insert("mods".into(), serde_json::json!(c.mods));
+    }
+    // `#RRGGBB`, or `#RRGGBBAA` for a color that is not opaque.
+    let hex = |c: &deckcraft_color::Rgba| if c.a == 255 { format!("#{}", c.hex()) } else { format!("#{}{:02X}", c.hex(), c.a) };
+    // A preset or system name that `color_value` does not know (kept from an opened file) is given as
+    // the color it is drawn with, so OK does not reject it.
+    let base = match &c.base {
+        ColorBase::Preset { name } if !deckcraft_color::is_preset_name(name) => ColorBase::Rgb { rgb: deckcraft_color::Rgba::BLACK },
+        ColorBase::System { name, last } if !deckcraft_color::is_system_name(name) => ColorBase::Rgb { rgb: *last },
+        b => b.clone(),
+    };
+    match &base {
+        ColorBase::Rgb { rgb } if o.is_empty() => Value::String(hex(rgb)),
+        ColorBase::Rgb { rgb } => {
+            o.insert("rgb".into(), Value::String(hex(rgb)));
+            Value::Object(o)
+        }
+        ColorBase::Scheme { slot } => {
+            o.insert("scheme".into(), Value::String(slot.xml_name().to_string()));
+            Value::Object(o)
+        }
+        ColorBase::Preset { name } => {
+            o.insert("preset".into(), Value::String(name.clone()));
+            Value::Object(o)
+        }
+        ColorBase::System { name, last } => {
+            o.insert("system".into(), Value::String(name.clone()));
+            o.insert("last".into(), Value::String(hex(last)));
+            Value::Object(o)
+        }
+    }
+}
+
 /// Look a shape up by id in the edited tree.
 pub(crate) fn shape_of(s: &Session, id: ShapeId) -> Result<deckcraft_model::Shape> {
     s.doc()?.shape(id).cloned().ok_or_else(|| EngineError::Other(format!("no shape {id}")))

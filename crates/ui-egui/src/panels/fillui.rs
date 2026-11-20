@@ -529,4 +529,82 @@ mod tests {
         };
         assert_eq!(gradient_json(&gradient).get("flip"), Some(&json!("xy")));
     }
+
+    /// Colors whose transforms an object-key form loses: one without a value, a repeated one, two in
+    /// an order that is not alphabetical, and a system color that is not opaque.
+    fn transformed_colors() -> Vec<ColorRef> {
+        let preset = |name: &str| ColorRef { base: deckcraft_model::ColorBase::Preset { name: name.into() }, mods: vec![] };
+        vec![
+            preset("red").with(ColorTransform::Inv),
+            preset("red").with(ColorTransform::Inv).with(ColorTransform::Inv),
+            ColorRef::scheme(SchemeSlot::Accent2).with(ColorTransform::LumOff(20_000)).with(ColorTransform::LumMod(50_000)),
+            ColorRef {
+                base: deckcraft_model::ColorBase::System { name: "window".into(), last: deckcraft_color::Rgba::rgba(0xF0, 0xF0, 0xF0, 0x80) },
+                mods: vec![],
+            },
+        ]
+    }
+
+    fn deck_with_shape() -> (deckcraft_engine::Session, deckcraft_model::ShapeId) {
+        let mut s = deckcraft_engine::Session::with_new();
+        let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0]})).unwrap();
+        let id = r.get("id").and_then(Value::as_u64).unwrap();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        (s, deckcraft_model::ShapeId(u32::try_from(id).unwrap()))
+    }
+
+    fn shape_fill(s: &deckcraft_engine::Session, id: deckcraft_model::ShapeId) -> deckcraft_model::Fill {
+        s.active().unwrap().shape(id).unwrap().fill.clone().unwrap()
+    }
+
+    fn background_fill(s: &deckcraft_engine::Session) -> deckcraft_model::Fill {
+        match &s.active().unwrap().doc.slides[0].background {
+            Some(deckcraft_model::Background::Fill { fill }) => fill.clone(),
+            other => panic!("expected a fill background, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gradient_json_keeps_the_transforms_of_every_stop_color() {
+        for color in transformed_colors() {
+            let g = Gradient {
+                stops: vec![GradientStop { pos: 0.0, color: color.clone() }, GradientStop { pos: 1.0, color: ColorRef::scheme(SchemeSlot::Bg1) }],
+                shape: GradientShape::Linear { angle: 90.0, scaled: false },
+                flip: None,
+                rotate_with_shape: true,
+                tile: [0.0; 4],
+            };
+            let (mut s, id) = deck_with_shape();
+            s.execute("shape.fill", &json!({"gradient": gradient_json(&g)})).unwrap();
+            let deckcraft_model::Fill::Gradient(on_shape) = shape_fill(&s, id) else { panic!("gradient fill") };
+            assert_eq!(on_shape.stops[0].color, color, "shape: {}", gradient_json(&g));
+            s.execute("design.background", &json!({"gradient": gradient_json(&g)})).unwrap();
+            let deckcraft_model::Fill::Gradient(on_slide) = background_fill(&s) else { panic!("gradient background") };
+            assert_eq!(on_slide.stops[0].color, color, "background: {}", gradient_json(&g));
+        }
+    }
+
+    #[test]
+    fn pattern_json_keeps_the_transforms_of_both_colors() {
+        let colors = transformed_colors();
+        for pair in colors.windows(2) {
+            let pt = PatternFill { preset: "pct25".into(), fg: pair[0].clone(), bg: pair[1].clone() };
+            let (mut s, id) = deck_with_shape();
+            s.execute("shape.fill", &json!({"pattern": pattern_json(&pt)})).unwrap();
+            assert_eq!(shape_fill(&s, id), deckcraft_model::Fill::Pattern(pt.clone()), "shape: {}", pattern_json(&pt));
+            s.execute("design.background", &json!({"pattern": pattern_json(&pt)})).unwrap();
+            assert_eq!(background_fill(&s), deckcraft_model::Fill::Pattern(pt.clone()), "background: {}", pattern_json(&pt));
+        }
+    }
+
+    #[test]
+    fn cref_param_keeps_the_transforms_of_a_solid_background_and_fill() {
+        for color in transformed_colors() {
+            let (mut s, id) = deck_with_shape();
+            s.execute("design.background", &json!({"color": cref_param(&color)})).unwrap();
+            assert_eq!(background_fill(&s), deckcraft_model::Fill::solid(color.clone()), "background: {}", cref_param(&color));
+            s.execute("shape.fill", &json!({"color": cref_param(&color)})).unwrap();
+            assert_eq!(shape_fill(&s, id), deckcraft_model::Fill::solid(color.clone()), "shape: {}", cref_param(&color));
+        }
+    }
 }
