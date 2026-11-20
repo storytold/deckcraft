@@ -10,5 +10,5 @@ Terminal=false
 StartupNotify=true
 StartupWMClass=ai.storyteller.deckcraft
 Categories=Office;Presentation;
-MimeType=application/x-deckcraft;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.openxmlformats-officedocument.presentationml.template;application/vnd.openxmlformats-officedocument.presentationml.slideshow;
+MimeType=application/x-deckcraft;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.openxmlformats-officedocument.presentationml.template;application/vnd.openxmlformats-officedocument.presentationml.slideshow;application/vnd.ms-powerpoint;
 Keywords=presentation;slides;slide show;deck;pptx;keynote;powerpoint;
