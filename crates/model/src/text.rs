@@ -517,6 +517,10 @@ pub struct RunProps {
     pub reflection: Option<crate::style::Reflection>,
     /// Soft-edge radius in points (`a:softEdge`).
     pub soft_edge: Option<f64>,
+    /// The run carries its own (possibly empty) `a:effectLst`, which replaces the list styles' one:
+    /// no shadow, inner shadow, glow, reflection or soft edge is inherited. How text turns off an
+    /// inherited shadow.
+    pub own_effects: Option<bool>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
     pub normalize_height: Option<bool>,
@@ -530,6 +534,8 @@ where
 }
 
 impl RunProps {
+    /// Fills what this run leaves unset from `p`, its paragraph or list style. The effects come as
+    /// one list: none of them when the run has its own ([`RunProps::own_effects`]).
     pub fn inherit(&mut self, p: &RunProps) {
         macro_rules! take {
             ($($f:ident),*) => { $( if self.$f.is_none() { self.$f.clone_from(&p.$f); } )* };
@@ -556,14 +562,23 @@ impl RunProps {
             hover,
             lang,
             alt_lang,
-            shadow,
-            inner_shadow,
-            glow,
-            reflection,
-            soft_edge,
             no_proof,
             normalize_height
         );
+        self.inherit_effects(p);
+    }
+
+    /// Takes `p`'s effect list (shadow, inner shadow, glow, reflection, soft edge) unless this run
+    /// has its own, which replaces it as a whole. Split out of [`RunProps::inherit`] to keep that
+    /// one simple.
+    fn inherit_effects(&mut self, p: &RunProps) {
+        if self.own_effects == Some(true) {
+            return;
+        }
+        macro_rules! take {
+            ($($f:ident),*) => { $( if self.$f.is_none() { self.$f.clone_from(&p.$f); } )* };
+        }
+        take!(shadow, inner_shadow, glow, reflection, soft_edge, own_effects);
     }
 }
 
@@ -771,6 +786,36 @@ mod tests {
         let props: RunProps = serde_json::from_value(json).expect("run props");
         assert_eq!(props.alt_lang.as_deref().map(str::len), Some(256));
         assert_eq!(serde_json::from_value::<RunProps>(serde_json::json!({})).expect("old run props"), RunProps::default());
+    }
+
+    #[test]
+    fn a_run_without_effects_inherits_no_shadow() {
+        let shadow = crate::style::Shadow {
+            color: ColorRef::rgb(Rgba::rgb(0, 0, 0)),
+            blur: 3.0,
+            dist: 2.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        };
+        let level = RunProps { shadow: Some(shadow), soft_edge: Some(4.0), bold: Some(true), ..Default::default() };
+        let mut plain = RunProps::default();
+        plain.inherit(&level);
+        assert!(plain.shadow.is_some() && plain.soft_edge == Some(4.0));
+        let mut off = RunProps { own_effects: Some(true), ..Default::default() };
+        off.inherit(&level);
+        assert!(off.shadow.is_none() && off.soft_edge.is_none());
+        assert_eq!(off.bold, Some(true), "other formatting still inherits");
+        // A list style's empty effect list hides the master's effects from the runs below it.
+        let mut via_layout = RunProps::default();
+        via_layout.inherit(&RunProps { own_effects: Some(true), ..Default::default() });
+        via_layout.inherit(&level);
+        assert!(via_layout.shadow.is_none());
     }
 
     #[test]
