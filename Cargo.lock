@@ -953,7 +953,7 @@ source = "git+https://github.com/storytold/craft-libs?rev=254e9a409b410dc93c0e06
 [[package]]
 name = "craft-codepage"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
+source = "git+https://github.com/storytold/craft-libs?rev=d0193d7e94b5ec180ecc2a152ea72047d39ac632#d0193d7e94b5ec180ecc2a152ea72047d39ac632"
 
 [[package]]
 name = "craft-deckcraft-format"
@@ -1077,9 +1077,9 @@ dependencies = [
 [[package]]
 name = "craft-rtf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725#63196e66f3033a6623eb629af95a104d26986725"
+source = "git+https://github.com/storytold/craft-libs?rev=d0193d7e94b5ec180ecc2a152ea72047d39ac632#d0193d7e94b5ec180ecc2a152ea72047d39ac632"
 dependencies = [
- "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=63196e66f3033a6623eb629af95a104d26986725)",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=d0193d7e94b5ec180ecc2a152ea72047d39ac632)",
  "encoding_rs",
 ]
 
