@@ -1,5 +1,5 @@
-//! PPTX import and export: Office Open XML PresentationML / DrawingML, written from the public
-//! ECMA-376 standard.
+//! PPTX import and export: Office Open XML PresentationML / DrawingML, delegated to the shared
+//! `craft-pptx` crate.
 //!
 //! [`import`] reads a package leniently (unknown parts are skipped, malformed parts are logged and
 //! ignored, every size and depth is bounded) into the DeckCraft model; [`export`] writes a valid
@@ -8,28 +8,15 @@
 #![forbid(unsafe_code)]
 
 mod cfb;
-mod custgeom;
-mod dgm;
-mod maps;
-mod opc;
-mod png;
-pub(crate) mod read;
-pub use read::MAX_TAG_BYTES;
-mod tables;
-mod write;
+mod convert;
 mod xml;
 
+pub use craft_pptx::MAX_TAG_BYTES;
 /// The bounded XML reader the importer uses, for callers that read kept fragments (a shape's
 /// 3-D settings) instead of scanning strings.
 pub use xml::{Doc as XmlDoc, El as XmlEl, parse as parse_xml};
 
-use deckcraft_model::Presentation;
-
-/// Extension URI of the PowerPoint 2010 section list in `presentation.xml`.
-pub(crate) const SECTION_EXT_URI: &str = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}";
-
-/// Extension URI of the modern-comments anchor in a slide (names the threaded comment part).
-pub(crate) const COMMENTS_EXT_URI: &str = "{6950BFC3-D8DA-4A85-94F7-54DA5524770B}";
+use deckcraft_model::{Presentation, Shape, ShapeKind, defaults};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PptxError {
@@ -43,15 +30,49 @@ pub enum PptxError {
     Xml(String),
 }
 
+impl From<craft_pptx::Error> for PptxError {
+    fn from(e: craft_pptx::Error) -> Self {
+        match e {
+            craft_pptx::Error::NotPptx(m) => PptxError::NotPptx(m),
+            craft_pptx::Error::Unsupported(m) => PptxError::Unsupported(m),
+            craft_pptx::Error::Write(m) => PptxError::Write(m),
+            craft_pptx::Error::Xml(m) => PptxError::Xml(m),
+        }
+    }
+}
+
+struct DeckDefaults;
+
+impl craft_pptx::Defaults for DeckDefaults {
+    fn master(&self, size: deckcraft_geom::Size, after: u32) -> (craft_pptx::Master, u32) {
+        let (m, last) = defaults::build_master(size, Default::default(), after);
+        (convert::master_to_craft(&m), last)
+    }
+
+    fn theme(&self) -> craft_drawingml::theme::Theme {
+        convert::theme_to_craft(&deckcraft_model::theme::Theme::default())
+    }
+
+    fn master_styles(&self) -> (craft_drawingml::text::ListStyle, craft_drawingml::text::ListStyle, craft_drawingml::text::ListStyle) {
+        let (t, b, o) = defaults::master_styles();
+        (convert::list_style_to_craft(&t), convert::list_style_to_craft(&b), convert::list_style_to_craft(&o))
+    }
+
+    fn default_text_style(&self) -> craft_drawingml::text::ListStyle {
+        convert::list_style_to_craft(&defaults::default_text_style())
+    }
+
+    fn application(&self) -> &str {
+        "DeckCraft"
+    }
+}
+
 /// Does this look like an OOXML package (zip with `[Content_Types].xml`)?
 ///
-/// The part is looked up in the zip's central directory, not in the leading bytes: writers may
+/// The part is looked up in the archive's central directory, not in the leading bytes: writers may
 /// store it anywhere in the archive (recent PowerPoint builds put it last, megabytes in).
 pub fn sniff(bytes: &[u8]) -> bool {
-    if !bytes.starts_with(b"PK") {
-        return false;
-    }
-    zip::ZipArchive::new(std::io::Cursor::new(bytes)).map(|z| z.index_for_name("[Content_Types].xml").is_some()).unwrap_or(false)
+    craft_pptx::sniff(bytes)
 }
 
 /// Is this a password-protected presentation (an encrypted package inside a compound file)?
@@ -59,81 +80,110 @@ pub fn is_encrypted(bytes: &[u8]) -> bool {
     cfb::is_encrypted(bytes)
 }
 
+const MAX_SLIDE_ENTRIES: usize = 10_000;
+
+/// Checks `ppt/presentation.xml` for > 10,000 slide-list entries (refused instead of truncated)
+/// and collects any `sldId` entries whose relationship is missing so `import_checked` /
+/// `import_report` report them as lost slides.
+fn preflight_slides(bytes: &[u8]) -> Result<Vec<String>, PptxError> {
+    let Ok(mut pkg) = craft_opc::LazyPackage::open(bytes, &craft_pptx::LIMITS) else {
+        return Ok(vec![]);
+    };
+    let root_rels = pkg.rels("").unwrap_or_default();
+    let pres_path = root_rels.first("officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "ppt/presentation.xml".into());
+    let Ok(Some(pres_bytes)) = pkg.read_limited(&pres_path, craft_pptx::MAX_XML_PART as u64) else {
+        return Ok(vec![]);
+    };
+    let Ok(pres_el) = craft_drawingml::xmlx::parse(&pres_bytes) else {
+        return Ok(vec![]);
+    };
+    let pres_rels = pkg.rels(&pres_path).unwrap_or_default();
+    let mut lost = Vec::new();
+    if let Some(list) = pres_el.child(craft_xml::Local("sldIdLst")) {
+        let mut count = 0usize;
+        for s in list.children(craft_xml::Local("sldId")) {
+            count += 1;
+            if count > MAX_SLIDE_ENTRIES {
+                return Err(PptxError::Unsupported(format!("presentation has more than {MAX_SLIDE_ENTRIES} slides")));
+            }
+            let rid = s.attr_local("r:id").unwrap_or("");
+            if pres_rels.target(rid).is_none() {
+                let id = s.attr_local("id").and_then(craft_xml::value::to_u32_lossy).unwrap_or(0);
+                lost.push(format!("slide {id} (missing relationship {rid})"));
+            }
+        }
+    }
+    Ok(lost)
+}
+
 /// Read a `.pptx` / `.potx` / `.ppsx` package.
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
-    read::import(bytes)
+    preflight_slides(bytes)?;
+    craft_pptx::import(bytes, &DeckDefaults).map(convert::pres_from_craft).map_err(Into::into)
 }
 
 /// [`import`], plus the part names of slides the file lists but that couldn't be read and were
 /// left out.
 /// Files with more than 10,000 slide-list entries return [`PptxError::Unsupported`] instead of a truncated presentation.
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
-    read::import_checked(bytes)
+    let (p, lost, _) = import_report(bytes)?;
+    Ok((p, lost))
 }
 
 /// [`import_checked`], plus warnings for content cut to fit a limit (a table past the cell cap
 /// keeps its leading rows); the file still opens.
 pub fn import_report(bytes: &[u8]) -> Result<(Presentation, Vec<String>, Vec<String>), PptxError> {
-    read::import_report(bytes)
+    let mut missing = preflight_slides(bytes)?;
+    let (p, lost, warnings) = craft_pptx::import_report(bytes, &DeckDefaults)?;
+    missing.extend(lost);
+    Ok((convert::pres_from_craft(p), missing, warnings))
 }
 
 /// [`import`] with a lower presentation-wide chart point budget, so tests reach the over-budget
 /// path without a multi-million-point chart.
 #[doc(hidden)]
 pub fn import_with_chart_budget(bytes: &[u8], points: usize) -> Result<Presentation, PptxError> {
-    read::import_with_chart_points(bytes, points).map(|(p, _)| p)
+    preflight_slides(bytes)?;
+    craft_pptx::import_with_chart_budget(bytes, &DeckDefaults, points).map(convert::pres_from_craft).map_err(Into::into)
 }
 
 /// Read the theme of a `.thmx` file, or of a `.pptx` / `.potx`'s first master, with its media.
 pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<deckcraft_model::MediaItem>), PptxError> {
-    read::import_theme(bytes)
+    let (theme, media) = craft_pptx::import_theme(bytes)?;
+    Ok((convert::theme_from_craft(theme), media.into_iter().map(convert::media_item_from_craft).collect()))
+}
+
+fn shapes_have_over_cap_table(shapes: &[Shape]) -> bool {
+    shapes.iter().any(|s| match &s.kind {
+        ShapeKind::Table(t) => t.over_cap(),
+        ShapeKind::Group { children, .. } => shapes_have_over_cap_table(children),
+        _ => false,
+    })
+}
+
+fn check_table_caps(p: &Presentation) -> Result<(), PptxError> {
+    let over = p.slides.iter().any(|s| shapes_have_over_cap_table(&s.shapes))
+        || p.masters.iter().any(|m| shapes_have_over_cap_table(&m.shapes) || m.layouts.iter().any(|l| shapes_have_over_cap_table(&l.shapes)));
+    if over {
+        return Err(PptxError::Unsupported(format!(
+            "a table has more than {} cells; export refused rather than drop rows",
+            deckcraft_model::table::MAX_CELLS
+        )));
+    }
+    Ok(())
 }
 
 /// Write a `.pptx` package.
 pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
-    write::export(p, write::CT_PRES)
+    check_table_caps(p)?;
+    craft_pptx::export(&convert::pres_to_craft(p), &DeckDefaults).map_err(Into::into)
 }
 
 /// Write a package for `ext`: `potx` (template) and `ppsx` (slide show) differ from `pptx` only in
 /// the main part's content type.
 pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
-    let ct = match ext {
-        "potx" => write::CT_TEMPLATE,
-        "ppsx" => write::CT_SHOW,
-        _ => write::CT_PRES,
-    };
-    write::export(p, ct)
-}
-
-/// Content type for a file name's extension.
-pub(crate) fn mime_for(name: &str) -> &'static str {
-    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
-    match ext.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" | "jpe" => "image/jpeg",
-        "gif" => "image/gif",
-        "bmp" => "image/bmp",
-        "tif" | "tiff" => "image/tiff",
-        "svg" => "image/svg+xml",
-        "emf" => "image/x-emf",
-        "wmf" => "image/x-wmf",
-        "webp" => "image/webp",
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
-        "wmv" => "video/x-ms-wmv",
-        "avi" => "video/x-msvideo",
-        "webm" => "video/webm",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "m4a" => "audio/mp4",
-        "wma" => "audio/x-ms-wma",
-        "ogg" => "audio/ogg",
-        "flac" => "audio/flac",
-        "glb" => "model/gltf-binary",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "fntdata" => "application/x-fontdata",
-        _ => "application/octet-stream",
-    }
+    check_table_caps(p)?;
+    craft_pptx::export_as(&convert::pres_to_craft(p), &DeckDefaults, ext).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -227,5 +277,19 @@ mod table_direction_tests {
                 roundtrip = crate::import(&crate::export(&roundtrip).expect("export again")).expect("import again");
             }
         }
+    }
+
+    #[test]
+    fn over_cap_table_export_is_refused() {
+        let mut p = defaults::new_presentation(None);
+        let mut t = Table::new(1, 2, 200.0, 30.0);
+        t.rows.resize_with(deckcraft_model::table::MAX_CELLS / 2 + 1, || deckcraft_model::table::Row {
+            height: 20.0,
+            cells: vec![Cell::new("x"), Cell::new("y")],
+        });
+        let shape = Shape { id: ShapeId(p.alloc_id().expect("id")), kind: ShapeKind::Table(t), ..Default::default() };
+        Arc::make_mut(&mut p.slides[0]).shapes.push(shape);
+        let err = crate::export(&p).expect_err("over-cap table must be refused");
+        assert!(matches!(err, crate::PptxError::Unsupported(_)));
     }
 }
