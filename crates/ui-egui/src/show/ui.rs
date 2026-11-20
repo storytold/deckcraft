@@ -4,7 +4,7 @@ use super::media::{
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
-use super::window_fit::{SCREEN_MARGIN, SHOW_MIN_INNER_SIZE, Step, WindowFit};
+use super::window_fit::{SHOW_MIN_INNER_SIZE, Step, WindowFit};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
@@ -268,7 +268,7 @@ fn fit_window(app: &mut SlideApp, ctx: &egui::Context, doc: &Presentation, full:
     }
     let held = app.services.mouse_held.as_mut().map(|held| held());
     let Some(fit) = app.show_window.as_mut() else { return };
-    match fit.frame(inner, full.size(), slide_aspect(doc), monitor.map(|m| m - SCREEN_MARGIN), held, now) {
+    match fit.frame(inner, full.size(), slide_aspect(doc), monitor, held, now) {
         Step::Resize(size) => ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size)),
         Step::Wait(secs) => {
             ctx.request_repaint_after(std::time::Duration::try_from_secs_f64(secs).unwrap_or(std::time::Duration::from_millis(300)));

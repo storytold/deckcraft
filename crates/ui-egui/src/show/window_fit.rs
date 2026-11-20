@@ -20,7 +20,7 @@ pub(super) const RELEASED_SECS: f64 = 0.15;
 const HELD_POLL_SECS: f64 = 0.1;
 
 /// Room left around the window on the monitor (menu bar, Dock, task bar), in points.
-pub(super) const SCREEN_MARGIN: Vec2 = Vec2::new(64.0, 96.0);
+const SCREEN_MARGIN: Vec2 = Vec2::new(64.0, 96.0);
 
 /// The slide area may be this far off the slide's shape, in points, before the window is snapped.
 const TOLERANCE: f32 = 1.0;
@@ -36,7 +36,9 @@ pub(super) enum Keep {
 
 /// The window's inner size that makes its slide area (`slide_area`, inside `inner`) the slide's
 /// shape (`aspect` = width / height). Space outside the slide area, such as a title bar, is
-/// kept. With `max` (the monitor size less a margin) the result is scaled down to fit in it.
+/// kept. With `max` (the largest allowed inner size) the result is scaled down to fit in it. The
+/// show's minimum size gives way to `max` when both can't be met, as with a very tall or very
+/// wide slide on a small monitor.
 pub(super) fn fitted_inner_size(inner: Vec2, slide_area: Vec2, aspect: f32, keep: Keep, max: Option<Vec2>) -> Vec2 {
     if !aspect.is_finite() || aspect <= 0.0 || !inner.x.is_finite() || !inner.y.is_finite() {
         return inner;
@@ -51,13 +53,15 @@ pub(super) fn fitted_inner_size(inner: Vec2, slide_area: Vec2, aspect: f32, keep
         Keep::Inside if by_width.y <= area.y => by_width,
         Keep::Inside => by_height,
     };
-    if let Some(max) = max {
-        let room = (max - chrome).max(Vec2::splat(1.0));
-        let scale = (room.x / slide.x).min(room.y / slide.y);
-        if scale.is_finite() && scale < 1.0 {
-            slide *= scale;
+    let room = max.map(|max| (max - chrome).max(Vec2::splat(1.0)));
+    let shrink = |slide: Vec2| match room {
+        Some(room) => {
+            let scale = (room.x / slide.x).min(room.y / slide.y);
+            if scale.is_finite() && scale < 1.0 { slide * scale } else { slide }
         }
-    }
+        None => slide,
+    };
+    slide = shrink(slide);
     let min = SHOW_MIN_INNER_SIZE;
     if slide.x < min.x || slide.y < min.y {
         let scale = (min.x / slide.x).max(min.y / slide.y);
@@ -65,6 +69,8 @@ pub(super) fn fitted_inner_size(inner: Vec2, slide_area: Vec2, aspect: f32, keep
             slide *= scale;
         }
     }
+    // The minimum may have pushed one side past the monitor: the monitor wins.
+    slide = shrink(slide);
     (chrome + slide).round()
 }
 
@@ -105,21 +111,24 @@ impl WindowFit {
     }
 
     /// One frame of a browsed show: the window's inner size, the part of it the slide area takes,
-    /// the slide's shape and the largest allowed inner size. The first frame sizes the window;
+    /// the slide's shape and the monitor's size. The first frame sizes the window;
     /// after that a resize is snapped, keeping the side the user changed more. `held` says
     /// whether a mouse button is held anywhere, when the host can tell: during a drag of the
     /// window's edge egui sees no pointer events, so this is how a pause in the drag is told
     /// from its end. While it is held nothing is snapped; once it is let go the snap follows
     /// after [`RELEASED_SECS`]. When the host can't tell, the size must stay the same for
-    /// [`SETTLE_SECS`]. A window already larger than `max` may stay that large.
-    pub(super) fn frame(&mut self, inner: Vec2, slide_area: Vec2, aspect: f32, max: Option<Vec2>, held: Option<bool>, now: f64) -> Step {
-        let max = max.map(|m| m.max(inner));
+    /// [`SETTLE_SECS`]. The window is kept [`SCREEN_MARGIN`] inside the monitor, except that a
+    /// window already on screen inside that margin may stay that large. It is never larger than
+    /// the monitor.
+    pub(super) fn frame(&mut self, inner: Vec2, slide_area: Vec2, aspect: f32, monitor: Option<Vec2>, held: Option<bool>, now: f64) -> Step {
+        let max = monitor.map(|m| (m - SCREEN_MARGIN).max(inner).min(m));
+        let on_monitor = max.is_none_or(|m| inner.x <= m.x + TOLERANCE && inner.y <= m.y + TOLERANCE);
         if !self.sized {
             self.sized = true;
             self.seen = inner;
             self.settled = inner;
             self.changed_at = now;
-            if fits(slide_area, aspect) {
+            if fits(slide_area, aspect) && on_monitor {
                 return Step::Idle;
             }
             let size = fitted_inner_size(inner, slide_area, aspect, Keep::Inside, max);
@@ -145,7 +154,7 @@ impl WindowFit {
         }
         self.pending = false;
         let before = std::mem::replace(&mut self.settled, inner);
-        if fits(slide_area, aspect) {
+        if fits(slide_area, aspect) && on_monitor {
             return Step::Idle;
         }
         let moved = inner - before;
