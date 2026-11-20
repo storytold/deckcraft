@@ -1340,7 +1340,7 @@ fn chart_to(c: &dm_chart::Chart) -> cd_chart::Chart {
         out.data_table = parsed.data_table;
         out.first_slice_angle = parsed.first_slice_angle;
         out.pivot_source = parsed.pivot_source;
-        for (dst, src) in out.series.iter_mut().zip(parsed.series.into_iter()) {
+        for (dst, src) in out.series.iter_mut().zip(parsed.series) {
             dst.refs = src.refs;
         }
     }
