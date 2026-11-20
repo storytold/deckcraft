@@ -10,8 +10,9 @@
 //! Painting that the renderer has no model for is reported through [`Skipped`] rather than drawn
 //! wrong, so a caller holding a raster fallback can prefer it: filters, masks, clip paths, patterns
 //! and embedded images. A group's opacity multiplies each shape it paints rather than compositing
-//! the group once, so overlapping shapes in a translucent group show their overlap (a `shortcut:`
-//! for real group compositing).
+//! the group once. That is exact for a single fill or stroke; a translucent group that paints more
+//! than that (overlapping shapes, or a fill under its own stroke) is reported in
+//! [`Skipped::group_opacity`] instead, since its overlaps would show.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -58,11 +59,14 @@ pub struct Skipped {
     /// A pattern this mapping could not turn into tiles (nested, or too many cells).
     pub patterns: bool,
     pub images: bool,
+    /// A translucent group (`opacity` below 1) whose shapes overlap one another: SVG composites
+    /// the group once and then fades it, which the per-shape alpha here cannot reproduce.
+    pub group_opacity: bool,
 }
 
 impl Skipped {
     pub fn any(&self) -> bool {
-        self.filters || self.masks || self.patterns || self.images
+        self.filters || self.masks || self.patterns || self.images || self.group_opacity
     }
 }
 
@@ -329,6 +333,7 @@ impl Build {
             self.skipped.filters = true;
         }
         let opacity = parent_opacity * f64::from(group.opacity().get());
+        let first = self.items.len();
         let saved = self.clips.len();
         if let Some(clip) = group.clip_path() {
             self.push_clip(clip);
@@ -340,6 +345,12 @@ impl Build {
                 usvg::Node::Text(t) => self.group(t.flattened(), opacity),
                 usvg::Node::Path(p) => self.path(p, opacity),
                 usvg::Node::Image(_) => self.skipped.images = true,
+            }
+        }
+        if group.opacity().get() < 1.0 {
+            let painted = self.items.get(first..).unwrap_or(&[]);
+            if painted.len() > 1 || painted.iter().any(|i| i.fill.is_some() && i.stroke.is_some()) {
+                self.skipped.group_opacity = true;
             }
         }
         self.clips.truncate(saved);
@@ -627,6 +638,19 @@ mod tests {
 
     fn svg(body: &str) -> Svg {
         parse(format!("<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>{body}</svg>").as_bytes()).expect("reads")
+    }
+
+    #[test]
+    fn a_translucent_group_that_overlaps_itself_is_left_to_the_rasterizer() {
+        // One shape, or a fill or stroke alone: per-shape alpha is exact.
+        assert!(!svg("<g opacity='0.5'><rect width='4' height='4' fill='red'/></g>").skipped.any());
+        assert!(!svg("<rect width='4' height='4' fill='red' opacity='0.5'/>").skipped.any());
+        assert!(!svg("<g opacity='1'><rect width='4' height='4'/><rect x='2' width='4' height='4'/></g>").skipped.any());
+        // Two shapes, or a fill under its own stroke: the group is composited once, then faded.
+        assert!(
+            svg("<g opacity='0.5'><rect width='4' height='4' fill='red'/><rect x='2' width='4' height='4' fill='lime'/></g>").skipped.group_opacity
+        );
+        assert!(svg("<rect width='4' height='4' fill='red' stroke='blue' opacity='0.5'/>").skipped.group_opacity);
     }
 
     #[test]

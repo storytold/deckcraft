@@ -195,6 +195,21 @@ mod tests {
         <path d='M12 2 L15 9 L22 9 L16 14 L18 21 L12 17 L6 21 L8 14 L2 9 L9 9 Z' fill='#ff0000'/></svg>";
 
     #[test]
+    fn a_translucent_group_is_faded_as_one_layer() {
+        // SVG composites the group, then applies its opacity: where the green covers the red, the
+        // red does not show through.
+        let img = rasterize(
+            b"<svg width='30' height='10' viewBox='0 0 30 10'><g opacity='0.5'><rect width='20' height='10' fill='#ff0000'/><rect x='10' width='20' height='10' fill='#00ff00'/></g></svg>",
+            30,
+        )
+        .expect("draws");
+        let overlap = img.get_pixel(15, 5);
+        let green = img.get_pixel(25, 5);
+        assert!(overlap[0] < 10, "no red under the green: {overlap:?}");
+        assert!(overlap[1] > 245 && (i16::from(overlap[3]) - i16::from(green[3])).abs() <= 2, "overlap {overlap:?}, green alone {green:?}");
+    }
+
+    #[test]
     fn draws_a_filled_path_as_a_vector() {
         let img = rasterize(STAR.as_bytes(), 96).expect("draws");
         assert_eq!(img.dimensions(), (96, 96));
