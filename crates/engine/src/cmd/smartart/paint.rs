@@ -4,6 +4,7 @@ use super::{
     Align, AutoFit, ColorRef, ColorTransform, Diagram, DiagramNode, Effects, Fill, Geom, Gradient, GradientShape, GradientStop, Line, MAX_LEVEL,
     Paragraph, SchemeSlot, Shadow, Shape, ShapeStyle, TextBody, Xfrm,
 };
+use deckcraft_model::text::RunKind;
 
 fn slot(i: usize) -> SchemeSlot {
     [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6][i % 6]
@@ -194,14 +195,86 @@ pub fn layout(d: &Diagram, area: Xfrm) -> Vec<Shape> {
     layout_items(d, area).into_iter().map(|(s, _)| s).collect()
 }
 
-/// Lay out `d`, painted with its style and colours, each shape with the nodes it shows; text is
-/// shrunk per shape so its longest word fits on a line.
+/// Lay out `d`, painted with its style and colours, each shape with the nodes it shows. All the
+/// text of a graphic is sized alike, as PowerPoint does: the one scale that lets every shape's
+/// longest word fit on a line, or the size the user set (`Diagram::font_size`) for every node.
+/// Text that still overflows down a shape is fitted on the slide by [`share_shrink`], again at
+/// one scale for every shape.
 pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
     let mut v = layout_raw(d, area);
+    let scale = v.iter().map(|(sh, _)| word_scale(sh, 1.0)).fold(1.0_f64, f64::min);
     for (sh, _) in &mut v {
-        fit_words(sh);
+        // A set size replaces the automatic one outright: the long word's scale would otherwise
+        // still narrow the bullets' indents.
+        match d.font_size.filter(|z| z.is_finite() && *z > 0.0) {
+            Some(size) => set_size(sh, size.clamp(1.0, 4000.0)),
+            None => apply_scale(sh, scale),
+        }
     }
     v
+}
+
+/// How much a resized graphic stretches its children on the slide: the group's box over its child
+/// space, per axis (1 where the child space is empty).
+pub(super) fn child_scale(group: &Xfrm, child: &Xfrm) -> (f64, f64) {
+    let k = |g: f64, c: f64| if c.abs() > 1e-9 && (g / c).is_finite() && (g / c).abs() > 1e-9 { (g / c).abs() } else { 1.0 };
+    (k(group.w, child.w), k(group.h, child.h))
+}
+
+/// The text of `sh` laid out as the renderer draws it (None: no text or no box): in the box the
+/// shape has on the slide, its own size stretched by the group's `scale` ([`child_scale`]).
+pub(super) fn laid_out(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape, scale: (f64, f64)) -> Option<deckcraft_text::TextLayout> {
+    let body = sh.text.as_ref()?;
+    let x = sh.xfrm?;
+    let rect = deckcraft_render::shape_geometry(sh, x.w * scale.0, x.h * scale.1).text_rect;
+    let opts = deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false };
+    Some(deckcraft_text::layout(ctx, sh, body, &opts))
+}
+
+/// The font scale and line reduction shrink-on-overflow gives the text of `sh` (None: it does not shrink).
+pub(super) fn fitted(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape, scale: (f64, f64)) -> Option<(f64, f64)> {
+    sh.text.as_ref().filter(|b| matches!(b.body.autofit, Some(AutoFit::Shrink { .. })))?;
+    let l = laid_out(ctx, sh, scale)?;
+    Some((l.font_scale, l.line_reduction))
+}
+
+/// One shrink-on-overflow scale for every shape of an automatically sized graphic, as PowerPoint
+/// sizes SmartArt text alike: the smallest scale any shape's text needs to fit its box, across or
+/// down (a node of many lines as much as a long word), saved on every shape. A saved scale is
+/// drawn as it is, so no shape shrinks on its own. A set size (`AutoFit::None`) is left alone.
+pub(super) fn share_shrink(ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &mut [Shape], stretch: (f64, f64)) {
+    let Some((fit, reduction)) = shapes.iter().filter_map(|sh| fitted(ctx, sh, stretch)).min_by(|a, b| a.0.total_cmp(&b.0)) else { return };
+    // The rule layout_items applies at generation, against the displayed widths: a word an edit
+    // made too long for its line breaks mid-word without overflowing down, so it shrinks every node.
+    let words = shapes
+        .iter()
+        .filter(|sh| sh.text.as_ref().is_some_and(|b| matches!(b.body.autofit, Some(AutoFit::Shrink { .. }))))
+        .map(|sh| word_scale(sh, stretch.0))
+        .fold(1.0_f64, f64::min);
+    let scale = fit.min(words);
+    if scale >= 1.0 {
+        return;
+    }
+    for sh in shapes {
+        if let Some(t) = sh.text.as_mut()
+            && let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut t.body.autofit
+        {
+            (*font_scale, *line_reduction) = (Some(scale), reduction);
+        }
+    }
+}
+
+/// Every run of the shape's text at `size`; a fixed size turns shrink-on-overflow off, so no node
+/// is fitted to a size of its own.
+pub(super) fn set_size(sh: &mut Shape, size: f64) {
+    let Some(body) = &mut sh.text else { return };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            r.props.size = Some(size);
+        }
+        p.end_props.size = Some(size);
+    }
+    body.body.autofit = Some(AutoFit::None);
 }
 
 /// Rough advance of a character as a fraction of the font size (a sans text face).
@@ -210,34 +283,54 @@ const CHAR_W: f64 = 0.6;
 /// Smallest font scale shrinking to fit goes to.
 pub(super) const MIN_SCALE: f64 = 0.25;
 
-/// Shrink the shape's text (all paragraphs together, as PowerPoint's per-shape font size does) so
-/// no word is wider than its line and would break mid-word. Overflow in height is left to the
-/// body's shrink-on-overflow autofit.
-fn fit_words(sh: &mut Shape) {
-    let Some(w) = sh.xfrm.map(|x| x.w) else { return };
+/// The scale (`MIN_SCALE..=1`) at which no word of the shape's text is wider than its line and
+/// would break mid-word. Overflow in height is left to the body's shrink-on-overflow autofit.
+fn word_scale(sh: &Shape, stretch: f64) -> f64 {
+    let Some(w) = sh.xfrm.map(|x| x.w * stretch) else { return 1.0 };
     // Round shapes keep their text in the inscribed rectangle (about 71% of the width).
     let text_w = match sh.geom.preset_name() {
         Some("ellipse" | "gear6" | "gear9") => w * 0.71,
         _ => w,
     };
-    let Some(body) = &mut sh.text else { return };
+    let Some(body) = &sh.text else { return 1.0 };
     let avail = text_w - body.body.inset_l.unwrap_or(7.2) - body.body.inset_r.unwrap_or(7.2);
     let mut scale: f64 = 1.0;
     for p in &body.paragraphs {
         let line = avail - p.props.margin_left.unwrap_or(0.0).max(0.0);
+        // A word split across runs by formatting is one word: sum its fragments' widths, and end
+        // it only at whitespace or a line break.
+        let mut word = 0.0;
+        let mut fit = |word: &mut f64| {
+            if *word > 0.0 {
+                scale = scale.min(line.max(0.0) / *word);
+            }
+            *word = 0.0;
+        };
         for r in &p.runs {
+            if matches!(r.kind, RunKind::Break) {
+                fit(&mut word);
+                continue;
+            }
             let size = r.props.size.unwrap_or(18.0);
-            let word = r.text.split_whitespace().map(|t| t.chars().count()).max().unwrap_or(0) as f64;
-            let need = word * size * CHAR_W;
-            if need > 0.0 {
-                scale = scale.min(line.max(0.0) / need);
+            for c in r.text.chars() {
+                if c.is_whitespace() {
+                    fit(&mut word);
+                } else {
+                    word += size * CHAR_W;
+                }
             }
         }
+        fit(&mut word);
     }
-    let scale = scale.max(MIN_SCALE);
+    scale.max(MIN_SCALE)
+}
+
+/// Shrink the shape's text (all paragraphs together, as PowerPoint's per-shape font size does).
+fn apply_scale(sh: &mut Shape, scale: f64) {
     if scale >= 0.999 {
         return;
     }
+    let Some(body) = &mut sh.text else { return };
     let shrink = |v: &mut Option<f64>| {
         if let Some(x) = v {
             *x = (*x * scale * 2.0).floor() / 2.0;
@@ -255,6 +348,79 @@ fn fit_words(sh: &mut Shape) {
     }
 }
 
+/// After a node's text changed in a generated, automatically sized graphic: the text of `kids`
+/// (the graphic's shapes, in layout order) takes the sizes and indents a fresh layout of `d` (its
+/// text already synced) gives it. Only when every run still has the size generation gave it, at
+/// one shared scale: a size set on some text of a node is the user's and stays, with the rest.
+pub(super) fn size_afresh(d: &Diagram, area: Xfrm, kids: &mut [Shape]) {
+    let mut fresh = layout_raw(d, area);
+    if fresh.len() != kids.len() {
+        return;
+    }
+    let base = |p: &Paragraph| p.runs.first().and_then(|r| r.props.size).or(p.end_props.size);
+    // (size generation starts from, size now) of every run.
+    let mut sizes: Vec<(f64, f64)> = vec![];
+    for (kid, (raw, _)) in kids.iter().zip(&fresh) {
+        let (Some(kt), Some(rt)) = (&kid.text, &raw.text) else { continue };
+        if kt.paragraphs.len() != rt.paragraphs.len() {
+            return;
+        }
+        for (kp, rp) in kt.paragraphs.iter().zip(&rt.paragraphs) {
+            let Some(b) = base(rp).filter(|b| b.is_finite() && *b > 0.0) else { return };
+            for r in &kp.runs {
+                let Some(now) = r.props.size else { return };
+                sizes.push((b, now));
+            }
+        }
+    }
+    // Generation leaves every run at its starting size, or at that size times one shared scale,
+    // rounded down to half a point ([`apply_scale`]). So each run bounds the scale to
+    // `[now / b, (now + 0.5) / b)`, and the sizes are generation's only when one scale fits them all.
+    if sizes.is_empty() {
+        return;
+    }
+    let untouched = sizes.iter().all(|(b, now)| b == now);
+    let lo = sizes.iter().map(|(b, now)| now / b).fold(0.0_f64, f64::max);
+    let hi = sizes.iter().map(|(b, now)| (now + 0.5) / b).fold(f64::INFINITY, f64::min);
+    if !untouched && !(lo < hi && lo < 0.999) {
+        return;
+    }
+    let scale = fresh.iter().map(|(sh, _)| word_scale(sh, 1.0)).fold(1.0_f64, f64::min);
+    // Whether `now` is what generation makes of `start` at the scale the sizes were found at. An
+    // indent the user set on a paragraph is not, and stays.
+    let generated = |now: Option<f64>, start: Option<f64>, half_points: bool| match (now, start) {
+        (None, None) => true,
+        (Some(now), Some(start)) if untouched => now == start,
+        (Some(now), Some(start)) => {
+            let (a, b) = (start * lo, start * hi);
+            let (min, max) = (a.min(b), a.max(b));
+            if half_points {
+                now >= (min * 2.0).floor() / 2.0 - 1e-9 && now <= (max * 2.0).floor() / 2.0 + 1e-9
+            } else {
+                now >= min - 1e-9 && now <= max + 1e-9
+            }
+        }
+        _ => false,
+    };
+    for (kid, (raw, _)) in kids.iter_mut().zip(&mut fresh) {
+        let unscaled = raw.text.clone();
+        apply_scale(raw, scale);
+        let (Some(kt), Some(rt), Some(ut)) = (&mut kid.text, &raw.text, &unscaled) else { continue };
+        for ((kp, rp), up) in kt.paragraphs.iter_mut().zip(&rt.paragraphs).zip(&ut.paragraphs) {
+            if let Some(size) = base(rp) {
+                for r in &mut kp.runs {
+                    r.props.size = Some(size);
+                }
+            }
+            kp.end_props.size = rp.end_props.size;
+            if generated(kp.props.margin_left, up.props.margin_left, true) && generated(kp.props.indent, up.props.indent, false) {
+                kp.props.margin_left = rp.props.margin_left;
+                kp.props.indent = rp.props.indent;
+            }
+        }
+    }
+}
+
 /// A picture placeholder for node `node`: its picture when it has one, else a pale box.
 pub(super) fn picture_shape(d: &Diagram, preset: &str, x: Xfrm, i: usize, node: usize) -> Shape {
     let mut sh = Shape { name: "Diagram picture".into(), xfrm: Some(x), geom: Geom::preset(preset), ..Default::default() };
@@ -264,4 +430,30 @@ pub(super) fn picture_shape(d: &Diagram, preset: &str, x: Xfrm, i: usize, node: 
         sh.line = Some(Line::solid(ColorRef::scheme(SchemeSlot::Lt1), 1.5));
     }
     sh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_model::text::Run;
+
+    fn shape(runs: Vec<Run>) -> Shape {
+        let mut sh = Shape { xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 40.0)), ..Default::default() };
+        sh.text = Some(TextBody { paragraphs: vec![Paragraph { runs, ..Default::default() }], ..Default::default() });
+        sh
+    }
+
+    #[test]
+    fn a_word_split_across_runs_is_measured_whole() {
+        let run = |t: &str| Run::new(t);
+        // 10 characters at 18 pt need 108 pt; the line is 100 - 14.4 = 85.6 pt. Each half (54 pt) fits.
+        let whole = word_scale(&shape(vec![run("Internatio")]), 1.0);
+        assert!(whole < 1.0);
+        let split = word_scale(&shape(vec![run("Inter"), run("natio")]), 1.0);
+        assert!((split - whole).abs() < 1e-9, "{split} vs {whole}");
+        // A space or a line break between the fragments ends the word.
+        assert_eq!(word_scale(&shape(vec![run("Inter "), run("natio")]), 1.0), 1.0);
+        let brk = Run { kind: RunKind::Break, ..Run::new("") };
+        assert_eq!(word_scale(&shape(vec![run("Inter"), brk, run("natio")]), 1.0), 1.0);
+    }
 }

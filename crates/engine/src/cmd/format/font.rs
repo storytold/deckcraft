@@ -82,8 +82,58 @@ pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Runs `f` and puts the selection back as it was: regenerating a SmartArt graphic selects the
+/// graphic alone, which must not drop the other selected shapes or the text range from a format
+/// command that goes on to format them.
+fn keeping_selection<T>(s: &mut Session, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+    let (shapes, text, cells) = {
+        let st = s.doc()?;
+        (st.selection.shapes.clone(), st.selection.text.clone(), st.selection.cells)
+    };
+    let r = f(s);
+    if let Ok(st) = s.doc_mut() {
+        st.selection.shapes = shapes;
+        st.selection.text = text;
+        st.selection.cells = cells;
+    }
+    r
+}
+
+/// Home ▸ Font on a selection holding SmartArt graphics: `graphic` formats each graphic as a whole
+/// (all its nodes, kept across regeneration), then `rest` formats the other selected shapes. The
+/// selection is left as it was. `None` when no graphic is selected (or text is): format as usual.
+fn on_graphics(
+    s: &mut Session,
+    graphic: impl Fn(&mut Session, ShapeId) -> Result<()>,
+    rest: impl FnOnce(&mut Session) -> Result<Value>,
+) -> Option<Result<Value>> {
+    if s.doc().ok()?.selection.text.is_some() {
+        return None;
+    }
+    let graphics = crate::cmd::smartart::selected_graphics(s);
+    if graphics.is_empty() {
+        return None;
+    }
+    let selected = s.doc().ok()?.selection.shapes.len();
+    if let Err(e) = keeping_selection(s, |s| graphics.iter().try_for_each(|gid| graphic(s, *gid))) {
+        return Some(Err(e));
+    }
+    if graphics.len() == selected {
+        return Some(ok());
+    }
+    Some(keeping_selection(s, |s| {
+        s.doc_mut()?.selection.shapes.retain(|id| !graphics.contains(id));
+        rest(s)
+    }))
+}
+
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
+    // A selected SmartArt graphic: one size for all its nodes (like smartArt.fontSize).
+    let graphic = |s: &mut Session, gid| crate::cmd::smartart::set_font_size(s, gid, Some(v), "format.size");
+    if let Some(r) = on_graphics(s, graphic, |s| format_run(s, &move |r| r.size = Some(v))) {
+        return r;
+    }
     format_run(s, &move |r| r.size = Some(v))
 }
 
@@ -105,6 +155,20 @@ fn step(cur: f64, up: bool) -> f64 {
 }
 
 fn grow_shrink(s: &mut Session, up: bool) -> Result<Value> {
+    // A selected SmartArt graphic steps all its nodes from the size they share, as format.size
+    // sets them; a run edit would be lost when the graphic is next regenerated.
+    let cmd = if up { "format.grow" } else { "format.shrink" };
+    let graphic = |s: &mut Session, gid| {
+        let to = step(crate::cmd::smartart::shown_size(s, gid).unwrap_or(18.0), up);
+        crate::cmd::smartart::set_font_size(s, gid, Some(to), cmd)
+    };
+    if let Some(r) = on_graphics(s, graphic, |s| grow_shrink_runs(s, up)) {
+        return r;
+    }
+    grow_shrink_runs(s, up)
+}
+
+fn grow_shrink_runs(s: &mut Session, up: bool) -> Result<Value> {
     // Each run steps from its own size, like PowerPoint.
     let st = s.doc()?;
     let ctx_sizes = current_run(s).size.unwrap_or(18.0);
@@ -498,6 +562,17 @@ pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
     if edits.is_empty() {
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
+    }
+    // A selected SmartArt graphic takes the size as format.size gives it: one size for all its
+    // nodes, kept on the diagram, so regeneration draws it. The run formatting then goes on the
+    // other selected shapes only, as format.size leaves the graphics out of that pass.
+    let size = edits.size.map(|z| z.clamp(1.0, 4000.0));
+    let graphic = move |s: &mut Session, gid| match size {
+        Some(z) => crate::cmd::smartart::set_font_size(s, gid, Some(z), "format.fontDialog"),
+        None => Ok(()),
+    };
+    if let Some(r) = on_graphics(s, graphic, |s| format_run(s, &|r| edits.write(r))) {
+        return r;
     }
     format_run(s, &|r| edits.write(r))
 }
