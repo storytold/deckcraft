@@ -2193,11 +2193,58 @@ pub(crate) fn pres_to_craft(p: &deckcraft_model::Presentation) -> craft_pptx::Pr
     }
 }
 
+const DATE_KINDS: [&str; 13] = [
+    "datetime1",
+    "datetime2",
+    "datetime3",
+    "datetime4",
+    "datetime5",
+    "datetime6",
+    "datetime7",
+    "datetime8",
+    "datetime9",
+    "datetime10",
+    "datetime11",
+    "datetime12",
+    "datetime13",
+];
+
+fn infer_date_format(slides: &[Arc<deckcraft_model::Slide>]) -> String {
+    for s in slides {
+        for sh in &s.shapes {
+            if sh.ph_type() != Some(deckcraft_model::PhType::Date) {
+                continue;
+            }
+            if let Some(kind) = sh.text.iter().flat_map(|t| t.paragraphs.iter()).flat_map(|p| p.runs.iter()).find_map(|r| match &r.kind {
+                dm_text::RunKind::Field { field } if DATE_KINDS.contains(&field.as_str()) => Some(field.as_str()),
+                _ => None,
+            }) {
+                return kind.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
 pub(crate) fn pres_from_craft(p: craft_pptx::Presentation) -> deckcraft_model::Presentation {
+    let slides: Vec<Arc<deckcraft_model::Slide>> = p.slides.into_iter().map(|s| Arc::new(slide_from((*s).clone()))).collect();
+    let mut header_footer = deckcraft_model::HeaderFooter {
+        date: p.header_footer.date,
+        slide_number: p.header_footer.slide_number,
+        footer: p.header_footer.footer,
+        header: p.header_footer.header,
+        footer_text: p.header_footer.footer_text,
+        date_text: p.header_footer.date_text,
+        date_format: p.header_footer.date_format,
+        hide_on_title: p.header_footer.hide_on_title,
+    };
+    if header_footer.date && header_footer.date_format.is_empty() && header_footer.date_text.is_empty() {
+        header_footer.date_format = infer_date_format(&slides);
+    }
     deckcraft_model::Presentation {
         slide_size: p.slide_size,
         notes_size: p.notes_size,
-        slides: p.slides.into_iter().map(|s| Arc::new(slide_from((*s).clone()))).collect(),
+        slides,
         masters: p.masters.into_iter().map(|m| Arc::new(master_from((*m).clone()))).collect(),
         notes_master: p.notes_master.map(|m| Arc::new(master_from((*m).clone()))),
         handout_master: p.handout_master.map(|m| Arc::new(master_from((*m).clone()))),
@@ -2223,16 +2270,7 @@ pub(crate) fn pres_from_craft(p: craft_pptx::Presentation) -> deckcraft_model::P
             laser_color: p.show.laser_color,
             show_media_controls: p.show.show_media_controls,
         },
-        header_footer: deckcraft_model::HeaderFooter {
-            date: p.header_footer.date,
-            slide_number: p.header_footer.slide_number,
-            footer: p.header_footer.footer,
-            header: p.header_footer.header,
-            footer_text: p.header_footer.footer_text,
-            date_text: p.header_footer.date_text,
-            date_format: p.header_footer.date_format,
-            hide_on_title: p.header_footer.hide_on_title,
-        },
+        header_footer,
         props: deckcraft_model::Properties {
             title: p.props.title,
             subject: p.props.subject,
