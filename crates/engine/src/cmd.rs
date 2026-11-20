@@ -378,14 +378,14 @@ pub(crate) fn ok() -> Result<Value> {
 /// Parse a colour param: `"#RRGGBB"`, `"accent1"`…, or `{"scheme":"accent2","lumMod":75000}`.
 /// A preset or system colour keeps its base: `{"preset":"red"}`,
 /// `{"system":"windowText","last":"#000000"}`. `"mods"` lists transforms in order:
-/// `{"preset":"red","mods":[{"op":"inv"},{"op":"inv"}]}`. A list longer than [`MAX_COLOR_MODS`]
-/// makes the color invalid.
+/// `{"preset":"red","mods":[{"op":"inv"},{"op":"inv"}]}`. A color whose keyed and listed transforms
+/// together number more than [`MAX_COLOR_MODS`] is invalid.
 pub(crate) fn color_param(p: &Value, key: &str) -> Option<deckcraft_model::ColorRef> {
     let v = p.get(key)?;
     color_value(v)
 }
 
-/// Most transforms a color param's `"mods"` list may hold.
+/// Most transforms a color param may hold, keyed transforms and the `"mods"` list together.
 pub(crate) const MAX_COLOR_MODS: usize = 256;
 
 pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
@@ -425,7 +425,7 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
             // `mods` lists transforms in order, repeats included: `[{"op":"inv"},{"op":"lumMod","val":50000}]`.
             if let Some(list) = o.get("mods") {
                 let list = list.as_array()?;
-                if list.len() > MAX_COLOR_MODS {
+                if c.mods.len() + list.len() > MAX_COLOR_MODS {
                     return None;
                 }
                 for m in list {
@@ -782,5 +782,18 @@ mod tests {
         let at_cap = color_value(&json!({"preset": "red", "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS]}));
         assert_eq!(at_cap.map(|c| c.mods), Some(vec![ColorTransform::Inv; MAX_COLOR_MODS]));
         assert_eq!(color_value(&json!({"preset": "red", "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS + 1]})), None);
+    }
+
+    #[test]
+    fn color_mods_cap_counts_keyed_transforms_and_survives_a_round_trip() {
+        use deckcraft_color::ColorTransform;
+        use serde_json::json;
+        // One keyed transform plus a full list is 257 transforms, which the cap rejects.
+        assert_eq!(color_value(&json!({"preset": "red", "inv": true, "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS]})), None);
+        // A keyed transform plus a list that totals the cap is accepted and reads back unchanged.
+        let mixed = color_value(&json!({"preset": "red", "inv": true, "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS - 1]}));
+        let mixed = mixed.unwrap_or_else(|| panic!("a color at the cap is valid"));
+        assert_eq!(mixed.mods, vec![ColorTransform::Inv; MAX_COLOR_MODS]);
+        assert_eq!(color_value(&color_command_value(&mixed)), Some(mixed));
     }
 }
