@@ -54,8 +54,9 @@ impl craft_pptx::Defaults for DeckDefaults {
     }
 
     fn master_styles(&self) -> (craft_drawingml::text::ListStyle, craft_drawingml::text::ListStyle, craft_drawingml::text::ListStyle) {
-        let (t, b, o) = defaults::master_styles();
-        (convert::list_style_to_craft(&t), convert::list_style_to_craft(&b), convert::list_style_to_craft(&o))
+        // An imported empty master style must stay empty on save; new decks already carry their
+        // populated master styles in the model.
+        Default::default()
     }
 
     fn default_text_style(&self) -> craft_drawingml::text::ListStyle {
