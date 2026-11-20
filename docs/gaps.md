@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-16 · **Change:** minor (SVG pictures read through the shared `craft-svg` reader; the shortfall that remains is filters, masks and clip paths; previous: minor (SVG pictures are saved with a PNG fallback beside the vector, as PowerPoint writes them, so the export shortfall is closed; nested `svg` viewports, right-to-left runs, dash patterns, `lime`, CDATA and percentages follow the review, and a picture we would draw incomplete keeps its raster copy; previous: trivial (the SVG entry is split: rendering limits and the export fallback are separate shortfalls now; gradients follow their element's transform and resolve viewport percentages; a marker cannot recurse, the last vertex keeps its marker and curve markers follow the tangent; a `url(#…)` that names no paint draws black; previous: minor (SVG pictures draw their text, real gradient ramps and markers; filters, masks and clip paths still are not read, export still lacks the PNG fallback; previous: minor (SVG pictures render as vectors, insert from disk and import their vector original from PowerPoint files; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-09 · **Change:** minor (legacy `.ppt` import landed; its entry lists what it leaves out; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -20,18 +20,17 @@ revision history.
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
-| 4 | SVG pictures lose their filters, masks and clip paths | File format | | 10–16 | [file-format-parity.md](file-format-parity.md) |
-| 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
-| 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
-| 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
-| 8 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
-| 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
-| 10 | Animation Pane: 64 of ~190 effects, effect options (timeline and Play From done) | Feature | B (pane) | 7–13 | [animation-parity.md](animation-parity.md) |
-| 11 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
-| 12 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
-| 13 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
-| 14 | PDF export rasterizes slide artwork | File format | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
-| 15 | Slides rasterize on the CPU; no performance baseline | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
+| 4 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
+| 5 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
+| 6 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
+| 7 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
+| 8 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
+| 9 | Animation Pane: 64 of ~190 effects, effect options (timeline and Play From done) | Feature | B (pane) | 7–13 | [animation-parity.md](animation-parity.md) |
+| 10 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
+| 11 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
+| 12 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
+| 13 | PDF export rasterizes slide artwork | File format | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
+| 14 | Slides rasterize on the CPU; no performance baseline | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
 
 ## Stability
 
@@ -132,12 +131,18 @@ patterns as tiles).
 - **Impact:** macro decks can't be opened even to view.
 - **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
 
-### No legacy `.ppt`/`.pot`/`.pps` import
-- **Evidence:** PowerPoint for Mac still opens and saves the 97–2003 binary formats
-  (`CFBundleDocumentTypes`); DeckCraft doesn't read them.
-- **Impact:** archives of older decks don't open.
-- **Estimate:** 20–35 h (import only, from the public [MS-PPT] spec). Owner decision whether it's
-  worth it.
+### Legacy `.ppt` import is partial
+- **Evidence:** `crates/ppt` opens PowerPoint 97–2003 files (slides, masters, text and styles, shapes,
+  pictures, notes) but leaves out transitions, animations, hyperlinks and actions, sounds and
+  video; tables arrive as grouped shapes, OLE objects and charts as their preview pictures, WordArt
+  as plain text; PICT pictures don't show, and embossed text is plain. Only checked against decks
+  built in tests and one outside lecture deck: committed tests use files built from records (no
+  PowerPoint-made files, AGENTS.md §1.1), so real decks need a corpus of files we own, kept in a
+  separate repository.
+- **Impact:** old decks open with their text, layout and pictures, but lose their motion, links,
+  sounds and video. Tables, OLE objects, charts and WordArt come in degraded and can't be edited as
+  such. PICT pictures are missing, and embossed text comes in plain.
+- **Estimate:** 10–18 h (transitions and build effects, interactive info, tables, a corpus).
 
 ### No OpenDocument `.odp`
 - **Evidence:** PowerPoint opens and saves `.odp`.
@@ -383,14 +388,6 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-16 | minor | SVG clip paths are drawn as clip layers and pattern fills as repeated tile geometry clipped to the shape, so both stay vector; the shared rasterizer now covers only filters, masks, embedded images and patterns too dense to tile |
-| 2026-11-16 | minor | SVG pictures that need filters, masks, clip paths, patterns or embedded images are composed by the shared `craft_svg::tree::draw` within its memory budget, so nothing is left undrawn; those pictures are bitmaps at display size, everything else stays vector |
-| 2026-11-16 | minor | SVG pictures read through the shared `craft-svg` crate (usvg behind its bounded preflight); the app keeps only the mapping onto its geometry, paints and text outlines. A vector-only picture still shows when it would draw incomplete |
-| 2026-11-14 | minor | SVG pictures are saved with a PNG fallback in `a:blip/@r:embed` and the vector in `asvg:svgBlip`, so readers without SVG support draw them; the export shortfall is closed and the ranking row keeps only the filters, masks and clip paths |
-| 2026-11-13 | trivial | The remaining SVG limits are two entries now: filters, masks, clip paths and patterns (10–16 h) and export without a PNG fallback (2–4 h) |
-| 2026-11-13 | trivial | SVG gradients now follow the element transform and resolve percentages in `userSpaceOnUse` against the viewport; markers cannot recurse, keep the last vertex and follow a curve's tangent; the gap that remains is filters, masks and clip paths, plus the missing export fallback |
-| 2026-11-13 | minor | SVG pictures draw their text (families, size, weight, style, anchor, tspans), real gradient ramps (stops, units, transform, spread) and markers; filters, masks and clip paths remain, and so does export without a PNG fallback |
-| 2026-11-13 | minor | SVG pictures insert, render as vectors and import their vector original from `asvg:svgBlip`; the gap that remains is export without a PNG fallback, and gradients drawn as average stops |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
