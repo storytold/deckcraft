@@ -696,10 +696,71 @@ fn patch_pic_grp_fill(xml_bytes: &[u8], spids: &std::collections::HashSet<u32>) 
     xml.into_bytes()
 }
 
+fn collect_large_geom_adjs(shapes: &[Shape]) -> Vec<(u32, &[f64])> {
+    let mut out = Vec::new();
+    assign_spids(shapes, |spid, s| {
+        if let deckcraft_geom::Geom::Preset { adj, .. } = &s.geom
+            && adj.iter().any(|v| v.is_finite() && (v.round() < -2.0e9 || v.round() > 2.0e9))
+        {
+            out.push((spid, adj.as_slice()));
+        }
+    });
+    out
+}
+
+fn patch_shape_av_lst(xml: &mut String, after: usize, adj: &[f64]) {
+    let shape_end_rel = ["</p:sp>", "</p:cxnSp>", "</p:pic>"].iter().filter_map(|t| xml[after..].find(t)).min();
+    let Some(shape_end_rel) = shape_end_rel else { return };
+    let Some(av_rel) = xml[after..after + shape_end_rel].find("<a:avLst>") else { return };
+    let av_start = after + av_rel + "<a:avLst>".len();
+    let Some(av_end_rel) = xml[av_start..after + shape_end_rel].find("</a:avLst>") else { return };
+    let mut av_end = av_start + av_end_rel;
+    for (i, &v) in adj.iter().take(16).enumerate() {
+        if !v.is_finite() || (v.round() >= -2.0e9 && v.round() <= 2.0e9) {
+            continue;
+        }
+        let clamped = v.round().clamp(-2.0e9, 2.0e9) as i64;
+        let actual = v.round() as i64;
+        let single_name = format!(r#"<a:gd name="adj" fmla="val {clamped}"/>"#);
+        let idx_name = format!(r#"<a:gd name="adj{}" fmla="val {clamped}"/>"#, i + 1);
+        let (target, repl) = if i == 0 && xml[av_start..av_end].contains(&single_name) {
+            (single_name, format!(r#"<a:gd name="adj" fmla="val {actual}"/>"#))
+        } else {
+            (idx_name, format!(r#"<a:gd name="adj{}" fmla="val {actual}"/>"#, i + 1))
+        };
+        if let Some(rel) = xml[av_start..av_end].find(&target) {
+            let pos = av_start + rel;
+            xml.replace_range(pos..pos + target.len(), &repl);
+            av_end = av_end + repl.len() - target.len();
+        }
+    }
+}
+
+fn patch_large_geom_adjs(xml_bytes: &[u8], adjs: &[(u32, &[f64])]) -> Vec<u8> {
+    let Ok(mut xml) = String::from_utf8(xml_bytes.to_vec()) else {
+        return xml_bytes.to_vec();
+    };
+    for &(spid, adj) in adjs {
+        let needle = format!(r#"<p:cNvPr id="{spid}""#);
+        let mut search_from = 0;
+        while let Some(rel) = xml[search_from..].find(&needle) {
+            let after = search_from + rel + needle.len();
+            if xml.as_bytes().get(after).is_some_and(|b| matches!(b, b' ' | b'/' | b'>')) {
+                patch_shape_av_lst(&mut xml, after, adj);
+                break;
+            }
+            search_from = after;
+        }
+    }
+    xml.into_bytes()
+}
+
 fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, PptxError> {
     let slide_media: Vec<Vec<(u32, &deckcraft_model::MediaClip)>> = p.slides.iter().map(|s| collect_export_media(&s.shapes)).collect();
     let slide_grp_pics: Vec<std::collections::HashSet<u32>> = p.slides.iter().map(|s| collect_grp_fill_pic_spids(&s.shapes)).collect();
-    if slide_media.iter().all(Vec::is_empty) && slide_grp_pics.iter().all(std::collections::HashSet::is_empty) {
+    let slide_adjs: Vec<Vec<(u32, &[f64])>> = p.slides.iter().map(|s| collect_large_geom_adjs(&s.shapes)).collect();
+    if slide_media.iter().all(Vec::is_empty) && slide_grp_pics.iter().all(std::collections::HashSet::is_empty) && slide_adjs.iter().all(Vec::is_empty)
+    {
         return Ok(bytes);
     }
     let pkg = craft_opc::Package::open(&bytes, &craft_pptx::LIMITS).map_err(|e| PptxError::Write(e.to_string()))?;
@@ -714,8 +775,9 @@ fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, Pp
         for (i, s) in list.children(craft_xml::Local("sldId")).enumerate() {
             let media = slide_media.get(i).map(Vec::as_slice).unwrap_or(&[]);
             let grp_pics = slide_grp_pics.get(i);
+            let adjs = slide_adjs.get(i).map(Vec::as_slice).unwrap_or(&[]);
             let need_grp = grp_pics.is_some_and(|g| !g.is_empty());
-            if media.is_empty() && !need_grp {
+            if media.is_empty() && !need_grp && adjs.is_empty() {
                 continue;
             }
             if let Some(target) = s.attr_local("r:id").and_then(|rid| pres_rels.target(rid))
@@ -726,6 +788,9 @@ fn patch_exported_slides(p: &Presentation, bytes: Vec<u8>) -> Result<Vec<u8>, Pp
                     && !g.is_empty()
                 {
                     patched = patch_pic_grp_fill(&patched, g);
+                }
+                if !adjs.is_empty() {
+                    patched = patch_large_geom_adjs(&patched, adjs);
                 }
                 patches.insert(target.to_string(), patched);
             }
