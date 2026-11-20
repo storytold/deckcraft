@@ -444,3 +444,33 @@ fn a_shared_notes_part_is_read_once() {
     assert_eq!(q.slides[0].notes.text(), "notes 0");
     assert!(q.slides[1..].iter().all(|s| s.notes.text().is_empty()), "a shared notes part is not copied");
 }
+
+#[test]
+fn notes_master_and_handout_master_shape_count_bounds() {
+    use std::fmt::Write as _;
+    use std::sync::Arc;
+    let mut p = defaults::new_presentation(None);
+    Arc::make_mut(&mut p.slides[0]).notes = deckcraft_model::text::TextBody::from_text("note");
+    p.handout_master = Some(Arc::new(deckcraft_model::Master { name: "Handouts".into(), ..Default::default() }));
+    let mut es = entries(&deckcraft_pptx::export(&p).expect("export"));
+    let mut many = String::new();
+    for i in 2..=20_050 {
+        let _ = write!(many, r#"<p:sp><p:nvSpPr><p:cNvPr id="{i}" name="S{i}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/></p:sp>"#);
+    }
+    for (n, d) in es.iter_mut() {
+        if n == "ppt/notesMasters/notesMaster1.xml" || n == "ppt/handoutMasters/handoutMaster1.xml" {
+            let xml = String::from_utf8(d.clone()).expect("utf8");
+            if let Some(pos) = xml.rfind("</p:spTree>") {
+                let mut patched = String::with_capacity(xml.len() + many.len());
+                patched.push_str(&xml[..pos]);
+                patched.push_str(&many);
+                patched.push_str(&xml[pos..]);
+                *d = patched.into_bytes();
+            }
+        }
+    }
+    let q = deckcraft_pptx::import(&rezip(&es)).expect("bounded import");
+    assert_eq!(q.notes_master.as_ref().expect("notes_master").shapes.len(), 20_000);
+    assert_eq!(q.handout_master.as_ref().expect("handout_master").shapes.len(), 20_000);
+    deckcraft_pptx::export(&q).expect("re-export");
+}
