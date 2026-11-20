@@ -804,6 +804,7 @@ fn diagram_outline(imp: &mut Imp, part: &Part, rel_ids: &El, data: &El) -> Optio
     let pr = data.path(&["ptLst"]).and_then(|l| l.children_named("pt").find(|p| p.attr("type") == Some("doc"))).and_then(|p| p.child("prSet"));
     let style = crate::dgm::style_for(pr.and_then(|p| p.attr("qsTypeId")).unwrap_or("")).to_string();
     let colors = crate::dgm::colors_for(pr.and_then(|p| p.attr("csTypeId")).unwrap_or(""));
+    let (font_size, text_color) = crate::dgm::text_look(data);
     let (style_xml, colors_xml) = (raw("r:qs"), raw("r:cs"));
     imp.diagram_xml_bytes = spent.get();
     Some(deckcraft_model::Diagram {
@@ -817,6 +818,9 @@ fn diagram_outline(imp: &mut Imp, part: &Part, rel_ids: &El, data: &El) -> Optio
         layout_xml,
         style_xml,
         colors_xml,
+        font_size,
+        text_color,
+        text_style: None,
     })
 }
 
