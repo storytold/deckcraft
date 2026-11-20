@@ -353,8 +353,33 @@ mod tests {
         assert_eq!(app.ui.file_dialog_directory, Some(missing));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn file_dialogs_skip_unc_directories_without_forgetting_the_selection() {
+    fn cancelling_open_preserves_memory_with_a_colon_in_the_active_path() {
+        let scratch = Scratch::new("dialog-colon");
+        let directory = scratch.0.join("project:").join("decks");
+        std::fs::create_dir_all(&directory).unwrap();
+        let services = crate::Services {
+            pick_open: Some(Box::new(move |_, start| {
+                assert_eq!(start, Some(directory.as_path()));
+                None
+            })),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        let remembered = scratch.0.join("missing");
+        app.ui.file_dialog_directory = Some(remembered.clone());
+        for file in ["project://decks/Q4.pptx", "project:/decks/Q4.pptx"] {
+            let path = scratch.0.join(file).to_string_lossy().into_owned();
+            app.session.active_mut().unwrap().path = Some(path.clone());
+            app.pick_and_open();
+            assert_eq!(app.ui.file_dialog_directory.as_ref(), Some(&remembered));
+            assert_eq!(app.session.active().unwrap().path.as_deref(), Some(path.as_str()));
+        }
+    }
+
+    #[test]
+    fn file_dialogs_skip_unc_and_uri_without_forgetting_the_selection() {
         let root = std::env::temp_dir();
         let expected = root.clone();
         let services = crate::Services {
@@ -372,10 +397,13 @@ mod tests {
         let remembered = std::path::PathBuf::from(r"\\deckcraft-offline.invalid\share\previous");
         app.ui.file_dialog_directory = Some(remembered.clone());
         app.session.active_mut().unwrap().path = Some(r"\\?\UNC\deckcraft-offline.invalid\share\active.deckcraft".into());
-        app.ui.recent =
-            vec![r"\\deckcraft-offline.invalid\share\recent.deckcraft".into(), root.join("local.deckcraft").to_string_lossy().into_owned()];
+        app.ui.recent = vec![
+            r"\\deckcraft-offline.invalid\share\recent.deckcraft".into(),
+            "https://deckcraft-offline.invalid/share/recent.deckcraft".into(),
+            root.join("local.deckcraft").to_string_lossy().into_owned(),
+        ];
         app.pick_and_open();
-        app.ui.recent.truncate(1);
+        app.ui.recent.truncate(2);
         app.save_as_dialog("deckcraft");
         assert_eq!(app.ui.file_dialog_directory, Some(remembered));
     }

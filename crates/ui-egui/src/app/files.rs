@@ -133,11 +133,19 @@ fn is_remote_dialog_path(path: &Path) -> bool {
     if let Some(Component::Prefix(prefix)) = path.components().next() {
         match prefix.kind() {
             Prefix::UNC(..) | Prefix::VerbatimUNC(..) => return true,
-            Prefix::VerbatimDisk(_) => return false,
+            Prefix::Disk(_) | Prefix::VerbatimDisk(_) => return false,
             _ => {}
         }
     }
-    path.to_str().is_some_and(|p| p.starts_with("\\\\") || p.contains("://"))
+    path.to_str().is_some_and(|p| {
+        if p.starts_with("\\\\") {
+            return true;
+        }
+        // Only a leading scheme is a URI marker. A local component can contain a colon.
+        let Some((scheme, _)) = p.split_once("://") else { return false };
+        let mut bytes = scheme.bytes();
+        bytes.next().is_some_and(|b| b.is_ascii_alphabetic()) && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+    })
 }
 
 fn usable_dialog_directory(path: &Path) -> bool {
@@ -881,6 +889,34 @@ pub(crate) fn web_image_files(
             (file, bytes)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod dialog_path_tests {
+    use super::{Path, is_remote_dialog_path};
+
+    #[test]
+    fn distinguishes_remote_dialog_paths_from_local_paths() {
+        for path in [
+            "https://example.invalid/decks/Q4.pptx",
+            "web+deck-1.0://example.invalid/Q4.pptx",
+            r"\\server\share\Q4.pptx",
+            r"\\?\UNC\server\share\Q4.pptx",
+        ] {
+            assert!(is_remote_dialog_path(Path::new(path)), "{path}");
+        }
+        for path in ["/tmp/decks/Q4.pptx", "/tmp/project://decks/Q4.pptx", "relative/project://decks/Q4.pptx", "1https://decks/Q4.pptx"] {
+            assert!(!is_remote_dialog_path(Path::new(path)), "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_prefixes_are_local_paths() {
+        for path in [r"C:\decks\Q4.pptx", "C://decks/Q4.pptx", r"\\?\C:\decks\Q4.pptx"] {
+            assert!(!is_remote_dialog_path(Path::new(path)), "{path}");
+        }
+    }
 }
 
 #[cfg(test)]
