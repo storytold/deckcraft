@@ -110,7 +110,8 @@ pub(crate) fn fill_path_in_view(
                 let on_slide = m.transform_rect_bbox(bounds);
                 let on_path = m * path.clone();
                 ctx.set_transform(view);
-                ctx.push_clip_layer(&on_path);
+                // A morph fading the fill fades the picture with it, as it does any other fill.
+                ctx.push_layer(Some(&on_path), None, (alpha < 1.0).then_some(alpha as f32), None, None);
                 // Drawn in device pixels, so a tile (given in shape units) is sized to pixels first.
                 let tiled = tiled_per_point(fill, (c[0].hypot(c[1]), c[2].hypot(c[3])));
                 let upright = if let Fill::Picture(p) = tiled.as_ref() { p } else { pf };
@@ -118,7 +119,7 @@ pub(crate) fn fill_path_in_view(
                 ctx.pop_layer();
                 return;
             }
-            ctx.push_clip_layer(path);
+            ctx.push_layer(Some(path), None, (alpha < 1.0).then_some(alpha as f32), None, None);
             picture_in_view(ctx, pres, &resolved(rctx, pf, ph), bounds, m, view, None);
             ctx.pop_layer();
         }

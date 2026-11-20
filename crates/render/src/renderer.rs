@@ -138,6 +138,8 @@ struct FxSource<'a> {
     gif_time: Option<f64>,
     /// How strongly each sub-path's fill shows while a morph fades it (empty outside a morph).
     fades: &'a [deckcraft_geom::morph::Fade],
+    /// Shape units to the point along x and y, which size a tiled picture fill as the face does.
+    per_point: (f64, f64),
     m: Affine,
     w: f64,
     h: f64,
@@ -147,6 +149,11 @@ impl FxSource<'_> {
     /// Whether sub-path `i` has a fill on screen: the face skips a fill a morph has faded out.
     fn fills(&self, i: usize, sp: &SubPath) -> bool {
         sp.fill != FillMode::None && self.fades.get(i).is_none_or(|f| f.fill > 0.0)
+    }
+
+    /// How strongly sub-path `i`'s fill shows: 1 outside a morph.
+    fn fill_fade(&self, i: usize) -> f64 {
+        self.fades.get(i).map_or(1.0, |f| f.fill)
     }
 }
 
@@ -777,6 +784,7 @@ impl Renderer {
                     picture_background: is_pic && picture_shows_fill(rctx, s),
                     gif_time: is_pic.then(|| d.f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1)).flatten(),
                     fades: &d.fades,
+                    per_point: self.per_point_xy(m, depth),
                     m,
                     w,
                     h,
@@ -1213,6 +1221,8 @@ impl Renderer {
                 if !src.fills(i, sp) {
                     continue;
                 }
+                // A morph's partial fade shows in the glow as it does on the face.
+                let fade = src.fill_fade(i);
                 let path = &sp.path;
                 mask.set_transform(plan.to_mask);
                 mask.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
@@ -1220,25 +1230,29 @@ impl Renderer {
                     (Fill::Background, Some((bg, ph, view))) => {
                         let slide = Rect::new(0.0, 0.0, rctx.pres.slide_size.width, rctx.pres.slide_size.height);
                         let path = (view.inverse() * src.m) * path.clone();
-                        paint::fill_path_in_view(&mut mask, rctx, bg, *ph, &path, slide, *view, device_to_mask, sp.fill, 1.0, rctx.pres);
+                        paint::fill_path_in_view(&mut mask, rctx, bg, *ph, &path, slide, *view, device_to_mask, sp.fill, fade, rctx.pres);
                     }
                     (Fill::Group, _) => {
                         if let Some((fill, gm, bounds)) = &self.group_fill
                             && gm.determinant().abs() > 1e-12
                         {
                             let path = (gm.inverse() * src.m) * path.clone();
-                            paint::fill_path_in_view(&mut mask, rctx, fill, None, &path, *bounds, *gm, device_to_mask, sp.fill, 1.0, rctx.pres);
+                            paint::fill_path_in_view(&mut mask, rctx, fill, None, &path, *bounds, *gm, device_to_mask, sp.fill, fade, rctx.pres);
                         }
                     }
-                    _ => paint::fill_path_in_view(&mut mask, rctx, fill, src.fill_ph, path, bounds, src.m, device_to_mask, sp.fill, 1.0, rctx.pres),
+                    _ => {
+                        // A tile is sized in points, as the face's is (fill_geometry).
+                        let fill = paint::tiled_per_point(fill, src.per_point);
+                        paint::fill_path_in_view(&mut mask, rctx, &fill, src.fill_ph, path, bounds, src.m, device_to_mask, sp.fill, fade, rctx.pres);
+                    }
                 }
             }
         }
-        let mut paint_path = |path: &BezPath, even_odd: bool| {
+        let mut paint_path = |path: &BezPath, even_odd: bool, alpha: f64| {
             // A picture-backed background leaves its image-pixel transform installed.
             mask.set_transform(plan.to_mask);
             mask.set_fill_rule(if even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
-            mask.push_clip_layer(path);
+            mask.push_layer(Some(path), None, (alpha < 1.0).then_some(alpha as f32), None, None);
             if upright {
                 // Drawn in device pixels, as the visible fill is, so a tile (given in shape units)
                 // is sized to pixels first.
@@ -1255,13 +1269,13 @@ impl Renderer {
             // A picture fill is painted per filled subpath, as in fill_geometry.
             for (i, sp) in src.geo.paths.iter().enumerate() {
                 if src.fills(i, sp) {
-                    paint_path(&sp.path, sp.even_odd);
+                    paint_path(&sp.path, sp.even_odd, src.fill_fade(i));
                 }
             }
         } else {
             // A picture's foreground is painted once through the merged outline, as in draw_fill.
             // Repeating it per subpath would accumulate translucent coverage where paths overlap.
-            paint_path(&src.geo.outline(), false);
+            paint_path(&src.geo.outline(), false, 1.0);
         }
         let coverage = self.finish(mask, plan.width, plan.height);
         if let Some(pm) = plan.tint(coverage, color) {
@@ -1286,12 +1300,27 @@ impl Renderer {
             picture_background: src.picture_background,
             gif_time: src.gif_time,
             fades: src.fades,
+            per_point: src.per_point,
             m: src.m,
             w: src.w,
             h: src.h,
         };
-        let FxSource { geo, fill, fill_alpha, fill_ph: _, outline, content, picture_fill: _, picture_background: _, gif_time: _, fades: _, m, w, h } =
-            src;
+        let FxSource {
+            geo,
+            fill,
+            fill_alpha,
+            fill_ph: _,
+            outline,
+            content,
+            picture_fill: _,
+            picture_background: _,
+            gif_time: _,
+            fades: _,
+            per_point: _,
+            m,
+            w,
+            h,
+        } = src;
         let silhouette = {
             let mut p = BezPath::new();
             for sp in &geo.paths {

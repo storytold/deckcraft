@@ -3745,6 +3745,61 @@ fn a_picture_glow_casts_from_a_fill_its_placeholder_sets() {
     }
 }
 
+#[test]
+fn a_picture_glow_fades_with_a_morphs_partial_fill_fade() {
+    // Halfway through the morph the square's fill shows at half strength, on the face and in
+    // its glow: a picture fill, and a clear picture's own fill behind it.
+    let bx = Xfrm::new(100.0, 100.0, 128.0, 128.0);
+    let square = |fill| Geom::Custom {
+        paths: vec![deckcraft_model::CustomPath { w: 128.0, h: 128.0, d: "M 0 0 L 128 0 L 128 128 L 0 128 Z".into(), fill, ..Default::default() }],
+    };
+    for case in ["fill", "background"] {
+        let mut p = picture_glow_deck(255, false, case == "fill", [0.0; 4], bx);
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        let mut shape = slide.shapes.remove(0);
+        shape.geom = square(deckcraft_geom::preset::FillMode::None);
+        if let ShapeKind::Picture { fill } = &mut shape.kind {
+            fill.alpha = Some(0.0);
+            shape.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 30, 20))));
+        }
+        let next = (*p.slides[0]).clone();
+        p.slides.push(std::sync::Arc::new(next));
+        let at = |t: f64, x: u32| {
+            let pm = PathMorph { id: shape.id, from: square(deckcraft_geom::preset::FillMode::Norm), from_box: bx, to_box: bx, t };
+            render_blend(&p, (0, 1), t, &[(shape.clone(), false)], &[], &[pm], &RenderOpts { scale: 1.0, ..Default::default() }).pixel(x, 164)
+        };
+        assert_eq!(at(0.0, 200)[..3], [220, 30, 20], "{case}: the filled face at the start");
+        let face = at(0.5, 200);
+        assert!(face[0] < 200 && face[1] > 50, "{case}: the half-faded face shows the slide through it: {face:?}");
+        let (full, half) = (at(0.0, 232)[0], at(0.5, 232)[0]);
+        assert!(half > 50 && half + 10 < full, "{case}: the glow fades with the fill: {half} at half, {full} at the start");
+    }
+}
+
+#[test]
+fn a_picture_glow_sizes_its_tiled_background_in_a_stretched_group_like_its_face() {
+    // A clear picture's tiled fill in a group whose child space halves it across: the face keeps
+    // each 96 pt tile (64 px at twice its size, right half opaque) 96 pt wide on the slide, so
+    // the fill is clear from 196 to 244 pt across. A tile left in shape units would be half that
+    // and opaque from 220 to 244.
+    let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm::new(0.0, 0.0, 320.0, 160.0));
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    let mut pic = slide.shapes.remove(0);
+    let ShapeKind::Picture { fill } = &mut pic.kind else { panic!("picture fixture") };
+    let tile = deckcraft_model::style::PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 2.0, sy: 2.0, flip: "none".into(), align: "tl".into() };
+    pic.fill = Some(Fill::Picture(deckcraft_model::style::PictureFill { mode: tile, ..fill.clone() }));
+    fill.alpha = Some(0.0);
+    slide.shapes = vec![Shape {
+        id: ShapeId(1598),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 160.0, 160.0)),
+        kind: ShapeKind::Group { children: vec![pic], child: Xfrm::new(0.0, 0.0, 320.0, 160.0) },
+        ..Default::default()
+    }];
+    let image = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    assert_eq!(image.pixel(172, 180)[..3], [220, 30, 20], "the face's opaque column runs from 148 to 196 pt");
+    assert_eq!(image.pixel(222, 180)[..3], [40, 110, 60], "22 pt from the opaque columns, the clear one casts no glow");
+}
+
 fn upright_picture_background_alpha(gradient: bool) -> Image {
     let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
     let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
