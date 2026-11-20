@@ -448,9 +448,10 @@ fn next_ph_idx(shapes: &[Shape]) -> Option<u32> {
     }
     // Imported layouts may already use u32::MAX. Wrapping or saturating would reuse an index
     // that binds a different placeholder, so find the first hole without scanning the u32 range.
+    // Keep index zero available for a title, just as ordinary append allocation does.
     let mut used: Vec<u32> = shapes.iter().filter_map(|sh| sh.ph.as_ref().map(|p| p.idx)).collect();
     used.sort_unstable();
-    let mut next = 0_u32;
+    let mut next = 1_u32;
     for idx in used {
         if idx > next {
             return Some(next);
@@ -561,6 +562,29 @@ mod placeholder_index_tests {
         s.execute("edit.undo", &json!({})).unwrap();
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.doc().unwrap().doc, before, "original placeholders are unchanged");
+        s.execute("edit.redo", &json!({})).unwrap();
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, after);
+    }
+
+    #[test]
+    fn overflow_allocation_keeps_zero_for_a_restored_title() {
+        let mut s = layout_with_indices(&[1, u32::MAX]);
+        let before = s.doc().unwrap().doc.clone();
+        let result = s.execute("master.insertPlaceholder", &json!({"kind": "text"})).unwrap();
+        let id = ShapeId(result["id"].as_u64().unwrap() as u32);
+        let st = s.doc().unwrap();
+        let body = st.shapes().iter().find(|sh| sh.id == id).unwrap();
+        assert_eq!(body.ph_type(), Some(PhType::Body));
+        assert_eq!(body.ph.as_ref().unwrap().idx, 2, "a new body does not take the free preferred title index");
+        s.execute("master.placeholders", &json!({"title": true})).unwrap();
+        let st = s.doc().unwrap();
+        let title = st.shapes().iter().find(|sh| sh.ph_type() == Some(PhType::Title)).unwrap();
+        assert_eq!(title.ph.as_ref().unwrap().idx, 0, "the restored title keeps its free preferred index");
+        let after = st.doc.clone();
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before, "both commands preserve the original placeholders through undo");
         s.execute("edit.redo", &json!({})).unwrap();
         s.execute("edit.redo", &json!({})).unwrap();
         assert_eq!(s.doc().unwrap().doc, after);
