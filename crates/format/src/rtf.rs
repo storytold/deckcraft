@@ -8,74 +8,40 @@
 //! with [`rtf_to_slides`], straight into slides that keep empty titles and titles starting `- `.
 
 use deckcraft_model::Presentation;
-use deckcraft_model::text::{Paragraph, RunKind};
+use deckcraft_model::text::Paragraph;
 
-/// RTF-escape `s` (non-ASCII as `\uN?`, UTF-16, signed as RTF wants).
-fn escape(out: &mut String, s: &str) {
-    // Keep outline text literal: the shared writer also supports page/column breaks and
-    // shorthand controls that this app's deliberately small outline reader does not consume.
-    // Delegate ordinary spans, including UTF-16 escaping, without allocating a second string.
-    let mut start = 0;
-    for (i, c) in s.char_indices() {
-        let replacement = match c {
-            '\u{000C}' | '\u{000E}' => "",
-            '\u{00A0}' => "\\u160?",
-            '\u{00AD}' => "\\u173?",
-            '\u{2011}' => "\\u8209?",
-            '\u{2028}' => "\\u8232?",
-            _ => continue,
-        };
-        craft_rtf::push_esc(out, &s[start..i]);
-        out.push_str(replacement);
-        start = i + c.len_utf8();
-    }
-    craft_rtf::push_esc(out, &s[start..]);
-}
-
-fn runs(out: &mut String, p: &Paragraph) {
+fn write_runs(w: &mut craft_rtf::OutlineWriter, p: &Paragraph) {
     for r in &p.runs {
-        if matches!(r.kind, RunKind::Break) {
-            out.push_str("\\line ");
+        if matches!(r.kind, deckcraft_model::text::RunKind::Break) {
+            w.line_break();
             continue;
         }
-        let (b, i, u) = (r.props.bold == Some(true), r.props.italic == Some(true), r.props.underline.as_deref().is_some_and(|u| u != "none"));
-        if !(b || i || u) {
-            escape(out, &r.text);
-            continue;
-        }
-        out.push('{');
-        out.push_str(if b { "\\b" } else { "" });
-        out.push_str(if i { "\\i" } else { "" });
-        out.push_str(if u { "\\ul" } else { "" });
-        out.push(' ');
-        escape(out, &r.text);
-        out.push('}');
+        let b = r.props.bold == Some(true);
+        let i = r.props.italic == Some(true);
+        let u = r.props.underline.as_deref().is_some_and(|u| u != "none");
+        w.run(&r.text, b, i, u);
     }
 }
 
 /// The presentation's outline (slide titles and body text) as RTF.
 pub fn slides_to_rtf(p: &Presentation) -> String {
-    let mut out = String::from("{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1{\\fonttbl{\\f0\\fswiss Liberation Sans;}}\n{\\stylesheet");
-    for n in 1..=9 {
-        out.push_str(&format!("{{\\s{n}\\li{}\\fi-360\\level{n} heading {n};}}", 360 * n));
-    }
-    out.push_str("}\n");
+    let mut w = craft_rtf::OutlineWriter::new("Liberation Sans");
     for s in &p.slides {
         let title = s.shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())).and_then(|sh| sh.text.as_ref());
-        out.push_str("\\pard\\s1\\outlinelevel0\\sb240\\b\\fs32 ");
+        w.begin_title();
         // The title stays one outline paragraph (a `\par` would start another slide on re-import),
         // so its paragraphs are joined with line breaks.
         let mut tps = title.into_iter().flat_map(|t| &t.paragraphs).filter(|p| !p.is_empty()).peekable();
         if tps.peek().is_none() {
-            escape(&mut out, &s.title());
+            w.run(&s.title(), false, false, false);
         }
         for (k, tp) in tps.enumerate() {
             if k > 0 {
-                out.push_str("\\line ");
+                w.line_break();
             }
-            runs(&mut out, tp);
+            write_runs(&mut w, tp);
         }
-        out.push_str("\\b0\\par\n");
+        w.end_title();
         for sh in &s.shapes {
             // As in the text outline: footer, date and slide-number placeholders are not body text.
             if sh.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind()) {
@@ -83,15 +49,13 @@ pub fn slides_to_rtf(p: &Presentation) -> String {
             }
             let Some(t) = &sh.text else { continue };
             for para in t.paragraphs.iter().filter(|p| !p.is_empty()) {
-                let lvl = para.level.min(8) as u32;
-                out.push_str(&format!("\\pard\\s{}\\outlinelevel{}\\li{}\\fs24 ", (lvl + 2).min(9), lvl + 1, 360 * (lvl + 1)));
-                runs(&mut out, para);
-                out.push_str("\\par\n");
+                w.begin_body(para.level);
+                write_runs(&mut w, para);
+                w.end_body();
             }
         }
     }
-    out.push_str("}\n");
-    out
+    w.finish()
 }
 
 /// Whether `bytes` look like RTF.
@@ -487,6 +451,24 @@ mod tests {
     use super::*;
 
     // Frozen pre-cutover implementations are test oracles, not production parsers.
+    fn escape(out: &mut String, s: &str) {
+        let mut start = 0;
+        for (i, c) in s.char_indices() {
+            let replacement = match c {
+                '\u{000C}' | '\u{000E}' => "",
+                '\u{00A0}' => "\\u160?",
+                '\u{00AD}' => "\\u173?",
+                '\u{2011}' => "\\u8209?",
+                '\u{2028}' => "\\u8232?",
+                _ => continue,
+            };
+            craft_rtf::push_esc(out, &s[start..i]);
+            out.push_str(replacement);
+            start = i + c.len_utf8();
+        }
+        craft_rtf::push_esc(out, &s[start..]);
+    }
+
     fn legacy_escape(out: &mut String, s: &str) {
         for c in s.chars() {
             match c {
