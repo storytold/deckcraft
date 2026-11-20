@@ -24,8 +24,10 @@ mod nodes;
 mod paint;
 
 use edit::{
-    add_node, change_colors, change_layout, change_style, demote, from_text, nodes, promote, remove_node, set_nodes, set_picture, to_shapes, to_text,
+    add_node, change_colors, change_layout, change_style, demote, font_size, from_text, nodes, promote, remove_node, set_nodes, set_picture,
+    to_shapes, to_text,
 };
+pub(crate) use edit::{clear_text_look, selected_graphics, set_font_size, set_text_color, set_text_props, share_after_edit, shown_size};
 pub use edit::{insert, selected};
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};
@@ -259,6 +261,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set_picture
         ),
         cmd!(
+            "smartArt.fontSize",
+            "Font Size",
+            ["SmartArt Design", "Create Graphic"],
+            None,
+            "{id?, size: pt|null} → {id, fontSize} (one size for every node's text, as PowerPoint sizes a graphic's text alike; null sizes it automatically again, all nodes alike; format.size with the graphic selected does the same)",
+            has_selection,
+            font_size
+        ),
+        cmd!(
             "smartArt.style",
             "Diagram Styles",
             ["Diagram Design", "Diagram Styles"],
@@ -375,7 +386,16 @@ mod tests {
         let items = layout_items(&d, Xfrm::new(0.0, 0.0, 600.0, 300.0));
         let size = |k: usize| items[k].0.text.as_ref().and_then(|b| b.paragraphs[0].runs[0].props.size).unwrap_or(0.0);
         assert!(size(0) < 20.0 && size(0) >= 20.0 * MIN_SCALE - 0.5, "the tip's long word shrinks: {}", size(0));
-        assert!((size(1) - 20.0).abs() < 1e-9, "short words keep their size");
+        assert!((size(1) - size(0)).abs() < 1e-9, "the other shapes follow: every node's text is sized alike");
+    }
+
+    #[test]
+    fn a_font_size_out_of_range_is_clamped_at_layout() {
+        let size_of = |z: f64| {
+            let d = Diagram { kind: "pyramid".into(), nodes: nodes_from_lines(["A", "B"]), font_size: Some(z), ..Default::default() };
+            layout_items(&d, Xfrm::new(0.0, 0.0, 600.0, 300.0))[0].0.text.as_ref().and_then(|b| b.paragraphs[0].runs[0].props.size)
+        };
+        assert_eq!((size_of(1e9), size_of(0.01), size_of(18.0)), (Some(4000.0), Some(1.0), Some(18.0)));
     }
 
     #[test]
