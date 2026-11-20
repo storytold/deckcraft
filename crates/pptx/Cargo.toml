@@ -25,4 +25,5 @@ serde_json = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-geom = { workspace = true }
 image = { workspace = true }
+quick-xml = { workspace = true }
 zip = { workspace = true }
