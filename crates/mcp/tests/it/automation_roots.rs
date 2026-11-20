@@ -211,6 +211,24 @@ fn links_out_of_a_root_are_refused() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// A frame sequence is written by worker threads; they keep the write root, so a frame name
+/// linked out of the root is refused, not followed.
+#[cfg(unix)]
+#[test]
+fn frame_export_workers_keep_the_write_root() {
+    let (mut server, base) = confined("frames", true, true);
+    std::fs::create_dir_all(base.join("out/frames")).unwrap();
+    std::os::unix::fs::symlink(base.join("outside/secret.txt"), base.join("out/frames/frame-000002.png")).unwrap();
+    let (error, text) = run(
+        &mut server,
+        "file.export",
+        json!({"format": "frames", "path": s(&base.join("out/frames")), "fps": 10, "secondsPerSlide": 1, "width": 160}),
+    );
+    assert!(error && text.contains("outside the write root"), "{text}");
+    assert_eq!(std::fs::read_to_string(base.join("outside/secret.txt")).unwrap(), "TOP SECRET", "the link's target is untouched");
+    let _ = std::fs::remove_dir_all(base);
+}
+
 #[test]
 fn without_roots_nothing_is_confined() {
     let base = std::env::temp_dir().join(format!("dc-mcp-roots-none-{}", std::process::id()));

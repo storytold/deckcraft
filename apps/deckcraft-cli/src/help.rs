@@ -66,7 +66,9 @@ everything; .pptx, .pdf and .md (the outline) are written as convert writes them
 current slide as .png or .jpg, or the presentation as .pdf, .pptx or an animated .gif (one frame per
 slide). --export-params passes file.export options as one JSON object, such as
 '{\"width\": \"large\", \"secondsPerSlide\": 3, \"loop\": false, \"slides\": [0, 1, 2]}' for a GIF
-(`deckcraft-cli describe file.export` lists them).
+(`deckcraft-cli describe file.export` lists them). A video's frames (the show with its builds and
+transitions, one PNG per frame in a folder) are exported with a command:
+--cmd 'file.export={\"format\":\"frames\",\"path\":\"frames/\",\"fps\":30}'.
 
 Each --cmd is one command: COMMAND is a command id, then `=`, then the command's parameters as one
 JSON object. Quote it for the shell. A command that needs no parameters is just its id.
