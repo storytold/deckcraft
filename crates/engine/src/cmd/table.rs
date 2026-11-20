@@ -626,11 +626,18 @@ fn distribute(s: &mut Session, p: &Value, rows: bool) -> Result<Value> {
     })
 }
 
+/// A row or column the table doesn't have is an error, like a malformed index (#2260): checked
+/// inside the edit, so a refused resize changes nothing and adds no undo step.
+fn index_in_table(cmd: &str, key: &str, i: usize, n: usize, what: &str) -> Result<()> {
+    if i < n { Ok(()) } else { Err(bad(cmd, format!("`{key}` {i} is out of range: the table has {n} {what}"))) }
+}
+
 fn column_width(s: &mut Session, p: &Value) -> Result<Value> {
     let (_, c) = at(s, p, "table.columnWidth")?;
     let w = f64_param(p, "width").ok_or_else(|| bad("table.columnWidth", "missing `width`"))?.clamp(4.0, 4000.0);
     let keep_total = bool_or(p, "keepTotal", false);
     with_table(s, p, "table.columnWidth", move |t| {
+        index_in_table("table.columnWidth", "col", c, t.n_cols(), "columns")?;
         // Keeping the table's width, the column to the right gives or takes the difference (dragging
         // an inner border). The last column has none: the table gets wider or narrower.
         let pair = t.cols.get(c).zip(t.cols.get(c.saturating_add(1))).map(|(a, b)| a.max(0.0) + b.max(0.0)).filter(|x| x.is_finite());
@@ -659,6 +666,7 @@ fn row_height(s: &mut Session, p: &Value) -> Result<Value> {
     let (r, _) = at(s, p, "table.rowHeight")?;
     let h = f64_param(p, "height").ok_or_else(|| bad("table.rowHeight", "missing `height`"))?.clamp(4.0, 4000.0);
     with_table(s, p, "table.rowHeight", move |t| {
+        index_in_table("table.rowHeight", "row", r, t.n_rows(), "rows")?;
         if let Some(x) = t.rows.get_mut(r) {
             x.height = h;
         }
