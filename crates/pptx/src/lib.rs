@@ -699,7 +699,7 @@ fn patch_pic_grp_fill(xml_bytes: &[u8], spids: &std::collections::HashSet<u32>) 
 fn collect_large_geom_adjs(shapes: &[Shape]) -> Vec<(u32, &[f64])> {
     let mut out = Vec::new();
     assign_spids(shapes, |spid, s| {
-        if let deckcraft_geom::Geom::Preset { adj, .. } = &s.geom
+        if let deckcraft_model::Geom::Preset { adj, .. } = &s.geom
             && adj.iter().any(|v| v.is_finite() && (v.round() < -2.0e9 || v.round() > 2.0e9))
         {
             out.push((spid, adj.as_slice()));
