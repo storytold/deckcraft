@@ -150,6 +150,19 @@ impl FxSource<'_> {
     }
 }
 
+/// Whether a picture paints a fill behind its transparent pixels: its own fill, or, when it sets
+/// neither a fill nor a style, the fill its layout or master placeholder sets (#2068). A style
+/// fill alone, its own or inherited, stays undrawn. The face and the glow mask both ask here, so
+/// a glow follows the background the face shows.
+fn picture_shows_fill(rctx: &Ctx, s: &Shape) -> bool {
+    let explicit = |sh: &Shape| sh.fill.as_ref().is_some_and(|f| !f.is_none());
+    let inherited = || {
+        let (lp, mp) = resolve::parents(rctx, s);
+        [lp, mp].into_iter().flatten().find(|p| p.fill.is_some() || p.style.is_some()).is_some_and(explicit)
+    };
+    explicit(s) || (s.fill.is_none() && s.style.is_none() && inherited())
+}
+
 impl Renderer {
     fn canvas(pres: &Presentation, opts: &RenderOpts, filters: bool) -> (RenderContext, u16, u16, Affine) {
         let (w, h) = output_size(pres, opts);
@@ -761,7 +774,7 @@ impl Renderer {
                     outline,
                     content: content.as_ref(),
                     picture_fill: !is_pic,
-                    picture_background: is_pic && s.fill.as_ref().is_some_and(|f| !f.is_none()),
+                    picture_background: is_pic && picture_shows_fill(rctx, s),
                     gif_time: is_pic.then(|| d.f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1)).flatten(),
                     fades: &d.fades,
                     m,
@@ -837,15 +850,9 @@ impl Renderer {
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
                 // The picture's own fill shows behind its transparent pixels, as in PowerPoint (an
-                // emphasis tint recolours it, as it does any shape's fill). A picture that sets
-                // neither a fill nor a style shows the fill its layout or master placeholder sets
-                // (#2068). A style fill alone, its own or inherited, stays undrawn.
-                let explicit = |sh: &deckcraft_model::Shape| sh.fill.as_ref().is_some_and(|f| !f.is_none());
-                let inherited = || {
-                    let (lp, mp) = resolve::parents(rctx, s);
-                    [lp, mp].into_iter().flatten().find(|p| p.fill.is_some() || p.style.is_some()).is_some_and(explicit)
-                };
-                if (explicit(s) || (s.fill.is_none() && s.style.is_none() && inherited()))
+                // emphasis tint recolours it, as it does any shape's fill); `picture_shows_fill`
+                // covers a fill inherited from a placeholder (#2068).
+                if picture_shows_fill(rctx, s)
                     && let Some(fl) = &fill
                 {
                     self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);

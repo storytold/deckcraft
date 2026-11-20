@@ -3710,6 +3710,41 @@ fn a_picture_glow_skips_fills_a_morph_has_faded_out() {
     }
 }
 
+#[test]
+fn a_picture_glow_casts_from_a_fill_its_placeholder_sets() {
+    // A picture that sets neither a fill nor a style shows its layout placeholder's fill behind its
+    // clear left half (#2068), so the glow follows that fill too. A style of its own keeps the
+    // fill undrawn, and the glow stays off the clear half.
+    let ph = || Some(Placeholder { kind: PhType::Picture, idx: 11, ..Default::default() });
+    let bx = Xfrm::new(100.0, 100.0, 128.0, 128.0);
+    let orange = Fill::solid(ColorRef::rgb(Rgba::rgb(255, 153, 0)));
+    // (layout fill, picture's own style, glow left of the clear half)
+    let cases = [
+        (Some(orange.clone()), None, true),
+        (None, None, false),
+        (Some(orange), Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)), false),
+    ];
+    for (i, (layout_fill, own_style, glows)) in cases.into_iter().enumerate() {
+        let mut p = picture_glow_deck(255, false, false, [0.0; 4], bx);
+        let lid = p.slides[0].layout;
+        let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+        let layout = m.layouts.iter_mut().find(|l| l.id == lid).expect("layout");
+        layout.shapes.push(Shape { id: ShapeId(2), ph: ph(), xfrm: Some(bx), fill: layout_fill, ..Default::default() });
+        let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
+        shape.ph = ph();
+        shape.fill = None;
+        shape.style = own_style;
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let left = img.pixel(96, 164);
+        if glows {
+            assert!(img.pixel(120, 164)[..3] == [255, 153, 0], "case {i}: the layout's fill shows behind the clear half");
+            assert!(left[0] > 60, "case {i}: the placeholder's fill casts the glow: {left:?}");
+        } else {
+            assert_eq!(left[..3], [40, 110, 60], "case {i}: the clear half casts no glow");
+        }
+    }
+}
+
 fn upright_picture_background_alpha(gradient: bool) -> Image {
     let mut p = picture_glow_deck(255, false, false, [0.0; 4], Xfrm { rot: 90.0, ..Xfrm::new(100.0, 100.0, 160.0, 160.0) });
     let shape = &mut std::sync::Arc::make_mut(&mut p.slides[0]).shapes[0];
