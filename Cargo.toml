@@ -71,7 +71,7 @@ craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "010702ee
 # H.264, HEVC, VP9 and AV1 decoders.
 craft-video = { git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890", version = "=0.1.0", default-features = false, features = ["h264-decode", "hevc-decode", "vp9-decode", "av1-decode", "threads"] }
 # WMF, EMF and EMF+ reader.
-craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0" }
+craft-metafile = { git = "https://github.com/storytold/craft-libs", rev = "f428c3d36e0faf3924b76956a01334c051543527", version = "=0.1.0" }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "63196e66f3033a6623eb629af95a104d26986725", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "63196e66f3033a6623eb629af95a104d26986725", features = ["egui"] }
