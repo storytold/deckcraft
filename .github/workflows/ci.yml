@@ -26,8 +26,12 @@ jobs:
       # Same craft-fonts commit as release.yml.
       CRAFT_FONTS_REF: 37827adc41fd165f9a9234ac40f94dbad353aa69
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@v2.22.4
+        with:
+          egress-policy: audit
       - name: Check out craft-fonts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
         with:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
