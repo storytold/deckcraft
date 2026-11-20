@@ -69,7 +69,7 @@ fn broken_pipe_does_not_hide_a_later_command_failure() {
     );
     assert!(!out.status.success(), "a later command failure returned success");
     assert!(!dir.0.join("out.deckcraft").exists(), "failed run unexpectedly saved");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("no slide 999"), "missing command failure diagnostic");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no slide at index 999"), "missing command failure diagnostic");
 }
 
 #[test]

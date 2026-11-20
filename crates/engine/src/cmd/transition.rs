@@ -47,6 +47,9 @@ pub fn specs() -> Vec<CommandSpec> {
 fn slide_indices(s: &Session, p: &Value, cmd: &str) -> Result<Vec<usize>> {
     let st = s.doc()?;
     if let Some(i) = opt_usize_param(p, "index", cmd)? {
+        if i >= st.doc.slides.len() {
+            return Err(super::no_slide(cmd, i, st.doc.slides.len()));
+        }
         return Ok(vec![i]);
     }
     let v: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
