@@ -58,9 +58,10 @@ fn from_craft_el(el: craft_xml::El) -> El {
     let children = el
         .children
         .into_iter()
-        .map(|n| match n {
-            craft_xml::Node::El(c) => Node::El(from_craft_el(c)),
-            craft_xml::Node::Text(t) => Node::Text(t),
+        .filter_map(|n| match n {
+            craft_xml::Node::El(c) => Some(Node::El(from_craft_el(c))),
+            craft_xml::Node::Text(t) | craft_xml::Node::CData(t) => Some(Node::Text(t)),
+            craft_xml::Node::Pi { .. } | craft_xml::Node::Comment(_) => None,
         })
         .collect();
     El { name: el.name, attrs: el.attrs, children }

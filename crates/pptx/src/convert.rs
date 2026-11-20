@@ -928,7 +928,7 @@ fn table_to(t: &dm_table::Table) -> cd_table::Table {
     cd_table::Table {
         cols: t.cols.clone(),
         rows: t.rows.iter().map(|r| cd_table::Row { height: r.height, cells: r.cells.iter().map(cell_to).collect() }).collect(),
-        style_id: t.style_id.clone(),
+        style: t.style.clone(),
         first_row: t.first_row,
         last_row: t.last_row,
         first_col: t.first_col,
@@ -936,6 +936,7 @@ fn table_to(t: &dm_table::Table) -> cd_table::Table {
         band_row: t.band_row,
         band_col: t.band_col,
         rtl: t.rtl,
+        background: t.background.as_ref().map(fill_to),
     }
 }
 
@@ -943,7 +944,7 @@ fn table_from(t: cd_table::Table) -> dm_table::Table {
     dm_table::Table {
         cols: t.cols,
         rows: t.rows.into_iter().map(|r| dm_table::Row { height: r.height, cells: r.cells.into_iter().map(cell_from).collect() }).collect(),
-        style_id: t.style_id,
+        style: t.style,
         first_row: t.first_row,
         last_row: t.last_row,
         first_col: t.first_col,
@@ -951,50 +952,64 @@ fn table_from(t: cd_table::Table) -> dm_table::Table {
         band_row: t.band_row,
         band_col: t.band_col,
         rtl: t.rtl,
+        background: t.background.map(fill_from),
     }
 }
 
 fn table_border_to(b: &dm_table::TableBorder) -> cd_table::TableBorder {
-    cd_table::TableBorder { width: b.width, color: color_ref_to(&b.color) }
+    match b {
+        dm_table::TableBorder::Line { line } => cd_table::TableBorder::Line { line: line_to(line) },
+        dm_table::TableBorder::Ref { idx, color } => cd_table::TableBorder::Ref { idx: *idx, color: color_ref_to(color) },
+    }
 }
 
 fn table_border_from(b: cd_table::TableBorder) -> dm_table::TableBorder {
-    dm_table::TableBorder { width: b.width, color: color_ref_from(b.color) }
+    match b {
+        cd_table::TableBorder::Line { line } => dm_table::TableBorder::Line { line: line_from(line) },
+        cd_table::TableBorder::Ref { idx, color } => dm_table::TableBorder::Ref { idx, color: color_ref_from(color) },
+    }
 }
 
 fn table_part_style_to(p: &dm_table::TablePartStyle) -> cd_table::TablePartStyle {
     cd_table::TablePartStyle {
         fill: p.fill.as_ref().map(fill_to),
-        text_color: p.text_color.as_ref().map(color_ref_to),
-        bold: p.bold,
-        italic: p.italic,
+        fill_ref: p.fill_ref.as_ref().map(|(idx, c)| (*idx, color_ref_to(c))),
         borders: [
             p.borders[0].as_ref().map(table_border_to),
             p.borders[1].as_ref().map(table_border_to),
             p.borders[2].as_ref().map(table_border_to),
             p.borders[3].as_ref().map(table_border_to),
+            p.borders[4].as_ref().map(table_border_to),
+            p.borders[5].as_ref().map(table_border_to),
         ],
-        inside_h: p.inside_h.as_ref().map(table_border_to),
-        inside_v: p.inside_v.as_ref().map(table_border_to),
+        text_color: p.text_color.as_ref().map(color_ref_to),
+        bold: p.bold,
+        italic: p.italic,
     }
 }
 
 fn table_part_style_from(p: cd_table::TablePartStyle) -> dm_table::TablePartStyle {
-    let [b0, b1, b2, b3] = p.borders;
+    let [b0, b1, b2, b3, b4, b5] = p.borders;
     dm_table::TablePartStyle {
         fill: p.fill.map(fill_from),
+        fill_ref: p.fill_ref.map(|(idx, c)| (idx, color_ref_from(c))),
+        borders: [
+            b0.map(table_border_from),
+            b1.map(table_border_from),
+            b2.map(table_border_from),
+            b3.map(table_border_from),
+            b4.map(table_border_from),
+            b5.map(table_border_from),
+        ],
         text_color: p.text_color.map(color_ref_from),
         bold: p.bold,
         italic: p.italic,
-        borders: [b0.map(table_border_from), b1.map(table_border_from), b2.map(table_border_from), b3.map(table_border_from)],
-        inside_h: p.inside_h.map(table_border_from),
-        inside_v: p.inside_v.map(table_border_from),
     }
 }
 
 fn table_part_to(p: &dm_table::TablePart) -> cd_table::TablePart {
     match p {
-        dm_table::TablePart::Whole => cd_table::TablePart::Whole,
+        dm_table::TablePart::WholeTbl => cd_table::TablePart::WholeTbl,
         dm_table::TablePart::Band1H => cd_table::TablePart::Band1H,
         dm_table::TablePart::Band2H => cd_table::TablePart::Band2H,
         dm_table::TablePart::Band1V => cd_table::TablePart::Band1V,
@@ -1012,7 +1027,7 @@ fn table_part_to(p: &dm_table::TablePart) -> cd_table::TablePart {
 
 fn table_part_from(p: cd_table::TablePart) -> dm_table::TablePart {
     match p {
-        cd_table::TablePart::Whole => dm_table::TablePart::Whole,
+        cd_table::TablePart::WholeTbl => dm_table::TablePart::WholeTbl,
         cd_table::TablePart::Band1H => dm_table::TablePart::Band1H,
         cd_table::TablePart::Band2H => dm_table::TablePart::Band2H,
         cd_table::TablePart::Band1V => dm_table::TablePart::Band1V,
@@ -1032,7 +1047,7 @@ fn table_style_def_to(d: &dm_table::TableStyleDef) -> cd_table::TableStyleDef {
     cd_table::TableStyleDef {
         id: d.id.clone(),
         name: d.name.clone(),
-        bg: d.bg.as_ref().map(fill_to),
+        background: d.background.as_ref().map(table_part_style_to),
         parts: d.parts.iter().map(|(k, v)| (table_part_to(k), table_part_style_to(v))).collect(),
         raw: d.raw.clone(),
     }
@@ -1042,7 +1057,7 @@ fn table_style_def_from(d: cd_table::TableStyleDef) -> dm_table::TableStyleDef {
     dm_table::TableStyleDef {
         id: d.id,
         name: d.name,
-        bg: d.bg.map(fill_from),
+        background: d.background.map(table_part_style_from),
         parts: d.parts.into_iter().map(|(k, v)| (table_part_from(k), table_part_style_from(v))).collect(),
         raw: d.raw,
     }
@@ -1468,7 +1483,7 @@ fn anim_class_to(c: dm_anim::AnimClass) -> cp_anim::AnimClass {
         dm_anim::AnimClass::Entrance => cp_anim::AnimClass::Entrance,
         dm_anim::AnimClass::Emphasis => cp_anim::AnimClass::Emphasis,
         dm_anim::AnimClass::Exit => cp_anim::AnimClass::Exit,
-        dm_anim::AnimClass::Motion => cp_anim::AnimClass::Motion,
+        dm_anim::AnimClass::Path => cp_anim::AnimClass::Path,
         dm_anim::AnimClass::Media => cp_anim::AnimClass::Media,
     }
 }
@@ -1478,7 +1493,7 @@ fn anim_class_from(c: cp_anim::AnimClass) -> dm_anim::AnimClass {
         cp_anim::AnimClass::Entrance => dm_anim::AnimClass::Entrance,
         cp_anim::AnimClass::Emphasis => dm_anim::AnimClass::Emphasis,
         cp_anim::AnimClass::Exit => dm_anim::AnimClass::Exit,
-        cp_anim::AnimClass::Motion => dm_anim::AnimClass::Motion,
+        cp_anim::AnimClass::Path => dm_anim::AnimClass::Path,
         cp_anim::AnimClass::Media => dm_anim::AnimClass::Media,
     }
 }
@@ -1499,23 +1514,27 @@ fn anim_start_from(s: cp_anim::AnimStart) -> dm_anim::AnimStart {
     }
 }
 
-fn anim_build_to(b: &dm_anim::AnimBuild) -> cp_anim::AnimBuild {
+fn text_build_to(b: dm_anim::TextBuild) -> cp_anim::TextBuild {
     match b {
-        dm_anim::AnimBuild::AllAtOnce => cp_anim::AnimBuild::AllAtOnce,
-        dm_anim::AnimBuild::ByParagraph { level } => cp_anim::AnimBuild::ByParagraph { level: *level },
+        dm_anim::TextBuild::AsOne => cp_anim::TextBuild::AsOne,
+        dm_anim::TextBuild::ByParagraph => cp_anim::TextBuild::ByParagraph,
+        dm_anim::TextBuild::ByWord => cp_anim::TextBuild::ByWord,
+        dm_anim::TextBuild::ByLetter => cp_anim::TextBuild::ByLetter,
     }
 }
 
-fn anim_build_from(b: cp_anim::AnimBuild) -> dm_anim::AnimBuild {
+fn text_build_from(b: cp_anim::TextBuild) -> dm_anim::TextBuild {
     match b {
-        cp_anim::AnimBuild::AllAtOnce => dm_anim::AnimBuild::AllAtOnce,
-        cp_anim::AnimBuild::ByParagraph { level } => dm_anim::AnimBuild::ByParagraph { level },
+        cp_anim::TextBuild::AsOne => dm_anim::TextBuild::AsOne,
+        cp_anim::TextBuild::ByParagraph => dm_anim::TextBuild::ByParagraph,
+        cp_anim::TextBuild::ByWord => dm_anim::TextBuild::ByWord,
+        cp_anim::TextBuild::ByLetter => dm_anim::TextBuild::ByLetter,
     }
 }
 
 fn animation_to(a: &dm_anim::Animation) -> cp_anim::Animation {
     cp_anim::Animation {
-        target: shape_id_to(a.target),
+        shape: shape_id_to(a.shape),
         class: anim_class_to(a.class),
         effect: a.effect.clone(),
         option: a.option.clone(),
@@ -1523,10 +1542,8 @@ fn animation_to(a: &dm_anim::Animation) -> cp_anim::Animation {
         duration_ms: a.duration_ms,
         delay_ms: a.delay_ms,
         repeat: a.repeat,
-        auto_reverse: a.auto_reverse,
-        accelerate: a.accelerate,
-        decelerate: a.decelerate,
-        build: anim_build_to(&a.build),
+        rewind: a.rewind,
+        text_build: text_build_to(a.text_build),
         paragraph: a.paragraph,
         path: a.path.clone(),
         trigger: a.trigger.map(shape_id_to),
@@ -1535,18 +1552,17 @@ fn animation_to(a: &dm_anim::Animation) -> cp_anim::Animation {
         preset_id: a.preset_id,
         preset_subtype: a.preset_subtype,
         after: a.after.clone(),
-        after_color: a.after_color.as_ref().map(color_ref_to),
         sound: a.sound.map(media_id_to),
-        stop_sound: a.stop_sound,
-        rewind: a.rewind,
-        hide_after: a.hide_after,
-        raw: a.raw.clone(),
+        smooth_start: a.smooth_start,
+        smooth_end: a.smooth_end,
+        bounce_end: a.bounce_end,
+        auto_reverse: a.auto_reverse,
     }
 }
 
 fn animation_from(a: cp_anim::Animation) -> dm_anim::Animation {
     dm_anim::Animation {
-        target: shape_id_from(a.target),
+        shape: shape_id_from(a.shape),
         class: anim_class_from(a.class),
         effect: a.effect,
         option: a.option,
@@ -1554,10 +1570,8 @@ fn animation_from(a: cp_anim::Animation) -> dm_anim::Animation {
         duration_ms: a.duration_ms,
         delay_ms: a.delay_ms,
         repeat: a.repeat,
-        auto_reverse: a.auto_reverse,
-        accelerate: a.accelerate,
-        decelerate: a.decelerate,
-        build: anim_build_from(a.build),
+        rewind: a.rewind,
+        text_build: text_build_from(a.text_build),
         paragraph: a.paragraph,
         path: a.path,
         trigger: a.trigger.map(shape_id_from),
@@ -1566,12 +1580,11 @@ fn animation_from(a: cp_anim::Animation) -> dm_anim::Animation {
         preset_id: a.preset_id,
         preset_subtype: a.preset_subtype,
         after: a.after,
-        after_color: a.after_color.map(color_ref_from),
         sound: a.sound.map(media_id_from),
-        stop_sound: a.stop_sound,
-        rewind: a.rewind,
-        hide_after: a.hide_after,
-        raw: a.raw,
+        smooth_start: a.smooth_start,
+        smooth_end: a.smooth_end,
+        bounce_end: a.bounce_end,
+        auto_reverse: a.auto_reverse,
     }
 }
 
