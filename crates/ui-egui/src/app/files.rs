@@ -544,10 +544,7 @@ impl SlideApp {
         let Some(index) = self.session.documents().iter().position(|d| Some(d.uid) == uid) else { return true };
         self.session.set_active(index);
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        let ext = match params.get("format").and_then(Value::as_str) {
-            Some(format @ ("pptx" | "potx" | "ppsx")) => format,
-            _ => "deckcraft",
-        };
+        let ext = params.get("format").and_then(Value::as_str).filter(|format| matches!(*format, "pptx" | "potx" | "ppsx")).unwrap_or("deckcraft");
         self.save_as_native(&format!("{name}.{ext}"))
     }
 
