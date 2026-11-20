@@ -519,7 +519,9 @@ fn shapes_have_over_cap_table(shapes: &[Shape]) -> bool {
 
 fn check_table_caps(p: &Presentation) -> Result<(), PptxError> {
     let over = p.slides.iter().any(|s| shapes_have_over_cap_table(&s.shapes))
-        || p.masters.iter().any(|m| shapes_have_over_cap_table(&m.shapes) || m.layouts.iter().any(|l| shapes_have_over_cap_table(&l.shapes)));
+        || p.masters.iter().any(|m| shapes_have_over_cap_table(&m.shapes) || m.layouts.iter().any(|l| shapes_have_over_cap_table(&l.shapes)))
+        || p.notes_master.as_ref().is_some_and(|m| shapes_have_over_cap_table(&m.shapes))
+        || p.handout_master.as_ref().is_some_and(|m| shapes_have_over_cap_table(&m.shapes));
     if over {
         return Err(PptxError::Unsupported(format!(
             "a table has more than {} cells; export refused rather than drop rows",
@@ -820,7 +822,8 @@ pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
 /// the main part's content type.
 pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
     check_table_caps(p)?;
-    let bytes = craft_pptx::export_as(&convert::pres_to_craft(p), &DeckDefaults, ext)?;
+    let ext = ext.trim_start_matches('.').to_ascii_lowercase();
+    let bytes = craft_pptx::export_as(&convert::pres_to_craft(p), &DeckDefaults, &ext)?;
     patch_exported_slides(p, bytes)
 }
 
@@ -929,5 +932,23 @@ mod table_direction_tests {
         Arc::make_mut(&mut p.slides[0]).shapes.push(shape);
         let err = crate::export(&p).expect_err("over-cap table must be refused");
         assert!(matches!(err, crate::PptxError::Unsupported(_)));
+    }
+
+    #[test]
+    fn over_cap_table_on_notes_and_handout_master_is_refused() {
+        let mut t = Table::new(1, 2, 200.0, 30.0);
+        t.rows.resize_with(deckcraft_model::table::MAX_CELLS / 2 + 1, || deckcraft_model::table::Row {
+            height: 20.0,
+            cells: vec![Cell::new("x"), Cell::new("y")],
+        });
+        let mut p_notes = defaults::new_presentation(None);
+        let shape = Shape { id: ShapeId(p_notes.alloc_id().expect("id")), kind: ShapeKind::Table(t.clone()), ..Default::default() };
+        p_notes.notes_master = Some(Arc::new(deckcraft_model::Master { name: "Notes".into(), shapes: vec![shape], ..Default::default() }));
+        assert!(matches!(crate::export(&p_notes), Err(crate::PptxError::Unsupported(_))));
+
+        let mut p_handout = defaults::new_presentation(None);
+        let shape = Shape { id: ShapeId(p_handout.alloc_id().expect("id")), kind: ShapeKind::Table(t), ..Default::default() };
+        p_handout.handout_master = Some(Arc::new(deckcraft_model::Master { name: "Handout".into(), shapes: vec![shape], ..Default::default() }));
+        assert!(matches!(crate::export(&p_handout), Err(crate::PptxError::Unsupported(_))));
     }
 }
