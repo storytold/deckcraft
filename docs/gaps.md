@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (Traditional Chinese shell catalog with 87 keys for ribbon tabs, File menu, title bar, quick access toolbar, status bar and Preferences; the rest of the UI stays English; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-09 · **Change:** minor (legacy `.ppt` import landed; its entry lists what it leaves out; previous: minor (Traditional Chinese shell catalog with 87 keys for ribbon tabs, File menu, title bar, quick access toolbar, status bar and Preferences; the rest of the UI stays English; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -21,7 +21,7 @@ revision history.
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
-| 5 | No localization beyond the Traditional Chinese shell | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
+| 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 8 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
@@ -117,12 +117,18 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** macro decks can't be opened even to view.
 - **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
 
-### No legacy `.ppt`/`.pot`/`.pps` import
-- **Evidence:** PowerPoint for Mac still opens and saves the 97–2003 binary formats
-  (`CFBundleDocumentTypes`); DeckCraft doesn't read them.
-- **Impact:** archives of older decks don't open.
-- **Estimate:** 20–35 h (import only, from the public [MS-PPT] spec). Owner decision whether it's
-  worth it.
+### Legacy `.ppt` import is partial
+- **Evidence:** `crates/ppt` opens PowerPoint 97–2003 files (slides, masters, text and styles, shapes,
+  pictures, notes) but leaves out transitions, animations, hyperlinks and actions, sounds and
+  video; tables arrive as grouped shapes, OLE objects and charts as their preview pictures, WordArt
+  as plain text; PICT pictures don't show, and embossed text is plain. Only checked against decks
+  built in tests and one outside lecture deck: committed tests use files built from records (no
+  PowerPoint-made files, AGENTS.md §1.1), so real decks need a corpus of files we own, kept in a
+  separate repository.
+- **Impact:** old decks open with their text, layout and pictures, but lose their motion, links,
+  sounds and video. Tables, OLE objects, charts and WordArt come in degraded and can't be edited as
+  such. PICT pictures are missing, and embossed text comes in plain.
+- **Estimate:** 10–18 h (transitions and build effects, interactive info, tables, a corpus).
 
 ### No OpenDocument `.odp`
 - **Evidence:** PowerPoint opens and saves `.odp`.
@@ -332,14 +338,9 @@ Detail in [hardware-parity.md](hardware-parity.md).
 
 Detail in [localization-parity.md](localization-parity.md).
 
-- **The shell has an 87-key catalog; the rest of the UI is English** (#15, #30; Ukrainian PR #34
-  open). Preferences offers System, English and 繁體中文 (`app.language`). System selects
-  Traditional Chinese for a `zh-Hant`, `zh-TW`, `zh-HK` or `zh-MO` locale. Ribbon groups,
-  the other dialogs, command ids and presentation text stay English. The web build has no system
-  locale and disables the Traditional Chinese picker because it bundles no CJK face. PowerPoint
-  for Mac ships 26 languages. Filling the remaining catalog is 8–14 h, then 3–16 h per language
-  plus native review. Beta needs that catalog for at least Simplified Chinese, Spanish, French,
-  German and Japanese (~30–45 h).
+- **English only, no string catalog** (#15, #30; Ukrainian PR #34 open). PowerPoint for Mac ships
+  26 languages. Infrastructure 8–14 h, then 3–16 h per language plus native review. Beta needs the
+  infrastructure and at least Simplified Chinese, Spanish, French, German and Japanese (~30–45 h).
 - **Hangul in the interface needs an installed Korean font** (#101). craft-fonts has no Korean face
   (Noto CJK is excluded by the asset policy), so the web build draws Korean file names, notes and
   outline text as boxes; desktop borrows Malgun Gothic, Apple SD Gothic Neo or Noto Sans CJK.
@@ -373,7 +374,6 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-04 | minor | Application shell has an 87-key catalog: ribbon tabs, File menu, title bar, status bar and Preferences in Taiwan Traditional Chinese; ribbon groups, other dialogs and command ids stay English |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
