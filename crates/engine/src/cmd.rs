@@ -614,6 +614,11 @@ fn param_optional(alt: &str) -> Option<bool> {
     }
 }
 
+/// A raster picture's size from its header, before any pixels are decoded.
+pub(crate) fn raster_size(data: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().ok()?.into_dimensions().ok()
+}
+
 /// The picture's pixels: a raster format decoded as it is, or an SVG drawn by the renderer, so
 /// effects that work on pixels also work on vector pictures. `None` for a format neither reads.
 pub(crate) fn picture_pixels(data: &[u8]) -> Option<image::DynamicImage> {

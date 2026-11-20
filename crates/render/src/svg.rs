@@ -167,7 +167,7 @@ fn pen_at(p: &kurbo::Stroke, k: f64, path: &BezPath) -> kurbo::Stroke {
     if !p.dash_pattern.is_empty() {
         // A dash shorter than a pixel would ask for unbounded dashes, as on any line.
         let pattern: Vec<f64> = p.dash_pattern.iter().map(|d| d * k).collect();
-        s = s.with_dashes(p.dash_offset, crate::stroke::limit_dash_count(path, pattern));
+        s = s.with_dashes(p.dash_offset * k, crate::stroke::limit_dash_count(path, pattern));
     }
     s
 }

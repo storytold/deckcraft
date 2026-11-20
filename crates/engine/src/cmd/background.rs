@@ -142,6 +142,13 @@ fn remove_background(s: &mut Session, p: &Value) -> Result<Value> {
             let Some(sh) = st.shape(*id) else { continue };
             let ShapeKind::Picture { fill } = &sh.kind else { continue };
             let Some(item) = st.doc.media(fill.media) else { continue };
+            // Reject a raster picture from its header, before decoding allocates its pixels.
+            if !deckcraft_render::is_svg(&item.data)
+                && let Some((w, h)) = crate::cmd::raster_size(&item.data)
+                && u64::from(w) * u64::from(h) > MAX_PIXELS
+            {
+                return Err(bad("picture.removeBackground", format!("{w}×{h} pixels is too large; compress the picture first")));
+            }
             // An SVG is drawn to pixels first, so the fill works on vector pictures too.
             let Some(dynimg) = crate::cmd::picture_pixels(&item.data) else { continue };
             let (iw, ih) = (dynimg.width(), dynimg.height());

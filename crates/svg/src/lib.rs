@@ -62,11 +62,13 @@ pub struct Skipped {
     /// A translucent group (`opacity` below 1) whose shapes overlap one another: SVG composites
     /// the group once and then fades it, which the per-shape alpha here cannot reproduce.
     pub group_opacity: bool,
+    /// One clip path cut from several shapes: SVG unions them, while clips here intersect.
+    pub clips: bool,
 }
 
 impl Skipped {
     pub fn any(&self) -> bool {
-        self.filters || self.masks || self.patterns || self.images || self.group_opacity
+        self.filters || self.masks || self.patterns || self.images || self.group_opacity || self.clips
     }
 }
 
@@ -361,8 +363,15 @@ impl Build {
         if let Some(inner) = clip.clip_path() {
             self.push_clip(inner);
         }
+        let before = self.clips.len();
         for node in clip.root().children() {
             self.clip_geometry(node);
+        }
+        // `clips` intersect, but the shapes of one clip path are a union: leave it to the
+        // rasterizer rather than clip the picture down to their overlap.
+        if self.clips.len() - before > 1 {
+            self.clips.truncate(before);
+            self.skipped.clips = true;
         }
     }
 
@@ -443,12 +452,13 @@ impl Build {
         self.items.push(Item { path: bez.clone(), even_odd: false, fill: None, stroke: Some(stroke), clips: self.clips.clone() });
     }
 
-    fn pen(&self, path: &usvg::Path, opacity: f64, scale: f64) -> Option<(Paint, kurbo::Stroke)> {
+    fn pen(&mut self, path: &usvg::Path, opacity: f64, scale: f64) -> Option<(Paint, kurbo::Stroke)> {
         let s = path.stroke().filter(|s| s.width().get() > 0.0)?;
         let color = match s.paint() {
             usvg::Paint::Pattern(_) => {
-                // A patterned outline is rare enough to draw in its average colour rather than to
-                // tile a pen.
+                // A patterned outline is not tiled here: report the picture so the rasterizer
+                // draws it, rather than draw the outline black.
+                self.skipped.patterns = true;
                 Paint::Solid(Rgba::BLACK.with_alpha(mul_alpha(255, opacity * f64::from(s.opacity().get()))))
             }
             other => paint(other, opacity * f64::from(s.opacity().get())),
@@ -456,7 +466,8 @@ impl Build {
         let mut pen = kurbo::Stroke::new(f64::from(s.width().get()) * scale).with_caps(cap(s.linecap())).with_join(join(s.linejoin()));
         if let Some(dash) = s.dasharray().filter(|d| d.len() >= 2 && d.iter().all(|v| *v > 0.0)) {
             let pattern: Vec<f64> = dash.iter().map(|v| f64::from(*v) * scale).collect();
-            pen = pen.with_dashes(f64::from(s.dashoffset()), pattern);
+            // The offset is a length in the same units as the dashes, so it scales with them.
+            pen = pen.with_dashes(f64::from(s.dashoffset()) * scale, pattern);
         }
         Some((color, pen))
     }
@@ -760,6 +771,31 @@ mod tests {
         assert!((s.items[0].clips[0].path.bounding_box().width() - 2.0).abs() < 1e-6);
         let s = svg("<rect width='4' height='4' fill='url(#none)'/>");
         assert!(!s.skipped.any(), "a missing paint server is not a pattern");
+    }
+
+    #[test]
+    fn a_clip_path_of_several_shapes_is_left_to_the_rasterizer() {
+        // SVG unions the shapes of one clip path; the clips here intersect, so two disjoint
+        // rects would clip the content away entirely.
+        let s = svg(
+            "<defs><clipPath id='c'><rect width='2' height='4'/><rect x='2' width='2' height='4'/></clipPath></defs><g clip-path='url(#c)'><rect width='4' height='4'/></g>",
+        );
+        assert!(s.skipped.clips, "a union clip is reported");
+        assert!(s.items[0].clips.is_empty(), "no clip is applied here");
+        let _ = &s.items;
+    }
+
+    #[test]
+    fn a_dash_offset_scales_with_the_dash_pattern() {
+        // The offset is a length like the dashes, so both follow the shape's scale.
+        let s = parse(
+            b"<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 12 12'><line x1='0' y1='2' x2='12' y2='2' stroke='black' stroke-width='1' stroke-dasharray='2 1' stroke-dashoffset='1'/></svg>",
+        )
+        .expect("reads");
+        let (_, pen) = s.items[0].stroke.as_ref().expect("stroked");
+        assert!((pen.dash_offset - 2.0).abs() < 1e-6, "1 user unit at scale 2: {}", pen.dash_offset);
+        assert_eq!(pen.dash_pattern.len(), 2);
+        assert!((pen.dash_pattern[0] - 4.0).abs() < 1e-6 && (pen.dash_pattern[1] - 2.0).abs() < 1e-6, "{:?}", pen.dash_pattern);
     }
 
     #[test]
