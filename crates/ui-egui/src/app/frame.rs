@@ -13,10 +13,7 @@ impl SlideApp {
         // This walks the font catalog, so it only runs when the answer can have changed: the
         // language was re-resolved, or the borrowed face set moved under us. Asking every frame
         // repeats the catalog lookups whenever a listed family is installed but rejected.
-        if self.language() == crate::i18n::Resolved::TraditionalChinese
-            && self.prefer_traditional_pending
-            && self.ui_fonts.prefer_traditional()
-        {
+        if self.language() == crate::i18n::Resolved::TraditionalChinese && self.prefer_traditional_pending && self.ui_fonts.prefer_traditional() {
             self.styled = false;
         }
         self.prefer_traditional_pending = false;

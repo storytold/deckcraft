@@ -30,16 +30,8 @@ const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
 /// Apple's PingFang/Heiti/Songti are system faces of the operating system rather than of a
 /// creative product, so they stay ahead of the Microsoft ones but behind the open faces.
 #[cfg(not(target_arch = "wasm32"))]
-const TRADITIONAL_FAMILIES: &[&str] = &[
-    "AR PL UMing TW",
-    "WenQuanYi Zen Hei",
-    "PingFang TC",
-    "Heiti TC",
-    "Songti TC",
-    "Microsoft JhengHei",
-    "MingLiU",
-    "DFKai-SB",
-];
+const TRADITIONAL_FAMILIES: &[&str] =
+    &["AR PL UMing TW", "WenQuanYi Zen Hei", "PingFang TC", "Heiti TC", "Songti TC", "Microsoft JhengHei", "MingLiU", "DFKai-SB"];
 
 /// Whether a face may be borrowed for the interface: not a colour face, and within the per-face
 /// byte limit.
