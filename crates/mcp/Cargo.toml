@@ -9,6 +9,7 @@ description = "DeckCraft MCP server: JSON-RPC 2.0 over stdio, driving a running 
 workspace = true
 
 [dependencies]
+craft-mcp-server = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-render = { workspace = true }
 serde_json = { workspace = true }
