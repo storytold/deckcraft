@@ -90,6 +90,32 @@ fn is_word_char(c: char) -> bool {
     matches!(unicode_linebreak::break_property(c as u32), Alphabetic | Ambiguous | HebrewLetter | Numeric) && c.is_alphanumeric()
 }
 
+/// Where a line may start with 禁則 relaxed (`eaLnBrk="0"`): the Unicode rule that keeps a non-starter
+/// off the start of a line (LB21, and LB16 before a non-starter) is lifted, every rule that binds the
+/// position for another reason is kept (an opening bracket ends no line, LB14; U+2060 and a no-break
+/// space hold, LB11 and LB12). Reruns the algorithm on a copy where each non-starter is an ordinary
+/// kana, one char for one char, so char indices map back.
+fn relaxed_opportunities(chars: &[char]) -> Vec<bool> {
+    let mut allowed = vec![false; chars.len() + 1];
+    if !chars.iter().any(|c| is_cj_nonstarter(*c)) {
+        return allowed;
+    }
+    let relaxed: String = chars.iter().map(|c| if is_cj_nonstarter(*c) { 'あ' } else { *c }).collect();
+    let mut char_of_byte = std::collections::HashMap::new();
+    for (ci, (b, _)) in relaxed.char_indices().enumerate() {
+        char_of_byte.insert(b, ci);
+    }
+    char_of_byte.insert(relaxed.len(), chars.len());
+    for (b, _) in unicode_linebreak::linebreaks(&relaxed) {
+        if let Some(&ci) = char_of_byte.get(&b)
+            && let Some(a) = allowed.get_mut(ci)
+        {
+            *a = true;
+        }
+    }
+    allowed
+}
+
 /// Break opportunities: allowed[i] = a line may start at char i. Unicode line breaking, then
 /// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/`, `\`, `?`, `!`, `}`
 /// or `+` inside a word (measured in PowerPoint 2016 for Windows; before an ideograph or a space
@@ -118,28 +144,8 @@ pub(crate) fn break_opportunities(text: &str, latin_break: bool, east_asian_brea
         }
     }
     let chars: Vec<char> = text.chars().collect();
-    // Relaxing 禁則 (`eaLnBrk="0"`) lifts only the Unicode rule that keeps a non-starter off the
-    // start of a line (LB21, and LB16 before a non-starter), never a rule that binds the position
-    // for another reason: an opening bracket still ends no line (LB14), and U+2060 or a no-break
-    // space still holds (LB11, LB12). Rerun the algorithm on a copy where each non-starter is an
-    // ordinary kana — one char for one char, so char indices map back — and accept a break before
-    // a non-starter only where that relaxed run allows it.
-    let mut relaxed_allowed = vec![false; n + 1];
-    if !east_asian_break && chars.iter().any(|c| is_cj_nonstarter(*c)) {
-        let relaxed: String = chars.iter().map(|c| if is_cj_nonstarter(*c) { 'あ' } else { *c }).collect();
-        let mut char_of_byte = std::collections::HashMap::new();
-        for (ci, (b, _)) in relaxed.char_indices().enumerate() {
-            char_of_byte.insert(b, ci);
-        }
-        char_of_byte.insert(relaxed.len(), n);
-        for (b, _) in unicode_linebreak::linebreaks(&relaxed) {
-            if let Some(&ci) = char_of_byte.get(&b)
-                && let Some(a) = relaxed_allowed.get_mut(ci)
-            {
-                *a = true;
-            }
-        }
-    }
+    // A break before a non-starter is accepted only where the relaxed run allows it.
+    let relaxed_allowed = if east_asian_break { Vec::new() } else { relaxed_opportunities(&chars) };
     for (i, w) in chars.windows(2).enumerate() {
         let (prev, next) = (w[0], w[1]);
         // PowerPoint never breaks after a zero-width space, nor before an em dash (only after it).
